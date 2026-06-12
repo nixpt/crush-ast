@@ -1,0 +1,23 @@
+# Test explicit module imports
+
+# CrushModule import
+import io;
+import fs as files;
+import net { http_get, http_post };
+
+# MCP import
+use @mcp "https://api.github.com" { "issues.list", "repos.get" } as github;
+
+# Capability import
+use @cap "fs.read" { "fs.read", "fs.list" } as reader;
+
+# Polyglot import
+use @lang python "sys" { "version", "path" } as pysys;
+
+# External imports
+import @git "https://github.com/nixpt/exosphere.git" as exo;
+import @http "https://example.com/data.json" as data;
+
+fn main() {
+    io.print("Imports working!");
+}

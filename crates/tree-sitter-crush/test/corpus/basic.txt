@@ -1,0 +1,106 @@
+==================
+Variable Declaration
+==================
+let x = 10;
+let message = "hello";
+
+---
+
+(program
+  (var_decl
+    name: (identifier)
+    value: (expression (int_literal)))
+  (var_decl
+    name: (identifier)
+    value: (expression (string_literal))))
+
+==================
+Function Definition
+==================
+fn add(a, b) {
+  return a + b;
+}
+
+---
+
+(program
+  (fn_def
+    name: (identifier)
+    (parameter_list (identifier) (identifier))
+    body: (block
+      (return_statement
+        value: (expression
+          (binary_op
+            left: (identifier)
+            right: (identifier)))))))
+
+==================
+Control Flow
+==================
+if x > 0 {
+  print("positive");
+} else {
+  print("non-positive");
+}
+
+---
+
+(program
+  (if_statement
+    condition: (expression
+      (binary_op
+        left: (identifier)
+        right: (int_literal)))
+    consequence: (block
+      (expr_stmt
+        (expression
+          (capability_call
+            name: (identifier)
+            (argument_list (expression (string_literal)))))))
+    alternative: (block
+      (expr_stmt
+        (expression
+          (capability_call
+            name: (identifier)
+            (argument_list (expression (string_literal)))))))))
+
+==================
+Concurrency
+==================
+spawn worker();
+yield;
+
+---
+
+(program
+  (expr_stmt
+    (expression (spawn_expr function: (identifier) (argument_list))))
+  (expr_stmt
+    (expression (yield_expr))))
+
+==================
+Structs
+==================
+let p = new Point();
+p.x = 10;
+
+---
+
+(program
+  (var_decl
+    name: (identifier)
+    value: (expression (new_struct name: (identifier) (argument_list))))
+  (field_assignment
+    target: (field_access target: (identifier) field: (identifier))
+    value: (expression (int_literal))))
+
+==================
+Embedded Language
+==================
+@python {hello}
+
+---
+
+(program
+  (lang_block
+    language: (identifier)))

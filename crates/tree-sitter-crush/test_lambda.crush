@@ -1,0 +1,7 @@
+let add = |a, b| {
+    return a + b;
+};
+
+let mul = |x, y| => x * y;
+
+let res = add(1, 2) | mul(3);

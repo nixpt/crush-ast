@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "crush",
+      "path": ".",
+      "scope": "source.crush",
+      "file-types": ["crush"],
+      "injection-regex": "^crush$"
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "license": "ISC",
+    "description": "Crush language grammar"
+  }
+}

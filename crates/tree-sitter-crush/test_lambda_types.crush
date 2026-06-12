@@ -1,0 +1,8 @@
+let add = |x: Int, y: Int| => x + y;
+let greet = |name, msg: String| {
+    print(msg);
+    print(name);
+};
+
+add(1, 2);
+greet("Alice", "Hello");

@@ -1,0 +1,26 @@
+[capsule]
+name = "go_walker"
+version = "0.1.0"
+description = "Go (TinyGo) language walker for CRUSH polyglot support"
+icon = "🐹"
+author = "CRUSH Team"
+language = "Rust"
+tags = ["compiler", "golang", "polyglot", "tinygo"]
+category = "language-walker"
+
+[platform]
+web_compatible = false
+desktop_only = true
+requires_terminal = false
+requires_gui = false
+compile_time = true
+
+[capabilities]
+provides = ["lang.go", "lang.tinygo"]
+requires = ["compiler", "filesystem"]
+
+[build]
+type = "walker"
+target_language = "go"
+output_format = "casm"
+tinygo_compatible = true

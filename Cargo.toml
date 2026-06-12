@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/crush-errors",
+    "crates/crush-cast",
+    "crates/casm",
+    "crates/tree-sitter-crush",
+    "crates/walker-core",
+    "crates/bash_walker",
+    "crates/wasm_walker",
+    "crates/cli",
+    "crates/python_walker",
+    "crates/go_walker",
+    "crates/rust_walker",
+    "crates/js_walker",
+    "crates/c_walker",
+    "crates/zig_walker",
+]
+
+[workspace.package]
+version       = "0.2.0"
+edition       = "2024"
+license       = "MIT OR Apache-2.0"
+homepage      = "https://github.com/nixpt/crush-ast"
+repository    = "https://github.com/nixpt/crush-ast"
+rust-version  = "1.85.0"
+publish       = false
+
+[workspace.dependencies]
+crush-errors      = { path = "crates/crush-errors",      version = "0.1.0" }
+crush-cast        = { path = "crates/crush-cast",        version = "0.1.0" }
+casm              = { path = "crates/casm",              version = "0.1.0" }
+tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.1.0" }
+walker-core       = { path = "crates/walker-core",       version = "0.1.0" }
+
+serde       = { version = "1.0", features = ["derive"] }
+serde_json  = "1.0"
+anyhow      = "1.0"
+thiserror   = "1.0"
+tree-sitter = "0.25"
+clap        = { version = "4.0", features = ["derive"] }

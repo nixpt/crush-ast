@@ -1,0 +1,2 @@
+struct Point { x, y }
+let p = new Point(10, 20);

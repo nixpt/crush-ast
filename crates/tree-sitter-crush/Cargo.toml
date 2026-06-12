@@ -1,0 +1,15 @@
+[package]
+license = "MIT OR Apache-2.0"
+name = "tree-sitter-crush"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1.0"
