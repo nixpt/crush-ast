@@ -8,7 +8,7 @@ pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
-pub use caps::{CapabilitySpec, CAPABILITIES, PORTABLE_CAPS, is_privileged};
+pub use caps::{CapabilitySpec, capabilities, is_privileged};
 pub use vm::{Quotas, VmError, VmResult, run};
 
 #[derive(Debug, thiserror::Error)]

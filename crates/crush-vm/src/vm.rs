@@ -59,10 +59,6 @@ pub enum VmError {
     UnknownCap(String),
     #[error("{cap} takes {expected} arg(s), got {got}")]
     CapArity { cap: String, expected: usize, got: usize },
-    #[error("{0} requires a host bus")]
-    NeedsBus(String),
-    #[error("frame emission quota exceeded ({0})")]
-    FrameQuota(usize),
 }
 
 /// Stack value — the five types the CVM1 supports.
@@ -128,7 +124,6 @@ pub struct Quotas {
     pub max_steps: usize,
     pub max_stack: usize,
     pub max_output: usize,
-    pub max_frames: usize,
     pub max_call_depth: usize,
     /// If set, further restricts the program's declared permissions.
     pub allowed_caps: Option<Vec<String>>,
@@ -140,7 +135,6 @@ impl Default for Quotas {
             max_steps:      1_000_000,
             max_stack:      4096,
             max_output:     1 << 20,
-            max_frames:     256,
             max_call_depth: 256,
             allowed_caps:   None,
         }
@@ -151,7 +145,6 @@ impl Default for Quotas {
 #[derive(Debug, Default)]
 pub struct VmResult {
     pub output: String,
-    pub frames: Vec<Vec<u8>>,
     pub steps: usize,
     pub halted: bool,
     pub stack: Vec<Value>,
@@ -168,7 +161,6 @@ pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
     let mut stack: Vec<Value> = Vec::new();
     let mut out_parts: Vec<String> = Vec::new();
     let mut out_len: usize = 0;
-    let mut frames_out: Vec<Vec<u8>> = Vec::new();
     let declared: std::collections::HashSet<&str> =
         program.manifest.permissions.iter().map(|s| s.as_str()).collect();
     let mut steps: usize = 0;
@@ -362,7 +354,7 @@ pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
                 args.reverse();
                 let result = dispatch_cap(
                     &cap, args, &declared, quotas,
-                    &mut out_parts, &mut out_len, &mut frames_out,
+                    &mut out_parts, &mut out_len,
                 )?;
                 if let Some(v) = result { push!(v); }
             }
@@ -385,7 +377,6 @@ pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
                     None => {
                         return Ok(VmResult {
                             output: out_parts.concat(),
-                            frames: frames_out,
                             steps,
                             halted: true,
                             stack,
@@ -397,7 +388,6 @@ pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
             HALT => {
                 return Ok(VmResult {
                     output: out_parts.concat(),
-                    frames: frames_out,
                     steps,
                     halted: true,
                     stack,
@@ -410,7 +400,6 @@ pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
 
     Ok(VmResult {
         output: out_parts.concat(),
-        frames: frames_out,
         steps,
         halted: false,
         stack,
@@ -424,19 +413,12 @@ fn dispatch_cap(
     quotas: &Quotas,
     out_parts: &mut Vec<String>,
     out_len: &mut usize,
-    frames_out: &mut Vec<Vec<u8>>,
 ) -> Result<Option<Value>, VmError> {
-    let tokens = if cap.starts_with("bus.") && !args.is_empty() {
-        vec![cap, Box::leak(format!("{}:{}", cap, args[0].as_text()).into_boxed_str()) as &str]
-    } else {
-        vec![cap]
-    };
-
-    if tokens.iter().all(|t| !declared.contains(t)) {
+    if !declared.contains(cap) {
         return Err(VmError::CapNotDeclared(cap.to_string()));
     }
     if let Some(allowed) = &quotas.allowed_caps {
-        if tokens.iter().all(|t| !allowed.iter().any(|a| a == t)) {
+        if !allowed.iter().any(|a| a == cap) {
             return Err(VmError::CapDenied(cap.to_string()));
         }
     }
@@ -446,9 +428,6 @@ fn dispatch_cap(
         if args.len() != expected {
             return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
         }
-    }
-    if spec.needs_bus {
-        return Err(VmError::NeedsBus(cap.to_string()));
     }
 
     match cap {
@@ -468,17 +447,6 @@ fn dispatch_cap(
         "str.len" => {
             let s = args[0].as_text();
             Ok(Some(Value::Int(s.len() as i64)))
-        }
-        "frame.emit" => {
-            if frames_out.len() >= quotas.max_frames {
-                return Err(VmError::FrameQuota(quotas.max_frames));
-            }
-            let payload = match &args[0] {
-                Value::Str(s) => s.as_bytes().to_vec(),
-                v => v.as_text().into_bytes(),
-            };
-            frames_out.push(payload);
-            Ok(None)
         }
         _ => Err(VmError::UnknownCap(cap.to_string())),
     }
