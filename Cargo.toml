@@ -15,6 +15,7 @@ members = [
     "crates/js_walker",
     "crates/c_walker",
     "crates/zig_walker",
+    "crates/crush-vm",
 ]
 
 [workspace.package]
