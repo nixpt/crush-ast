@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "casm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "crush-cast"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "cbor4ii",
  "crush-errors",
@@ -235,9 +235,18 @@ dependencies = [
 
 [[package]]
 name = "crush-errors"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "regex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "crush-vm"
+version = "0.2.0"
+dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
