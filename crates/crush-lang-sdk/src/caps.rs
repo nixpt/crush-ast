@@ -59,7 +59,8 @@ pub fn value_as_text(value: &crush_vm::vm::Value) -> String {
             let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_as_text(v))).collect();
             format!("{{{}}}", items.join(", "))
         }
-        Value::Error(e) => format!("error({})", e)
+        Value::Error(e) => format!("error({})", e),
+        Value::Bytes(b) => format!("<{} bytes>", b.len()),
     }
 }
 

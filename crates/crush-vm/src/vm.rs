@@ -78,6 +78,8 @@ pub enum Value {
     Map(std::collections::HashMap<String, Value>),
     /// Error value (carries a message string).
     Error(String),
+    /// Binary blob data.
+    Bytes(Vec<u8>),
 }
 
 impl Value {
@@ -91,6 +93,7 @@ impl Value {
             Value::Array(_)  => "array",
             Value::Map(_)    => "map",
             Value::Error(_)  => "error",
+            Value::Bytes(_)  => "bytes",
         }
     }
 
@@ -104,6 +107,7 @@ impl Value {
             Value::Array(a)   => !a.is_empty(),
             Value::Map(m)     => !m.is_empty(),
             Value::Error(_)   => true,
+            Value::Bytes(b)   => !b.is_empty(),
         }
     }
 
@@ -129,6 +133,7 @@ impl Value {
                 format!("{{{}}}", inner.join(", "))
             }
             Value::Error(e)  => format!("error({e})"),
+            Value::Bytes(b)  => format!("<{} bytes>", b.len()),
         }
     }
 
