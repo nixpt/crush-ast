@@ -14,9 +14,10 @@ use std::collections::HashMap;
 
 use crate::bytecode::{
     self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
-    DIV, DUP, EQ, EXEC_LANG, GET_FIELD, GT, HALT, JMP, JNZ, JZ, LOAD, LT,
-    MOD, MUL, NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT, PUSH, PUSH_BOOL,
-    PUSH_F64, PUSH_NULL, PUSH_STR, RET, SET_FIELD, STORE, SUB, SWAP, Program,
+    DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP,
+    JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT,
+    PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, RET, SET_FIELD, STORE,
+    SUB, SWAP, THROW, Program,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -75,6 +76,8 @@ pub enum Value {
     Array(Vec<Value>),
     /// String-keyed map (object/dict).
     Map(std::collections::HashMap<String, Value>),
+    /// Error value (carries a message string).
+    Error(String),
 }
 
 impl Value {
@@ -87,6 +90,7 @@ impl Value {
             Value::Str(_)    => "str",
             Value::Array(_)  => "array",
             Value::Map(_)    => "map",
+            Value::Error(_)  => "error",
         }
     }
 
@@ -99,6 +103,7 @@ impl Value {
             Value::Str(s)     => !s.is_empty(),
             Value::Array(a)   => !a.is_empty(),
             Value::Map(m)     => !m.is_empty(),
+            Value::Error(_)   => true,
         }
     }
 
@@ -123,6 +128,7 @@ impl Value {
                 let inner: Vec<_> = m.iter().map(|(k, v)| format!("{k}: {}", v.as_text())).collect();
                 format!("{{{}}}", inner.join(", "))
             }
+            Value::Error(e)  => format!("error({e})"),
         }
     }
 
@@ -198,6 +204,7 @@ pub fn run_with_caps(
 
     let mut ip = start_ip;
     let mut call_stack: Vec<Frame> = vec![Frame { return_ip: None, memory: HashMap::new() }];
+    let mut try_stack: Vec<usize> = Vec::new();
 
     macro_rules! pop {
         () => {{
@@ -461,6 +468,23 @@ pub fn run_with_caps(
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
+            }
+            ENTER_TRY => {
+                let target = u32::from_be_bytes(code[ip+1..ip+5].try_into().unwrap()) as usize;
+                if target > n { return Err(VmError::BadJump(target)); }
+                try_stack.push(target);
+            }
+            EXIT_TRY => {
+                try_stack.pop();
+            }
+            THROW => {
+                let err_val = pop!();
+                if let Some(handler_ip) = try_stack.pop() {
+                    ip = handler_ip;
+                    push!(err_val);
+                    continue;
+                }
+                return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
             }
             NEW_OBJ => {
                 push!(Value::Map(std::collections::HashMap::new()));

@@ -560,6 +560,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Str(_) => "str",
         Value::Array(_) => "array",
         Value::Map(_) => "map",
+        Value::Error(_) => "error",
     }
 }
 
@@ -585,6 +586,7 @@ pub fn value_to_text(v: &Value) -> String {
             let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_text(v))).collect();
             format!("{{{}}}", items.join(", "))
         }
+        Value::Error(e) => format!("error({})", e)
     }
 }
 
@@ -598,6 +600,7 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Str(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
         Value::Map(m) => !m.is_empty(),
+        Value::Error(_) => true,
     }
 }
 

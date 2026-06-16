@@ -51,7 +51,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
         let mut target_labels: HashMap<usize, String> = HashMap::new();
         for (_i, instr) in func.body.iter().enumerate() {
-            if instr.op == "jmp" || instr.op == "jmp_if_not" {
+            if instr.op == "jmp" || instr.op == "jmp_if_not" || instr.op == "enter_try" {
                 if let Some(target) = instr.args.get("target").and_then(|v| v.as_u64()) {
                     target_labels.entry(target as usize).or_insert_with(unique_label);
                 }
@@ -171,6 +171,15 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     // We'll replace them with the real bytecode post-assembly.
                     "NOP\n    NOP\n    NOP".to_string()
                 }
+                "throw" => "THROW".to_string(),
+                "enter_try" => {
+                    let target = instr.args["target"].as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("enter_try missing target at {fname}:{i}"))? as usize;
+                    let label = target_labels.get(&target)
+                        .ok_or_else(|| anyhow::anyhow!("enter_try to unknown target {target} at {fname}:{i}"))?;
+                    format!("ENTER_TRY {label}")
+                }
+                "exit_try" => "EXIT_TRY".to_string(),
                 "new_obj" => "NEW_OBJ".to_string(),
                 "get_field" => {
                     let field = instr.args["field"].as_str()

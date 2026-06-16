@@ -49,6 +49,9 @@ pub const PRINT: u8 = 0x50;
 pub const CAP_CALL: u8 = 0x51;
 pub const CALL: u8 = 0x52;
 pub const RET: u8 = 0x53;
+pub const ENTER_TRY: u8 = 0x54;
+pub const EXIT_TRY: u8 = 0x55;
+pub const THROW: u8 = 0x56;
 pub const NEW_ARRAY: u8 = 0x60;
 pub const ARR_GET: u8 = 0x61;
 pub const ARR_SET: u8 = 0x62;
@@ -91,7 +94,7 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | HALT
+        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT
         | ADD | SUB | MUL | DIV | MOD
         | EQ | LT | GT | NOT
         | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
@@ -99,7 +102,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),
         LOAD | STORE => Some(OperandKind::Slot),
-        JMP | JZ | JNZ => Some(OperandKind::Addr),
+        JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL  => Some(OperandKind::Cap),
         CALL      => Some(OperandKind::Func),
         EXEC_LANG => Some(OperandKind::Str),

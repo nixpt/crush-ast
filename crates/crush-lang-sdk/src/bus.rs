@@ -185,6 +185,7 @@ fn crush_value_to_json(v: &crush_vm::vm::Value) -> serde_json::Value {
             let obj: serde_json::Map<String, serde_json::Value> = m.iter().map(|(k, v)| (k.clone(), crush_value_to_json(v))).collect();
             serde_json::Value::Object(obj)
         }
+        crush_vm::vm::Value::Error(e) => serde_json::Value::String(format!("error({})", e))
     }
 }
 

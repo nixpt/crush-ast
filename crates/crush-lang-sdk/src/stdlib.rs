@@ -107,6 +107,7 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
                 let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_string(v))).collect();
                 format!("{{{}}}", items.join(", "))
             }
+            Value::Error(e) => format!("error({})", e)
         })
         .ok_or_else(|| format!("missing argument at index {}", idx))
 }
@@ -152,6 +153,7 @@ fn value_to_string(v: &Value) -> String {
                 let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_string(v))).collect();
                 format!("{{{}}}", items.join(", "))
             }
+            Value::Error(e) => format!("error({})", e)
     }
 }
 
@@ -446,6 +448,7 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
         Value::Null => Value::Int(0),
         Value::Array(a) => Value::Int(if a.is_empty() { 0 } else { 1 }),
         Value::Map(m) => Value::Int(if m.is_empty() { 0 } else { 1 }),
+        Value::Error(_) => Value::Int(1),
     };
     Ok(Some(result))
 });
@@ -473,6 +476,7 @@ conv_cap!(ConvTypeOfCap, "type_of", 1, |args: &[Value]| {
         Value::Null => "null",
         Value::Map(_) => "map",
         Value::Array(_) => "array",
+        Value::Error(_) => "error",
     };
     Ok(Some(Value::Str(type_name.to_string())))
 });
