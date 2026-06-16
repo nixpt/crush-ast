@@ -1,0 +1,229 @@
+OpenKO Cooperative Protocol License (OCPL) Version 1.1
+Copyright (c) 2026 OpenKO Contributors
+
+─────────────────────────────────────────────────────────────────────────────
+PREAMBLE
+─────────────────────────────────────────────────────────────────────────────
+
+This license governs software that implements, extends, or builds upon open
+coordination protocols. Its purpose is to ensure that such software remains
+permanently open, that users retain sovereignty over their identity and data,
+and that no single actor can use technical or legal mechanisms to capture the
+protocol, lock in users, or undermine federated governance.
+
+Commercial activity built on top of this software is explicitly permitted and
+encouraged. The conditions below protect the protocol's openness and users'
+rights — they do not restrict legitimate business.
+
+─────────────────────────────────────────────────────────────────────────────
+PERMISSIONS
+─────────────────────────────────────────────────────────────────────────────
+
+Subject to the conditions below, every person is granted a worldwide,
+royalty-free, non-exclusive, irrevocable license to:
+
+  a. Use, copy, and distribute this software and its documentation.
+  b. Modify this software and create derivative works.
+  c. Build and operate commercial services using this software.
+  d. Implement the protocol specifications published in the authoritative
+     specification repository designated by the licensor.
+  e. Charge for services, hosting, compute, agent labor, resource access,
+     and any other commercial activity built on top of this software.
+
+─────────────────────────────────────────────────────────────────────────────
+CONDITIONS
+─────────────────────────────────────────────────────────────────────────────
+
+1. Protocol Openness
+
+   Any software that implements the protocols covered by this license must
+   remain interoperable with the canonical protocol specifications published
+   by the licensor. You may not use technical measures, patent claims,
+   contractual restrictions, or any other mechanism to prevent third parties
+   from implementing these specifications or from federating with nodes that
+   run your software.
+
+   Protocol specifications must remain publicly readable. You may not move
+   them behind authentication, paywalls, or access controls.
+
+2. Identity Sovereignty
+
+   You may not modify this software to prevent users from:
+
+     a. Exporting their identity documents, cryptographic key material, and
+        all associated credentials in full, at any time, at no charge.
+     b. Exporting their contribution history, reputation records, attestations,
+        and participation data in a machine-readable open format.
+     c. Migrating their identity and all associated data to another compatible
+        implementation at any time, without penalty, delay, or data loss.
+     d. Revoking all delegations and reclaiming full control over their agents,
+        services, and authorization tokens.
+
+3. Data Portability
+
+   Any hosted service operating this software must, upon a user's written
+   request, provide a complete machine-readable export of all data associated
+   with that user within 30 days, at no charge. The export format must be
+   documented and usable without this software.
+
+4. No Lock-in
+
+   You may not enforce any patent, trade secret, license term, or contractual
+   restriction that would prevent a third party from:
+
+     a. Implementing the protocol specifications covered by this license.
+     b. Building software that reads or writes data formats defined by these
+        specifications.
+     c. Building a node that federates with nodes running your software.
+     d. Forking this software and operating an independent network.
+
+5. Constitutional Invariants
+
+   You may not modify this software to circumvent or remove enforcement of
+   the following principles:
+
+     i.   No permanent central authority — no single node, organization, or
+          individual may be granted irrevocable control over the network or
+          its governance.
+     ii.  Protocols remain open — all protocol specifications must remain
+          publicly readable and freely implementable by any party.
+     iii. Participation remains voluntary — no participant may be coerced
+          into joining, remaining in, or contributing to the network.
+     iv.  Contributions remain transparent — the record of who contributed
+          what must be auditable by participants and verifiable by third parties.
+     v.   Identities remain sovereign — participants control their own identity
+          material; no operator may hold identity hostage.
+     vi.  Knowledge remains portable — data and knowledge artifacts must be
+          exportable in open formats at any time.
+     vii. Governance remains federated — governance authority must be
+          distributed across independent cells and federations; no single
+          entity may capture the governance process.
+     viii.AI systems remain auditable — automated agents operating in the
+          network must expose their reasoning and actions to audit by their
+          controllers and by governance.
+     ix.  Local autonomy preserved — local cells and communities retain
+          authority over their own operations within the constraints of
+          protocol standards; no global authority may override local governance
+          for local matters.
+     x.   Public-good missions prioritized — the network's economic mechanisms
+          must be designed to sustain public-good missions, not only
+          commercially profitable ones.
+
+6. Attribution
+
+   All distributions must retain this license notice. User-visible
+   documentation and hosted service interfaces must credit the originating
+   project and this license. Attribution in the project's lineage record is
+   permanent and survives stewardship transitions.
+
+7. Patent Non-Aggression
+
+   Any contributor to this software who holds patents that would be infringed
+   by a conforming implementation of the covered protocol specifications grants
+   a royalty-free, perpetual, irrevocable patent license to all parties for
+   the purpose of implementing those specifications. This grant is not
+   revocable and survives any transfer of the patent.
+
+8. Source Availability for Network Services
+
+   If you operate a publicly accessible service that uses a modified version
+   of this software, you must make the complete corresponding source of your
+   modifications available to users of that service under the terms of this
+   license, without charge, via a publicly accessible repository or download.
+
+─────────────────────────────────────────────────────────────────────────────
+DEPENDENCY BOUNDARY
+─────────────────────────────────────────────────────────────────────────────
+
+The conditions of this license apply to the covered work itself. They do not
+apply to libraries, dependencies, or other software components that the
+covered work incorporates or links against, provided those components are
+distributed under their own applicable licenses and are not modifications of
+the covered work.
+
+A covered work may incorporate components licensed under MIT, Apache 2.0,
+GPL v2 or later, LGPL v2.1 or later, AGPL v3, MPL 2.0, or other open-source
+licenses without those components becoming subject to the conditions of this
+license beyond their own terms. The conditions of this license apply only to
+the portions of the work originally licensed under the OCPL.
+
+─────────────────────────────────────────────────────────────────────────────
+LICENSE COMPATIBILITY
+─────────────────────────────────────────────────────────────────────────────
+
+This license is designed to be compatible with the following licenses as
+inbound contributors to a covered work:
+
+  Compatible (inbound):
+    MIT License
+    Apache License 2.0 (with patent termination clause)
+    GNU General Public License v2.0 or later
+    GNU General Public License v3.0
+    GNU Lesser General Public License v2.1 or later
+    GNU Affero General Public License v3.0
+    Mozilla Public License 2.0
+    ISC License
+    BSD 2-Clause and 3-Clause Licenses
+    Creative Commons CC0 1.0 (for documentation and data)
+
+  Not compatible (inbound):
+    Proprietary licenses that restrict redistribution
+    Licenses that prohibit commercial use
+    Licenses with field-of-use restrictions
+    Business Source License (BSL/BUSL) variants
+
+When this license conflicts with an inbound license, the inbound license
+governs its own component and this license governs the remainder.
+
+─────────────────────────────────────────────────────────────────────────────
+OUTBOUND COMPATIBILITY
+─────────────────────────────────────────────────────────────────────────────
+
+Works incorporating components under this license may be distributed as a
+whole under GPL v3.0 or AGPL v3.0, provided the conditions of this license
+are preserved for the OCPL-licensed portions. The constitutional invariants
+(Condition 5) and protocol openness requirements (Condition 1) must be
+preserved in any such distribution; they may not be overridden by the terms
+of the incorporating license.
+
+─────────────────────────────────────────────────────────────────────────────
+EXTENSIONS
+─────────────────────────────────────────────────────────────────────────────
+
+Domain-specific extensions to this license may be adopted alongside the core
+conditions. Extensions add conditions; they may not remove or weaken any core
+condition. Recognized extensions:
+
+  OCPL-Format  — additional conditions for format/protocol specification
+                 projects (open format guarantee, format portability)
+  OCPL-Model   — additional conditions for AI model projects (model weights
+                 availability, training data lineage, inference access)
+  OCPL-Tool    — additional conditions for developer tooling (free tier
+                 requirement, CLI/local-mode must remain free)
+
+Extension texts are published at: https://openko.network/ocpl/extensions/
+
+─────────────────────────────────────────────────────────────────────────────
+COMPLIANCE
+─────────────────────────────────────────────────────────────────────────────
+
+If you cannot comply with these conditions, you may not distribute or operate
+this software. The conditions exist to protect the protocol's openness, users'
+sovereignty, and the network's integrity — not to restrict legitimate
+commercial activity built on an open foundation.
+
+Non-compliant forks that remove these conditions are not covered works under
+this license and are not authorized to use the protocol specifications,
+trademarks, or Foundry registry of the originating project.
+
+─────────────────────────────────────────────────────────────────────────────
+DISCLAIMER
+─────────────────────────────────────────────────────────────────────────────
+
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
