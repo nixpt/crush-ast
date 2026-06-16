@@ -335,6 +335,17 @@ impl<'a> Visitor<'a> {
                     Ok(Expression::NullLiteral { meta })
                 }
             }
+            "bool_operator" => {
+                let left = Box::new(self.visit_expression(node.child(0).unwrap())?);
+                let operator = self.base.text(node.child(1).unwrap())?.to_string();
+                let right = Box::new(self.visit_expression(node.child(2).unwrap())?);
+                Ok(Expression::BinaryOp {
+                    operator,
+                    left,
+                    right,
+                    meta,
+                })
+            }
             "list" => {
                 // Not strictly in CAST yet as a first-class expr, but we had it in legacy.
                 // For now, let's just null it or stick to minimal.

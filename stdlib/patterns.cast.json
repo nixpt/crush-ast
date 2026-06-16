@@ -1,0 +1,1716 @@
+{
+  "cast_version": "0.1",
+  "entry": "",
+  "lang": "crush",
+  "functions": {
+    "is_digit": {
+      "params": [
+        [
+          "c",
+          "Any"
+        ]
+      ],
+      "body": [
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": ">=",
+            "left": {
+              "type": "Var",
+              "name": "c",
+              "meta": {
+                "lang": "python",
+                "line": 54,
+                "column": 8,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            },
+            "right": {
+              "type": "StringLiteral",
+              "value": "0",
+              "meta": {
+                "line": 54,
+                "column": 13,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python"
+              }
+            },
+            "meta": {
+              "lang": "python",
+              "column": 8,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 54
+            }
+          },
+          "then_body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "<=",
+                "left": {
+                  "type": "Var",
+                  "name": "c",
+                  "meta": {
+                    "column": 12,
+                    "lang": "python",
+                    "line": 55,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                },
+                "right": {
+                  "type": "StringLiteral",
+                  "value": "9",
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "column": 17,
+                    "line": 55,
+                    "lang": "python"
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "lang": "python",
+                  "column": 12,
+                  "line": 55
+                }
+              },
+              "then_body": [
+                {
+                  "type": "Return",
+                  "value": {
+                    "type": "BoolLiteral",
+                    "value": true,
+                    "meta": {
+                      "column": 20,
+                      "line": 56,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "lang": "python"
+                    }
+                  },
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 56,
+                    "column": 13,
+                    "lang": "python"
+                  }
+                }
+              ],
+              "else_body": null,
+              "meta": {
+                "line": 55,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "column": 9,
+                "lang": "python"
+              }
+            }
+          ],
+          "else_body": null,
+          "meta": {
+            "lang": "python",
+            "line": 54,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "column": 5
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "BoolLiteral",
+            "value": false,
+            "meta": {
+              "line": 57,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "lang": "python",
+              "column": 12
+            }
+          },
+          "meta": {
+            "lang": "python",
+            "line": 57,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "column": 5
+          }
+        }
+      ],
+      "meta": {
+        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+        "lang": "python",
+        "column": 1,
+        "line": 53
+      }
+    },
+    "match": {
+      "params": [
+        [
+          "pattern",
+          "Any"
+        ],
+        [
+          "text",
+          "Any"
+        ]
+      ],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "pi",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "lang": "python",
+              "column": 10,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 2
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "column": 5,
+            "lang": "python",
+            "line": 2
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "ti",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "column": 10,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 3,
+              "lang": "python"
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "line": 3,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "column": 5,
+            "lang": "python"
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "star_pos",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "column": 16,
+              "line": 4,
+              "lang": "python",
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "column": 5,
+            "line": 4,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "has_star",
+          "value": {
+            "type": "BoolLiteral",
+            "value": false,
+            "meta": {
+              "lang": "python",
+              "column": 16,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 5
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 5,
+            "column": 5,
+            "lang": "python"
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "match_ti",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "line": 6,
+              "lang": "python",
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "column": 16
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 6,
+            "column": 5
+          }
+        },
+        {
+          "type": "While",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "<",
+            "left": {
+              "type": "Var",
+              "name": "ti",
+              "meta": {
+                "lang": "python",
+                "line": 7,
+                "column": 11,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            },
+            "right": {
+              "type": "Call",
+              "function": "len",
+              "args": [
+                {
+                  "type": "Var",
+                  "name": "text",
+                  "meta": {
+                    "line": 7,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python",
+                    "column": 20
+                  }
+                }
+              ],
+              "meta": {
+                "lang": "python",
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 7,
+                "column": 16
+              }
+            },
+            "meta": {
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 7,
+              "column": 11,
+              "lang": "python"
+            }
+          },
+          "body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "<",
+                "left": {
+                  "type": "Var",
+                  "name": "pi",
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "column": 12,
+                    "line": 8,
+                    "lang": "python"
+                  }
+                },
+                "right": {
+                  "type": "Call",
+                  "function": "len",
+                  "args": [
+                    {
+                      "type": "Var",
+                      "name": "pattern",
+                      "meta": {
+                        "lang": "python",
+                        "column": 21,
+                        "line": 8,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                      }
+                    }
+                  ],
+                  "meta": {
+                    "column": 17,
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 8
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "column": 12,
+                  "line": 8,
+                  "lang": "python"
+                }
+              },
+              "then_body": [
+                {
+                  "type": "If",
+                  "condition": {
+                    "type": "NullLiteral",
+                    "meta": {
+                      "line": 9,
+                      "lang": "python",
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "column": 16
+                    }
+                  },
+                  "then_body": [
+                    {
+                      "type": "VarDecl",
+                      "name": "pi",
+                      "value": {
+                        "type": "BinaryOp",
+                        "operator": "+",
+                        "left": {
+                          "type": "Var",
+                          "name": "pi",
+                          "meta": {
+                            "column": 22,
+                            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                            "lang": "python",
+                            "line": 10
+                          }
+                        },
+                        "right": {
+                          "type": "IntLiteral",
+                          "value": 1,
+                          "meta": {
+                            "line": 10,
+                            "lang": "python",
+                            "column": 27,
+                            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                          }
+                        },
+                        "meta": {
+                          "lang": "python",
+                          "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                          "column": 22,
+                          "line": 10
+                        }
+                      },
+                      "type_hint": "Any",
+                      "meta": {
+                        "column": 17,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "lang": "python",
+                        "line": 10
+                      }
+                    },
+                    {
+                      "type": "VarDecl",
+                      "name": "ti",
+                      "value": {
+                        "type": "BinaryOp",
+                        "operator": "+",
+                        "left": {
+                          "type": "Var",
+                          "name": "ti",
+                          "meta": {
+                            "lang": "python",
+                            "line": 11,
+                            "column": 22,
+                            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                          }
+                        },
+                        "right": {
+                          "type": "IntLiteral",
+                          "value": 1,
+                          "meta": {
+                            "column": 27,
+                            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                            "line": 11,
+                            "lang": "python"
+                          }
+                        },
+                        "meta": {
+                          "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                          "line": 11,
+                          "lang": "python",
+                          "column": 22
+                        }
+                      },
+                      "type_hint": "Any",
+                      "meta": {
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "column": 17,
+                        "line": 11,
+                        "lang": "python"
+                      }
+                    }
+                  ],
+                  "else_body": [],
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python",
+                    "line": 9,
+                    "column": 13
+                  }
+                }
+              ],
+              "else_body": [],
+              "meta": {
+                "lang": "python",
+                "line": 8,
+                "column": 9,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            }
+          ],
+          "meta": {
+            "column": 5,
+            "line": 7,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "lang": "python"
+          }
+        },
+        {
+          "type": "While",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "<",
+            "left": {
+              "type": "Var",
+              "name": "pi",
+              "meta": {
+                "line": 29,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python",
+                "column": 11
+              }
+            },
+            "right": {
+              "type": "Call",
+              "function": "len",
+              "args": [
+                {
+                  "type": "Var",
+                  "name": "pattern",
+                  "meta": {
+                    "line": 29,
+                    "column": 20,
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                }
+              ],
+              "meta": {
+                "line": 29,
+                "column": 16,
+                "lang": "python",
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            },
+            "meta": {
+              "line": 29,
+              "lang": "python",
+              "column": 11,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+            }
+          },
+          "body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "==",
+                "left": {
+                  "type": "NullLiteral",
+                  "meta": {
+                    "line": 30,
+                    "column": 12,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python"
+                  }
+                },
+                "right": {
+                  "type": "StringLiteral",
+                  "value": "*",
+                  "meta": {
+                    "column": 27,
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 30
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "lang": "python",
+                  "line": 30,
+                  "column": 12
+                }
+              },
+              "then_body": [
+                {
+                  "type": "VarDecl",
+                  "name": "pi",
+                  "value": {
+                    "type": "BinaryOp",
+                    "operator": "+",
+                    "left": {
+                      "type": "Var",
+                      "name": "pi",
+                      "meta": {
+                        "lang": "python",
+                        "line": 31,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "column": 18
+                      }
+                    },
+                    "right": {
+                      "type": "IntLiteral",
+                      "value": 1,
+                      "meta": {
+                        "column": 23,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "lang": "python",
+                        "line": 31
+                      }
+                    },
+                    "meta": {
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "line": 31,
+                      "column": 18,
+                      "lang": "python"
+                    }
+                  },
+                  "type_hint": "Any",
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 31,
+                    "lang": "python",
+                    "column": 13
+                  }
+                }
+              ],
+              "else_body": [],
+              "meta": {
+                "line": 30,
+                "column": 9,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python"
+              }
+            }
+          ],
+          "meta": {
+            "column": 5,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 29,
+            "lang": "python"
+          }
+        },
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "==",
+            "left": {
+              "type": "Var",
+              "name": "pi",
+              "meta": {
+                "column": 8,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 34,
+                "lang": "python"
+              }
+            },
+            "right": {
+              "type": "Call",
+              "function": "len",
+              "args": [
+                {
+                  "type": "Var",
+                  "name": "pattern",
+                  "meta": {
+                    "line": 34,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python",
+                    "column": 18
+                  }
+                }
+              ],
+              "meta": {
+                "column": 14,
+                "line": 34,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python"
+              }
+            },
+            "meta": {
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "column": 8,
+              "lang": "python",
+              "line": 34
+            }
+          },
+          "then_body": [
+            {
+              "type": "Return",
+              "value": {
+                "type": "BoolLiteral",
+                "value": true,
+                "meta": {
+                  "lang": "python",
+                  "line": 35,
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "column": 16
+                }
+              },
+              "meta": {
+                "column": 9,
+                "lang": "python",
+                "line": 35,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            }
+          ],
+          "else_body": null,
+          "meta": {
+            "column": 5,
+            "lang": "python",
+            "line": 34,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "BoolLiteral",
+            "value": false,
+            "meta": {
+              "lang": "python",
+              "line": 36,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "column": 12
+            }
+          },
+          "meta": {
+            "line": 36,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "column": 5
+          }
+        }
+      ],
+      "meta": {
+        "column": 1,
+        "lang": "python",
+        "line": 1,
+        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+      }
+    },
+    "count_matches": {
+      "params": [
+        [
+          "text",
+          "Any"
+        ],
+        [
+          "substr",
+          "Any"
+        ]
+      ],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "count",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "column": 13,
+              "lang": "python",
+              "line": 39
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "column": 5,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 39
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "i",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "line": 40,
+              "column": 9,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "lang": "python"
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "line": 40,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "column": 5
+          }
+        },
+        {
+          "type": "While",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "<=",
+            "left": {
+              "type": "Var",
+              "name": "i",
+              "meta": {
+                "column": 11,
+                "lang": "python",
+                "line": 41,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            },
+            "right": {
+              "type": "BinaryOp",
+              "operator": "-",
+              "left": {
+                "type": "Call",
+                "function": "len",
+                "args": [
+                  {
+                    "type": "Var",
+                    "name": "text",
+                    "meta": {
+                      "lang": "python",
+                      "column": 20,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "line": 41
+                    }
+                  }
+                ],
+                "meta": {
+                  "column": 16,
+                  "lang": "python",
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "line": 41
+                }
+              },
+              "right": {
+                "type": "Call",
+                "function": "len",
+                "args": [
+                  {
+                    "type": "Var",
+                    "name": "substr",
+                    "meta": {
+                      "column": 32,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "line": 41,
+                      "lang": "python"
+                    }
+                  }
+                ],
+                "meta": {
+                  "line": 41,
+                  "lang": "python",
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "column": 28
+                }
+              },
+              "meta": {
+                "column": 16,
+                "line": 41,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python"
+              }
+            },
+            "meta": {
+              "column": 11,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "lang": "python",
+              "line": 41
+            }
+          },
+          "body": [
+            {
+              "type": "VarDecl",
+              "name": "found",
+              "value": {
+                "type": "BoolLiteral",
+                "value": true,
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "column": 17,
+                  "lang": "python",
+                  "line": 42
+                }
+              },
+              "type_hint": "Any",
+              "meta": {
+                "lang": "python",
+                "column": 9,
+                "line": 42,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            },
+            {
+              "type": "VarDecl",
+              "name": "j",
+              "value": {
+                "type": "IntLiteral",
+                "value": 0,
+                "meta": {
+                  "column": 13,
+                  "line": 43,
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "lang": "python"
+                }
+              },
+              "type_hint": "Any",
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "column": 9,
+                "lang": "python",
+                "line": 43
+              }
+            },
+            {
+              "type": "While",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "<",
+                "left": {
+                  "type": "Var",
+                  "name": "j",
+                  "meta": {
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "column": 15,
+                    "line": 44
+                  }
+                },
+                "right": {
+                  "type": "Call",
+                  "function": "len",
+                  "args": [
+                    {
+                      "type": "Var",
+                      "name": "substr",
+                      "meta": {
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "column": 23,
+                        "lang": "python",
+                        "line": 44
+                      }
+                    }
+                  ],
+                  "meta": {
+                    "line": 44,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python",
+                    "column": 19
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "line": 44,
+                  "column": 15,
+                  "lang": "python"
+                }
+              },
+              "body": [
+                {
+                  "type": "If",
+                  "condition": {
+                    "type": "NullLiteral",
+                    "meta": {
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "line": 45,
+                      "column": 16,
+                      "lang": "python"
+                    }
+                  },
+                  "then_body": [
+                    {
+                      "type": "VarDecl",
+                      "name": "found",
+                      "value": {
+                        "type": "BoolLiteral",
+                        "value": false,
+                        "meta": {
+                          "column": 25,
+                          "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                          "lang": "python",
+                          "line": 46
+                        }
+                      },
+                      "type_hint": "Any",
+                      "meta": {
+                        "lang": "python",
+                        "line": 46,
+                        "column": 17,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                      }
+                    }
+                  ],
+                  "else_body": null,
+                  "meta": {
+                    "line": 45,
+                    "column": 13,
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                },
+                {
+                  "type": "VarDecl",
+                  "name": "j",
+                  "value": {
+                    "type": "BinaryOp",
+                    "operator": "+",
+                    "left": {
+                      "type": "Var",
+                      "name": "j",
+                      "meta": {
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "column": 17,
+                        "line": 47,
+                        "lang": "python"
+                      }
+                    },
+                    "right": {
+                      "type": "IntLiteral",
+                      "value": 1,
+                      "meta": {
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "line": 47,
+                        "lang": "python",
+                        "column": 21
+                      }
+                    },
+                    "meta": {
+                      "column": 17,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "lang": "python",
+                      "line": 47
+                    }
+                  },
+                  "type_hint": "Any",
+                  "meta": {
+                    "lang": "python",
+                    "column": 13,
+                    "line": 47,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                }
+              ],
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 44,
+                "column": 9,
+                "lang": "python"
+              }
+            },
+            {
+              "type": "If",
+              "condition": {
+                "type": "Var",
+                "name": "found",
+                "meta": {
+                  "line": 48,
+                  "column": 12,
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "lang": "python"
+                }
+              },
+              "then_body": [
+                {
+                  "type": "VarDecl",
+                  "name": "count",
+                  "value": {
+                    "type": "BinaryOp",
+                    "operator": "+",
+                    "left": {
+                      "type": "Var",
+                      "name": "count",
+                      "meta": {
+                        "column": 21,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "line": 49,
+                        "lang": "python"
+                      }
+                    },
+                    "right": {
+                      "type": "IntLiteral",
+                      "value": 1,
+                      "meta": {
+                        "line": 49,
+                        "column": 29,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "lang": "python"
+                      }
+                    },
+                    "meta": {
+                      "column": 21,
+                      "line": 49,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "lang": "python"
+                    }
+                  },
+                  "type_hint": "Any",
+                  "meta": {
+                    "line": 49,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "column": 13,
+                    "lang": "python"
+                  }
+                }
+              ],
+              "else_body": null,
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "column": 9,
+                "lang": "python",
+                "line": 48
+              }
+            },
+            {
+              "type": "VarDecl",
+              "name": "i",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "+",
+                "left": {
+                  "type": "Var",
+                  "name": "i",
+                  "meta": {
+                    "lang": "python",
+                    "column": 13,
+                    "line": 50,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                },
+                "right": {
+                  "type": "IntLiteral",
+                  "value": 1,
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "column": 17,
+                    "lang": "python",
+                    "line": 50
+                  }
+                },
+                "meta": {
+                  "column": 13,
+                  "lang": "python",
+                  "line": 50,
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                }
+              },
+              "type_hint": "Any",
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "column": 9,
+                "line": 50,
+                "lang": "python"
+              }
+            }
+          ],
+          "meta": {
+            "column": 5,
+            "line": 41,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "Var",
+            "name": "count",
+            "meta": {
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 51,
+              "lang": "python",
+              "column": 12
+            }
+          },
+          "meta": {
+            "column": 5,
+            "line": 51,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+          }
+        }
+      ],
+      "meta": {
+        "lang": "python",
+        "line": 38,
+        "column": 1,
+        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+      }
+    },
+    "count_words": {
+      "params": [
+        [
+          "text",
+          "Any"
+        ]
+      ],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "count",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "lang": "python",
+              "column": 13,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 69
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "column": 5,
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 69
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "in_word",
+          "value": {
+            "type": "BoolLiteral",
+            "value": false,
+            "meta": {
+              "line": 70,
+              "column": 15,
+              "lang": "python",
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "column": 5,
+            "line": 70,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "lang": "python"
+          }
+        },
+        {
+          "type": "VarDecl",
+          "name": "i",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {
+              "column": 9,
+              "line": 71,
+              "lang": "python",
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+            }
+          },
+          "type_hint": "Any",
+          "meta": {
+            "column": 5,
+            "line": 71,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "lang": "python"
+          }
+        },
+        {
+          "type": "While",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "<",
+            "left": {
+              "type": "Var",
+              "name": "i",
+              "meta": {
+                "column": 11,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 72,
+                "lang": "python"
+              }
+            },
+            "right": {
+              "type": "Call",
+              "function": "len",
+              "args": [
+                {
+                  "type": "Var",
+                  "name": "text",
+                  "meta": {
+                    "line": 72,
+                    "column": 19,
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                }
+              ],
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "column": 15,
+                "lang": "python",
+                "line": 72
+              }
+            },
+            "meta": {
+              "line": 72,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "lang": "python",
+              "column": 11
+            }
+          },
+          "body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "Call",
+                "function": "is_alpha",
+                "args": [],
+                "meta": {
+                  "line": 73,
+                  "column": 12,
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "lang": "python"
+                }
+              },
+              "then_body": [
+                {
+                  "type": "If",
+                  "condition": {
+                    "type": "BinaryOp",
+                    "operator": "==",
+                    "left": {
+                      "type": "Var",
+                      "name": "in_word",
+                      "meta": {
+                        "lang": "python",
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "column": 16,
+                        "line": 74
+                      }
+                    },
+                    "right": {
+                      "type": "BoolLiteral",
+                      "value": false,
+                      "meta": {
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "line": 74,
+                        "column": 27,
+                        "lang": "python"
+                      }
+                    },
+                    "meta": {
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "line": 74,
+                      "column": 16,
+                      "lang": "python"
+                    }
+                  },
+                  "then_body": [
+                    {
+                      "type": "VarDecl",
+                      "name": "count",
+                      "value": {
+                        "type": "BinaryOp",
+                        "operator": "+",
+                        "left": {
+                          "type": "Var",
+                          "name": "count",
+                          "meta": {
+                            "column": 25,
+                            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                            "lang": "python",
+                            "line": 75
+                          }
+                        },
+                        "right": {
+                          "type": "IntLiteral",
+                          "value": 1,
+                          "meta": {
+                            "column": 33,
+                            "lang": "python",
+                            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                            "line": 75
+                          }
+                        },
+                        "meta": {
+                          "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                          "line": 75,
+                          "column": 25,
+                          "lang": "python"
+                        }
+                      },
+                      "type_hint": "Any",
+                      "meta": {
+                        "line": 75,
+                        "column": 17,
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "lang": "python"
+                      }
+                    },
+                    {
+                      "type": "VarDecl",
+                      "name": "in_word",
+                      "value": {
+                        "type": "BoolLiteral",
+                        "value": true,
+                        "meta": {
+                          "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                          "line": 76,
+                          "column": 27,
+                          "lang": "python"
+                        }
+                      },
+                      "type_hint": "Any",
+                      "meta": {
+                        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                        "column": 17,
+                        "lang": "python",
+                        "line": 76
+                      }
+                    }
+                  ],
+                  "else_body": null,
+                  "meta": {
+                    "lang": "python",
+                    "column": 13,
+                    "line": 74,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                }
+              ],
+              "else_body": [],
+              "meta": {
+                "column": 9,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 73,
+                "lang": "python"
+              }
+            },
+            {
+              "type": "VarDecl",
+              "name": "i",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "+",
+                "left": {
+                  "type": "Var",
+                  "name": "i",
+                  "meta": {
+                    "lang": "python",
+                    "column": 13,
+                    "line": 79,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                  }
+                },
+                "right": {
+                  "type": "IntLiteral",
+                  "value": 1,
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python",
+                    "line": 79,
+                    "column": 17
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "line": 79,
+                  "lang": "python",
+                  "column": 13
+                }
+              },
+              "type_hint": "Any",
+              "meta": {
+                "line": 79,
+                "lang": "python",
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "column": 9
+              }
+            }
+          ],
+          "meta": {
+            "column": 5,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 72,
+            "lang": "python"
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "Var",
+            "name": "count",
+            "meta": {
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "line": 80,
+              "column": 12,
+              "lang": "python"
+            }
+          },
+          "meta": {
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 80,
+            "column": 5
+          }
+        }
+      ],
+      "meta": {
+        "column": 1,
+        "lang": "python",
+        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+        "line": 68
+      }
+    },
+    "is_alpha": {
+      "params": [
+        [
+          "c",
+          "Any"
+        ]
+      ],
+      "body": [
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": ">=",
+            "left": {
+              "type": "Var",
+              "name": "c",
+              "meta": {
+                "line": 60,
+                "column": 8,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python"
+              }
+            },
+            "right": {
+              "type": "StringLiteral",
+              "value": "a",
+              "meta": {
+                "line": 60,
+                "column": 13,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "lang": "python"
+              }
+            },
+            "meta": {
+              "line": 60,
+              "lang": "python",
+              "column": 8,
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+            }
+          },
+          "then_body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "<=",
+                "left": {
+                  "type": "Var",
+                  "name": "c",
+                  "meta": {
+                    "lang": "python",
+                    "column": 12,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 61
+                  }
+                },
+                "right": {
+                  "type": "StringLiteral",
+                  "value": "z",
+                  "meta": {
+                    "line": 61,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python",
+                    "column": 17
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "lang": "python",
+                  "line": 61,
+                  "column": 12
+                }
+              },
+              "then_body": [
+                {
+                  "type": "Return",
+                  "value": {
+                    "type": "BoolLiteral",
+                    "value": true,
+                    "meta": {
+                      "lang": "python",
+                      "line": 62,
+                      "column": 20,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+                    }
+                  },
+                  "meta": {
+                    "column": 13,
+                    "line": 62,
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "lang": "python"
+                  }
+                }
+              ],
+              "else_body": null,
+              "meta": {
+                "column": 9,
+                "lang": "python",
+                "line": 61,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            }
+          ],
+          "else_body": null,
+          "meta": {
+            "lang": "python",
+            "column": 5,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 60
+          }
+        },
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": ">=",
+            "left": {
+              "type": "Var",
+              "name": "c",
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 63,
+                "column": 8,
+                "lang": "python"
+              }
+            },
+            "right": {
+              "type": "StringLiteral",
+              "value": "A",
+              "meta": {
+                "lang": "python",
+                "column": 13,
+                "line": 63,
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+              }
+            },
+            "meta": {
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "column": 8,
+              "line": 63,
+              "lang": "python"
+            }
+          },
+          "then_body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "<=",
+                "left": {
+                  "type": "Var",
+                  "name": "c",
+                  "meta": {
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 64,
+                    "lang": "python",
+                    "column": 12
+                  }
+                },
+                "right": {
+                  "type": "StringLiteral",
+                  "value": "Z",
+                  "meta": {
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 64,
+                    "column": 17
+                  }
+                },
+                "meta": {
+                  "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                  "line": 64,
+                  "lang": "python",
+                  "column": 12
+                }
+              },
+              "then_body": [
+                {
+                  "type": "Return",
+                  "value": {
+                    "type": "BoolLiteral",
+                    "value": true,
+                    "meta": {
+                      "line": 65,
+                      "column": 20,
+                      "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                      "lang": "python"
+                    }
+                  },
+                  "meta": {
+                    "column": 13,
+                    "lang": "python",
+                    "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                    "line": 65
+                  }
+                }
+              ],
+              "else_body": null,
+              "meta": {
+                "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+                "line": 64,
+                "lang": "python",
+                "column": 9
+              }
+            }
+          ],
+          "else_body": null,
+          "meta": {
+            "lang": "python",
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "line": 63,
+            "column": 5
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "BoolLiteral",
+            "value": false,
+            "meta": {
+              "line": 66,
+              "lang": "python",
+              "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+              "column": 12
+            }
+          },
+          "meta": {
+            "column": 5,
+            "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py",
+            "lang": "python",
+            "line": 66
+          }
+        }
+      ],
+      "meta": {
+        "lang": "python",
+        "column": 1,
+        "line": 59,
+        "file": "/workspace/projects/crush-ast/stdlib/src/patterns.py"
+      }
+    }
+  },
+  "ai_meta": null
+}

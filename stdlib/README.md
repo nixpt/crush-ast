@@ -16,27 +16,30 @@ subprocess required at runtime.
 
 | Module | Source | Functions |
 |--------|--------|-----------|
-| `strings` | Rust (`stdlib/src/strings.rs`) | `contains`, `starts_with`, `trim`, `replace`, `substring`, `to_uppercase`, `to_lowercase` |
-
-## Adding a new module
-
-1. Write the functions in a language that has a walker (Rust, Python, etc.)
-2. Use only constructs that transpile cleanly:
-   ✅ `if/else`, `while`, `for`, `let`, `return`, arithmetic, comparisons
-   ✅ Manual byte/string operations
-   ✅ `String::new()`, `push_str()`, string indexing
-   ❌ Language-specific stdlib calls (`s.as_bytes()`, `regex`, etc.)
-   ❌ External crate imports
-3. Run the walker to produce CAST JSON:
-   ```
-   cargo run --bin rust_walker -- stdlib/src/strings.rs | python3 -m json.tool
-   ```
-4. Save as `stdlib/<module>.cast.json`
+| `strings` | Rust (`src/strings.rs`) | `contains`, `starts_with`, `trim`, `replace`, `substring`, `to_uppercase`, `to_lowercase` |
+| `patterns` | Python (`src/patterns.py`) | `match` (glob-style `*`/`?` wildcard), `count_matches`, `is_digit`, `is_alpha`, `count_words` |
 
 ## Constraints
 
-- Method calls like `s.as_bytes()` transpile but won't resolve at runtime
-  (they become calls to a function literally named `s.as_bytes`). Instead,
-  use manual byte iteration or a function that accepts the data directly.
-- String indexing with `s[i..j]` transpiles to Crush's `substring` equivalent
-  when the rust_walker handles `IndexExpr` — verify the CAST output.
+| Construct | Rust walker | Python walker |
+|-----------|-------------|--------------|
+| `if/else` | ✅ | ✅ |
+| `while` | ✅ | ✅ |
+| `for` | ✅ | ⚠️ limited |
+| `let`/`var` | ✅ | ✅ |
+| arithmetic (`+`, `-`, `*`, `/`) | ✅ | ✅ |
+| comparisons (`==`, `<`, `>`, `<=`, `>=`) | ✅ | ✅ |
+| boolean `and`/`or` | ❌ | ❌ (use nested `if`) |
+| string indexing `s[i]` | ✅ | ✅ |
+| list/array literals | ❌ | ❌ |
+| method calls `s.foo()` | ❌ | ❌ |
+| `!=` operator | ✅ | ❌ (use `a < b or a > b`) |
+| negative literals `-1` | ❌ | ❌ (use `0` + flag) |
+| `return` | ✅ | ✅ |
+
+## Adding a new module
+
+1. Write functions using only supported constructs (see table above).
+2. Run the walker: `cargo run --bin <lang>_walker -- src/<module>.<ext> | python3 -m json.tool`
+3. Extract the functions from the output and save as `stdlib/<module>.cast.json`
+4. Keep the original source at `stdlib/src/<module>.<ext>` for regeneration.
