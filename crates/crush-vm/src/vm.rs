@@ -18,6 +18,7 @@ use crate::bytecode::{
     PUSH, PUSH_F64, PUSH_NULL, PUSH_STR, RET, STORE, SUB, SWAP, Program,
 };
 use crate::caps::capabilities;
+use crate::host::HostCaps;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
@@ -155,7 +156,17 @@ struct Frame {
     memory: HashMap<u16, Value>,
 }
 
+/// Run a program with the built-in portable capability registry only.
 pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
+    run_with_caps(program, quotas, None)
+}
+
+/// Run a program with optional host-provided capabilities.
+pub fn run_with_caps(
+    program: &Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
+) -> Result<VmResult, VmError> {
     let code = &program.code;
     let n = code.len();
     let mut stack: Vec<Value> = Vec::new();
@@ -355,6 +366,7 @@ pub fn run(program: &Program, quotas: &Quotas) -> Result<VmResult, VmError> {
                 let result = dispatch_cap(
                     &cap, args, &declared, quotas,
                     &mut out_parts, &mut out_len,
+                    host_caps,
                 )?;
                 if let Some(v) = result { push!(v); }
             }
@@ -413,6 +425,7 @@ fn dispatch_cap(
     quotas: &Quotas,
     out_parts: &mut Vec<String>,
     out_len: &mut usize,
+    host_caps: Option<&HostCaps>,
 ) -> Result<Option<Value>, VmError> {
     if !declared.contains(cap) {
         return Err(VmError::CapNotDeclared(cap.to_string()));
@@ -422,34 +435,50 @@ fn dispatch_cap(
             return Err(VmError::CapDenied(cap.to_string()));
         }
     }
-    let spec = capabilities().get(cap)
-        .ok_or_else(|| VmError::UnknownCap(cap.to_string()))?;
-    if let Some(expected) = spec.argc {
-        if args.len() != expected {
-            return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+
+    // Built-in portable capabilities.
+    if let Some(spec) = capabilities().get(cap) {
+        if let Some(expected) = spec.argc {
+            if args.len() != expected {
+                return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+            }
+        }
+        return match cap {
+            "io.print" => {
+                let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
+                *out_len += s.len();
+                if *out_len > quotas.max_output {
+                    return Err(VmError::OutputQuota(quotas.max_output));
+                }
+                out_parts.push(s);
+                Ok(None)
+            }
+            "str.concat" => {
+                let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
+                Ok(Some(Value::Str(s)))
+            }
+            "str.len" => {
+                let s = args[0].as_text();
+                Ok(Some(Value::Int(s.len() as i64)))
+            }
+            _ => Err(VmError::UnknownCap(cap.to_string())),
+        };
+    }
+
+    // Host-provided capabilities.
+    if let Some(host) = host_caps {
+        if let Some(handler) = host.get(cap) {
+            let spec = handler.spec();
+            if let Some(expected) = spec.argc {
+                if args.len() != expected {
+                    return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+                }
+            }
+            return handler.call(args).map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
         }
     }
 
-    match cap {
-        "io.print" => {
-            let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
-            *out_len += s.len();
-            if *out_len > quotas.max_output {
-                return Err(VmError::OutputQuota(quotas.max_output));
-            }
-            out_parts.push(s);
-            Ok(None)
-        }
-        "str.concat" => {
-            let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
-            Ok(Some(Value::Str(s)))
-        }
-        "str.len" => {
-            let s = args[0].as_text();
-            Ok(Some(Value::Int(s.len() as i64)))
-        }
-        _ => Err(VmError::UnknownCap(cap.to_string())),
-    }
+    Err(VmError::UnknownCap(cap.to_string()))
 }
 
 #[inline]

@@ -4,12 +4,16 @@ mod tests;
 pub mod assembler;
 pub mod bytecode;
 pub mod caps;
+pub mod host;
+pub mod portable_vm;
 pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
-pub use caps::{CapabilitySpec, capabilities, is_privileged};
-pub use vm::{Quotas, VmError, VmResult, run};
+pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
+pub use host::{HostCap, HostCapSpec, HostCaps};
+pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
+pub use vm::{Quotas, VmError, VmResult, run, run_with_caps};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

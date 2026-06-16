@@ -82,20 +82,23 @@ pub fn assemble(
         if line.starts_with('.') {
             let toks = split_tokens(&line);
             match toks[0].as_str() {
-                ".func" => {
-                    if toks.len() != 2 {
-                        return Err(AssemblyError::new(lineno, ".func needs exactly one name"));
+                    ".func" => {
+                        if toks.len() != 2 {
+                            return Err(AssemblyError::new(lineno, ".func needs exactly one name"));
+                        }
+                        let fname = toks[1].clone();
+                        if !is_valid_ident(&fname) {
+                            return Err(AssemblyError::new(lineno, format!("invalid function name {fname:?}")));
+                        }
+                        if functions.contains_key(&fname) {
+                            return Err(AssemblyError::new(lineno, format!("duplicate function {fname:?}")));
+                        }
+                        functions.insert(fname.clone(), offset);
+                        // Prefer 'main' as entry point, otherwise use first function
+                        if entry_name.is_none() || fname == "main" {
+                            entry_name = Some(fname);
+                        }
                     }
-                    let fname = toks[1].clone();
-                    if !is_valid_ident(&fname) {
-                        return Err(AssemblyError::new(lineno, format!("invalid function name {fname:?}")));
-                    }
-                    if functions.contains_key(&fname) {
-                        return Err(AssemblyError::new(lineno, format!("duplicate function {fname:?}")));
-                    }
-                    functions.insert(fname.clone(), offset);
-                    if entry_name.is_none() { entry_name = Some(fname); }
-                }
                 d => return Err(AssemblyError::new(lineno, format!("unknown directive {d:?}"))),
             }
             continue;
