@@ -171,9 +171,17 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     // We'll replace them with the real bytecode post-assembly.
                     "NOP\n    NOP\n    NOP".to_string()
                 }
-                "new_obj" => anyhow::bail!("object literal not supported in CVM1 at {fname}:{i}"),
-                "get_field" => anyhow::bail!("field access not supported in CVM1 at {fname}:{i}"),
-                "set_field" => anyhow::bail!("field mutation not supported in CVM1 at {fname}:{i}"),
+                "new_obj" => "NEW_OBJ".to_string(),
+                "get_field" => {
+                    let field = instr.args["field"].as_str()
+                        .ok_or_else(|| anyhow::anyhow!("get_field missing field at {fname}:{i}"))?;
+                    format!("GET_FIELD {field:?}")
+                }
+                "set_field" => {
+                    let field = instr.args["field"].as_str()
+                        .ok_or_else(|| anyhow::anyhow!("set_field missing field at {fname}:{i}"))?;
+                    format!("SET_FIELD {field:?}")
+                }
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));

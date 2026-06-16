@@ -55,6 +55,10 @@ pub fn value_as_text(value: &crush_vm::vm::Value) -> String {
             let inner: Vec<_> = a.iter().map(value_as_text).collect();
             format!("[{}]", inner.join(", "))
         }
+        Value::Map(m) => {
+            let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_as_text(v))).collect();
+            format!("{{{}}}", items.join(", "))
+        }
     }
 }
 

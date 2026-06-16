@@ -56,6 +56,9 @@ pub const ARR_LEN: u8 = 0x63;
 pub const ARR_PUSH: u8 = 0x64;
 pub const ARR_POP: u8 = 0x65;
 pub const EXEC_LANG: u8 = 0x70;
+pub const NEW_OBJ: u8 = 0x71;
+pub const SET_FIELD: u8 = 0x72;
+pub const GET_FIELD: u8 = 0x73;
 pub const HALT: u8 = 0xFF;
 
 /// How an opcode's operand bytes are interpreted.
@@ -100,6 +103,8 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         CAP_CALL  => Some(OperandKind::Cap),
         CALL      => Some(OperandKind::Func),
         EXEC_LANG => Some(OperandKind::Str),
+        SET_FIELD | GET_FIELD => Some(OperandKind::Str),
+        NEW_OBJ => Some(OperandKind::None),
         NEW_ARRAY => Some(OperandKind::Count),
         _ => None,
     }

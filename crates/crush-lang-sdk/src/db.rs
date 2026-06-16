@@ -33,6 +33,10 @@ fn crush_value_to_json(v: &Value) -> serde_json::Value {
         ),
         Value::Str(s) => serde_json::Value::String(s.clone()),
         Value::Array(a) => serde_json::Value::Array(a.iter().map(crush_value_to_json).collect()),
+        Value::Map(m) => {
+            let obj: serde_json::Map<String, serde_json::Value> = m.iter().map(|(k, v)| (k.clone(), crush_value_to_json(v))).collect();
+            serde_json::Value::Object(obj)
+        }
     }
 }
 

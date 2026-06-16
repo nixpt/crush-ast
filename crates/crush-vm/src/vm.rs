@@ -14,9 +14,9 @@ use std::collections::HashMap;
 
 use crate::bytecode::{
     self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
-    DIV, DUP, EQ, EXEC_LANG, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL,
-    NEW_ARRAY, NOP, NOT, POP, PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL,
-    PUSH_STR, RET, STORE, SUB, SWAP, Program,
+    DIV, DUP, EQ, EXEC_LANG, GET_FIELD, GT, HALT, JMP, JNZ, JZ, LOAD, LT,
+    MOD, MUL, NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT, PUSH, PUSH_BOOL,
+    PUSH_F64, PUSH_NULL, PUSH_STR, RET, SET_FIELD, STORE, SUB, SWAP, Program,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -73,6 +73,8 @@ pub enum Value {
     Str(String),
     /// Owned array (copy-on-write; see module doc for the one semantic divergence).
     Array(Vec<Value>),
+    /// String-keyed map (object/dict).
+    Map(std::collections::HashMap<String, Value>),
 }
 
 impl Value {
@@ -84,10 +86,10 @@ impl Value {
             Value::Float(_)  => "float",
             Value::Str(_)    => "str",
             Value::Array(_)  => "array",
+            Value::Map(_)    => "map",
         }
     }
 
-    /// Python truthiness: 0 / 0.0 / "" / null / [] / false are falsy.
     fn is_truthy(&self) -> bool {
         match self {
             Value::Null       => false,
@@ -96,6 +98,7 @@ impl Value {
             Value::Float(f)   => *f != 0.0,
             Value::Str(s)     => !s.is_empty(),
             Value::Array(a)   => !a.is_empty(),
+            Value::Map(m)     => !m.is_empty(),
         }
     }
 
@@ -115,6 +118,10 @@ impl Value {
             Value::Array(a)  => {
                 let inner: Vec<_> = a.iter().map(|v| v.as_text()).collect();
                 format!("[{}]", inner.join(", "))
+            }
+            Value::Map(m)    => {
+                let inner: Vec<_> = m.iter().map(|(k, v)| format!("{k}: {}", v.as_text())).collect();
+                format!("{{{}}}", inner.join(", "))
             }
         }
     }
@@ -454,6 +461,30 @@ pub fn run_with_caps(
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
+            }
+            NEW_OBJ => {
+                push!(Value::Map(std::collections::HashMap::new()));
+            }
+            SET_FIELD => {
+                let idx = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+                let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let val = pop!();
+                let mut map = match pop!() {
+                    Value::Map(m) => m,
+                    other => return Err(VmError::TypeError { expected: "map", got: other.type_name() }),
+                };
+                map.insert(field, val);
+                push!(Value::Map(map));
+            }
+            GET_FIELD => {
+                let idx = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+                let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let map = match pop!() {
+                    Value::Map(m) => m,
+                    other => return Err(VmError::TypeError { expected: "map", got: other.type_name() }),
+                };
+                let val = map.get(&field).cloned().unwrap_or(Value::Null);
+                push!(val);
             }
             HALT => {
                 return Ok(VmResult {

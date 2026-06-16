@@ -1,63 +1,73 @@
 fn main() {
+    use std::collections::BTreeMap;
+
     let out = std::path::PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").unwrap(),
     ).join("opcodes.json");
+
+    let mut opcodes: BTreeMap<&str, u64> = BTreeMap::new();
+    opcodes.insert("NOP", 0);
+    opcodes.insert("PUSH", 1);
+    opcodes.insert("PUSH_STR", 2);
+    opcodes.insert("POP", 3);
+    opcodes.insert("DUP", 4);
+    opcodes.insert("SWAP", 5);
+    opcodes.insert("PUSH_F64", 6);
+    opcodes.insert("PUSH_NULL", 7);
+    opcodes.insert("PUSH_BOOL", 8);
+    opcodes.insert("ADD", 16);
+    opcodes.insert("SUB", 17);
+    opcodes.insert("MUL", 18);
+    opcodes.insert("DIV", 19);
+    opcodes.insert("MOD", 20);
+    opcodes.insert("EQ", 32);
+    opcodes.insert("LT", 33);
+    opcodes.insert("GT", 34);
+    opcodes.insert("NOT", 35);
+    opcodes.insert("LOAD", 48);
+    opcodes.insert("STORE", 49);
+    opcodes.insert("JMP", 64);
+    opcodes.insert("JZ", 65);
+    opcodes.insert("JNZ", 66);
+    opcodes.insert("PRINT", 80);
+    opcodes.insert("CAP_CALL", 81);
+    opcodes.insert("CALL", 82);
+    opcodes.insert("RET", 83);
+    opcodes.insert("NEW_ARRAY", 96);
+    opcodes.insert("ARR_GET", 97);
+    opcodes.insert("ARR_SET", 98);
+    opcodes.insert("ARR_LEN", 99);
+    opcodes.insert("ARR_PUSH", 100);
+    opcodes.insert("ARR_POP", 101);
+    opcodes.insert("EXEC_LANG", 112);
+    opcodes.insert("NEW_OBJ", 113);
+    opcodes.insert("SET_FIELD", 114);
+    opcodes.insert("GET_FIELD", 115);
+    opcodes.insert("HALT", 255);
+
+    let mut okinds: BTreeMap<&str, &str> = BTreeMap::new();
+    okinds.insert("PUSH", "i64");
+    okinds.insert("PUSH_F64", "f64");
+    okinds.insert("PUSH_STR", "str");
+    okinds.insert("PUSH_BOOL", "i64");
+    okinds.insert("LOAD", "slot");
+    okinds.insert("STORE", "slot");
+    okinds.insert("JMP", "addr");
+    okinds.insert("JZ", "addr");
+    okinds.insert("JNZ", "addr");
+    okinds.insert("CAP_CALL", "cap");
+    okinds.insert("CALL", "func");
+    okinds.insert("EXEC_LANG", "str");
+    okinds.insert("SET_FIELD", "str");
+    okinds.insert("GET_FIELD", "str");
+    okinds.insert("NEW_ARRAY", "count");
 
     let spec = serde_json::json!({
         "magic": "CVM1",
         "version": 2,
         "min_version": 1,
-        "opcodes": {
-            "NOP":      0x00,
-            "PUSH":     0x01,
-            "PUSH_STR": 0x02,
-            "POP":      0x03,
-            "DUP":      0x04,
-            "SWAP":     0x05,
-            "PUSH_F64": 0x06,
-            "PUSH_NULL": 0x07,
-            "PUSH_BOOL": 0x08,
-            "ADD":      0x10,
-            "SUB":      0x11,
-            "MUL":      0x12,
-            "DIV":      0x13,
-            "MOD":      0x14,
-            "EQ":       0x20,
-            "LT":       0x21,
-            "GT":       0x22,
-            "NOT":      0x23,
-            "LOAD":     0x30,
-            "STORE":    0x31,
-            "JMP":      0x40,
-            "JZ":       0x41,
-            "JNZ":      0x42,
-            "PRINT":    0x50,
-            "CAP_CALL": 0x51,
-            "CALL":     0x52,
-            "RET":      0x53,
-            "NEW_ARRAY": 0x60,
-            "ARR_GET":  0x61,
-            "ARR_SET":  0x62,
-            "ARR_LEN":  0x63,
-            "ARR_PUSH": 0x64,
-            "ARR_POP":  0x65,
-            "EXEC_LANG": 0x70,
-            "HALT":     0xFF
-        },
-        "operand_kinds": {
-            "PUSH":     "i64",
-            "PUSH_F64": "f64",
-            "PUSH_STR": "str",
-            "LOAD":     "slot",
-            "STORE":    "slot",
-            "JMP":      "addr",
-            "JZ":       "addr",
-            "JNZ":      "addr",
-            "CAP_CALL": "cap",
-            "CALL":     "func",
-            "EXEC_LANG": "str",
-            "NEW_ARRAY": "count"
-        }
+        "opcodes": opcodes,
+        "operand_kinds": okinds,
     });
 
     std::fs::write(&out, serde_json::to_string_pretty(&spec).unwrap())
