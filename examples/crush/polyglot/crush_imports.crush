@@ -1,0 +1,23 @@
+// Crush-level polyglot import declaration + usage
+//
+// `use @lang` declares a module that the import system resolves.
+// Currently, inline imports inside @python { } blocks work more
+// reliably — Python handles them natively.
+//
+// The `use @lang` syntax compiles to EXEC_LANG for the import,
+// stored as a null result. Full variable wiring between
+// `use @lang` and subsequent @python { } blocks is in progress.
+
+use @lang python "math" as math
+use @lang python "json" as json
+
+fn main() {
+    @python {
+        import math
+        import json
+        val = math.factorial(5)
+        print(f"factorial(5) = {val}")
+        print(f"pi = {math.pi}")
+        print(f"JSON: {json.dumps({'a': 1})}")
+    }
+}

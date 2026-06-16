@@ -1,0 +1,31 @@
+// Multi-language polyglot blocks
+//
+// Each @<lang> block spawns the corresponding interpreter.
+// Languages available on PATH will work: python3, bash, etc.
+//
+// To add Node.js support: uncomment the @javascript block below
+// and ensure `node` is on your PATH.
+
+fn main() {
+    @python {
+        print("Hello from Python")
+    }
+
+    @bash {
+        echo "Hello from Bash"
+        echo "Today is $(date)"
+        echo "CPU cores: $(nproc)"
+    }
+
+    @python {
+        import math
+        print(f"pi = {math.pi}")
+        print(f"sqrt(144) = {math.sqrt(144)}")
+    }
+
+    // @javascript {
+    //     console.log(`Hello from Node.js`);
+    //     let x = 2 + 2;
+    //     console.log(`2 + 2 = ${x}`);
+    // }
+}
