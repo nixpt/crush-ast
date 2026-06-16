@@ -1,0 +1,69 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "StructDef",
+          "name": "Point",
+          "fields": [["x", "Int"], ["y", "Int"]],
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "p",
+          "value": { "type": "NewStruct", "name": "Point" },
+          "type_hint": { "Struct": "Point" },
+          "meta": {}
+        },
+        {
+          "type": "SetField",
+          "target": { "type": "Var", "name": "p" },
+          "field": "x",
+          "value": { "type": "IntLiteral", "value": 3 },
+          "meta": {}
+        },
+        {
+          "type": "SetField",
+          "target": { "type": "Var", "name": "p" },
+          "field": "y",
+          "value": { "type": "IntLiteral", "value": 4 },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "x_val",
+          "value": {
+            "type": "GetField",
+            "target": { "type": "Var", "name": "p" },
+            "field": "x"
+          },
+          "type_hint": "Int",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "Var", "name": "x_val" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": { "type": "Var", "name": "x_val" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Structs: StructDef declares fields, NewStruct instantiates (no initializer args), SetField writes, GetField reads. Field access is type-checked against the StructDef."
+      }
+    }
+  },
+  "ai_meta": null
+}

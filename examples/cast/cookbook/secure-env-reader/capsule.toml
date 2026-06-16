@@ -1,0 +1,13 @@
+[capsule]
+name = "secure-env-reader"
+version = "0.1.0"
+description = "Cookbook capsule: SecureEnv import — read encrypted secrets into the capsule"
+entry = "main.cast.json"
+
+[capabilities]
+required = [
+  "secrets.read"
+]
+
+[runtime]
+engine = "crush"

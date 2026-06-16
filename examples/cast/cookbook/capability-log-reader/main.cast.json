@@ -1,0 +1,54 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "Import",
+          "import": {
+            "type": "Capability",
+            "capability_path": "fs.read:/var/log/exo",
+            "permissions": ["read"],
+            "alias": "logs"
+          },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "content",
+          "value": {
+            "type": "CapabilityCall",
+            "name": "fs.read",
+            "args": [{ "type": "StringLiteral", "value": "/var/log/exo/daemon.log" }],
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "Var", "name": "content" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "content",
+          "value": { "type": "Var", "name": "content" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Capability import + CapabilityCall: acquire a scoped fs.read handle (cap.acquire), then invoke it. Both the import path and every CapabilityCall name land in the CASM manifest permissions."
+      }
+    }
+  },
+  "ai_meta": null
+}

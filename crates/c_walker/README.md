@@ -24,20 +24,18 @@ Transforms C source code into CRUSH's universal Abstract Syntax Tree format, ena
 | Preprocessor | ❌ | Not yet supported |
 | Macros | ❌ | Not yet supported |
 
-See [LANGUAGE_READINESS.md](../../LANGUAGE_READINESS.md) for detailed status.
-
 ## Usage
 
 ```bash
 # Compile C to CAST
 cargo run --bin c_walker input.c > output.cast
 
-# Or use via crush-cli
-crush compile input.c -o output.casm
+# Or use via the CLI dispatcher
+cargo run --bin walker input.c > output.cast
 ```
 
 ## See Also
 
 - [`walker-core`](../walker-core/README.md) - Base walker utilities
-- [`crush-lang`](../../core/crush-lang/README.md) - CAST definitions
-- [LANGUAGE_READINESS.md](../../LANGUAGE_READINESS.md) - Feature support matrix
+- [`crush-cast`](../crush-cast/README.md) - CAST definitions
+- [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) - Full language documentation

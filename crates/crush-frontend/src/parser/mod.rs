@@ -282,6 +282,33 @@ impl Parser {
                 continue;
             }
 
+            // pub fn — consume 'pub' and delegate to parse_function
+            let is_pub_fn = if self.pos + 1 < self.tokens.len() {
+                let ident_is_pub = match &self.tokens[self.pos] {
+                    Token::Ident(s, _) => s == "pub",
+                    _ => false,
+                };
+                let next_is_fn = match &self.tokens[self.pos + 1] {
+                    Token::Fn(_) => true,
+                    _ => false,
+                };
+                ident_is_pub && next_is_fn
+            } else {
+                false
+            };
+            if is_pub_fn {
+                self.advance(); // consume 'pub'
+                match self.parse_function() {
+                    Ok((name, func)) => {
+                        functions.insert(name, func);
+                    }
+                    Err(_) => {
+                        self.synchronize();
+                    }
+                }
+                continue;
+            }
+
             // Parse statement
             match self.parse_statement() {
                 Ok(stmt) => statements.push(stmt),

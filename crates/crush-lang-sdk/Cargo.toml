@@ -18,6 +18,10 @@ path = "src/bin/crush-compile.rs"
 name = "crush-repl"
 path = "src/bin/crush-repl.rs"
 
+[[bin]]
+name = "crushc"
+path = "src/bin/crushc.rs"
+
 [features]
 default = []
 net = ["dep:ureq"]
@@ -27,23 +31,22 @@ stdlib = ["dep:regex"]
 repl-helper = ["dep:rustyline"]
 
 [dependencies]
-crush-vm = { path = "../crush-vm" }
-crush-cast = { path = "../crush-cast" }
-casm = { path = "../casm" }
-crush-frontend = { path = "../crush-frontend" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-thiserror = "1.0"
+crush-vm.workspace = true
+crush-cast.workspace = true
+casm.workspace = true
+crush-frontend.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 base64 = "0.22"
 rand = { version = "0.8", features = ["std", "std_rng"] }
-clap = { version = "4.0", features = ["derive"] }
+clap.workspace = true
 ureq = { version = "2", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 regex = { version = "1.10", optional = true }
 rustyline = { version = "10.0", optional = true }
 
 [dev-dependencies]
-anyhow = "1.0"
 tempfile = "3"

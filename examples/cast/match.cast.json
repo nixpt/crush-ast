@@ -1,0 +1,117 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "StructDef",
+          "name": "Point",
+          "fields": [["x", "Int"], ["y", "Int"]],
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "value",
+          "value": { "type": "IntLiteral", "value": 2 },
+          "type_hint": "Int",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "label",
+          "value": {
+            "type": "Match",
+            "expression": { "type": "Var", "name": "value" },
+            "arms": [
+              {
+                "pattern": {
+                  "type": "Literal",
+                  "value": { "type": "IntLiteral", "value": 1 }
+                },
+                "body": [
+                  {
+                    "type": "ExprStmt",
+                    "expr": {
+                      "type": "CapabilityCall",
+                      "name": "print",
+                      "args": [{ "type": "StringLiteral", "value": "one" }],
+                      "meta": {}
+                    },
+                    "meta": {}
+                  }
+                ]
+              },
+              {
+                "pattern": { "type": "Identifier", "name": "n" },
+                "body": [
+                  {
+                    "type": "ExprStmt",
+                    "expr": {
+                      "type": "CapabilityCall",
+                      "name": "print",
+                      "args": [{ "type": "Var", "name": "n" }],
+                      "meta": {}
+                    },
+                    "meta": {}
+                  }
+                ]
+              },
+              {
+                "pattern": {
+                  "type": "Struct",
+                  "name": "Point",
+                  "fields": [
+                    ["x", { "type": "Identifier", "name": "px" }],
+                    ["y", { "type": "Wildcard" }]
+                  ]
+                },
+                "body": [
+                  {
+                    "type": "ExprStmt",
+                    "expr": {
+                      "type": "CapabilityCall",
+                      "name": "print",
+                      "args": [{ "type": "Var", "name": "px" }],
+                      "meta": {}
+                    },
+                    "meta": {}
+                  }
+                ]
+              },
+              {
+                "pattern": { "type": "Wildcard" },
+                "body": [
+                  {
+                    "type": "ExprStmt",
+                    "expr": {
+                      "type": "CapabilityCall",
+                      "name": "print",
+                      "args": [{ "type": "StringLiteral", "value": "something else" }],
+                      "meta": {}
+                    },
+                    "meta": {}
+                  }
+                ]
+              }
+            ]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "label",
+          "value": { "type": "Var", "name": "label" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Match expression with all four Pattern kinds: Literal, Identifier (binds), Struct (destructures fields), Wildcard. Valid CAST; not yet compilable (see harness exempt list)."
+      }
+    }
+  },
+  "ai_meta": null
+}

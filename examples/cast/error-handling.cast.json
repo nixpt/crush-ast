@@ -1,0 +1,66 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "TryCatch",
+          "body": [
+            {
+              "type": "VarDecl",
+              "name": "risky",
+              "value": { "type": "IntLiteral", "value": 1 },
+              "type_hint": "Int",
+              "meta": {}
+            },
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "==",
+                "left": { "type": "Var", "name": "risky" },
+                "right": { "type": "IntLiteral", "value": 1 }
+              },
+              "then_body": [
+                {
+                  "type": "Throw",
+                  "value": { "type": "StringLiteral", "value": "risky value was 1" },
+                  "meta": {}
+                }
+              ],
+              "else_body": null,
+              "meta": {}
+            }
+          ],
+          "error_var": "err",
+          "handler": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "CapabilityCall",
+                "name": "print",
+                "args": [{ "type": "Var", "name": "err" }],
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "status",
+          "value": { "type": "StringLiteral", "value": "recovered" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Error handling: Throw raises any expression as an error; TryCatch binds it to error_var inside the handler block."
+      }
+    }
+  },
+  "ai_meta": null
+}

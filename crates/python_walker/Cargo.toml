@@ -5,12 +5,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-clap = { version = "4.0", features = ["derive"] }
-anyhow = "1.0"
-tree-sitter = "0.25"
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tree-sitter.workspace = true
 tree-sitter-python = "0.23"
-walker-core = { path = "../walker-core" }
-crush-cast = { path = "../crush-cast" }
+walker-core.workspace = true
+crush-cast.workspace = true
 num-traits = "0.2"

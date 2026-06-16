@@ -5,7 +5,7 @@ Tree-sitter grammar for the CRUSH programming language.
 ## Purpose
 
 Provides a Tree-sitter grammar for parsing CRUSH source code. Used by:
-- `crush_walker` for CRUSH → CAST transformation
+- The Crush language frontend (`crush-frontend`) for CRUSH → CAST parsing
 - Code editors for syntax highlighting
 - Development tools for code analysis
 
@@ -52,5 +52,5 @@ tree-sitter parse examples/hello.crush
 
 ## See Also
 
-- [`crush_walker`](../crush_walker/README.md) - Uses this grammar
 - [Tree-sitter Documentation](https://tree-sitter.github.io/tree-sitter/)
+- [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) - Full language documentation

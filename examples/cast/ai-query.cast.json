@@ -1,0 +1,63 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "question",
+          "value": {
+            "type": "StringLiteral",
+            "value": "What is the capital of France?"
+          },
+          "type_hint": "String",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "answer",
+          "value": {
+            "type": "AI",
+            "ai_type": "Query",
+            "query": "Answer this question concisely",
+            "result_type": "string",
+            "context": {
+              "question": "What is the capital of France?"
+            }
+          },
+          "type_hint": "String",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [
+              {
+                "type": "Var",
+                "name": "answer"
+              }
+            ],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "result",
+          "value": {
+            "type": "Var",
+            "name": "answer"
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

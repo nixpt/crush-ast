@@ -1,0 +1,17 @@
+[capsule]
+name = "code-review-helper"
+version = "0.1.0"
+description = "Cookbook capsule: code review with AgentDelegation, ToolChain, AIStatement"
+entry = "main.cast.json"
+
+[capabilities]
+required = [
+  "ai.query",
+  "ai.tool_chain",
+  "ai.agent_delegation",
+  "fs.read:/workspace",
+  "net.tcp.connect:github.com:443"
+]
+
+[runtime]
+engine = "crush"

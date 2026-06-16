@@ -1,0 +1,92 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "nums",
+          "value": {
+            "type": "ArrayLiteral",
+            "elements": [
+              { "type": "IntLiteral", "value": 10 },
+              { "type": "IntLiteral", "value": 20 },
+              { "type": "IntLiteral", "value": 30 }
+            ]
+          },
+          "type_hint": { "Array": "Int" },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "first",
+          "value": {
+            "type": "Index",
+            "target": { "type": "Var", "name": "nums" },
+            "index": { "type": "IntLiteral", "value": 0 }
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "person",
+          "value": {
+            "type": "ObjectLiteral",
+            "properties": [
+              ["name", { "type": "StringLiteral", "value": "Ada" }],
+              ["age", { "type": "IntLiteral", "value": 36 }]
+            ]
+          },
+          "type_hint": { "Map": "Any" },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "who",
+          "value": {
+            "type": "Index",
+            "target": { "type": "Var", "name": "person" },
+            "index": { "type": "StringLiteral", "value": "name" }
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "window",
+          "value": {
+            "type": "Range",
+            "start": { "type": "IntLiteral", "value": 1 },
+            "end": { "type": "IntLiteral", "value": 10 }
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "Var", "name": "who" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "first",
+          "value": { "type": "Var", "name": "first" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Collections: ArrayLiteral (homogeneous), ObjectLiteral (properties are [key, expr] pairs), Index on arrays and maps, Range start..end."
+      }
+    }
+  },
+  "ai_meta": null
+}

@@ -25,20 +25,18 @@ Transforms JavaScript source code into CRUSH's universal Abstract Syntax Tree fo
 | Async/Await | ❌ | Not yet supported |
 | Promises | ❌ | Not yet supported |
 
-See [LANGUAGE_READINESS.md](../../LANGUAGE_READINESS.md) for detailed status.
-
 ## Usage
 
 ```bash
 # Compile JavaScript to CAST
 cargo run --bin js_walker input.js > output.cast
 
-# Or use via crush-cli
-crush compile input.js -o output.casm
+# Or use via the CLI dispatcher
+cargo run --bin walker input.js > output.cast
 ```
 
 ## See Also
 
 - [`walker-core`](../walker-core/README.md) - Base walker utilities
-- [`crush-lang`](../../core/crush-lang/README.md) - CAST definitions
-- [LANGUAGE_READINESS.md](../../LANGUAGE_READINESS.md) - Feature support matrix
+- [`crush-cast`](../crush-cast/README.md) - CAST definitions
+- [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) - Full language documentation

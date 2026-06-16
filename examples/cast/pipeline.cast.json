@@ -1,0 +1,63 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "raw",
+          "value": { "type": "StringLiteral", "value": "  hello exosphere  " },
+          "type_hint": "String",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "processed",
+          "value": {
+            "type": "Pipeline",
+            "segments": [
+              { "type": "Var", "name": "raw" },
+              {
+                "type": "CapabilityCall",
+                "name": "text.trim",
+                "args": [],
+                "meta": {}
+              },
+              {
+                "type": "CapabilityCall",
+                "name": "text.uppercase",
+                "args": [],
+                "meta": {}
+              }
+            ]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "Var", "name": "processed" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "processed",
+          "value": { "type": "Var", "name": "processed" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Pipeline: the first segment produces a value; each later segment (Call/CapabilityCall/Var) receives the previous result as an extra leading argument."
+      }
+    }
+  },
+  "ai_meta": null
+}

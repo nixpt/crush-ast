@@ -1,0 +1,5 @@
+# Auto-written by khukuri. Do not commit audit records — they may contain
+# redacted secret references and hash digests of matched tokens. See
+# https://github.com/nixpt/khukuri/blob/main/docs/security/secrets-db-security-model.md
+audit/
+*.json.tmp

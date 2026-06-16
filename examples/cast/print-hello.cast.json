@@ -1,0 +1,48 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "message",
+          "value": {
+            "type": "StringLiteral",
+            "value": "Hello, World!"
+          },
+          "type_hint": "String",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [
+              {
+                "type": "Var",
+                "name": "message"
+              }
+            ],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "result",
+          "value": {
+            "type": "StringLiteral",
+            "value": "completed"
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

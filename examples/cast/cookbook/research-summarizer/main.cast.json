@@ -1,0 +1,125 @@
+{
+  "cast_version": "0.1",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "meta": {},
+      "body": [
+        {
+          "type": "AI",
+          "ai_type": "GoalDeclaration",
+          "goal_id": "research-summarizer",
+          "description": "Exercise research workflow with Query, ToolChain, and AgentDelegation",
+          "success_criteria": [
+            "Query LLM for initial summary",
+            "Chain search and fetch tools",
+            "Delegate final write to writer agent"
+          ],
+          "priority": "Medium",
+          "deadline": null
+        },
+        {
+          "type": "VarDecl",
+          "name": "search_results",
+          "value": {
+            "type": "AI",
+            "ai_type": "ToolChain",
+            "tools": [
+              {
+                "tool_name": "search.query",
+                "parameters": {
+                  "query": "CRUSH AI-native primitives specification",
+                  "limit": 5
+                },
+                "result_binding": "search_results",
+                "condition": null
+              },
+              {
+                "tool_name": "web.fetch",
+                "parameters": {
+                  "url": "https://example.com/docs/ai-primitives"
+                },
+                "result_binding": "fetched_content",
+                "condition": "search_results != null"
+              }
+            ],
+            "strategy": {
+              "type": "Sequential"
+            },
+            "error_handling": {
+              "type": "Fallback",
+              "fallback_tools": [
+                {
+                  "tool_name": "search.query",
+                  "parameters": {
+                    "query": "AI primitives overview"
+                  },
+                  "result_binding": "fallback_results",
+                  "condition": null
+                }
+              ]
+            }
+          },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "summary",
+          "value": {
+            "type": "AI",
+            "ai_type": "Query",
+            "query": "Summarize the research findings about AI-native primitives into a concise 3-bullet summary",
+            "result_type": "string",
+            "context": {
+              "source": "search_results",
+              "length": "short"
+            }
+          },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "final_report",
+          "value": {
+            "type": "AI",
+            "ai_type": "AgentDelegation",
+            "task": "Write a final research report based on the summary: ${summary}",
+            "delegation_strategy": "RoundRobin",
+            "agents": ["writer", "scribe"],
+            "expected_format": "markdown"
+          },
+          "meta": {}
+        },
+        {
+          "type": "AI",
+          "ai_type": "CapabilityDiscovery",
+          "domain": "research",
+          "requirements": ["search", "fetch", "write"],
+          "discovery_strategy": "Broadcast"
+        },
+        {
+          "type": "AI",
+          "ai_type": "ProgressUpdate",
+          "goal_id": "research-summarizer",
+          "progress": 1.0,
+          "status_message": "Research summarization completed with query, tool chain, and delegation",
+          "metrics": {
+            "tools_executed": 3,
+            "delegation_count": 1,
+            "query_count": 1
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "Var",
+            "name": "final_report"
+          },
+          "meta": {}
+        }
+      ]
+    }
+  }
+}

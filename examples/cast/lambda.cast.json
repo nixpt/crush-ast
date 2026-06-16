@@ -1,0 +1,44 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "twice",
+          "value": {
+            "type": "Lambda",
+            "params": [["x", "Int"]],
+            "body": [
+              {
+                "type": "Return",
+                "value": {
+                  "type": "BinaryOp",
+                  "operator": "*",
+                  "left": { "type": "Var", "name": "x" },
+                  "right": { "type": "IntLiteral", "value": 2 }
+                },
+                "meta": {}
+              }
+            ]
+          },
+          "type_hint": { "Lambda": { "params": ["Int"], "returns": "Int" } },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "twice",
+          "value": { "type": "Var", "name": "twice" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Lambda expression with typed params, plus the CastType::Lambda type hint shape. Valid CAST; not yet compilable (see harness exempt list)."
+      }
+    }
+  },
+  "ai_meta": null
+}

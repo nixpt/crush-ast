@@ -1,0 +1,50 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "Import",
+          "import": {
+            "type": "SecureEnv",
+            "keys": ["API_TOKEN", "DB_URL"],
+            "alias": null,
+            "db_path": null
+          },
+          "meta": {}
+        },
+        {
+          "type": "Import",
+          "import": {
+            "type": "SecureEnv",
+            "keys": [],
+            "alias": "all_secrets",
+            "db_path": "/var/lib/exo/secrets.db"
+          },
+          "meta": {}
+        },
+        {
+          "type": "LangBlock",
+          "lang": "python",
+          "code": "masked = API_TOKEN[:4] + \"****\"\nprint(f\"token loaded: {masked}\")",
+          "variables": ["API_TOKEN"],
+          "imports": [],
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "status",
+          "value": { "type": "StringLiteral", "value": "secrets loaded" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "SecureEnv import: selective keys (each stored under its own name), or all keys under an alias with an explicit db_path. Requires the secrets.read capability."
+      }
+    }
+  },
+  "ai_meta": null
+}

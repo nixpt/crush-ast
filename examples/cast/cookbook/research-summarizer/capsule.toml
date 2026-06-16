@@ -1,0 +1,17 @@
+[capsule]
+name = "research-summarizer"
+version = "0.1.0"
+description = "Cookbook capsule: research summarizer with Query, ToolChain, AgentDelegation"
+entry = "main.cast.json"
+
+[capabilities]
+required = [
+  "ai.query",
+  "ai.tool_chain",
+  "ai.agent_delegation",
+  "net.http.connect:api.example.com:443",
+  "fs.read:/data/research"
+]
+
+[runtime]
+engine = "crush"

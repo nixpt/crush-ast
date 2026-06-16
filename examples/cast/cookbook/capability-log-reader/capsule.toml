@@ -1,0 +1,13 @@
+[capsule]
+name = "capability-log-reader"
+version = "0.1.0"
+description = "Cookbook capsule: Capability import — acquire a scoped capability handle and use it"
+entry = "main.cast.json"
+
+[capabilities]
+required = [
+  "fs.read:/var/log/exo"
+]
+
+[runtime]
+engine = "crush"

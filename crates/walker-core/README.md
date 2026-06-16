@@ -53,7 +53,7 @@ pub trait Walker {
     fn language(&self) -> tree_sitter::Language;
     
     /// Transforms a parsed tree into CRUSH AST
-    fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<ast::Program>;
+    fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<crush_cast::ast::Program>;
 }
 ```
 
@@ -75,7 +75,7 @@ Utility struct providing common operations for tree-sitter node processing:
 ### Dependencies
 
 - **`tree-sitter`**: Parsing library for all language walkers
-- **`crush-lang`**: CAST AST definitions
+- **`crush-cast`**: CAST AST definitions
 - **`anyhow`**: Error handling
 
 ### Dependents
@@ -87,7 +87,8 @@ All language walkers depend on this crate:
 - **`c_walker`**: C → CAST
 - **`go_walker`**: Go → CAST
 - **`js_walker`**: JavaScript → CAST
-- **`crush_walker`**: Crush → CAST
+- **`zig_walker`**: Zig → CAST
+- **`wasm_walker`**: WebAssembly → CAST
 
 ## Usage Example
 
@@ -95,7 +96,7 @@ Implementing a new language walker:
 
 ```rust
 use walker_core::{Walker, BaseWalker};
-use crush_lang::ast;
+use crush_cast::ast;
 use anyhow::Result;
 
 pub struct MyLangWalker;
@@ -104,8 +105,8 @@ impl Walker for MyLangWalker {
     fn language(&self) -> tree_sitter::Language {
         tree_sitter_mylang::language()
     }
-    
-    fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<ast::Program> {
+
+    fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<crush_cast::ast::Program> {
         let base = BaseWalker::new(source);
         let root = tree.root_node();
         
@@ -169,7 +170,7 @@ When implementing a new walker:
 5. ✅ Preserve metadata on all nodes
 6. ✅ Handle unsupported features gracefully
 7. ✅ Add tests with example source files
-8. ✅ Update `LANGUAGE_READINESS.md` with feature support
+8. ✅ Document supported features in the walker's README
 
 ## Development
 
@@ -186,7 +187,6 @@ cargo doc --no-deps --open
 
 ## See Also
 
-- [`crush-lang`](../crush-lang/README.md) - CAST AST definitions
+- [`crush-cast`](../crush-cast/README.md) - CAST AST definitions
 - [`python_walker`](../python_walker/README.md) - Example walker implementation
-- [POLYGLOT_WALKERS.md](../../docs/POLYGLOT_WALKERS.md) - Walker architecture
-- [LANGUAGE_READINESS.md](../../LANGUAGE_READINESS.md) - Language support status
+- [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) - Full language documentation

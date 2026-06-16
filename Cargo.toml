@@ -19,6 +19,7 @@ members = [
     "crates/crush-lang-sdk",
     "crates/crush-frontend",
     "crates/crush-pkg",
+    "crates/crush-installer",
 ]
 
 [workspace.package]
@@ -28,12 +29,14 @@ license       = "MIT OR Apache-2.0"
 homepage      = "https://github.com/nixpt/crush-ast"
 repository    = "https://github.com/nixpt/crush-ast"
 rust-version  = "1.85.0"
-publish       = false
 
 [workspace.dependencies]
-crush-errors      = { path = "crates/crush-errors",      version = "0.1.0" }
-crush-cast        = { path = "crates/crush-cast",        version = "0.1.0" }
-casm              = { path = "crates/casm",              version = "0.1.0" }
+crush-errors      = { path = "crates/crush-errors",      version = "0.2.0" }
+crush-cast        = { path = "crates/crush-cast",        version = "0.2.0" }
+casm              = { path = "crates/casm",              version = "0.2.0" }
+crush-vm          = { path = "crates/crush-vm",          version = "0.2.0" }
+crush-frontend    = { path = "crates/crush-frontend",    version = "0.2.0" }
+crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.2.0" }
 tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.1.0" }
 walker-core       = { path = "crates/walker-core",       version = "0.1.0" }
 

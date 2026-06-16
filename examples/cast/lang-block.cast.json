@@ -1,0 +1,37 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "greeting",
+          "value": { "type": "StringLiteral", "value": "hello from CAST" },
+          "type_hint": "String",
+          "meta": {}
+        },
+        {
+          "type": "LangBlock",
+          "lang": "python",
+          "code": "shouted = greeting.upper()\nprint(f\"python says: {shouted}\")",
+          "variables": ["greeting"],
+          "imports": [],
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "status",
+          "value": { "type": "StringLiteral", "value": "lang block executed" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "LangBlock: embed raw source in a language sandbox (captain-ratified CRUSH-AI-NATIVE authoring). 'variables' injects CAST vars into the sandbox by name."
+      }
+    }
+  },
+  "ai_meta": null
+}

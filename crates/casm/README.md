@@ -66,9 +66,8 @@ Programs are serialized as JSON or MessagePack for portability:
 
 ## Used By
 
-- `crush-lang` - Compiler output format
-- `nanovm` - Execution input
-- `crush-stdlib` - Standard library implementation
+- `crush-frontend` - Compiler output format
+- `crush-vm` - Execution input
 
 ## 📚 Documentation
-- [CASM Specification](../../../../docs/core/COMPONENTS_DOCUMENTATION.md#3-cratescorecasm---polyglot-assembly-format) - Assembly format reference.
+- [CASM Specification](https://github.com/nixpt/crush-language-guide) - Assembly format reference in the Crush Language Guide.

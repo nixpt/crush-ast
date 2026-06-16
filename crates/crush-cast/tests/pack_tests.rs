@@ -34,7 +34,7 @@ fn collect_fixtures(dir: &Path, out: &mut Vec<PathBuf>) {
 /// the valid set. At least one valid fixture is required so the test can't
 /// silently pass on an empty walk.
 fn valid_fixtures() -> Vec<(PathBuf, Program)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/cast");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/cast");
     let mut paths = Vec::new();
     collect_fixtures(&root, &mut paths);
     paths.sort();

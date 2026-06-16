@@ -1,0 +1,63 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "Import",
+          "import": {
+            "type": "CrushModule",
+            "module_path": "std/strings",
+            "alias": "strings",
+            "selective": []
+          },
+          "meta": {}
+        },
+        {
+          "type": "Import",
+          "import": {
+            "type": "PolyglotModule",
+            "language": "python",
+            "module_path": "json",
+            "alias": "pyjson",
+            "selective": []
+          },
+          "meta": {}
+        },
+        {
+          "type": "Import",
+          "import": {
+            "type": "External",
+            "uri": "https://example.com/dataset.json",
+            "resource_type": { "API": { "format": "json" } },
+            "alias": "dataset"
+          },
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "StringLiteral", "value": "imports resolved" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "status",
+          "value": { "type": "StringLiteral", "value": "ok" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Module imports: CrushModule (module.load cap), PolyglotModule (loads into the language sandbox), External (external.load cap; resource_type is Http/Git/File/Database or {\"API\": {\"format\": ...}}). Capability/MCPImport/SecureEnv live in cookbook capsules where the manifest matters."
+      }
+    }
+  },
+  "ai_meta": null
+}

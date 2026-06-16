@@ -1,0 +1,112 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "AI",
+          "ai_type": "CapabilityDiscovery",
+          "domain": "code-review",
+          "requirements": ["rust", "security-analysis"],
+          "discovery_strategy": "Broadcast",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "review",
+          "value": {
+            "type": "AI",
+            "ai_type": "AgentDelegation",
+            "task": "Review the diff on branch agent/castbook/EXO-175 for unsoundness",
+            "agents": ["agent://reviewers/*"],
+            "delegation_strategy": { "Consensus": { "threshold": 0.66 } },
+            "expected_format": "markdown"
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "AI",
+          "ai_type": "KnowledgeSharing",
+          "knowledge_type": "Insight",
+          "content": { "finding": "review consensus reached", "confidence": 0.9 },
+          "recipients": ["agent://reviewers/*", "foreman"],
+          "retention_policy": "Session",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "insight",
+          "value": {
+            "type": "AI",
+            "ai_type": "LearningLoop",
+            "learning_target": "ExecutionPatterns",
+            "strategy": "PatternRecognition",
+            "adaptations": ["OptimizeToolChain", "LearnNewPatterns"]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "AI",
+          "ai_type": "AdaptationRequest",
+          "adaptation_type": "Performance",
+          "reason": "review latency above target",
+          "parameters": { "max_parallel_reviews": 4 },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "summary",
+          "value": {
+            "type": "AI",
+            "ai_type": "ContextAware",
+            "expression": {
+              "type": "AI",
+              "ai_type": "Query",
+              "query": "Summarize the review consensus in two sentences",
+              "result_type": "string",
+              "context": {}
+            },
+            "requires_context": ["session.goal", "review.findings"],
+            "provides_context": ["review.summary"]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "summary",
+          "value": { "type": "Var", "name": "summary" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "AI orchestration surface: AgentDelegation (Consensus strategy — the only non-plain-string DelegationStrategy), LearningLoop, ContextAware-wrapped Query, plus the AIStatement coordination ops CapabilityDiscovery, KnowledgeSharing, AdaptationRequest."
+      }
+    }
+  },
+  "ai_meta": {
+    "description": "Demonstrates the AI-native orchestration primitives end to end.",
+    "ai_tags": ["orchestration", "delegation", "learning"],
+    "required_capabilities": ["ai.query", "ai.agent_delegation"],
+    "execution_context": {
+      "environment": ["exosphere"],
+      "resources": [],
+      "permissions": ["ai.query"],
+      "dependencies": []
+    },
+    "learning_objectives": ["improve review throughput"],
+    "collaboration_patterns": [
+      {
+        "pattern_type": "review-consensus",
+        "participants": ["agent://reviewers/*"],
+        "communication_style": "structured",
+        "decision_making": "consensus"
+      }
+    ]
+  }
+}

@@ -111,6 +111,29 @@ impl SemanticAnalyzer {
             }
         }
 
+        // Fixed-point iteration for recursive functions: keep re-inferring until
+        // return types stabilize (or max iterations reached).
+        for _ in 0..10 {
+            let mut changed = false;
+            for (name, func) in &program.functions {
+                let depth = self.scopes.len();
+                match self.infer_function_return_type(func) {
+                    Ok(inferred) => {
+                        if let Some((_, ret)) = self.functions.get_mut(name) {
+                            if *ret != inferred {
+                                *ret = inferred;
+                                changed = true;
+                            }
+                        }
+                    }
+                    Err(_) => self.scopes.truncate(depth),
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
         Ok(())
     }
 
@@ -256,6 +279,9 @@ impl SemanticAnalyzer {
                             Ok(Type::String)
                         } else if self.is_numeric(&l_type) && self.is_numeric(&r_type) {
                             Ok(self.numeric_result_type(&l_type, &r_type))
+                        } else if l_type == Type::String || r_type == Type::String {
+                            // Auto-convert non-string operand to string
+                            Ok(Type::String)
                         } else {
                             bail!("Invalid binary op + for types {} and {}", l_type, r_type)
                         }
@@ -379,7 +405,26 @@ impl SemanticAnalyzer {
                     )
                 }
             }
+            Expression::CapabilityCall { name, args, .. } => {
+                // Type-check argument expressions
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(self.capability_return_type(name))
+            }
             _ => Ok(Type::Any), // Default for complex expressions (capabilities, index, etc.)
+        }
+    }
+
+    /// Return the known return type for a built-in capability name
+    fn capability_return_type(&self, name: &str) -> Type {
+        match name {
+            "io.print" | "array.push" => Type::Null,
+            "str.contains" => Type::Bool,
+            "str.split" => Type::Array(Box::new(Type::String)),
+            "str.replace" | "str.join" => Type::String,
+            "str.len" | "len" => Type::Int,
+            _ => Type::Any,
         }
     }
 

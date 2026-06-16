@@ -1,0 +1,102 @@
+{
+  "cast_version": "0.1",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "meta": {},
+      "body": [
+        {
+          "type": "AI",
+          "ai_type": "GoalDeclaration",
+          "goal_id": "code-review-helper",
+          "description": "Exercise code review workflow with AgentDelegation, ToolChain, and AIStatement",
+          "success_criteria": [
+            "Delegate review to reviewer agent",
+            "Chain git diff and review analysis tools",
+            "Surface findings with AIStatement"
+          ],
+          "priority": "Medium",
+          "deadline": null
+        },
+        {
+          "type": "VarDecl",
+          "name": "git_diff",
+          "value": {
+            "type": "AI",
+            "ai_type": "ToolChain",
+            "tools": [
+              {
+                "tool_name": "git.diff",
+                "parameters": {
+                  "staged": true
+                },
+                "result_binding": "staged_diff",
+                "condition": null
+              },
+              {
+                "tool_name": "git.diff",
+                "parameters": {
+                  "staged": false
+                },
+                "result_binding": "unstaged_diff",
+                "condition": null
+              }
+            ],
+            "strategy": {
+              "type": "Parallel"
+            },
+            "error_handling": {
+              "type": "ContinueOnError"
+            }
+          },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "review_result",
+          "value": {
+            "type": "AI",
+            "ai_type": "AgentDelegation",
+            "task": "Review the following code changes and provide feedback: staged changes and unstaged changes",
+            "delegation_strategy": "Best",
+            "agents": ["reviewer"],
+            "expected_format": "json"
+          },
+          "meta": {}
+        },
+        {
+          "type": "AI",
+          "ai_type": "KnowledgeSharing",
+          "knowledge_type": "Insight",
+          "content": {
+            "review_summary": "Code review completed",
+            "findings": "Pattern matching and best practices applied"
+          },
+          "recipients": ["opencode", "squad"],
+          "retention_policy": "Session"
+        },
+        {
+          "type": "AI",
+          "ai_type": "ProgressUpdate",
+          "goal_id": "code-review-helper",
+          "progress": 1.0,
+          "status_message": "Code review completed with delegation and tool chain execution",
+          "metrics": {
+            "tools_executed": 2,
+            "delegation_count": 1
+          }
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "Var",
+            "name": "review_result"
+          },
+          "meta": {}
+        }
+      ]
+    }
+  }
+}

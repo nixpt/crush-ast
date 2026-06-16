@@ -1,0 +1,14 @@
+[capsule]
+name = "mcp-web-tools"
+version = "0.1.0"
+description = "Cookbook capsule: MCPImport — connect to an MCP server and bind its tools"
+entry = "main.cast.json"
+
+[capabilities]
+required = [
+  "mcp.client",
+  "net.tcp.connect:localhost:9100"
+]
+
+[runtime]
+engine = "crush"

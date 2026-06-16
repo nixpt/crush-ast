@@ -1,0 +1,51 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "FunctionDef",
+          "name": "double",
+          "params": [["x", "Int"]],
+          "body": [
+            {
+              "type": "Return",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "*",
+                "left": { "type": "Var", "name": "x" },
+                "right": { "type": "IntLiteral", "value": 2 }
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "result",
+          "value": {
+            "type": "Call",
+            "function": "double",
+            "args": [{ "type": "IntLiteral", "value": 21 }]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "result",
+          "value": { "type": "Var", "name": "result" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "FunctionDef statement: a function defined inside a body, then called. Prefer top-level Program.functions (see functions.cast.json) — body-level definitions are not yet visible to the semantic analyzer."
+      }
+    }
+  },
+  "ai_meta": null
+}

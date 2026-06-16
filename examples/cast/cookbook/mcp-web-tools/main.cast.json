@@ -1,0 +1,42 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "Import",
+          "import": {
+            "type": "MCPImport",
+            "server_url": "mcp://localhost:9100/web",
+            "tools": ["search", "fetch"],
+            "alias": "web"
+          },
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "StringLiteral", "value": "MCP tools bound: search, fetch" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "status",
+          "value": { "type": "StringLiteral", "value": "connected" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "MCPImport: connects to the server (mcp.connect cap), stores the handle under alias, then binds each listed tool by name (mcp.get_tool cap). Requires the mcp.client capability."
+      }
+    }
+  },
+  "ai_meta": null
+}

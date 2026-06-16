@@ -1,0 +1,61 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "worker": {
+      "params": [],
+      "body": [
+        {
+          "type": "Return",
+          "value": { "type": "IntLiteral", "value": 42 },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Spawn targets must currently be zero-argument functions."
+      }
+    },
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "task",
+          "value": {
+            "type": "Spawn",
+            "function": "worker",
+            "args": []
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": { "type": "Yield", "meta": {} },
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "result",
+          "value": {
+            "type": "Await",
+            "expression": { "type": "Var", "name": "task" }
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "result",
+          "value": { "type": "Var", "name": "result" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Concurrency: Spawn launches a zero-arg function as a task, Yield cooperatively yields the scheduler, Await blocks on a task handle."
+      }
+    }
+  },
+  "ai_meta": null
+}

@@ -1,0 +1,91 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "greet": {
+      "params": [["name", "String"]],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": { "type": "StringLiteral", "value": "Hello, " },
+            "right": { "type": "Var", "name": "name" }
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Top-level function with a typed String param; called from main via Call."
+      }
+    },
+    "add": {
+      "params": [["a", "Int"], ["b", "Int"]],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": { "type": "Var", "name": "a" },
+            "right": { "type": "Var", "name": "b" }
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "message",
+          "value": {
+            "type": "Call",
+            "function": "greet",
+            "args": [{ "type": "StringLiteral", "value": "Exosphere" }]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "sum",
+          "value": {
+            "type": "Call",
+            "function": "add",
+            "args": [
+              { "type": "IntLiteral", "value": 40 },
+              { "type": "IntLiteral", "value": 2 }
+            ]
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [{ "type": "Var", "name": "message" }],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "sum",
+          "value": { "type": "Var", "name": "sum" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Multiple top-level functions in Program.functions, cross-function Call with typed params. Arity and arg types are checked at compile time."
+      }
+    }
+  },
+  "ai_meta": null
+}

@@ -6,10 +6,10 @@ description = "Portable Crush language frontend: parser, semantic analyzer, opti
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-crush-cast = { path = "../crush-cast" }
-casm = { path = "../casm" }
-crush-errors = { path = "../crush-errors" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-thiserror = "1.0"
+crush-cast.workspace = true
+casm.workspace = true
+crush-errors.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true

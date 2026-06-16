@@ -1,0 +1,79 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "toolchain_result",
+          "value": {
+            "type": "AI",
+            "ai_type": "ToolChain",
+            "tools": [
+              {
+                "tool_name": "search",
+                "parameters": {
+                  "query": "Python best practices"
+                },
+                "result_binding": "search_results"
+              },
+              {
+                "tool_name": "analyze",
+                "parameters": {
+                  "text": "search_results"
+                },
+                "result_binding": "analysis"
+              },
+              {
+                "tool_name": "summarize",
+                "parameters": {
+                  "input": "analysis"
+                },
+                "result_binding": "summary"
+              }
+            ],
+            "strategy": {
+              "type": "Sequential"
+            },
+            "error_handling": {
+              "type": "Retry",
+              "max_retries": 2,
+              "retry_condition": "status != ok"
+            }
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "CapabilityCall",
+            "name": "print",
+            "args": [
+              {
+                "type": "StringLiteral",
+                "value": "ToolChain execution complete"
+              }
+            ],
+            "meta": {}
+          },
+          "meta": {}
+        },
+        {
+          "type": "Export",
+          "name": "output",
+          "value": {
+            "type": "Var",
+            "name": "toolchain_result"
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

@@ -1,0 +1,146 @@
+{
+  "cast_version": "0.1.0",
+  "entry": "main",
+  "lang": null,
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "total",
+          "value": { "type": "IntLiteral", "value": 0 },
+          "type_hint": "Int",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "numbers",
+          "value": {
+            "type": "ArrayLiteral",
+            "elements": [
+              { "type": "IntLiteral", "value": 1 },
+              { "type": "IntLiteral", "value": 2 },
+              { "type": "IntLiteral", "value": 3 },
+              { "type": "IntLiteral", "value": 4 },
+              { "type": "IntLiteral", "value": 5 }
+            ]
+          },
+          "type_hint": { "Array": "Int" },
+          "meta": {}
+        },
+        {
+          "type": "For",
+          "variable": "n",
+          "iterable": { "type": "Var", "name": "numbers" },
+          "body": [
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": "==",
+                "left": { "type": "Var", "name": "n" },
+                "right": { "type": "IntLiteral", "value": 3 }
+              },
+              "then_body": [{ "type": "Continue", "meta": {} }],
+              "else_body": null,
+              "meta": {}
+            },
+            {
+              "type": "If",
+              "condition": {
+                "type": "BinaryOp",
+                "operator": ">",
+                "left": { "type": "Var", "name": "n" },
+                "right": { "type": "IntLiteral", "value": 4 }
+              },
+              "then_body": [{ "type": "Break", "meta": {} }],
+              "else_body": null,
+              "meta": {}
+            },
+            {
+              "type": "VarDecl",
+              "name": "total",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "+",
+                "left": { "type": "Var", "name": "total" },
+                "right": { "type": "IntLiteral", "value": 1 }
+              },
+              "type_hint": "Any",
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "While",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "<",
+            "left": { "type": "Var", "name": "total" },
+            "right": { "type": "IntLiteral", "value": 100 }
+          },
+          "body": [
+            {
+              "type": "VarDecl",
+              "name": "total",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "+",
+                "left": { "type": "Var", "name": "total" },
+                "right": { "type": "IntLiteral", "value": 10 }
+              },
+              "type_hint": "Any",
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": ">",
+            "left": { "type": "Var", "name": "total" },
+            "right": { "type": "IntLiteral", "value": 50 }
+          },
+          "then_body": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "CapabilityCall",
+                "name": "print",
+                "args": [{ "type": "StringLiteral", "value": "total crossed 50" }],
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "else_body": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "CapabilityCall",
+                "name": "print",
+                "args": [{ "type": "StringLiteral", "value": "total stayed small" }],
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": { "type": "Var", "name": "total" },
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "description": "Control flow: If/else, While, For-over-array, Break, Continue. Loop bodies rebind via VarDecl (CAST has no assignment statement). For-loop variables type as Any: comparisons against them compile, arithmetic on them does not yet — accumulate with literals/typed vars."
+      }
+    }
+  },
+  "ai_meta": null
+}
