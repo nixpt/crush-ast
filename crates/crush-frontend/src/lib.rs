@@ -7,6 +7,7 @@ pub mod render;
 pub mod import_system;
 pub mod language_walkers;
 pub mod ai_runtime;
+pub mod polyglot_imports;
 
 use anyhow::Result;
 
