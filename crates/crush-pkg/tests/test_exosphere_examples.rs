@@ -16,6 +16,10 @@ fn compile_and_report(name: &str, src: &str) -> bool {
 #[test]
 fn test_exosphere_fixtures() {
     let root = Path::new("/workspace/projects/exosphere/crates/core/crush-lang/tests/fixtures");
+    if !root.exists() {
+        println!("SKIP test_exosphere_fixtures — exosphere checkout absent ({})", root.display());
+        return;
+    }
     let mut passed = 0u32;
     let mut failed = 0u32;
 
@@ -45,6 +49,10 @@ fn test_exosphere_fixtures() {
 #[test]
 fn test_exosphere_integration() {
     let root = Path::new("/workspace/projects/exosphere/tests/language");
+    if !root.exists() {
+        println!("SKIP test_exosphere_integration — exosphere checkout absent ({})", root.display());
+        return;
+    }
     let mut passed = 0u32;
     let mut failed = 0u32;
     let mut known_skipped = 0u32;
@@ -78,6 +86,10 @@ fn test_exosphere_integration() {
 #[test]
 fn test_build_pipeline() {
     let path = Path::new("/workspace/projects/exosphere/crates/core/crush-lang/examples/build_pipeline.crush");
+    if !path.exists() {
+        println!("SKIP test_build_pipeline — exosphere checkout absent ({})", path.display());
+        return;
+    }
     let src = std::fs::read_to_string(path).unwrap();
     assert!(compile_and_report("build_pipeline", &src));
 }
@@ -85,6 +97,10 @@ fn test_build_pipeline() {
 #[test]
 fn test_sbl_core() {
     let path = Path::new("/workspace/projects/exosphere/crates/core/vm/nanovm/src/sbl_core.crush");
+    if !path.exists() {
+        println!("SKIP test_sbl_core — exosphere checkout absent ({})", path.display());
+        return;
+    }
     let src = std::fs::read_to_string(path).unwrap();
     match crush_frontend::compile_crush_source(&src) {
         Ok(prog) => println!("  sbl_core: OK — {} funcs", prog.functions.len()),
