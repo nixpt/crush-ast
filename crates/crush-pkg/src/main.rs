@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 mod builder;
 mod bundle;
+mod ecap;
 mod manifest;
 mod packer;
 mod signer;
