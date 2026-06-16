@@ -3,26 +3,31 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod builder;
+mod bundle;
 mod manifest;
 mod packer;
+mod signer;
 
 use builder::PackageBuilder;
 use manifest::Manifest;
 use packer::{pack, unpack};
+use signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     let mut dir = cwd.as_path();
     loop {
-        let candidate = dir.join("crush.toml");
-        if candidate.exists() {
-            return Ok(candidate);
+        for name in ["capsule.toml", "Capsule.toml", "crush.toml", "Crush.toml"] {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
         }
         if let Some(parent) = dir.parent() {
             dir = parent;
         } else {
             anyhow::bail!(
-                "no crush.toml found in {} or any parent directory",
+                "no capsule/crush.toml found in {} or any parent directory",
                 cwd.display()
             );
         }
@@ -78,6 +83,26 @@ enum Commands {
         #[arg(short, long)]
         dir: Option<PathBuf>,
     },
+    /// Generate Ed25519 signing keys
+    GenerateKeys {
+        /// Output directory for key files
+        #[arg(default_value = "./keys")]
+        dir: PathBuf,
+    },
+    /// Sign a .cap file with a private key
+    Sign {
+        /// Path to the .cap file
+        package: PathBuf,
+        /// Path to private key (64-byte keypair)
+        key: PathBuf,
+    },
+    /// Verify a .cap file's signature
+    Verify {
+        /// Path to the .cap file
+        package: PathBuf,
+        /// Path to public key (32 bytes)
+        key: PathBuf,
+    },
     /// Show package metadata
     Show,
 }
@@ -94,24 +119,24 @@ fn main() -> anyhow::Result<()> {
             let manifest = manifest::scaffold_package(&target, &name)?;
             println!(
                 "created new Crush package at {}",
-                target.join("crush.toml").display()
+                target.join("capsule.toml").display()
             );
             println!(
                 "  name:    {}",
-                manifest.package.name
+                manifest.capsule.name
             );
             println!(
                 "  entry:   {}",
-                manifest.package.entry
+                manifest.capsule.entry
             );
             println!(
                 "  version: {}",
-                manifest.package.version
+                manifest.capsule.version
             );
         }
         Commands::Build => {
             let (manifest, root) = load_manifest()?;
-            println!("building {} v{}", manifest.package.name, manifest.package.version);
+            println!("building {} v{}", manifest.capsule.name, manifest.capsule.version);
             let builder = PackageBuilder::new(manifest, root);
             let output = builder.build()?;
             builder.write_output(&output)?;
@@ -123,7 +148,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Run { args } => {
             let (manifest, root) = load_manifest()?;
-            println!("running {} v{}", manifest.package.name, manifest.package.version);
+            println!("running {} v{}", manifest.capsule.name, manifest.capsule.version);
             let builder = PackageBuilder::new(manifest, root);
             let result = builder.run(&args)?;
             if !result.output.is_empty() {
@@ -133,7 +158,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Pack { output } => {
             let (manifest, root) = load_manifest()?;
             let output = output.unwrap_or_else(|| {
-                PathBuf::from(format!("{}.crush-pack", manifest.package.name))
+                PathBuf::from(format!("{}.crush-pack", manifest.capsule.name))
             });
             pack(&root, &output)?;
         }
@@ -142,17 +167,25 @@ fn main() -> anyhow::Result<()> {
             let dir = dir.unwrap_or_else(|| PathBuf::from(name));
             unpack(&pack, &dir)?;
         }
+        Commands::GenerateKeys { dir } => {
+            generate_keys(&dir)?;
+        }
+        Commands::Sign { package, key } => {
+            sign_package(&package, &key)?;
+        }
+        Commands::Verify { package, key } => {
+            verify_package(&package, &key)?;
+        }
         Commands::Check => {
             let (manifest, root) = load_manifest()?;
-            println!("checking {} v{}", manifest.package.name, manifest.package.version);
+            println!("checking {} v{}", manifest.capsule.name, manifest.capsule.version);
             let builder = PackageBuilder::new(manifest, root);
             builder.check()?;
         }
         Commands::Show => {
             let (manifest, root) = load_manifest()?;
-            let path = root.join("crush.toml");
             println!("{}", manifest::Manifest::to_toml_string(&manifest)?);
-            println!("  (at {})", path.display());
+            println!("  (at {})", root.join("capsule.toml").display());
         }
     }
 

@@ -1,5 +1,8 @@
+use std::fs::File;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::io::{Read, Write, Cursor};
+
+use crate::manifest::{manifest_path, Manifest};
 
 const EXCLUDED_DIRS: &[&str] = &["target", ".git", "node_modules", "__pycache__", "dist"];
 
@@ -15,11 +18,23 @@ fn is_excluded_path(path: &Path) -> bool {
 }
 
 pub fn pack(source_dir: &Path, output_path: &Path) -> anyhow::Result<()> {
-    let file = std::fs::File::create(output_path)?;
+    // If output_path is a directory, derive filename from manifest
+    let output_file: PathBuf = if output_path.is_dir() {
+        let name = manifest_path(source_dir)
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| Manifest::from_str(&s, source_dir).ok())
+            .map(|m| m.capsule.name)
+            .unwrap_or_else(|| "capsule".to_string());
+        output_path.join(format!("{}.cap", name))
+    } else {
+        output_path.to_path_buf()
+    };
+
+    let file = File::create(&output_file)?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Stored)
-        .unix_permissions(0o644);
+        .unix_permissions(0o755);
 
     let base = source_dir.canonicalize()?;
 
@@ -33,17 +48,32 @@ pub fn pack(source_dir: &Path, output_path: &Path) -> anyhow::Result<()> {
         let name = relative.to_string_lossy().replace('\\', "/");
 
         if path.is_dir() {
-            zip.add_directory(&name, options)?;
+            if !name.is_empty() {
+                zip.add_directory(&name, options)?;
+            }
         } else {
             zip.start_file(&name, options)?;
             let mut data = Vec::new();
-            std::fs::File::open(path)?.read_to_end(&mut data)?;
+            File::open(path)?.read_to_end(&mut data)?;
             zip.write_all(&data)?;
         }
     }
 
+    // Auto-generate README if missing
+    let readme_path = source_dir.join("README.md");
+    if !readme_path.exists() {
+        zip.start_file("README.md", options)?;
+        let content = if let Some(toml_path) = manifest_path(source_dir) {
+            let toml_str = std::fs::read_to_string(toml_path).unwrap_or_default();
+            format!("# Capsule\n\nAuto-generated README.\n\n## Manifest\n```toml\n{}\n```", toml_str)
+        } else {
+            "# Capsule\n\nNo description provided.".to_string()
+        };
+        zip.write_all(content.as_bytes())?;
+    }
+
     zip.finish()?;
-    println!("  packed {} -> {}", source_dir.display(), output_path.display());
+    println!("  packed {} -> {}", source_dir.display(), output_file.display());
     Ok(())
 }
 

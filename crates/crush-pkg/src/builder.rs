@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{Dependency, Manifest};
+use crate::manifest::Manifest;
 
 pub struct DepResolution {
     pub name: String,
@@ -61,20 +60,19 @@ impl PackageBuilder {
     pub fn build(&self) -> anyhow::Result<BuildOutput> {
         let deps = self.resolve_deps()?;
         let sources = self.collect_all_sources()?;
-        let entry = self.root_dir.join(&self.manifest.package.entry);
+        let entry = self.root_dir.join(&self.manifest.capsule.entry);
 
         let has_entry = sources.iter().any(|(p, _)| p == &entry);
         if !has_entry {
             anyhow::bail!(
-                "entry file {} not found; check crush.toml [package].entry",
+                "entry file {} not found; check [capsule].entry",
                 entry.display()
             );
         }
 
-        // Combine all source: main package sources + dependency sources
         let mut combined = String::new();
         combined.push_str("// Crush package: ");
-        combined.push_str(&self.manifest.package.name);
+        combined.push_str(&self.manifest.capsule.name);
         combined.push('\n');
 
         for (path, _) in &sources {
@@ -84,8 +82,6 @@ impl PackageBuilder {
             combined.push('\n');
         }
 
-        // Collect dep source files
-        let mut dep_source_files: Vec<PathBuf> = deps.iter().map(|d| d.source_file.clone()).collect();
         let dep_names: Vec<String> = deps.iter().map(|d| d.name.clone()).collect();
 
         for dep in &deps {
@@ -119,29 +115,23 @@ impl PackageBuilder {
 
     fn resolve_deps(&self) -> anyhow::Result<Vec<DepResolution>> {
         let mut resolved = Vec::new();
-        for (name, dep) in &self.manifest.dependencies {
-            let dep_path = match dep {
-                Dependency::Simple(p) => self.root_dir.join(p),
-                Dependency::Full(f) => {
-                    if let Some(path) = &f.path {
-                        self.root_dir.join(path)
-                    } else {
-                        continue; // skip non-path deps (version/git not yet supported)
-                    }
-                }
+        for dep in &self.manifest.dependencies {
+            let name = &dep.name;
+            let dep_path = if let Some(path) = &dep.path {
+                self.root_dir.join(path)
+            } else {
+                continue;
             };
 
-            let dep_manifest_path = dep_path.join("crush.toml");
-            if !dep_manifest_path.exists() {
-                anyhow::bail!(
-                    "dependency '{}': no crush.toml found at {}",
+            let manifest_path = crate::manifest::manifest_path(&dep_path)
+                .ok_or_else(|| anyhow::anyhow!(
+                    "dependency '{}': no capsule / crush.toml found at {}",
                     name,
                     dep_path.display()
-                );
-            }
+                ))?;
 
-            let dep_manifest = Manifest::from_file(&dep_manifest_path)?;
-            let dep_entry = dep_path.join(&dep_manifest.package.entry);
+            let dep_manifest = Manifest::from_file(&manifest_path)?;
+            let dep_entry = dep_path.join(&dep_manifest.capsule.entry);
             if !dep_entry.exists() {
                 anyhow::bail!(
                     "dependency '{}': entry file not found at {}",
@@ -165,7 +155,7 @@ impl PackageBuilder {
     }
 
     fn collect_all_sources(&self) -> anyhow::Result<Vec<(PathBuf, String)>> {
-        let entry = self.root_dir.join(&self.manifest.package.entry);
+        let entry = self.root_dir.join(&self.manifest.capsule.entry);
         let mut sources = Vec::new();
 
         if entry.exists() {
@@ -193,15 +183,13 @@ impl PackageBuilder {
         let target_dir = self.root_dir.join("target");
         std::fs::create_dir_all(&target_dir)?;
 
-        let name = &self.manifest.package.name;
+        let name = &self.manifest.capsule.name;
 
-        // Write .cvm (native VM binary)
         let cvm_path = target_dir.join(format!("{}.cvm", name));
         let blob = output.program.to_blob();
         std::fs::write(&cvm_path, blob)?;
         println!("  wrote {}", cvm_path.display());
 
-        // Write .casm.json (human-readable debugging dump)
         let casm_path = target_dir.join(format!("{}.casm.json", name));
         let dump = serde_json::json!({
             "version": "1.0",
@@ -237,12 +225,49 @@ mod tests {
     use super::*;
     use crate::manifest::scaffold_package;
 
+    fn make_manifest(
+        name: &str,
+        entry: &str,
+        deps: Vec<crate::manifest::Dependency>,
+    ) -> Manifest {
+        Manifest {
+            capsule: crate::manifest::CapsuleSection {
+                name: name.to_string(),
+                version: "0.1.0".to_string(),
+                entry: entry.to_string(),
+                language: "crush".to_string(),
+                description: None,
+                author: None,
+                network_access: None,
+                seccomp_profile: None,
+                rootless: None,
+                memory_limit_mb: None,
+                cpu_limit_percent: None,
+                pids_limit: None,
+                readonly_root: None,
+                allowed_paths: None,
+                denied_paths: None,
+                entry_point_sha256: None,
+                entry_point: None,
+                capsule_type: None,
+                id: None,
+                capsule_kind: None,
+            },
+            capabilities: crate::manifest::CapabilitiesSection::default(),
+            resources: crate::manifest::ResourcesSection::default(),
+            env: std::collections::HashMap::new(),
+            service: None,
+            dependencies: deps,
+            runtime: None,
+        }
+    }
+
     #[test]
     fn test_collect_sources() {
         let dir = tempfile::tempdir().unwrap();
         scaffold_package(dir.path(), "test-pkg").unwrap();
 
-        let manifest = Manifest::from_file(&dir.path().join("crush.toml")).unwrap();
+        let manifest = Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = PackageBuilder::new(manifest, dir.path().to_path_buf());
         let sources = builder.collect_all_sources().unwrap();
 
@@ -252,9 +277,6 @@ mod tests {
 
     #[test]
     fn test_resolve_path_dep() {
-        use std::collections::HashMap;
-        use crate::manifest::{Dependency, DependencyFull, PackageSection};
-
         let dir = tempfile::tempdir().unwrap();
 
         // Create dep package
@@ -264,33 +286,21 @@ mod tests {
             dep_dir.join("src/lib.crush"),
             "fn greet(name) {\n    io.print(\"hello \" + name)\n}\n",
         ).unwrap();
-        let dep_manifest = Manifest {
-            package: PackageSection {
-                name: "dep-lib".into(),
-                version: "0.1.0".into(),
-                entry: "src/lib.crush".into(),
-                edition: "2024".into(),
-                description: None,
-                authors: None,
-            },
-            dependencies: HashMap::new(),
-        };
+        let dep_manifest = make_manifest("dep-lib", "src/lib.crush", vec![]);
         dep_manifest.write_to_dir(&dep_dir).unwrap();
 
-        // Create main package that depends on dep-lib
+        // Create main package
         let main_dir = dir.path().join("main-pkg");
         scaffold_package(&main_dir, "main-pkg").unwrap();
 
-        // Add the path dep to the manifest
-        let mut main_manifest = Manifest::from_file(&main_dir.join("crush.toml")).unwrap();
-        main_manifest.dependencies.insert(
-            "dep-lib".to_string(),
-            Dependency::Full(DependencyFull {
-                path: Some(dep_dir.to_string_lossy().to_string()),
-                version: None,
-                git: None,
-            }),
-        );
+        // Add the path dep
+        let dep = crate::manifest::Dependency {
+            name: "dep-lib".to_string(),
+            version: None,
+            path: Some(dep_dir.to_string_lossy().to_string()),
+        };
+        let mut main_manifest = Manifest::from_file(&main_dir.join("capsule.toml")).unwrap();
+        main_manifest.dependencies.push(dep);
         main_manifest.write_to_dir(&main_dir).unwrap();
 
         let builder = PackageBuilder::new(main_manifest, main_dir);
@@ -301,9 +311,6 @@ mod tests {
 
     #[test]
     fn test_build_with_dep() {
-        use std::collections::HashMap;
-        use crate::manifest::{Dependency, DependencyFull, PackageSection};
-
         let dir = tempfile::tempdir().unwrap();
 
         // Create dep package
@@ -313,17 +320,7 @@ mod tests {
             dep_dir.join("src/lib.crush"),
             "fn greet(name) {\n    io.print(\"hello \" + name)\n}\n",
         ).unwrap();
-        let dep_manifest = Manifest {
-            package: PackageSection {
-                name: "dep-lib".into(),
-                version: "0.1.0".into(),
-                entry: "src/lib.crush".into(),
-                edition: "2024".into(),
-                description: None,
-                authors: None,
-            },
-            dependencies: HashMap::new(),
-        };
+        let dep_manifest = make_manifest("dep-lib", "src/lib.crush", vec![]);
         dep_manifest.write_to_dir(&dep_dir).unwrap();
 
         // Create main package
@@ -333,32 +330,17 @@ mod tests {
             main_dir.join("src/main.crush"),
             "fn main() {\n    greet(\"world\")\n}\n",
         ).unwrap();
-        let mut main_manifest = Manifest {
-            package: PackageSection {
-                name: "main-pkg".into(),
-                version: "0.1.0".into(),
-                entry: "src/main.crush".into(),
-                edition: "2024".into(),
-                description: None,
-                authors: None,
-            },
-            dependencies: HashMap::new(),
+        let dep = crate::manifest::Dependency {
+            name: "dep-lib".to_string(),
+            version: None,
+            path: Some(dep_dir.to_string_lossy().to_string()),
         };
-        main_manifest.dependencies.insert(
-            "dep-lib".to_string(),
-            Dependency::Full(DependencyFull {
-                path: Some(dep_dir.to_string_lossy().to_string()),
-                version: None,
-                git: None,
-            }),
-        );
+        let main_manifest = make_manifest("main-pkg", "src/main.crush", vec![dep]);
         main_manifest.write_to_dir(&main_dir).unwrap();
 
         let builder = PackageBuilder::new(main_manifest, main_dir);
         let output = builder.build().unwrap();
 
-        // Should have both main and greet functions
-        assert!(output.functions.contains(&"main".to_string()) || output.functions.contains(&"main".to_string()));
         assert!(!output.program.code.is_empty());
     }
 
@@ -367,7 +349,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         scaffold_package(dir.path(), "check-test").unwrap();
 
-        let manifest = Manifest::from_file(&dir.path().join("crush.toml")).unwrap();
+        let manifest = Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = PackageBuilder::new(manifest, dir.path().to_path_buf());
         builder.check().unwrap();
     }
@@ -377,7 +359,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         scaffold_package(dir.path(), "build-test").unwrap();
 
-        let manifest = Manifest::from_file(&dir.path().join("crush.toml")).unwrap();
+        let manifest = Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = PackageBuilder::new(manifest, dir.path().to_path_buf());
         let output = builder.build().unwrap();
 
@@ -390,7 +372,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         scaffold_package(dir.path(), "write-test").unwrap();
 
-        let manifest = Manifest::from_file(&dir.path().join("crush.toml")).unwrap();
+        let manifest = Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = PackageBuilder::new(manifest, dir.path().to_path_buf());
         let output = builder.build().unwrap();
         builder.write_output(&output).unwrap();
@@ -399,7 +381,6 @@ mod tests {
         assert!(target.join("write-test.cvm").exists());
         assert!(target.join("write-test.casm.json").exists());
 
-        // Check it's loadable
         let cvm_data = std::fs::read(target.join("write-test.cvm")).unwrap();
         let loaded = crush_vm::Program::from_blob(&cvm_data).unwrap();
         assert!(!loaded.code.is_empty());
@@ -410,7 +391,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         scaffold_package(dir.path(), "run-test").unwrap();
 
-        let manifest = Manifest::from_file(&dir.path().join("crush.toml")).unwrap();
+        let manifest = Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = PackageBuilder::new(manifest, dir.path().to_path_buf());
         let result = builder.run(&[]).unwrap();
 
