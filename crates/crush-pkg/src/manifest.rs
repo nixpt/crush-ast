@@ -20,7 +20,7 @@ pub fn manifest_path(dir: &Path) -> Option<PathBuf> {
 // Canonical TOML schema
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
     pub capsule: CapsuleSection,
     #[serde(default)]
@@ -37,7 +37,7 @@ pub struct Manifest {
     pub runtime: Option<RuntimeSection>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CapsuleSection {
     pub name: String,
     #[serde(default = "default_version")]
@@ -155,6 +155,104 @@ fn default_version() -> String {
 
 fn default_entry() -> String {
     "src/main.crush".to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Capsule type / runtime enums
+// ---------------------------------------------------------------------------
+
+/// Capsule type — determines which runner to use
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CapsuleType {
+    #[default]
+    Auto,
+    Crush,
+    Native,
+    Container,
+    Script(ScriptRuntime),
+}
+
+/// Script runtime preference
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ScriptRuntime {
+    #[default]
+    Bun,
+    Node,
+    Deno,
+    Python,
+}
+
+/// Auto-detected payload format based on file extension / magic bytes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PayloadFormat {
+    Casm,
+    JavaScript,
+    TypeScript,
+    Python,
+    NativeElf,
+    NativeMachO,
+    NativePe,
+    Container,
+    Unknown,
+}
+
+impl PayloadFormat {
+    pub fn from_path(path: &std::path::Path) -> Self {
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            match ext.to_lowercase().as_str() {
+                "casm" | "casmb" => PayloadFormat::Casm,
+                "js" | "mjs" | "cjs" => PayloadFormat::JavaScript,
+                "ts" | "mts" | "cts" | "tsx" => PayloadFormat::TypeScript,
+                "py" => PayloadFormat::Python,
+                _ => PayloadFormat::Unknown,
+            }
+        } else {
+            PayloadFormat::Unknown
+        }
+    }
+
+    pub fn from_magic(bytes: &[u8]) -> Self {
+        if bytes.len() < 4 {
+            return PayloadFormat::Unknown;
+        }
+        if bytes.starts_with(&[0x7F, 0x45, 0x4C, 0x46]) {
+            return PayloadFormat::NativeElf;
+        }
+        if bytes.starts_with(&[0xCF, 0xFA, 0xED, 0xFE])
+            || bytes.starts_with(&[0xFE, 0xED, 0xFA, 0xCF])
+        {
+            return PayloadFormat::NativeMachO;
+        }
+        if bytes.starts_with(&[0x4D, 0x5A]) {
+            return PayloadFormat::NativePe;
+        }
+        if bytes.starts_with(&[0x7B]) {
+            return PayloadFormat::Casm;
+        }
+        PayloadFormat::Unknown
+    }
+
+    pub fn script_runtime(&self) -> Option<ScriptRuntime> {
+        match self {
+            PayloadFormat::JavaScript | PayloadFormat::TypeScript => Some(ScriptRuntime::Bun),
+            PayloadFormat::Python => Some(ScriptRuntime::Python),
+            _ => None,
+        }
+    }
+}
+
+/// Map language string from manifest to CapsuleType
+pub fn language_to_capsule_type(language: &str) -> CapsuleType {
+    match language {
+        "crush" => CapsuleType::Crush,
+        "native" | "rust" | "c" => CapsuleType::Native,
+        "container" => CapsuleType::Container,
+        "javascript" | "js" | "ts" | "typescript" | "bun" => CapsuleType::Script(ScriptRuntime::Bun),
+        "node" | "nodejs" => CapsuleType::Script(ScriptRuntime::Node),
+        "deno" => CapsuleType::Script(ScriptRuntime::Deno),
+        "python" | "py" => CapsuleType::Script(ScriptRuntime::Python),
+        _ => CapsuleType::Auto,
+    }
 }
 
 // ---------------------------------------------------------------------------

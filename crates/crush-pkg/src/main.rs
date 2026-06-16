@@ -8,11 +8,13 @@ mod ecap;
 mod manifest;
 mod merkle;
 mod packer;
+mod runners;
 mod signer;
 
 use builder::PackageBuilder;
 use manifest::Manifest;
 use packer::{pack, unpack};
+use runners::{get_runner_for_payload, ExecutionResult};
 use signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
@@ -150,11 +152,22 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Run { args } => {
             let (manifest, root) = load_manifest()?;
-            println!("running {} v{}", manifest.capsule.name, manifest.capsule.version);
-            let builder = PackageBuilder::new(manifest, root);
-            let result = builder.run(&args)?;
-            if !result.output.is_empty() {
-                print!("{}", result.output);
+            let payload = root.join(&manifest.capsule.entry);
+            if !payload.exists() {
+                anyhow::bail!("entry file not found: {}", payload.display());
+            }
+            let runner = get_runner_for_payload(&payload, &manifest);
+            println!("running {} v{} ({})", manifest.capsule.name, manifest.capsule.version, manifest.capsule.language);
+            let result = runner.run(&manifest, &payload, &args)?;
+            match result {
+                ExecutionResult::Vm => {},
+                ExecutionResult::Process(mut child) => {
+                    let status = child.wait()?;
+                    if !status.success() {
+                        std::process::exit(status.code().unwrap_or(1));
+                    }
+                }
+                ExecutionResult::None => {},
             }
         }
         Commands::Pack { output } => {
