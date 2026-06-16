@@ -81,6 +81,7 @@ pub enum TrustLevel {
 
 pub struct ImportResolver {
     registry: HashMap<String, ModuleDefinition>,
+    #[allow(dead_code)]
     active_imports: HashMap<String, ImportResolution>,
     security_policy: SecurityPolicy,
 }
