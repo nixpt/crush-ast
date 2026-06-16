@@ -1,0 +1,47 @@
+[package]
+name = "crush-lang-sdk"
+version = "0.2.0"
+edition = "2024"
+description = "Rust SDK for hosting and extending the crush-vm CVM1 runtime"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nixpt/crush-ast"
+
+[[bin]]
+name = "crush-run"
+path = "src/bin/crush-run.rs"
+
+[[bin]]
+name = "crush-compile"
+path = "src/bin/crush-compile.rs"
+
+[[bin]]
+name = "crush-repl"
+path = "src/bin/crush-repl.rs"
+
+[features]
+default = []
+net = ["dep:ureq"]
+db = ["dep:rusqlite"]
+graphics = []
+stdlib = ["dep:regex"]
+
+[dependencies]
+crush-vm = { path = "../crush-vm" }
+crush-cast = { path = "../crush-cast" }
+casm = { path = "../casm" }
+crush-frontend = { path = "../crush-frontend" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+base64 = "0.22"
+rand = { version = "0.8", features = ["std", "std_rng"] }
+clap = { version = "4.0", features = ["derive"] }
+ureq = { version = "2", optional = true }
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+regex = { version = "1.10", optional = true }
+
+[dev-dependencies]
+anyhow = "1.0"
+tempfile = "3"
