@@ -1,0 +1,26 @@
+# Test: Concurrency and Structs
+# Description: Verifies struct definition, instantiation, and concurrent access.
+
+# Struct Test
+let p = new Point();
+p.x = 10;
+p.y = 20;
+print("Point x:");
+print(p.x);
+print("Point y:");
+print(p.y);
+
+# Concurrency Test
+print("Main starting spawn");
+spawn worker();
+print("Main yielding 1");
+yield;
+print("Main yielding 2");
+yield;
+print("Main resumed");
+
+fn worker() {
+    print("Worker running");
+    yield;
+    print("Worker finishing");
+}

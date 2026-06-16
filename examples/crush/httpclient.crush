@@ -1,0 +1,45 @@
+capability network connect
+
+fn main() {
+    let url = "https://www.google.com" 
+    let resp = http.get(url)
+    
+    // Simple length calculation (byte length approximates char length for ASCII)
+    let len_resp = len(resp)
+    
+    // Escape HTML special chars
+    let escaped = html_escape(resp)
+    
+    // We can't display full body nicely in a small box, so truncate
+    if len_resp > 2000 {
+        escaped = str.replace(format("{}", escaped), "\n", "<br>") 
+        // Just show first 2000 chars roughly
+        // slice not implemented yet?
+    }
+
+    let page = format("
+        <div style='padding:40px;text-align:center;'>
+            <h1 style='color:#38bdf8;margin-bottom:20px'>HTTP Client</h1>
+            <div style='background:#1e293b;padding:20px;border-radius:12px;margin-bottom:20px'>
+                <p style='color:#94a3b8;margin-bottom:10px'>Fetching URL:</p>
+                <code style='background:#0f172a;padding:5px 10px;border-radius:6px;color:#e2e8f0'>{}</code>
+            </div>
+            <div style='background:#0f172a;padding:20px;border-radius:12px;text-align:left;overflow-x:auto;max-height:400px;border:1px solid #334155'>
+                <p style='color:#22d3ee;margin-top:0'>Status: <span style='color:#4ade80'>200 OK</span></p>
+                <p style='color:#94a3b8'>Length: {} chars</p>
+                <div style='color:#cbd5e1;font-size:12px;font-family:monospace;white-space:pre-wrap'>{}</div>
+            </div>
+        </div>
+    ", url, len_resp, escaped)
+    
+    return page
+}
+
+fn html_escape(s) {
+    let res = format("{}", s)
+    res = str.replace(res, "&", "&amp;")
+    res = str.replace(res, "<", "&lt;")
+    res = str.replace(res, ">", "&gt;")
+    res = str.replace(res, "\"", "&quot;")
+    return res
+}

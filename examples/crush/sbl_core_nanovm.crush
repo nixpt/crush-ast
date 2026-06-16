@@ -1,0 +1,25 @@
+// System Bytecode Layer (SBL) Core Utilities
+// This is compiled to CASM and loaded as the Root of Trust.
+
+pub fn path_normalize(path: string) -> string {
+    // Basic validation for double slashes (internal)
+    let parts = str.split(path, "/");
+    let result = [];
+    
+    for part in parts {
+        if (part == "..") {
+            if (len(result) > 0) {
+                array.pop(result);
+            }
+        } else if (part != "." && part != "") {
+             array.push(result, part);
+        }
+    }
+
+    let joined = str.join(result, "/");
+    return "/" + joined;
+}
+
+pub fn format_node_info(id: string, version: string) -> string {
+    return "Node: " + id + " (v" + version + ")";
+}

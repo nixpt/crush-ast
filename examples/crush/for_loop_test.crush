@@ -1,0 +1,16 @@
+# Test: For Loops
+# Description: Verifies 'for' loop syntax and execution over ranges and collections.
+
+io.print("Testing for loops with ranges")
+
+io.print("Test 1: Range 0..3")
+for i in 0..3 {
+    io.print(i)
+}
+
+io.print("Test 2: Range 5..8")
+for num in 5..8 {
+    io.print(num)
+}
+
+io.print("For loop tests passed!")

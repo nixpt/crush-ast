@@ -1,0 +1,12 @@
+# Test: Exception Handling
+# Description: Verifies try-catch blocks and error propagation.
+
+print("Starting Exception Test")
+try {
+    print("Inside try block")
+    throw "Oops"
+    print("This should not print")
+} catch e {
+    print("Caught exception: " + e)
+}
+print("After catch block")

@@ -1,0 +1,22 @@
+capability system readonly
+
+fn load_stats() {
+    let cpu = sys.cpu_usage()
+    let memory = sys.memory_info()
+    let disk = sys.disk_usage()
+    let uptime = sys.uptime()
+    let processes = sys.process_count()
+
+    return {
+        cpu: cpu,
+        memory: memory,
+        disk: disk,
+        uptime: uptime,
+        processes: processes
+    }
+}
+
+fn main() {
+    let stats = load_stats()
+    return render_dashboard(stats)
+}

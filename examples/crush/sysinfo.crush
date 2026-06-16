@@ -1,0 +1,73 @@
+capability system readonly
+
+fn main() {
+    let hostname = sys.hostname()
+    let os = sys.os_name()
+    let cpus = sys.cpu_count()
+    let cpu = sys.cpu_usage()
+    let memory = sys.memory_info()
+    let disk = sys.disk_usage()
+    let uptime = sys.uptime()
+    let processes = sys.process_count()
+    let now = time.now()
+
+    let mem_used = math.round(memory.used_gb * 100) / 100
+    let mem_total = math.round(memory.total_gb * 100) / 100
+    let mem_pct = math.round(memory.percent)
+    let disk_pct = math.round(disk.percent)
+    let cpu_pct = math.round(cpu)
+
+    let html = "<div style='max-width:800px;margin:0 auto;padding:40px 32px;'>"
+    let html = html + "<h1 style='font-size:28px;font-weight:700;margin-bottom:4px;'>System Information</h1>"
+    let html = html + "<p style='color:#71717a;font-size:13px;margin-bottom:28px;'>Generated at " + now + "</p>"
+
+    let html = html + "<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;'>"
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;'>Hostname</div>"
+    let html = html + "<div style='font-size:20px;font-weight:600;margin-top:4px;'>" + hostname + "</div>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;'>Operating System</div>"
+    let html = html + "<div style='font-size:14px;font-weight:600;margin-top:4px;'>" + os + "</div>"
+    let html = html + "</div>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;'>"
+
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;'>CPU</div>"
+    let html = html + "<div style='font-size:24px;font-weight:700;color:#a78bfa;margin-top:4px;'>" + str(cpu_pct) + "%</div>"
+    let html = html + "<div style='color:#71717a;font-size:12px;margin-top:4px;'>" + str(cpus) + " cores</div>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;'>Memory</div>"
+    let html = html + "<div style='font-size:24px;font-weight:700;color:#60a5fa;margin-top:4px;'>" + str(mem_pct) + "%</div>"
+    let html = html + "<div style='color:#71717a;font-size:12px;margin-top:4px;'>" + str(mem_used) + " / " + str(mem_total) + " GB</div>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;'>Disk</div>"
+    let html = html + "<div style='font-size:24px;font-weight:700;color:#34d399;margin-top:4px;'>" + str(disk_pct) + "%</div>"
+    let html = html + "</div>"
+
+    let html = html + "</div>"
+
+    let html = html + "<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;'>"
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;'>Uptime</div>"
+    let html = html + "<div style='font-size:18px;font-weight:600;margin-top:4px;'>" + uptime + "</div>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:12px;padding:20px;'>"
+    let html = html + "<div style='color:#71717a;font-size:12px;text-transform:uppercase;'>Processes</div>"
+    let html = html + "<div style='font-size:18px;font-weight:600;margin-top:4px;'>" + str(processes) + "</div>"
+    let html = html + "</div>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='margin-top:24px;'><a href='shell://refresh' style='color:#a78bfa;font-size:13px;'>Refresh</a></div>"
+    let html = html + "</div>"
+
+    return html
+}

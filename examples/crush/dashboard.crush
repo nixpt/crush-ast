@@ -1,0 +1,211 @@
+// Pure Crush implementation of Pipefish LLM Dashboard
+// This demonstrates the DOM capability integration
+
+// Import the seahorse module for LLM inference
+import seahorse
+
+// Global state
+let current_model = "llama3.2";
+let is_generating = false;
+
+// Initialize the dashboard
+fn init() {
+    // Set up initial UI state
+    dom.set_text_content(dom.get_element_by_id("status"), "Ready");
+    dom.set_text_content(dom.get_element_by_id("model-name"), current_model);
+    
+    // Populate model list
+    update_model_list();
+    
+    // Set up event listeners
+    setup_event_handlers();
+    
+    print("Dashboard initialized");
+}
+
+// Set up all event handlers
+fn setup_event_handlers() {
+    // Generate button click
+    dom.add_event_listener(
+        dom.get_element_by_id("generate-btn"),
+        "click",
+        "on_generate_click"
+    );
+    
+    // Model selection change
+    dom.add_event_listener(
+        dom.get_element_by_id("model-select"),
+        "change",
+        "on_model_change"
+    );
+    
+    // Temperature slider
+    dom.add_event_listener(
+        dom.get_element_by_id("temp-slider"),
+        "input",
+        "on_temp_change"
+    );
+}
+
+// Handle generate button click
+fn on_generate_click() {
+    if is_generating {
+        return; // Prevent double-clicks
+    }
+    
+    let prompt_input = dom.get_element_by_id("prompt-input");
+    let prompt = dom.get_attribute(prompt_input, "value");
+    
+    if prompt == "" {
+        show_error("Please enter a prompt");
+        return;
+    }
+    
+    // Start generation
+    is_generating = true;
+    update_ui_for_generation(true);
+    
+    // Get parameters
+    let temperature = get_temperature();
+    let max_tokens = get_max_tokens();
+    
+    // Call LLM in background
+    generate_async(current_model, prompt, temperature, max_tokens);
+}
+
+// Async generation (runs in background)
+async fn generate_async(model: String, prompt: String, temp: Float, max_tokens: Int) {
+    try {
+        // Call seahorse for LLM inference
+        let result = seahorse.generate(model, prompt, {
+            temperature: temp,
+            max_tokens: max_tokens,
+            stream: false
+        });
+        
+        // Update UI with result
+        dom.set_inner_html(
+            dom.get_element_by_id("output"),
+            format_output(result.text)
+        );
+        
+        // Add to history
+        add_to_history(prompt, result.text);
+        
+        // Clear any error
+        hide_error();
+        
+    } catch (e) {
+        show_error(format("Generation failed: {}", e));
+    } finally {
+        is_generating = false;
+        update_ui_for_generation(false);
+    }
+}
+
+// Update UI during generation
+fn update_ui_for_generation(generating: Bool) {
+    let status = dom.get_element_by_id("status");
+    let btn = dom.get_element_by_id("generate-btn");
+    
+    if generating {
+        dom.set_text_content(status, "Generating...");
+        dom.set_attribute(btn, "disabled", "true");
+        dom.set_style(btn, "opacity", "0.5");
+    } else {
+        dom.set_text_content(status, "Ready");
+        dom.remove_attribute(btn, "disabled");
+        dom.set_style(btn, "opacity", "1.0");
+    }
+}
+
+// Handle model selection change
+fn on_model_change() {
+    let select = dom.get_element_by_id("model-select");
+    current_model = dom.get_attribute(select, "value");
+    dom.set_text_content(
+        dom.get_element_by_id("model-name"),
+        current_model
+    );
+}
+
+// Update model list dropdown
+fn update_model_list() {
+    let models = seahorse.list_models();
+    let select = dom.get_element_by_id("model-select");
+    
+    // Build HTML options
+    let options = models.map(|m| {
+        format(
+            "<option value=\"{}\" {}>{}</option>",
+            m.id,
+            if m.id == current_model { "selected" } else { "" },
+            m.name
+        )
+    }).join("");
+    
+    dom.set_inner_html(select, options);
+}
+
+// Format output text (basic markdown-like formatting)
+fn format_output(text: String) -> String {
+    // Simple formatting - in real implementation could use a proper markdown parser
+    text.replace("\n", "<br>")
+        .replace("```", "<pre><code>")
+        .replace("```", "</code></pre>")
+}
+
+// Add entry to history
+fn add_to_history(prompt: String, response: String) {
+    let history = dom.get_element_by_id("history");
+    let entry = format(
+        "<div class=\"history-item\">
+            <div class=\"prompt\">{}</div>
+            <div class=\"response\">{}</div>
+        </div>",
+        escape_html(prompt),
+        format_output(response)
+    );
+    
+    // Append to existing content
+    let current = dom.get_inner_html(history);
+    dom.set_inner_html(history, entry + current);
+}
+
+// Helper: Get temperature from slider
+fn get_temperature() -> Float {
+    let slider = dom.get_element_by_id("temp-slider");
+    let value = dom.get_attribute(slider, "value");
+    value.parse::<Float>() / 100.0  // Slider is 0-100, we want 0.0-1.0
+}
+
+// Helper: Get max tokens
+fn get_max_tokens() -> Int {
+    let input = dom.get_element_by_id("max-tokens");
+    let value = dom.get_attribute(input, "value");
+    value.parse::<Int>().unwrap_or(512)
+}
+
+// Show error message
+fn show_error(message: String) {
+    let error_div = dom.get_element_by_id("error");
+    dom.set_text_content(error_div, message);
+    dom.set_style(error_div, "display", "block");
+}
+
+// Hide error message
+fn hide_error() {
+    let error_div = dom.get_element_by_id("error");
+    dom.set_style(error_div, "display", "none");
+}
+
+// Basic HTML escaping
+fn escape_html(text: String) -> String {
+    text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+}
+
+// Start the application
+init();

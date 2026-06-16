@@ -1,0 +1,68 @@
+// build_pipeline.crush — a real-world Crush example: orchestrating a native build.
+//
+// Unlike the toy fixtures (fib, arithmetic), this shows Crush in its intended role from the
+// "shell/workflow bytecode" design: a capability-gated, event-sourced *conductor* for native
+// toolchains. Crush does not compile anything itself — it drives external tools (here: a kernel
+// build → initramfs → QEMU smoke-boot) through capability calls, so the pipeline is auditable,
+// replayable, and policy-checkable instead of an opaque shell script.
+//
+// Donated from the Nakshatra kernel-substrate project (nixpt/nakshatra, tools/build.crush),
+// where `crush-run` validated it through parse → typecheck → compile-to-CASM → nanovm execution.
+//
+// Pattern demonstrated:
+//   - multi-function decomposition with fail-fast control flow (exit-code propagation)
+//   - capability-bound host calls (`run_tool`/`emit` — stubbed here so the example is
+//     self-contained; in production they bind to the process.spawn / event.emit capabilities,
+//     and the compiler emits `cap_call` for them)
+//   - an event stream (build.start / build.step.* / build.done)
+//
+// Grammar notes learned writing this (useful for anyone authoring Crush):
+//   - `spawn` is a RESERVED keyword (actor concurrency) — name process helpers differently.
+//   - statements are newline-terminated: no multi-line calls, no list literals across lines;
+//     pass commands as single strings.
+
+// --- capability-bound host calls (stubbed for a self-contained example) ----------
+
+fn run_tool(cmd: String) -> Int { return 0 }              // prod: process.spawn cap_call -> exit code
+fn emit(topic: String, name: String) -> Int { return 0 } // prod: event.emit cap_call
+
+// run a native build step; emit its event; return its exit code
+fn step(name: String, cmd: String) -> Int {
+    emit("build.step.start", name)
+    let code = run_tool(cmd)
+    if code != 0 {
+        emit("build.step.failed", name)
+        return code
+    }
+    emit("build.step.ok", name)
+    return 0
+}
+
+// --- the pipeline ----------------------------------------------------------------
+
+fn main() -> Int {
+    emit("build.start", "kernel")
+
+    // 1. configure
+    let c1 = step("config", "cp config/kernel.config kernel/.config")
+    if c1 != 0 { return c1 }
+    let c2 = step("olddefconfig", "make -C kernel olddefconfig")
+    if c2 != 0 { return c2 }
+
+    // 2. compile natively (gcc/Kbuild — Crush only conducts)
+    let c3 = step("kernel", "make -C kernel -j8 bzImage")
+    if c3 != 0 { return c3 }
+
+    // 3. assemble a bootable initramfs
+    let c4 = step("initramfs", "mkinitramfs --out build/init.cpio.gz")
+    if c4 != 0 { return c4 }
+
+    // 4. smoke-boot in QEMU
+    let c5 = step("boot", "qemu-run --kernel kernel/arch/x86/boot/bzImage --initrd build/init.cpio.gz")
+    if c5 != 0 { return c5 }
+
+    emit("build.done", "kernel")
+    return 0
+}
+
+main()

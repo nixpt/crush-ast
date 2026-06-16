@@ -1,0 +1,16 @@
+# Test: Async/Await
+# Description: Verifies async function execution, task spawning, and awaiting results.
+
+io.print("Testing MVP async/await")
+
+io.print("Test 1: Simple await with sleep")
+await async.sleep(100)
+io.print("Slept for 100ms")
+
+io.print("Test 2: Sequential awaits")
+await async.sleep(50)
+io.print("First sleep done")
+await async.sleep(50)
+io.print("Second sleep done")
+
+io.print("Async/await MVP tests passed!")

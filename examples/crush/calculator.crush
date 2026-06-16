@@ -1,0 +1,82 @@
+capability system readonly
+
+fn factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+fn fibonacci(n) {
+    if n <= 0 {
+        return 0
+    }
+    if n == 1 {
+        return 1
+    }
+    let a = 0
+    let b = 1
+    let i = 2
+    while i <= n {
+        let temp = a + b
+        let a = b
+        let b = temp
+        let i = i + 1
+    }
+    return b
+}
+
+fn is_prime(n) {
+    if n < 2 {
+        return false
+    }
+    let i = 2
+    while i * i <= n {
+        if n % i == 0 {
+            return false
+        }
+        let i = i + 1
+    }
+    return true
+}
+
+fn result_row(label, value) {
+    return "<tr><td style='padding:8px 16px;color:#a1a1aa;'>" + label + "</td><td style='padding:8px 16px;font-family:monospace;font-weight:600;color:#e4e4e7;'>" + str(value) + "</td></tr>"
+}
+
+fn main() {
+    let html = "<div style='max-width:700px;margin:0 auto;padding:40px 32px;'>"
+    let html = html + "<h1 style='font-size:28px;font-weight:700;margin-bottom:4px;'>Calculator</h1>"
+    let html = html + "<p style='color:#71717a;font-size:13px;margin-bottom:28px;'>Expression evaluator demonstrating Crush arithmetic, variables, and functions</p>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#a78bfa;'>Arithmetic</h2>"
+    let html = html + "<table style='width:100%;background:#0c0c14;border:1px solid #27272a;border-radius:12px;margin-bottom:24px;border-collapse:collapse;'>"
+    let html = html + result_row("2 + 3 * 4", 2 + 3 * 4)
+    let html = html + result_row("(10 - 3) * 2", (10 - 3) * 2)
+    let html = html + result_row("100 / 7", 100 / 7)
+    let html = html + result_row("100 % 7", 100 % 7)
+    let html = html + result_row("2 * 2 * 2 * 2", 2 * 2 * 2 * 2)
+    let html = html + "</table>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#60a5fa;'>Functions</h2>"
+    let html = html + "<table style='width:100%;background:#0c0c14;border:1px solid #27272a;border-radius:12px;margin-bottom:24px;border-collapse:collapse;'>"
+    let html = html + result_row("factorial(10)", factorial(10))
+    let html = html + result_row("factorial(12)", factorial(12))
+    let html = html + result_row("fibonacci(10)", fibonacci(10))
+    let html = html + result_row("fibonacci(20)", fibonacci(20))
+    let html = html + "</table>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#34d399;'>Primes</h2>"
+    let html = html + "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px;'>"
+    let n = 2
+    while n <= 100 {
+        if is_prime(n) {
+            let html = html + "<span style='display:inline-block;padding:4px 12px;background:#1e1b4b;color:#c4b5fd;border-radius:8px;font-family:monospace;font-size:13px;'>" + str(n) + "</span>"
+        }
+        let n = n + 1
+    }
+    let html = html + "</div>"
+
+    let html = html + "</div>"
+    return html
+}

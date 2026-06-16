@@ -1,0 +1,5 @@
+fn double(n: Int) {
+    return n * 2
+}
+
+double(21)

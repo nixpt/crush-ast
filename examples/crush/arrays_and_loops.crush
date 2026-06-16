@@ -1,0 +1,44 @@
+# Test: Arrays and Loops
+# Description: Verifies array creation, indexing, looping, and nested loops.
+
+print("Testing Arrays and For Loops");
+
+let arr = [10, 20, 30, 40, 50];
+print("Array created: " + arr);
+
+let size = len(arr);
+print("Array length: " + size);
+
+print("Accessing elements:");
+print(arr[0]);
+print(arr[2]);
+print(arr[4]);
+
+print("Iterating with for loop:");
+for x in arr {
+    print("Item: " + x);
+}
+
+print("Iterating with break (break at 30):");
+for x in arr {
+    if x == 30 {
+        break;
+    }
+    print("Item: " + x);
+}
+
+print("Iterating with continue (skip 30):");
+for x in arr {
+    if x == 30 {
+        continue;
+    }
+    print("Item: " + x);
+}
+
+print("String indexing:");
+let s = "hello";
+print(s[0]);
+print(s[1]);
+print(s[4]);
+
+print("Done");

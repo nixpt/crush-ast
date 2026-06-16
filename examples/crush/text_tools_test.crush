@@ -1,0 +1,10 @@
+# Test: Text Tools
+# Description: Verifies text processing utilities.
+
+io.print("Testing advanced text tools")
+
+io.print("Test 1: text.wc")
+let stats = text.wc("tests/for_loop_test.crush")
+io.print(stats)
+
+io.print("All text tool tests passed!")

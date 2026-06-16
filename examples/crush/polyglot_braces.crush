@@ -1,0 +1,36 @@
+// Test: Polyglot block brace handling (EXO-47)
+// Description: Verifies the parser treats @<lang> { ... } bodies as opaque
+// raw text bounded by a matching '}' at the outer nesting level, with
+// string-aware tracking so braces inside quoted strings don't unbalance
+// the count.
+
+print("polyglot braces test starting")
+
+// 1. Python f-string with {var} interpolation
+@python {
+x = 7
+print(f"value = {x}")
+}
+
+// 2. JS template literal (backtick-quoted string)
+@javascript {
+const s = `x = `
+console.log(s)
+}
+
+// 3. JS nested object literal on a single line — closing brace NOT
+//    flush-left, so this case fails the simple "}-alone-on-a-line" rule
+//    and exercises true brace counting.
+@javascript { const o = {a: 1, b: {c: 2}}; }
+
+// 4. Python triple-quoted string with `{` on its own line inside the
+//    string — proves the lexer tracks triple-quoted strings.
+@python {
+s = """
+{
+line2
+"""
+print(s)
+}
+
+print("polyglot braces test finished")

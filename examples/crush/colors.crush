@@ -1,0 +1,50 @@
+capability system readonly
+
+fn color_swatch(name, hex) {
+    return "<div style='display:flex;align-items:center;gap:12px;padding:12px;background:#0c0c14;border:1px solid #27272a;border-radius:8px;'>" + "<div style='width:48px;height:48px;border-radius:8px;background:" + hex + ";'></div>" + "<div><div style='font-weight:600;font-size:14px;'>" + name + "</div>" + "<div style='color:#71717a;font-family:monospace;font-size:13px;'>" + hex + "</div></div></div>"
+}
+
+fn main() {
+    let html = "<div style='max-width:900px;margin:0 auto;padding:40px 32px;'>"
+    let html = html + "<h1 style='font-size:28px;font-weight:700;margin-bottom:4px;'>Color Palette</h1>"
+    let html = html + "<p style='color:#71717a;font-size:13px;margin-bottom:28px;'>Exosphere theme colors</p>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#a78bfa;'>Primary</h2>"
+    let html = html + "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:24px;'>"
+    let html = html + color_swatch("Purple 400", "#a78bfa")
+    let html = html + color_swatch("Purple 500", "#8b5cf6")
+    let html = html + color_swatch("Purple 600", "#7c3aed")
+    let html = html + color_swatch("Purple 700", "#6d28d9")
+    let html = html + color_swatch("Indigo 950", "#1e1b4b")
+    let html = html + "</div>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#60a5fa;'>Accent</h2>"
+    let html = html + "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:24px;'>"
+    let html = html + color_swatch("Blue 400", "#60a5fa")
+    let html = html + color_swatch("Cyan 400", "#22d3ee")
+    let html = html + color_swatch("Green 400", "#34d399")
+    let html = html + color_swatch("Amber 400", "#fbbf24")
+    let html = html + color_swatch("Rose 400", "#fb7185")
+    let html = html + "</div>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#71717a;'>Neutrals</h2>"
+    let html = html + "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:24px;'>"
+    let html = html + color_swatch("Background", "#050508")
+    let html = html + color_swatch("Surface", "#0a0a12")
+    let html = html + color_swatch("Panel", "#0c0c14")
+    let html = html + color_swatch("Border", "#27272a")
+    let html = html + color_swatch("Muted", "#71717a")
+    let html = html + color_swatch("Text", "#e4e4e7")
+    let html = html + "</div>"
+
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#34d399;'>Status</h2>"
+    let html = html + "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:24px;'>"
+    let html = html + color_swatch("Success", "#34d399")
+    let html = html + color_swatch("Warning", "#fbbf24")
+    let html = html + color_swatch("Error", "#f87171")
+    let html = html + color_swatch("Info", "#60a5fa")
+    let html = html + "</div>"
+
+    let html = html + "</div>"
+    return html
+}

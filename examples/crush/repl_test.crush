@@ -1,0 +1,20 @@
+io.print("Testing CoreUtils in REPL")
+
+io.print("1. File system operations:")
+io.print(fs.pwd())
+fs.mkdir("repl_test", true)
+fs.cd("repl_test")
+fs.touch("test.txt")
+io.print("Created test.txt in repl_test")
+
+io.print("2. Text operations:")
+text.echo("Hello from REPL!", true)
+
+io.print("3. File search:")
+fs.cd("..")
+io.print("Finding files:")
+
+io.print("4. Cleanup:")
+fs.rm("repl_test", true)
+
+io.print("REPL integration test passed!")

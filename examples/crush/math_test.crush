@@ -1,0 +1,23 @@
+# Test: Math Library
+# Description: Verifies mathematical functions and operations.
+
+io.print("Testing math library")
+
+let x = math.sqrt(16)
+io.print(x)
+
+let y = math.pow(2, 8)
+io.print(y)
+
+let pi = math.pi()
+io.print(pi)
+
+io.print(math.abs(-42))
+io.print(math.floor(3.7))
+io.print(math.ceil(3.2))
+io.print(math.round(3.5))
+
+io.print(math.min(5, 3))
+io.print(math.max(5, 3))
+
+io.print("Math library tests passed!")

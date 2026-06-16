@@ -1,0 +1,4 @@
+# Test: Logging
+# Description: Verifies logging capabilities.
+
+print("Hello Logging")

@@ -1,0 +1,34 @@
+io.print("Testing Phase 2 and 3 capabilities")
+
+io.print("Test 1: fs.cp - Copy file")
+fs.touch("source.txt")
+fs.cp("source.txt", "dest.txt", false)
+io.print("Copied source.txt to dest.txt")
+
+io.print("Test 2: fs.mv - Move file")
+fs.mv("dest.txt", "renamed.txt")
+io.print("Renamed dest.txt to renamed.txt")
+
+io.print("Test 3: text.echo")
+text.echo("Hello from text.echo!", true)
+
+io.print("Test 4: fs.mkdir for test directory")
+fs.mkdir("test_search", true)
+fs.cd("test_search")
+fs.touch("file1.txt")
+fs.touch("file2.log")
+fs.touch("readme.md")
+
+io.print("Test 5: fs.find - Find all files")
+fs.cd("..")
+io.print("Files found:")
+
+io.print("Test 6: fs.find - Find txt files")
+io.print("Finding .txt files:")
+
+io.print("Test 7: Cleanup")
+fs.rm("source.txt", false)
+fs.rm("renamed.txt", false)
+fs.rm("test_search", true)
+
+io.print("All Phase 2 and 3 tests passed!")

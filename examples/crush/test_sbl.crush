@@ -1,0 +1,7 @@
+let path = "/mnt/data/../user/./projects//exosphere";
+let normalized = system.path_normalize(path);
+io.print("Path: " + path);
+io.print("Normalized: " + normalized);
+
+let info = system.format_info("node-001", "1.2.3");
+io.print("Info: " + info);

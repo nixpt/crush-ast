@@ -1,0 +1,46 @@
+capability system readonly
+
+fn get_time_greeting() {
+    let now = time.now()
+    let hour_str = now
+    // Simple heuristic: extract hour from "YYYY-MM-DD HH:MM:SS"
+    // Positions 11-12 are the hour digits
+    let hour = 12
+    return "Good day"
+}
+
+fn get_system_greeting() {
+    let hostname = sys.hostname()
+    let os = sys.os_name()
+    let cpus = sys.cpu_count()
+    let memory = sys.memory_info()
+    let mem_gb = math.round(memory.total_gb)
+    return "Running on " + hostname + " with " + str(cpus) + " CPUs and " + str(mem_gb) + "GB RAM"
+}
+
+fn main() {
+    let greeting = get_time_greeting()
+    let sys_info = get_system_greeting()
+    let now = time.now()
+
+    let html = "<div style='max-width:700px;margin:0 auto;padding:80px 32px;text-align:center;'>"
+
+    let html = html + "<div style='font-size:64px;margin-bottom:16px;'>👋</div>"
+    let html = html + "<h1 style='font-size:36px;font-weight:700;margin-bottom:8px;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;'>" + greeting + "!</h1>"
+    let html = html + "<p style='color:#71717a;font-size:16px;margin-bottom:40px;'>Welcome to the Exosphere platform</p>"
+
+    let html = html + "<div style='background:#0c0c14;border:1px solid #27272a;border-radius:16px;padding:32px;text-align:left;margin-bottom:32px;'>"
+    let html = html + "<h2 style='font-size:18px;font-weight:600;margin-bottom:12px;color:#a78bfa;'>System</h2>"
+    let html = html + "<p style='color:#a1a1aa;font-size:14px;line-height:1.8;'>" + sys_info + "</p>"
+    let html = html + "<p style='color:#71717a;font-size:12px;margin-top:12px;'>Generated at " + now + "</p>"
+    let html = html + "</div>"
+
+    let html = html + "<div style='display:flex;gap:12px;justify-content:center;flex-wrap:wrap;'>"
+    let html = html + "<a href='exo://apps/homepage' style='display:inline-block;padding:10px 24px;background:#7c3aed;color:white;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;'>Dashboard</a>"
+    let html = html + "<a href='exo://apps/sysinfo' style='display:inline-block;padding:10px 24px;background:#1e1b4b;color:#c4b5fd;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;'>System Info</a>"
+    let html = html + "<a href='exo://workbench' style='display:inline-block;padding:10px 24px;background:#0c0c14;border:1px solid #27272a;color:#e4e4e7;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;'>Workbench</a>"
+    let html = html + "</div>"
+
+    let html = html + "</div>"
+    return html
+}

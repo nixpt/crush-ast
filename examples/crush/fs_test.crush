@@ -1,0 +1,26 @@
+io.print("Testing fs capabilities")
+
+io.print("Test 1: fs.pwd")
+io.print(fs.pwd())
+
+io.print("Test 2: fs.mkdir")
+fs.mkdir("test_dir", true)
+io.print("Created test_dir")
+
+io.print("Test 3: fs.cd")
+fs.cd("test_dir")
+io.print(fs.pwd())
+
+io.print("Test 4: fs.touch")
+fs.touch("test.txt")
+io.print("Created test.txt")
+
+io.print("Test 5: fs.cd back")
+fs.cd("..")
+io.print(fs.pwd())
+
+io.print("Test 6: fs.rm")
+fs.rm("test_dir", true)
+io.print("Removed test_dir")
+
+io.print("All tests passed!")

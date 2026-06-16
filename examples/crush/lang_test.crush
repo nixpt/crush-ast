@@ -1,0 +1,10 @@
+# Test: Language Basics
+# Description: Verifies fundamental language constructs like variables and basic arithmetic.
+
+# Lang Block Test
+print("Lang starting");
+@python {
+import math
+print("Python Pi:", math.pi)
+}
+print("Lang finished");
