@@ -6,6 +6,7 @@ mod builder;
 mod bundle;
 mod ecap;
 mod manifest;
+mod merkle;
 mod packer;
 mod signer;
 

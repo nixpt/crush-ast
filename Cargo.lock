@@ -449,6 +449,7 @@ dependencies = [
  "crush-vm",
  "ed25519-dalek",
  "flate2",
+ "hex",
  "rand",
  "serde",
  "serde_json",
