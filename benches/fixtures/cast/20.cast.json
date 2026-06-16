@@ -1,0 +1,509 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "seed",
+          "value": {
+            "type": "IntLiteral",
+            "value": 3,
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "a",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "seed",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 12,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "b",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "seed",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 11,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "c",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "seed",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 10,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": ">",
+            "left": {
+              "type": "Var",
+              "name": "a",
+              "meta": {}
+            },
+            "right": {
+              "type": "Var",
+              "name": "b",
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "then_body": [
+            {
+              "type": "Return",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "+",
+                "left": {
+                  "type": "Var",
+                  "name": "a",
+                  "meta": {}
+                },
+                "right": {
+                  "type": "Var",
+                  "name": "c",
+                  "meta": {}
+                },
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "else_body": [
+            {
+              "type": "Return",
+              "value": {
+                "type": "BinaryOp",
+                "operator": "+",
+                "left": {
+                  "type": "Var",
+                  "name": "b",
+                  "meta": {}
+                },
+                "right": {
+                  "type": "Var",
+                  "name": "c",
+                  "meta": {}
+                },
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block04": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 4,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block02": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 2,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block01": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 1,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block03": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 3,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block07": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 7,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block05": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 5,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block08": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 8,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block09": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 9,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block10": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 10,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block12": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 12,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block11": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 11,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "block06": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 6,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

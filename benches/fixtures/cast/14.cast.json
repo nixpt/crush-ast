@@ -1,0 +1,65 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "message",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "StringLiteral",
+              "value": "compile",
+              "meta": {}
+            },
+            "right": {
+              "type": "StringLiteral",
+              "value": " benchmark",
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "suffix",
+          "value": {
+            "type": "StringLiteral",
+            "value": " cast",
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "message",
+              "meta": {}
+            },
+            "right": {
+              "type": "Var",
+              "name": "suffix",
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

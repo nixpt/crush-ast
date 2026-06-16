@@ -1,0 +1,34 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "x",
+          "value": {
+            "type": "IntLiteral",
+            "value": 42,
+            "meta": {}
+          },
+          "type_hint": "Int",
+          "meta": {}
+        },
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "Var",
+            "name": "x",
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

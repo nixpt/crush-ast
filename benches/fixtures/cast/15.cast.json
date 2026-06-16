@@ -1,0 +1,118 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "a",
+          "value": {
+            "type": "IntLiteral",
+            "value": 1,
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "b",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "a",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 1,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "c",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "b",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 1,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "d",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "c",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 1,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "e",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "d",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 1,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "Var",
+            "name": "e",
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

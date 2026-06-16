@@ -1,0 +1,43 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "ExprStmt",
+          "expr": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "IntLiteral",
+              "value": 2,
+              "meta": {}
+            },
+            "right": {
+              "type": "BinaryOp",
+              "operator": "*",
+              "left": {
+                "type": "IntLiteral",
+                "value": 3,
+                "meta": {}
+              },
+              "right": {
+                "type": "IntLiteral",
+                "value": 4,
+                "meta": {}
+              },
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

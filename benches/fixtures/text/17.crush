@@ -1,0 +1,9 @@
+fn main() {
+    let x = 10 - 4
+    let y = 8 - 3
+    if x == y {
+        return 1
+    } else {
+        return x + y
+    }
+}

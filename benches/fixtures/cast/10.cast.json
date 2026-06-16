@@ -1,0 +1,43 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "While",
+          "condition": {
+            "type": "BoolLiteral",
+            "value": false,
+            "meta": {}
+          },
+          "body": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "IntLiteral",
+                "value": 1,
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "IntLiteral",
+            "value": 9,
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

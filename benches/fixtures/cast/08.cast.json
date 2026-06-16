@@ -1,0 +1,76 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "ok",
+          "value": {
+            "type": "BoolLiteral",
+            "value": true,
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "If",
+          "condition": {
+            "type": "BinaryOp",
+            "operator": "&&",
+            "left": {
+              "type": "Var",
+              "name": "ok",
+              "meta": {}
+            },
+            "right": {
+              "type": "BinaryOp",
+              "operator": "<",
+              "left": {
+                "type": "IntLiteral",
+                "value": 3,
+                "meta": {}
+              },
+              "right": {
+                "type": "IntLiteral",
+                "value": 4,
+                "meta": {}
+              },
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "then_body": [
+            {
+              "type": "Return",
+              "value": {
+                "type": "IntLiteral",
+                "value": 1,
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "else_body": [
+            {
+              "type": "Return",
+              "value": {
+                "type": "IntLiteral",
+                "value": 2,
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

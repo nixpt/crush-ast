@@ -1,0 +1,24 @@
+fn block01(x: Int) { return x + 1 }
+fn block02(x: Int) { return x + 2 }
+fn block03(x: Int) { return x + 3 }
+fn block04(x: Int) { return x + 4 }
+fn block05(x: Int) { return x + 5 }
+fn block06(x: Int) { return x + 6 }
+fn block07(x: Int) { return x + 7 }
+fn block08(x: Int) { return x + 8 }
+fn block09(x: Int) { return x + 9 }
+fn block10(x: Int) { return x + 10 }
+fn block11(x: Int) { return x + 11 }
+fn block12(x: Int) { return x + 12 }
+
+fn main() {
+    let seed = 3
+    let a = seed + 12
+    let b = seed + 11
+    let c = seed + 10
+    if a > b {
+        return a + c
+    } else {
+        return b + c
+    }
+}

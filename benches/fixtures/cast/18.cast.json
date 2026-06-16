@@ -1,0 +1,119 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "a",
+          "value": {
+            "type": "ArrayLiteral",
+            "elements": [
+              {
+                "type": "IntLiteral",
+                "value": 1,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 2,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 3,
+                "meta": {}
+              }
+            ],
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "VarDecl",
+          "name": "b",
+          "value": {
+            "type": "ArrayLiteral",
+            "elements": [
+              {
+                "type": "IntLiteral",
+                "value": 4,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 5,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 6,
+                "meta": {}
+              }
+            ],
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "For",
+          "variable": "x",
+          "iterable": {
+            "type": "Var",
+            "name": "a",
+            "meta": {}
+          },
+          "body": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "Var",
+                "name": "x",
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "For",
+          "variable": "y",
+          "iterable": {
+            "type": "Var",
+            "name": "b",
+            "meta": {}
+          },
+          "body": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "Var",
+                "name": "y",
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "IntLiteral",
+            "value": 0,
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

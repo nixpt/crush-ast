@@ -1,0 +1,13 @@
+fn unused01(x: Int) { return x + 1 }
+fn unused02(x: Int) { return x + 2 }
+fn unused03(x: Int) { return x + 3 }
+fn unused04(x: Int) { return x + 4 }
+fn unused05(x: Int) { return x + 5 }
+fn unused06(x: Int) { return x + 6 }
+fn unused07(x: Int) { return x + 7 }
+fn unused08(x: Int) { return x + 8 }
+
+fn main() {
+    let seed = 8
+    return seed + 1
+}

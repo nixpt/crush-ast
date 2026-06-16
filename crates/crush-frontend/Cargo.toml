@@ -13,3 +13,11 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "cast_compile"
+path = "../../benches/cast_compile.rs"
+harness = false

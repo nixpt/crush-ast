@@ -1,0 +1,5 @@
+fn main() {
+    let message = "compile" + " benchmark"
+    let suffix = " cast"
+    return message + suffix
+}

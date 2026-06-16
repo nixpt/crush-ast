@@ -1,0 +1,6 @@
+fn main() {
+    while false {
+        1
+    }
+    return 9
+}

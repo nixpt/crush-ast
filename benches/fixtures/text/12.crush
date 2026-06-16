@@ -1,0 +1,8 @@
+fn main() {
+    let flag = 5 > 3
+    if flag {
+        return 100
+    } else {
+        return 200
+    }
+}

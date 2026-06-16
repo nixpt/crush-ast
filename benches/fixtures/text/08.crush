@@ -1,0 +1,8 @@
+fn main() {
+    let ok = true
+    if ok && (3 < 4) {
+        return 1
+    } else {
+        return 2
+    }
+}

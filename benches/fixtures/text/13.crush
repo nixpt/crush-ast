@@ -1,0 +1,8 @@
+fn main() {
+    let a = 1 * 3
+    let b = 2 * 5
+    let c = 3 * 7
+    let first = a + b + c
+    let second = first * 2 - a
+    return first + second
+}

@@ -1,0 +1,60 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "Call",
+            "function": "double",
+            "args": [
+              {
+                "type": "IntLiteral",
+                "value": 21,
+                "meta": {}
+              }
+            ],
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    },
+    "double": {
+      "params": [
+        [
+          "n",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "*",
+            "left": {
+              "type": "Var",
+              "name": "n",
+              "meta": {}
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 2,
+              "meta": {}
+            },
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}

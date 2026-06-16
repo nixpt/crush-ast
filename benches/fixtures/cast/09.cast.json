@@ -1,0 +1,81 @@
+{
+  "cast_version": "1.0.0",
+  "entry": "main",
+  "lang": "crush",
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {
+          "type": "VarDecl",
+          "name": "values",
+          "value": {
+            "type": "ArrayLiteral",
+            "elements": [
+              {
+                "type": "IntLiteral",
+                "value": 1,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 2,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 3,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 4,
+                "meta": {}
+              },
+              {
+                "type": "IntLiteral",
+                "value": 5,
+                "meta": {}
+              }
+            ],
+            "meta": {}
+          },
+          "type_hint": "Any",
+          "meta": {}
+        },
+        {
+          "type": "For",
+          "variable": "item",
+          "iterable": {
+            "type": "Var",
+            "name": "values",
+            "meta": {}
+          },
+          "body": [
+            {
+              "type": "ExprStmt",
+              "expr": {
+                "type": "Var",
+                "name": "item",
+                "meta": {}
+              },
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "type": "Return",
+          "value": {
+            "type": "IntLiteral",
+            "value": 5,
+            "meta": {}
+          },
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  },
+  "ai_meta": null
+}
