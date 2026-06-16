@@ -4,6 +4,7 @@ pub mod semantics;
 pub mod optimizer;
 pub mod compiler;
 pub mod render;
+pub mod import_system;
 
 use anyhow::Result;
 
