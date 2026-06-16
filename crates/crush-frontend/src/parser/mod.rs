@@ -183,6 +183,13 @@ impl Parser {
         }
     }
 
+    /// Optionally consume a semicolon (statement terminator)
+    fn maybe_semicolon(&mut self) {
+        if matches!(self.peek(), Token::Semicolon(_)) {
+            self.advance();
+        }
+    }
+
     /// Synchronize to the next statement boundary
     fn synchronize(&mut self) {
         let start_pos = self.pos;
@@ -532,12 +539,14 @@ impl Parser {
             Token::Return(_) => self.parse_return_statement(),
             Token::Break(_) => {
                 self.advance();
+                self.maybe_semicolon();
                 Ok(Statement::Break {
                     meta: HashMap::new(),
                 })
             }
             Token::Continue(_) => {
                 self.advance();
+                self.maybe_semicolon();
                 Ok(Statement::Continue {
                     meta: HashMap::new(),
                 })
@@ -592,6 +601,8 @@ impl Parser {
         self.expect(Token::Assign(SourceLocation { line: 0, col: 0 }))?;
 
         let value = self.parse_expression()?;
+
+        self.maybe_semicolon();
 
         Ok(Statement::VarDecl {
             name,
@@ -708,6 +719,8 @@ impl Parser {
             None
         };
 
+        self.maybe_semicolon();
+
         Ok(Statement::Return {
             value,
             meta: HashMap::new(),
@@ -750,6 +763,8 @@ impl Parser {
     fn parse_throw_statement(&mut self) -> Result<Statement, ()> {
         self.expect(Token::Throw(SourceLocation { line: 0, col: 0 }))?;
         let value = self.parse_expression()?;
+
+        self.maybe_semicolon();
 
         Ok(Statement::Throw {
             value,
@@ -859,6 +874,8 @@ impl Parser {
     /// Parse expression statement
     fn parse_expression_statement(&mut self) -> Result<Statement, ()> {
         let expr = self.parse_expression()?;
+
+        self.maybe_semicolon();
 
         Ok(Statement::ExprStmt {
             expr,

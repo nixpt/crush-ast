@@ -28,6 +28,10 @@ impl SemanticAnalyzer {
     }
 
     pub fn check(&mut self, program: &Program) -> Result<()> {
+        // Register built-in functions
+        self.functions.insert("len".to_string(), (vec![Type::Any], Type::Int));
+        self.functions.insert("print".to_string(), (vec![Type::Any], Type::Null));
+
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;
 

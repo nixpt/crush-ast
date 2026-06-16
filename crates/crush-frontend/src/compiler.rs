@@ -965,6 +965,16 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if function == "print" {
+                    self.all_permissions.insert("io.print".to_string());
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "io.print", "argc": args.len()}),
+                        meta,
+                    ));
                 } else if function == "str.contains" {
                     if args.len() != 2 {
                         bail!("str.contains() expects exactly 2 arguments");

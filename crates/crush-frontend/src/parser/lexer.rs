@@ -688,6 +688,22 @@ impl Lexer {
                     Ok(Token::Ident("|".to_string(), location)) // Single | as ident for now
                 }
             }
+            '#' => {
+                // Single-line comment (same as //)
+                self.advance();
+                let mut value = String::new();
+                while let Some(ch) = self.peek() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    value.push(ch);
+                    self.advance();
+                }
+                Ok(Token::Comment(
+                    value,
+                    location,
+                ))
+            }
             '@' => {
                 self.advance();
                 match self.read_identifier() {
