@@ -1,0 +1,16 @@
+[package]
+name = "crush-python"
+version = "0.2.0"
+edition = "2024"
+description = "Python bindings for crush-cast — parse and validate CAST IR from Python"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "crush_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+crush-cast.workspace = true
+serde_json.workspace = true
+pyo3 = { version = "0.23", features = ["extension-module", "abi3", "abi3-py311"] }

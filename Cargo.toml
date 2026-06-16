@@ -20,6 +20,7 @@ members = [
     "crates/crush-frontend",
     "crates/crush-pkg",
     "crates/crush-installer",
+    "crates/crush-python",
 ]
 
 [workspace.package]
