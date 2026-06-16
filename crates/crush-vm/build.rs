@@ -38,6 +38,7 @@ fn main() {
             "ARR_GET":  0x61,
             "ARR_SET":  0x62,
             "ARR_LEN":  0x63,
+            "EXEC_LANG": 0x70,
             "HALT":     0xFF
         },
         "operand_kinds": {
@@ -51,6 +52,7 @@ fn main() {
             "JNZ":      "addr",
             "CAP_CALL": "cap",
             "CALL":     "func",
+            "EXEC_LANG": "str",
             "NEW_ARRAY": "count"
         }
     });

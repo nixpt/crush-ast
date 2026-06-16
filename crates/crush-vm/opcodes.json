@@ -33,6 +33,7 @@
     "ARR_GET": 97,
     "ARR_SET": 98,
     "ARR_LEN": 99,
+    "EXEC_LANG": 112,
     "HALT": 255
   },
   "operand_kinds": {
@@ -46,6 +47,7 @@
     "JNZ": "addr",
     "CAP_CALL": "cap",
     "CALL": "func",
+    "EXEC_LANG": "str",
     "NEW_ARRAY": "count"
   }
 }

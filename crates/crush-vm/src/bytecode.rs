@@ -52,6 +52,7 @@ pub const NEW_ARRAY: u8 = 0x60;
 pub const ARR_GET: u8 = 0x61;
 pub const ARR_SET: u8 = 0x62;
 pub const ARR_LEN: u8 = 0x63;
+pub const EXEC_LANG: u8 = 0x70;
 pub const HALT: u8 = 0xFF;
 
 /// How an opcode's operand bytes are interpreted.
@@ -95,6 +96,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         JMP | JZ | JNZ => Some(OperandKind::Addr),
         CAP_CALL  => Some(OperandKind::Cap),
         CALL      => Some(OperandKind::Func),
+        EXEC_LANG => Some(OperandKind::Str),
         NEW_ARRAY => Some(OperandKind::Count),
         _ => None,
     }

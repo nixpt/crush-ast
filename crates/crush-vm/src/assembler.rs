@@ -229,6 +229,7 @@ pub fn disassemble(program: &Program) -> String {
         (LOAD, "LOAD"), (STORE, "STORE"),
         (JMP, "JMP"), (JZ, "JZ"), (JNZ, "JNZ"),
         (PRINT, "PRINT"), (CAP_CALL, "CAP_CALL"), (CALL, "CALL"), (RET, "RET"),
+        (EXEC_LANG, "EXEC_LANG"),
         (NEW_ARRAY, "NEW_ARRAY"), (ARR_GET, "ARR_GET"), (ARR_SET, "ARR_SET"),
         (ARR_LEN, "ARR_LEN"), (HALT, "HALT"),
     ].iter().copied().collect();
@@ -303,6 +304,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "JMP" => Some(JMP), "JZ" => Some(JZ), "JNZ" => Some(JNZ),
         "PRINT" => Some(PRINT), "CAP_CALL" => Some(CAP_CALL),
         "CALL" => Some(CALL), "RET" => Some(RET),
+        "EXEC_LANG" => Some(EXEC_LANG),
         "NEW_ARRAY" => Some(NEW_ARRAY), "ARR_GET" => Some(ARR_GET),
         "ARR_SET" => Some(ARR_SET), "ARR_LEN" => Some(ARR_LEN),
         "HALT" => Some(HALT),

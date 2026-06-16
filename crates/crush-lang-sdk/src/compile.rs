@@ -156,6 +156,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
                 "index" => "ARR_GET".to_string(),
+                "exec_lang" => {
+                    let args_json = serde_json::to_string(&instr.args)
+                        .map_err(|e| anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}"))?;
+                    format!("EXEC_LANG {args_json:?}")
+                }
                 "export_var" => "PRINT".to_string(),
                 "new_obj" => anyhow::bail!("object literal not supported in CVM1 at {fname}:{i}"),
                 "get_field" => anyhow::bail!("field access not supported in CVM1 at {fname}:{i}"),
