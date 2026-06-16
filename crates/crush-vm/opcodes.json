@@ -34,6 +34,8 @@
     "ARR_GET": 97,
     "ARR_SET": 98,
     "ARR_LEN": 99,
+    "ARR_PUSH": 100,
+    "ARR_POP": 101,
     "EXEC_LANG": 112,
     "HALT": 255
   },

@@ -232,7 +232,8 @@ pub fn disassemble(program: &Program) -> String {
         (PRINT, "PRINT"), (CAP_CALL, "CAP_CALL"), (CALL, "CALL"), (RET, "RET"),
         (EXEC_LANG, "EXEC_LANG"),
         (NEW_ARRAY, "NEW_ARRAY"), (ARR_GET, "ARR_GET"), (ARR_SET, "ARR_SET"),
-        (ARR_LEN, "ARR_LEN"), (HALT, "HALT"),
+        (ARR_LEN, "ARR_LEN"), (ARR_PUSH, "ARR_PUSH"), (ARR_POP, "ARR_POP"),
+        (HALT, "HALT"),
     ].iter().copied().collect();
 
     let mut ip = 0usize;
@@ -309,6 +310,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "EXEC_LANG" => Some(EXEC_LANG),
         "NEW_ARRAY" => Some(NEW_ARRAY), "ARR_GET" => Some(ARR_GET),
         "ARR_SET" => Some(ARR_SET), "ARR_LEN" => Some(ARR_LEN),
+        "ARR_PUSH" => Some(ARR_PUSH), "ARR_POP" => Some(ARR_POP),
         "HALT" => Some(HALT),
         _ => None,
     }

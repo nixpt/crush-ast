@@ -39,6 +39,8 @@ fn main() {
             "ARR_GET":  0x61,
             "ARR_SET":  0x62,
             "ARR_LEN":  0x63,
+            "ARR_PUSH": 0x64,
+            "ARR_POP":  0x65,
             "EXEC_LANG": 0x70,
             "HALT":     0xFF
         },

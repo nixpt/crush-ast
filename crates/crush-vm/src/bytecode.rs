@@ -53,6 +53,8 @@ pub const NEW_ARRAY: u8 = 0x60;
 pub const ARR_GET: u8 = 0x61;
 pub const ARR_SET: u8 = 0x62;
 pub const ARR_LEN: u8 = 0x63;
+pub const ARR_PUSH: u8 = 0x64;
+pub const ARR_POP: u8 = 0x65;
 pub const EXEC_LANG: u8 = 0x70;
 pub const HALT: u8 = 0xFF;
 
@@ -89,7 +91,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | HALT
         | ADD | SUB | MUL | DIV | MOD
         | EQ | LT | GT | NOT
-        | ARR_GET | ARR_SET | ARR_LEN => Some(OperandKind::None),
+        | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),

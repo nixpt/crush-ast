@@ -13,10 +13,10 @@
 use std::collections::HashMap;
 
 use crate::bytecode::{
-    self, ADD, ARR_GET, ARR_LEN, ARR_SET, CALL, CAP_CALL, DIV, DUP, EQ,
-    EXEC_LANG, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY, NOP,
-    NOT, POP, PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, RET,
-    STORE, SUB, SWAP, Program,
+    self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
+    DIV, DUP, EQ, EXEC_LANG, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL,
+    NEW_ARRAY, NOP, NOT, POP, PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL,
+    PUSH_STR, RET, STORE, SUB, SWAP, Program,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -334,6 +334,18 @@ pub fn run_with_caps(
                 let v = pop!();
                 let len = need_array(v)?.len();
                 push!(Value::Int(len as i64));
+            }
+            ARR_PUSH => {
+                let val = pop!();
+                let mut arr = need_array(pop!())?;
+                arr.push(val);
+                push!(Value::Array(arr));
+            }
+            ARR_POP => {
+                let mut arr = need_array(pop!())?;
+                let val = arr.pop().unwrap_or(Value::Null);
+                push!(Value::Array(arr));
+                push!(val);
             }
             LOAD => {
                 let slot = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap());
