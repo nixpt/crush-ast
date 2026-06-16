@@ -9,7 +9,6 @@ use crush_vm::vm::Value;
 /// Register all standard library capabilities on the given [`HostCaps`] registry.
 pub fn register(caps: &mut HostCaps) {
     // String capabilities
-    caps.register(Box::new(StrLenCap));
     caps.register(Box::new(StrSplitCap));
     caps.register(Box::new(StrJoinCap));
     caps.register(Box::new(StrTrimCap));
@@ -94,7 +93,13 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
         .map(|v| match v {
             Value::Str(s) => s.clone(),
             Value::Int(i) => i.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::Float(f) => {
+                if f.fract() == 0.0 && f.is_finite() {
+                    format!("{f:.1}")
+                } else {
+                    f.to_string()
+                }
+            }
             Value::Null => String::new(),
             Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
         })
@@ -127,7 +132,13 @@ fn value_to_string(v: &Value) -> String {
     match v {
         Value::Str(s) => s.clone(),
         Value::Int(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Float(f) => {
+            if f.fract() == 0.0 && f.is_finite() {
+                format!("{f:.1}")
+            } else {
+                f.to_string()
+            }
+        }
         Value::Null => String::new(),
         Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
     }
@@ -154,11 +165,6 @@ macro_rules! str_cap {
         }
     };
 }
-
-str_cap!(StrLenCap, "len", 1, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    Ok(Some(Value::Int(s.len() as i64)))
-});
 
 str_cap!(StrSplitCap, "split", 2, |args: &[Value]| {
     let s = get_str(args, 0)?;
@@ -834,14 +840,6 @@ mod tests {
     }
 
     #[test]
-    fn test_str_len() {
-        let caps = setup_caps();
-        let cap = caps.get("str.len").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string())]).unwrap();
-        assert_eq!(result, Some(Value::Int(5)));
-    }
-
-    #[test]
     fn test_str_split() {
         let caps = setup_caps();
         let cap = caps.get("str.split").unwrap();
@@ -1179,6 +1177,7 @@ mod tests {
     }
 
     // JSON tests
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_json_parse() {
         let caps = setup_caps();
@@ -1187,6 +1186,7 @@ mod tests {
         assert!(matches!(result, Some(Value::Array(arr)) if arr.len() == 3));
     }
 
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_json_stringify() {
         let caps = setup_caps();
@@ -1195,6 +1195,7 @@ mod tests {
         assert_eq!(result, Some(Value::Str("[1,2]".to_string())));
     }
 
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_json_stringify_pretty() {
         let caps = setup_caps();
@@ -1268,6 +1269,7 @@ mod tests {
     }
 
     // Regex tests
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_regex_test() {
         let caps = setup_caps();
@@ -1276,6 +1278,7 @@ mod tests {
         assert_eq!(cap.call(vec![Value::Str(r"\d+".to_string()), Value::Str("abc".to_string())]).unwrap(), Some(Value::Int(0)));
     }
 
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_regex_match() {
         let caps = setup_caps();
@@ -1284,6 +1287,7 @@ mod tests {
         assert!(matches!(result, Some(Value::Array(arr)) if arr.len() >= 2));
     }
 
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_regex_find_all() {
         let caps = setup_caps();
@@ -1292,6 +1296,7 @@ mod tests {
         assert!(matches!(result, Some(Value::Array(arr)) if arr.len() == 3));
     }
 
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_regex_replace() {
         let caps = setup_caps();
@@ -1305,6 +1310,7 @@ mod tests {
         assert_eq!(s, "aXbXc");
     }
 
+    #[cfg(feature = "stdlib")]
     #[test]
     fn test_regex_split() {
         let caps = setup_caps();
