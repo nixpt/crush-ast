@@ -40,6 +40,9 @@ pub mod graphics;
 pub mod stdlib;
 pub mod runtime;
 pub mod repl;
+pub mod repl_util;
+#[cfg(feature = "repl-helper")]
+pub mod repl_helper;
 
 // Re-export the core crush-vm types a host author needs.
 pub use crush_vm::{assemble, disassemble, Program, Quotas, VmError, VmResult};

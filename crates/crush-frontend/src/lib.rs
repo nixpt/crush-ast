@@ -5,6 +5,8 @@ pub mod optimizer;
 pub mod compiler;
 pub mod render;
 pub mod import_system;
+pub mod language_walkers;
+pub mod ai_runtime;
 
 use anyhow::Result;
 

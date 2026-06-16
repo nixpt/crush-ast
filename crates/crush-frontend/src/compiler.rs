@@ -71,6 +71,9 @@ impl Compiler {
                 } = stmt
                 {
                     let mut func_instrs = Vec::new();
+                    for (param_name, _) in params {
+                        func_instrs.push(self.create_instr("store", serde_json::json!({"name": param_name}), meta));
+                    }
                     for inner_stmt in body {
                         self.compile_stmt(inner_stmt, &mut func_instrs)?;
                     }
@@ -94,6 +97,9 @@ impl Compiler {
             }
 
             // Second pass: Compile main function instructions
+            for (param_name, _) in &func.params {
+                instrs.push(self.create_instr("store", serde_json::json!({"name": param_name}), &func.meta));
+            }
             for stmt in &func.body {
                 if !matches!(stmt, Statement::FunctionDef { .. }) {
                     self.compile_stmt(stmt, &mut instrs)?;
