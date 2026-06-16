@@ -1,8 +1,10 @@
 [package]
-license = "MIT OR Apache-2.0"
+license.workspace = true
+description = "JavaScript walker — parses JS/TS source code into CAST IR"
 name = "js_walker"
 version = "0.1.0"
 edition = "2021"
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true

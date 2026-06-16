@@ -2,8 +2,9 @@
 name = "crush-cast"
 version = "0.2.0"
 edition = "2024"
+repository.workspace = true
 description = "Crush Abstract Syntax Tree (CAST) - Stable Intermediate Representation"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [features]
 default = []

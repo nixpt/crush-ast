@@ -2,8 +2,9 @@
 name = "crush-frontend"
 version = "0.2.0"
 edition = "2024"
+repository.workspace = true
 description = "Portable Crush language frontend: parser, semantic analyzer, optimizer, and CASM compiler"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [dependencies]
 crush-cast.workspace = true

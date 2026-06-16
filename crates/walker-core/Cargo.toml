@@ -1,8 +1,10 @@
 [package]
-license = "MIT OR Apache-2.0"
+license.workspace = true
+description = "Walker core — Walker trait, BaseWalker, and capability mappings"
 name = "walker-core"
 version = "0.1.0"
 edition = "2021"
+repository.workspace = true
 
 [dependencies]
 tree-sitter.workspace = true

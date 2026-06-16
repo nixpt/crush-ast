@@ -3,7 +3,7 @@ name = "crush-lang-sdk"
 version = "0.2.0"
 edition = "2024"
 description = "Rust SDK for hosting and extending the crush-vm CVM1 runtime"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 repository = "https://github.com/nixpt/crush-ast"
 
 [[bin]]

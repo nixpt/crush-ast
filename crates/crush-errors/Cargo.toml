@@ -2,8 +2,9 @@
 name = "crush-errors"
 version = "0.2.0"
 edition = "2024"
+repository.workspace = true
 description = "Unified error types for the CRUSH runtime"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [dependencies]
 thiserror.workspace = true

@@ -2,8 +2,9 @@
 name = "crush-vm"
 version = "0.2.0"
 edition = "2024"
+repository.workspace = true
 description = "CVM1 binary bytecode assembler, disassembler, and sandboxed interpreter — standalone Crush runtime outside exosphere"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [[bin]]
 name = "crush-vm"

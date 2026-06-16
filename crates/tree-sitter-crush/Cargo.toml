@@ -1,8 +1,10 @@
 [package]
-license = "MIT OR Apache-2.0"
+license.workspace = true
+description = "Tree-sitter grammar for the Crush programming language"
 name = "tree-sitter-crush"
 version = "0.1.0"
 edition = "2021"
+repository.workspace = true
 
 [lib]
 path = "src/lib.rs"

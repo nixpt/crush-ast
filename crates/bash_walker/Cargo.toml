@@ -1,8 +1,10 @@
 [package]
-license = "MIT OR Apache-2.0"
+license.workspace = true
+description = "Bash language walker — parses shell scripts into CAST IR"
 name = "bash_walker"
 version = "0.1.0"
 edition = "2021"
+repository.workspace = true
 
 [dependencies]
 casm.workspace = true
