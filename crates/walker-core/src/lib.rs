@@ -13,7 +13,10 @@
 //!
 //! ## Implementing a Walker
 //!
-//! ```rust
+//! ```rust,ignore
+//! // The example below requires a real tree-sitter grammar crate.
+//! // Substitute `tree_sitter_yourlang` and `tree_sitter::Language` for
+//! // your target language.
 //! use walker_core::{Walker, BaseWalker};
 //! use crush_cast;
 //! use anyhow::Result;
@@ -22,23 +25,24 @@
 //!
 //! impl Walker for MyLangWalker {
 //!     fn language(&self) -> tree_sitter::Language {
-//!         tree_sitter_mylang::language()
+//!         todo!("return tree_sitter_yourlang::language()")
 //!     }
-//!     
-//!     fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<ast::Program> {
+//!
+//!     fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<crush_cast::Program> {
 //!         let base = BaseWalker::new(source);
 //!         let root = tree.root_node();
-//!         
+//!
 //!         // Transform tree to CAST using base utilities
-//!         let meta = base.create_meta(root, "mylang", "input.mylang");
-//!         
-//!         // ... build AST ...
-//!         
-//!         Ok(ast::Program {
-//!             version: "0.2".to_string(),
+//!         let _meta = base.create_meta(root, "yourlang", "input.ext");
+//!
+//!         // ... build AST nodes ...
+//!
+//!         Ok(crush_cast::Program {
+//!             cast_version: "0.2".to_string(),
 //!             entry: "main".to_string(),
-//!             lang: Some("mylang".to_string()),
+//!             lang: Some("yourlang".to_string()),
 //!             functions: Default::default(),
+//!             ai_meta: None,
 //!         })
 //!     }
 //! }
