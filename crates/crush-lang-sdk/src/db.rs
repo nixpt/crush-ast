@@ -26,6 +26,7 @@ fn params_from_values(values: &[Value]) -> Vec<rusqlite::types::Value> {
 fn crush_value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(b),
         Value::Int(i) => serde_json::Value::Number((*i).into()),
         Value::Float(f) => serde_json::Value::Number(
             serde_json::Number::from_f64(*f).unwrap_or(0.into()),
@@ -38,6 +39,7 @@ fn crush_value_to_json(v: &Value) -> serde_json::Value {
 fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
     match v {
         Value::Null => rusqlite::types::Value::Null,
+        Value::Bool(b) => rusqlite::types::Value::Integer(if b { 1 } else { 0 }),
         Value::Int(i) => rusqlite::types::Value::Integer(*i),
         Value::Float(f) => rusqlite::types::Value::Real(*f),
         Value::Str(s) => rusqlite::types::Value::Text(s.clone()),

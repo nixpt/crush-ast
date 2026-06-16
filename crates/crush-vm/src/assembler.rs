@@ -224,6 +224,7 @@ pub fn disassemble(program: &Program) -> String {
     let name_of: HashMap<u8, &str> = [
         (NOP, "NOP"), (PUSH, "PUSH"), (PUSH_STR, "PUSH_STR"), (POP, "POP"),
         (DUP, "DUP"), (SWAP, "SWAP"), (PUSH_F64, "PUSH_F64"), (PUSH_NULL, "PUSH_NULL"),
+        (PUSH_BOOL, "PUSH_BOOL"),
         (ADD, "ADD"), (SUB, "SUB"), (MUL, "MUL"), (DIV, "DIV"), (MOD, "MOD"),
         (EQ, "EQ"), (LT, "LT"), (GT, "GT"), (NOT, "NOT"),
         (LOAD, "LOAD"), (STORE, "STORE"),
@@ -297,6 +298,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "NOP" => Some(NOP), "PUSH" => Some(PUSH), "PUSH_STR" => Some(PUSH_STR),
         "POP" => Some(POP), "DUP" => Some(DUP), "SWAP" => Some(SWAP),
         "PUSH_F64" => Some(PUSH_F64), "PUSH_NULL" => Some(PUSH_NULL),
+        "PUSH_BOOL" => Some(PUSH_BOOL),
         "ADD" => Some(ADD), "SUB" => Some(SUB), "MUL" => Some(MUL),
         "DIV" => Some(DIV), "MOD" => Some(MOD),
         "EQ" => Some(EQ), "LT" => Some(LT), "GT" => Some(GT), "NOT" => Some(NOT),

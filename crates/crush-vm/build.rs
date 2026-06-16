@@ -16,6 +16,7 @@ fn main() {
             "SWAP":     0x05,
             "PUSH_F64": 0x06,
             "PUSH_NULL": 0x07,
+            "PUSH_BOOL": 0x08,
             "ADD":      0x10,
             "SUB":      0x11,
             "MUL":      0x12,

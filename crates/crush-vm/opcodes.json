@@ -11,6 +11,7 @@
     "SWAP": 5,
     "PUSH_F64": 6,
     "PUSH_NULL": 7,
+    "PUSH_BOOL": 8,
     "ADD": 16,
     "SUB": 17,
     "MUL": 18,

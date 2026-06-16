@@ -41,6 +41,7 @@ pub fn len(value: &Value) -> Result<i64, CapabilityError> {
 pub fn value_as_text(value: &crush_vm::vm::Value) -> String {
     match value {
         Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
         Value::Int(i) => i.to_string(),
         Value::Float(f) => {
             if f.fract() == 0.0 && f.is_finite() {

@@ -82,7 +82,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "push_bool" => {
                     let v = instr.args["value"].as_bool()
                         .ok_or_else(|| anyhow::anyhow!("push_bool missing value at {fname}:{i}"))?;
-                    format!("PUSH {}", if v { 1 } else { 0 })
+                    format!("PUSH_BOOL {}", if v { 1 } else { 0 })
                 }
                 "push_null" => "PUSH_NULL".to_string(),
                 "pop" => "POP".to_string(),

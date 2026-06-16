@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use crate::bytecode::{
     self, ADD, ARR_GET, ARR_LEN, ARR_SET, CALL, CAP_CALL, DIV, DUP, EQ,
     EXEC_LANG, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY, NOP,
-    NOT, POP, PRINT, PUSH, PUSH_F64, PUSH_NULL, PUSH_STR, RET, STORE, SUB,
-    SWAP, Program,
+    NOT, POP, PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, RET,
+    STORE, SUB, SWAP, Program,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -63,10 +63,11 @@ pub enum VmError {
     CapArity { cap: String, expected: usize, got: usize },
 }
 
-/// Stack value — the five types the CVM1 supports.
+/// Stack value — the types the CVM1 supports.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
+    Bool(bool),
     Int(i64),
     Float(f64),
     Str(String),
@@ -78,6 +79,7 @@ impl Value {
     fn type_name(&self) -> &'static str {
         match self {
             Value::Null      => "null",
+            Value::Bool(_)   => "bool",
             Value::Int(_)    => "int",
             Value::Float(_)  => "float",
             Value::Str(_)    => "str",
@@ -85,10 +87,11 @@ impl Value {
         }
     }
 
-    /// Python truthiness: 0 / 0.0 / "" / null / [] are falsy.
+    /// Python truthiness: 0 / 0.0 / "" / null / [] / false are falsy.
     fn is_truthy(&self) -> bool {
         match self {
             Value::Null       => false,
+            Value::Bool(b)    => *b,
             Value::Int(i)     => *i != 0,
             Value::Float(f)   => *f != 0.0,
             Value::Str(s)     => !s.is_empty(),
@@ -99,6 +102,7 @@ impl Value {
     fn as_text(&self) -> String {
         match self {
             Value::Null      => "null".to_string(),
+            Value::Bool(b)   => b.to_string(),
             Value::Int(i)    => i.to_string(),
             Value::Float(f)  => {
                 if f.fract() == 0.0 && f.is_finite() {
@@ -234,6 +238,10 @@ pub fn run_with_caps(
                 let v = f64::from_be_bytes(code[ip+1..ip+9].try_into().unwrap());
                 push!(Value::Float(v));
             }
+            PUSH_BOOL => {
+                let v = i64::from_be_bytes(code[ip+1..ip+9].try_into().unwrap());
+                push!(Value::Bool(v != 0));
+            }
             PUSH_NULL => {
                 push!(Value::Null);
             }
@@ -248,7 +256,7 @@ pub fn run_with_caps(
 
             EQ => {
                 let b = pop!(); let a = pop!();
-                push!(Value::Int(if a == b { 1 } else { 0 }));
+                push!(Value::Bool(a == b));
             }
             ADD | SUB | MUL | DIV | MOD | LT | GT => {
                 let b = need_num!(pop!());
@@ -285,15 +293,15 @@ pub fn run_with_caps(
                             Value::Int(ai - bi * trunc_div(ai, bi))
                         }
                     }
-                    LT => Value::Int(if af < bf { 1 } else { 0 }),
-                    GT => Value::Int(if af > bf { 1 } else { 0 }),
+                    LT => Value::Bool(af < bf),
+                    GT => Value::Bool(af > bf),
                     _ => unreachable!(),
                 };
                 push!(result);
             }
             NOT => {
                 let v = pop!();
-                push!(Value::Int(if v.is_truthy() { 0 } else { 1 }));
+                push!(Value::Bool(!v.is_truthy()));
             }
             NEW_ARRAY => {
                 let count = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;

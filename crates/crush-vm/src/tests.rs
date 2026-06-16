@@ -51,19 +51,19 @@ fn float_push() {
 #[test]
 fn comparisons() {
     let r = run_src("PUSH 3\nPUSH 5\nLT\nHALT");
-    assert_eq!(r.stack, vec![Value::Int(1)]);
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
     let r = run_src("PUSH 5\nPUSH 3\nGT\nHALT");
-    assert_eq!(r.stack, vec![Value::Int(1)]);
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
     let r = run_src("PUSH 5\nPUSH 5\nEQ\nHALT");
-    assert_eq!(r.stack, vec![Value::Int(1)]);
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
 }
 
 #[test]
 fn logical_not() {
     let r = run_src("PUSH 0\nNOT\nHALT");
-    assert_eq!(r.stack, vec![Value::Int(1)]);
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
     let r = run_src("PUSH 42\nNOT\nHALT");
-    assert_eq!(r.stack, vec![Value::Int(0)]);
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
 }
 
 // ── stack ops ────────────────────────────────────────────────────────────────

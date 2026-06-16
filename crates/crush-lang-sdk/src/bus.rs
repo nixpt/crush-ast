@@ -174,6 +174,7 @@ impl HostCap for MessageBusRecvCap {
 fn crush_value_to_json(v: &crush_vm::vm::Value) -> serde_json::Value {
     match v {
         crush_vm::vm::Value::Null => serde_json::Value::Null,
+        crush_vm::vm::Value::Bool(b) => serde_json::Value::Bool(*b),
         crush_vm::vm::Value::Int(i) => serde_json::Value::Number((*i).into()),
         crush_vm::vm::Value::Float(f) => serde_json::Value::Number(
             serde_json::Number::from_f64(*f).unwrap_or(0.into()),

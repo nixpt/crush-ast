@@ -30,6 +30,7 @@ pub const DUP: u8 = 0x04;
 pub const SWAP: u8 = 0x05;
 pub const PUSH_F64: u8 = 0x06;
 pub const PUSH_NULL: u8 = 0x07;
+pub const PUSH_BOOL: u8 = 0x08;
 pub const ADD: u8 = 0x10;
 pub const SUB: u8 = 0x11;
 pub const MUL: u8 = 0x12;
@@ -89,7 +90,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         | ADD | SUB | MUL | DIV | MOD
         | EQ | LT | GT | NOT
         | ARR_GET | ARR_SET | ARR_LEN => Some(OperandKind::None),
-        PUSH     => Some(OperandKind::I64),
+        PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),
         LOAD | STORE => Some(OperandKind::Slot),
