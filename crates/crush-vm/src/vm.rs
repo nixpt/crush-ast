@@ -16,6 +16,7 @@ use crate::bytecode::{
     self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
     BITAND, BITNOT, BITOR, BITXOR, SHL, SHR,
     DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP,
+    MAKE_RANGE, STR_CONTAINS, STR_SPLIT, STR_REPLACE, STR_JOIN,
     JNZ, JZ, LOAD, LT, MOD, MUL, NEG, NE, LE, GE, AND, OR,
     NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT,
     PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, RET, SET_FIELD, STORE,
@@ -543,6 +544,60 @@ pub fn run_with_caps(
                     continue;
                 }
                 return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
+            }
+            STR_CONTAINS => {
+                let needle = pop!();
+                let haystack = pop!();
+                push!(Value::Bool(haystack.as_text().contains(&needle.as_text())));
+            }
+            STR_SPLIT => {
+                let delim = pop!();
+                let s = pop!();
+                let text = s.as_text();
+                let d = delim.as_text();
+                let parts: Vec<Value> = if d.is_empty() {
+                    text.chars().map(|c| Value::Str(c.to_string())).collect()
+                } else {
+                    text.split(&d).map(|p| Value::Str(p.to_string())).collect()
+                };
+                push!(Value::Array(parts));
+            }
+            STR_REPLACE => {
+                let to = pop!();
+                let from = pop!();
+                let s = pop!();
+                push!(Value::Str(s.as_text().replace(&from.as_text(), &to.as_text())));
+            }
+            STR_JOIN => {
+                let delim = pop!();
+                let arr_v = pop!();
+                let d = delim.as_text();
+                match arr_v {
+                    Value::Array(elems) => {
+                        let parts: Vec<String> = elems.iter().map(|v| v.as_text()).collect();
+                        push!(Value::Str(parts.join(&d)));
+                    }
+                    other => return Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+                }
+            }
+            MAKE_RANGE => {
+                let end_v = pop!();
+                let start_v = pop!();
+                let start = match start_v {
+                    Value::Int(i) => i,
+                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                };
+                let end = match end_v {
+                    Value::Int(i) => i,
+                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                };
+                let mut elems = Vec::new();
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
+                push!(Value::Array(elems));
             }
             NEW_OBJ => {
                 push!(Value::Map(std::collections::HashMap::new()));

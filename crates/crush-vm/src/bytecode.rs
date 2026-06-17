@@ -64,6 +64,11 @@ pub const RET: u8 = 0x53;
 pub const ENTER_TRY: u8 = 0x54;
 pub const EXIT_TRY: u8 = 0x55;
 pub const THROW: u8 = 0x56;
+pub const STR_CONTAINS: u8 = 0x57;
+pub const STR_SPLIT: u8 = 0x58;
+pub const STR_REPLACE: u8 = 0x59;
+pub const STR_JOIN: u8 = 0x5A;
+pub const MAKE_RANGE: u8 = 0x5B;
 pub const NEW_ARRAY: u8 = 0x60;
 pub const ARR_GET: u8 = 0x61;
 pub const ARR_SET: u8 = 0x62;
@@ -106,7 +111,8 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT
+        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW
+        | STR_CONTAINS | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | HALT
         | ADD | SUB | MUL | DIV | MOD | NEG
         | EQ | LT | GT | NOT | NE | LE | GE | AND | OR
         | BITAND | BITOR | BITXOR | BITNOT | SHL | SHR

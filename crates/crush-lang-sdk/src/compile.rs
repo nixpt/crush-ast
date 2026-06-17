@@ -48,7 +48,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
         let mut target_labels: HashMap<usize, String> = HashMap::new();
         for (_i, instr) in func.body.iter().enumerate() {
-            if instr.op == "jmp" || instr.op == "jmp_if_not" || instr.op == "enter_try" {
+            if instr.op == "jmp" || instr.op == "jmp_if" || instr.op == "jmp_if_not" || instr.op == "enter_try" {
                 if let Some(target) = instr.args.get("target").and_then(|v| v.as_u64()) {
                     target_labels.entry(target as usize).or_insert_with(unique_label);
                 }
@@ -144,6 +144,13 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         .ok_or_else(|| anyhow::anyhow!("jmp_if_not to unknown target {target} at {fname}:{i}"))?;
                     format!("JZ {label}")
                 }
+                "jmp_if" => {
+                    let target = instr.args["target"].as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("jmp_if missing target at {fname}:{i}"))? as usize;
+                    let label = target_labels.get(&target)
+                        .ok_or_else(|| anyhow::anyhow!("jmp_if to unknown target {target} at {fname}:{i}"))?;
+                    format!("JNZ {label}")
+                }
                 "new_array" => {
                     let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
                     format!("NEW_ARRAY {size}")
@@ -152,11 +159,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
                 "index" => "ARR_GET".to_string(),
-                "make_range" => "CAP_CALL \"make_range\" 2".to_string(),
-                "str_contains" => "CAP_CALL \"str.contains\" 2".to_string(),
-                "str_split" => "CAP_CALL \"str.split\" 2".to_string(),
-                "str_replace" => "CAP_CALL \"str.replace\" 3".to_string(),
-                "str_join" => "CAP_CALL \"str.join\" 2".to_string(),
+                "make_range" => "MAKE_RANGE".to_string(),
+                "str_contains" => "STR_CONTAINS".to_string(),
+                "str_split" => "STR_SPLIT".to_string(),
+                "str_replace" => "STR_REPLACE".to_string(),
+                "str_join" => "STR_JOIN".to_string(),
                 "arr_set" => "ARR_SET".to_string(),
                 "export_var" => "NOP".to_string(),
                 "exec_lang" => {

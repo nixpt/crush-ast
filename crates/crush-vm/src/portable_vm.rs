@@ -499,6 +499,60 @@ impl PortableVm {
                 }
                 return Err(VmError::UnknownCap(format!("uncaught error: {}", value_to_text(&err_val))));
             }
+            STR_CONTAINS => {
+                let needle = self.pop()?;
+                let haystack = self.pop()?;
+                self.push(Value::Bool(value_to_text(&haystack).contains(&value_to_text(&needle))));
+            }
+            STR_SPLIT => {
+                let delim = self.pop()?;
+                let s = self.pop()?;
+                let text = value_to_text(&s);
+                let d = value_to_text(&delim);
+                let parts: Vec<Value> = if d.is_empty() {
+                    text.chars().map(|c| Value::Str(c.to_string())).collect()
+                } else {
+                    text.split(&d).map(|p| Value::Str(p.to_string())).collect()
+                };
+                self.push(Value::Array(parts));
+            }
+            STR_REPLACE => {
+                let to = self.pop()?;
+                let from = self.pop()?;
+                let s = self.pop()?;
+                self.push(Value::Str(value_to_text(&s).replace(&value_to_text(&from), &value_to_text(&to))));
+            }
+            STR_JOIN => {
+                let delim = self.pop()?;
+                let arr_v = self.pop()?;
+                let d = value_to_text(&delim);
+                match arr_v {
+                    Value::Array(elems) => {
+                        let parts: Vec<String> = elems.iter().map(|v| value_to_text(v)).collect();
+                        self.push(Value::Str(parts.join(&d)));
+                    }
+                    other => return Err(VmError::TypeError { expected: "array", got: value_type_name(&other) }),
+                }
+            }
+            MAKE_RANGE => {
+                let end_v = self.pop()?;
+                let start_v = self.pop()?;
+                let start = match start_v {
+                    Value::Int(i) => i,
+                    other => return Err(VmError::TypeError { expected: "int", got: value_type_name(&other) }),
+                };
+                let end = match end_v {
+                    Value::Int(i) => i,
+                    other => return Err(VmError::TypeError { expected: "int", got: value_type_name(&other) }),
+                };
+                let mut elems = Vec::new();
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
+                self.push(Value::Array(elems));
+            }
             HALT => {
                 self.halted = true;
             }
