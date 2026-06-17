@@ -395,13 +395,12 @@ impl Optimizer {
                     Expression::StringLiteral { value: l_val, .. },
                     Expression::StringLiteral { value: r_val, .. },
                 ) = (&**left, &**right)
+                    && operator == "+"
                 {
-                    if operator == "+" {
-                        *expr = Expression::StringLiteral {
-                            value: format!("{}{}", l_val, r_val),
-                            meta: meta.clone(),
-                        };
-                    }
+                    *expr = Expression::StringLiteral {
+                        value: format!("{}{}", l_val, r_val),
+                        meta: meta.clone(),
+                    };
                 }
             }
             Expression::UnaryOp {
@@ -410,22 +409,22 @@ impl Optimizer {
                 meta,
             } => {
                 Self::optimize_expr(operand);
-                if let Expression::IntLiteral { value, .. } = &**operand {
-                    if operator == "-" {
-                        *expr = Expression::IntLiteral {
-                            value: -value,
-                            meta: meta.clone(),
-                        };
-                        return;
-                    }
+                if let Expression::IntLiteral { value, .. } = &**operand
+                    && operator == "-"
+                {
+                    *expr = Expression::IntLiteral {
+                        value: -value,
+                        meta: meta.clone(),
+                    };
+                    return;
                 }
-                if let Expression::BoolLiteral { value, .. } = &**operand {
-                    if operator == "!" {
-                        *expr = Expression::BoolLiteral {
-                            value: !value,
-                            meta: meta.clone(),
-                        };
-                    }
+                if let Expression::BoolLiteral { value, .. } = &**operand
+                    && operator == "!"
+                {
+                    *expr = Expression::BoolLiteral {
+                        value: !value,
+                        meta: meta.clone(),
+                    };
                 }
             }
             Expression::Call { args, .. } => {

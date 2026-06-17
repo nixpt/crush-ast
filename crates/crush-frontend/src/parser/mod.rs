@@ -1561,24 +1561,24 @@ impl Parser {
 
         let module_path = path.join(".");
         let mut alias = None;
-        if let Token::Ident(s, _) = self.peek() {
-            if s == "as" {
-                self.advance();
-                match self.peek() {
-                    Token::Ident(a, _) => {
-                        alias = Some(a.clone());
-                        self.advance();
-                    }
-                    _ => {
-                        let (line, col) = self.get_location(self.peek());
-                        self.errors.push(ParseError::Expected {
-                            line,
-                            col,
-                            expected: "alias name".to_string(),
-                            found: format!("{:?}", self.peek()),
-                        });
-                        return Err(());
-                    }
+        if let Token::Ident(s, _) = self.peek()
+            && s == "as"
+        {
+            self.advance();
+            match self.peek() {
+                Token::Ident(a, _) => {
+                    alias = Some(a.clone());
+                    self.advance();
+                }
+                _ => {
+                    let (line, col) = self.get_location(self.peek());
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: "alias name".to_string(),
+                        found: format!("{:?}", self.peek()),
+                    });
+                    return Err(());
                 }
             }
         }
@@ -1652,16 +1652,13 @@ impl Parser {
         }
 
         let mut alias = None;
-        if let Token::Ident(s, _) = self.peek() {
-            if s == "as" {
+        if let Token::Ident(s, _) = self.peek()
+            && s == "as"
+        {
+            self.advance();
+            if let Token::Ident(a, _) = self.peek() {
+                alias = Some(a.clone());
                 self.advance();
-                match self.peek() {
-                    Token::Ident(a, _) => {
-                        alias = Some(a.clone());
-                        self.advance();
-                    }
-                    _ => {}
-                }
             }
         }
 
@@ -1713,16 +1710,13 @@ impl Parser {
         }
 
         let mut alias = None;
-        if let Token::Ident(s, _) = self.peek() {
-            if s == "as" {
+        if let Token::Ident(s, _) = self.peek()
+            && s == "as"
+        {
+            self.advance();
+            if let Token::Ident(a, _) = self.peek() {
+                alias = Some(a.clone());
                 self.advance();
-                match self.peek() {
-                    Token::Ident(a, _) => {
-                        alias = Some(a.clone());
-                        self.advance();
-                    }
-                    _ => {}
-                }
             }
         }
 
@@ -1843,16 +1837,13 @@ impl Parser {
         }
 
         let mut alias = None;
-        if let Token::Ident(s, _) = self.peek() {
-            if s == "as" {
+        if let Token::Ident(s, _) = self.peek()
+            && s == "as"
+        {
+            self.advance();
+            if let Token::Ident(a, _) = self.peek() {
+                alias = Some(a.clone());
                 self.advance();
-                match self.peek() {
-                    Token::Ident(a, _) => {
-                        alias = Some(a.clone());
-                        self.advance();
-                    }
-                    _ => {}
-                }
             }
         }
 
@@ -1899,16 +1890,13 @@ impl Parser {
         };
 
         let mut alias = None;
-        if let Token::Ident(s, _) = self.peek() {
-            if s == "as" {
+        if let Token::Ident(s, _) = self.peek()
+            && s == "as"
+        {
+            self.advance();
+            if let Token::Ident(a, _) = self.peek() {
+                alias = Some(a.clone());
                 self.advance();
-                match self.peek() {
-                    Token::Ident(a, _) => {
-                        alias = Some(a.clone());
-                        self.advance();
-                    }
-                    _ => {}
-                }
             }
         }
 
@@ -2022,12 +2010,9 @@ let z = 100
         assert!(errors.len() > 1);
         // Check that errors have line/col information
         for error in &errors {
-            match error {
-                ParseError::Expected { line, col, .. } => {
-                    assert!(*line > 0);
-                    assert!(*col > 0);
-                }
-                _ => {}
+            if let ParseError::Expected { line, col, .. } = error {
+                assert!(*line > 0);
+                assert!(*col > 0);
             }
         }
     }

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
+#[derive(Default)]
 pub enum CastType {
     /// 64-bit integer
     Int,
@@ -27,15 +28,10 @@ pub enum CastType {
         returns: Box<CastType>,
     },
     /// Any/Dynamic type
+    #[default]
     Any,
     /// Reference to a defined type
     TypeRef(String),
-}
-
-impl Default for CastType {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 impl std::fmt::Display for CastType {

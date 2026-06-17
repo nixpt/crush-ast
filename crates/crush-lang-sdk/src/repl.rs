@@ -82,6 +82,7 @@ impl ReplState {
     fn to_exec_program(&self) -> (Program, bool) {
         let mut program = self.to_program();
         let mut converted = false;
+<<<<<<< HEAD
         if let Some(main) = program.functions.get_mut("main") {
             if let Some(Statement::ExprStmt { expr, meta }) = main.body.last().cloned() {
                 let returns_value = match &expr {
@@ -99,6 +100,25 @@ impl ReplState {
                     });
                     converted = true;
                 }
+=======
+        if let Some(main) = program.functions.get_mut("main")
+            && let Some(Statement::ExprStmt { expr, meta }) = main.body.last().cloned()
+        {
+            let returns_value = match &expr {
+                Expression::CapabilityCall { name, .. } => crush_vm::capabilities()
+                    .get(name.as_str())
+                    .map(|spec| spec.returns)
+                    .unwrap_or(true),
+                _ => true,
+            };
+            if returns_value {
+                main.body.pop();
+                main.body.push(Statement::Return {
+                    value: Some(expr),
+                    meta,
+                });
+                converted = true;
+>>>>>>> main
             }
         }
         (program, converted)

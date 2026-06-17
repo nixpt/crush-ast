@@ -94,7 +94,7 @@ fn crushc_compiled_program_runs() {
     assert!(out.exists());
 
     let run = Command::new(crush_run_bin())
-        .args(&["run", out.to_str().unwrap()])
+        .args(["run", out.to_str().unwrap()])
         .output()
         .expect("failed to execute crush-run");
     assert!(

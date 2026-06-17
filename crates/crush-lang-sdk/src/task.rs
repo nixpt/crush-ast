@@ -102,10 +102,7 @@ impl HostCap for TaskStartCap {
         }
         let name = crate::caps::value_as_text(&args[0]);
         let command = crate::caps::value_as_text(&args[1]);
-        let task_args: Vec<String> = args[2..]
-            .iter()
-            .map(|v| crate::caps::value_as_text(v))
-            .collect();
+        let task_args: Vec<String> = args[2..].iter().map(crate::caps::value_as_text).collect();
 
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         let id = state.start(&name, &command, &task_args)?;

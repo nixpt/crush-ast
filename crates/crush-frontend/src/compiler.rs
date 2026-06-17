@@ -38,11 +38,11 @@ impl Compiler {
 
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
-        for (name, _) in &program.functions {
+        for name in program.functions.keys() {
             self.local_functions.insert(name.clone());
         }
         // Pre-pass: track VarDecls and populate LangBlock variables
-        for (_, func) in &mut program.functions {
+        for func in program.functions.values_mut() {
             let mut declared: Vec<String> = Vec::new();
             for stmt in &mut func.body {
                 match stmt {
@@ -52,10 +52,8 @@ impl Compiler {
                     Statement::FunctionDef { name, .. } => {
                         self.local_functions.insert(name.clone());
                     }
-                    Statement::LangBlock { variables, .. } => {
-                        if variables.is_empty() {
-                            *variables = declared.clone();
-                        }
+                    Statement::LangBlock { variables, .. } if variables.is_empty() => {
+                        *variables = declared.clone();
                     }
                     _ => {}
                 }

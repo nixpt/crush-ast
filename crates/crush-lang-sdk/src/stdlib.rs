@@ -263,7 +263,7 @@ str_cap!(StrPadLeftCap, "pad_left", 3, |args: &[Value]| {
     if s.len() >= len {
         return Ok(Some(Value::Str(s)));
     }
-    let padding: String = std::iter::repeat(pad_char).take(len - s.len()).collect();
+    let padding: String = std::iter::repeat_n(pad_char, len - s.len()).collect();
     Ok(Some(Value::Str(format!("{}{}", padding, s))))
 });
 
@@ -275,7 +275,7 @@ str_cap!(StrPadRightCap, "pad_right", 3, |args: &[Value]| {
     if s.len() >= len {
         return Ok(Some(Value::Str(s)));
     }
-    let padding: String = std::iter::repeat(pad_char).take(len - s.len()).collect();
+    let padding: String = std::iter::repeat_n(pad_char, len - s.len()).collect();
     Ok(Some(Value::Str(format!("{}{}", s, padding))))
 });
 

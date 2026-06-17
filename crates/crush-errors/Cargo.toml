@@ -3,8 +3,12 @@ name = "crush-errors"
 version = "0.2.0"
 edition = "2024"
 repository.workspace = true
+homepage.workspace = true
 description = "Unified error types for the CRUSH runtime"
 license.workspace = true
+readme = "README.md"
+keywords = ["crush", "error", "error-handling", "diagnostics"]
+categories = ["rust-patterns"]
 
 [dependencies]
 thiserror.workspace = true

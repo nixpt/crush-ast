@@ -5,6 +5,10 @@ name = "casm"
 version = "0.2.0"
 edition = "2024"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["crush", "bytecode", "vm", "compiler"]
+categories = ["compilers"]
 
 [dependencies]
 crush-errors.workspace = true

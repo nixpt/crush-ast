@@ -37,16 +37,10 @@ pub enum ParseError {
 }
 
 /// Source location information
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SourceLocation {
     pub line: usize,
     pub col: usize,
-}
-
-impl Default for SourceLocation {
-    fn default() -> Self {
-        Self { line: 0, col: 0 }
-    }
 }
 
 /// Token types for Crush lexer with source location tracking

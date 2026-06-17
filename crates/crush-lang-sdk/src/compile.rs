@@ -35,7 +35,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     let mut lines: Vec<String> = Vec::new();
     let mut perms: HashSet<String> = HashSet::new();
 
-    for (_fname, _func) in &program.functions {
+    for _func in program.functions.values() {
         perms.extend(program.manifest.permissions.clone());
     }
 
@@ -47,6 +47,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         lines.push(format!(".func {fname}"));
 
         let mut target_labels: HashMap<usize, String> = HashMap::new();
+<<<<<<< HEAD
         for (_i, instr) in func.body.iter().enumerate() {
             if instr.op == "jmp"
                 || instr.op == "jmp_if"
@@ -58,6 +59,15 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         .entry(target as usize)
                         .or_insert_with(unique_label);
                 }
+=======
+        for instr in func.body.iter() {
+            if (instr.op == "jmp" || instr.op == "jmp_if_not" || instr.op == "enter_try")
+                && let Some(target) = instr.args.get("target").and_then(|v| v.as_u64())
+            {
+                target_labels
+                    .entry(target as usize)
+                    .or_insert_with(unique_label);
+>>>>>>> main
             }
         }
 
@@ -120,9 +130,26 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "le" => "LE".to_string(),
                 "ge" => "GE".to_string(),
                 "not" => "NOT".to_string(),
+<<<<<<< HEAD
                 "neg" => "NEG".to_string(),
                 "and" => "AND".to_string(),
                 "or" => "OR".to_string(),
+=======
+                "and" => {
+                    let lend = unique_label();
+                    let lfalse = unique_label();
+                    format!(
+                        "SWAP\n    DUP\n    JZ {lfalse}\n    POP\n    JMP {lend}\n{lfalse}:\n    POP\n    PUSH 0\n{lend}:"
+                    )
+                }
+                "or" => {
+                    let ltrue = unique_label();
+                    let lend = unique_label();
+                    format!(
+                        "SWAP\n    DUP\n    JNZ {ltrue}\n    POP\n    JMP {lend}\n{ltrue}:\n    POP\n    PUSH 1\n{lend}:"
+                    )
+                }
+>>>>>>> main
                 "call" => {
                     let fn_name = instr.args["function"]
                         .as_str()
@@ -251,10 +278,10 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
             suppress_next_pop = Some(!cap_returns_value(name));
             cleaned.push(line.clone());
         } else if trimmed == "POP" {
-            if let Some(suppress) = suppress_next_pop.take() {
-                if suppress {
-                    continue;
-                }
+            if let Some(suppress) = suppress_next_pop.take()
+                && suppress
+            {
+                continue;
             }
             suppress_next_pop = None;
             cleaned.push(line.clone());

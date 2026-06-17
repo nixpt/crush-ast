@@ -164,6 +164,12 @@ impl LanguageWalker for SubprocessWalker {
     }
 }
 
+impl Default for WalkerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WalkerRegistry {
     pub fn new() -> Self {
         let mut registry = Self {

@@ -48,3 +48,30 @@ Rejected alternatives:
 Outcome:
 New crates/crush-pkg/src/site.rs (build/write/extract_site_capsule) + CLI 'site' and 'site-extract' subcommands. 5 site tests + CLI smoke (signed build -> extract -> byte-identical). crush-pkg 44+8 tests green, workspace check green. Hosting via openko exo-light noted as future (captured).
 
+
+## 2026-06-17T02:30:51-05:00 — [STRATEGIC] [VERIFIED] Published core crates (crush-errors, crush-cast, casm) v0.2.0 to crates.io
+
+Reason:
+External dependents (openko/fabric, crush-symbols, mycelium-mobile, arniko) can now consume versioned registry deps instead of path deps. Preceded by a clean/format pass (rustfmt the never-formatted core crates, auto-safe clippy), metadata (keywords/categories/readme/homepage), and a licensing reconciliation.
+
+Artifacts: crates/crush-cast/Cargo.toml
+
+Rejected alternatives:
+- **triple-license OCPL/MIT/Apache:OCPL is not an SPDX identifier (crates.io rejects it) and 'at your option' nullifies its protocol-protection intent; OCPL belongs on the openko protocol layer, not foundation IR crates**
+- **OCPL-governed non-SPDX publish (license-file):unusual for a library, loses SPDX badge, contradicts the permissive intent for foundation crates**
+
+Outcome:
+3 crates live at 0.2.0; v0.2.0 tagged+pushed; license now clean dual MIT OR Apache-2.0; copyright 'Antarik / Exosphere Authors' -> 'The Crush Authors'; LICENSE-MIT+LICENSE-APACHE bundled per-crate; stale __pycache__ pyc untracked. Publish order crush-errors -> crush-cast/casm.
+
+
+## 2026-06-17T03:00:46-05:00 — [STRATEGIC] [VERIFIED] Published Tier-1 crates (crush-vm, crush-frontend, crush-lang-sdk, tree-sitter-crush) v0.2.0 to crates.io
+
+Reason:
+Completes the registry surface so external dependents (openko/fabric, mycelium-mobile, arniko -> crush-lang-sdk; crush-symbols -> tree-sitter-crush) can drop path-deps. Same prep as core-3 (fmt, clippy, metadata, dual MIT/Apache LICENSE bundled, keywords <20ch).
+
+Rejected alternatives:
+- **publish crush-vm with its build.rs intact:build.rs wrote opcodes.json into the source tree -> cargo verify rejects it and it breaks consumers building from the read-only registry cache; dropped build.rs, opcodes.json kept as static artifact**
+
+Outcome:
+All 4 live at 0.2.0. tree-sitter-crush bumped 0.1.0->0.2.0 (workspace consistency). crush.so (prebuilt grammar) untracked+excluded. Hit crates.io new-crate rate limit on the 7th publish; retried crush-lang-sdk after the window. 7/7 crush crates now on crates.io.
+

@@ -71,7 +71,7 @@ fn host_fs_capabilities() {
         .permission("io.print")
         .permission("fs.read")
         .line(".func main")
-        .line(&format!(r#"PUSH_STR "{}""#, file_name))
+        .line(format!(r#"PUSH_STR "{}""#, file_name))
         .line(r#"CAP_CALL "fs.read" 1"#)
         .line(r#"CAP_CALL "io.print" 1"#)
         .line("HALT")

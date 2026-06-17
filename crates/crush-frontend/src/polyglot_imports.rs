@@ -392,18 +392,17 @@ impl PolyglotContext {
             "javascript" => {
                 for line in code.lines() {
                     let line = line.trim();
-                    if line.contains("require(") {
-                        if let Some(start) = line.find("require('") {
-                            if let Some(end) = line[start + 9..].find("')") {
-                                let module = &line[start + 9..start + 9 + end];
-                                implicit.push(ImportStatement::PolyglotModule {
-                                    language: language.to_string(),
-                                    module_path: module.to_string(),
-                                    alias: None,
-                                    selective: vec![],
-                                });
-                            }
-                        }
+                    if line.contains("require(")
+                        && let Some(start) = line.find("require('")
+                        && let Some(end) = line[start + 9..].find("')")
+                    {
+                        let module = &line[start + 9..start + 9 + end];
+                        implicit.push(ImportStatement::PolyglotModule {
+                            language: language.to_string(),
+                            module_path: module.to_string(),
+                            alias: None,
+                            selective: vec![],
+                        });
                     }
                 }
             }

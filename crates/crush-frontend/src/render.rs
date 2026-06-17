@@ -50,14 +50,14 @@ impl Renderer {
             self.render_function_header(name, func);
         }
 
-        if let Some(main) = program.functions.get("main") {
-            if !main.body.is_empty() {
-                if !first {
-                    self.newline();
-                }
-                for stmt in &main.body {
-                    self.render_statement(stmt);
-                }
+        if let Some(main) = program.functions.get("main")
+            && !main.body.is_empty()
+        {
+            if !first {
+                self.newline();
+            }
+            for stmt in &main.body {
+                self.render_statement(stmt);
             }
         }
     }
@@ -538,10 +538,8 @@ impl Renderer {
             Expression::FloatLiteral { value, .. } => {
                 let s = value.to_string();
                 self.push_str(&s);
-                if s.parse::<i64>().is_ok() {
-                    if !s.contains('.') && !s.contains('e') {
-                        self.push_str(".0");
-                    }
+                if s.parse::<i64>().is_ok() && !s.contains('.') && !s.contains('e') {
+                    self.push_str(".0");
                 }
             }
             Expression::StringLiteral { value, .. } => {
@@ -1220,7 +1218,7 @@ let z = y
 
     #[test]
     fn render_round_trip_function() {
-        let source = "\
+        let _source = "\
 fn helper(x: Int) {
     return x * 2
 }

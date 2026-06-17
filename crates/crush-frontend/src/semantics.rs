@@ -121,11 +121,11 @@ impl SemanticAnalyzer {
                 let depth = self.scopes.len();
                 match self.infer_function_return_type(func) {
                     Ok(inferred) => {
-                        if let Some((_, ret)) = self.functions.get_mut(name) {
-                            if *ret != inferred {
-                                *ret = inferred;
-                                changed = true;
-                            }
+                        if let Some((_, ret)) = self.functions.get_mut(name)
+                            && *ret != inferred
+                        {
+                            *ret = inferred;
+                            changed = true;
                         }
                     }
                     Err(_) => self.scopes.truncate(depth),

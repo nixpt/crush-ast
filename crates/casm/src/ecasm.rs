@@ -425,10 +425,10 @@ impl EcasmFile {
 
         // Write footer
         writer.write_all(&self.header_hash)?;
-        if self.header.flags.contains(EcasmFlags::SIGNED) {
-            if let Some(sig) = &self.signature {
-                writer.write_all(sig)?;
-            }
+        if self.header.flags.contains(EcasmFlags::SIGNED)
+            && let Some(sig) = &self.signature
+        {
+            writer.write_all(sig)?;
         }
 
         Ok(())

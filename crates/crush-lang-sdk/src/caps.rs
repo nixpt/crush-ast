@@ -23,10 +23,7 @@ pub enum CapabilityError {
 /// Render a slice of CVM1 values as text, the same way `io.print` and
 /// `str.concat` do inside the VM.
 pub fn print(args: &[Value]) -> String {
-    args.iter()
-        .map(|v| value_as_text(v))
-        .collect::<Vec<_>>()
-        .concat()
+    args.iter().map(value_as_text).collect::<Vec<_>>().concat()
 }
 
 /// Alias for [`print`], matching the `str.concat` capability semantics.
