@@ -67,7 +67,7 @@ fn analyze_stmt(
     }
 }
 
-fn is_dangerous_import(module: &str) -> bool {
+pub fn is_dangerous_import(module: &str) -> bool {
     let dangerous = [
         "os", "sys", "subprocess", "socket", "ctypes", "signal",
         "multiprocessing", "threading", "fcntl", "termios",
