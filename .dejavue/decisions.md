@@ -34,3 +34,17 @@ Reason: The tree-sitter-bound Walker trait (`tree_sitter::Language`, `tree_sitte
 ## 2026-06-16 — [ADOPTED] VM type expansion: Value::{Bool, Map, Error, Bytes}
 
 Reason: Previously bools were `Value::Int(0/1)`, maps required exosphere's object model, errors had no runtime type, and binary data was forced through `Value::Str`. Each new type eliminates a gap between the type system and runtime.
+
+## 2026-06-17T00:40:43-05:00 — [STRATEGIC] [VERIFIED] crush-pkg: static-site capsules (bundle a site into a signed ECAP)
+
+Reason:
+Enables 'publish a site as a portable capsule' without exosphere — the surfer sitecapsule investigation showed crush-pkg already has the ECAP format (EcapManifest + sections + Ed25519 sign) but was bytecode-only. Added a site module that bundles a directory of static web assets (each file a SHA-256 EcapSection) into a signed .ecap, plus extract (hash-verified round-trip → servable tree).
+
+Artifacts: crates/crush-pkg/src/site.rs
+
+Rejected alternatives:
+- **Store capsule metadata in manifest.metadata.custom (HashMap<String,serde_json::Value>)**: bincode (the ECAP wire format) cannot deserialize serde_json::Value — it needs deserialize_any, which non-self-describing formats lack. Used a reserved __site__.json section (plain bytes) instead, touching no shared struct.
+
+Outcome:
+New crates/crush-pkg/src/site.rs (build/write/extract_site_capsule) + CLI 'site' and 'site-extract' subcommands. 5 site tests + CLI smoke (signed build -> extract -> byte-identical). crush-pkg 44+8 tests green, workspace check green. Hosting via openko exo-light noted as future (captured).
+
