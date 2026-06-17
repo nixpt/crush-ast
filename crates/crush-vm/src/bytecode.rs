@@ -46,6 +46,12 @@ pub const LE: u8 = 0x25;
 pub const GE: u8 = 0x26;
 pub const AND: u8 = 0x27;
 pub const OR: u8 = 0x28;
+pub const BITAND: u8 = 0x29;
+pub const BITOR: u8 = 0x2A;
+pub const BITXOR: u8 = 0x2B;
+pub const BITNOT: u8 = 0x2C;
+pub const SHL: u8 = 0x2D;
+pub const SHR: u8 = 0x2E;
 pub const LOAD: u8 = 0x30;
 pub const STORE: u8 = 0x31;
 pub const JMP: u8 = 0x40;
@@ -103,6 +109,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT
         | ADD | SUB | MUL | DIV | MOD | NEG
         | EQ | LT | GT | NOT | NE | LE | GE | AND | OR
+        | BITAND | BITOR | BITXOR | BITNOT | SHL | SHR
         | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),

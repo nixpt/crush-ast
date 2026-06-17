@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use crate::bytecode::{
     self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
+    BITAND, BITNOT, BITOR, BITXOR, SHL, SHR,
     DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP,
     JNZ, JZ, LOAD, LT, MOD, MUL, NEG, NE, LE, GE, AND, OR,
     NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT,
@@ -55,6 +56,8 @@ pub enum VmError {
     BadIndex(&'static str),
     #[error("division by zero")]
     DivByZero,
+    #[error("arithmetic overflow")]
+    ArithmeticOverflow,
     #[error("capability not declared in manifest: {0}")]
     CapNotDeclared(String),
     #[error("capability denied by host: {0}")]
@@ -291,15 +294,15 @@ pub fn run_with_caps(
                 let result = match opcode {
                     ADD => {
                         if is_float { Value::Float(af + bf) }
-                        else { Value::Int(to_i64(&a) + to_i64(&b)) }
+                        else { Value::Int(to_i64(&a).checked_add(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
                     }
                     SUB => {
                         if is_float { Value::Float(af - bf) }
-                        else { Value::Int(to_i64(&a) - to_i64(&b)) }
+                        else { Value::Int(to_i64(&a).checked_sub(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
                     }
                     MUL => {
                         if is_float { Value::Float(af * bf) }
-                        else { Value::Int(to_i64(&a) * to_i64(&b)) }
+                        else { Value::Int(to_i64(&a).checked_mul(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
                     }
                     DIV => {
                         if bf == 0.0 { return Err(VmError::DivByZero); }
@@ -342,6 +345,25 @@ pub fn run_with_caps(
                     OR  => Value::Bool(a.is_truthy() || b.is_truthy()),
                     _ => unreachable!(),
                 });
+            }
+            BITAND | BITOR | BITXOR | SHL | SHR => {
+                let b = need_num!(pop!());
+                let a = need_num!(pop!());
+                let ai = to_i64(&a);
+                let bi = to_i64(&b);
+                let result = match opcode {
+                    BITAND => Value::Int(ai & bi),
+                    BITOR  => Value::Int(ai | bi),
+                    BITXOR => Value::Int(ai ^ bi),
+                    SHL    => Value::Int(ai.checked_shl(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
+                    SHR    => Value::Int(ai.checked_shr(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
+                    _ => unreachable!(),
+                };
+                push!(result);
+            }
+            BITNOT => {
+                let a = need_num!(pop!());
+                push!(Value::Int(!to_i64(&a)));
             }
             NOT => {
                 let v = pop!();

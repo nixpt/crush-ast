@@ -144,7 +144,10 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         .ok_or_else(|| anyhow::anyhow!("jmp_if_not to unknown target {target} at {fname}:{i}"))?;
                     format!("JZ {label}")
                 }
-                "new_array" => "NEW_ARRAY 0".to_string(),
+                "new_array" => {
+                    let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    format!("NEW_ARRAY {size}")
+                }
                 "array_push" => "ARR_PUSH".to_string(),
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
@@ -155,7 +158,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "str_replace" => "CAP_CALL \"str.replace\" 3".to_string(),
                 "str_join" => "CAP_CALL \"str.join\" 2".to_string(),
                 "arr_set" => "ARR_SET".to_string(),
-                "export_var" => "PRINT".to_string(),
+                "export_var" => "NOP".to_string(),
                 "exec_lang" => {
                     let args_json = serde_json::to_string(&instr.args)
                         .map_err(|e| anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}"))?;

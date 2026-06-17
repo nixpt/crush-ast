@@ -227,15 +227,15 @@ impl PortableVm {
                 let result = match opcode {
                     ADD => {
                         if is_float { Value::Float(af + bf) }
-                        else { Value::Int(to_i64(&a) + to_i64(&b)) }
+                        else { Value::Int(to_i64(&a).checked_add(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
                     }
                     SUB => {
                         if is_float { Value::Float(af - bf) }
-                        else { Value::Int(to_i64(&a) - to_i64(&b)) }
+                        else { Value::Int(to_i64(&a).checked_sub(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
                     }
                     MUL => {
                         if is_float { Value::Float(af * bf) }
-                        else { Value::Int(to_i64(&a) * to_i64(&b)) }
+                        else { Value::Int(to_i64(&a).checked_mul(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
                     }
                     DIV => {
                         if bf == 0.0 { return Err(VmError::DivByZero); }
@@ -291,6 +291,25 @@ impl PortableVm {
                     OR  => Value::Bool(value_is_truthy(&a) || value_is_truthy(&b)),
                     _ => unreachable!(),
                 });
+            }
+            BITAND | BITOR | BITXOR | SHL | SHR => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let ai = to_i64(&a);
+                let bi = to_i64(&b);
+                let result = match opcode {
+                    BITAND => Value::Int(ai & bi),
+                    BITOR  => Value::Int(ai | bi),
+                    BITXOR => Value::Int(ai ^ bi),
+                    SHL    => Value::Int(ai.checked_shl(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
+                    SHR    => Value::Int(ai.checked_shr(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
+                    _ => unreachable!(),
+                };
+                self.push(result);
+            }
+            BITNOT => {
+                let a = self.pop()?;
+                self.push(Value::Int(!to_i64(&a)));
             }
             NOT => {
                 let a = self.pop()?;
