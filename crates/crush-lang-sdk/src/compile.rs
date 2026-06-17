@@ -173,6 +173,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let esc = args_json.replace('\\', "\\\\").replace('"', "\\\"");
                     format!("EXEC_LANG \"{esc}\"")
                 }
+                "spawn" => "NOP".to_string(),
+                "yield" => "NOP".to_string(),
+                "await" => "NOP".to_string(),
                 "throw" => "THROW".to_string(),
                 "enter_try" => {
                     let target = instr.args["target"].as_u64()
@@ -181,6 +184,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         .ok_or_else(|| anyhow::anyhow!("enter_try to unknown target {target} at {fname}:{i}"))?;
                     format!("ENTER_TRY {label}")
                 }
+                "halt" => "HALT".to_string(),
                 "exit_try" => "EXIT_TRY".to_string(),
                 "new_obj" => "NEW_OBJ".to_string(),
                 "get_field" => {
