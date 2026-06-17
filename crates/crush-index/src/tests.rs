@@ -121,6 +121,7 @@ fn test_invariants_query() {
         description: "no re-entrancy".to_string(),
         applies_to: vec!["execute_one".to_string()],
         consequence: Some("deadlock".to_string()),
+        check_source: None,
     }];
 
     let mut idx = CrushIndex::new();

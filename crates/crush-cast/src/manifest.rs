@@ -80,6 +80,11 @@ pub struct Invariant {
     /// the consequence of a change without needing to trace the full call graph.
     #[serde(default)]
     pub consequence: Option<String>,
+
+    /// Optional source expression that can be evaluated to check this invariant.
+    /// Phase 2b will execute this; Phase 2a only stores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_source: Option<String>,
 }
 
 /// A lightweight changelog entry. Date is ISO 8601 string (YYYY-MM-DD).
@@ -91,6 +96,80 @@ pub struct ChangelogEntry {
     pub date: String,
     /// What changed and why — the commit message essence.
     pub summary: String,
+}
+
+/// Likelihood of an error variant being produced by a function.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorLikelihood {
+    /// >50% of error cases.
+    Likely,
+    /// 5–50% of error cases.
+    Possible,
+    /// <5% of error cases.
+    Rare,
+}
+
+impl std::fmt::Display for ErrorLikelihood {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Likely => write!(f, "likely"),
+            Self::Possible => write!(f, "possible"),
+            Self::Rare => write!(f, "rare"),
+        }
+    }
+}
+
+/// An error variant annotated with a probabilistic likelihood.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct WeightedError {
+    /// Error variant name, e.g. `"NetworkTimeout"`.
+    pub variant: String,
+    /// Likelihood level.
+    pub likelihood: ErrorLikelihood,
+}
+
+/// A `@wip` node declaring in-progress work on a module.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct WipNode {
+    /// One-line description of the in-progress task.
+    pub intent: String,
+    /// Agent or human who started this work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<String>,
+    /// Subtasks already completed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub done: Vec<String>,
+    /// Subtasks still to be done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todo: Vec<String>,
+    /// Open questions blocking or complicating completion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unresolved: Vec<String>,
+}
+
+/// A `@temporary` node declaring technical debt with an intended expiry condition.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct TemporaryNode {
+    /// Why this temporary code exists.
+    pub reason: String,
+    /// Condition under which it should be removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_when: Option<String>,
+    /// Who is responsible for removing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// ISO 8601 date when this block was added, e.g. `"2026-06-17"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<String>,
 }
 
 /// Function-level semantic annotations.
@@ -149,6 +228,10 @@ pub struct FunctionAnnotations {
     /// the full body or request a summary. 0 = trivial, 100 = extremely complex.
     #[serde(default)]
     pub complexity: Option<u8>,
+
+    /// Probabilistic error annotations from `@errors { Variant: likely }` blocks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors_weighted: Vec<WeightedError>,
 }
 
 /// A site in the CAST where a sum type is matched exhaustively.

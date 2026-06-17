@@ -50,6 +50,10 @@ pub struct CrushIndex {
     call_graph: HashMap<String, Vec<CallSite>>,
     /// exhaustive match sites across all programs
     match_sites: Vec<ExhaustiveMatchSite>,
+    /// module_path → @wip node (one per module at most)
+    wip: HashMap<String, crush_cast::manifest::WipNode>,
+    /// (module_path, @temporary node) pairs across all programs
+    temporaries: Vec<(String, crush_cast::manifest::TemporaryNode)>,
 }
 
 impl CrushIndex {
@@ -60,6 +64,8 @@ impl CrushIndex {
             functions: HashMap::new(),
             call_graph: HashMap::new(),
             match_sites: Vec::new(),
+            wip: HashMap::new(),
+            temporaries: Vec::new(),
         }
     }
 
@@ -121,6 +127,14 @@ impl CrushIndex {
 
         // Exhaustive match sites from the enriched CAST
         self.match_sites.extend(program.exhaustive_sites.clone());
+
+        // @wip and @temporary nodes
+        if let Some(wip) = &program.wip {
+            self.wip.insert(module_path.to_string(), wip.clone());
+        }
+        for tmp in &program.temporaries {
+            self.temporaries.push((module_path.to_string(), tmp.clone()));
+        }
     }
 
     // ── query API ────────────────────────────────────────────────────────────
@@ -215,6 +229,18 @@ impl CrushIndex {
     /// Number of modules in the index.
     pub fn module_count(&self) -> usize {
         self.modules.len()
+    }
+
+    /// The @wip node for any module in the index, if one was declared.
+    ///
+    /// Returns the first wip node found (programs typically have at most one).
+    pub fn wip(&self) -> Option<&crush_cast::manifest::WipNode> {
+        self.wip.values().next()
+    }
+
+    /// All @temporary nodes across all programs.
+    pub fn temporaries(&self) -> Vec<&crush_cast::manifest::TemporaryNode> {
+        self.temporaries.iter().map(|(_, t)| t).collect()
     }
 }
 

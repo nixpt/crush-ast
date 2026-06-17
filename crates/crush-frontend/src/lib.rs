@@ -11,6 +11,7 @@ pub mod polyglot_imports;
 pub mod render;
 pub mod semantics;
 pub mod types;
+pub mod wip_check;
 
 use anyhow::Result;
 
@@ -49,7 +50,9 @@ pub fn check_source(
     source: &str,
 ) -> Result<(crush_cast::Program, Vec<diagnostics::CompilerDiagnostic>)> {
     let program = parse_source(source)?;
-    let diags = exhaustive_check::check_exhaustiveness(&program);
+    let mut diags = exhaustive_check::check_exhaustiveness(&program);
+    diags.extend(wip_check::check_wip(&program));
+    diags.extend(wip_check::check_temporaries(&program));
     Ok((program, diags))
 }
 

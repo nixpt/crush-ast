@@ -33,6 +33,8 @@ pub fn register(caps: &mut HostCaps, index: Arc<CrushIndex>) {
     caps.register(Box::new(CodebaseInvariantsCap(Arc::clone(&index))));
     caps.register(Box::new(CodebaseExhaustiveSitesCap(Arc::clone(&index))));
     caps.register(Box::new(CodebaseUncoveredPathsCap(Arc::clone(&index))));
+    caps.register(Box::new(CodebaseWipCap(Arc::clone(&index))));
+    caps.register(Box::new(CodebaseTemporariesCap(Arc::clone(&index))));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -278,6 +280,84 @@ impl HostCap for CodebaseUncoveredPathsCap {
     }
 }
 
+// ── codebase.wip() ───────────────────────────────────────────────────────────
+
+struct CodebaseWipCap(Arc<CrushIndex>);
+
+impl HostCap for CodebaseWipCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec { name: "codebase.wip".to_string(), argc: Some(0), returns: true }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let Some(wip) = self.0.wip() else {
+            return Ok(Some(Value::Null));
+        };
+        Ok(Some(make_map([
+            ("intent", Value::Str(wip.intent.clone())),
+            (
+                "started_by",
+                wip.started_by
+                    .as_deref()
+                    .map(|s| Value::Str(s.to_string()))
+                    .unwrap_or(Value::Null),
+            ),
+            ("done", str_list(&wip.done)),
+            ("todo", str_list(&wip.todo)),
+            ("unresolved", str_list(&wip.unresolved)),
+        ])))
+    }
+}
+
+// ── codebase.temporaries() ───────────────────────────────────────────────────
+
+struct CodebaseTemporariesCap(Arc<CrushIndex>);
+
+impl HostCap for CodebaseTemporariesCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "codebase.temporaries".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let rows: Vec<Value> = self
+            .0
+            .temporaries()
+            .into_iter()
+            .map(|tmp| {
+                make_map([
+                    ("reason", Value::Str(tmp.reason.clone())),
+                    (
+                        "expires_when",
+                        tmp.expires_when
+                            .as_deref()
+                            .map(|s| Value::Str(s.to_string()))
+                            .unwrap_or(Value::Null),
+                    ),
+                    (
+                        "owner",
+                        tmp.owner
+                            .as_deref()
+                            .map(|s| Value::Str(s.to_string()))
+                            .unwrap_or(Value::Null),
+                    ),
+                    (
+                        "added",
+                        tmp.added
+                            .as_deref()
+                            .map(|s| Value::Str(s.to_string()))
+                            .unwrap_or(Value::Null),
+                    ),
+                ])
+            })
+            .collect();
+        Ok(Some(Value::new_array(rows)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +380,7 @@ mod tests {
                     description: "must be true".to_string(),
                     applies_to: vec!["do_thing".to_string()],
                     consequence: Some("boom".to_string()),
+                    check_source: None,
                 }],
                 related: vec!["other".to_string()],
                 exhaustive_types: vec!["MyEnum".to_string()],
@@ -433,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_registers_all_six_codebase_caps() {
+    fn builder_registers_all_codebase_caps() {
         use crate::host_caps::HostCapsBuilder;
         let caps = HostCapsBuilder::new().codebase(make_index()).build();
         for name in [
@@ -443,6 +524,8 @@ mod tests {
             "codebase.invariants",
             "codebase.exhaustive_sites",
             "codebase.uncovered_paths",
+            "codebase.wip",
+            "codebase.temporaries",
         ] {
             assert!(caps.get(name).is_some(), "{name} not registered");
         }

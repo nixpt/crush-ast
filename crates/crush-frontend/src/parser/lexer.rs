@@ -402,6 +402,8 @@ impl Lexer {
             "module", "invariant", "exhaustive-match-sites",
             "errors", "reads", "writes", "does-not-write",
             "covers", "relies-on", "complexity",
+            // Phase 2a additions
+            "wip", "temporary", "decision",
         ];
         if IMPORT_KEYWORDS.contains(&id.as_str()) {
             return Ok(Token::AtIdent(id, at_location));

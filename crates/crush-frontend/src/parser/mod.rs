@@ -6,7 +6,10 @@
 mod lexer;
 pub use lexer::{Lexer, ParseError, SourceLocation, Token};
 
-use crush_cast::manifest::{FunctionAnnotations, Invariant, ModuleManifest};
+use crush_cast::manifest::{
+    ErrorLikelihood, FunctionAnnotations, Invariant, ModuleManifest, TemporaryNode, WeightedError,
+    WipNode,
+};
 use crush_cast::*;
 use crush_cast::{ExternalResourceType, ImportStatement};
 use std::collections::HashMap;
@@ -238,6 +241,8 @@ impl Parser {
         let mut pending_invariants: Vec<Invariant> = Vec::new();
         let mut pending_exhaustive_types: Vec<String> = Vec::new();
         let mut pending_fn_annotations: Option<FunctionAnnotations> = None;
+        let mut pending_wip: Option<WipNode> = None;
+        let mut pending_temporaries: Vec<TemporaryNode> = Vec::new();
 
         self.skip_newlines();
 
@@ -292,6 +297,16 @@ impl Parser {
                             self.advance();
                             let ann = pending_fn_annotations.get_or_insert_with(Default::default);
                             self.parse_fn_annotation_body(&id, ann);
+                            continue;
+                        }
+                        "wip" => {
+                            self.advance();
+                            pending_wip = Some(self.parse_wip_block());
+                            continue;
+                        }
+                        "temporary" => {
+                            self.advance();
+                            pending_temporaries.push(self.parse_temporary_block());
                             continue;
                         }
                         _ => {}
@@ -417,6 +432,8 @@ impl Parser {
             functions,
             ai_meta: None,
             manifest,
+            wip: pending_wip,
+            temporaries: pending_temporaries,
             ..Default::default()
         })
     }
@@ -2075,6 +2092,7 @@ impl Parser {
                                 description: String::new(),
                                 applies_to: Vec::new(),
                                 consequence: None,
+                                check_source: None,
                             }
                         })),
                         "exhaustive_types" => manifest.exhaustive_types = items,
@@ -2109,6 +2127,7 @@ impl Parser {
                 description: String::new(),
                 applies_to: Vec::new(),
                 consequence: None,
+                check_source: None,
             });
         }
         self.advance(); // consume {
@@ -2118,6 +2137,7 @@ impl Parser {
             description: String::new(),
             applies_to: Vec::new(),
             consequence: None,
+            check_source: None,
         };
         self.skip_newlines();
 
@@ -2146,6 +2166,10 @@ impl Parser {
                     let s = self.parse_at_string_value();
                     inv.consequence = if s.is_empty() { None } else { Some(s) };
                 }
+                "check" => {
+                    let s = self.parse_at_string_value();
+                    inv.check_source = if s.is_empty() { None } else { Some(s) };
+                }
                 _ => {
                     self.skip_at_value();
                 }
@@ -2163,7 +2187,14 @@ impl Parser {
     /// Writes into `ann`.
     fn parse_fn_annotation_body(&mut self, name: &str, ann: &mut FunctionAnnotations) {
         match name {
-            "errors" => ann.errors.extend(self.parse_at_items()),
+            "errors" => {
+                self.skip_newlines();
+                if matches!(self.peek(), Token::LBrace(_)) {
+                    ann.errors_weighted.extend(self.parse_weighted_errors());
+                } else {
+                    ann.errors.extend(self.parse_at_items());
+                }
+            }
             "reads" => ann.reads.extend(self.parse_at_items()),
             "writes" => ann.writes.extend(self.parse_at_items()),
             "does-not-write" => ann.does_not_write.extend(self.parse_at_items()),
@@ -2313,6 +2344,156 @@ impl Parser {
             }
         }
         result
+    }
+
+    /// Parse `@wip { intent: "...", todo: [...], ... }` → `WipNode`.
+    fn parse_wip_block(&mut self) -> WipNode {
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            return WipNode::default();
+        }
+        self.advance(); // consume {
+
+        let mut wip = WipNode::default();
+        self.skip_newlines();
+
+        while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let key = self.read_annotation_key();
+            if key.is_empty() {
+                break;
+            }
+            if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+            }
+            match key.as_str() {
+                "intent" => {
+                    wip.intent = self.parse_at_string_value();
+                }
+                "started_by" | "started-by" => {
+                    let s = self.parse_at_string_value();
+                    wip.started_by = if s.is_empty() { None } else { Some(s) };
+                }
+                "done" => {
+                    wip.done = self.parse_at_list();
+                }
+                "todo" => {
+                    wip.todo = self.parse_at_list();
+                }
+                "unresolved" => {
+                    wip.unresolved = self.parse_at_list();
+                }
+                _ => {
+                    self.skip_at_value();
+                }
+            }
+            self.skip_newlines();
+        }
+
+        if matches!(self.peek(), Token::RBrace(_)) {
+            self.advance();
+        }
+        wip
+    }
+
+    /// Parse `@temporary { reason: "...", expires_when: "...", ... }` → `TemporaryNode`.
+    fn parse_temporary_block(&mut self) -> TemporaryNode {
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            return TemporaryNode::default();
+        }
+        self.advance(); // consume {
+
+        let mut tmp = TemporaryNode::default();
+        self.skip_newlines();
+
+        while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let key = self.read_annotation_key();
+            if key.is_empty() {
+                break;
+            }
+            if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+            }
+            match key.as_str() {
+                "reason" => {
+                    tmp.reason = self.parse_at_string_value();
+                }
+                "expires_when" | "expires-when" => {
+                    let s = self.parse_at_string_value();
+                    tmp.expires_when = if s.is_empty() { None } else { Some(s) };
+                }
+                "owner" => {
+                    let s = self.parse_at_string_value();
+                    tmp.owner = if s.is_empty() { None } else { Some(s) };
+                }
+                "added" => {
+                    let s = self.parse_at_string_value();
+                    tmp.added = if s.is_empty() { None } else { Some(s) };
+                }
+                _ => {
+                    self.skip_at_value();
+                }
+            }
+            self.skip_newlines();
+        }
+
+        if matches!(self.peek(), Token::RBrace(_)) {
+            self.advance();
+        }
+        tmp
+    }
+
+    /// Parse `{ Variant: likely, ... }` — a weighted-errors block.
+    fn parse_weighted_errors(&mut self) -> Vec<WeightedError> {
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            return Vec::new();
+        }
+        self.advance(); // consume {
+
+        let mut items = Vec::new();
+        self.skip_newlines();
+
+        while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let variant = self.read_annotation_key();
+            if variant.is_empty() {
+                break;
+            }
+            if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+            }
+            self.skip_newlines();
+            let likelihood_str = self.read_annotation_key();
+            let likelihood = match likelihood_str.as_str() {
+                "likely" => ErrorLikelihood::Likely,
+                "possible" => ErrorLikelihood::Possible,
+                "rare" => ErrorLikelihood::Rare,
+                _ => ErrorLikelihood::Possible, // default
+            };
+            items.push(WeightedError { variant, likelihood });
+            self.skip_newlines();
+            if matches!(self.peek(), Token::Comma(_)) {
+                self.advance();
+                self.skip_newlines();
+            }
+        }
+
+        if matches!(self.peek(), Token::RBrace(_)) {
+            self.advance();
+        }
+        items
+    }
+
+    /// Read a single identifier key from an annotation block (bare ident, no qualifiers).
+    fn read_annotation_key(&mut self) -> String {
+        self.skip_newlines();
+        match self.peek() {
+            Token::Ident(k, _) => {
+                let k = k.clone();
+                self.advance();
+                k
+            }
+            _ => String::new(),
+        }
     }
 
     /// Skip over an unknown annotation value (string, list, or single token).

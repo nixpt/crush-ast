@@ -9,7 +9,8 @@ pub mod pack;
 pub mod types;
 pub mod validate;
 pub use manifest::{
-    ChangelogEntry, ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, SourceLoc,
+    ChangelogEntry, ErrorLikelihood, ExhaustiveMatchSite, FunctionAnnotations, Invariant,
+    ModuleManifest, SourceLoc, TemporaryNode, WeightedError, WipNode,
 };
 pub use pack::{CAST_VERSION, Format, PackError};
 pub use types::CastType;
@@ -34,6 +35,12 @@ pub struct Program {
     /// Set for each type listed in `manifest.exhaustive_types`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exhaustive_sites: Vec<manifest::ExhaustiveMatchSite>,
+    /// Work-in-progress node, if a `@wip { ... }` block was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wip: Option<manifest::WipNode>,
+    /// Technical-debt nodes from `@temporary { ... }` blocks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub temporaries: Vec<manifest::TemporaryNode>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
