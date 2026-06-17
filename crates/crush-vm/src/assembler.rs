@@ -177,11 +177,7 @@ pub fn assemble(
             OperandKind::Slot | OperandKind::Count => {
                 let (v,) = require_args(&p.args, 1, &p.op, p.line)?;
                 let val = parse_int(v, p.line)?;
-<<<<<<< HEAD
-                if val < 0 || val > 0xFFFF {
-=======
                 if !(0..=0xFFFF).contains(&val) {
->>>>>>> main
                     return Err(AssemblyError::new(
                         p.line,
                         format!("operand out of range: {val}"),
@@ -293,15 +289,11 @@ pub fn disassemble(program: &Program) -> String {
         (MUL, "MUL"),
         (DIV, "DIV"),
         (MOD, "MOD"),
-<<<<<<< HEAD
         (NEG, "NEG"),
-=======
->>>>>>> main
         (EQ, "EQ"),
         (LT, "LT"),
         (GT, "GT"),
         (NOT, "NOT"),
-<<<<<<< HEAD
         (NE, "NE"),
         (LE, "LE"),
         (GE, "GE"),
@@ -313,8 +305,6 @@ pub fn disassemble(program: &Program) -> String {
         (BITNOT, "BITNOT"),
         (SHL, "SHL"),
         (SHR, "SHR"),
-=======
->>>>>>> main
         (LOAD, "LOAD"),
         (STORE, "STORE"),
         (JMP, "JMP"),
@@ -327,14 +317,11 @@ pub fn disassemble(program: &Program) -> String {
         (ENTER_TRY, "ENTER_TRY"),
         (EXIT_TRY, "EXIT_TRY"),
         (THROW, "THROW"),
-<<<<<<< HEAD
         (STR_CONTAINS, "STR_CONTAINS"),
         (STR_SPLIT, "STR_SPLIT"),
         (STR_REPLACE, "STR_REPLACE"),
         (STR_JOIN, "STR_JOIN"),
         (MAKE_RANGE, "MAKE_RANGE"),
-=======
->>>>>>> main
         (EXEC_LANG, "EXEC_LANG"),
         (NEW_OBJ, "NEW_OBJ"),
         (SET_FIELD, "SET_FIELD"),
@@ -429,15 +416,11 @@ fn opcode_for(name: &str) -> Option<u8> {
         "MUL" => Some(MUL),
         "DIV" => Some(DIV),
         "MOD" => Some(MOD),
-<<<<<<< HEAD
         "NEG" => Some(NEG),
-=======
->>>>>>> main
         "EQ" => Some(EQ),
         "LT" => Some(LT),
         "GT" => Some(GT),
         "NOT" => Some(NOT),
-<<<<<<< HEAD
         "NE" => Some(NE),
         "LE" => Some(LE),
         "GE" => Some(GE),
@@ -449,8 +432,6 @@ fn opcode_for(name: &str) -> Option<u8> {
         "BITNOT" => Some(BITNOT),
         "SHL" => Some(SHL),
         "SHR" => Some(SHR),
-=======
->>>>>>> main
         "LOAD" => Some(LOAD),
         "STORE" => Some(STORE),
         "JMP" => Some(JMP),
@@ -464,14 +445,11 @@ fn opcode_for(name: &str) -> Option<u8> {
         "ENTER_TRY" => Some(ENTER_TRY),
         "EXIT_TRY" => Some(EXIT_TRY),
         "THROW" => Some(THROW),
-<<<<<<< HEAD
         "STR_CONTAINS" => Some(STR_CONTAINS),
         "STR_SPLIT" => Some(STR_SPLIT),
         "STR_REPLACE" => Some(STR_REPLACE),
         "STR_JOIN" => Some(STR_JOIN),
         "MAKE_RANGE" => Some(MAKE_RANGE),
-=======
->>>>>>> main
         "NEW_OBJ" => Some(NEW_OBJ),
         "SET_FIELD" => Some(SET_FIELD),
         "GET_FIELD" => Some(GET_FIELD),
@@ -523,11 +501,7 @@ fn strip_label(line: &str) -> Option<String> {
     if !candidate
         .chars()
         .next()
-<<<<<<< HEAD
-        .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
-=======
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
->>>>>>> main
     {
         return None;
     }

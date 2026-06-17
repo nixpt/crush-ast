@@ -480,30 +480,12 @@ impl PortableVm {
                     return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
                 }
 
-<<<<<<< HEAD
                 // Arguments stay on the stack (main VM convention).
                 // Callee accesses them via stack operations or LOAD/STORE slots.
                 self.call_stack.push(Frame::new(Some(next_ip)));
                 self.ip = func_entry;
             }
             RET => {
-=======
-                // For binary functions like add, pop the two arguments from main stack
-                // and store them in the new frame's slots 0 and 1
-                let mut frame = Frame::new(Some(next_ip));
-                if self.stack.len() >= 2 {
-                    // Pop args from main stack (top is last pushed)
-                    let arg1 = self.pop()?; // 5
-                    let arg0 = self.pop()?; // 10
-                    frame.memory.insert(0, arg0); // slot 0 = first arg
-                    frame.memory.insert(1, arg1); // slot 1 = second arg
-                }
-                self.call_stack.push(frame);
-                self.ip = func_entry;
-            }
-            RET => {
-                let return_value = self.pop()?;
->>>>>>> main
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
                 match frame.return_ip {
                     None => {
@@ -737,24 +719,6 @@ impl PortableVm {
 
         // Built-in portable capabilities
         if let Some(spec) = crate::caps::capabilities().get(cap) {
-<<<<<<< HEAD
-            if let Some(expected) = spec.argc {
-                if args.len() != expected {
-                    return Err(VmError::CapArity {
-                        cap: cap.to_string(),
-                        expected,
-                        got: args.len(),
-                    });
-                }
-            }
-            return match cap {
-                "io.print" => {
-                    let s: String = args
-                        .iter()
-                        .map(|a| value_to_text(a))
-                        .collect::<Vec<_>>()
-                        .concat();
-=======
             if let Some(expected) = spec.argc
                 && args.len() != expected
             {
@@ -767,7 +731,6 @@ impl PortableVm {
             return match cap {
                 "io.print" => {
                     let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
->>>>>>> main
                     self.out_len += s.len();
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
@@ -776,22 +739,13 @@ impl PortableVm {
                     Ok(None)
                 }
                 "str.concat" => {
-<<<<<<< HEAD
-                    let s: String = args
-                        .iter()
-                        .map(|a| value_to_text(a))
-                        .collect::<Vec<_>>()
-                        .concat();
-=======
                     let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
->>>>>>> main
                     Ok(Some(Value::Str(s)))
                 }
                 "str.len" => {
                     let s = value_to_text(&args[0]);
                     Ok(Some(Value::Int(s.len() as i64)))
                 }
-<<<<<<< HEAD
                 "str.contains" => {
                     let haystack = value_to_text(&args[0]);
                     let needle = value_to_text(&args[1]);
@@ -854,8 +808,6 @@ impl PortableVm {
                     }
                     Ok(Some(Value::Array(elems)))
                 }
-=======
->>>>>>> main
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
         }
@@ -868,23 +820,6 @@ impl PortableVm {
         }
 
         // Host-provided capabilities
-<<<<<<< HEAD
-        if let Some(host) = &self.host_caps {
-            if let Some(handler) = host.get(cap) {
-                let spec = handler.spec();
-                if let Some(expected) = spec.argc {
-                    if args.len() != expected {
-                        return Err(VmError::CapArity {
-                            cap: cap.to_string(),
-                            expected,
-                            got: args.len(),
-                        });
-                    }
-                }
-                return handler
-                    .call(args)
-                    .map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
-=======
         if let Some(host) = &self.host_caps
             && let Some(handler) = host.get(cap)
         {
@@ -897,7 +832,6 @@ impl PortableVm {
                     expected,
                     got: args.len(),
                 });
->>>>>>> main
             }
             return handler
                 .call(args)
@@ -968,15 +902,9 @@ pub enum VmYield {
 fn need_array(v: Value) -> Result<Vec<Value>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-<<<<<<< HEAD
         other => Err(VmError::TypeError {
             expected: "array",
             got: value_type_name(&other),
-=======
-        _ => Err(VmError::TypeError {
-            expected: "array",
-            got: value_type_name(v),
->>>>>>> main
         }),
     }
 }

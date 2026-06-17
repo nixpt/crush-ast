@@ -13,18 +13,11 @@
 use std::collections::HashMap;
 
 use crate::bytecode::{
-<<<<<<< HEAD
     self, ADD, AND, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, BITAND, BITNOT, BITOR, BITXOR,
     CALL, CAP_CALL, DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GE, GET_FIELD, GT, HALT, JMP,
     JNZ, JZ, LE, LOAD, LT, MAKE_RANGE, MOD, MUL, NE, NEG, NEW_ARRAY, NEW_OBJ, NOP, NOT, OR, POP,
     PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, Program, RET, SET_FIELD, SHL, SHR,
     STORE, STR_CONTAINS, STR_JOIN, STR_REPLACE, STR_SPLIT, SUB, SWAP, THROW,
-=======
-    self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL, DIV, DUP, ENTER_TRY,
-    EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY,
-    NEW_OBJ, NOP, NOT, POP, PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, Program, RET,
-    SET_FIELD, STORE, SUB, SWAP, THROW,
->>>>>>> main
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -340,45 +333,33 @@ pub fn run_with_caps(
                         if is_float {
                             Value::Float(af + bf)
                         } else {
-<<<<<<< HEAD
                             Value::Int(
                                 to_i64(&a)
                                     .checked_add(to_i64(&b))
                                     .ok_or(VmError::ArithmeticOverflow)?,
                             )
-=======
-                            Value::Int(to_i64(&a) + to_i64(&b))
->>>>>>> main
                         }
                     }
                     SUB => {
                         if is_float {
                             Value::Float(af - bf)
                         } else {
-<<<<<<< HEAD
                             Value::Int(
                                 to_i64(&a)
                                     .checked_sub(to_i64(&b))
                                     .ok_or(VmError::ArithmeticOverflow)?,
                             )
-=======
-                            Value::Int(to_i64(&a) - to_i64(&b))
->>>>>>> main
                         }
                     }
                     MUL => {
                         if is_float {
                             Value::Float(af * bf)
                         } else {
-<<<<<<< HEAD
                             Value::Int(
                                 to_i64(&a)
                                     .checked_mul(to_i64(&b))
                                     .ok_or(VmError::ArithmeticOverflow)?,
                             )
-=======
-                            Value::Int(to_i64(&a) * to_i64(&b))
->>>>>>> main
                         }
                     }
                     DIV => {
@@ -680,7 +661,6 @@ pub fn run_with_caps(
                     "uncaught error: {}",
                     err_val.as_text()
                 )));
-<<<<<<< HEAD
             }
             STR_CONTAINS => {
                 let needle = pop!();
@@ -752,8 +732,6 @@ pub fn run_with_caps(
                     }
                 }
                 push!(Value::Array(elems));
-=======
->>>>>>> main
             }
             NEW_OBJ => {
                 push!(Value::Map(std::collections::HashMap::new()));
@@ -838,16 +816,6 @@ fn dispatch_cap(
 
     // Built-in portable capabilities.
     if let Some(spec) = capabilities().get(cap) {
-<<<<<<< HEAD
-        if let Some(expected) = spec.argc {
-            if args.len() != expected {
-                return Err(VmError::CapArity {
-                    cap: cap.to_string(),
-                    expected,
-                    got: args.len(),
-                });
-            }
-=======
         if let Some(expected) = spec.argc
             && args.len() != expected
         {
@@ -856,7 +824,6 @@ fn dispatch_cap(
                 expected,
                 got: args.len(),
             });
->>>>>>> main
         }
         return match cap {
             "io.print" => {
@@ -950,23 +917,6 @@ fn dispatch_cap(
     }
 
     // Host-provided capabilities.
-<<<<<<< HEAD
-    if let Some(host) = host_caps {
-        if let Some(handler) = host.get(cap) {
-            let spec = handler.spec();
-            if let Some(expected) = spec.argc {
-                if args.len() != expected {
-                    return Err(VmError::CapArity {
-                        cap: cap.to_string(),
-                        expected,
-                        got: args.len(),
-                    });
-                }
-            }
-            return handler
-                .call(args)
-                .map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
-=======
     if let Some(host) = host_caps
         && let Some(handler) = host.get(cap)
     {
@@ -979,7 +929,6 @@ fn dispatch_cap(
                 expected,
                 got: args.len(),
             });
->>>>>>> main
         }
         return handler
             .call(args)
