@@ -49,10 +49,84 @@
 //! ```
 
 use anyhow::{Context, Result};
-use crush_cast::{self as ast};
+use crush_cast::{self as ast, Program};
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::Path;
 use tree_sitter::Node;
+
+// ── Frontend trait (replaces Walker for native-parser frontends) ─────────────
+
+/// Features detected in source code before lowering to CAST.
+#[derive(Debug, Default, Clone)]
+pub struct FeatureReport {
+    pub lang: String,
+    pub uses_functions: bool,
+    pub uses_classes: bool,
+    pub uses_async: bool,
+    pub uses_generators: bool,
+    pub uses_exceptions: bool,
+    pub uses_imports: Vec<String>,
+    pub dangerous_imports: Vec<String>,
+    pub uses_unsafe: bool,
+    pub uses_ffi: bool,
+    pub uses_meta_programming: bool,
+    pub has_top_level_side_effects: bool,
+    pub estimated_complexity: usize,
+}
+
+impl FeatureReport {
+    pub fn can_lower_safely(&self) -> bool {
+        self.dangerous_imports.is_empty() && !self.uses_unsafe && !self.uses_ffi
+    }
+}
+
+/// A language frontend: parse, analyze, lower.
+///
+/// Replaces the tree-sitter-bound `Walker` trait for language implementations
+/// that use native Rust parsers (rustpython-parser, syn, boa_parser, etc.).
+pub trait Frontend {
+    fn language_name(&self) -> &'static str;
+    fn file_extensions(&self) -> &[&'static str];
+
+    /// Parse source text into a language-specific AST (opaque).
+    fn parse(&self, source: &str) -> Result<Box<dyn std::any::Any>>;
+
+    /// Analyze the parsed AST for features and capability requirements.
+    fn analyze(&self, ast: &Box<dyn std::any::Any>) -> Result<FeatureReport>;
+
+    /// Lower the parsed AST to a CAST Program.
+    fn lower(&self, ast: Box<dyn std::any::Any>) -> Result<Program>;
+}
+
+/// Run the full frontend pipeline: parse → analyze → lower.
+pub fn frontend_pipeline(
+    frontend: &dyn Frontend,
+    source: &str,
+) -> Result<(FeatureReport, Program)> {
+    let ast = frontend.parse(source)?;
+    let report = frontend.analyze(&ast)?;
+    let program = frontend.lower(ast)?;
+    Ok((report, program))
+}
+
+/// Auto-detect frontend by file extension.
+pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
+    match ext {
+        "py" | "pyi" => Some("python"),
+        "rs" => Some("rust"),
+        "js" | "jsx" | "mjs" => Some("javascript"),
+        "ts" | "tsx" => Some("typescript"),
+        "sh" | "bash" => Some("bash"),
+        "go" => Some("go"),
+        "c" | "h" => Some("c"),
+        "zig" => Some("zig"),
+        "wasm" => Some("wasm"),
+        _ => None,
+    }
+}
+
+// ── Legacy Walker trait (tree-sitter-based) ─────────────────────────────────
 
 /// Errors emitted by language walkers.
 #[derive(Debug, thiserror::Error)]

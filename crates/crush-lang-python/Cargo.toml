@@ -1,0 +1,25 @@
+[package]
+name = "crush-lang-python"
+version = "0.2.0"
+edition = "2024"
+description = "Python language support for Crush — parser + CAST lowering backed by rustpython-parser"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "python_walker"
+path = "src/bin/walker.rs"
+
+[dependencies]
+crush-cast.workspace = true
+walker-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustpython-parser = "0.4"
+rustpython-ast = "0.4"
+
+[dev-dependencies]
+crush-frontend = { path = "../crush-frontend" }
+crush-lang-sdk = { path = "../crush-lang-sdk" }
+crush-vm = { path = "../crush-vm" }

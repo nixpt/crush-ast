@@ -178,6 +178,9 @@ pub enum OpCode {
         var_count: usize,
     },
 
+    // Program control
+    Halt, // Halt execution
+
     // String intrinsics
     StrContains, // str, pattern -> bool
     StrSplit,    // str, delimiter -> array[str]
@@ -404,7 +407,22 @@ impl Instruction {
             "str_contains" => Ok(OpCode::StrContains),
             "str_split" => Ok(OpCode::StrSplit),
             "str_replace" => Ok(OpCode::StrReplace),
+            "halt" => Ok(OpCode::Halt),
             "str_join" => Ok(OpCode::StrJoin),
+            "exec_lang" => {
+                let lang = self.require_field("lang", |v| v.as_str().map(String::from))?;
+                let code = self.require_field("code", |v| v.as_str().map(String::from))?;
+                let var_count = self
+                    .args
+                    .get("var_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                Ok(OpCode::ExecLang {
+                    lang,
+                    code,
+                    var_count,
+                })
+            }
             "call_interface" => Ok(OpCode::CallInterface {
                 handle: self.require_field("handle", |v| v.as_str().map(String::from))?,
                 method: self.require_field("method", |v| v.as_str().map(String::from))?,

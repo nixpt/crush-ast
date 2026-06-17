@@ -48,7 +48,10 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
         let mut target_labels: HashMap<usize, String> = HashMap::new();
         for instr in func.body.iter() {
-            if (instr.op == "jmp" || instr.op == "jmp_if_not" || instr.op == "enter_try")
+            if (instr.op == "jmp"
+                || instr.op == "jmp_if"
+                || instr.op == "jmp_if_not"
+                || instr.op == "enter_try")
                 && let Some(target) = instr.args.get("target").and_then(|v| v.as_u64())
             {
                 target_labels
@@ -110,26 +113,15 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "div" => "DIV".to_string(),
                 "mod" => "MOD".to_string(),
                 "eq" => "EQ".to_string(),
-                "ne" => "EQ\n    NOT".to_string(),
+                "ne" => "NE".to_string(),
                 "lt" => "LT".to_string(),
                 "gt" => "GT".to_string(),
-                "le" => "GT\n    NOT".to_string(),
-                "ge" => "LT\n    NOT".to_string(),
+                "le" => "LE".to_string(),
+                "ge" => "GE".to_string(),
                 "not" => "NOT".to_string(),
-                "and" => {
-                    let lend = unique_label();
-                    let lfalse = unique_label();
-                    format!(
-                        "SWAP\n    DUP\n    JZ {lfalse}\n    POP\n    JMP {lend}\n{lfalse}:\n    POP\n    PUSH 0\n{lend}:"
-                    )
-                }
-                "or" => {
-                    let ltrue = unique_label();
-                    let lend = unique_label();
-                    format!(
-                        "SWAP\n    DUP\n    JNZ {ltrue}\n    POP\n    JMP {lend}\n{ltrue}:\n    POP\n    PUSH 1\n{lend}:"
-                    )
-                }
+                "neg" => "NEG".to_string(),
+                "and" => "AND".to_string(),
+                "or" => "OR".to_string(),
                 "call" => {
                     let fn_name = instr.args["function"]
                         .as_str()
@@ -170,12 +162,31 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     })?;
                     format!("JZ {label}")
                 }
-                "new_array" => "NEW_ARRAY 0".to_string(),
+                "jmp_if" => {
+                    let target = instr.args["target"]
+                        .as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("jmp_if missing target at {fname}:{i}"))?
+                        as usize;
+                    let label = target_labels.get(&target).ok_or_else(|| {
+                        anyhow::anyhow!("jmp_if to unknown target {target} at {fname}:{i}")
+                    })?;
+                    format!("JNZ {label}")
+                }
+                "new_array" => {
+                    let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    format!("NEW_ARRAY {size}")
+                }
                 "array_push" => "ARR_PUSH".to_string(),
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
                 "index" => "ARR_GET".to_string(),
-                "export_var" => "PRINT".to_string(),
+                "make_range" => "MAKE_RANGE".to_string(),
+                "str_contains" => "STR_CONTAINS".to_string(),
+                "str_split" => "STR_SPLIT".to_string(),
+                "str_replace" => "STR_REPLACE".to_string(),
+                "str_join" => "STR_JOIN".to_string(),
+                "arr_set" => "ARR_SET".to_string(),
+                "export_var" => "NOP".to_string(),
                 "exec_lang" => {
                     let args_json = serde_json::to_string(&instr.args).map_err(|e| {
                         anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}")
@@ -184,6 +195,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let esc = args_json.replace('\\', "\\\\").replace('"', "\\\"");
                     format!("EXEC_LANG \"{esc}\"")
                 }
+                "spawn" => "NOP".to_string(),
+                "yield" => "NOP".to_string(),
+                "await" => "NOP".to_string(),
                 "throw" => "THROW".to_string(),
                 "enter_try" => {
                     let target = instr.args["target"]
@@ -195,6 +209,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     })?;
                     format!("ENTER_TRY {label}")
                 }
+                "halt" => "HALT".to_string(),
                 "exit_try" => "EXIT_TRY".to_string(),
                 "new_obj" => "NEW_OBJ".to_string(),
                 "get_field" => {

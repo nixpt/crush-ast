@@ -1,0 +1,19 @@
+[package]
+name = "crush-lang-rust"
+version = "0.2.0"
+edition = "2024"
+description = "Rust language support for Crush — parser + CAST lowering backed by syn"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rust_walker"
+path = "src/bin/walker.rs"
+
+[dependencies]
+crush-cast.workspace = true
+walker-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syn = { version = "2.0", features = ["full", "extra-traits"] }

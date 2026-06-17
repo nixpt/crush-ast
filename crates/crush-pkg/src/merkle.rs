@@ -80,8 +80,11 @@ impl MerkleNode {
         if expected == self.hash {
             Ok(())
         } else {
-            anyhow::bail!("node hash mismatch: expected {}, got {}",
-                hex::encode(expected), hex::encode(self.hash))
+            anyhow::bail!(
+                "node hash mismatch: expected {}, got {}",
+                hex::encode(expected),
+                hex::encode(self.hash)
+            )
         }
     }
 
@@ -134,11 +137,13 @@ pub struct MerkleTree {
 impl MerkleTree {
     pub fn from_data(data: Vec<Vec<u8>>) -> anyhow::Result<Self> {
         if data.is_empty() {
-            return Ok(Self { root: None, leaf_count: 0, height: 0 });
+            return Ok(Self {
+                root: None,
+                leaf_count: 0,
+                height: 0,
+            });
         }
-        let leaves: Vec<MerkleNode> = data.into_iter()
-            .map(|d| MerkleNode::leaf(&d))
-            .collect();
+        let leaves: Vec<MerkleNode> = data.into_iter().map(|d| MerkleNode::leaf(&d)).collect();
         Self::build_tree(leaves)
     }
 
@@ -147,7 +152,11 @@ impl MerkleTree {
         if leaf_count == 1 {
             let root = nodes.into_iter().next().unwrap();
             let height = root.depth();
-            return Ok(Self { root: Some(root), leaf_count, height });
+            return Ok(Self {
+                root: Some(root),
+                leaf_count,
+                height,
+            });
         }
 
         let mut cur = nodes;
@@ -163,14 +172,24 @@ impl MerkleTree {
             cur = next;
         }
 
-        let root = cur.into_iter().next()
+        let root = cur
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("empty tree after build"))?;
         let height = root.depth();
-        Ok(Self { root: Some(root), leaf_count, height })
+        Ok(Self {
+            root: Some(root),
+            leaf_count,
+            height,
+        })
     }
 
     pub fn empty() -> Self {
-        Self { root: None, leaf_count: 0, height: 0 }
+        Self {
+            root: None,
+            leaf_count: 0,
+            height: 0,
+        }
     }
 
     pub fn root_hash(&self) -> Option<[u8; 32]> {
@@ -201,7 +220,9 @@ impl MerkleTree {
     }
 
     pub fn leaf_hashes(&self) -> Vec<[u8; 32]> {
-        self.root.as_ref().map_or_else(Vec::new, |r| collect_leaf_hashes(r))
+        self.root
+            .as_ref()
+            .map_or_else(Vec::new, |r| collect_leaf_hashes(r))
     }
 
     pub fn stats(&self) -> MerkleTreeStats {
@@ -219,8 +240,12 @@ fn search_hash(node: &MerkleNode, target: &[u8; 32]) -> anyhow::Result<bool> {
         return Ok(node.is_leaf());
     }
     if let (Some(l), Some(r)) = (&node.left, &node.right) {
-        if search_hash(l, target)? { return Ok(true); }
-        if search_hash(r, target)? { return Ok(true); }
+        if search_hash(l, target)? {
+            return Ok(true);
+        }
+        if search_hash(r, target)? {
+            return Ok(true);
+        }
     }
     Ok(false)
 }
@@ -230,15 +255,20 @@ fn collect_leaf_hashes(node: &MerkleNode) -> Vec<[u8; 32]> {
         vec![node.hash]
     } else {
         let mut h = Vec::new();
-        if let Some(l) = &node.left { h.extend(collect_leaf_hashes(l)); }
-        if let Some(r) = &node.right { h.extend(collect_leaf_hashes(r)); }
+        if let Some(l) = &node.left {
+            h.extend(collect_leaf_hashes(l));
+        }
+        if let Some(r) = &node.right {
+            h.extend(collect_leaf_hashes(r));
+        }
         h
     }
 }
 
 fn count_nodes(node: &MerkleNode) -> usize {
-    if node.is_leaf() { 1 }
-    else {
+    if node.is_leaf() {
+        1
+    } else {
         let l = node.left.as_ref().map(|n| count_nodes(n)).unwrap_or(0);
         let r = node.right.as_ref().map(|n| count_nodes(n)).unwrap_or(0);
         1 + l + r
@@ -331,8 +361,18 @@ pub struct MerkleProof {
 }
 
 impl MerkleProof {
-    pub fn new(leaf_hash: [u8; 32], proof_hashes: Vec<[u8; 32]>, leaf_index: u32, total_leaves: u32) -> Self {
-        Self { leaf_hash, proof_hashes, leaf_index, total_leaves }
+    pub fn new(
+        leaf_hash: [u8; 32],
+        proof_hashes: Vec<[u8; 32]>,
+        leaf_index: u32,
+        total_leaves: u32,
+    ) -> Self {
+        Self {
+            leaf_hash,
+            proof_hashes,
+            leaf_index,
+            total_leaves,
+        }
     }
 
     pub fn proof_size(&self) -> usize {
@@ -341,7 +381,11 @@ impl MerkleProof {
 
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.leaf_index >= self.total_leaves {
-            anyhow::bail!("leaf index {} out of range (total: {})", self.leaf_index, self.total_leaves);
+            anyhow::bail!(
+                "leaf index {} out of range (total: {})",
+                self.leaf_index,
+                self.total_leaves
+            );
         }
         if self.proof_hashes.len() > 32 {
             anyhow::bail!("proof too long");
@@ -380,10 +424,11 @@ impl MerkleProof {
             anyhow::bail!("proof bytes too short");
         }
         let mut off = 0;
-        let leaf_hash: [u8; 32] = bytes[off..off+32].try_into()?; off += 32;
+        let leaf_hash: [u8; 32] = bytes[off..off + 32].try_into()?;
+        off += 32;
 
         let read_u32 = |b: &[u8], o: &mut usize| -> anyhow::Result<u32> {
-            let arr: [u8; 4] = b[*o..*o+4].try_into()?;
+            let arr: [u8; 4] = b[*o..*o + 4].try_into()?;
             *o += 4;
             Ok(u32::from_le_bytes(arr))
         };
@@ -393,11 +438,16 @@ impl MerkleProof {
 
         let mut proof_hashes = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            let arr: [u8; 32] = bytes[off..off+32].try_into()?;
+            let arr: [u8; 32] = bytes[off..off + 32].try_into()?;
             off += 32;
             proof_hashes.push(arr);
         }
-        Ok(Self { leaf_hash, proof_hashes, leaf_index, total_leaves })
+        Ok(Self {
+            leaf_hash,
+            proof_hashes,
+            leaf_index,
+            total_leaves,
+        })
     }
 }
 
@@ -411,10 +461,7 @@ mod tests {
 
     #[test]
     fn simple_tree() {
-        let tree = MerkleTree::from_data(vec![
-            b"data1".to_vec(),
-            b"data2".to_vec(),
-        ]).unwrap();
+        let tree = MerkleTree::from_data(vec![b"data1".to_vec(), b"data2".to_vec()]).unwrap();
         assert!(tree.root_hash().is_some());
         assert_eq!(tree.leaf_count, 2);
         assert!(tree.verify().is_ok());
@@ -436,20 +483,15 @@ mod tests {
 
     #[test]
     fn odd_leaves() {
-        let tree = MerkleTree::from_data(vec![
-            b"a".to_vec(), b"b".to_vec(), b"c".to_vec(),
-        ]).unwrap();
+        let tree =
+            MerkleTree::from_data(vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]).unwrap();
         assert_eq!(tree.leaf_count, 3);
         assert!(tree.verify().is_ok());
     }
 
     #[test]
     fn verify_inclusion() {
-        let data = vec![
-            b"alpha".to_vec(),
-            b"beta".to_vec(),
-            b"gamma".to_vec(),
-        ];
+        let data = vec![b"alpha".to_vec(), b"beta".to_vec(), b"gamma".to_vec()];
         let tree = MerkleTree::from_data(data.clone()).unwrap();
         assert!(tree.verify_inclusion(&data[0]).unwrap());
         assert!(tree.verify_inclusion(&data[1]).unwrap());
@@ -476,9 +518,9 @@ mod tests {
     fn proof_bytes_roundtrip() {
         let proof = MerkleProof::new(
             [1u8; 32],       // leaf hash
-            vec![[2u8; 32]],  // one sibling
-            0,                // index
-            2,                // total
+            vec![[2u8; 32]], // one sibling
+            0,               // index
+            2,               // total
         );
         let bytes = proof.to_bytes();
         let restored = MerkleProof::from_bytes(&bytes).unwrap();
@@ -488,9 +530,7 @@ mod tests {
 
     #[test]
     fn compute_root_matches_tree() {
-        let data: Vec<Vec<u8>> = vec![
-            b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec(),
-        ];
+        let data: Vec<Vec<u8>> = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()];
         let tree = MerkleTree::from_data(data.clone()).unwrap();
         let hashes: Vec<[u8; 32]> = data.iter().map(|d| hash_leaf(d)).collect();
         let computed = compute_merkle_root(&hashes).unwrap();
@@ -500,8 +540,13 @@ mod tests {
     #[test]
     fn leaf_hashes_count() {
         let tree = MerkleTree::from_data(vec![
-            b"1".to_vec(), b"2".to_vec(), b"3".to_vec(), b"4".to_vec(), b"5".to_vec(),
-        ]).unwrap();
+            b"1".to_vec(),
+            b"2".to_vec(),
+            b"3".to_vec(),
+            b"4".to_vec(),
+            b"5".to_vec(),
+        ])
+        .unwrap();
         assert_eq!(tree.leaf_hashes().len(), 5);
     }
 

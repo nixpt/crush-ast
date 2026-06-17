@@ -135,11 +135,10 @@ impl InstallManifest {
 
     fn save(&self, prefix: &Path) -> Result<()> {
         let dir = prefix.join(CRUSH_DIR);
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("cannot create '{}'", dir.display()))?;
+        fs::create_dir_all(&dir).with_context(|| format!("cannot create '{}'", dir.display()))?;
         let path = Self::path(prefix);
-        let content = serde_json::to_string_pretty(self)
-            .context("failed to serialize install manifest")?;
+        let content =
+            serde_json::to_string_pretty(self).context("failed to serialize install manifest")?;
         fs::write(&path, content)
             .with_context(|| format!("cannot write manifest '{}'", path.display()))?;
         Ok(())
@@ -278,7 +277,11 @@ fn uninstall(args: UninstallArgs) -> Result<()> {
         .with_context(|| format!("no Crush installation found at '{}'", prefix.display()))?;
 
     if !args.quiet {
-        eprintln!("Uninstalling Crush {} from '{}'", manifest.version, prefix.display());
+        eprintln!(
+            "Uninstalling Crush {} from '{}'",
+            manifest.version,
+            prefix.display()
+        );
     }
 
     for binary in &manifest.installed_binaries {
@@ -323,7 +326,9 @@ fn uninstall(args: UninstallArgs) -> Result<()> {
     }
 
     if !args.quiet {
-        eprintln!("\nCrush uninstalled. You may need to restart your shell for PATH changes to take effect.");
+        eprintln!(
+            "\nCrush uninstalled. You may need to restart your shell for PATH changes to take effect."
+        );
     }
     Ok(())
 }
@@ -340,14 +345,20 @@ fn status(args: StatusArgs) -> Result<()> {
             println!("  bin dir:      {}", manifest.bin_dir.display());
             println!("  lib dir:      {}", manifest.lib_dir.display());
             println!("  binaries:     {}", manifest.installed_binaries.join(", "));
-            println!("  profiles:     {}", manifest.modified_profiles.iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", "));
+            println!(
+                "  profiles:     {}",
+                manifest
+                    .modified_profiles
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             for binary in &manifest.installed_binaries {
                 let path = manifest.bin_dir.join(binary);
                 if path.exists() {
-                    let version = CommandRunner::version(&path).unwrap_or_else(|_| "unknown".to_string());
+                    let version =
+                        CommandRunner::version(&path).unwrap_or_else(|_| "unknown".to_string());
                     println!("  {binary}: {version}");
                 } else {
                     println!("  {binary}: MISSING");
@@ -364,9 +375,13 @@ fn status(args: StatusArgs) -> Result<()> {
 
 fn binary_name(base: &str) -> String {
     #[cfg(target_os = "windows")]
-    { format!("{base}.exe") }
+    {
+        format!("{base}.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { base.to_string() }
+    {
+        base.to_string()
+    }
 }
 
 fn is_dir_empty(path: &Path) -> Result<bool> {

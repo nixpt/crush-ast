@@ -123,12 +123,13 @@ impl PackageBuilder {
                 continue;
             };
 
-            let manifest_path = crate::manifest::manifest_path(&dep_path)
-                .ok_or_else(|| anyhow::anyhow!(
+            let manifest_path = crate::manifest::manifest_path(&dep_path).ok_or_else(|| {
+                anyhow::anyhow!(
                     "dependency '{}': no capsule / crush.toml found at {}",
                     name,
                     dep_path.display()
-                ))?;
+                )
+            })?;
 
             let dep_manifest = Manifest::from_file(&manifest_path)?;
             let dep_entry = dep_path.join(&dep_manifest.capsule.entry);
@@ -225,11 +226,7 @@ mod tests {
     use super::*;
     use crate::manifest::scaffold_package;
 
-    fn make_manifest(
-        name: &str,
-        entry: &str,
-        deps: Vec<crate::manifest::Dependency>,
-    ) -> Manifest {
+    fn make_manifest(name: &str, entry: &str, deps: Vec<crate::manifest::Dependency>) -> Manifest {
         Manifest {
             capsule: crate::manifest::CapsuleSection {
                 name: name.to_string(),
@@ -285,7 +282,8 @@ mod tests {
         std::fs::write(
             dep_dir.join("src/lib.crush"),
             "fn greet(name) {\n    io.print(\"hello \" + name)\n}\n",
-        ).unwrap();
+        )
+        .unwrap();
         let dep_manifest = make_manifest("dep-lib", "src/lib.crush", vec![]);
         dep_manifest.write_to_dir(&dep_dir).unwrap();
 
@@ -319,7 +317,8 @@ mod tests {
         std::fs::write(
             dep_dir.join("src/lib.crush"),
             "fn greet(name) {\n    io.print(\"hello \" + name)\n}\n",
-        ).unwrap();
+        )
+        .unwrap();
         let dep_manifest = make_manifest("dep-lib", "src/lib.crush", vec![]);
         dep_manifest.write_to_dir(&dep_dir).unwrap();
 
@@ -329,7 +328,8 @@ mod tests {
         std::fs::write(
             main_dir.join("src/main.crush"),
             "fn main() {\n    greet(\"world\")\n}\n",
-        ).unwrap();
+        )
+        .unwrap();
         let dep = crate::manifest::Dependency {
             name: "dep-lib".to_string(),
             version: None,

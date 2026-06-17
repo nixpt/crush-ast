@@ -13,10 +13,11 @@
 use std::collections::HashMap;
 
 use crate::bytecode::{
-    self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL, DIV, DUP, ENTER_TRY,
-    EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY,
-    NEW_OBJ, NOP, NOT, POP, PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, Program, RET,
-    SET_FIELD, STORE, SUB, SWAP, THROW,
+    self, ADD, AND, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, BITAND, BITNOT, BITOR, BITXOR,
+    CALL, CAP_CALL, DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GE, GET_FIELD, GT, HALT, JMP,
+    JNZ, JZ, LE, LOAD, LT, MAKE_RANGE, MOD, MUL, NE, NEG, NEW_ARRAY, NEW_OBJ, NOP, NOT, OR, POP,
+    PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, Program, RET, SET_FIELD, SHL, SHR,
+    STORE, STR_CONTAINS, STR_JOIN, STR_REPLACE, STR_SPLIT, SUB, SWAP, THROW,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -56,6 +57,8 @@ pub enum VmError {
     BadIndex(&'static str),
     #[error("division by zero")]
     DivByZero,
+    #[error("arithmetic overflow")]
+    ArithmeticOverflow,
     #[error("capability not declared in manifest: {0}")]
     CapNotDeclared(String),
     #[error("capability denied by host: {0}")]
@@ -314,7 +317,12 @@ pub fn run_with_caps(
                 let a = pop!();
                 push!(Value::Bool(a == b));
             }
-            ADD | SUB | MUL | DIV | MOD | LT | GT => {
+            NE => {
+                let b = pop!();
+                let a = pop!();
+                push!(Value::Bool(a != b));
+            }
+            ADD | SUB | MUL | DIV | MOD | LT | GT | LE | GE => {
                 let b = need_num!(pop!());
                 let a = need_num!(pop!());
                 let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
@@ -325,21 +333,33 @@ pub fn run_with_caps(
                         if is_float {
                             Value::Float(af + bf)
                         } else {
-                            Value::Int(to_i64(&a) + to_i64(&b))
+                            Value::Int(
+                                to_i64(&a)
+                                    .checked_add(to_i64(&b))
+                                    .ok_or(VmError::ArithmeticOverflow)?,
+                            )
                         }
                     }
                     SUB => {
                         if is_float {
                             Value::Float(af - bf)
                         } else {
-                            Value::Int(to_i64(&a) - to_i64(&b))
+                            Value::Int(
+                                to_i64(&a)
+                                    .checked_sub(to_i64(&b))
+                                    .ok_or(VmError::ArithmeticOverflow)?,
+                            )
                         }
                     }
                     MUL => {
                         if is_float {
                             Value::Float(af * bf)
                         } else {
-                            Value::Int(to_i64(&a) * to_i64(&b))
+                            Value::Int(
+                                to_i64(&a)
+                                    .checked_mul(to_i64(&b))
+                                    .ok_or(VmError::ArithmeticOverflow)?,
+                            )
                         }
                     }
                     DIV => {
@@ -368,9 +388,54 @@ pub fn run_with_caps(
                     }
                     LT => Value::Bool(af < bf),
                     GT => Value::Bool(af > bf),
+                    NE => Value::Bool(af != bf),
+                    LE => Value::Bool(af <= bf),
+                    GE => Value::Bool(af >= bf),
                     _ => unreachable!(),
                 };
                 push!(result);
+            }
+            NEG => {
+                let v = need_num!(pop!());
+                push!(match v {
+                    Value::Int(i) => Value::Int(-i),
+                    Value::Float(f) => Value::Float(-f),
+                    _ => unreachable!(),
+                });
+            }
+            AND | OR => {
+                let b = pop!();
+                let a = pop!();
+                push!(match opcode {
+                    AND => Value::Bool(a.is_truthy() && b.is_truthy()),
+                    OR => Value::Bool(a.is_truthy() || b.is_truthy()),
+                    _ => unreachable!(),
+                });
+            }
+            BITAND | BITOR | BITXOR | SHL | SHR => {
+                let b = need_num!(pop!());
+                let a = need_num!(pop!());
+                let ai = to_i64(&a);
+                let bi = to_i64(&b);
+                let result = match opcode {
+                    BITAND => Value::Int(ai & bi),
+                    BITOR => Value::Int(ai | bi),
+                    BITXOR => Value::Int(ai ^ bi),
+                    SHL => Value::Int(
+                        ai.checked_shl(bi as u32)
+                            .ok_or(VmError::ArithmeticOverflow)?,
+                    ),
+                    SHR => Value::Int(
+                        ai.checked_shr(bi as u32)
+                            .ok_or(VmError::ArithmeticOverflow)?,
+                    ),
+                    _ => unreachable!(),
+                };
+                push!(result);
+            }
+            BITNOT => {
+                let a = need_num!(pop!());
+                push!(Value::Int(!to_i64(&a)));
             }
             NOT => {
                 let v = pop!();
@@ -597,6 +662,77 @@ pub fn run_with_caps(
                     err_val.as_text()
                 )));
             }
+            STR_CONTAINS => {
+                let needle = pop!();
+                let haystack = pop!();
+                push!(Value::Bool(haystack.as_text().contains(&needle.as_text())));
+            }
+            STR_SPLIT => {
+                let delim = pop!();
+                let s = pop!();
+                let text = s.as_text();
+                let d = delim.as_text();
+                let parts: Vec<Value> = if d.is_empty() {
+                    text.chars().map(|c| Value::Str(c.to_string())).collect()
+                } else {
+                    text.split(&d).map(|p| Value::Str(p.to_string())).collect()
+                };
+                push!(Value::Array(parts));
+            }
+            STR_REPLACE => {
+                let to = pop!();
+                let from = pop!();
+                let s = pop!();
+                push!(Value::Str(
+                    s.as_text().replace(&from.as_text(), &to.as_text())
+                ));
+            }
+            STR_JOIN => {
+                let delim = pop!();
+                let arr_v = pop!();
+                let d = delim.as_text();
+                match arr_v {
+                    Value::Array(elems) => {
+                        let parts: Vec<String> = elems.iter().map(|v| v.as_text()).collect();
+                        push!(Value::Str(parts.join(&d)));
+                    }
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "array",
+                            got: other.type_name(),
+                        });
+                    }
+                }
+            }
+            MAKE_RANGE => {
+                let end_v = pop!();
+                let start_v = pop!();
+                let start = match start_v {
+                    Value::Int(i) => i,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: other.type_name(),
+                        });
+                    }
+                };
+                let end = match end_v {
+                    Value::Int(i) => i,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: other.type_name(),
+                        });
+                    }
+                };
+                let mut elems = Vec::new();
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
+                push!(Value::Array(elems));
+            }
             NEW_OBJ => {
                 push!(Value::Map(std::collections::HashMap::new()));
             }
@@ -714,6 +850,67 @@ fn dispatch_cap(
             "str.len" => {
                 let s = args[0].as_text();
                 Ok(Some(Value::Int(s.len() as i64)))
+            }
+            "str.contains" => {
+                let haystack = args[0].as_text();
+                let needle = args[1].as_text();
+                Ok(Some(Value::Bool(haystack.contains(&needle))))
+            }
+            "str.split" => {
+                let s = args[0].as_text();
+                let delim = args[1].as_text();
+                let parts: Vec<Value> = if delim.is_empty() {
+                    s.chars().map(|c| Value::Str(c.to_string())).collect()
+                } else {
+                    s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
+                };
+                Ok(Some(Value::Array(parts)))
+            }
+            "str.replace" => {
+                let s = args[0].as_text();
+                let from = args[1].as_text();
+                let to = args[2].as_text();
+                Ok(Some(Value::Str(s.replace(&from, &to))))
+            }
+            "str.join" => {
+                let delim = args[1].as_text();
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let parts: Vec<String> = elems.iter().map(|v| v.as_text()).collect();
+                        Ok(Some(Value::Str(parts.join(&delim))))
+                    }
+                    other => Err(VmError::TypeError {
+                        expected: "array",
+                        got: other.type_name(),
+                    }),
+                }
+            }
+            "make_range" => {
+                let start = match &args[0] {
+                    Value::Int(i) => *i,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: other.type_name(),
+                        });
+                    }
+                };
+                let end = match &args[1] {
+                    Value::Int(i) => *i,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: other.type_name(),
+                        });
+                    }
+                };
+                let mut elems = Vec::new();
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
+                Ok(Some(Value::Array(elems)))
             }
             _ => Err(VmError::UnknownCap(cap.to_string())),
         };

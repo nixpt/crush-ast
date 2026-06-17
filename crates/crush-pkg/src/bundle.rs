@@ -80,10 +80,16 @@ impl CapsuleBundle {
             }
         }
 
-        let manifest = manifest.ok_or_else(|| anyhow::anyhow!("Missing capsule/crush.toml in bundle"))?;
-        let payload = payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm payload in bundle"))?;
+        let manifest =
+            manifest.ok_or_else(|| anyhow::anyhow!("Missing capsule/crush.toml in bundle"))?;
+        let payload =
+            payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm payload in bundle"))?;
 
-        Ok(Self { manifest, payload, readme })
+        Ok(Self {
+            manifest,
+            payload,
+            readme,
+        })
     }
 
     fn from_tar_gz(path: &Path) -> anyhow::Result<Self> {
@@ -130,10 +136,16 @@ impl CapsuleBundle {
             }
         }
 
-        let manifest = manifest.ok_or_else(|| anyhow::anyhow!("Missing capsule/crush.toml in bundle"))?;
-        let payload = payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm payload in bundle"))?;
+        let manifest =
+            manifest.ok_or_else(|| anyhow::anyhow!("Missing capsule/crush.toml in bundle"))?;
+        let payload =
+            payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm payload in bundle"))?;
 
-        Ok(Self { manifest, payload, readme })
+        Ok(Self {
+            manifest,
+            payload,
+            readme,
+        })
     }
 }
 
@@ -147,7 +159,8 @@ mod tests {
         crate::manifest::scaffold_package(dir.path(), "bundle-test").unwrap();
 
         // Build to get .cvm output
-        let manifest = crate::manifest::Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
+        let manifest =
+            crate::manifest::Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = crate::builder::PackageBuilder::new(manifest, dir.path().to_path_buf());
         let output = builder.build().unwrap();
         builder.write_output(&output).unwrap();
@@ -158,11 +171,13 @@ mod tests {
         std::fs::copy(
             dir.path().join("capsule.toml"),
             capsule_dir.join("capsule.toml"),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::copy(
             dir.path().join("target/bundle-test.cvm"),
             capsule_dir.join("payload.cvm"),
-        ).unwrap();
+        )
+        .unwrap();
 
         let pack_path = dir.path().join("bundle-test.cap");
         crate::packer::pack(&capsule_dir, &pack_path).unwrap();

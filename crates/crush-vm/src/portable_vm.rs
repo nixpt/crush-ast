@@ -57,6 +57,8 @@ pub struct PortableVm {
     halted: bool,
     /// Whether privileged capabilities are allowed.
     privileged_allowed: bool,
+    /// Exception handler stack (target IP for each active try block).
+    try_stack: Vec<usize>,
 }
 
 impl PortableVm {
@@ -104,6 +106,7 @@ impl PortableVm {
             steps: 0,
             halted: false,
             privileged_allowed: false,
+            try_stack: Vec::new(),
         }
     }
 
@@ -208,6 +211,14 @@ impl PortableVm {
                     .ok_or(VmError::ConstOutOfRange(idx))?;
                 self.push(Value::Str(s.clone()));
             }
+            PUSH_BOOL => {
+                let v = i64::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 9]
+                        .try_into()
+                        .unwrap(),
+                );
+                self.push(Value::Bool(v != 0));
+            }
             PUSH_NULL => {
                 self.push(Value::Null);
             }
@@ -227,38 +238,153 @@ impl PortableVm {
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
+                let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
+                let af = to_f64_p(&a);
+                let bf = to_f64_p(&b);
                 let result = match opcode {
-                    ADD => Value::Int(to_i64(&a) + to_i64(&b)),
-                    SUB => Value::Int(to_i64(&a) - to_i64(&b)),
-                    MUL => Value::Int(to_i64(&a) * to_i64(&b)),
+                    ADD => {
+                        if is_float {
+                            Value::Float(af + bf)
+                        } else {
+                            Value::Int(
+                                to_i64(&a)
+                                    .checked_add(to_i64(&b))
+                                    .ok_or(VmError::ArithmeticOverflow)?,
+                            )
+                        }
+                    }
+                    SUB => {
+                        if is_float {
+                            Value::Float(af - bf)
+                        } else {
+                            Value::Int(
+                                to_i64(&a)
+                                    .checked_sub(to_i64(&b))
+                                    .ok_or(VmError::ArithmeticOverflow)?,
+                            )
+                        }
+                    }
+                    MUL => {
+                        if is_float {
+                            Value::Float(af * bf)
+                        } else {
+                            Value::Int(
+                                to_i64(&a)
+                                    .checked_mul(to_i64(&b))
+                                    .ok_or(VmError::ArithmeticOverflow)?,
+                            )
+                        }
+                    }
                     DIV => {
-                        let denom = to_i64(&b);
-                        if denom == 0 {
+                        if bf == 0.0 {
                             return Err(VmError::DivByZero);
                         }
-                        Value::Int(to_i64(&a) / denom)
+                        if is_float {
+                            Value::Float(af / bf)
+                        } else {
+                            Value::Int(to_i64(&a) / to_i64(&b))
+                        }
                     }
                     MOD => {
-                        let denom = to_i64(&b);
-                        if denom == 0 {
+                        if bf == 0.0 {
                             return Err(VmError::DivByZero);
                         }
-                        Value::Int(to_i64(&a) % denom)
+                        if is_float {
+                            Value::Float(af % bf)
+                        } else {
+                            Value::Int(to_i64(&a) % to_i64(&b))
+                        }
                     }
                     _ => unreachable!(),
                 };
                 self.push(result);
             }
-            EQ | LT | GT => {
+            NEG => {
+                let a = self.pop()?;
+                match a {
+                    Value::Int(i) => self.push(Value::Int(-i)),
+                    Value::Float(f) => self.push(Value::Float(-f)),
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "numeric",
+                            got: value_type_name(&other),
+                        });
+                    }
+                }
+            }
+            EQ | NE => {
                 let b = self.pop()?;
                 let a = self.pop()?;
-                let result = match opcode {
+                self.push(match opcode {
                     EQ => Value::Bool(a == b),
-                    LT => Value::Bool(to_i64(&a) < to_i64(&b)),
-                    GT => Value::Bool(to_i64(&a) > to_i64(&b)),
+                    NE => Value::Bool(a != b),
+                    _ => unreachable!(),
+                });
+            }
+            LT | GT | LE | GE => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
+                let af = to_f64_p(&a);
+                let bf = to_f64_p(&b);
+                let result = match opcode {
+                    LT => Value::Bool(if is_float {
+                        af < bf
+                    } else {
+                        to_i64(&a) < to_i64(&b)
+                    }),
+                    GT => Value::Bool(if is_float {
+                        af > bf
+                    } else {
+                        to_i64(&a) > to_i64(&b)
+                    }),
+                    LE => Value::Bool(if is_float {
+                        af <= bf
+                    } else {
+                        to_i64(&a) <= to_i64(&b)
+                    }),
+                    GE => Value::Bool(if is_float {
+                        af >= bf
+                    } else {
+                        to_i64(&a) >= to_i64(&b)
+                    }),
                     _ => unreachable!(),
                 };
                 self.push(result);
+            }
+            AND | OR => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.push(match opcode {
+                    AND => Value::Bool(value_is_truthy(&a) && value_is_truthy(&b)),
+                    OR => Value::Bool(value_is_truthy(&a) || value_is_truthy(&b)),
+                    _ => unreachable!(),
+                });
+            }
+            BITAND | BITOR | BITXOR | SHL | SHR => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let ai = to_i64(&a);
+                let bi = to_i64(&b);
+                let result = match opcode {
+                    BITAND => Value::Int(ai & bi),
+                    BITOR => Value::Int(ai | bi),
+                    BITXOR => Value::Int(ai ^ bi),
+                    SHL => Value::Int(
+                        ai.checked_shl(bi as u32)
+                            .ok_or(VmError::ArithmeticOverflow)?,
+                    ),
+                    SHR => Value::Int(
+                        ai.checked_shr(bi as u32)
+                            .ok_or(VmError::ArithmeticOverflow)?,
+                    ),
+                    _ => unreachable!(),
+                };
+                self.push(result);
+            }
+            BITNOT => {
+                let a = self.pop()?;
+                self.push(Value::Int(!to_i64(&a)));
             }
             NOT => {
                 let a = self.pop()?;
@@ -354,30 +480,19 @@ impl PortableVm {
                     return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
                 }
 
-                // For binary functions like add, pop the two arguments from main stack
-                // and store them in the new frame's slots 0 and 1
-                let mut frame = Frame::new(Some(next_ip));
-                if self.stack.len() >= 2 {
-                    // Pop args from main stack (top is last pushed)
-                    let arg1 = self.pop()?; // 5
-                    let arg0 = self.pop()?; // 10
-                    frame.memory.insert(0, arg0); // slot 0 = first arg
-                    frame.memory.insert(1, arg1); // slot 1 = second arg
-                }
-                self.call_stack.push(frame);
+                // Arguments stay on the stack (main VM convention).
+                // Callee accesses them via stack operations or LOAD/STORE slots.
+                self.call_stack.push(Frame::new(Some(next_ip)));
                 self.ip = func_entry;
             }
             RET => {
-                let return_value = self.pop()?;
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
                 match frame.return_ip {
                     None => {
-                        self.push(return_value);
                         self.halted = true;
                     }
                     Some(ret_ip) => {
                         self.ip = ret_ip;
-                        self.push(return_value);
                     }
                 }
             }
@@ -398,7 +513,7 @@ impl PortableVm {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let arr = need_array(&arr_v)?;
+                let arr = need_array(arr_v)?;
                 let len = arr.len();
                 let actual = wrap_index(idx, len)?;
                 self.push(arr[actual].clone());
@@ -408,7 +523,7 @@ impl PortableVm {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let mut arr = need_array(&arr_v)?.to_vec();
+                let mut arr = need_array(arr_v)?;
                 let len = arr.len();
                 let actual = wrap_index(idx, len)?;
                 arr[actual] = val;
@@ -416,8 +531,171 @@ impl PortableVm {
             }
             ARR_LEN => {
                 let v = self.pop()?;
-                let len = need_array(&v)?.len();
-                self.push(Value::Int(len as i64));
+                let arr = need_array(v)?;
+                self.push(Value::Int(arr.len() as i64));
+            }
+            ARR_PUSH => {
+                let val = self.pop()?;
+                let mut arr = need_array(self.pop()?)?;
+                arr.push(val);
+                self.push(Value::Array(arr));
+            }
+            ARR_POP => {
+                let mut arr = need_array(self.pop()?)?;
+                let val = arr.pop().unwrap_or(Value::Null);
+                self.push(Value::Array(arr));
+                self.push(val);
+            }
+            NEW_OBJ => {
+                self.push(Value::Map(std::collections::HashMap::new()));
+            }
+            SET_FIELD => {
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                let field = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
+                let val = self.pop()?;
+                let mut map = match self.pop()? {
+                    Value::Map(m) => m,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "map",
+                            got: value_type_name(&other),
+                        });
+                    }
+                };
+                map.insert(field, val);
+                self.push(Value::Map(map));
+            }
+            GET_FIELD => {
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                let field = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
+                let map = match self.pop()? {
+                    Value::Map(m) => m,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "map",
+                            got: value_type_name(&other),
+                        });
+                    }
+                };
+                let val = map.get(&field).cloned().unwrap_or(Value::Null);
+                self.push(val);
+            }
+            ENTER_TRY => {
+                let target = u32::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 5]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                if target > self.program.code.len() {
+                    return Err(VmError::BadJump(target));
+                }
+                self.try_stack.push(target);
+            }
+            EXIT_TRY => {
+                self.try_stack.pop();
+            }
+            THROW => {
+                let err_val = self.pop()?;
+                if let Some(handler_ip) = self.try_stack.pop() {
+                    self.ip = handler_ip;
+                    self.push(err_val);
+                    return Ok(());
+                }
+                return Err(VmError::UnknownCap(format!(
+                    "uncaught error: {}",
+                    value_to_text(&err_val)
+                )));
+            }
+            STR_CONTAINS => {
+                let needle = self.pop()?;
+                let haystack = self.pop()?;
+                self.push(Value::Bool(
+                    value_to_text(&haystack).contains(&value_to_text(&needle)),
+                ));
+            }
+            STR_SPLIT => {
+                let delim = self.pop()?;
+                let s = self.pop()?;
+                let text = value_to_text(&s);
+                let d = value_to_text(&delim);
+                let parts: Vec<Value> = if d.is_empty() {
+                    text.chars().map(|c| Value::Str(c.to_string())).collect()
+                } else {
+                    text.split(&d).map(|p| Value::Str(p.to_string())).collect()
+                };
+                self.push(Value::Array(parts));
+            }
+            STR_REPLACE => {
+                let to = self.pop()?;
+                let from = self.pop()?;
+                let s = self.pop()?;
+                self.push(Value::Str(
+                    value_to_text(&s).replace(&value_to_text(&from), &value_to_text(&to)),
+                ));
+            }
+            STR_JOIN => {
+                let delim = self.pop()?;
+                let arr_v = self.pop()?;
+                let d = value_to_text(&delim);
+                match arr_v {
+                    Value::Array(elems) => {
+                        let parts: Vec<String> = elems.iter().map(|v| value_to_text(v)).collect();
+                        self.push(Value::Str(parts.join(&d)));
+                    }
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "array",
+                            got: value_type_name(&other),
+                        });
+                    }
+                }
+            }
+            MAKE_RANGE => {
+                let end_v = self.pop()?;
+                let start_v = self.pop()?;
+                let start = match start_v {
+                    Value::Int(i) => i,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: value_type_name(&other),
+                        });
+                    }
+                };
+                let end = match end_v {
+                    Value::Int(i) => i,
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: value_type_name(&other),
+                        });
+                    }
+                };
+                let mut elems = Vec::new();
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
+                self.push(Value::Array(elems));
             }
             HALT => {
                 self.halted = true;
@@ -467,6 +745,68 @@ impl PortableVm {
                 "str.len" => {
                     let s = value_to_text(&args[0]);
                     Ok(Some(Value::Int(s.len() as i64)))
+                }
+                "str.contains" => {
+                    let haystack = value_to_text(&args[0]);
+                    let needle = value_to_text(&args[1]);
+                    Ok(Some(Value::Bool(haystack.contains(&needle))))
+                }
+                "str.split" => {
+                    let s = value_to_text(&args[0]);
+                    let delim = value_to_text(&args[1]);
+                    let parts: Vec<Value> = if delim.is_empty() {
+                        s.chars().map(|c| Value::Str(c.to_string())).collect()
+                    } else {
+                        s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
+                    };
+                    Ok(Some(Value::Array(parts)))
+                }
+                "str.replace" => {
+                    let s = value_to_text(&args[0]);
+                    let from = value_to_text(&args[1]);
+                    let to = value_to_text(&args[2]);
+                    Ok(Some(Value::Str(s.replace(&from, &to))))
+                }
+                "str.join" => {
+                    let delim = value_to_text(&args[1]);
+                    match &args[0] {
+                        Value::Array(elems) => {
+                            let parts: Vec<String> =
+                                elems.iter().map(|v| value_to_text(v)).collect();
+                            Ok(Some(Value::Str(parts.join(&delim))))
+                        }
+                        other => Err(VmError::TypeError {
+                            expected: "array",
+                            got: value_type_name(other),
+                        }),
+                    }
+                }
+                "make_range" => {
+                    let start = match &args[0] {
+                        Value::Int(i) => *i,
+                        other => {
+                            return Err(VmError::TypeError {
+                                expected: "int",
+                                got: value_type_name(other),
+                            });
+                        }
+                    };
+                    let end = match &args[1] {
+                        Value::Int(i) => *i,
+                        other => {
+                            return Err(VmError::TypeError {
+                                expected: "int",
+                                got: value_type_name(other),
+                            });
+                        }
+                    };
+                    let mut elems = Vec::new();
+                    if start < end {
+                        for i in start..end {
+                            elems.push(Value::Int(i));
+                        }
+                    }
+                    Ok(Some(Value::Array(elems)))
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
@@ -559,12 +899,12 @@ pub enum VmYield {
 }
 
 /// Helper functions for array operations.
-fn need_array(v: &Value) -> Result<&Vec<Value>, VmError> {
+fn need_array(v: Value) -> Result<Vec<Value>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-        _ => Err(VmError::TypeError {
+        other => Err(VmError::TypeError {
             expected: "array",
-            got: value_type_name(v),
+            got: value_type_name(&other),
         }),
     }
 }
@@ -597,6 +937,14 @@ fn to_i64(v: &Value) -> i64 {
         Value::Int(i) => *i,
         Value::Float(f) => *f as i64,
         _ => 0,
+    }
+}
+
+fn to_f64_p(v: &Value) -> f64 {
+    match v {
+        Value::Int(i) => *i as f64,
+        Value::Float(f) => *f,
+        _ => 0.0,
     }
 }
 
@@ -700,8 +1048,6 @@ mod tests {
     fn test_portable_vm_function_call() {
         let source = r#"
             .func add
-            LOAD 0
-            LOAD 1
             ADD
             RET
             .func main

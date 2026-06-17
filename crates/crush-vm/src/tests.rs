@@ -66,6 +66,46 @@ fn logical_not() {
     assert_eq!(r.stack, vec![Value::Bool(false)]);
 }
 
+#[test]
+fn negate() {
+    let r = run_src("PUSH 42\nNEG\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(-42)]);
+    let r = run_src("PUSH_F64 3.5\nNEG\nHALT");
+    assert!(matches!(r.stack.first(), Some(Value::Float(f)) if (*f - (-3.5)).abs() < 1e-10));
+}
+
+#[test]
+fn extended_comparisons() {
+    let r = run_src("PUSH 3\nPUSH 5\nNE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 5\nPUSH 5\nNE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+    let r = run_src("PUSH 3\nPUSH 5\nLE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 5\nPUSH 5\nLE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 6\nPUSH 5\nLE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+    let r = run_src("PUSH 6\nPUSH 5\nGE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 5\nPUSH 5\nGE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 3\nPUSH 5\nGE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+}
+
+#[test]
+fn logical_and_or() {
+    let r = run_src("PUSH 1\nPUSH 42\nAND\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 0\nPUSH 42\nAND\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+    let r = run_src("PUSH 0\nPUSH 42\nOR\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 0\nPUSH 0\nOR\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+}
+
 // ── stack ops ────────────────────────────────────────────────────────────────
 
 #[test]

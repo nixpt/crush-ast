@@ -1,0 +1,35 @@
+[package]
+name = "crush-lang-js"
+version = "0.2.0"
+edition = "2024"
+description = "JavaScript/TypeScript language support for Crush — dual-backend JS/TS frontend (swc primary + boa optional)"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "js_walker"
+path = "src/bin/walker.rs"
+
+[features]
+default = ["swc-backend"]
+swc-backend = []
+boa-backend = ["boa_ast", "boa_parser", "boa_interner"]
+
+[dependencies]
+crush-cast.workspace = true
+walker-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+swc_ecma_parser = "41"
+swc_ecma_ast = "25"
+swc_common = "23"
+swc_atoms = "9"
+boa_parser = { version = "0.21", optional = true }
+boa_ast = { version = "0.21", optional = true }
+boa_interner = { version = "0.21", optional = true }
+
+[dev-dependencies]
+crush-frontend = { path = "../crush-frontend" }
+crush-lang-sdk = { path = "../crush-lang-sdk" }
+crush-vm = { path = "../crush-vm" }

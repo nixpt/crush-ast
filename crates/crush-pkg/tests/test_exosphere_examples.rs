@@ -17,7 +17,10 @@ fn compile_and_report(name: &str, src: &str) -> bool {
 fn test_exosphere_fixtures() {
     let root = Path::new("/workspace/projects/exosphere/crates/core/crush-lang/tests/fixtures");
     if !root.exists() {
-        println!("SKIP test_exosphere_fixtures — exosphere checkout absent ({})", root.display());
+        println!(
+            "SKIP test_exosphere_fixtures — exosphere checkout absent ({})",
+            root.display()
+        );
         return;
     }
     let mut passed = 0u32;
@@ -50,7 +53,10 @@ fn test_exosphere_fixtures() {
 fn test_exosphere_integration() {
     let root = Path::new("/workspace/projects/exosphere/tests/language");
     if !root.exists() {
-        println!("SKIP test_exosphere_integration — exosphere checkout absent ({})", root.display());
+        println!(
+            "SKIP test_exosphere_integration — exosphere checkout absent ({})",
+            root.display()
+        );
         return;
     }
     let mut passed = 0u32;
@@ -65,8 +71,11 @@ fn test_exosphere_integration() {
             let src = std::fs::read_to_string(&p).unwrap();
 
             // Skip tests that use language features we don't support yet
-            if name == "for_loop_test" || name == "async_test" || name == "concurrency_structs"
-                || name == "arrays_and_loops" || name == "exception_test"
+            if name == "for_loop_test"
+                || name == "async_test"
+                || name == "concurrency_structs"
+                || name == "arrays_and_loops"
+                || name == "exception_test"
             {
                 println!("  {name}: SKIP (unsupported language features)");
                 known_skipped += 1;
@@ -85,9 +94,14 @@ fn test_exosphere_integration() {
 
 #[test]
 fn test_build_pipeline() {
-    let path = Path::new("/workspace/projects/exosphere/crates/core/crush-lang/examples/build_pipeline.crush");
+    let path = Path::new(
+        "/workspace/projects/exosphere/crates/core/crush-lang/examples/build_pipeline.crush",
+    );
     if !path.exists() {
-        println!("SKIP test_build_pipeline — exosphere checkout absent ({})", path.display());
+        println!(
+            "SKIP test_build_pipeline — exosphere checkout absent ({})",
+            path.display()
+        );
         return;
     }
     let src = std::fs::read_to_string(path).unwrap();
@@ -98,7 +112,10 @@ fn test_build_pipeline() {
 fn test_sbl_core() {
     let path = Path::new("/workspace/projects/exosphere/crates/core/vm/nanovm/src/sbl_core.crush");
     if !path.exists() {
-        println!("SKIP test_sbl_core — exosphere checkout absent ({})", path.display());
+        println!(
+            "SKIP test_sbl_core — exosphere checkout absent ({})",
+            path.display()
+        );
         return;
     }
     let src = std::fs::read_to_string(path).unwrap();

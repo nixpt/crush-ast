@@ -247,7 +247,9 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
         "crush" => CapsuleType::Crush,
         "native" | "rust" | "c" => CapsuleType::Native,
         "container" => CapsuleType::Container,
-        "javascript" | "js" | "ts" | "typescript" | "bun" => CapsuleType::Script(ScriptRuntime::Bun),
+        "javascript" | "js" | "ts" | "typescript" | "bun" => {
+            CapsuleType::Script(ScriptRuntime::Bun)
+        }
         "node" | "nodejs" => CapsuleType::Script(ScriptRuntime::Node),
         "deno" => CapsuleType::Script(ScriptRuntime::Deno),
         "python" | "py" => CapsuleType::Script(ScriptRuntime::Python),
@@ -358,7 +360,8 @@ impl Manifest {
         }
 
         let value = toml::Value::Table(table);
-        let mut manifest: Manifest = value.try_into()
+        let mut manifest: Manifest = value
+            .try_into()
             .map_err(|e| anyhow::anyhow!("Failed to parse manifest: {}", e))?;
 
         // Auto-detect language if not set
@@ -401,7 +404,10 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
 
     let main_path = src_dir.join("main.crush");
     if !main_path.exists() {
-        std::fs::write(&main_path, "fn main() {\n    io.print(\"hello from Crush\")\n}\n")?;
+        std::fs::write(
+            &main_path,
+            "fn main() {\n    io.print(\"hello from Crush\")\n}\n",
+        )?;
     }
 
     let manifest = Manifest {
@@ -503,7 +509,9 @@ name = "bad"
 [permissions]
 network = true
 "#;
-        let err = Manifest::from_str(toml, Path::new("")).unwrap_err().to_string();
+        let err = Manifest::from_str(toml, Path::new(""))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("legacy [permissions]"));
     }
 

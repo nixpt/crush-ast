@@ -97,7 +97,11 @@ impl EcapManifest {
             .map_err(|e| anyhow::anyhow!("Failed to produce canonical bytes: {}", e))
     }
 
-    pub fn sign_with(&mut self, signing_key: &ed25519_dalek::SigningKey, did: &str) -> anyhow::Result<()> {
+    pub fn sign_with(
+        &mut self,
+        signing_key: &ed25519_dalek::SigningKey,
+        did: &str,
+    ) -> anyhow::Result<()> {
         let canonical = self.canonical_bytes()?;
         let sig = signing_key.sign(&canonical);
         self.signature = Some(EcapSignature {
@@ -109,9 +113,14 @@ impl EcapManifest {
         Ok(())
     }
 
-    pub fn verify_signature(&self, verifying_key: &ed25519_dalek::VerifyingKey) -> anyhow::Result<bool> {
+    pub fn verify_signature(
+        &self,
+        verifying_key: &ed25519_dalek::VerifyingKey,
+    ) -> anyhow::Result<bool> {
         use ed25519_dalek::Signature;
-        let sig_info = self.signature.as_ref()
+        let sig_info = self
+            .signature
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No signature on manifest"))?;
         let canonical = self.canonical_bytes()?;
         let sig = Signature::from_slice(&sig_info.signature_bytes)?;
@@ -133,7 +142,12 @@ impl EcapSection {
             hasher.update(&data);
             hasher.finalize().into()
         };
-        Self { name: name.to_string(), data, encrypted: false, hash }
+        Self {
+            name: name.to_string(),
+            data,
+            encrypted: false,
+            hash,
+        }
     }
 
     pub fn verify_hash(&self) -> bool {
@@ -158,7 +172,11 @@ impl ManifestSection {
 
 impl EcapPackage {
     pub fn new(manifest: EcapManifest) -> Self {
-        Self { manifest, sections: Vec::new(), signature: None }
+        Self {
+            manifest,
+            sections: Vec::new(),
+            signature: None,
+        }
     }
 
     pub fn add_section(&mut self, section: EcapSection) {
@@ -182,10 +200,7 @@ impl EcapPackage {
 // Top-level helpers
 // ---------------------------------------------------------------------------
 
-pub fn create_ecap_package(
-    manifest: &EcapManifest,
-    sections: Vec<EcapSection>,
-) -> EcapPackage {
+pub fn create_ecap_package(manifest: &EcapManifest, sections: Vec<EcapSection>) -> EcapPackage {
     let mut pkg = EcapPackage::new(manifest.clone());
     for s in sections {
         pkg.add_section(s);

@@ -36,10 +36,22 @@ pub const SUB: u8 = 0x11;
 pub const MUL: u8 = 0x12;
 pub const DIV: u8 = 0x13;
 pub const MOD: u8 = 0x14;
+pub const NEG: u8 = 0x15;
 pub const EQ: u8 = 0x20;
 pub const LT: u8 = 0x21;
 pub const GT: u8 = 0x22;
 pub const NOT: u8 = 0x23;
+pub const NE: u8 = 0x24;
+pub const LE: u8 = 0x25;
+pub const GE: u8 = 0x26;
+pub const AND: u8 = 0x27;
+pub const OR: u8 = 0x28;
+pub const BITAND: u8 = 0x29;
+pub const BITOR: u8 = 0x2A;
+pub const BITXOR: u8 = 0x2B;
+pub const BITNOT: u8 = 0x2C;
+pub const SHL: u8 = 0x2D;
+pub const SHR: u8 = 0x2E;
 pub const LOAD: u8 = 0x30;
 pub const STORE: u8 = 0x31;
 pub const JMP: u8 = 0x40;
@@ -52,6 +64,11 @@ pub const RET: u8 = 0x53;
 pub const ENTER_TRY: u8 = 0x54;
 pub const EXIT_TRY: u8 = 0x55;
 pub const THROW: u8 = 0x56;
+pub const STR_CONTAINS: u8 = 0x57;
+pub const STR_SPLIT: u8 = 0x58;
+pub const STR_REPLACE: u8 = 0x59;
+pub const STR_JOIN: u8 = 0x5A;
+pub const MAKE_RANGE: u8 = 0x5B;
 pub const NEW_ARRAY: u8 = 0x60;
 pub const ARR_GET: u8 = 0x61;
 pub const ARR_SET: u8 = 0x62;
@@ -93,9 +110,10 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT | ADD | SUB
-        | MUL | DIV | MOD | EQ | LT | GT | NOT | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH
-        | ARR_POP => Some(OperandKind::None),
+        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
+        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | HALT | ADD | SUB | MUL | DIV | MOD
+        | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT
+        | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),

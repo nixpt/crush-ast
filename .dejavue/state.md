@@ -1,23 +1,40 @@
 # State
 
-Updated: 2026-06-16T00:10:00Z
+Updated: 2026-06-16T23:30:00Z
 
-## Complete
+## v0.2.0 Workspace — 23 crates
 
-- **Path deps migrated**: All 19 crates use `workspace = true` for internal deps. `publish = false` removed.
-- **Repo docs created**: `README.md`, `CONTRIBUTING.md`, dejavue context/state/decisions/handoff.
-- **Crate READMEs fixed**: 9 crate READMEs — stale cross-references to exosphere paths replaced with correct crush-ast references.
-- **Crush Language Guide updated**: `src/README.md` now points to crush-ast as the implementation repo. Other stale exosphere refs fixed.
-- **Compiler fixes**: `pub fn` parser support, `str.join` return type inference, string + non-string `+` auto-conversion, recursive function return type inference.
-- **crushc binary**: rustc-style compiler binary with `--emit {vm,casm,ast,types}`, `--check`, `-O`, `--cap`, `-L`, `-v`. 5 integration tests.
-- **crush-installer**: Full install/uninstall/status toolchain with 5 unit tests, end-to-end verified.
-- **CAST fixtures copied**: 16 `examples/cast/*.cast.json` from exosphere. Fixes pre-existing `crush-cast` test failure (pack_tests path corrected).
-- **CAST docs copied**: `docs/cast/cookbook.md`, `docs/cast/schema-reference.md`.
+### Core IR (v0.2.0)
+- `crush-errors`, `crush-cast`, `casm`
 
-## Test Status
+### Grammar
+- `tree-sitter-crush` (v0.1.0)
 
-320 pass, 1 pre-existing failure (walker-core doc-test references non-existent `tree_sitter_mylang`).
+### Walkers / Language Frontends
+- `walker-core` (v0.1.0) — Frontend trait, FeatureReport, BaseWalker
+- `cli` (v0.1.0) — walker dispatcher
+- `python_walker` via `crush-lang-python` — rustpython-parser (replaced tree-sitter)
+- `rust_walker` via `crush-lang-rust` — syn (replaced tree-sitter)
+- Remaining tree-sitter: js, go, c, zig, bash, wasm
+- Old tree-sitter crates: `python_walker/` and `rust_walker/` deleted
+
+### Runtime & Tools (v0.2.0)
+- `crush-vm` — CVM1 bytecode with 35+ opcodes, Value::{Bool,Map,Error,Bytes}
+- `crush-frontend` — compiler frontend (parser, sema, optimizer, compiler)
+- `crush-lang-sdk` — SDK + binaries (crushc, crush-run, crush-compile, crush-repl)
+- `crush-pkg` — package manager
+- `crush-installer` — toolchain installer
+- `crush-python` — PyO3 bindings for crush-cast
+
+### Polyglot
+- `EXEC_LANG` opcode (0x70) — subprocess dispatch for `@python { }` blocks
+- Variable wiring across polyglot blocks via env vars + stdout capture
+- Three-lane Python: CAST transpile / (RustPython planned) / subprocess
+
+### Test Status
+- 414+ tests pass (workspace), 0 warnings
+- Python frontend: 6 FeatureReport tests + 3 pipeline tests
+- All 31 crush-vm tests pass including new types
 
 ## Known External Dependents
-
-openko/fabric, crush-symbols, mycelium-mobile, arniko — all path-dep on crates via `../crush-ast/crates/`.
+openko/fabric, crush-symbols, mycelium-mobile, arniko — all path-dep on crates in this repo.
