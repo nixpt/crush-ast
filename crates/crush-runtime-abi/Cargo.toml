@@ -1,0 +1,11 @@
+[package]
+name = "crush-runtime-abi"
+version = "0.2.0"
+edition = "2024"
+description = "Guest runtime ABI for hosting foreign language VMs under Crush's capability model"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true

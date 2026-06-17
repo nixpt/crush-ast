@@ -1,0 +1,16 @@
+[package]
+name = "crush-python-rt"
+version = "0.2.0"
+edition = "2024"
+description = "RustPython guest runtime for CrushVM — run Python code under Crush's capability model"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crush-runtime-abi = { path = "../crush-runtime-abi" }
+anyhow.workspace = true
+rustpython-vm = { git = "https://github.com/RustPython/RustPython", optional = true }
+
+[features]
+default = []
+rustpython = ["dep:rustpython-vm"]
