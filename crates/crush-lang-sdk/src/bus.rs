@@ -195,6 +195,7 @@ fn crush_value_to_json(v: &crush_vm::vm::Value) -> serde_json::Value {
         }
         crush_vm::vm::Value::Error(e) => serde_json::Value::String(format!("error({})", e)),
         crush_vm::vm::Value::Bytes(b) => serde_json::Value::String(format!("<{} bytes>", b.len())),
+        crush_vm::vm::Value::Handle(id) => serde_json::Value::String(format!("<handle {}>", id)),
     }
 }
 

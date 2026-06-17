@@ -1100,6 +1100,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Map(_) => "map",
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
+        Value::Handle(_) => "handle",
     }
 }
 
@@ -1131,6 +1132,7 @@ pub fn value_to_text(v: &Value) -> String {
         }
         Value::Error(e) => format!("error({})", e),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
+        Value::Handle(id) => format!("<handle {}>", id),
     }
 }
 
@@ -1146,6 +1148,7 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Map(m) => !m.borrow().is_empty(),
         Value::Error(_) => true,
         Value::Bytes(b) => !b.is_empty(),
+        Value::Handle(_) => true,
     }
 }
 

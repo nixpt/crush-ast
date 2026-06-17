@@ -65,6 +65,7 @@ pub fn value_as_text(value: &crush_vm::vm::Value) -> String {
         }
         Value::Error(e) => format!("error({})", e),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
+        Value::Handle(id) => format!("<handle {}>", id),
     }
 }
 

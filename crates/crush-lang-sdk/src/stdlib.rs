@@ -113,6 +113,7 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
             }
             Value::Error(e) => format!("error({})", e),
             Value::Bytes(b) => format!("<{} bytes>", b.len()),
+            Value::Handle(id) => format!("<handle {}>", id),
         })
         .ok_or_else(|| format!("missing argument at index {}", idx))
 }
@@ -164,6 +165,7 @@ fn value_to_string(v: &Value) -> String {
         }
         Value::Error(e) => format!("error({})", e),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
+        Value::Handle(id) => format!("<handle {}>", id),
     }
 }
 
@@ -460,6 +462,7 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
         Value::Map(m) => Value::Int(if m.borrow().is_empty() { 0 } else { 1 }),
         Value::Error(_) => Value::Int(1),
         Value::Bytes(b) => Value::Int(if b.is_empty() { 0 } else { 1 }),
+        Value::Handle(_) => Value::Int(1),
     };
     Ok(Some(result))
 });
@@ -495,6 +498,7 @@ conv_cap!(ConvTypeOfCap, "type_of", 1, |args: &[Value]| {
         Value::Array(_) => "array",
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
+        Value::Handle(_) => "handle",
     };
     Ok(Some(Value::Str(type_name.to_string())))
 });

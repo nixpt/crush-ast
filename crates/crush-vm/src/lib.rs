@@ -6,6 +6,7 @@ pub mod bytecode;
 pub mod caps;
 pub mod host;
 pub mod portable_vm;
+pub mod scheduler;
 pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
