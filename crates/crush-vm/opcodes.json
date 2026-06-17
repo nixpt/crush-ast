@@ -1,6 +1,5 @@
 {
   "magic": "CVM1",
-  "version": 2,
   "min_version": 1,
   "opcodes": {
     "ADD": 16,
@@ -58,5 +57,6 @@
     "PUSH_STR": "str",
     "SET_FIELD": "str",
     "STORE": "slot"
-  }
+  },
+  "version": 2
 }

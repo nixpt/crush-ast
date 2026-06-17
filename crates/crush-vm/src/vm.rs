@@ -610,6 +610,54 @@ fn dispatch_cap(
                 let s = args[0].as_text();
                 Ok(Some(Value::Int(s.len() as i64)))
             }
+            "str.contains" => {
+                let haystack = args[0].as_text();
+                let needle = args[1].as_text();
+                Ok(Some(Value::Bool(haystack.contains(&needle))))
+            }
+            "str.split" => {
+                let s = args[0].as_text();
+                let delim = args[1].as_text();
+                let parts: Vec<Value> = if delim.is_empty() {
+                    s.chars().map(|c| Value::Str(c.to_string())).collect()
+                } else {
+                    s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
+                };
+                Ok(Some(Value::Array(parts)))
+            }
+            "str.replace" => {
+                let s = args[0].as_text();
+                let from = args[1].as_text();
+                let to = args[2].as_text();
+                Ok(Some(Value::Str(s.replace(&from, &to))))
+            }
+            "str.join" => {
+                let delim = args[1].as_text();
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let parts: Vec<String> = elems.iter().map(|v| v.as_text()).collect();
+                        Ok(Some(Value::Str(parts.join(&delim))))
+                    }
+                    other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+                }
+            }
+            "make_range" => {
+                let start = match &args[0] {
+                    Value::Int(i) => *i,
+                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                };
+                let end = match &args[1] {
+                    Value::Int(i) => *i,
+                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                };
+                let mut elems = Vec::new();
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
+                Ok(Some(Value::Array(elems)))
+            }
             _ => Err(VmError::UnknownCap(cap.to_string())),
         };
     }
