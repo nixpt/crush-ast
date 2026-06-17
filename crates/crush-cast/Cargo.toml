@@ -7,7 +7,7 @@ homepage.workspace = true
 description = "Crush Abstract Syntax Tree (CAST) - Stable Intermediate Representation"
 license.workspace = true
 readme = "README.md"
-keywords = ["crush", "ast", "compiler", "intermediate-representation"]
+keywords = ["crush", "ast", "compiler", "ir"]
 categories = ["compilers", "data-structures"]
 exclude = ["python/__pycache__"]
 
