@@ -44,9 +44,11 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 The `Frontend` abstraction (native parser → CAST) is the active direction; the
 remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
-- [ ] **JavaScript/TypeScript frontend** — migrate `js_walker` off tree-sitter to
-  a native parser (`boa_parser` or `swc_ecma_parser`). Highest-value next
-  frontend.
+- [ ] **JavaScript/TypeScript frontend** → **boa_parser** chosen (not swc): surfer
+  already ships `boa_engine` 0.21, so a boa-based walker shares one Boa toolchain
+  (parse + execute). Full dispatch-ready spec: **`docs/tasks/boa-js-walker.md`**
+  (task CA-JS-1). Highest-value next frontend; enables "Crush as surfer's script
+  language."
 - [ ] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
   (prior attempt hit an API mismatch). The planned `crush-lang-bash` crate is its
   home.
