@@ -179,6 +179,13 @@ pub struct ExhaustiveMatchSite {
     /// is finalised; empty until then).
     #[serde(default)]
     pub missing_arms: Vec<String>,
+
+    /// True when the match contains a wildcard arm (`_ => { ... }`).
+    ///
+    /// A wildcard silences the exhaustiveness check because it hides any number
+    /// of unhandled variants.  `check_exhaustiveness()` emits `E-EXH-001` here.
+    #[serde(default)]
+    pub has_wildcard: bool,
 }
 
 /// A source location used for diagnostics and index navigation.

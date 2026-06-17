@@ -311,6 +311,7 @@ mod tests {
                 location: SourceLoc { file: "mod.crush".to_string(), line: 10, col: 0 },
                 covered_arms: vec!["A".to_string(), "B".to_string()],
                 missing_arms: vec![],
+                has_wildcard: false,
             }],
             ..Default::default()
         };

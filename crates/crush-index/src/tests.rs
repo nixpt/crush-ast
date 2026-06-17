@@ -163,6 +163,7 @@ fn test_exhaustive_sites() {
             location: SourceLoc { file: "vm.crush".to_string(), line: 10, col: 4 },
             covered_arms: vec!["Int".to_string(), "Str".to_string()],
             missing_arms: Vec::new(),
+            has_wildcard: false,
         },
         ExhaustiveMatchSite {
             type_name: "StepAction".to_string(),
@@ -170,6 +171,7 @@ fn test_exhaustive_sites() {
             location: SourceLoc::default(),
             covered_arms: vec!["Spawn".to_string()],
             missing_arms: Vec::new(),
+            has_wildcard: false,
         },
     ];
 

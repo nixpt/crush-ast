@@ -131,6 +131,7 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
                 .iter()
                 .filter_map(|arm| arm_pattern_name(&arm.pattern))
                 .collect();
+            let has_wildcard = arms.iter().any(|arm| matches!(arm.pattern, Pattern::Wildcard));
 
             let location = meta_to_source_loc(meta);
 
@@ -143,6 +144,7 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
                 location,
                 covered_arms,
                 missing_arms: Vec::new(),
+                has_wildcard,
             });
 
             // Also recurse into the discriminant and arm bodies

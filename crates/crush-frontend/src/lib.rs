@@ -1,6 +1,8 @@
 pub mod ai_runtime;
 pub mod cast_enrich;
 pub mod compiler;
+pub mod diagnostics;
+pub mod exhaustive_check;
 pub mod import_system;
 pub mod language_walkers;
 pub mod optimizer;
@@ -19,6 +21,8 @@ use anyhow::Result;
 /// Annotations from `@module`, `@invariant`, `@errors` etc. are already in
 /// the CAST from the parser; enrichment adds derived fields that require
 /// walking the full program tree.
+///
+/// For warnings (e.g. exhaustiveness), use [`check_source`] instead.
 pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
     let mut program = parser::Parser::parse(source).map_err(|errors| {
         anyhow::anyhow!(
@@ -32,6 +36,21 @@ pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
     })?;
     cast_enrich::enrich_cast(&mut program);
     Ok(program)
+}
+
+/// Parse Crush source, enrich the CAST, and run all compiler analysis passes.
+///
+/// Returns the enriched program alongside any diagnostics (warnings/errors).
+/// Unlike `parse_source`, this does **not** short-circuit on analysis findings —
+/// a `Vec` of `CompilerDiagnostic` is returned even when non-empty.
+///
+/// Parse failures (syntax errors) are still returned as `Err`.
+pub fn check_source(
+    source: &str,
+) -> Result<(crush_cast::Program, Vec<diagnostics::CompilerDiagnostic>)> {
+    let program = parse_source(source)?;
+    let diags = exhaustive_check::check_exhaustiveness(&program);
+    Ok((program, diags))
 }
 
 /// Compile an already-parsed CAST Program into CASM bytecode.
