@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 /// Analysis of Python source code for backend routing decisions.
 #[derive(Debug, Default)]
 pub struct PythonAnalysis {

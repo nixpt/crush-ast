@@ -2,18 +2,74 @@
 //!
 //! # Python Execution Lanes
 //!
-//! Crush can run Python code through three backends, selected automatically
-//! by [`PythonRouter`]:
+//! ```text
+//! CrushVM Python Stack
+//! ├── Lane 1: py→CAST→CASM       safest / native speed
+//! ├── Lane 2: embedded CrushPy   dynamic pure Python, cap-gated
+//! └── Lane 3: cpython subprocess full ecosystem fallback
+//! ```
 //!
-//! | Lane | Backend | Best for | Speed | Security |
-//! |------|---------|----------|-------|----------|
-//! | 1 | CAST/CASM transpile | Simple subset (`x = 1; print(x)`) | ⚡ Native VM | ✅ Full |
-//! | 2 | RustPython embedded | Dynamic pure Python (classes, methods) | 🏃 In-process | ✅ Cap-gated |
-//! | 3 | Subprocess | CPython ecosystem (numpy, pandas) | 🐢 External | ⚠️ Process-level |
+//! ## Lane 2: Embedded CrushPy (RustPython)
 //!
-//! When the `rustpython` feature is enabled, the RustPython VM backend
-//! is available for lane 2. Without it, only lanes 1 and 3 are usable.
+//! Embedded RustPython should not pretend to be normal Python.
+//! It is **Python syntax inside Crush authority.**
+//!
+//! ### Execution Profiles
+//!
+//! | Profile | Builtins | Imports | Use Case |
+//! |---------|----------|---------|---------|
+//! | `crushpy-core` | Tiny (print, len, range, int, str...) | None | Pure computation |
+//! | `crushpy-exo` | Core + exo bridge | exo.fs, exo.log, exo.env | Capability-gated I/O |
+//! | `crushpy-compat` | Broader stdlib | Math, json, re, itertools | Richer scripts |
+//! | `cpython-external` | Full CPython | Everything | numpy, pandas, torch |
+//!
+//! ### Import Firewall
+//!
+//! No normal imports by default. Only `exo.*` modules are allowed:
+//! - `import exo.fs` → allowed
+//! - `import os` → denied
+//! - `import socket` → denied
+//!
+//! ### Frozen Builtins
+//!
+//! Dangerous builtins are replaced or capability-gated:
+//! - `print` → ctx.stdout
+//! - `open` → denied unless `io.open` capability granted
+//! - `eval` / `exec` / `compile` → denied unless `sys.eval` cap granted
+//! - `__import__` → capability-gated
+//!
+//! ### Fuel / Step Budget
+//!
+//! Every embedded script runs under limits:
+//! - `max_steps` = 1_000_000
+//! - `max_memory` = 64 MB
+//! - `max_time_ms` = 500
+//! - `max_recursion` = 128
+//!
+//! ### Value Bridge
+//!
+//! ```text
+//! Crush    ↔ Python
+//! null     ↔ None
+//! bool     ↔ bool
+//! int      ↔ int
+//! float    ↔ float
+//! str      ↔ str
+//! list     ↔ list
+//! map      ↔ dict
+//! bytes    ↔ bytes
+//! opaque   → OpaquePyObject(handle)
+//! ```
+//!
+//! ### Error Mapping
+//!
+//! - Python `SyntaxError` → Crush `CompileError`
+//! - Python `NameError` → Crush `RuntimeError`
+//! - Python `PermissionError` → Crush `CapabilityDenied`
+//! - Python `RecursionError` → Crush `LimitExceeded`
+//! - Python timeout → Crush `FuelExhausted`
 
+pub mod profile;
 pub mod router;
 
 #[cfg(feature = "rustpython")]
@@ -24,16 +80,10 @@ use crush_runtime_abi::{GuestContext, GuestValue};
 use router::{PythonBackend, PythonRouter};
 
 /// Execute Python source code through the best available backend.
-///
-/// The router selects the lane based on code analysis:
-/// 1. Simple code → CAST transpile (no runtime needed)
-/// 2. Dynamic Python → RustPython (requires `rustpython` feature)
-/// 3. C-extension imports → Subprocess (external Python)
 pub fn execute_python(source: &str, ctx: &GuestContext) -> anyhow::Result<GuestValue> {
     let router = PythonRouter::new();
     match router.choose_backend(source) {
         PythonBackend::CastTranspile => {
-            // Uses the existing py_walker + crush_frontend pipeline
             anyhow::bail!("CAST transpile not yet wired from this entry point")
         }
         PythonBackend::RustPythonEmbedded => {
@@ -51,7 +101,6 @@ pub fn execute_python(source: &str, ctx: &GuestContext) -> anyhow::Result<GuestV
             }
         }
         PythonBackend::Subprocess => {
-            // Uses the existing @python { } subprocess dispatch
             anyhow::bail!("subprocess backend not yet wired from this entry point")
         }
     }

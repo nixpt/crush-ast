@@ -2,14 +2,14 @@
 name = "crush-python-rt"
 version = "0.2.0"
 edition = "2024"
-description = "Multi-lane Python execution for CrushVM: CAST transpile, RustPython embedded, subprocess"
+description = "Multi-lane Python execution for CrushVM: CAST transpile, embedded CrushPy, subprocess"
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
 crush-runtime-abi = { path = "../crush-runtime-abi" }
 anyhow.workspace = true
-rustpython-vm = { git = "https://github.com/RustPython/RustPython", optional = true }
+rustpython-vm = { version = "0.4", optional = true }
 
 [features]
 default = []

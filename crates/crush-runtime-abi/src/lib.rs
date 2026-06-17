@@ -5,8 +5,6 @@
 //! that runs inside CrushVM as a sandboxed capsule. It cannot access
 //! host resources directly — all I/O goes through Crush capabilities.
 
-use std::sync::Arc;
-
 use anyhow::Result;
 
 // ── Value types ─────────────────────────────────────────────────────────────
