@@ -1,6 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -13,6 +14,21 @@ struct Cli {
     format: String,
 }
 
+fn walker_binary(ext: &str) -> Option<&'static str> {
+    match ext {
+        "rs" => Some("rust_walker"),
+        "py" | "pyw" => Some("python_walker"),
+        "js" | "mjs" | "cjs" => Some("js_walker"),
+        "ts" | "tsx" | "mts" => Some("js_walker"),
+        "c" | "h" => Some("c_walker"),
+        "go" => Some("go_walker"),
+        "zig" => Some("zig_walker"),
+        "sh" | "bash" => Some("bash_walker"),
+        "wasm" => Some("wasm_walker"),
+        _ => None,
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -22,22 +38,20 @@ fn main() -> Result<()> {
         .and_then(|s| s.to_str())
         .context("File has no extension")?;
 
-    println!("Walker observing: {:?} (Type: {})", cli.file, extension);
+    let binary = walker_binary(extension)
+        .ok_or_else(|| anyhow::anyhow!("Unknown extension '.{extension}', no walker available"))?;
 
-    match extension {
-        "rs" => println!("Delegating to rust_walker..."),
-        "py" => println!("Delegating to python_walker..."),
-        "js" | "ts" => println!("Delegating to js_walker..."),
-        "c" | "h" => println!("Delegating to c_walker..."),
-        "go" => println!("Delegating to go_walker..."),
-        "crush" => println!("Delegating to crush_walker..."),
-        "zig" => println!("Delegating to zig_walker..."),
-        "sh" => println!("Delegating to bash_walker..."),
-        _ => println!(
-            "Unknown extension '{}', using fallback generic walker.",
-            extension
-        ),
+    let output = Command::new(binary)
+        .arg(&cli.file)
+        .output()
+        .with_context(|| format!("Failed to execute {binary}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("{binary} failed:\n{stderr}");
     }
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    print!("{stdout}");
     Ok(())
 }
