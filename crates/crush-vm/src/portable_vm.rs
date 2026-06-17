@@ -235,6 +235,34 @@ impl PortableVm {
                 self.push(a);
                 self.push(b);
             }
+            ROT => {
+                let a = self.pop()?;
+                let b = self.pop()?;
+                let c = self.pop()?;
+                self.push(b);
+                self.push(c);
+                self.push(a);
+            }
+            PICK => {
+                let n = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                if n >= self.stack.len() {
+                    return Err(VmError::StackUnderflow);
+                }
+                self.push(self.stack[self.stack.len() - 1 - n].clone());
+            }
+            ROLL => {
+                let n = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                if n >= self.stack.len() {
+                    return Err(VmError::StackUnderflow);
+                }
+                let idx = self.stack.len() - 1 - n;
+                let v = self.stack.remove(idx);
+                self.push(v);
+            }
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
@@ -392,6 +420,40 @@ impl PortableVm {
                 let a = self.pop()?;
                 self.push(Value::Bool(!value_is_truthy(&a)));
             }
+            TYPEOF => {
+                let v = self.pop()?;
+                self.push(Value::Str(value_type_name(&v).to_string()));
+            }
+            CAST => {
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let type_name = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let v = self.pop()?;
+                match type_name.as_str() {
+                    "str" | "string" => self.push(Value::Str(value_to_text(&v))),
+                    "int" | "i64" => {
+                        self.push(match v {
+                            Value::Int(_) => v,
+                            Value::Float(f) => Value::Int(f as i64),
+                            Value::Str(s) => Value::Int(s.parse().unwrap_or(0)),
+                            Value::Bool(b) => Value::Int(if b { 1 } else { 0 }),
+                            _ => Value::Int(0),
+                        });
+                    }
+                    "float" | "f64" => {
+                        self.push(match v {
+                            Value::Float(_) => v,
+                            Value::Int(i) => Value::Float(i as f64),
+                            Value::Str(s) => Value::Float(s.parse().unwrap_or(0.0)),
+                            Value::Bool(b) => Value::Float(if b { 1.0 } else { 0.0 }),
+                            _ => Value::Float(0.0),
+                        });
+                    }
+                    "bool" => self.push(Value::Bool(value_is_truthy(&v))),
+                    _ => self.push(v),
+                }
+            }
             LOAD => {
                 let slot = u16::from_be_bytes(
                     self.program.code[self.ip + 1..self.ip + 3]
@@ -509,13 +571,14 @@ impl PortableVm {
                     vals.push(self.pop()?);
                 }
                 vals.reverse();
-                self.push(Value::Array(vals));
+                self.push(Value::new_array(vals));
             }
             ARR_GET => {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let arr = need_array(arr_v)?;
+                let arr_rc = need_array(arr_v)?;
+                let arr = arr_rc.borrow();
                 let len = arr.len();
                 let actual = wrap_index(idx, len)?;
                 self.push(arr[actual].clone());
@@ -525,31 +588,34 @@ impl PortableVm {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let mut arr = need_array(arr_v)?;
-                let len = arr.len();
-                let actual = wrap_index(idx, len)?;
-                arr[actual] = val;
-                self.push(Value::Array(arr));
+                let arr_rc = need_array(arr_v)?;
+                {
+                    let mut arr = arr_rc.borrow_mut();
+                    let len = arr.len();
+                    let actual = wrap_index(idx, len)?;
+                    arr[actual] = val;
+                }
+                self.push(Value::Array(arr_rc));
             }
             ARR_LEN => {
                 let v = self.pop()?;
-                let arr = need_array(v)?;
-                self.push(Value::Int(arr.len() as i64));
+                let arr_rc = need_array(v)?;
+                self.push(Value::Int(arr_rc.borrow().len() as i64));
             }
             ARR_PUSH => {
                 let val = self.pop()?;
-                let mut arr = need_array(self.pop()?)?;
-                arr.push(val);
-                self.push(Value::Array(arr));
+                let arr_rc = need_array(self.pop()?)?;
+                arr_rc.borrow_mut().push(val);
+                self.push(Value::Array(arr_rc));
             }
             ARR_POP => {
-                let mut arr = need_array(self.pop()?)?;
-                let val = arr.pop().unwrap_or(Value::Null);
-                self.push(Value::Array(arr));
+                let arr_rc = need_array(self.pop()?)?;
+                let val = arr_rc.borrow_mut().pop().unwrap_or(Value::Null);
+                self.push(Value::Array(arr_rc.clone()));
                 self.push(val);
             }
             NEW_OBJ => {
-                self.push(Value::Map(std::collections::HashMap::new()));
+                self.push(Value::new_map(std::collections::HashMap::new()));
             }
             SET_FIELD => {
                 let idx = u16::from_be_bytes(
@@ -564,7 +630,7 @@ impl PortableVm {
                     .ok_or(VmError::ConstOutOfRange(idx))?
                     .clone();
                 let val = self.pop()?;
-                let mut map = match self.pop()? {
+                let map_rc = match self.pop()? {
                     Value::Map(m) => m,
                     other => {
                         return Err(VmError::TypeError {
@@ -573,8 +639,8 @@ impl PortableVm {
                         });
                     }
                 };
-                map.insert(field, val);
-                self.push(Value::Map(map));
+                map_rc.borrow_mut().insert(field, val);
+                self.push(Value::Map(map_rc));
             }
             GET_FIELD => {
                 let idx = u16::from_be_bytes(
@@ -588,7 +654,7 @@ impl PortableVm {
                     .get(idx)
                     .ok_or(VmError::ConstOutOfRange(idx))?
                     .clone();
-                let map = match self.pop()? {
+                let map_rc = match self.pop()? {
                     Value::Map(m) => m,
                     other => {
                         return Err(VmError::TypeError {
@@ -597,7 +663,7 @@ impl PortableVm {
                         });
                     }
                 };
-                let val = map.get(&field).cloned().unwrap_or(Value::Null);
+                let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
                 self.push(val);
             }
             ENTER_TRY => {
@@ -643,7 +709,7 @@ impl PortableVm {
                 } else {
                     text.split(&d).map(|p| Value::Str(p.to_string())).collect()
                 };
-                self.push(Value::Array(parts));
+                self.push(Value::new_array(parts));
             }
             STR_REPLACE => {
                 let to = self.pop()?;
@@ -659,7 +725,7 @@ impl PortableVm {
                 let d = value_to_text(&delim);
                 match arr_v {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.iter().map(|v| value_to_text(v)).collect();
+                        let parts: Vec<String> = elems.borrow().iter().map(|v| value_to_text(v)).collect();
                         self.push(Value::Str(parts.join(&d)));
                     }
                     other => {
@@ -697,7 +763,7 @@ impl PortableVm {
                         elems.push(Value::Int(i));
                     }
                 }
-                self.push(Value::Array(elems));
+                self.push(Value::new_array(elems));
             }
             EXEC_LANG => {
                 let idx = u16::from_be_bytes(
@@ -800,7 +866,7 @@ impl PortableVm {
                     } else {
                         s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
                     };
-                    Ok(Some(Value::Array(parts)))
+                    Ok(Some(Value::new_array(parts)))
                 }
                 "str.replace" => {
                     let s = value_to_text(&args[0]);
@@ -813,7 +879,7 @@ impl PortableVm {
                     match &args[0] {
                         Value::Array(elems) => {
                             let parts: Vec<String> =
-                                elems.iter().map(|v| value_to_text(v)).collect();
+                                elems.borrow().iter().map(|v| value_to_text(v)).collect();
                             Ok(Some(Value::Str(parts.join(&delim))))
                         }
                         other => Err(VmError::TypeError {
@@ -847,7 +913,7 @@ impl PortableVm {
                             elems.push(Value::Int(i));
                         }
                     }
-                    Ok(Some(Value::Array(elems)))
+                    Ok(Some(Value::new_array(elems)))
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
@@ -940,7 +1006,7 @@ pub enum VmYield {
 }
 
 /// Helper functions for array operations.
-fn need_array(v: Value) -> Result<Vec<Value>, VmError> {
+fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
         other => Err(VmError::TypeError {
@@ -1019,11 +1085,12 @@ pub fn value_to_text(v: &Value) -> String {
         }
         Value::Str(s) => s.clone(),
         Value::Array(a) => {
-            let items: Vec<String> = a.iter().map(value_to_text).collect();
+            let items: Vec<String> = a.borrow().iter().map(value_to_text).collect();
             format!("[{}]", items.join(", "))
         }
         Value::Map(m) => {
             let items: Vec<String> = m
+                .borrow()
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, value_to_text(v)))
                 .collect();
@@ -1042,8 +1109,8 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Int(i) => *i != 0,
         Value::Float(f) => *f != 0.0,
         Value::Str(s) => !s.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Map(m) => !m.is_empty(),
+        Value::Array(a) => !a.borrow().is_empty(),
+        Value::Map(m) => !m.borrow().is_empty(),
         Value::Error(_) => true,
         Value::Bytes(b) => !b.is_empty(),
     }

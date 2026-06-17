@@ -31,12 +31,17 @@ pub const SWAP: u8 = 0x05;
 pub const PUSH_F64: u8 = 0x06;
 pub const PUSH_NULL: u8 = 0x07;
 pub const PUSH_BOOL: u8 = 0x08;
+pub const ROT: u8 = 0x09;
+pub const PICK: u8 = 0x0A;
+pub const ROLL: u8 = 0x0B;
 pub const ADD: u8 = 0x10;
 pub const SUB: u8 = 0x11;
 pub const MUL: u8 = 0x12;
 pub const DIV: u8 = 0x13;
 pub const MOD: u8 = 0x14;
 pub const NEG: u8 = 0x15;
+pub const TYPEOF: u8 = 0x16;
+pub const CAST: u8 = 0x17;
 pub const EQ: u8 = 0x20;
 pub const LT: u8 = 0x21;
 pub const GT: u8 = 0x22;
@@ -110,8 +115,10 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
-        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | HALT | ADD | SUB | MUL | DIV | MOD
+        NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
+        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | HALT
+        | TYPEOF
+        | ADD | SUB | MUL | DIV | MOD
         | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT
         | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
@@ -122,8 +129,9 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
         EXEC_LANG => Some(OperandKind::Str),
-        SET_FIELD | GET_FIELD => Some(OperandKind::Str),
+        SET_FIELD | GET_FIELD | CAST => Some(OperandKind::Str),
         NEW_OBJ => Some(OperandKind::None),
+        PICK | ROLL => Some(OperandKind::Count),
         NEW_ARRAY => Some(OperandKind::Count),
         _ => None,
     }

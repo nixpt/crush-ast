@@ -5,19 +5,19 @@
 //! `Quotas::allowed_caps`. Division and modulo truncate toward zero (matching
 //! Python's `int(a/b)` for same-sign and `a//b` for same-sign).
 //!
-//! Array values use owned `Vec<Value>` (copy-on-write semantics) rather than
-//! Python's shared-reference lists. Programs that STORE an array and then
-//! ARR_SET via a DUP will see diverging copies — this is the only semantic
-//! difference from the Python original.
+//! Array and map values use `Rc<RefCell<...>>` (shared reference semantics):
+//! cloning a `Value::Array` or `Value::Map` produces an alias, not a copy.
+//! This matches Python/JS list/dict behavior — a DUP followed by ARR_SET
+//! mutates the same underlying storage as the original.
 
 use std::collections::HashMap;
 
 use crate::bytecode::{
     self, ADD, AND, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, BITAND, BITNOT, BITOR, BITXOR,
-    CALL, CAP_CALL, DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GE, GET_FIELD, GT, HALT, JMP,
-    JNZ, JZ, LE, LOAD, LT, MAKE_RANGE, MOD, MUL, NE, NEG, NEW_ARRAY, NEW_OBJ, NOP, NOT, OR, POP,
+    CALL, CAP_CALL, CAST, DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GE, GET_FIELD, GT, HALT, JMP,
+    JNZ, JZ, LE, LOAD, LT, MAKE_RANGE, MOD, MUL, NE, NEG, NEW_ARRAY, NEW_OBJ, NOP, NOT, OR, PICK, POP,
     PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, Program, RET, SET_FIELD, SHL, SHR,
-    STORE, STR_CONTAINS, STR_JOIN, STR_REPLACE, STR_SPLIT, SUB, SWAP, THROW,
+    ROT, ROLL, STORE, STR_CONTAINS, STR_JOIN, STR_REPLACE, STR_SPLIT, SUB, SWAP, THROW, TYPEOF,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -74,21 +74,38 @@ pub enum VmError {
 }
 
 /// Stack value — the types the CVM1 supports.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Null,
     Bool(bool),
     Int(i64),
     Float(f64),
     Str(String),
-    /// Owned array (copy-on-write; see module doc for the one semantic divergence).
-    Array(Vec<Value>),
-    /// String-keyed map (object/dict).
-    Map(std::collections::HashMap<String, Value>),
+    /// Shared array (reference semantics via Rc<RefCell<...>>).
+    Array(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
+    /// Shared string-keyed map (reference semantics via Rc<RefCell<...>>).
+    Map(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>),
     /// Error value (carries a message string).
     Error(String),
     /// Binary blob data.
     Bytes(Vec<u8>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
+            (Value::Map(a), Value::Map(b)) => *a.borrow() == *b.borrow(),
+            (Value::Error(a), Value::Error(b)) => a == b,
+            (Value::Bytes(a), Value::Bytes(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -113,8 +130,8 @@ impl Value {
             Value::Int(i) => *i != 0,
             Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
-            Value::Array(a) => !a.is_empty(),
-            Value::Map(m) => !m.is_empty(),
+            Value::Array(a) => !a.borrow().is_empty(),
+            Value::Map(m) => !m.borrow().is_empty(),
             Value::Error(_) => true,
             Value::Bytes(b) => !b.is_empty(),
         }
@@ -134,11 +151,12 @@ impl Value {
             }
             Value::Str(s) => s.clone(),
             Value::Array(a) => {
-                let inner: Vec<_> = a.iter().map(|v| v.as_text()).collect();
+                let inner: Vec<_> = a.borrow().iter().map(|v| v.as_text()).collect();
                 format!("[{}]", inner.join(", "))
             }
             Value::Map(m) => {
                 let inner: Vec<_> = m
+                    .borrow()
                     .iter()
                     .map(|(k, v)| format!("{k}: {}", v.as_text()))
                     .collect();
@@ -151,6 +169,14 @@ impl Value {
 
     pub(crate) fn is_numeric(&self) -> bool {
         matches!(self, Value::Int(_) | Value::Float(_))
+    }
+
+    pub fn new_array(v: Vec<Value>) -> Self {
+        Value::Array(std::rc::Rc::new(std::cell::RefCell::new(v)))
+    }
+
+    pub fn new_map(m: std::collections::HashMap<String, Value>) -> Self {
+        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(m)))
     }
 }
 
@@ -311,6 +337,28 @@ pub fn run_with_caps(
                 push!(a);
                 push!(b);
             }
+            ROT => {
+                let a = pop!();
+                let b = pop!();
+                let c = pop!();
+                push!(b);
+                push!(c);
+                push!(a);
+            }
+            PICK => {
+                let n = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+                let len = stack.len();
+                if n >= len { return Err(VmError::StackUnderflow); }
+                push!(stack[len - 1 - n].clone());
+            }
+            ROLL => {
+                let n = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+                let len = stack.len();
+                if n >= len { return Err(VmError::StackUnderflow); }
+                let idx = len - 1 - n;
+                let v = stack.remove(idx);
+                push!(v);
+            }
 
             EQ => {
                 let b = pop!();
@@ -440,6 +488,34 @@ pub fn run_with_caps(
                 let v = pop!();
                 push!(Value::Bool(!v.is_truthy()));
             }
+            TYPEOF => {
+                let v = pop!();
+                push!(Value::Str(v.type_name().to_string()));
+            }
+            CAST => {
+                let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+                let type_name = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let v = pop!();
+                match type_name.as_str() {
+                    "str" | "string" => push!(Value::Str(v.as_text())),
+                    "int" | "i64" => match v {
+                        Value::Int(_) => push!(v),
+                        Value::Float(f) => push!(Value::Int(f as i64)),
+                        Value::Str(s) => push!(Value::Int(s.parse().unwrap_or(0))),
+                        Value::Bool(b) => push!(Value::Int(if b { 1 } else { 0 })),
+                        _ => push!(Value::Int(0)),
+                    },
+                    "float" | "f64" => match v {
+                        Value::Float(_) => push!(v),
+                        Value::Int(i) => push!(Value::Float(i as f64)),
+                        Value::Str(s) => push!(Value::Float(s.parse().unwrap_or(0.0))),
+                        Value::Bool(b) => push!(Value::Float(if b { 1.0 } else { 0.0 })),
+                        _ => push!(Value::Float(0.0)),
+                    },
+                    "bool" => push!(Value::Bool(v.is_truthy())),
+                    _ => push!(v),
+                }
+            }
             NEW_ARRAY => {
                 let count = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
                 let mut vals = Vec::with_capacity(count);
@@ -447,13 +523,14 @@ pub fn run_with_caps(
                     vals.push(pop!());
                 }
                 vals.reverse();
-                push!(Value::Array(vals));
+                push!(Value::new_array(vals));
             }
             ARR_GET => {
                 let idx_v = pop!();
                 let arr_v = pop!();
                 let idx = need_array_index(&idx_v)?;
-                let arr = need_array(arr_v)?;
+                let arr_rc = need_array(arr_v)?;
+                let arr = arr_rc.borrow();
                 let len = arr.len();
                 let actual = wrap_index(idx, len)?;
                 push!(arr[actual].clone());
@@ -463,27 +540,31 @@ pub fn run_with_caps(
                 let idx_v = pop!();
                 let arr_v = pop!();
                 let idx = need_array_index(&idx_v)?;
-                let mut arr = need_array(arr_v)?;
-                let len = arr.len();
-                let actual = wrap_index(idx, len)?;
-                arr[actual] = val;
-                push!(Value::Array(arr));
+                let arr_rc = need_array(arr_v)?;
+                {
+                    let mut arr = arr_rc.borrow_mut();
+                    let len = arr.len();
+                    let actual = wrap_index(idx, len)?;
+                    arr[actual] = val;
+                }
+                push!(Value::Array(arr_rc));
             }
             ARR_LEN => {
                 let v = pop!();
-                let len = need_array(v)?.len();
+                let arr_rc = need_array(v)?;
+                let len = arr_rc.borrow().len();
                 push!(Value::Int(len as i64));
             }
             ARR_PUSH => {
                 let val = pop!();
-                let mut arr = need_array(pop!())?;
-                arr.push(val);
-                push!(Value::Array(arr));
+                let arr_rc = need_array(pop!())?;
+                arr_rc.borrow_mut().push(val);
+                push!(Value::Array(arr_rc));
             }
             ARR_POP => {
-                let mut arr = need_array(pop!())?;
-                let val = arr.pop().unwrap_or(Value::Null);
-                push!(Value::Array(arr));
+                let arr_rc = need_array(pop!())?;
+                let val = arr_rc.borrow_mut().pop().unwrap_or(Value::Null);
+                push!(Value::Array(arr_rc.clone()));
                 push!(val);
             }
             LOAD => {
@@ -676,7 +757,7 @@ pub fn run_with_caps(
                 } else {
                     text.split(&d).map(|p| Value::Str(p.to_string())).collect()
                 };
-                push!(Value::Array(parts));
+                push!(Value::new_array(parts));
             }
             STR_REPLACE => {
                 let to = pop!();
@@ -692,7 +773,7 @@ pub fn run_with_caps(
                 let d = delim.as_text();
                 match arr_v {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.iter().map(|v| v.as_text()).collect();
+                        let parts: Vec<String> = elems.borrow().iter().map(|v| v.as_text()).collect();
                         push!(Value::Str(parts.join(&d)));
                     }
                     other => {
@@ -730,10 +811,10 @@ pub fn run_with_caps(
                         elems.push(Value::Int(i));
                     }
                 }
-                push!(Value::Array(elems));
+                push!(Value::new_array(elems));
             }
             NEW_OBJ => {
-                push!(Value::Map(std::collections::HashMap::new()));
+                push!(Value::new_map(std::collections::HashMap::new()));
             }
             SET_FIELD => {
                 let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
@@ -743,7 +824,7 @@ pub fn run_with_caps(
                     .ok_or(VmError::ConstOutOfRange(idx))?
                     .clone();
                 let val = pop!();
-                let mut map = match pop!() {
+                let map_rc = match pop!() {
                     Value::Map(m) => m,
                     other => {
                         return Err(VmError::TypeError {
@@ -752,8 +833,8 @@ pub fn run_with_caps(
                         });
                     }
                 };
-                map.insert(field, val);
-                push!(Value::Map(map));
+                map_rc.borrow_mut().insert(field, val);
+                push!(Value::Map(map_rc));
             }
             GET_FIELD => {
                 let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
@@ -762,7 +843,7 @@ pub fn run_with_caps(
                     .get(idx)
                     .ok_or(VmError::ConstOutOfRange(idx))?
                     .clone();
-                let map = match pop!() {
+                let map_rc = match pop!() {
                     Value::Map(m) => m,
                     other => {
                         return Err(VmError::TypeError {
@@ -771,7 +852,7 @@ pub fn run_with_caps(
                         });
                     }
                 };
-                let val = map.get(&field).cloned().unwrap_or(Value::Null);
+                let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
                 push!(val);
             }
             HALT => {
@@ -863,7 +944,7 @@ fn dispatch_cap(
                 } else {
                     s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
                 };
-                Ok(Some(Value::Array(parts)))
+                Ok(Some(Value::new_array(parts)))
             }
             "str.replace" => {
                 let s = args[0].as_text();
@@ -875,7 +956,7 @@ fn dispatch_cap(
                 let delim = args[1].as_text();
                 match &args[0] {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.iter().map(|v| v.as_text()).collect();
+                        let parts: Vec<String> = elems.borrow().iter().map(|v| v.as_text()).collect();
                         Ok(Some(Value::Str(parts.join(&delim))))
                     }
                     other => Err(VmError::TypeError {
@@ -909,7 +990,7 @@ fn dispatch_cap(
                         elems.push(Value::Int(i));
                     }
                 }
-                Ok(Some(Value::Array(elems)))
+                Ok(Some(Value::new_array(elems)))
             }
             _ => Err(VmError::UnknownCap(cap.to_string())),
         };
@@ -961,7 +1042,7 @@ fn trunc_div(a: i64, b: i64) -> i64 {
     a / b // Rust integer division already truncates toward zero
 }
 
-fn need_array(v: Value) -> Result<Vec<Value>, VmError> {
+fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
         other => Err(VmError::TypeError {

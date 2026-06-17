@@ -234,6 +234,13 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         })?;
                     format!("SET_FIELD {field:?}")
                 }
+                // Stubs for unimplemented opcodes — prevent bailing
+                "new_struct" => "NEW_OBJ".to_string(),
+                "dom_mutate" | "dom_event_listener" | "dom_query" => "NOP".to_string(),
+                "ai_goal_decl" | "ai_progress_update" | "ai_knowledge_share" => "NOP".to_string(),
+                "ai_capability_discovery" | "ai_adaptation_request" => "NOP".to_string(),
+                "ai_query" | "ai_tool_chain" | "ai_agent_delegation" => "NOP".to_string(),
+                "ai_learning_loop" | "ai_context_aware" => "NOP".to_string(),
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));

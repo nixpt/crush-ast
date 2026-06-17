@@ -186,7 +186,7 @@ fn new_array() {
     let r = run_src("PUSH 1\nPUSH 2\nPUSH 3\nNEW_ARRAY 3\nHALT");
     assert_eq!(
         r.stack,
-        vec![Value::Array(vec![
+        vec![Value::new_array(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(3)
@@ -420,9 +420,9 @@ fn arr_push_and_arr_pop() {
     let r = run_src("NEW_ARRAY 0\nDUP\nPUSH 1\nARR_PUSH\nDUP\nPUSH 2\nARR_PUSH\nHALT");
     let last = r.stack.last().expect("should have a value");
     if let Value::Array(arr) = last {
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0], Value::Int(1));
-        assert_eq!(arr[1], Value::Int(2));
+        assert_eq!(arr.borrow().len(), 2);
+        assert_eq!(arr.borrow()[0], Value::Int(1));
+        assert_eq!(arr.borrow()[1], Value::Int(2));
     } else {
         panic!("expected array, got {:?}", last);
     }
@@ -445,8 +445,8 @@ fn arr_pop_removes_last() {
         panic!("expected Int, got {:?}", r.stack[len - 1]);
     }
     if let Value::Array(arr) = &r.stack[len - 2] {
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0], Value::Int(1));
+        assert_eq!(arr.borrow().len(), 1);
+        assert_eq!(arr.borrow()[0], Value::Int(1));
     } else {
         panic!("expected Array, got {:?}", r.stack[len - 2]);
     }
@@ -498,10 +498,10 @@ fn str_split_native() {
     STR_SPLIT
     HALT"#);
     if let Some(Value::Array(arr)) = r.stack.first() {
-        assert_eq!(arr.len(), 3);
-        assert_eq!(arr[0], Value::Str("a".to_string()));
-        assert_eq!(arr[1], Value::Str("b".to_string()));
-        assert_eq!(arr[2], Value::Str("c".to_string()));
+        assert_eq!(arr.borrow().len(), 3);
+        assert_eq!(arr.borrow()[0], Value::Str("a".to_string()));
+        assert_eq!(arr.borrow()[1], Value::Str("b".to_string()));
+        assert_eq!(arr.borrow()[2], Value::Str("c".to_string()));
     } else {
         panic!("expected array");
     }
@@ -533,14 +533,14 @@ fn str_join_native() {
 fn make_range_native() {
     let r = run_src("PUSH 0\nPUSH 5\nMAKE_RANGE\nHALT");
     if let Some(Value::Array(arr)) = r.stack.first() {
-        assert_eq!(arr.len(), 5);
-        assert_eq!(arr[0], Value::Int(0));
-        assert_eq!(arr[4], Value::Int(4));
+        assert_eq!(arr.borrow().len(), 5);
+        assert_eq!(arr.borrow()[0], Value::Int(0));
+        assert_eq!(arr.borrow()[4], Value::Int(4));
     } else {
         panic!("expected array");
     }
     let r = run_src("PUSH 5\nPUSH 3\nMAKE_RANGE\nHALT");  // empty range
-    assert_eq!(r.stack, vec![Value::Array(vec![])]);
+    assert_eq!(r.stack, vec![Value::new_array(vec![])]);
 }
 
 // ── capability tests ──────────────────────────────────────────────────────────
@@ -567,7 +567,7 @@ fn cap_str_split() {
         &["str.split"],
     );
     if let Some(Value::Array(arr)) = r.stack.first() {
-        assert_eq!(arr.len(), 3);
+        assert_eq!(arr.borrow().len(), 3);
     } else {
         panic!("expected array");
     }
@@ -607,7 +607,7 @@ fn cap_make_range() {
         &["make_range"],
     );
     if let Some(Value::Array(arr)) = r.stack.first() {
-        assert_eq!(arr.len(), 5);
+        assert_eq!(arr.borrow().len(), 5);
     } else {
         panic!("expected array");
     }
