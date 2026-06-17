@@ -159,7 +159,7 @@ impl HostCap for TaskListCap {
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
         let state = self.state.lock().map_err(|e| e.to_string())?;
         let rows = state.list();
-        Ok(Some(Value::Array(
+        Ok(Some(Value::new_array(
             rows.into_iter()
                 .map(|v| Value::Str(serde_json::to_string(&v).unwrap_or_default()))
                 .collect(),

@@ -59,6 +59,10 @@ pub struct PortableVm {
     privileged_allowed: bool,
     /// Exception handler stack (target IP for each active try block).
     try_stack: Vec<usize>,
+    /// Next task ID for async spawn.
+    next_task_id: u64,
+    /// Scheduled tasks: task_id → function name.
+    scheduled_tasks: std::collections::HashMap<u64, String>,
 }
 
 impl PortableVm {
@@ -107,6 +111,8 @@ impl PortableVm {
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
+            next_task_id: 1,
+            scheduled_tasks: std::collections::HashMap::new(),
         }
     }
 
@@ -803,6 +809,33 @@ impl PortableVm {
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
+            }
+            SPAWN => {
+                let fn_name = value_to_text(&self.pop()?);
+                let task_id = self.next_task_id;
+                self.next_task_id += 1;
+                self.scheduled_tasks.insert(task_id, fn_name);
+                self.push(Value::Int(task_id as i64));
+            }
+            YIELD => {
+                std::thread::yield_now();
+            }
+            AWAIT => {
+                let handle = self.pop()?;
+                if let Value::Int(task_id) = handle {
+                    if let Some(fn_name) = self.scheduled_tasks.remove(&(task_id as u64)) {
+                        if let Some(&entry) = self.func_entry.get(&fn_name) {
+                            if self.call_stack.len() >= self.quotas.max_call_depth {
+                                return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                            }
+                            self.call_stack
+                                .push(Frame::new(Some(next_ip)));
+                            self.ip = entry;
+                            return Ok(());
+                        }
+                    }
+                }
+                self.push(Value::Null);
             }
             HALT => {
                 self.halted = true;

@@ -195,9 +195,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let esc = args_json.replace('\\', "\\\\").replace('"', "\\\"");
                     format!("EXEC_LANG \"{esc}\"")
                 }
-                "spawn" => "NOP".to_string(),
-                "yield" => "NOP".to_string(),
-                "await" => "NOP".to_string(),
+                "spawn" => "SPAWN".to_string(),
+                "yield" => "YIELD".to_string(),
+                "await" => "AWAIT".to_string(),
                 "throw" => "THROW".to_string(),
                 "enter_try" => {
                     let target = instr.args["target"]

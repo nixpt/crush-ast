@@ -137,7 +137,7 @@ impl HostCap for AkgSearchCap {
         let query = crate::caps::value_as_text(&args[0]);
         let state = self.state.lock().map_err(|e| e.to_string())?;
         let results = state.search(&query);
-        Ok(Some(Value::Array(
+        Ok(Some(Value::new_array(
             results
                 .into_iter()
                 .map(|v| Value::Str(serde_json::to_string(&v).unwrap_or_default()))
@@ -171,7 +171,7 @@ mod tests {
             .call(vec![Value::Str("greeting".to_string())])
             .unwrap();
         if let Value::Array(arr) = results.unwrap() {
-            assert_eq!(arr.len(), 1);
+            assert_eq!(arr.borrow().len(), 1);
         } else {
             panic!("expected array");
         }

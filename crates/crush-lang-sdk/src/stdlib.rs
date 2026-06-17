@@ -102,9 +102,10 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
                 }
             }
             Value::Null => String::new(),
-            Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
+            Value::Array(a) => a.borrow().iter().map(value_to_string).collect::<Vec<_>>().join(", "),
             Value::Map(m) => {
                 let items: Vec<String> = m
+                    .borrow()
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k, value_to_string(v)))
                     .collect();
@@ -152,9 +153,10 @@ fn value_to_string(v: &Value) -> String {
             }
         }
         Value::Null => String::new(),
-        Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
+        Value::Array(a) => a.borrow().iter().map(value_to_string).collect::<Vec<_>>().join(", "),
         Value::Map(m) => {
             let items: Vec<String> = m
+                .borrow()
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, value_to_string(v)))
                 .collect();
@@ -191,16 +193,16 @@ str_cap!(StrSplitCap, "split", 2, |args: &[Value]| {
     let s = get_str(args, 0)?;
     let delim = get_str(args, 1)?;
     let parts: Vec<Value> = s.split(&delim).map(|p| Value::Str(p.to_string())).collect();
-    Ok(Some(Value::Array(parts)))
+    Ok(Some(Value::new_array(parts)))
 });
 
 str_cap!(StrJoinCap, "join", 2, |args: &[Value]| {
     let arr = match &args[0] {
-        Value::Array(a) => a,
+        Value::Array(a) => a.clone(),
         _ => return Err("str.join: first argument must be an array".to_string()),
     };
     let delim = get_str(args, 1)?;
-    let strings: Result<Vec<String>, String> = arr.iter().map(|v| Ok(value_to_string(v))).collect();
+    let strings: Result<Vec<String>, String> = arr.borrow().iter().map(|v| Ok(value_to_string(v))).collect();
     let joined = strings?.join(&delim);
     Ok(Some(Value::Str(joined)))
 });
@@ -454,8 +456,8 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
         Value::Float(f) => Value::Int(if *f != 0.0 { 1 } else { 0 }),
         Value::Str(s) => Value::Int(if s.is_empty() { 0 } else { 1 }),
         Value::Null => Value::Int(0),
-        Value::Array(a) => Value::Int(if a.is_empty() { 0 } else { 1 }),
-        Value::Map(m) => Value::Int(if m.is_empty() { 0 } else { 1 }),
+        Value::Array(a) => Value::Int(if a.borrow().is_empty() { 0 } else { 1 }),
+        Value::Map(m) => Value::Int(if m.borrow().is_empty() { 0 } else { 1 }),
         Value::Error(_) => Value::Int(1),
         Value::Bytes(b) => Value::Int(if b.is_empty() { 0 } else { 1 }),
     };
@@ -522,7 +524,7 @@ macro_rules! coll_cap {
 coll_cap!(CollLenCap, "len", 1, |args: &[Value]| {
     let v = &args[0];
     let len = match v {
-        Value::Array(a) => a.len(),
+        Value::Array(a) => a.borrow().len(),
         Value::Str(s) => s.len(),
         _ => return Err("collections.len: expected array or string".to_string()),
     };
@@ -533,9 +535,9 @@ coll_cap!(CollReverseCap, "reverse", 1, |args: &[Value]| {
     let v = &args[0];
     match v {
         Value::Array(a) => {
-            let mut arr = a.clone();
+            let mut arr = a.borrow().clone();
             arr.reverse();
-            Ok(Some(Value::Array(arr)))
+            Ok(Some(Value::new_array(arr)))
         }
         _ => Err("collections.reverse: expected array".to_string()),
     }
@@ -545,7 +547,7 @@ coll_cap!(CollIncludesCap, "includes", 2, |args: &[Value]| {
     let v = &args[0];
     let needle = &args[1];
     let found = match v {
-        Value::Array(a) => a.iter().any(|x| x == needle),
+        Value::Array(a) => a.borrow().iter().any(|x| x == needle),
         _ => return Err("collections.includes: expected array".to_string()),
     };
     Ok(Some(Value::Int(if found { 1 } else { 0 })))
@@ -556,13 +558,13 @@ coll_cap!(CollFlattenCap, "flatten", 1, |args: &[Value]| {
     match v {
         Value::Array(a) => {
             let mut flat = Vec::new();
-            for item in a {
+            for item in a.borrow().iter() {
                 match item {
-                    Value::Array(inner) => flat.extend(inner.clone()),
+                    Value::Array(inner) => flat.extend(inner.borrow().clone()),
                     _ => flat.push(item.clone()),
                 }
             }
-            Ok(Some(Value::Array(flat)))
+            Ok(Some(Value::new_array(flat)))
         }
         _ => Err("collections.flatten: expected array".to_string()),
     }
@@ -576,8 +578,8 @@ coll_cap!(CollChunkCap, "chunk", 2, |args: &[Value]| {
     }
     match v {
         Value::Array(a) => {
-            let chunks: Vec<Value> = a.chunks(size).map(|c| Value::Array(c.to_vec())).collect();
-            Ok(Some(Value::Array(chunks)))
+            let chunks: Vec<Value> = a.borrow().chunks(size).map(|c| Value::new_array(c.to_vec())).collect();
+            Ok(Some(Value::new_array(chunks)))
         }
         _ => Err("collections.chunk: expected array".to_string()),
     }
@@ -585,19 +587,20 @@ coll_cap!(CollChunkCap, "chunk", 2, |args: &[Value]| {
 
 coll_cap!(CollZipCap, "zip", 2, |args: &[Value]| {
     let a = match &args[0] {
-        Value::Array(a) => a,
+        Value::Array(a) => a.clone(),
         _ => return Err("collections.zip: expected array".to_string()),
     };
     let b = match &args[1] {
-        Value::Array(b) => b,
+        Value::Array(b) => b.clone(),
         _ => return Err("collections.zip: expected array".to_string()),
     };
     let pairs: Vec<Value> = a
+        .borrow()
         .iter()
-        .zip(b.iter())
-        .map(|(x, y)| Value::Array(vec![x.clone(), y.clone()]))
+        .zip(b.borrow().iter())
+        .map(|(x, y)| Value::new_array(vec![x.clone(), y.clone()]))
         .collect();
-    Ok(Some(Value::Array(pairs)))
+    Ok(Some(Value::new_array(pairs)))
 });
 
 coll_cap!(CollUniqueCap, "unique", 1, |args: &[Value]| {
@@ -606,13 +609,13 @@ coll_cap!(CollUniqueCap, "unique", 1, |args: &[Value]| {
         Value::Array(a) => {
             let mut seen = Vec::new();
             let mut result = Vec::new();
-            for item in a {
+            for item in a.borrow().iter() {
                 if !seen.iter().any(|s| s == item) {
                     seen.push(item.clone());
                     result.push(item.clone());
                 }
             }
-            Ok(Some(Value::Array(result)))
+            Ok(Some(Value::new_array(result)))
         }
         _ => Err("collections.unique: expected array".to_string()),
     }
@@ -652,7 +655,7 @@ fn value_to_json(v: &Value) -> serde_json::Value {
         Value::Int(i) => serde_json::json!(*i),
         Value::Float(f) => serde_json::json!(*f),
         Value::Str(s) => serde_json::json!(s),
-        Value::Array(a) => serde_json::Value::Array(a.iter().map(value_to_json).collect()),
+        Value::Array(a) => serde_json::Value::Array(a.borrow().iter().map(value_to_json).collect()),
     }
 }
 
@@ -669,7 +672,7 @@ fn json_to_value(val: serde_json::Value) -> Value {
             }
         }
         serde_json::Value::String(s) => Value::Str(s),
-        serde_json::Value::Array(arr) => Value::Array(arr.into_iter().map(json_to_value).collect()),
+        serde_json::Value::Array(arr) => Value::new_array(arr.into_iter().map(json_to_value).collect()),
         serde_json::Value::Object(_) => Value::Null, // No map support yet
     }
 }
@@ -844,7 +847,7 @@ regex_cap!(RegexMatchCap, "match", 2, |args: &[Value]| {
                 .collect()
         })
         .unwrap_or_default();
-    Ok(Some(Value::Array(groups)))
+    Ok(Some(Value::new_array(groups)))
 });
 
 #[cfg(feature = "stdlib")]
@@ -857,7 +860,7 @@ regex_cap!(RegexFindAllCap, "find_all", 2, |args: &[Value]| {
         .find_iter(&text)
         .map(|m| Value::Str(m.as_str().to_string()))
         .collect();
-    Ok(Some(Value::Array(matches)))
+    Ok(Some(Value::new_array(matches)))
 });
 
 #[cfg(feature = "stdlib")]
@@ -878,7 +881,7 @@ regex_cap!(RegexSplitCap, "split", 2, |args: &[Value]| {
     let re =
         regex::Regex::new(&pattern).map_err(|e| format!("regex.split: invalid pattern: {}", e))?;
     let parts: Vec<Value> = re.split(&text).map(|s| Value::Str(s.to_string())).collect();
-    Ok(Some(Value::Array(parts)))
+    Ok(Some(Value::new_array(parts)))
 });
 
 #[cfg(test)]
@@ -905,10 +908,10 @@ mod tests {
             .unwrap();
         match result {
             Some(Value::Array(arr)) => {
-                assert_eq!(arr.len(), 3);
-                assert_eq!(arr[0], Value::Str("a".to_string()));
-                assert_eq!(arr[1], Value::Str("b".to_string()));
-                assert_eq!(arr[2], Value::Str("c".to_string()));
+                assert_eq!(arr.borrow().len(), 3);
+                assert_eq!(arr.borrow()[0], Value::Str("a".to_string()));
+                assert_eq!(arr.borrow()[1], Value::Str("b".to_string()));
+                assert_eq!(arr.borrow()[2], Value::Str("c".to_string()));
             }
             _ => panic!("expected array"),
         }
@@ -920,7 +923,7 @@ mod tests {
         let cap = caps.get("str.join").unwrap();
         let result = cap
             .call(vec![
-                Value::Array(vec![
+                Value::new_array(vec![
                     Value::Str("a".to_string()),
                     Value::Str("b".to_string()),
                 ]),
@@ -1269,11 +1272,11 @@ mod tests {
         );
         assert_eq!(cap.call(vec![Value::Null]).unwrap(), Some(Value::Int(0)));
         assert_eq!(
-            cap.call(vec![Value::Array(vec![])]).unwrap(),
+            cap.call(vec![Value::new_array(vec![])]).unwrap(),
             Some(Value::Int(0))
         );
         assert_eq!(
-            cap.call(vec![Value::Array(vec![Value::Int(1)])]).unwrap(),
+            cap.call(vec![Value::new_array(vec![Value::Int(1)])]).unwrap(),
             Some(Value::Int(1))
         );
     }
@@ -1330,7 +1333,7 @@ mod tests {
             Some(Value::Str("null".to_string()))
         );
         assert_eq!(
-            cap.call(vec![Value::Array(vec![])]).unwrap(),
+            cap.call(vec![Value::new_array(vec![])]).unwrap(),
             Some(Value::Str("array".to_string()))
         );
     }
@@ -1341,7 +1344,7 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("collections.len").unwrap();
         assert_eq!(
-            cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)])])
+            cap.call(vec![Value::new_array(vec![Value::Int(1), Value::Int(2)])])
                 .unwrap(),
             Some(Value::Int(2))
         );
@@ -1356,7 +1359,7 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("collections.reverse").unwrap();
         let result = cap
-            .call(vec![Value::Array(vec![
+            .call(vec![Value::new_array(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::Int(3),
@@ -1364,7 +1367,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             result,
-            Some(Value::Array(vec![
+            Some(Value::new_array(vec![
                 Value::Int(3),
                 Value::Int(2),
                 Value::Int(1)
@@ -1378,7 +1381,7 @@ mod tests {
         let cap = caps.get("collections.includes").unwrap();
         assert_eq!(
             cap.call(vec![
-                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::new_array(vec![Value::Int(1), Value::Int(2)]),
                 Value::Int(2)
             ])
             .unwrap(),
@@ -1386,7 +1389,7 @@ mod tests {
         );
         assert_eq!(
             cap.call(vec![
-                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::new_array(vec![Value::Int(1), Value::Int(2)]),
                 Value::Int(3)
             ])
             .unwrap(),
@@ -1399,14 +1402,14 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("collections.flatten").unwrap();
         let result = cap
-            .call(vec![Value::Array(vec![
-                Value::Array(vec![Value::Int(1), Value::Int(2)]),
-                Value::Array(vec![Value::Int(3)]),
+            .call(vec![Value::new_array(vec![
+                Value::new_array(vec![Value::Int(1), Value::Int(2)]),
+                Value::new_array(vec![Value::Int(3)]),
             ])])
             .unwrap();
         assert_eq!(
             result,
-            Some(Value::Array(vec![
+            Some(Value::new_array(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::Int(3)
@@ -1420,7 +1423,7 @@ mod tests {
         let cap = caps.get("collections.chunk").unwrap();
         let result = cap
             .call(vec![
-                Value::Array(vec![
+                Value::new_array(vec![
                     Value::Int(1),
                     Value::Int(2),
                     Value::Int(3),
@@ -1431,9 +1434,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             result,
-            Some(Value::Array(vec![
-                Value::Array(vec![Value::Int(1), Value::Int(2)]),
-                Value::Array(vec![Value::Int(3), Value::Int(4)]),
+            Some(Value::new_array(vec![
+                Value::new_array(vec![Value::Int(1), Value::Int(2)]),
+                Value::new_array(vec![Value::Int(3), Value::Int(4)]),
             ]))
         );
     }
@@ -1444,15 +1447,15 @@ mod tests {
         let cap = caps.get("collections.zip").unwrap();
         let result = cap
             .call(vec![
-                Value::Array(vec![Value::Int(1), Value::Int(2)]),
-                Value::Array(vec![Value::Int(3), Value::Int(4)]),
+                Value::new_array(vec![Value::Int(1), Value::Int(2)]),
+                Value::new_array(vec![Value::Int(3), Value::Int(4)]),
             ])
             .unwrap();
         assert_eq!(
             result,
-            Some(Value::Array(vec![
-                Value::Array(vec![Value::Int(1), Value::Int(3)]),
-                Value::Array(vec![Value::Int(2), Value::Int(4)]),
+            Some(Value::new_array(vec![
+                Value::new_array(vec![Value::Int(1), Value::Int(3)]),
+                Value::new_array(vec![Value::Int(2), Value::Int(4)]),
             ]))
         );
     }
@@ -1462,7 +1465,7 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("collections.unique").unwrap();
         let result = cap
-            .call(vec![Value::Array(vec![
+            .call(vec![Value::new_array(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::Int(1),
@@ -1471,7 +1474,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             result,
-            Some(Value::Array(vec![
+            Some(Value::new_array(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::Int(3)
@@ -1497,7 +1500,7 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("json.stringify").unwrap();
         let result = cap
-            .call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)])])
+            .call(vec![Value::new_array(vec![Value::Int(1), Value::Int(2)])])
             .unwrap();
         assert_eq!(result, Some(Value::Str("[1,2]".to_string())));
     }
@@ -1507,7 +1510,7 @@ mod tests {
     fn test_json_stringify_pretty() {
         let caps = setup_caps();
         let cap = caps.get("json.stringify_pretty").unwrap();
-        let result = cap.call(vec![Value::Array(vec![Value::Int(1)])]).unwrap();
+        let result = cap.call(vec![Value::new_array(vec![Value::Int(1)])]).unwrap();
         let s = match result.unwrap() {
             Value::Str(s) => s,
             _ => String::new(),
@@ -1701,7 +1704,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             result,
-            Some(Value::Array(vec![
+            Some(Value::new_array(vec![
                 Value::Str("a".to_string()),
                 Value::Str("b".to_string()),
                 Value::Str("c".to_string()),

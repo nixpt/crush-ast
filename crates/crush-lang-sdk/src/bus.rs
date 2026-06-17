@@ -23,7 +23,8 @@ pub fn register(caps: &mut HostCaps) {
 #[derive(Debug, Clone)]
 struct Message {
     topic: String,
-    payload: Value,
+    /// Payload serialized to JSON text to avoid Send issues with Rc<RefCell<...>>.
+    payload_json: serde_json::Value,
 }
 
 #[derive(Clone)]
@@ -47,11 +48,12 @@ impl BusState {
     }
 
     fn publish(&self, topic: String, payload: Value) {
+        let payload_json = crush_value_to_json(&payload);
         let mut queues = self.inner.queues.lock().unwrap();
         queues
             .entry(topic.clone())
             .or_default()
-            .push_back(Message { topic, payload });
+            .push_back(Message { topic, payload_json });
         self.inner.cv.notify_one();
     }
 
@@ -164,7 +166,7 @@ impl HostCap for MessageBusRecvCap {
         let msg = self.state.recv()?;
         let mut map = serde_json::Map::new();
         map.insert("topic".to_string(), serde_json::Value::String(msg.topic));
-        map.insert("payload".to_string(), crush_value_to_json(&msg.payload));
+        map.insert("payload".to_string(), msg.payload_json);
         Ok(Some(Value::Str(
             serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default(),
         )))
@@ -181,10 +183,11 @@ fn crush_value_to_json(v: &crush_vm::vm::Value) -> serde_json::Value {
         }
         crush_vm::vm::Value::Str(s) => serde_json::Value::String(s.clone()),
         crush_vm::vm::Value::Array(a) => {
-            serde_json::Value::Array(a.iter().map(crush_value_to_json).collect())
+            serde_json::Value::Array(a.borrow().iter().map(crush_value_to_json).collect())
         }
         crush_vm::vm::Value::Map(m) => {
             let obj: serde_json::Map<String, serde_json::Value> = m
+                .borrow()
                 .iter()
                 .map(|(k, v)| (k.clone(), crush_value_to_json(v)))
                 .collect();

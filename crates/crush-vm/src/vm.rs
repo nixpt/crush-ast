@@ -11,13 +11,17 @@
 //! mutates the same underlying storage as the original.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use crate::bytecode::{
     self, ADD, AND, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, BITAND, BITNOT, BITOR, BITXOR,
     CALL, CAP_CALL, CAST, DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GE, GET_FIELD, GT, HALT, JMP,
     JNZ, JZ, LE, LOAD, LT, MAKE_RANGE, MOD, MUL, NE, NEG, NEW_ARRAY, NEW_OBJ, NOP, NOT, OR, PICK, POP,
     PRINT, PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, Program, RET, SET_FIELD, SHL, SHR,
-    ROT, ROLL, STORE, STR_CONTAINS, STR_JOIN, STR_REPLACE, STR_SPLIT, SUB, SWAP, THROW, TYPEOF,
+    ROT, ROLL, SPAWN, STORE, STR_CONTAINS, STR_JOIN, STR_REPLACE, STR_SPLIT, SUB, SWAP, THROW, TYPEOF,
+    YIELD, AWAIT,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -256,11 +260,12 @@ pub fn run_with_caps(
         .unwrap_or_else(|| func_entry.values().copied().next().unwrap_or(0));
 
     let mut ip = start_ip;
-    let mut call_stack: Vec<Frame> = vec![Frame {
-        return_ip: None,
-        memory: HashMap::new(),
-    }];
+    let mut call_stack: Vec<Frame> = vec![Frame { return_ip: None, memory: HashMap::new() }];
     let mut try_stack: Vec<usize> = Vec::new();
+
+    // Async task infrastructure: spawned functions stored by ID, executed on await
+    let mut next_task_id: u64 = 1;
+    let mut scheduled_tasks: HashMap<u64, String> = HashMap::new();
 
     macro_rules! pop {
         () => {{ stack.pop().ok_or(VmError::StackUnderflow)? }};
@@ -854,6 +859,37 @@ pub fn run_with_caps(
                 };
                 let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
                 push!(val);
+            }
+            SPAWN => {
+                let fn_name = pop!().as_text();
+                let task_id = next_task_id;
+                next_task_id += 1;
+                scheduled_tasks.insert(task_id, fn_name);
+                push!(Value::Int(task_id as i64));
+            }
+            YIELD => {
+                std::thread::yield_now();
+            }
+            AWAIT => {
+                let handle = pop!();
+                if let Value::Int(task_id) = handle {
+                    if let Some(fn_name) = scheduled_tasks.remove(&(task_id as u64)) {
+                        // Run the scheduled task synchronously (like CALL then continue)
+                        if let Some(&entry) = func_entry.get(fn_name.as_str()) {
+                            if call_stack.len() >= quotas.max_call_depth {
+                                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
+                            }
+                            call_stack.push(Frame {
+                                return_ip: Some(next_ip),
+                                memory: HashMap::new(),
+                            });
+                            ip = entry;
+                            continue;
+                        }
+                    }
+                }
+                // Non-task handle or unknown task: push null as result
+                push!(Value::Null);
             }
             HALT => {
                 return Ok(VmResult {

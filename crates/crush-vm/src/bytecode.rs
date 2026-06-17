@@ -84,6 +84,9 @@ pub const EXEC_LANG: u8 = 0x70;
 pub const NEW_OBJ: u8 = 0x71;
 pub const SET_FIELD: u8 = 0x72;
 pub const GET_FIELD: u8 = 0x73;
+pub const SPAWN: u8 = 0x80;
+pub const YIELD: u8 = 0x81;
+pub const AWAIT: u8 = 0x82;
 pub const HALT: u8 = 0xFF;
 
 /// How an opcode's operand bytes are interpreted.
@@ -116,7 +119,8 @@ impl OperandKind {
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
         NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
-        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | HALT
+        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE
+        | SPAWN | YIELD | AWAIT | HALT
         | TYPEOF
         | ADD | SUB | MUL | DIV | MOD
         | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT

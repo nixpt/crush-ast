@@ -1159,7 +1159,6 @@ impl Compiler {
                     meta,
                 ));
                 instrs.push(self.create_instr("spawn", serde_json::json!({}), meta));
-                instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
             }
             Expression::ArrayLiteral { elements, meta } => {
                 instrs.push(self.create_instr(
@@ -1176,7 +1175,6 @@ impl Compiler {
             }
             Expression::Yield { meta } => {
                 instrs.push(self.create_instr("yield", serde_json::json!({}), meta));
-                instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
             }
             Expression::NewStruct { name, meta } => {
                 instrs.push(self.create_instr(

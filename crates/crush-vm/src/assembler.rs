@@ -322,6 +322,7 @@ pub fn disassemble(program: &Program) -> String {
         (ENTER_TRY, "ENTER_TRY"),
         (EXIT_TRY, "EXIT_TRY"),
         (THROW, "THROW"),
+        (SPAWN, "SPAWN"), (YIELD, "YIELD"), (AWAIT, "AWAIT"),
         (STR_CONTAINS, "STR_CONTAINS"),
         (STR_SPLIT, "STR_SPLIT"),
         (STR_REPLACE, "STR_REPLACE"),
@@ -469,6 +470,9 @@ fn opcode_for(name: &str) -> Option<u8> {
         "ARR_LEN" => Some(ARR_LEN),
         "ARR_PUSH" => Some(ARR_PUSH),
         "ARR_POP" => Some(ARR_POP),
+        "SPAWN" => Some(SPAWN),
+        "YIELD" => Some(YIELD),
+        "AWAIT" => Some(AWAIT),
         "HALT" => Some(HALT),
         _ => None,
     }

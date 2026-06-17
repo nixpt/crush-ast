@@ -614,8 +614,8 @@ fn cap_make_range() {
 }
 
 fn map_is_truthy_only_when_non_empty() {
-    assert!(!Value::Map(std::collections::HashMap::new()).is_truthy());
+    assert!(!Value::new_map(std::collections::HashMap::new()).is_truthy());
     let mut m = std::collections::HashMap::new();
     m.insert("x".to_string(), Value::Int(1));
-    assert!(Value::Map(m).is_truthy());
+    assert!(Value::new_map(m).is_truthy());
 }
