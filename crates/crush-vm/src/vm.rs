@@ -444,31 +444,37 @@ pub fn run_with_caps(
                     serde_json::from_str(&spec_json)
                         .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
-                let code = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
                 let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                // Collect variable names from spec
                 let mut var_names: Vec<String> = Vec::with_capacity(var_count);
+                let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
                 for i in 0..var_count {
                     let key = format!("var_{}", i);
                     if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
                         var_names.push(name.to_string());
+                        // Pop the value that was pushed by the load instruction
+                        var_values.push(pop!());
                     }
                 }
+                // Reverse so values correspond to names in order
+                var_values.reverse();
                 let mut cmd = std::process::Command::new(lang);
-                cmd.arg("-c").arg(code);
-                for name in &var_names {
-                    let v = call_stack.last().unwrap().memory.get(&0).cloned()
-                        .unwrap_or(Value::Null);
-                    cmd.env(name, v.as_text());
+                cmd.arg("-c").arg(code_str);
+                for (name, val) in var_names.iter().zip(var_values.iter()) {
+                    cmd.env(name, val.as_text());
                 }
                 let output = cmd.output()
                     .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
                 if output.status.success() {
-                    let s = String::from_utf8_lossy(&output.stdout).to_string();
+                    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     out_len += s.len();
                     if out_len > quotas.max_output {
                         return Err(VmError::OutputQuota(quotas.max_output));
                     }
-                    out_parts.push(s);
+                    out_parts.push(s.clone());
+                    // Push output back onto stack for the store instruction
+                    push!(Value::Str(s));
                 } else {
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
