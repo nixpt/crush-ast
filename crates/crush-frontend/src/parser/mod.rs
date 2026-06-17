@@ -584,10 +584,7 @@ impl Parser {
             Token::Import(_) | Token::Use(_) => self.parse_import_statement(),
             Token::Export(_) => self.parse_export_statement(),
             Token::AtIdent(_, _)
-                if matches!(
-                    self.tokens.get(self.pos + 1),
-                    Some(Token::LangBody(_, _))
-                ) =>
+                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _))) =>
             {
                 self.parse_lang_block()
             }
@@ -1047,24 +1044,22 @@ impl Parser {
                         args,
                         meta: HashMap::new(),
                     },
-                    Expression::GetField { target, field, .. } => {
-                        match *target {
-                            Expression::Var { name: obj, .. } => Expression::CapabilityCall {
-                                name: format!("{}.{}", obj, field),
-                                args,
-                                meta: HashMap::new(),
-                            },
-                            _ => {
-                                let (line, col) = self.get_location(self.peek());
-                                self.errors.push(ParseError::UnexpectedToken {
-                                    line,
-                                    col,
-                                    msg: "Cannot call non-function".to_string(),
-                                });
-                                return Err(());
-                            }
+                    Expression::GetField { target, field, .. } => match *target {
+                        Expression::Var { name: obj, .. } => Expression::CapabilityCall {
+                            name: format!("{}.{}", obj, field),
+                            args,
+                            meta: HashMap::new(),
+                        },
+                        _ => {
+                            let (line, col) = self.get_location(self.peek());
+                            self.errors.push(ParseError::UnexpectedToken {
+                                line,
+                                col,
+                                msg: "Cannot call non-function".to_string(),
+                            });
+                            return Err(());
                         }
-                    }
+                    },
                     _ => {
                         let (line, col) = self.get_location(self.peek());
                         self.errors.push(ParseError::UnexpectedToken {

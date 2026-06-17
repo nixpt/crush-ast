@@ -28,17 +28,67 @@ static REGISTRY: OnceLock<HashMap<&'static str, CapabilitySpec>> = OnceLock::new
 pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
     REGISTRY.get_or_init(|| {
         let mut m = HashMap::new();
-        let mut reg = |s: CapabilitySpec| { m.insert(s.name, s); };
+        let mut reg = |s: CapabilitySpec| {
+            m.insert(s.name, s);
+        };
         // I/O
-        reg(CapabilitySpec { name: "io.print",  argc: None,    returns: false, privileged: false, summary: "write args (concatenated) to output" });
+        reg(CapabilitySpec {
+            name: "io.print",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "write args (concatenated) to output",
+        });
         // String
-        reg(CapabilitySpec { name: "str.concat", argc: None,    returns: true,  privileged: false, summary: "concatenate all args → string" });
-        reg(CapabilitySpec { name: "str.len",    argc: Some(1), returns: true,  privileged: false, summary: "byte length of a string" });
-        reg(CapabilitySpec { name: "str.contains", argc: Some(2), returns: true,  privileged: false, summary: "check if string contains a substring" });
-        reg(CapabilitySpec { name: "str.split",    argc: Some(2), returns: true,  privileged: false, summary: "split string by delimiter" });
-        reg(CapabilitySpec { name: "str.replace",  argc: Some(3), returns: true,  privileged: false, summary: "replace all occurrences" });
-        reg(CapabilitySpec { name: "str.join",     argc: Some(2), returns: true,  privileged: false, summary: "join array elements with delimiter" });
-        reg(CapabilitySpec { name: "make_range",   argc: Some(2), returns: true,  privileged: false, summary: "create an integer range [start..end)" });
+        reg(CapabilitySpec {
+            name: "str.concat",
+            argc: None,
+            returns: true,
+            privileged: false,
+            summary: "concatenate all args → string",
+        });
+        reg(CapabilitySpec {
+            name: "str.len",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "byte length of a string",
+        });
+        reg(CapabilitySpec {
+            name: "str.contains",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "check if string contains a substring",
+        });
+        reg(CapabilitySpec {
+            name: "str.split",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "split string by delimiter",
+        });
+        reg(CapabilitySpec {
+            name: "str.replace",
+            argc: Some(3),
+            returns: true,
+            privileged: false,
+            summary: "replace all occurrences",
+        });
+        reg(CapabilitySpec {
+            name: "str.join",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "join array elements with delimiter",
+        });
+        reg(CapabilitySpec {
+            name: "make_range",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "create an integer range [start..end)",
+        });
         m
     })
 }

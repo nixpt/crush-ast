@@ -392,7 +392,11 @@ impl ImportResolver {
                 if domain.is_empty() {
                     return Err(ImportError::InvalidUrl(uri.to_string()));
                 }
-                if !self.security_policy.trusted_domains.contains(&domain.to_string()) {
+                if !self
+                    .security_policy
+                    .trusted_domains
+                    .contains(&domain.to_string())
+                {
                     return Err(ImportError::UntrustedDomain(domain.to_string()));
                 }
             }
@@ -690,14 +694,18 @@ mod tests {
         assert!(resolution.resolved_items.contains_key("DATABASE_URL"));
         assert!(resolution.resolved_items.contains_key("API_KEY"));
         assert_eq!(resolution.security_context.trust_level, TrustLevel::System);
-        assert!(resolution
-            .security_context
-            .required_permissions
-            .contains(&"secrets.read".to_string()));
-        assert!(resolution
-            .security_context
-            .sandbox_restrictions
-            .contains(&"no_logging".to_string()));
+        assert!(
+            resolution
+                .security_context
+                .required_permissions
+                .contains(&"secrets.read".to_string())
+        );
+        assert!(
+            resolution
+                .security_context
+                .sandbox_restrictions
+                .contains(&"no_logging".to_string())
+        );
     }
 
     #[test]

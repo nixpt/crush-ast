@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{manifest_path, Manifest};
+use crate::manifest::{Manifest, manifest_path};
 
 const EXCLUDED_DIRS: &[&str] = &["target", ".git", "node_modules", "__pycache__", "dist"];
 
@@ -38,7 +38,10 @@ pub fn pack(source_dir: &Path, output_path: &Path) -> anyhow::Result<()> {
 
     let base = source_dir.canonicalize()?;
 
-    for entry in walkdir::WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&base)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if is_excluded_path(path) {
             continue;
@@ -65,7 +68,10 @@ pub fn pack(source_dir: &Path, output_path: &Path) -> anyhow::Result<()> {
         zip.start_file("README.md", options)?;
         let content = if let Some(toml_path) = manifest_path(source_dir) {
             let toml_str = std::fs::read_to_string(toml_path).unwrap_or_default();
-            format!("# Capsule\n\nAuto-generated README.\n\n## Manifest\n```toml\n{}\n```", toml_str)
+            format!(
+                "# Capsule\n\nAuto-generated README.\n\n## Manifest\n```toml\n{}\n```",
+                toml_str
+            )
         } else {
             "# Capsule\n\nNo description provided.".to_string()
         };
@@ -73,7 +79,11 @@ pub fn pack(source_dir: &Path, output_path: &Path) -> anyhow::Result<()> {
     }
 
     zip.finish()?;
-    println!("  packed {} -> {}", source_dir.display(), output_file.display());
+    println!(
+        "  packed {} -> {}",
+        source_dir.display(),
+        output_file.display()
+    );
     Ok(())
 }
 
@@ -106,7 +116,12 @@ pub fn unpack(pack_path: &Path, output_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    println!("  unpacked {} -> {} ({} entries)", pack_path.display(), output_dir.display(), archive.len());
+    println!(
+        "  unpacked {} -> {} ({} entries)",
+        pack_path.display(),
+        output_dir.display(),
+        archive.len()
+    );
     Ok(())
 }
 
@@ -121,7 +136,11 @@ mod tests {
         // Create fixture
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join("src/main.crush"), "fn main() {}\n").unwrap();
-        std::fs::write(dir.path().join("crush.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"\n").unwrap();
+        std::fs::write(
+            dir.path().join("crush.toml"),
+            "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
 
         // Create excluded dir (should be skipped)
         std::fs::create_dir_all(dir.path().join("target")).unwrap();

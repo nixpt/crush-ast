@@ -1,6 +1,6 @@
+use crush_cast::{Expression, Statement};
 use crush_lang_zsh::ZshFrontend;
 use walker_core::Frontend;
-use crush_cast::{Statement, Expression};
 
 fn test_analyze(source: &str) -> walker_core::FeatureReport {
     let frontend = ZshFrontend;
@@ -142,8 +142,17 @@ fn test_zsh_if_else() {
     let cast = crush_lang_zsh::zsh_to_cast("if true; then echo yes; else echo no; fi\n").unwrap();
     let main = cast.functions.get("main").unwrap();
     assert_eq!(main.body.len(), 1);
-    if let Some(Statement::If { condition, then_body, else_body, .. }) = main.body.first() {
-        assert!(matches!(condition, Expression::BoolLiteral { value: true, .. }));
+    if let Some(Statement::If {
+        condition,
+        then_body,
+        else_body,
+        ..
+    }) = main.body.first()
+    {
+        assert!(matches!(
+            condition,
+            Expression::BoolLiteral { value: true, .. }
+        ));
         assert_eq!(then_body.len(), 1);
         assert!(else_body.is_some());
     } else {
@@ -155,7 +164,11 @@ fn test_zsh_if_else() {
 fn test_zsh_subshell() {
     let cast = crush_lang_zsh::zsh_to_cast("(echo hello; echo world)\n").unwrap();
     let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 2, "subshell body statements should be inlined");
+    assert_eq!(
+        main.body.len(),
+        2,
+        "subshell body statements should be inlined"
+    );
 }
 
 #[test]
@@ -174,8 +187,14 @@ fn test_zsh_case_statement() {
     assert_eq!(main.body.len(), 2, "case should produce one If per branch");
     for (i, stmt) in main.body.iter().enumerate() {
         match stmt {
-            Statement::If { condition, then_body, .. } => {
-                assert!(matches!(condition, Expression::BinaryOp { operator, .. } if operator == "=="));
+            Statement::If {
+                condition,
+                then_body,
+                ..
+            } => {
+                assert!(
+                    matches!(condition, Expression::BinaryOp { operator, .. } if operator == "==")
+                );
                 assert_eq!(then_body.len(), 1, "each case branch should have one stmt");
             }
             _ => panic!("expected If for branch {i}, got {stmt:?}"),
@@ -188,7 +207,13 @@ fn test_zsh_for_loop() {
     let cast = crush_lang_zsh::zsh_to_cast("for x in a b c; do echo $x; done\n").unwrap();
     let main = cast.functions.get("main").unwrap();
     assert_eq!(main.body.len(), 1);
-    if let Some(Statement::For { variable, iterable, body, .. }) = main.body.first() {
+    if let Some(Statement::For {
+        variable,
+        iterable,
+        body,
+        ..
+    }) = main.body.first()
+    {
         assert_eq!(variable, "x");
         if let Expression::ArrayLiteral { elements, .. } = iterable.as_ref() {
             assert_eq!(elements.len(), 3);
@@ -206,8 +231,14 @@ fn test_zsh_while_loop() {
     let cast = crush_lang_zsh::zsh_to_cast("while true; do echo looping; done\n").unwrap();
     let main = cast.functions.get("main").unwrap();
     assert_eq!(main.body.len(), 1);
-    if let Some(Statement::While { condition, body, .. }) = main.body.first() {
-        assert!(matches!(condition.as_ref(), Expression::BoolLiteral { value: true, .. }));
+    if let Some(Statement::While {
+        condition, body, ..
+    }) = main.body.first()
+    {
+        assert!(matches!(
+            condition.as_ref(),
+            Expression::BoolLiteral { value: true, .. }
+        ));
         assert_eq!(body.len(), 1);
     } else {
         panic!("expected While");

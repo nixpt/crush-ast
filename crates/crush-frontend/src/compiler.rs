@@ -1,7 +1,7 @@
-use crush_cast::*;
 use anyhow::{Result, bail};
 use casm::debug_info::{DebugInfo, SourceLocation};
 use casm::{Function as CasmFunction, Instruction, Manifest, Program as CasmProgram};
+use crush_cast::*;
 use std::collections::{HashMap, HashSet};
 
 pub type CompileError = anyhow::Error;
@@ -85,7 +85,11 @@ impl Compiler {
                 {
                     let mut func_instrs = Vec::new();
                     for (param_name, _) in params {
-                        func_instrs.push(self.create_instr("store", serde_json::json!({"name": param_name}), meta));
+                        func_instrs.push(self.create_instr(
+                            "store",
+                            serde_json::json!({"name": param_name}),
+                            meta,
+                        ));
                     }
                     for inner_stmt in body {
                         self.compile_stmt(inner_stmt, &mut func_instrs)?;
@@ -111,7 +115,11 @@ impl Compiler {
 
             // Second pass: Compile main function instructions
             for (param_name, _) in &func.params {
-                instrs.push(self.create_instr("store", serde_json::json!({"name": param_name}), &func.meta));
+                instrs.push(self.create_instr(
+                    "store",
+                    serde_json::json!({"name": param_name}),
+                    &func.meta,
+                ));
             }
             for stmt in &func.body {
                 if !matches!(stmt, Statement::FunctionDef { .. }) {

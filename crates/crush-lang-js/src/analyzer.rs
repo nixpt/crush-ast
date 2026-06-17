@@ -37,29 +37,31 @@ fn analyze_module_decl(decl: &ModuleDecl, r: &mut FeatureReport) {
 
 fn analyze_stmt(stmt: &Stmt, r: &mut FeatureReport) {
     match stmt {
-        Stmt::Decl(decl) => {
-            match decl {
-                Decl::Fn(f) => {
-                    r.uses_functions = true;
-                    if f.function.is_async {
-                        r.uses_async = true;
-                    }
-                    if f.function.is_generator {
-                        r.uses_generators = true;
-                    }
+        Stmt::Decl(decl) => match decl {
+            Decl::Fn(f) => {
+                r.uses_functions = true;
+                if f.function.is_async {
+                    r.uses_async = true;
                 }
-                Decl::Class(_) => r.uses_classes = true,
-                Decl::Var(_) => {}
-                Decl::Using(_) | Decl::TsInterface(_) | Decl::TsTypeAlias(_)
-                | Decl::TsEnum(_) | Decl::TsModule(_) => {}
+                if f.function.is_generator {
+                    r.uses_generators = true;
+                }
             }
-        }
+            Decl::Class(_) => r.uses_classes = true,
+            Decl::Var(_) => {}
+            Decl::Using(_)
+            | Decl::TsInterface(_)
+            | Decl::TsTypeAlias(_)
+            | Decl::TsEnum(_)
+            | Decl::TsModule(_) => {}
+        },
         Stmt::Expr(ExprStmt { expr, .. }) => {
             if let Expr::Call(CallExpr { callee, .. }) = expr.as_ref() {
                 if let Callee::Expr(callee_expr) = callee {
                     if let Expr::Ident(ident) = callee_expr.as_ref() {
                         if ident.sym.as_ref() == "eval" || ident.sym.as_ref() == "Function" {
-                            r.dangerous_imports.push(format!("eval-like: {}", ident.sym));
+                            r.dangerous_imports
+                                .push(format!("eval-like: {}", ident.sym));
                         }
                     }
                 }
@@ -87,8 +89,17 @@ fn analyze_stmt(stmt: &Stmt, r: &mut FeatureReport) {
 
 fn is_dangerous_import(module: &str) -> bool {
     let dangerous = [
-        "child_process", "fs", "net", "dgram", "cluster", "vm",
-        "worker_threads", "os", "process", "module", "electron",
+        "child_process",
+        "fs",
+        "net",
+        "dgram",
+        "cluster",
+        "vm",
+        "worker_threads",
+        "os",
+        "process",
+        "module",
+        "electron",
     ];
     let base = module.split('/').next().unwrap_or(module);
     dangerous.contains(&base)

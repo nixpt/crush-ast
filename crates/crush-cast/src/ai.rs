@@ -115,7 +115,9 @@ pub enum DelegationStrategy {
     CapabilityMatch,
     ParallelSplit,
     Hierarchical,
-    Consensus { threshold: f64 },
+    Consensus {
+        threshold: f64,
+    },
     /// Dispatch to all listed agents in parallel.
     Broadcast,
     /// Pick highest-rated agent for the task domain.

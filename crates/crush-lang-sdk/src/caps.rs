@@ -23,7 +23,10 @@ pub enum CapabilityError {
 /// Render a slice of CVM1 values as text, the same way `io.print` and
 /// `str.concat` do inside the VM.
 pub fn print(args: &[Value]) -> String {
-    args.iter().map(|v| value_as_text(v)).collect::<Vec<_>>().concat()
+    args.iter()
+        .map(|v| value_as_text(v))
+        .collect::<Vec<_>>()
+        .concat()
 }
 
 /// Alias for [`print`], matching the `str.concat` capability semantics.
@@ -56,7 +59,10 @@ pub fn value_as_text(value: &crush_vm::vm::Value) -> String {
             format!("[{}]", inner.join(", "))
         }
         Value::Map(m) => {
-            let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_as_text(v))).collect();
+            let items: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, value_as_text(v)))
+                .collect();
             format!("{{{}}}", items.join(", "))
         }
         Value::Error(e) => format!("error({})", e),

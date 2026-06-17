@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use rusqlite::{Connection, types::ValueRef};
 
 /// Add database capabilities to an existing [`HostCaps`] registry.
@@ -28,13 +28,16 @@ fn crush_value_to_json(v: &Value) -> serde_json::Value {
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(b),
         Value::Int(i) => serde_json::Value::Number((*i).into()),
-        Value::Float(f) => serde_json::Value::Number(
-            serde_json::Number::from_f64(*f).unwrap_or(0.into()),
-        ),
+        Value::Float(f) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(*f).unwrap_or(0.into()))
+        }
         Value::Str(s) => serde_json::Value::String(s.clone()),
         Value::Array(a) => serde_json::Value::Array(a.iter().map(crush_value_to_json).collect()),
         Value::Map(m) => {
-            let obj: serde_json::Map<String, serde_json::Value> = m.iter().map(|(k, v)| (k.clone(), crush_value_to_json(v))).collect();
+            let obj: serde_json::Map<String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| (k.clone(), crush_value_to_json(v)))
+                .collect();
             serde_json::Value::Object(obj)
         }
         crush_vm::vm::Value::Error(e) => serde_json::Value::String(format!("error({})", e)),
@@ -50,7 +53,8 @@ fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
         Value::Float(f) => rusqlite::types::Value::Real(*f),
         Value::Str(s) => rusqlite::types::Value::Text(s.clone()),
         Value::Array(a) => rusqlite::types::Value::Text(
-            serde_json::to_string(&crush_value_to_json(&Value::Array(a.clone()))).unwrap_or_default(),
+            serde_json::to_string(&crush_value_to_json(&Value::Array(a.clone())))
+                .unwrap_or_default(),
         ),
     }
 }
@@ -59,12 +63,12 @@ fn sql_value_to_json(v: ValueRef<'_>) -> serde_json::Value {
     match v {
         ValueRef::Null => serde_json::Value::Null,
         ValueRef::Integer(i) => serde_json::Value::Number(i.into()),
-        ValueRef::Real(f) => serde_json::Value::Number(
-            serde_json::Number::from_f64(f).unwrap_or(0.into()),
-        ),
-        ValueRef::Text(s) => serde_json::Value::String(
-            std::str::from_utf8(s).unwrap_or("").to_string()
-        ),
+        ValueRef::Real(f) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or(0.into()))
+        }
+        ValueRef::Text(s) => {
+            serde_json::Value::String(std::str::from_utf8(s).unwrap_or("").to_string())
+        }
         ValueRef::Blob(b) => serde_json::Value::String(format!("bytes:{}", b.len())),
     }
 }
@@ -123,9 +127,13 @@ impl HostCap for DbQueryCap {
         }
         Ok(Some(Value::Array(
             out.into_iter()
-                .map(|v| serde_json::to_string(&v).map(Value::Str).map_err(|e| e.to_string()))
+                .map(|v| {
+                    serde_json::to_string(&v)
+                        .map(Value::Str)
+                        .map_err(|e| e.to_string())
+                })
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("db.query serialize: {e}"))?
+                .map_err(|e| format!("db.query serialize: {e}"))?,
         )))
     }
 }
@@ -177,9 +185,9 @@ mod tests {
         let exec = DbExecuteCap::new(Arc::clone(&conn));
         let query = DbQueryCap::new(conn);
 
-        exec.call(vec![
-            Value::Str("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)".to_string()),
-        ])
+        exec.call(vec![Value::Str(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)".to_string(),
+        )])
         .unwrap();
 
         let affected = exec

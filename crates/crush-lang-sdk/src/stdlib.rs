@@ -3,8 +3,8 @@
 //! Pure computation capabilities ported from exosphere's stdlib.
 //! These are stdcaps — always available, no capability gate required.
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Register all standard library capabilities on the given [`HostCaps`] registry.
 pub fn register(caps: &mut HostCaps) {
@@ -104,7 +104,10 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
             Value::Null => String::new(),
             Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
             Value::Map(m) => {
-                let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_string(v))).collect();
+                let items: Vec<String> = m
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, value_to_string(v)))
+                    .collect();
                 format!("{{{}}}", items.join(", "))
             }
             Value::Error(e) => format!("error({})", e),
@@ -150,12 +153,15 @@ fn value_to_string(v: &Value) -> String {
         }
         Value::Null => String::new(),
         Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
-            Value::Map(m) => {
-                let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_string(v))).collect();
-                format!("{{{}}}", items.join(", "))
-            }
-            Value::Error(e) => format!("error({})", e),
-            Value::Bytes(b) => format!("<{} bytes>", b.len()),
+        Value::Map(m) => {
+            let items: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, value_to_string(v)))
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Error(e) => format!("error({})", e),
+        Value::Bytes(b) => format!("<{} bytes>", b.len()),
     }
 }
 
@@ -459,13 +465,19 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
 conv_cap!(ConvParseIntCap, "parse_int", 2, |args: &[Value]| {
     let s = get_str(args, 0)?;
     let radix = get_int(args, 1).unwrap_or(10) as u32;
-    let result = i64::from_str_radix(s.trim(), radix).map(Value::Int).unwrap_or(Value::Null);
+    let result = i64::from_str_radix(s.trim(), radix)
+        .map(Value::Int)
+        .unwrap_or(Value::Null);
     Ok(Some(result))
 });
 
 conv_cap!(ConvParseFloatCap, "parse_float", 1, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let result = s.trim().parse::<f64>().map(Value::Float).unwrap_or(Value::Null);
+    let result = s
+        .trim()
+        .parse::<f64>()
+        .map(Value::Float)
+        .unwrap_or(Value::Null);
     Ok(Some(result))
 });
 
@@ -564,10 +576,7 @@ coll_cap!(CollChunkCap, "chunk", 2, |args: &[Value]| {
     }
     match v {
         Value::Array(a) => {
-            let chunks: Vec<Value> = a
-                .chunks(size)
-                .map(|c| Value::Array(c.to_vec()))
-                .collect();
+            let chunks: Vec<Value> = a.chunks(size).map(|c| Value::Array(c.to_vec())).collect();
             Ok(Some(Value::Array(chunks)))
         }
         _ => Err("collections.chunk: expected array".to_string()),
@@ -575,8 +584,14 @@ coll_cap!(CollChunkCap, "chunk", 2, |args: &[Value]| {
 });
 
 coll_cap!(CollZipCap, "zip", 2, |args: &[Value]| {
-    let a = match &args[0] { Value::Array(a) => a, _ => return Err("collections.zip: expected array".to_string()) };
-    let b = match &args[1] { Value::Array(b) => b, _ => return Err("collections.zip: expected array".to_string()) };
+    let a = match &args[0] {
+        Value::Array(a) => a,
+        _ => return Err("collections.zip: expected array".to_string()),
+    };
+    let b = match &args[1] {
+        Value::Array(b) => b,
+        _ => return Err("collections.zip: expected array".to_string()),
+    };
     let pairs: Vec<Value> = a
         .iter()
         .zip(b.iter())
@@ -647,8 +662,11 @@ fn json_to_value(val: serde_json::Value) -> Value {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(b),
         serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() { Value::Int(i) }
-            else { Value::Float(n.as_f64().unwrap_or(0.0)) }
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else {
+                Value::Float(n.as_f64().unwrap_or(0.0))
+            }
         }
         serde_json::Value::String(s) => Value::Str(s),
         serde_json::Value::Array(arr) => Value::Array(arr.into_iter().map(json_to_value).collect()),
@@ -659,26 +677,30 @@ fn json_to_value(val: serde_json::Value) -> Value {
 #[cfg(feature = "stdlib")]
 json_cap!(JsonParseCap, "parse", 1, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let parsed: serde_json::Value = serde_json::from_str(&s)
-        .map_err(|e| format!("json.parse: {}", e))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&s).map_err(|e| format!("json.parse: {}", e))?;
     Ok(Some(json_to_value(parsed)))
 });
 
 #[cfg(feature = "stdlib")]
 json_cap!(JsonStringifyCap, "stringify", 1, |args: &[Value]| {
     let json = value_to_json(&args[0]);
-    let s = serde_json::to_string(&json)
-        .map_err(|e| format!("json.stringify: {}", e))?;
+    let s = serde_json::to_string(&json).map_err(|e| format!("json.stringify: {}", e))?;
     Ok(Some(Value::Str(s)))
 });
 
 #[cfg(feature = "stdlib")]
-json_cap!(JsonStringifyPrettyCap, "stringify_pretty", 1, |args: &[Value]| {
-    let json = value_to_json(&args[0]);
-    let s = serde_json::to_string_pretty(&json)
-        .map_err(|e| format!("json.stringify_pretty: {}", e))?;
-    Ok(Some(Value::Str(s)))
-});
+json_cap!(
+    JsonStringifyPrettyCap,
+    "stringify_pretty",
+    1,
+    |args: &[Value]| {
+        let json = value_to_json(&args[0]);
+        let s = serde_json::to_string_pretty(&json)
+            .map_err(|e| format!("json.stringify_pretty: {}", e))?;
+        Ok(Some(Value::Str(s)))
+    }
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Path Capabilities
@@ -738,7 +760,13 @@ path_cap!(PathExtensionCap, "extension", 1, |args: &[Value]| {
 
 path_cap!(PathIsAbsoluteCap, "is_absolute", 1, |args: &[Value]| {
     let p = get_str(args, 0)?;
-    Ok(Some(Value::Int(if std::path::Path::new(&p).is_absolute() { 1 } else { 0 })))
+    Ok(Some(Value::Int(
+        if std::path::Path::new(&p).is_absolute() {
+            1
+        } else {
+            0
+        },
+    )))
 });
 
 path_cap!(PathNormalizeCap, "normalize", 1, |args: &[Value]| {
@@ -747,7 +775,9 @@ path_cap!(PathNormalizeCap, "normalize", 1, |args: &[Value]| {
     let mut components = Vec::new();
     for component in path.components() {
         match component {
-            std::path::Component::ParentDir => { components.pop(); }
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
             std::path::Component::CurDir => {}
             other => components.push(other),
         }
@@ -792,8 +822,8 @@ macro_rules! regex_cap {
 regex_cap!(RegexTestCap, "test", 2, |args: &[Value]| {
     let pattern = get_str(args, 0)?;
     let text = get_str(args, 1)?;
-    let re = regex::Regex::new(&pattern)
-        .map_err(|e| format!("regex.test: invalid pattern: {}", e))?;
+    let re =
+        regex::Regex::new(&pattern).map_err(|e| format!("regex.test: invalid pattern: {}", e))?;
     Ok(Some(Value::Int(if re.is_match(&text) { 1 } else { 0 })))
 });
 
@@ -801,12 +831,16 @@ regex_cap!(RegexTestCap, "test", 2, |args: &[Value]| {
 regex_cap!(RegexMatchCap, "match", 2, |args: &[Value]| {
     let pattern = get_str(args, 0)?;
     let text = get_str(args, 1)?;
-    let re = regex::Regex::new(&pattern)
-        .map_err(|e| format!("regex.match: invalid pattern: {}", e))?;
-    let groups: Vec<Value> = re.captures(&text)
+    let re =
+        regex::Regex::new(&pattern).map_err(|e| format!("regex.match: invalid pattern: {}", e))?;
+    let groups: Vec<Value> = re
+        .captures(&text)
         .map(|caps| {
             caps.iter()
-                .map(|m| m.map(|m| Value::Str(m.as_str().to_string())).unwrap_or(Value::Null))
+                .map(|m| {
+                    m.map(|m| Value::Str(m.as_str().to_string()))
+                        .unwrap_or(Value::Null)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -841,17 +875,13 @@ regex_cap!(RegexReplaceCap, "replace", 3, |args: &[Value]| {
 regex_cap!(RegexSplitCap, "split", 2, |args: &[Value]| {
     let pattern = get_str(args, 0)?;
     let text = get_str(args, 1)?;
-    let re = regex::Regex::new(&pattern)
-        .map_err(|e| format!("regex.split: invalid pattern: {}", e))?;
-    let parts: Vec<Value> = re
-        .split(&text)
-        .map(|s| Value::Str(s.to_string()))
-        .collect();
+    let re =
+        regex::Regex::new(&pattern).map_err(|e| format!("regex.split: invalid pattern: {}", e))?;
+    let parts: Vec<Value> = re.split(&text).map(|s| Value::Str(s.to_string())).collect();
     Ok(Some(Value::Array(parts)))
 });
 
 #[cfg(test)]
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -867,7 +897,12 @@ mod tests {
     fn test_str_split() {
         let caps = setup_caps();
         let cap = caps.get("str.split").unwrap();
-        let result = cap.call(vec![Value::Str("a,b,c".to_string()), Value::Str(",".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("a,b,c".to_string()),
+                Value::Str(",".to_string()),
+            ])
+            .unwrap();
         match result {
             Some(Value::Array(arr)) => {
                 assert_eq!(arr.len(), 3);
@@ -883,10 +918,15 @@ mod tests {
     fn test_str_join() {
         let caps = setup_caps();
         let cap = caps.get("str.join").unwrap();
-        let result = cap.call(vec![
-            Value::Array(vec![Value::Str("a".to_string()), Value::Str("b".to_string())]),
-            Value::Str("-".to_string()),
-        ]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Array(vec![
+                    Value::Str("a".to_string()),
+                    Value::Str("b".to_string()),
+                ]),
+                Value::Str("-".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("a-b".to_string())));
     }
 
@@ -902,11 +942,13 @@ mod tests {
     fn test_str_replace() {
         let caps = setup_caps();
         let cap = caps.get("str.replace").unwrap();
-        let result = cap.call(vec![
-            Value::Str("hello world".to_string()),
-            Value::Str("world".to_string()),
-            Value::Str("rust".to_string()),
-        ]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello world".to_string()),
+                Value::Str("world".to_string()),
+                Value::Str("rust".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("hello rust".to_string())));
     }
 
@@ -914,9 +956,19 @@ mod tests {
     fn test_str_contains() {
         let caps = setup_caps();
         let cap = caps.get("str.contains").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Str("ell".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Str("ell".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Int(1)));
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Str("xyz".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Str("xyz".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Int(0)));
     }
 
@@ -924,11 +976,21 @@ mod tests {
     fn test_str_starts_ends_with() {
         let caps = setup_caps();
         let cap = caps.get("str.starts_with").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Str("he".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Str("he".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Int(1)));
 
         let cap = caps.get("str.ends_with").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Str("lo".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Str("lo".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Int(1)));
     }
 
@@ -948,11 +1010,23 @@ mod tests {
     fn test_str_pad() {
         let caps = setup_caps();
         let cap = caps.get("str.pad_left").unwrap();
-        let result = cap.call(vec![Value::Str("5".to_string()), Value::Int(3), Value::Str("0".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("5".to_string()),
+                Value::Int(3),
+                Value::Str("0".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("005".to_string())));
 
         let cap = caps.get("str.pad_right").unwrap();
-        let result = cap.call(vec![Value::Str("5".to_string()), Value::Int(3), Value::Str("0".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("5".to_string()),
+                Value::Int(3),
+                Value::Str("0".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("500".to_string())));
     }
 
@@ -960,7 +1034,9 @@ mod tests {
     fn test_str_repeat() {
         let caps = setup_caps();
         let cap = caps.get("str.repeat").unwrap();
-        let result = cap.call(vec![Value::Str("ab".to_string()), Value::Int(3)]).unwrap();
+        let result = cap
+            .call(vec![Value::Str("ab".to_string()), Value::Int(3)])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("ababab".to_string())));
     }
 
@@ -968,7 +1044,13 @@ mod tests {
     fn test_str_substring() {
         let caps = setup_caps();
         let cap = caps.get("str.substring").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Int(1), Value::Int(4)]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Int(1),
+                Value::Int(4),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("ell".to_string())));
     }
 
@@ -976,7 +1058,9 @@ mod tests {
     fn test_str_char_at() {
         let caps = setup_caps();
         let cap = caps.get("str.char_at").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Int(1)]).unwrap();
+        let result = cap
+            .call(vec![Value::Str("hello".to_string()), Value::Int(1)])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("e".to_string())));
     }
 
@@ -984,9 +1068,19 @@ mod tests {
     fn test_str_index_of() {
         let caps = setup_caps();
         let cap = caps.get("str.index_of").unwrap();
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Str("l".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Str("l".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Int(2)));
-        let result = cap.call(vec![Value::Str("hello".to_string()), Value::Str("z".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("hello".to_string()),
+                Value::Str("z".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Int(-1)));
     }
 
@@ -994,7 +1088,12 @@ mod tests {
     fn test_str_format() {
         let caps = setup_caps();
         let cap = caps.get("str.format").unwrap();
-        let result = cap.call(vec![Value::Str("Hello {}!".to_string()), Value::Str("World".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("Hello {}!".to_string()),
+                Value::Str("World".to_string()),
+            ])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("Hello World!".to_string())));
     }
 
@@ -1026,11 +1125,20 @@ mod tests {
     fn test_math_floor_ceil_round() {
         let caps = setup_caps();
         let cap = caps.get("math.floor").unwrap();
-        assert_eq!(cap.call(vec![Value::Float(3.7)]).unwrap(), Some(Value::Float(3.0)));
+        assert_eq!(
+            cap.call(vec![Value::Float(3.7)]).unwrap(),
+            Some(Value::Float(3.0))
+        );
         let cap = caps.get("math.ceil").unwrap();
-        assert_eq!(cap.call(vec![Value::Float(3.2)]).unwrap(), Some(Value::Float(4.0)));
+        assert_eq!(
+            cap.call(vec![Value::Float(3.2)]).unwrap(),
+            Some(Value::Float(4.0))
+        );
         let cap = caps.get("math.round").unwrap();
-        assert_eq!(cap.call(vec![Value::Float(3.5)]).unwrap(), Some(Value::Float(4.0)));
+        assert_eq!(
+            cap.call(vec![Value::Float(3.5)]).unwrap(),
+            Some(Value::Float(4.0))
+        );
     }
 
     #[test]
@@ -1038,20 +1146,40 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("math.sin").unwrap();
         let result = cap.call(vec![Value::Float(0.0)]).unwrap();
-        assert!((match result.unwrap() { Value::Float(f) => f, _ => 0.0 } - 0.0).abs() < 0.001);
+        assert!(
+            (match result.unwrap() {
+                Value::Float(f) => f,
+                _ => 0.0,
+            } - 0.0)
+                .abs()
+                < 0.001
+        );
 
         let cap = caps.get("math.cos").unwrap();
         let result = cap.call(vec![Value::Float(0.0)]).unwrap();
-        assert!((match result.unwrap() { Value::Float(f) => f, _ => 0.0 } - 1.0).abs() < 0.001);
+        assert!(
+            (match result.unwrap() {
+                Value::Float(f) => f,
+                _ => 0.0,
+            } - 1.0)
+                .abs()
+                < 0.001
+        );
     }
 
     #[test]
     fn test_math_min_max() {
         let caps = setup_caps();
         let cap = caps.get("math.min").unwrap();
-        assert_eq!(cap.call(vec![Value::Int(3), Value::Int(5)]).unwrap(), Some(Value::Float(3.0)));
+        assert_eq!(
+            cap.call(vec![Value::Int(3), Value::Int(5)]).unwrap(),
+            Some(Value::Float(3.0))
+        );
         let cap = caps.get("math.max").unwrap();
-        assert_eq!(cap.call(vec![Value::Int(3), Value::Int(5)]).unwrap(), Some(Value::Float(5.0)));
+        assert_eq!(
+            cap.call(vec![Value::Int(3), Value::Int(5)]).unwrap(),
+            Some(Value::Float(5.0))
+        );
     }
 
     #[test]
@@ -1059,7 +1187,14 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("math.pi").unwrap();
         let result = cap.call(vec![]).unwrap();
-        assert!((match result.unwrap() { Value::Float(f) => f, _ => 0.0 } - std::f64::consts::PI).abs() < 0.001);
+        assert!(
+            (match result.unwrap() {
+                Value::Float(f) => f,
+                _ => 0.0,
+            } - std::f64::consts::PI)
+                .abs()
+                < 0.001
+        );
     }
 
     // Conversion tests
@@ -1067,9 +1202,18 @@ mod tests {
     fn test_conv_to_int() {
         let caps = setup_caps();
         let cap = caps.get("conv.to_int").unwrap();
-        assert_eq!(cap.call(vec![Value::Int(42)]).unwrap(), Some(Value::Int(42)));
-        assert_eq!(cap.call(vec![Value::Float(3.14)]).unwrap(), Some(Value::Int(3)));
-        assert_eq!(cap.call(vec![Value::Str("123".to_string())]).unwrap(), Some(Value::Int(123)));
+        assert_eq!(
+            cap.call(vec![Value::Int(42)]).unwrap(),
+            Some(Value::Int(42))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Float(3.14)]).unwrap(),
+            Some(Value::Int(3))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("123".to_string())]).unwrap(),
+            Some(Value::Int(123))
+        );
         assert_eq!(cap.call(vec![Value::Null]).unwrap(), Some(Value::Int(0)));
     }
 
@@ -1077,18 +1221,36 @@ mod tests {
     fn test_conv_to_float() {
         let caps = setup_caps();
         let cap = caps.get("conv.to_float").unwrap();
-        assert_eq!(cap.call(vec![Value::Int(42)]).unwrap(), Some(Value::Float(42.0)));
-        assert_eq!(cap.call(vec![Value::Float(3.14)]).unwrap(), Some(Value::Float(3.14)));
-        assert_eq!(cap.call(vec![Value::Str("2.5".to_string())]).unwrap(), Some(Value::Float(2.5)));
+        assert_eq!(
+            cap.call(vec![Value::Int(42)]).unwrap(),
+            Some(Value::Float(42.0))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Float(3.14)]).unwrap(),
+            Some(Value::Float(3.14))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("2.5".to_string())]).unwrap(),
+            Some(Value::Float(2.5))
+        );
     }
 
     #[test]
     fn test_conv_to_str() {
         let caps = setup_caps();
         let cap = caps.get("conv.to_str").unwrap();
-        assert_eq!(cap.call(vec![Value::Int(42)]).unwrap(), Some(Value::Str("42".to_string())));
-        assert_eq!(cap.call(vec![Value::Float(3.14)]).unwrap(), Some(Value::Str("3.14".to_string())));
-        assert_eq!(cap.call(vec![Value::Null]).unwrap(), Some(Value::Str("".to_string())));
+        assert_eq!(
+            cap.call(vec![Value::Int(42)]).unwrap(),
+            Some(Value::Str("42".to_string()))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Float(3.14)]).unwrap(),
+            Some(Value::Str("3.14".to_string()))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Null]).unwrap(),
+            Some(Value::Str("".to_string()))
+        );
     }
 
     #[test]
@@ -1097,38 +1259,80 @@ mod tests {
         let cap = caps.get("conv.to_bool").unwrap();
         assert_eq!(cap.call(vec![Value::Int(1)]).unwrap(), Some(Value::Int(1)));
         assert_eq!(cap.call(vec![Value::Int(0)]).unwrap(), Some(Value::Int(0)));
-        assert_eq!(cap.call(vec![Value::Str("hello".to_string())]).unwrap(), Some(Value::Int(1)));
-        assert_eq!(cap.call(vec![Value::Str("".to_string())]).unwrap(), Some(Value::Int(0)));
+        assert_eq!(
+            cap.call(vec![Value::Str("hello".to_string())]).unwrap(),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("".to_string())]).unwrap(),
+            Some(Value::Int(0))
+        );
         assert_eq!(cap.call(vec![Value::Null]).unwrap(), Some(Value::Int(0)));
-        assert_eq!(cap.call(vec![Value::Array(vec![])]).unwrap(), Some(Value::Int(0)));
-        assert_eq!(cap.call(vec![Value::Array(vec![Value::Int(1)])]).unwrap(), Some(Value::Int(1)));
+        assert_eq!(
+            cap.call(vec![Value::Array(vec![])]).unwrap(),
+            Some(Value::Int(0))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Array(vec![Value::Int(1)])]).unwrap(),
+            Some(Value::Int(1))
+        );
     }
 
     #[test]
     fn test_conv_parse_int() {
         let caps = setup_caps();
         let cap = caps.get("conv.parse_int").unwrap();
-        assert_eq!(cap.call(vec![Value::Str("123".to_string()), Value::Int(10)]).unwrap(), Some(Value::Int(123)));
-        assert_eq!(cap.call(vec![Value::Str("FF".to_string()), Value::Int(16)]).unwrap(), Some(Value::Int(255)));
-        assert_eq!(cap.call(vec![Value::Str("abc".to_string()), Value::Int(10)]).unwrap(), Some(Value::Null));
+        assert_eq!(
+            cap.call(vec![Value::Str("123".to_string()), Value::Int(10)])
+                .unwrap(),
+            Some(Value::Int(123))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("FF".to_string()), Value::Int(16)])
+                .unwrap(),
+            Some(Value::Int(255))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("abc".to_string()), Value::Int(10)])
+                .unwrap(),
+            Some(Value::Null)
+        );
     }
 
     #[test]
     fn test_conv_parse_float() {
         let caps = setup_caps();
         let cap = caps.get("conv.parse_float").unwrap();
-        assert_eq!(cap.call(vec![Value::Str("3.14".to_string())]).unwrap(), Some(Value::Float(3.14)));
+        assert_eq!(
+            cap.call(vec![Value::Str("3.14".to_string())]).unwrap(),
+            Some(Value::Float(3.14))
+        );
     }
 
     #[test]
     fn test_conv_type_of() {
         let caps = setup_caps();
         let cap = caps.get("conv.type_of").unwrap();
-        assert_eq!(cap.call(vec![Value::Int(1)]).unwrap(), Some(Value::Str("int".to_string())));
-        assert_eq!(cap.call(vec![Value::Float(1.0)]).unwrap(), Some(Value::Str("float".to_string())));
-        assert_eq!(cap.call(vec![Value::Str("x".to_string())]).unwrap(), Some(Value::Str("string".to_string())));
-        assert_eq!(cap.call(vec![Value::Null]).unwrap(), Some(Value::Str("null".to_string())));
-        assert_eq!(cap.call(vec![Value::Array(vec![])]).unwrap(), Some(Value::Str("array".to_string())));
+        assert_eq!(
+            cap.call(vec![Value::Int(1)]).unwrap(),
+            Some(Value::Str("int".to_string()))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Float(1.0)]).unwrap(),
+            Some(Value::Str("float".to_string()))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("x".to_string())]).unwrap(),
+            Some(Value::Str("string".to_string()))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Null]).unwrap(),
+            Some(Value::Str("null".to_string()))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Array(vec![])]).unwrap(),
+            Some(Value::Str("array".to_string()))
+        );
     }
 
     // Collections tests
@@ -1136,68 +1340,143 @@ mod tests {
     fn test_coll_len() {
         let caps = setup_caps();
         let cap = caps.get("collections.len").unwrap();
-        assert_eq!(cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)])]).unwrap(), Some(Value::Int(2)));
-        assert_eq!(cap.call(vec![Value::Str("hello".to_string())]).unwrap(), Some(Value::Int(5)));
+        assert_eq!(
+            cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)])])
+                .unwrap(),
+            Some(Value::Int(2))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("hello".to_string())]).unwrap(),
+            Some(Value::Int(5))
+        );
     }
 
     #[test]
     fn test_coll_reverse() {
         let caps = setup_caps();
         let cap = caps.get("collections.reverse").unwrap();
-        let result = cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])]).unwrap();
-        assert_eq!(result, Some(Value::Array(vec![Value::Int(3), Value::Int(2), Value::Int(1)])));
+        let result = cap
+            .call(vec![Value::Array(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3),
+            ])])
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(Value::Array(vec![
+                Value::Int(3),
+                Value::Int(2),
+                Value::Int(1)
+            ]))
+        );
     }
 
     #[test]
     fn test_coll_includes() {
         let caps = setup_caps();
         let cap = caps.get("collections.includes").unwrap();
-        assert_eq!(cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)]), Value::Int(2)]).unwrap(), Some(Value::Int(1)));
-        assert_eq!(cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)]), Value::Int(3)]).unwrap(), Some(Value::Int(0)));
+        assert_eq!(
+            cap.call(vec![
+                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::Int(2)
+            ])
+            .unwrap(),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            cap.call(vec![
+                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::Int(3)
+            ])
+            .unwrap(),
+            Some(Value::Int(0))
+        );
     }
 
     #[test]
     fn test_coll_flatten() {
         let caps = setup_caps();
         let cap = caps.get("collections.flatten").unwrap();
-        let result = cap.call(vec![Value::Array(vec![
-            Value::Array(vec![Value::Int(1), Value::Int(2)]),
-            Value::Array(vec![Value::Int(3)]),
-        ])]).unwrap();
-        assert_eq!(result, Some(Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+        let result = cap
+            .call(vec![Value::Array(vec![
+                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::Array(vec![Value::Int(3)]),
+            ])])
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(Value::Array(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3)
+            ]))
+        );
     }
 
     #[test]
     fn test_coll_chunk() {
         let caps = setup_caps();
         let cap = caps.get("collections.chunk").unwrap();
-        let result = cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)]), Value::Int(2)]).unwrap();
-        assert_eq!(result, Some(Value::Array(vec![
-            Value::Array(vec![Value::Int(1), Value::Int(2)]),
-            Value::Array(vec![Value::Int(3), Value::Int(4)]),
-        ])));
+        let result = cap
+            .call(vec![
+                Value::Array(vec![
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]),
+                Value::Int(2),
+            ])
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(Value::Array(vec![
+                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::Array(vec![Value::Int(3), Value::Int(4)]),
+            ]))
+        );
     }
 
     #[test]
     fn test_coll_zip() {
         let caps = setup_caps();
         let cap = caps.get("collections.zip").unwrap();
-        let result = cap.call(vec![
-            Value::Array(vec![Value::Int(1), Value::Int(2)]),
-            Value::Array(vec![Value::Int(3), Value::Int(4)]),
-        ]).unwrap();
-        assert_eq!(result, Some(Value::Array(vec![
-            Value::Array(vec![Value::Int(1), Value::Int(3)]),
-            Value::Array(vec![Value::Int(2), Value::Int(4)]),
-        ])));
+        let result = cap
+            .call(vec![
+                Value::Array(vec![Value::Int(1), Value::Int(2)]),
+                Value::Array(vec![Value::Int(3), Value::Int(4)]),
+            ])
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(Value::Array(vec![
+                Value::Array(vec![Value::Int(1), Value::Int(3)]),
+                Value::Array(vec![Value::Int(2), Value::Int(4)]),
+            ]))
+        );
     }
 
     #[test]
     fn test_coll_unique() {
         let caps = setup_caps();
         let cap = caps.get("collections.unique").unwrap();
-        let result = cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(1), Value::Int(3)])]).unwrap();
-        assert_eq!(result, Some(Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+        let result = cap
+            .call(vec![Value::Array(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(1),
+                Value::Int(3),
+            ])])
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(Value::Array(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3)
+            ]))
+        );
     }
 
     // JSON tests
@@ -1206,7 +1485,9 @@ mod tests {
     fn test_json_parse() {
         let caps = setup_caps();
         let cap = caps.get("json.parse").unwrap();
-        let result = cap.call(vec![Value::Str(r#"[1,2,3]"#.to_string())]).unwrap();
+        let result = cap
+            .call(vec![Value::Str(r#"[1,2,3]"#.to_string())])
+            .unwrap();
         assert!(matches!(result, Some(Value::Array(arr)) if arr.len() == 3));
     }
 
@@ -1215,7 +1496,9 @@ mod tests {
     fn test_json_stringify() {
         let caps = setup_caps();
         let cap = caps.get("json.stringify").unwrap();
-        let result = cap.call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)])]).unwrap();
+        let result = cap
+            .call(vec![Value::Array(vec![Value::Int(1), Value::Int(2)])])
+            .unwrap();
         assert_eq!(result, Some(Value::Str("[1,2]".to_string())));
     }
 
@@ -1225,7 +1508,10 @@ mod tests {
         let caps = setup_caps();
         let cap = caps.get("json.stringify_pretty").unwrap();
         let result = cap.call(vec![Value::Array(vec![Value::Int(1)])]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert!(s.contains("1"));
     }
 
@@ -1234,8 +1520,16 @@ mod tests {
     fn test_path_join() {
         let caps = setup_caps();
         let cap = caps.get("path.join").unwrap();
-        let result = cap.call(vec![Value::Str("/home".to_string()), Value::Str("user".to_string())]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![
+                Value::Str("/home".to_string()),
+                Value::Str("user".to_string()),
+            ])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert!(s.ends_with("home/user"));
     }
 
@@ -1243,8 +1537,13 @@ mod tests {
     fn test_path_dirname() {
         let caps = setup_caps();
         let cap = caps.get("path.dirname").unwrap();
-        let result = cap.call(vec![Value::Str("/home/user/file.txt".to_string())]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![Value::Str("/home/user/file.txt".to_string())])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert_eq!(s, "/home/user");
     }
 
@@ -1252,8 +1551,13 @@ mod tests {
     fn test_path_basename() {
         let caps = setup_caps();
         let cap = caps.get("path.basename").unwrap();
-        let result = cap.call(vec![Value::Str("/home/user/file.txt".to_string())]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![Value::Str("/home/user/file.txt".to_string())])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert_eq!(s, "file.txt");
     }
 
@@ -1261,8 +1565,13 @@ mod tests {
     fn test_path_extension() {
         let caps = setup_caps();
         let cap = caps.get("path.extension").unwrap();
-        let result = cap.call(vec![Value::Str("/home/user/file.txt".to_string())]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![Value::Str("/home/user/file.txt".to_string())])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert_eq!(s, "txt");
     }
 
@@ -1270,16 +1579,27 @@ mod tests {
     fn test_path_is_absolute() {
         let caps = setup_caps();
         let cap = caps.get("path.is_absolute").unwrap();
-        assert_eq!(cap.call(vec![Value::Str("/home".to_string())]).unwrap(), Some(Value::Int(1)));
-        assert_eq!(cap.call(vec![Value::Str("home".to_string())]).unwrap(), Some(Value::Int(0)));
+        assert_eq!(
+            cap.call(vec![Value::Str("/home".to_string())]).unwrap(),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            cap.call(vec![Value::Str("home".to_string())]).unwrap(),
+            Some(Value::Int(0))
+        );
     }
 
     #[test]
     fn test_path_normalize() {
         let caps = setup_caps();
         let cap = caps.get("path.normalize").unwrap();
-        let result = cap.call(vec![Value::Str("/home/user/../etc".to_string())]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![Value::Str("/home/user/../etc".to_string())])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert_eq!(s, "/home/etc");
     }
 
@@ -1287,8 +1607,13 @@ mod tests {
     fn test_path_stem() {
         let caps = setup_caps();
         let cap = caps.get("path.stem").unwrap();
-        let result = cap.call(vec![Value::Str("/home/user/file.txt".to_string())]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![Value::Str("/home/user/file.txt".to_string())])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert_eq!(s, "file");
     }
 
@@ -1298,8 +1623,22 @@ mod tests {
     fn test_regex_test() {
         let caps = setup_caps();
         let cap = caps.get("regex.test").unwrap();
-        assert_eq!(cap.call(vec![Value::Str(r"\d+".to_string()), Value::Str("123".to_string())]).unwrap(), Some(Value::Int(1)));
-        assert_eq!(cap.call(vec![Value::Str(r"\d+".to_string()), Value::Str("abc".to_string())]).unwrap(), Some(Value::Int(0)));
+        assert_eq!(
+            cap.call(vec![
+                Value::Str(r"\d+".to_string()),
+                Value::Str("123".to_string())
+            ])
+            .unwrap(),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            cap.call(vec![
+                Value::Str(r"\d+".to_string()),
+                Value::Str("abc".to_string())
+            ])
+            .unwrap(),
+            Some(Value::Int(0))
+        );
     }
 
     #[cfg(feature = "stdlib")]
@@ -1307,7 +1646,12 @@ mod tests {
     fn test_regex_match() {
         let caps = setup_caps();
         let cap = caps.get("regex.match").unwrap();
-        let result = cap.call(vec![Value::Str(r"(\d+)-(\d+)".to_string()), Value::Str("123-456".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str(r"(\d+)-(\d+)".to_string()),
+                Value::Str("123-456".to_string()),
+            ])
+            .unwrap();
         assert!(matches!(result, Some(Value::Array(arr)) if arr.len() >= 2));
     }
 
@@ -1316,7 +1660,12 @@ mod tests {
     fn test_regex_find_all() {
         let caps = setup_caps();
         let cap = caps.get("regex.find_all").unwrap();
-        let result = cap.call(vec![Value::Str(r"\d+".to_string()), Value::Str("a1b23c4".to_string())]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str(r"\d+".to_string()),
+                Value::Str("a1b23c4".to_string()),
+            ])
+            .unwrap();
         assert!(matches!(result, Some(Value::Array(arr)) if arr.len() == 3));
     }
 
@@ -1325,12 +1674,17 @@ mod tests {
     fn test_regex_replace() {
         let caps = setup_caps();
         let cap = caps.get("regex.replace").unwrap();
-        let result = cap.call(vec![
-            Value::Str(r"\d+".to_string()),
-            Value::Str("a1b23c".to_string()),
-            Value::Str("X".to_string()),
-        ]).unwrap();
-        let s = match result.unwrap() { Value::Str(s) => s, _ => String::new() };
+        let result = cap
+            .call(vec![
+                Value::Str(r"\d+".to_string()),
+                Value::Str("a1b23c".to_string()),
+                Value::Str("X".to_string()),
+            ])
+            .unwrap();
+        let s = match result.unwrap() {
+            Value::Str(s) => s,
+            _ => String::new(),
+        };
         assert_eq!(s, "aXbXc");
     }
 
@@ -1339,11 +1693,19 @@ mod tests {
     fn test_regex_split() {
         let caps = setup_caps();
         let cap = caps.get("regex.split").unwrap();
-        let result = cap.call(vec![Value::Str(r"\s+".to_string()), Value::Str("a  b   c".to_string())]).unwrap();
-        assert_eq!(result, Some(Value::Array(vec![
-            Value::Str("a".to_string()),
-            Value::Str("b".to_string()),
-            Value::Str("c".to_string()),
-        ])));
+        let result = cap
+            .call(vec![
+                Value::Str(r"\s+".to_string()),
+                Value::Str("a  b   c".to_string()),
+            ])
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(Value::Array(vec![
+                Value::Str("a".to_string()),
+                Value::Str("b".to_string()),
+                Value::Str("c".to_string()),
+            ]))
+        );
     }
 }

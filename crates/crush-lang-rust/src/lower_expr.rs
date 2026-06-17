@@ -10,7 +10,9 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
     match expr {
         Expr::Lit(e) => lower_lit(&e.lit, meta),
         Expr::Path(e) => {
-            let name = e.path.get_ident()
+            let name = e
+                .path
+                .get_ident()
                 .ok_or_else(|| anyhow::anyhow!("complex path not supported"))?
                 .to_string();
             Ok(Expression::Var { name, meta })
@@ -63,22 +65,34 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             })
         }
         Expr::Call(e) => {
-            let lowered_args: Vec<Expression> = e.args.iter().map(|a| lower_expr(a)).collect::<Result<Vec<_>, _>>()?;
+            let lowered_args: Vec<Expression> = e
+                .args
+                .iter()
+                .map(|a| lower_expr(a))
+                .collect::<Result<Vec<_>, _>>()?;
             let func_name = match e.func.as_ref() {
-                Expr::Path(p) => p.path.get_ident()
+                Expr::Path(p) => p
+                    .path
+                    .get_ident()
                     .ok_or_else(|| anyhow::anyhow!("complex call path"))?
                     .to_string(),
                 _ => anyhow::bail!("complex function expression not supported"),
             };
             match func_name.as_str() {
                 "println" | "print" => Ok(Expression::CapabilityCall {
-                    name: "io.print".to_string(), args: lowered_args, meta,
+                    name: "io.print".to_string(),
+                    args: lowered_args,
+                    meta,
                 }),
                 "len" => Ok(Expression::Call {
-                    function: "len".to_string(), args: lowered_args, meta,
+                    function: "len".to_string(),
+                    args: lowered_args,
+                    meta,
                 }),
                 _ => Ok(Expression::Call {
-                    function: func_name, args: lowered_args, meta,
+                    function: func_name,
+                    args: lowered_args,
+                    meta,
                 }),
             }
         }
@@ -88,7 +102,9 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             let then_body = block_to_expr(&e.then_branch)?;
             let else_body = match &e.else_branch {
                 Some((_, else_expr)) => lower_expr(else_expr)?,
-                None => Expression::NullLiteral { meta: HashMap::new() },
+                None => Expression::NullLiteral {
+                    meta: HashMap::new(),
+                },
             };
             Ok(Expression::Call {
                 function: "__crush_ifexpr__".to_string(),
@@ -98,7 +114,9 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
         }
         Expr::Block(e) => {
             if e.block.stmts.is_empty() {
-                return Ok(Expression::NullLiteral { meta: HashMap::new() });
+                return Ok(Expression::NullLiteral {
+                    meta: HashMap::new(),
+                });
             }
             let first = &e.block.stmts[0];
             match first {
@@ -110,11 +128,19 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
                         let value = lower_expr(&init.expr)?;
                         Ok(Expression::Call {
                             function: "__crush_let__".to_string(),
-                            args: vec![Expression::Var { name, meta: HashMap::new() }, value],
+                            args: vec![
+                                Expression::Var {
+                                    name,
+                                    meta: HashMap::new(),
+                                },
+                                value,
+                            ],
                             meta: HashMap::new(),
                         })
                     } else {
-                        Ok(Expression::NullLiteral { meta: HashMap::new() })
+                        Ok(Expression::NullLiteral {
+                            meta: HashMap::new(),
+                        })
                     }
                 }
                 syn::Stmt::Item(_) => anyhow::bail!("item in block expression not supported"),
@@ -124,7 +150,9 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
         Expr::Return(e) => {
             let value = match &e.expr {
                 Some(expr) => lower_expr(expr)?,
-                None => Expression::NullLiteral { meta: HashMap::new() },
+                None => Expression::NullLiteral {
+                    meta: HashMap::new(),
+                },
             };
             Ok(Expression::Call {
                 function: "__crush_return__".to_string(),
@@ -138,7 +166,9 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
 
 fn block_to_expr(block: &syn::Block) -> anyhow::Result<Expression> {
     if block.stmts.is_empty() {
-        return Ok(Expression::NullLiteral { meta: HashMap::new() });
+        return Ok(Expression::NullLiteral {
+            meta: HashMap::new(),
+        });
     }
     match &block.stmts[0] {
         syn::Stmt::Expr(expr, _) => lower_expr(expr),
@@ -149,11 +179,19 @@ fn block_to_expr(block: &syn::Block) -> anyhow::Result<Expression> {
                 let value = lower_expr(&init.expr)?;
                 Ok(Expression::Call {
                     function: "__crush_let__".to_string(),
-                    args: vec![Expression::Var { name, meta: HashMap::new() }, value],
+                    args: vec![
+                        Expression::Var {
+                            name,
+                            meta: HashMap::new(),
+                        },
+                        value,
+                    ],
                     meta: HashMap::new(),
                 })
             } else {
-                Ok(Expression::NullLiteral { meta: HashMap::new() })
+                Ok(Expression::NullLiteral {
+                    meta: HashMap::new(),
+                })
             }
         }
         syn::Stmt::Item(_) => anyhow::bail!("item in block not supported"),
@@ -167,16 +205,31 @@ pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
     }
 }
 
-fn lower_lit(lit: &syn::Lit, meta: HashMap<String, serde_json::Value>) -> anyhow::Result<Expression> {
+fn lower_lit(
+    lit: &syn::Lit,
+    meta: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Expression> {
     match lit {
         syn::Lit::Int(i) => {
             let val = i.base10_parse::<i64>()?;
             Ok(Expression::IntLiteral { value: val, meta })
         }
-        syn::Lit::Float(f) => Ok(Expression::FloatLiteral { value: f.base10_parse()?, meta }),
-        syn::Lit::Str(s) => Ok(Expression::StringLiteral { value: s.value(), meta }),
-        syn::Lit::Bool(b) => Ok(Expression::BoolLiteral { value: b.value, meta }),
-        syn::Lit::Char(c) => Ok(Expression::StringLiteral { value: c.value().to_string(), meta }),
+        syn::Lit::Float(f) => Ok(Expression::FloatLiteral {
+            value: f.base10_parse()?,
+            meta,
+        }),
+        syn::Lit::Str(s) => Ok(Expression::StringLiteral {
+            value: s.value(),
+            meta,
+        }),
+        syn::Lit::Bool(b) => Ok(Expression::BoolLiteral {
+            value: b.value,
+            meta,
+        }),
+        syn::Lit::Char(c) => Ok(Expression::StringLiteral {
+            value: c.value().to_string(),
+            meta,
+        }),
         _ => anyhow::bail!("unsupported literal"),
     }
 }

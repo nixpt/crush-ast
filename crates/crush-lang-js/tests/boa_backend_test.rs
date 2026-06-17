@@ -20,56 +20,58 @@ fn test_lower(source: &str) -> crush_cast::Program {
 #[test]
 fn test_boa_var_decl_and_arithmetic() {
     let source = "const x = 42;\nlet y = x + 1;\n";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     let main = program.functions.get("main").unwrap();
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "x")));
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "y")));
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "x"))
+    );
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "y"))
+    );
 }
 
 #[test]
 fn test_boa_if_else() {
     let source = "if (true) { console.log('yes'); } else { console.log('no'); }";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_while_loop() {
     let source = "let i = 0;\nwhile (i < 10) { i++; }\n";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_for_loop() {
     let source = "for (let i = 0; i < 10; i++) { console.log(i); }";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_for_in_loop() {
     let source = "const obj = { a: 1, b: 2 };\nfor (let k in obj) { console.log(k); }\n";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_for_of_loop() {
     let source = "const arr = [1, 2, 3];\nfor (let v of arr) { console.log(v); }\n";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -78,27 +80,24 @@ fn test_boa_try_catch() {
     let source = "try { x(); } catch(e) { console.log(e); }";
     let report = test_analyze(source, "js");
     assert!(report.uses_exceptions);
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_function_decl() {
     let source = "function greet(name) { return 'hello ' + name; }";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("greet"));
 }
 
 #[test]
 fn test_boa_arrow_function() {
     let source = "const add = (a, b) => a + b;";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -107,7 +106,11 @@ fn test_boa_array_object() {
     let source = "const arr = [1, 2, 3];\nconst obj = { a: 1, b: 'hello' };\n";
     let program = test_lower(source);
     let main = program.functions.get("main").unwrap();
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "arr")));
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "arr"))
+    );
 }
 
 #[test]
@@ -147,9 +150,8 @@ fn test_boa_property_access() {
 #[test]
 fn test_boa_this_keyword() {
     let source = "function f() { return this; }";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("f"));
 }
 
@@ -177,9 +179,8 @@ fn test_boa_switch() {
 #[test]
 fn test_boa_throw() {
     let source = "throw new Error('bad');";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -213,9 +214,8 @@ fn test_boa_compound_assignment() {
 #[test]
 fn test_boa_update_operators() {
     let source = "let i = 0;\ni++;\n++i;\ni--;\n";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -229,8 +229,7 @@ fn test_boa_tagged_template() {
 #[test]
 fn test_boa_nested_functions() {
     let source = "function outer() { function inner() { return 1; } return inner(); }";
-    let (_report, program) = walker_core::frontend_pipeline(
-        &crush_lang_js::JsFrontend::new("js"), source,
-    ).unwrap();
+    let (_report, program) =
+        walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::new("js"), source).unwrap();
     assert!(program.functions.contains_key("outer"));
 }

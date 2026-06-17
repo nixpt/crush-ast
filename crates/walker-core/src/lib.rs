@@ -77,9 +77,7 @@ pub struct FeatureReport {
 
 impl FeatureReport {
     pub fn can_lower_safely(&self) -> bool {
-        self.dangerous_imports.is_empty()
-            && !self.uses_unsafe
-            && !self.uses_ffi
+        self.dangerous_imports.is_empty() && !self.uses_unsafe && !self.uses_ffi
     }
 }
 
@@ -102,7 +100,10 @@ pub trait Frontend {
 }
 
 /// Run the full frontend pipeline: parse → analyze → lower.
-pub fn frontend_pipeline(frontend: &dyn Frontend, source: &str) -> Result<(FeatureReport, Program)> {
+pub fn frontend_pipeline(
+    frontend: &dyn Frontend,
+    source: &str,
+) -> Result<(FeatureReport, Program)> {
     let ast = frontend.parse(source)?;
     let report = frontend.analyze(&ast)?;
     let program = frontend.lower(ast)?;

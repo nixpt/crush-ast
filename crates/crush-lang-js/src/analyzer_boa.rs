@@ -1,10 +1,10 @@
 use anyhow;
 use boa_ast::declaration::{Declaration, LexicalDeclaration};
+use boa_ast::expression::Expression;
 use boa_ast::expression::access::PropertyAccess;
 use boa_ast::expression::literal::PropertyDefinition;
 use boa_ast::expression::operator::assign::AssignTarget;
 use boa_ast::expression::operator::update::UpdateTarget;
-use boa_ast::expression::Expression;
 use boa_ast::{ModuleItem, Statement, StatementListItem};
 use boa_interner::{Interner, Sym};
 use walker_core::FeatureReport;
@@ -47,8 +47,17 @@ pub fn analyze(ast: &BoaAst, r: &mut FeatureReport) -> anyhow::Result<()> {
 
 fn is_dangerous_import(module: &str) -> bool {
     let dangerous = [
-        "child_process", "fs", "net", "dgram", "cluster", "vm",
-        "worker_threads", "os", "process", "module", "electron",
+        "child_process",
+        "fs",
+        "net",
+        "dgram",
+        "cluster",
+        "vm",
+        "worker_threads",
+        "os",
+        "process",
+        "module",
+        "electron",
     ];
     let base = module.split('/').next().unwrap_or(module);
     dangerous.contains(&base)
@@ -214,14 +223,12 @@ impl<'a> BoaAnalyzer<'a> {
                 self.walk_expression(b.rhs(), r);
             }
             Expression::Unary(u) => self.walk_expression(u.target(), r),
-            Expression::Update(u) => {
-                match u.target() {
-                    UpdateTarget::Identifier(_) => {}
-                    UpdateTarget::PropertyAccess(pa) => {
-                        self.walk_property_access(pa, r);
-                    }
+            Expression::Update(u) => match u.target() {
+                UpdateTarget::Identifier(_) => {}
+                UpdateTarget::PropertyAccess(pa) => {
+                    self.walk_property_access(pa, r);
                 }
-            }
+            },
             Expression::Assign(a) => {
                 match a.lhs() {
                     AssignTarget::Identifier(_) => {}

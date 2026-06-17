@@ -1,5 +1,5 @@
 use crush_lang_python::PythonFrontend;
-use walker_core::{Frontend};
+use walker_core::Frontend;
 
 /// Helper: just run analyze (not full pipeline) on source.
 fn test_analyze(source: &str) -> walker_core::FeatureReport {

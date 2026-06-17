@@ -1,7 +1,7 @@
 use crush_cast::CastType;
-use crush_frontend::semantics::SemanticAnalyzer;
 use crush_cast::{Expression, Function, Program, Statement};
 use crush_frontend::compile_cast;
+use crush_frontend::semantics::SemanticAnalyzer;
 use std::collections::HashMap;
 
 fn create_empty_meta() -> HashMap<String, serde_json::Value> {
@@ -222,7 +222,10 @@ fn test_function_return_type_inference_allows_numeric_use() {
 
     let program = create_program_with_functions(functions);
     let result = compile_cast(&program);
-    assert!(result.is_ok(), "inferred int return should support int arithmetic");
+    assert!(
+        result.is_ok(),
+        "inferred int return should support int arithmetic"
+    );
 }
 
 #[test]
@@ -270,7 +273,12 @@ fn test_conflicting_function_return_types_fail() {
     let program = create_program_with_functions(functions);
     let result = compile_cast(&program);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Conflicting return types"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Conflicting return types")
+    );
 }
 
 #[test]

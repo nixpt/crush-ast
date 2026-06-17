@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use crush_cast::{Expression, Function, Program, Statement};
-use walker_core::WalkerError;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use walker_core::WalkerError;
 use wasmparser::{Parser as WasmParser, Payload, TypeRef};
 
 #[derive(Parser)]

@@ -40,7 +40,10 @@ fn test_js_frontend_detects_exceptions() {
 
 #[test]
 fn test_js_frontend_detects_imports() {
-    let report = test_analyze("import * as fs from \"fs\";\nimport { loads } from \"json\";", "js");
+    let report = test_analyze(
+        "import * as fs from \"fs\";\nimport { loads } from \"json\";",
+        "js",
+    );
     assert!(report.uses_imports.contains(&"fs".to_string()));
     assert!(report.uses_imports.contains(&"json".to_string()));
 }
@@ -75,7 +78,11 @@ fn test_js_frontend_if_else() {
     let (report, program) = walker_core::frontend_pipeline(&frontend, source).unwrap();
     assert!(report.can_lower_safely());
     let main = program.functions.get("main").unwrap();
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::If { .. })));
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::If { .. }))
+    );
 }
 
 #[test]
@@ -84,8 +91,16 @@ fn test_js_frontend_array_object() {
     let frontend = JsFrontend::new("js");
     let (_report, program) = walker_core::frontend_pipeline(&frontend, source).unwrap();
     let main = program.functions.get("main").unwrap();
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "arr")));
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "obj")));
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "arr"))
+    );
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "obj"))
+    );
 }
 
 #[test]
@@ -95,7 +110,11 @@ fn test_js_frontend_try_catch() {
     let (report, program) = walker_core::frontend_pipeline(&frontend, source).unwrap();
     assert!(report.uses_exceptions);
     let main = program.functions.get("main").unwrap();
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::TryCatch { .. })));
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::TryCatch { .. }))
+    );
 }
 
 #[test]

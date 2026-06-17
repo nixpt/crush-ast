@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Register the task-management capabilities on a [`HostCaps`] registry.
 pub fn register(caps: &mut HostCaps) {
@@ -43,7 +43,9 @@ impl TaskState {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let child = cmd.spawn().map_err(|e| format!("task start {command}: {e}"))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("task start {command}: {e}"))?;
         self.tasks.insert(id.clone(), child);
         Ok(id)
     }
@@ -53,7 +55,9 @@ impl TaskState {
             .tasks
             .remove(task_id)
             .ok_or_else(|| format!("task not found: {task_id}"))?;
-        child.kill().map_err(|e| format!("task stop {task_id}: {e}"))?;
+        child
+            .kill()
+            .map_err(|e| format!("task stop {task_id}: {e}"))?;
         child
             .wait()
             .map_err(|e| format!("task wait {task_id}: {e}"))?;
@@ -160,9 +164,7 @@ impl HostCap for TaskListCap {
         let rows = state.list();
         Ok(Some(Value::Array(
             rows.into_iter()
-                .map(|v| {
-                    Value::Str(serde_json::to_string(&v).unwrap_or_default())
-                })
+                .map(|v| Value::Str(serde_json::to_string(&v).unwrap_or_default()))
                 .collect(),
         )))
     }

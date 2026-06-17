@@ -12,7 +12,9 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
     match expr {
         py_ast::Expr::BoolOp(py_ast::ExprBoolOp { op, values, .. }) => {
             let mut iter = values.iter();
-            let first = iter.next().ok_or_else(|| anyhow::anyhow!("empty bool op"))?;
+            let first = iter
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("empty bool op"))?;
             let mut result = lower_expr(first)?;
             for val in iter {
                 let right = lower_expr(val)?;
@@ -34,11 +36,19 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             let name = name_from_expr(target)?;
             Ok(Expression::Call {
                 function: "__crush_assign__".to_string(),
-                args: vec![value_expr, Expression::Var { name, meta: meta.clone() }],
+                args: vec![
+                    value_expr,
+                    Expression::Var {
+                        name,
+                        meta: meta.clone(),
+                    },
+                ],
                 meta,
             })
         }
-        py_ast::Expr::BinOp(py_ast::ExprBinOp { left, op, right, .. }) => {
+        py_ast::Expr::BinOp(py_ast::ExprBinOp {
+            left, op, right, ..
+        }) => {
             let left = lower_expr(left)?;
             let right = lower_expr(right)?;
             let operator = match op {
@@ -80,7 +90,9 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
         py_ast::Expr::Lambda { .. } => {
             anyhow::bail!("lambda expressions not yet supported")
         }
-        py_ast::Expr::IfExp(py_ast::ExprIfExp { test, body, orelse, .. }) => {
+        py_ast::Expr::IfExp(py_ast::ExprIfExp {
+            test, body, orelse, ..
+        }) => {
             let test = lower_expr(test)?;
             let body = lower_expr(body)?;
             let orelse = lower_expr(orelse)?;
@@ -103,15 +115,22 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             Ok(Expression::ObjectLiteral { properties, meta })
         }
         py_ast::Expr::Set { .. } => anyhow::bail!("set literals not yet supported"),
-        py_ast::Expr::ListComp { .. } | py_ast::Expr::SetComp { .. }
-        | py_ast::Expr::DictComp { .. } | py_ast::Expr::GeneratorExp { .. } => {
+        py_ast::Expr::ListComp { .. }
+        | py_ast::Expr::SetComp { .. }
+        | py_ast::Expr::DictComp { .. }
+        | py_ast::Expr::GeneratorExp { .. } => {
             anyhow::bail!("comprehensions not yet supported")
         }
         py_ast::Expr::Await { .. } => anyhow::bail!("async/await not yet supported"),
         py_ast::Expr::Yield { .. } | py_ast::Expr::YieldFrom { .. } => {
             anyhow::bail!("generators not yet supported")
         }
-        py_ast::Expr::Compare(py_ast::ExprCompare { left, ops, comparators, .. }) => {
+        py_ast::Expr::Compare(py_ast::ExprCompare {
+            left,
+            ops,
+            comparators,
+            ..
+        }) => {
             let left = lower_expr(left)?;
             let op = &ops[0];
             let right = lower_expr(&comparators[0])?;
@@ -136,12 +155,13 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
                 meta,
             })
         }
-        py_ast::Expr::Call(py_ast::ExprCall { func, args, keywords, .. }) => {
-            lower_call(func, args, keywords, meta)
-        }
-        py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => {
-            lower_constant(value, meta)
-        }
+        py_ast::Expr::Call(py_ast::ExprCall {
+            func,
+            args,
+            keywords,
+            ..
+        }) => lower_call(func, args, keywords, meta),
+        py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => lower_constant(value, meta),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
             let target = lower_expr(value)?;
             Ok(Expression::GetField {
@@ -160,15 +180,22 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             })
         }
         py_ast::Expr::Starred { .. } => anyhow::bail!("starred expressions not yet supported"),
-        py_ast::Expr::Name(py_ast::ExprName { id, .. }) => {
-            Ok(Expression::Var { name: id.to_string(), meta })
-        }
+        py_ast::Expr::Name(py_ast::ExprName { id, .. }) => Ok(Expression::Var {
+            name: id.to_string(),
+            meta,
+        }),
         py_ast::Expr::List(py_ast::ExprList { elts, .. }) => {
-            let elements: Vec<Expression> = elts.iter().map(|e| lower_expr(e)).collect::<Result<Vec<_>, _>>()?;
+            let elements: Vec<Expression> = elts
+                .iter()
+                .map(|e| lower_expr(e))
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         py_ast::Expr::Tuple(py_ast::ExprTuple { elts, .. }) => {
-            let elements: Vec<Expression> = elts.iter().map(|e| lower_expr(e)).collect::<Result<Vec<_>, _>>()?;
+            let elements: Vec<Expression> = elts
+                .iter()
+                .map(|e| lower_expr(e))
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         py_ast::Expr::Slice { .. } => anyhow::bail!("slice expressions not yet supported"),
@@ -188,7 +215,10 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
                     _ => anyhow::bail!("unexpected f-string part"),
                 }
             }
-            Ok(Expression::StringLiteral { value: parts.concat(), meta })
+            Ok(Expression::StringLiteral {
+                value: parts.concat(),
+                meta,
+            })
         }
         py_ast::Expr::FormattedValue(..) => {
             anyhow::bail!("formatted values not yet supported")
@@ -202,7 +232,10 @@ fn lower_call(
     _keywords: &[py_ast::Keyword],
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
-    let lowered_args: Vec<Expression> = args.iter().map(|a| lower_expr(a)).collect::<Result<Vec<_>, _>>()?;
+    let lowered_args: Vec<Expression> = args
+        .iter()
+        .map(|a| lower_expr(a))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let func_name = match func {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
@@ -218,18 +251,30 @@ fn lower_call(
 
     match func_name.as_str() {
         "print" => Ok(Expression::CapabilityCall {
-            name: "io.print".to_string(), args: lowered_args, meta,
+            name: "io.print".to_string(),
+            args: lowered_args,
+            meta,
         }),
         "len" => Ok(Expression::Call {
-            function: "len".to_string(), args: lowered_args, meta,
+            function: "len".to_string(),
+            args: lowered_args,
+            meta,
         }),
-        "int" | "float" | "str" | "bool" | "list" | "dict" => {
-            Ok(Expression::Call { function: func_name, args: lowered_args, meta })
-        }
+        "int" | "float" | "str" | "bool" | "list" | "dict" => Ok(Expression::Call {
+            function: func_name,
+            args: lowered_args,
+            meta,
+        }),
         "range" => Ok(Expression::Call {
-            function: "make_range".to_string(), args: lowered_args, meta,
+            function: "make_range".to_string(),
+            args: lowered_args,
+            meta,
         }),
-        _ => Ok(Expression::Call { function: func_name, args: lowered_args, meta }),
+        _ => Ok(Expression::Call {
+            function: func_name,
+            args: lowered_args,
+            meta,
+        }),
     }
 }
 
@@ -249,25 +294,39 @@ fn lower_constant(
         }
         py_ast::Constant::Float(f) => Ok(Expression::FloatLiteral { value: *f, meta }),
         py_ast::Constant::Str(s) => Ok(Expression::StringLiteral {
-            value: s.clone(), meta,
+            value: s.clone(),
+            meta,
         }),
         py_ast::Constant::Bytes(_) => anyhow::bail!("bytes literals not yet supported"),
         py_ast::Constant::Complex { .. } => anyhow::bail!("complex numbers not yet supported"),
         py_ast::Constant::Ellipsis => anyhow::bail!("ellipsis literal not yet supported"),
         py_ast::Constant::Tuple(t) => {
-            let elements: Vec<Expression> = t.iter().map(|e| {
-                match e {
+            let elements: Vec<Expression> = t
+                .iter()
+                .map(|e| match e {
                     py_ast::Constant::None => Ok(Expression::NullLiteral { meta: meta.clone() }),
-                    py_ast::Constant::Bool(b) => Ok(Expression::BoolLiteral { value: *b, meta: meta.clone() }),
+                    py_ast::Constant::Bool(b) => Ok(Expression::BoolLiteral {
+                        value: *b,
+                        meta: meta.clone(),
+                    }),
                     py_ast::Constant::Int(i) => {
                         let val: i64 = i.try_into().map_err(|_| anyhow::anyhow!("int overflow"))?;
-                        Ok(Expression::IntLiteral { value: val, meta: meta.clone() })
+                        Ok(Expression::IntLiteral {
+                            value: val,
+                            meta: meta.clone(),
+                        })
                     }
-                    py_ast::Constant::Float(f) => Ok(Expression::FloatLiteral { value: *f, meta: meta.clone() }),
-                    py_ast::Constant::Str(s) => Ok(Expression::StringLiteral { value: s.clone(), meta: meta.clone() }),
+                    py_ast::Constant::Float(f) => Ok(Expression::FloatLiteral {
+                        value: *f,
+                        meta: meta.clone(),
+                    }),
+                    py_ast::Constant::Str(s) => Ok(Expression::StringLiteral {
+                        value: s.clone(),
+                        meta: meta.clone(),
+                    }),
                     _ => anyhow::bail!("nested constant tuples not yet supported"),
-                }
-            }).collect::<Result<Vec<_>, _>>()?;
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
     }
@@ -275,17 +334,19 @@ fn lower_constant(
 
 fn constant_to_string(expr: &py_ast::Expr) -> anyhow::Result<String> {
     match expr {
-        py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => {
-            match value {
-                py_ast::Constant::Str(s) => Ok(s.clone()),
-                py_ast::Constant::Int(i) => Ok(format!("{}", i)),
-                py_ast::Constant::Bool(b) => Ok(if *b { "true".to_string() } else { "false".to_string() }),
-                py_ast::Constant::None => Ok("null".to_string()),
-                py_ast::Constant::Float(f) => Ok(format!("{}", f)),
-                py_ast::Constant::Ellipsis => anyhow::bail!("ellipsis as dict key"),
-                _ => anyhow::bail!("unsupported constant as dict key"),
-            }
-        }
+        py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => match value {
+            py_ast::Constant::Str(s) => Ok(s.clone()),
+            py_ast::Constant::Int(i) => Ok(format!("{}", i)),
+            py_ast::Constant::Bool(b) => Ok(if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }),
+            py_ast::Constant::None => Ok("null".to_string()),
+            py_ast::Constant::Float(f) => Ok(format!("{}", f)),
+            py_ast::Constant::Ellipsis => anyhow::bail!("ellipsis as dict key"),
+            _ => anyhow::bail!("unsupported constant as dict key"),
+        },
         _ => anyhow::bail!("dict keys must be constant expressions"),
     }
 }

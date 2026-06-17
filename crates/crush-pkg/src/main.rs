@@ -17,7 +17,7 @@ mod site;
 use builder::PackageBuilder;
 use manifest::Manifest;
 use packer::{pack, unpack};
-use runners::{get_runner_for_payload, ExecutionResult};
+use runners::{ExecutionResult, get_runner_for_payload};
 use signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
@@ -159,22 +159,16 @@ fn main() -> anyhow::Result<()> {
                 "created new Crush package at {}",
                 target.join("capsule.toml").display()
             );
-            println!(
-                "  name:    {}",
-                manifest.capsule.name
-            );
-            println!(
-                "  entry:   {}",
-                manifest.capsule.entry
-            );
-            println!(
-                "  version: {}",
-                manifest.capsule.version
-            );
+            println!("  name:    {}", manifest.capsule.name);
+            println!("  entry:   {}", manifest.capsule.entry);
+            println!("  version: {}", manifest.capsule.version);
         }
         Commands::Build => {
             let (manifest, root) = load_manifest()?;
-            println!("building {} v{}", manifest.capsule.name, manifest.capsule.version);
+            println!(
+                "building {} v{}",
+                manifest.capsule.name, manifest.capsule.version
+            );
             let builder = PackageBuilder::new(manifest, root);
             let output = builder.build()?;
             builder.write_output(&output)?;
@@ -191,28 +185,33 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("entry file not found: {}", payload.display());
             }
             let runner = get_runner_for_payload(&payload, &manifest);
-            println!("running {} v{} ({})", manifest.capsule.name, manifest.capsule.version, manifest.capsule.language);
+            println!(
+                "running {} v{} ({})",
+                manifest.capsule.name, manifest.capsule.version, manifest.capsule.language
+            );
             let result = runner.run(&manifest, &payload, &args)?;
             match result {
-                ExecutionResult::Vm => {},
+                ExecutionResult::Vm => {}
                 ExecutionResult::Process(mut child) => {
                     let status = child.wait()?;
                     if !status.success() {
                         std::process::exit(status.code().unwrap_or(1));
                     }
                 }
-                ExecutionResult::None => {},
+                ExecutionResult::None => {}
             }
         }
         Commands::Pack { output } => {
             let (manifest, root) = load_manifest()?;
-            let output = output.unwrap_or_else(|| {
-                PathBuf::from(format!("{}.crush-pack", manifest.capsule.name))
-            });
+            let output = output
+                .unwrap_or_else(|| PathBuf::from(format!("{}.crush-pack", manifest.capsule.name)));
             pack(&root, &output)?;
         }
         Commands::Unpack { pack, dir } => {
-            let name = pack.file_stem().and_then(|s| s.to_str()).unwrap_or("package");
+            let name = pack
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("package");
             let dir = dir.unwrap_or_else(|| PathBuf::from(name));
             unpack(&pack, &dir)?;
         }
@@ -227,7 +226,10 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Check => {
             let (manifest, root) = load_manifest()?;
-            println!("checking {} v{}", manifest.capsule.name, manifest.capsule.version);
+            println!(
+                "checking {} v{}",
+                manifest.capsule.name, manifest.capsule.version
+            );
             let builder = PackageBuilder::new(manifest, root);
             builder.check()?;
         }

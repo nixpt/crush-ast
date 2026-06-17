@@ -468,7 +468,10 @@ fn import_statement_is_accepted_by_compiler() {
 
     let ops = main_ops(&casm);
     // External imports lower to: push uri, external.load cap_call, store alias.
-    assert_eq!(ops, vec!["push_str", "cap_call", "store", "push_null", "ret"]);
+    assert_eq!(
+        ops,
+        vec!["push_str", "cap_call", "store", "push_null", "ret"]
+    );
 
     let main = casm.functions.get("main").unwrap();
     let cap = main

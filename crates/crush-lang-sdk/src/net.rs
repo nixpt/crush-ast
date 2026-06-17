@@ -3,8 +3,8 @@
 //! Enabled by the `net` cargo feature. Provides simple HTTP GET/POST via
 //! `ureq` with bounded response sizes.
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Add network capabilities to an existing [`HostCaps`] registry.
 pub fn register(caps: &mut HostCaps, max_response_bytes: usize) {

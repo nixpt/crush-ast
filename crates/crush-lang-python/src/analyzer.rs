@@ -19,7 +19,11 @@ pub fn analyze(source: &str) -> Analysis {
         Ok(stmts) => stmts,
         Err(e) => {
             unsupported_features.push(format!("parse error: {}", e));
-            return Analysis { dangerous_imports, unsupported_features, can_lower: false };
+            return Analysis {
+                dangerous_imports,
+                unsupported_features,
+                can_lower: false,
+            };
         }
     };
 
@@ -28,14 +32,14 @@ pub fn analyze(source: &str) -> Analysis {
     }
 
     let can_lower = unsupported_features.is_empty();
-    Analysis { dangerous_imports, unsupported_features, can_lower }
+    Analysis {
+        dangerous_imports,
+        unsupported_features,
+        can_lower,
+    }
 }
 
-fn analyze_stmt(
-    stmt: &py_ast::Stmt,
-    dangerous: &mut Vec<String>,
-    unsupported: &mut Vec<String>,
-) {
+fn analyze_stmt(stmt: &py_ast::Stmt, dangerous: &mut Vec<String>, unsupported: &mut Vec<String>) {
     match stmt {
         py_ast::Stmt::Import(py_ast::StmtImport { names, .. }) => {
             for alias in names {
@@ -69,9 +73,22 @@ fn analyze_stmt(
 
 pub fn is_dangerous_import(module: &str) -> bool {
     let dangerous = [
-        "os", "sys", "subprocess", "socket", "ctypes", "signal",
-        "multiprocessing", "threading", "fcntl", "termios",
-        "pty", "tty", "resource", "mmap", "cffi", "importlib",
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "ctypes",
+        "signal",
+        "multiprocessing",
+        "threading",
+        "fcntl",
+        "termios",
+        "pty",
+        "tty",
+        "resource",
+        "mmap",
+        "cffi",
+        "importlib",
     ];
     let base = module.split('.').next().unwrap_or(module);
     dangerous.contains(&base)

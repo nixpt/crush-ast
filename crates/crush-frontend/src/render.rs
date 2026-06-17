@@ -158,7 +158,9 @@ impl Renderer {
                 }
                 self.newline();
             }
-            Statement::While { condition, body, .. } => {
+            Statement::While {
+                condition, body, ..
+            } => {
                 self.write_indent();
                 self.push_str("while ");
                 self.render_expression(condition, 0);
@@ -232,10 +234,7 @@ impl Renderer {
                 self.newline();
             }
             Statement::FunctionDef {
-                name,
-                params,
-                body,
-                ..
+                name, params, body, ..
             } => {
                 let func = Function {
                     params: params.clone(),
@@ -571,15 +570,13 @@ impl Renderer {
                 self.push_str(" ");
                 self.render_expression(right, prec + 1);
             }
-            Expression::UnaryOp { operator, operand, .. } => {
+            Expression::UnaryOp {
+                operator, operand, ..
+            } => {
                 self.push_str(operator);
                 self.render_expression(operand, prec);
             }
-            Expression::Call {
-                function,
-                args,
-                ..
-            } => {
+            Expression::Call { function, args, .. } => {
                 self.push_str(function);
                 self.push_str("(");
                 for (i, arg) in args.iter().enumerate() {
@@ -726,9 +723,7 @@ impl Renderer {
                 self.push_str(")");
             }
             Expression::Match {
-                expression,
-                arms,
-                ..
+                expression, arms, ..
             } => {
                 let simple = arms.iter().all(|arm| {
                     arm.body.len() == 1 && matches!(arm.body[0], Statement::ExprStmt { .. })
@@ -1129,10 +1124,7 @@ if true {
     @io.print(2)
 }
 ";
-        let program = Parser::parse(
-            "if true { io.print(1) } else { io.print(2) }",
-        )
-        .expect("parse");
+        let program = Parser::parse("if true { io.print(1) } else { io.print(2) }").expect("parse");
         let output = render_program(&program);
         assert_eq!(output, source);
     }
@@ -1144,8 +1136,7 @@ fn add(a: Int, b: Int) {
     return a + b
 }
 ";
-        let program = Parser::parse("fn add(a: int, b: int) { return a + b }")
-            .expect("parse");
+        let program = Parser::parse("fn add(a: int, b: int) { return a + b }").expect("parse");
         let output = render_program(&program);
         assert_eq!(output, source);
     }
@@ -1235,8 +1226,8 @@ fn helper(x: Int) {
 }
 let y = helper(21)
 ";
-        let program = Parser::parse("fn helper(x: int) { return x * 2 }\nlet y = helper(21)")
-            .expect("parse");
+        let program =
+            Parser::parse("fn helper(x: int) { return x * 2 }\nlet y = helper(21)").expect("parse");
         let rendered = render_program(&program);
         let reparsed = Parser::parse(&rendered).expect("reparse");
         assert_eq!(
@@ -1257,8 +1248,8 @@ let y = helper(21)
     #[test]
     fn render_capability_call() {
         let source = "let result = @str.concat(\"hello\", \" world\")\n";
-        let program = Parser::parse("let result = str.concat(\"hello\", \" world\")")
-            .expect("parse");
+        let program =
+            Parser::parse("let result = str.concat(\"hello\", \" world\")").expect("parse");
         let output = render_program(&program);
         assert_eq!(output, source);
     }

@@ -1,6 +1,6 @@
-use crush_frontend::optimizer::Optimizer;
 use crush_cast::{Expression, Function, Program, Statement};
 use crush_frontend::compile_cast;
+use crush_frontend::optimizer::Optimizer;
 use std::collections::HashMap;
 
 fn create_empty_meta() -> HashMap<String, serde_json::Value> {

@@ -127,7 +127,7 @@ pub enum Token {
     Newline(SourceLocation),
     EOF(SourceLocation),
     Comment(String, SourceLocation),
-    AtIdent(String, SourceLocation), // @mcp, @cap, @lang, etc
+    AtIdent(String, SourceLocation),  // @mcp, @cap, @lang, etc
     LangBody(String, SourceLocation), // Raw body of @python { ... }, @javascript { ... }, etc
 }
 
@@ -487,11 +487,7 @@ impl Lexer {
         })
     }
 
-    fn consume_triple_quoted(
-        &mut self,
-        body: &mut String,
-        quote: char,
-    ) -> Result<(), ParseError> {
+    fn consume_triple_quoted(&mut self, body: &mut String, quote: char) -> Result<(), ParseError> {
         let start_line = self.line;
         let start_col = self.col;
         for _ in 0..3 {
@@ -499,9 +495,7 @@ impl Lexer {
             self.advance();
         }
         while let Some(ch) = self.peek() {
-            if ch == quote
-                && self.peek_ahead(1) == Some(quote)
-                && self.peek_ahead(2) == Some(quote)
+            if ch == quote && self.peek_ahead(1) == Some(quote) && self.peek_ahead(2) == Some(quote)
             {
                 for _ in 0..3 {
                     body.push(quote);
@@ -699,10 +693,7 @@ impl Lexer {
                     value.push(ch);
                     self.advance();
                 }
-                Ok(Token::Comment(
-                    value,
-                    location,
-                ))
+                Ok(Token::Comment(value, location))
             }
             '@' => {
                 self.advance();

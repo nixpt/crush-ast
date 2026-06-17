@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 static CANVAS_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -50,16 +50,14 @@ fn next_handle() -> String {
 
 fn color_text(v: &Value) -> String {
     let s = crate::caps::value_as_text(v);
-    if s.is_empty() {
-        "black".to_string()
-    } else {
-        s
-    }
+    if s.is_empty() { "black".to_string() } else { s }
 }
 
 fn u32_arg(v: &Value) -> Result<u32, String> {
     match v {
-        Value::Int(i) => (*i).try_into().map_err(|_| "expected non-negative integer".to_string()),
+        Value::Int(i) => (*i)
+            .try_into()
+            .map_err(|_| "expected non-negative integer".to_string()),
         Value::Float(f) => Ok(*f as u32),
         v => crate::caps::value_as_text(v)
             .parse::<u32>()
@@ -129,10 +127,16 @@ impl HostCap for RectCap {
         let w = u32_arg(&args[3])?;
         let h = u32_arg(&args[4])?;
         let fill = color_text(&args[5]);
-        let svg = format!(r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{}"/>"#, html_escape(&fill));
+        let svg = format!(
+            r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{}"/>"#,
+            html_escape(&fill)
+        );
 
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
-        let canvas = state.canvases.get_mut(&handle).ok_or("graphics.rect: canvas not found")?;
+        let canvas = state
+            .canvases
+            .get_mut(&handle)
+            .ok_or("graphics.rect: canvas not found")?;
         canvas.elements.push(Element { svg });
         Ok(None)
     }
@@ -163,10 +167,16 @@ impl HostCap for CircleCap {
         let cy = u32_arg(&args[2])?;
         let r = u32_arg(&args[3])?;
         let fill = color_text(&args[4]);
-        let svg = format!(r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{}"/>"#, html_escape(&fill));
+        let svg = format!(
+            r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{}"/>"#,
+            html_escape(&fill)
+        );
 
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
-        let canvas = state.canvases.get_mut(&handle).ok_or("graphics.circle: canvas not found")?;
+        let canvas = state
+            .canvases
+            .get_mut(&handle)
+            .ok_or("graphics.circle: canvas not found")?;
         canvas.elements.push(Element { svg });
         Ok(None)
     }
@@ -204,7 +214,10 @@ impl HostCap for TextCap {
         );
 
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
-        let canvas = state.canvases.get_mut(&handle).ok_or("graphics.text: canvas not found")?;
+        let canvas = state
+            .canvases
+            .get_mut(&handle)
+            .ok_or("graphics.text: canvas not found")?;
         canvas.elements.push(Element { svg });
         Ok(None)
     }
@@ -232,7 +245,10 @@ impl HostCap for ToSvgCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let handle = crate::caps::value_as_text(&args[0]);
         let state = self.state.lock().map_err(|e| e.to_string())?;
-        let canvas = state.canvases.get(&handle).ok_or("graphics.to_svg: canvas not found")?;
+        let canvas = state
+            .canvases
+            .get(&handle)
+            .ok_or("graphics.to_svg: canvas not found")?;
         let mut svg = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">"#,
             canvas.width, canvas.height
@@ -269,7 +285,10 @@ mod tests {
         let rect = RectCap::new(Arc::clone(&state));
         let to_svg = ToSvgCap::new(Arc::clone(&state));
 
-        let handle = create.call(vec![Value::Int(100), Value::Int(50)]).unwrap().unwrap();
+        let handle = create
+            .call(vec![Value::Int(100), Value::Int(50)])
+            .unwrap()
+            .unwrap();
         rect.call(vec![
             handle.clone(),
             Value::Int(10),
@@ -294,7 +313,10 @@ mod tests {
         let text = TextCap::new(Arc::clone(&state));
         let to_svg = ToSvgCap::new(Arc::clone(&state));
 
-        let handle = create.call(vec![Value::Int(50), Value::Int(50)]).unwrap().unwrap();
+        let handle = create
+            .call(vec![Value::Int(50), Value::Int(50)])
+            .unwrap()
+            .unwrap();
         text.call(vec![
             handle.clone(),
             Value::Int(5),
@@ -310,7 +332,7 @@ mod tests {
 
     #[test]
     fn runtime_with_store_load() {
-        use crate::{Runtime, ProgramBuilder, HostCapsBuilder};
+        use crate::{HostCapsBuilder, ProgramBuilder, Runtime};
         let program = ProgramBuilder::new()
             .permission("io.print")
             .permission("graphics.canvas")
@@ -338,6 +360,10 @@ mod tests {
             .with_host_caps(host_caps)
             .run(&program)
             .expect("run");
-        assert!(result.output.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+        assert!(
+            result
+                .output
+                .starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\"")
+        );
     }
 }

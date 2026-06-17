@@ -48,9 +48,15 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
         let mut target_labels: HashMap<usize, String> = HashMap::new();
         for (_i, instr) in func.body.iter().enumerate() {
-            if instr.op == "jmp" || instr.op == "jmp_if" || instr.op == "jmp_if_not" || instr.op == "enter_try" {
+            if instr.op == "jmp"
+                || instr.op == "jmp_if"
+                || instr.op == "jmp_if_not"
+                || instr.op == "enter_try"
+            {
                 if let Some(target) = instr.args.get("target").and_then(|v| v.as_u64()) {
-                    target_labels.entry(target as usize).or_insert_with(unique_label);
+                    target_labels
+                        .entry(target as usize)
+                        .or_insert_with(unique_label);
                 }
             }
         }
@@ -62,22 +68,26 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
             let op = match instr.op.as_str() {
                 "push_int" => {
-                    let v = instr.args["value"].as_i64()
+                    let v = instr.args["value"]
+                        .as_i64()
                         .ok_or_else(|| anyhow::anyhow!("push_int missing value at {fname}:{i}"))?;
                     format!("PUSH {v}")
                 }
                 "push_float" => {
-                    let v = instr.args["value"].as_f64()
-                        .ok_or_else(|| anyhow::anyhow!("push_float missing value at {fname}:{i}"))?;
+                    let v = instr.args["value"].as_f64().ok_or_else(|| {
+                        anyhow::anyhow!("push_float missing value at {fname}:{i}")
+                    })?;
                     format!("PUSH_F64 {v}")
                 }
                 "push_str" => {
-                    let v = instr.args["value"].as_str()
+                    let v = instr.args["value"]
+                        .as_str()
                         .ok_or_else(|| anyhow::anyhow!("push_str missing value at {fname}:{i}"))?;
                     format!("PUSH_STR {v:?}")
                 }
                 "push_bool" => {
-                    let v = instr.args["value"].as_bool()
+                    let v = instr.args["value"]
+                        .as_bool()
                         .ok_or_else(|| anyhow::anyhow!("push_bool missing value at {fname}:{i}"))?;
                     format!("PUSH_BOOL {}", if v { 1 } else { 0 })
                 }
@@ -85,13 +95,15 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "pop" => "POP".to_string(),
                 "dup" => "DUP".to_string(),
                 "load" => {
-                    let name = instr.args["name"].as_str()
+                    let name = instr.args["name"]
+                        .as_str()
                         .ok_or_else(|| anyhow::anyhow!("load missing name at {fname}:{i}"))?;
                     let slot = get_slot(name, &mut slot_map, &mut next_slot);
                     format!("LOAD {slot}")
                 }
                 "store" => {
-                    let name = instr.args["name"].as_str()
+                    let name = instr.args["name"]
+                        .as_str()
                         .ok_or_else(|| anyhow::anyhow!("store missing name at {fname}:{i}"))?;
                     let slot = get_slot(name, &mut slot_map, &mut next_slot);
                     format!("STORE {slot}")
@@ -112,7 +124,8 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "and" => "AND".to_string(),
                 "or" => "OR".to_string(),
                 "call" => {
-                    let fn_name = instr.args["function"].as_str()
+                    let fn_name = instr.args["function"]
+                        .as_str()
                         .ok_or_else(|| anyhow::anyhow!("call missing function at {fname}:{i}"))?;
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
                     if local_funcs.contains(fn_name) {
@@ -123,7 +136,8 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     }
                 }
                 "cap_call" => {
-                    let name = instr.args["name"].as_str()
+                    let name = instr.args["name"]
+                        .as_str()
                         .ok_or_else(|| anyhow::anyhow!("cap_call missing name at {fname}:{i}"))?;
                     let argc = instr.args["argc"].as_u64().unwrap_or(0);
                     perms.insert(name.to_string());
@@ -131,24 +145,32 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 }
                 "ret" => "RET".to_string(),
                 "jmp" => {
-                    let target = instr.args["target"].as_u64()
-                        .ok_or_else(|| anyhow::anyhow!("jmp missing target at {fname}:{i}"))? as usize;
-                    let label = target_labels.get(&target)
-                        .ok_or_else(|| anyhow::anyhow!("jmp to unknown target {target} at {fname}:{i}"))?;
+                    let target = instr.args["target"]
+                        .as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("jmp missing target at {fname}:{i}"))?
+                        as usize;
+                    let label = target_labels.get(&target).ok_or_else(|| {
+                        anyhow::anyhow!("jmp to unknown target {target} at {fname}:{i}")
+                    })?;
                     format!("JMP {label}")
                 }
                 "jmp_if_not" => {
-                    let target = instr.args["target"].as_u64()
-                        .ok_or_else(|| anyhow::anyhow!("jmp_if_not missing target at {fname}:{i}"))? as usize;
-                    let label = target_labels.get(&target)
-                        .ok_or_else(|| anyhow::anyhow!("jmp_if_not to unknown target {target} at {fname}:{i}"))?;
+                    let target = instr.args["target"].as_u64().ok_or_else(|| {
+                        anyhow::anyhow!("jmp_if_not missing target at {fname}:{i}")
+                    })? as usize;
+                    let label = target_labels.get(&target).ok_or_else(|| {
+                        anyhow::anyhow!("jmp_if_not to unknown target {target} at {fname}:{i}")
+                    })?;
                     format!("JZ {label}")
                 }
                 "jmp_if" => {
-                    let target = instr.args["target"].as_u64()
-                        .ok_or_else(|| anyhow::anyhow!("jmp_if missing target at {fname}:{i}"))? as usize;
-                    let label = target_labels.get(&target)
-                        .ok_or_else(|| anyhow::anyhow!("jmp_if to unknown target {target} at {fname}:{i}"))?;
+                    let target = instr.args["target"]
+                        .as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("jmp_if missing target at {fname}:{i}"))?
+                        as usize;
+                    let label = target_labels.get(&target).ok_or_else(|| {
+                        anyhow::anyhow!("jmp_if to unknown target {target} at {fname}:{i}")
+                    })?;
                     format!("JNZ {label}")
                 }
                 "new_array" => {
@@ -167,8 +189,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "arr_set" => "ARR_SET".to_string(),
                 "export_var" => "NOP".to_string(),
                 "exec_lang" => {
-                    let args_json = serde_json::to_string(&instr.args)
-                        .map_err(|e| anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}"))?;
+                    let args_json = serde_json::to_string(&instr.args).map_err(|e| {
+                        anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}")
+                    })?;
                     // Escape for assembly: \ → \\, " → \"
                     let esc = args_json.replace('\\', "\\\\").replace('"', "\\\"");
                     format!("EXEC_LANG \"{esc}\"")
@@ -178,23 +201,38 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "await" => "NOP".to_string(),
                 "throw" => "THROW".to_string(),
                 "enter_try" => {
-                    let target = instr.args["target"].as_u64()
-                        .ok_or_else(|| anyhow::anyhow!("enter_try missing target at {fname}:{i}"))? as usize;
-                    let label = target_labels.get(&target)
-                        .ok_or_else(|| anyhow::anyhow!("enter_try to unknown target {target} at {fname}:{i}"))?;
+                    let target = instr.args["target"]
+                        .as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("enter_try missing target at {fname}:{i}"))?
+                        as usize;
+                    let label = target_labels.get(&target).ok_or_else(|| {
+                        anyhow::anyhow!("enter_try to unknown target {target} at {fname}:{i}")
+                    })?;
                     format!("ENTER_TRY {label}")
                 }
                 "halt" => "HALT".to_string(),
                 "exit_try" => "EXIT_TRY".to_string(),
                 "new_obj" => "NEW_OBJ".to_string(),
                 "get_field" => {
-                    let field = instr.args.get("field").or_else(|| instr.args.get("name")).and_then(|v| v.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("get_field missing field arg at {fname}:{i}"))?;
+                    let field = instr
+                        .args
+                        .get("field")
+                        .or_else(|| instr.args.get("name"))
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("get_field missing field arg at {fname}:{i}")
+                        })?;
                     format!("GET_FIELD {field:?}")
                 }
                 "set_field" => {
-                    let field = instr.args.get("field").or_else(|| instr.args.get("name")).and_then(|v| v.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("set_field missing field arg at {fname}:{i}"))?;
+                    let field = instr
+                        .args
+                        .get("field")
+                        .or_else(|| instr.args.get("name"))
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("set_field missing field arg at {fname}:{i}")
+                        })?;
                     format!("SET_FIELD {field:?}")
                 }
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
@@ -230,7 +268,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     let perms_slice: Vec<&str> = perms.iter().map(|s| s.as_str()).collect();
     let vm_program = crush_vm::assemble(
         &assembly,
-        if perms_slice.is_empty() { None } else { Some(&perms_slice) },
+        if perms_slice.is_empty() {
+            None
+        } else {
+            Some(&perms_slice)
+        },
         None,
     )?;
     Ok(vm_program)

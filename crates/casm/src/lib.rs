@@ -412,8 +412,16 @@ impl Instruction {
             "exec_lang" => {
                 let lang = self.require_field("lang", |v| v.as_str().map(String::from))?;
                 let code = self.require_field("code", |v| v.as_str().map(String::from))?;
-                let var_count = self.args.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                Ok(OpCode::ExecLang { lang, code, var_count })
+                let var_count = self
+                    .args
+                    .get("var_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                Ok(OpCode::ExecLang {
+                    lang,
+                    code,
+                    var_count,
+                })
             }
             "call_interface" => Ok(OpCode::CallInterface {
                 handle: self.require_field("handle", |v| v.as_str().map(String::from))?,
@@ -586,8 +594,9 @@ impl Program {
     /// incompatible bytecode version.
     pub fn deserialize(data: &[u8], format: Format) -> Result<Self> {
         let program: Self = match format {
-            Format::Json => serde_json::from_slice(data)
-                .map_err(|e| crush_errors::CrushError::from(CasmError::DeserializationError(e.to_string())))?,
+            Format::Json => serde_json::from_slice(data).map_err(|e| {
+                crush_errors::CrushError::from(CasmError::DeserializationError(e.to_string()))
+            })?,
             Format::Binary => {
                 // Check for shebang and skip it
                 let data = if data.starts_with(b"#!") {
@@ -599,8 +608,9 @@ impl Program {
                 } else {
                     data
                 };
-                rmp_serde::from_slice(data)
-                    .map_err(|e| crush_errors::CrushError::from(CasmError::DeserializationError(e.to_string())))?
+                rmp_serde::from_slice(data).map_err(|e| {
+                    crush_errors::CrushError::from(CasmError::DeserializationError(e.to_string()))
+                })?
             }
         };
         program.check_version()?;

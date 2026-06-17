@@ -370,11 +370,7 @@ impl WalkerRegistry {
         walker.walk(ast)
     }
 
-    pub fn auto_walk_to_cast(
-        &self,
-        source: &str,
-        filename: &str,
-    ) -> Result<Program, WalkerError> {
+    pub fn auto_walk_to_cast(&self, source: &str, filename: &str) -> Result<Program, WalkerError> {
         let extension = std::path::Path::new(filename)
             .extension()
             .and_then(|e| e.to_str())

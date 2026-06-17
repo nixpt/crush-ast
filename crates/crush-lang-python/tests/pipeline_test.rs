@@ -8,7 +8,12 @@ fn python_simple_arithmetic() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "43", "expected 43, got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "43",
+        "expected 43, got: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -21,7 +26,12 @@ fn python_with_function() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "42", "expected 42, got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "42",
+        "expected 42, got: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -32,5 +42,10 @@ fn python_if_else() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "yes", "expected 'yes', got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "yes",
+        "expected 'yes', got: {}",
+        result.output
+    );
 }

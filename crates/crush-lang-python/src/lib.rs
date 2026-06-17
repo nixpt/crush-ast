@@ -11,7 +11,7 @@ pub mod parser;
 use std::any::Any;
 use std::collections::HashMap;
 
-use crush_cast::{Program, Function, Statement};
+use crush_cast::{Function, Program, Statement};
 use rustpython_ast as py_ast;
 use walker_core::{FeatureReport, Frontend};
 
@@ -19,8 +19,12 @@ use walker_core::{FeatureReport, Frontend};
 pub struct PythonFrontend;
 
 impl Frontend for PythonFrontend {
-    fn language_name(&self) -> &'static str { "python" }
-    fn file_extensions(&self) -> &[&'static str] { &[".py", ".pyi"] }
+    fn language_name(&self) -> &'static str {
+        "python"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &[".py", ".pyi"]
+    }
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
         let stmts = parser::parse_source(source)?;
@@ -28,7 +32,8 @@ impl Frontend for PythonFrontend {
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
-        let stmts = ast.downcast_ref::<Vec<py_ast::Stmt>>()
+        let stmts = ast
+            .downcast_ref::<Vec<py_ast::Stmt>>()
             .ok_or_else(|| anyhow::anyhow!("expected Python Stmt vec"))?;
         let mut r = FeatureReport::default();
         r.lang = "python".to_string();
@@ -66,7 +71,8 @@ impl Frontend for PythonFrontend {
     }
 
     fn lower(&self, ast: Box<dyn Any>) -> anyhow::Result<Program> {
-        let stmts = ast.downcast::<Vec<py_ast::Stmt>>()
+        let stmts = ast
+            .downcast::<Vec<py_ast::Stmt>>()
             .map_err(|_| anyhow::anyhow!("expected Python Stmt vec"))?;
         stmts_to_cast(*stmts)
     }
@@ -85,8 +91,21 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
     for stmt in &stmts {
         if let py_ast::Stmt::FunctionDef(py_ast::StmtFunctionDef { .. }) = stmt {
             let lowered = lower_stmt::lower_stmt(stmt)?;
-            if let Statement::FunctionDef { name: fn_name, params, body, .. } = lowered {
-                functions.insert(fn_name, Function { params, body, meta: HashMap::new() });
+            if let Statement::FunctionDef {
+                name: fn_name,
+                params,
+                body,
+                ..
+            } = lowered
+            {
+                functions.insert(
+                    fn_name,
+                    Function {
+                        params,
+                        body,
+                        meta: HashMap::new(),
+                    },
+                );
             }
         }
     }
@@ -101,11 +120,14 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
     }
 
     if !main_body.is_empty() {
-        functions.insert("main".to_string(), Function {
-            params: vec![],
-            body: main_body,
-            meta: HashMap::new(),
-        });
+        functions.insert(
+            "main".to_string(),
+            Function {
+                params: vec![],
+                body: main_body,
+                meta: HashMap::new(),
+            },
+        );
     }
 
     Ok(Program {

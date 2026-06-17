@@ -30,7 +30,9 @@ impl JsFrontend {
 
 impl Default for JsFrontend {
     fn default() -> Self {
-        JsFrontend { ext: "js".to_string() }
+        JsFrontend {
+            ext: "js".to_string(),
+        }
     }
 }
 

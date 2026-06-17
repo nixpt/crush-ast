@@ -1,7 +1,9 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use crush_cast::Program;
 use crush_frontend::{
-    compiler::Compiler, optimizer::Optimizer, parser::{Lexer, Parser},
+    compiler::Compiler,
+    optimizer::Optimizer,
+    parser::{Lexer, Parser},
     semantics::SemanticAnalyzer,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -131,8 +133,8 @@ fn fixture_root() -> PathBuf {
 }
 
 fn compile_text(source: &str) -> casm::Program {
-    let program = Parser::parse(source)
-        .unwrap_or_else(|err| panic!("text fixture should parse: {:?}", err));
+    let program =
+        Parser::parse(source).unwrap_or_else(|err| panic!("text fixture should parse: {:?}", err));
     let mut analyzer = SemanticAnalyzer::new();
     analyzer
         .check(&program)
@@ -149,10 +151,14 @@ fn compile_cast_json(cast_json: &str) -> casm::Program {
     let program: Program = serde_json::from_str(cast_json).expect("CAST fixture should decode");
     let mut program = program;
     let mut analyzer = SemanticAnalyzer::new();
-    analyzer.check(&program).expect("CAST fixture should type-check");
+    analyzer
+        .check(&program)
+        .expect("CAST fixture should type-check");
     Optimizer::optimize(&mut program);
     let mut compiler = Compiler::new();
-    compiler.compile(program).expect("CAST fixture should compile")
+    compiler
+        .compile(program)
+        .expect("CAST fixture should compile")
 }
 
 fn load_fixtures() -> Vec<Fixture> {
@@ -287,7 +293,9 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     println!("fixture,path,p50_us,p95_us,peak_heap_bytes");
     for fixture in &fixtures {
-        let text = sample_path(fixture, || { compile_text(&fixture.text); });
+        let text = sample_path(fixture, || {
+            compile_text(&fixture.text);
+        });
         println!(
             "{},text,{},{},{}",
             fixture.name,
@@ -296,7 +304,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             text.peak_heap_bytes
         );
 
-        let cast = sample_path(fixture, || { compile_cast_json(&fixture.cast_json); });
+        let cast = sample_path(fixture, || {
+            compile_cast_json(&fixture.cast_json);
+        });
         println!(
             "{},cast,{},{},{}",
             fixture.name,

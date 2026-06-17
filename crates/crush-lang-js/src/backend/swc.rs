@@ -1,7 +1,7 @@
 use anyhow::Result;
 use swc_common::{FileName, SourceMap};
 use swc_ecma_ast::Module;
-use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax, EsSyntax};
+use swc_ecma_parser::{EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 
 pub fn parse(source: &str, ext: &str) -> Result<Module> {
     let is_tsx = ext == "tsx";

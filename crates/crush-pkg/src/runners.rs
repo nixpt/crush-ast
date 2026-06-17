@@ -139,10 +139,7 @@ pub fn get_runner(capsule_type: &CapsuleType) -> Box<dyn CapsuleRunner> {
 }
 
 /// Auto-detect runner from payload path + manifest
-pub fn get_runner_for_payload(
-    payload_path: &Path,
-    manifest: &Manifest,
-) -> Box<dyn CapsuleRunner> {
+pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<dyn CapsuleRunner> {
     let capsule_type = crate::manifest::language_to_capsule_type(&manifest.capsule.language);
     if capsule_type != CapsuleType::Auto {
         return get_runner(&capsule_type);
@@ -253,6 +250,11 @@ mod tests {
         let payload = dir.path().join("dummy");
         let result = runner.run(&m, &payload, &[]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet supported"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet supported")
+        );
     }
 }

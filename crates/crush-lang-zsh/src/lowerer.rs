@@ -1,7 +1,7 @@
+use crush_cast::{CastType, Expression, Function, Program, Statement};
 use std::collections::HashMap;
 use zshrs_parse::lexer::untokenize;
 use zshrs_parse::parser::*;
-use crush_cast::{CastType, Expression, Function, Program, Statement};
 
 fn clean(s: &str) -> String {
     untokenize(s)
@@ -20,11 +20,14 @@ pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
     }
 
     if !main_body.is_empty() {
-        functions.insert("main".to_string(), Function {
-            params: vec![],
-            body: main_body,
-            meta: HashMap::new(),
-        });
+        functions.insert(
+            "main".to_string(),
+            Function {
+                params: vec![],
+                body: main_body,
+                meta: HashMap::new(),
+            },
+        );
     }
 
     Ok(Program {
@@ -38,7 +41,9 @@ pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
 
 /// Lower a ZshSublist to statements. A sublist is pipelines connected
 /// by && or ||. Returns extracted function definitions too.
-fn lower_sublist(sublist: &ZshSublist) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_sublist(
+    sublist: &ZshSublist,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let (stmts, funcs) = lower_pipe(&sublist.pipe)?;
 
     if let Some((op, next)) = &sublist.next {
@@ -86,10 +91,16 @@ fn lower_pipe(pipe: &ZshPipe) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
         current = p.next.as_deref();
     }
 
-    Ok((vec![Statement::ExprStmt {
-        expr: Expression::Pipeline { segments, meta: HashMap::new() },
-        meta: HashMap::new(),
-    }], funcs))
+    Ok((
+        vec![Statement::ExprStmt {
+            expr: Expression::Pipeline {
+                segments,
+                meta: HashMap::new(),
+            },
+            meta: HashMap::new(),
+        }],
+        funcs,
+    ))
 }
 
 fn lower_command(cmd: &ZshCommand) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
@@ -98,7 +109,11 @@ fn lower_command(cmd: &ZshCommand) -> anyhow::Result<(Vec<Statement>, Vec<(Strin
         ZshCommand::FuncDef(func) => lower_funcdef(func),
         ZshCommand::Subsh(prog) | ZshCommand::Cursh(prog) => {
             let lowered = lower_program(prog.as_ref())?;
-            let body = lowered.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+            let body = lowered
+                .functions
+                .get("main")
+                .map(|f| f.body.clone())
+                .unwrap_or_default();
             Ok((body, Vec::new()))
         }
         ZshCommand::If(if_cmd) => lower_if(if_cmd),
@@ -183,7 +198,9 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                 if let Expression::StringLiteral { value: name, .. } = &arg {
                     stmts.push(Statement::VarDecl {
                         name: name.clone(),
-                        value: Expression::NullLiteral { meta: HashMap::new() },
+                        value: Expression::NullLiteral {
+                            meta: HashMap::new(),
+                        },
                         type_hint: CastType::Any,
                         meta: HashMap::new(),
                     });
@@ -205,8 +222,16 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                 expr: Expression::CapabilityCall {
                     name: "env.set".to_string(),
                     args: vec![
-                        Expression::StringLiteral { value: "PWD".to_string(), meta: HashMap::new() },
-                        args.into_iter().next().unwrap_or(Expression::StringLiteral { value: "~".to_string(), meta: HashMap::new() }),
+                        Expression::StringLiteral {
+                            value: "PWD".to_string(),
+                            meta: HashMap::new(),
+                        },
+                        args.into_iter()
+                            .next()
+                            .unwrap_or(Expression::StringLiteral {
+                                value: "~".to_string(),
+                                meta: HashMap::new(),
+                            }),
                     ],
                     meta: cap_meta("env", "set"),
                 },
@@ -241,22 +266,33 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
 
 fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let body_prog = lower_program(func.body.as_ref())?;
-    let body = body_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let body = body_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
 
     let mut funcs = Vec::new();
     for name in &func.names {
-        funcs.push((name.clone(), Function {
-            params: vec![],
-            body: body.clone(),
-            meta: HashMap::new(),
-        }));
+        funcs.push((
+            name.clone(),
+            Function {
+                params: vec![],
+                body: body.clone(),
+                meta: HashMap::new(),
+            },
+        ));
     }
 
     let mut stmts = Vec::new();
     if let Some(args) = &func.auto_call_args {
-        let call_args: Vec<Expression> = args.iter().map(|a| {
-            Expression::StringLiteral { value: a.clone(), meta: HashMap::new() }
-        }).collect();
+        let call_args: Vec<Expression> = args
+            .iter()
+            .map(|a| Expression::StringLiteral {
+                value: a.clone(),
+                meta: HashMap::new(),
+            })
+            .collect();
         if let Some(name) = func.names.first() {
             stmts.push(Statement::ExprStmt {
                 expr: Expression::Call {
@@ -275,7 +311,11 @@ fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
 fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let condition = program_to_expr(&if_cmd.cond);
     let then_prog = lower_program(if_cmd.then.as_ref())?;
-    let then_body = then_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let then_body = then_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
 
     let mut else_body: Option<Vec<Statement>> = None;
     if !if_cmd.elif.is_empty() || if_cmd.else_.is_some() {
@@ -283,7 +323,11 @@ fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Func
         for (elif_cond, elif_then) in &if_cmd.elif {
             let elif_cond_expr = program_to_expr(elif_cond);
             let elif_then_prog = lower_program(elif_then)?;
-            let elif_then_body = elif_then_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+            let elif_then_body = elif_then_prog
+                .functions
+                .get("main")
+                .map(|f| f.body.clone())
+                .unwrap_or_default();
             combined.push(Statement::If {
                 condition: elif_cond_expr,
                 then_body: elif_then_body,
@@ -293,30 +337,44 @@ fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Func
         }
         if let Some(else_) = &if_cmd.else_ {
             let else_prog = lower_program(else_.as_ref())?;
-            let else_body_stmts = else_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+            let else_body_stmts = else_prog
+                .functions
+                .get("main")
+                .map(|f| f.body.clone())
+                .unwrap_or_default();
             combined.extend(else_body_stmts);
         }
         else_body = Some(combined);
     }
 
-    Ok((vec![Statement::If {
-        condition,
-        then_body,
-        else_body,
-        meta: HashMap::new(),
-    }], Vec::new()))
+    Ok((
+        vec![Statement::If {
+            condition,
+            then_body,
+            else_body,
+            meta: HashMap::new(),
+        }],
+        Vec::new(),
+    ))
 }
 
 fn lower_while(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let condition = program_to_expr(&w.cond);
     let body_prog = lower_program(w.body.as_ref())?;
-    let body = body_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let body = body_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
 
-    Ok((vec![Statement::While {
-        condition: Box::new(condition),
-        body,
-        meta: HashMap::new(),
-    }], Vec::new()))
+    Ok((
+        vec![Statement::While {
+            condition: Box::new(condition),
+            body,
+            meta: HashMap::new(),
+        }],
+        Vec::new(),
+    ))
 }
 
 fn lower_until(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
@@ -326,45 +384,64 @@ fn lower_until(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fun
         meta: HashMap::new(),
     };
     let body_prog = lower_program(w.body.as_ref())?;
-    let body = body_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let body = body_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
 
-    Ok((vec![Statement::While {
-        condition: Box::new(condition),
-        body,
-        meta: HashMap::new(),
-    }], Vec::new()))
+    Ok((
+        vec![Statement::While {
+            condition: Box::new(condition),
+            body,
+            meta: HashMap::new(),
+        }],
+        Vec::new(),
+    ))
 }
 
 fn lower_for(f: &ZshFor) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let iterable = match &f.list {
         ForList::Words(words) => {
-            let elements: Vec<Expression> = words.iter().map(|w| {
-                word_to_expr(w)
-            }).collect();
-            Expression::ArrayLiteral { elements, meta: HashMap::new() }
+            let elements: Vec<Expression> = words.iter().map(|w| word_to_expr(w)).collect();
+            Expression::ArrayLiteral {
+                elements,
+                meta: HashMap::new(),
+            }
         }
-        ForList::Positional => {
-            Expression::Var { name: "@".to_string(), meta: HashMap::new() }
-        }
+        ForList::Positional => Expression::Var {
+            name: "@".to_string(),
+            meta: HashMap::new(),
+        },
         ForList::CStyle { init, cond, step } => {
             let desc = format!("{}; {}; {}", init, cond, step);
             Expression::CapabilityCall {
                 name: "bash.arithmetic_for".to_string(),
-                args: vec![Expression::StringLiteral { value: desc, meta: HashMap::new() }],
+                args: vec![Expression::StringLiteral {
+                    value: desc,
+                    meta: HashMap::new(),
+                }],
                 meta: cap_meta("bash", "arithmetic_for"),
             }
         }
     };
 
     let body_prog = lower_program(f.body.as_ref())?;
-    let body = body_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let body = body_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
 
-    Ok((vec![Statement::For {
-        variable: f.var.clone(),
-        iterable: Box::new(iterable),
-        body,
-        meta: HashMap::new(),
-    }], Vec::new()))
+    Ok((
+        vec![Statement::For {
+            variable: f.var.clone(),
+            iterable: Box::new(iterable),
+            body,
+            meta: HashMap::new(),
+        }],
+        Vec::new(),
+    ))
 }
 
 fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
@@ -376,14 +453,20 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
             Expression::BinaryOp {
                 operator: "==".to_string(),
                 left: Box::new(subject.clone()),
-                right: Box::new(Expression::StringLiteral { value: arm.patterns[0].clone(), meta: HashMap::new() }),
+                right: Box::new(Expression::StringLiteral {
+                    value: arm.patterns[0].clone(),
+                    meta: HashMap::new(),
+                }),
                 meta: HashMap::new(),
             }
         } else {
             let mut or_chain = Expression::BinaryOp {
                 operator: "==".to_string(),
                 left: Box::new(subject.clone()),
-                right: Box::new(Expression::StringLiteral { value: arm.patterns[0].clone(), meta: HashMap::new() }),
+                right: Box::new(Expression::StringLiteral {
+                    value: arm.patterns[0].clone(),
+                    meta: HashMap::new(),
+                }),
                 meta: HashMap::new(),
             };
             for pat in &arm.patterns[1..] {
@@ -393,7 +476,10 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
                     right: Box::new(Expression::BinaryOp {
                         operator: "==".to_string(),
                         left: Box::new(subject.clone()),
-                        right: Box::new(Expression::StringLiteral { value: pat.clone(), meta: HashMap::new() }),
+                        right: Box::new(Expression::StringLiteral {
+                            value: pat.clone(),
+                            meta: HashMap::new(),
+                        }),
                         meta: HashMap::new(),
                     }),
                     meta: HashMap::new(),
@@ -403,7 +489,11 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
         };
 
         let body_prog = lower_program(&arm.body)?;
-        let body = body_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+        let body = body_prog
+            .functions
+            .get("main")
+            .map(|f| f.body.clone())
+            .unwrap_or_default();
 
         stmts.push(Statement::If {
             condition,
@@ -419,12 +509,22 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
 fn lower_repeat(rep: &ZshRepeat) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let count = word_to_expr(&rep.count);
     let body_prog = lower_program(rep.body.as_ref())?;
-    let body = body_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let body = body_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
 
     let condition = Expression::BinaryOp {
         operator: ">".to_string(),
-        left: Box::new(Expression::Var { name: "__repeat_i".to_string(), meta: HashMap::new() }),
-        right: Box::new(Expression::StringLiteral { value: "0".to_string(), meta: HashMap::new() }),
+        left: Box::new(Expression::Var {
+            name: "__repeat_i".to_string(),
+            meta: HashMap::new(),
+        }),
+        right: Box::new(Expression::StringLiteral {
+            value: "0".to_string(),
+            meta: HashMap::new(),
+        }),
         meta: HashMap::new(),
     };
 
@@ -432,33 +532,50 @@ fn lower_repeat(rep: &ZshRepeat) -> anyhow::Result<(Vec<Statement>, Vec<(String,
     loop_body.push(Statement::ExprStmt {
         expr: Expression::BinaryOp {
             operator: "-=".to_string(),
-            left: Box::new(Expression::Var { name: "__repeat_i".to_string(), meta: HashMap::new() }),
-            right: Box::new(Expression::StringLiteral { value: "1".to_string(), meta: HashMap::new() }),
+            left: Box::new(Expression::Var {
+                name: "__repeat_i".to_string(),
+                meta: HashMap::new(),
+            }),
+            right: Box::new(Expression::StringLiteral {
+                value: "1".to_string(),
+                meta: HashMap::new(),
+            }),
             meta: HashMap::new(),
         },
         meta: HashMap::new(),
     });
 
-    Ok((vec![
-        Statement::VarDecl {
-            name: "__repeat_i".to_string(),
-            value: count,
-            type_hint: CastType::Any,
-            meta: HashMap::new(),
-        },
-        Statement::While {
-            condition: Box::new(condition),
-            body: loop_body,
-            meta: HashMap::new(),
-        },
-    ], Vec::new()))
+    Ok((
+        vec![
+            Statement::VarDecl {
+                name: "__repeat_i".to_string(),
+                value: count,
+                type_hint: CastType::Any,
+                meta: HashMap::new(),
+            },
+            Statement::While {
+                condition: Box::new(condition),
+                body: loop_body,
+                meta: HashMap::new(),
+            },
+        ],
+        Vec::new(),
+    ))
 }
 
 fn lower_try(try_cmd: &ZshTry) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let try_prog = lower_program(try_cmd.try_block.as_ref())?;
-    let try_body = try_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let try_body = try_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
     let always_prog = lower_program(try_cmd.always.as_ref())?;
-    let always_body = always_prog.functions.get("main").map(|f| f.body.clone()).unwrap_or_default();
+    let always_body = always_prog
+        .functions
+        .get("main")
+        .map(|f| f.body.clone())
+        .unwrap_or_default();
     let mut body = try_body;
     body.extend(always_body);
     Ok((body, Vec::new()))
@@ -466,18 +583,30 @@ fn lower_try(try_cmd: &ZshTry) -> anyhow::Result<(Vec<Statement>, Vec<(String, F
 
 fn lower_cond(cond: &ZshCond) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let expr = cond_to_expr(cond);
-    Ok((vec![Statement::ExprStmt { expr, meta: HashMap::new() }], Vec::new()))
+    Ok((
+        vec![Statement::ExprStmt {
+            expr,
+            meta: HashMap::new(),
+        }],
+        Vec::new(),
+    ))
 }
 
 fn lower_arith(expr: &str) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    Ok((vec![Statement::ExprStmt {
-        expr: Expression::CapabilityCall {
-            name: "bash.arithmetic".to_string(),
-            args: vec![Expression::StringLiteral { value: expr.to_string(), meta: HashMap::new() }],
-            meta: cap_meta("bash", "arithmetic"),
-        },
-        meta: HashMap::new(),
-    }], Vec::new()))
+    Ok((
+        vec![Statement::ExprStmt {
+            expr: Expression::CapabilityCall {
+                name: "bash.arithmetic".to_string(),
+                args: vec![Expression::StringLiteral {
+                    value: expr.to_string(),
+                    meta: HashMap::new(),
+                }],
+                meta: cap_meta("bash", "arithmetic"),
+            },
+            meta: HashMap::new(),
+        }],
+        Vec::new(),
+    ))
 }
 
 fn cond_to_expr(cond: &ZshCond) -> Expression {
@@ -501,20 +630,35 @@ fn cond_to_expr(cond: &ZshCond) -> Expression {
         },
         ZshCond::Unary(op, val) => Expression::Call {
             function: format!("test_{}", op),
-            args: vec![Expression::StringLiteral { value: val.clone(), meta: HashMap::new() }],
+            args: vec![Expression::StringLiteral {
+                value: val.clone(),
+                meta: HashMap::new(),
+            }],
             meta: HashMap::new(),
         },
         ZshCond::Binary(a, op, b) => Expression::BinaryOp {
             operator: op.clone(),
-            left: Box::new(Expression::StringLiteral { value: a.clone(), meta: HashMap::new() }),
-            right: Box::new(Expression::StringLiteral { value: b.clone(), meta: HashMap::new() }),
+            left: Box::new(Expression::StringLiteral {
+                value: a.clone(),
+                meta: HashMap::new(),
+            }),
+            right: Box::new(Expression::StringLiteral {
+                value: b.clone(),
+                meta: HashMap::new(),
+            }),
             meta: HashMap::new(),
         },
         ZshCond::Regex(val, pat) => Expression::Call {
             function: "test_regex".to_string(),
             args: vec![
-                Expression::StringLiteral { value: val.clone(), meta: HashMap::new() },
-                Expression::StringLiteral { value: pat.clone(), meta: HashMap::new() },
+                Expression::StringLiteral {
+                    value: val.clone(),
+                    meta: HashMap::new(),
+                },
+                Expression::StringLiteral {
+                    value: pat.clone(),
+                    meta: HashMap::new(),
+                },
             ],
             meta: HashMap::new(),
         },
@@ -522,7 +666,10 @@ fn cond_to_expr(cond: &ZshCond) -> Expression {
 }
 
 fn program_to_expr(prog: &ZshProgram) -> Expression {
-    let mut last_expr = Expression::BoolLiteral { value: true, meta: HashMap::new() };
+    let mut last_expr = Expression::BoolLiteral {
+        value: true,
+        meta: HashMap::new(),
+    };
     for list in &prog.lists {
         last_expr = sublist_to_expr(&list.sublist);
     }
@@ -544,8 +691,14 @@ fn command_to_expr(cmd: &ZshCommand) -> Expression {
             let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w)).collect();
 
             match first {
-                "true" | ":" => Expression::BoolLiteral { value: true, meta: HashMap::new() },
-                "false" => Expression::BoolLiteral { value: false, meta: HashMap::new() },
+                "true" | ":" => Expression::BoolLiteral {
+                    value: true,
+                    meta: HashMap::new(),
+                },
+                "false" => Expression::BoolLiteral {
+                    value: false,
+                    meta: HashMap::new(),
+                },
                 "test" => expr_from_test_call(args),
                 "[" => expr_from_test_call(args),
                 _ => {
@@ -556,24 +709,29 @@ fn command_to_expr(cmd: &ZshCommand) -> Expression {
                             meta: HashMap::new(),
                         }
                     } else {
-                        Expression::BoolLiteral { value: true, meta: HashMap::new() }
+                        Expression::BoolLiteral {
+                            value: true,
+                            meta: HashMap::new(),
+                        }
                     }
                 }
             }
         }
-        ZshCommand::Subsh(prog) | ZshCommand::Cursh(prog) => {
-            program_to_expr(prog)
-        }
+        ZshCommand::Subsh(prog) | ZshCommand::Cursh(prog) => program_to_expr(prog),
         ZshCommand::Cond(cond) => cond_to_expr(cond),
-        ZshCommand::Arith(expr) => {
-            Expression::CapabilityCall {
-                name: "bash.arithmetic".to_string(),
-                args: vec![Expression::StringLiteral { value: expr.clone(), meta: HashMap::new() }],
-                meta: cap_meta("bash", "arithmetic"),
-            }
-        }
+        ZshCommand::Arith(expr) => Expression::CapabilityCall {
+            name: "bash.arithmetic".to_string(),
+            args: vec![Expression::StringLiteral {
+                value: expr.clone(),
+                meta: HashMap::new(),
+            }],
+            meta: cap_meta("bash", "arithmetic"),
+        },
         ZshCommand::Redirected(cmd_inner, _) => command_to_expr(cmd_inner),
-        _ => Expression::BoolLiteral { value: true, meta: HashMap::new() },
+        _ => Expression::BoolLiteral {
+            value: true,
+            meta: HashMap::new(),
+        },
     }
 }
 
@@ -590,17 +748,23 @@ fn expr_from_test_call(args: Vec<Expression>) -> Expression {
         }
     } else if args.len() == 2 {
         Expression::Call {
-            function: format!("test_{}", match &args[0] {
-                Expression::StringLiteral { value, .. } if value != "]" => value.clone(),
-                _ => "?".to_string(),
-            }),
+            function: format!(
+                "test_{}",
+                match &args[0] {
+                    Expression::StringLiteral { value, .. } if value != "]" => value.clone(),
+                    _ => "?".to_string(),
+                }
+            ),
             args: vec![args[1].clone()],
             meta: HashMap::new(),
         }
     } else if args.len() == 1 {
         args.into_iter().next().unwrap()
     } else {
-        Expression::BoolLiteral { value: true, meta: HashMap::new() }
+        Expression::BoolLiteral {
+            value: true,
+            meta: HashMap::new(),
+        }
     }
 }
 
@@ -608,10 +772,11 @@ fn assign_value_to_expr(value: &ZshAssignValue) -> Expression {
     match value {
         ZshAssignValue::Scalar(s) => word_to_expr(s),
         ZshAssignValue::Array(elems) => {
-            let elements: Vec<Expression> = elems.iter().map(|e| {
-                word_to_expr(e)
-            }).collect();
-            Expression::ArrayLiteral { elements, meta: HashMap::new() }
+            let elements: Vec<Expression> = elems.iter().map(|e| word_to_expr(e)).collect();
+            Expression::ArrayLiteral {
+                elements,
+                meta: HashMap::new(),
+            }
         }
     }
 }
@@ -623,12 +788,26 @@ fn word_to_expr(word: &str) -> Expression {
     // Simple $VAR at start of word
     if word.starts_with('$') {
         let name = if word.starts_with("${") && word.ends_with('}') {
-            word[2..word.len()-1].to_string()
+            word[2..word.len() - 1].to_string()
         } else {
             word[1..].to_string()
         };
-        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '*' || c == '@' || c == '?' || c == '$' || c == '!' || c == '#') {
-            return Expression::Var { name, meta: HashMap::new() };
+        if !name.is_empty()
+            && name.chars().all(|c| {
+                c.is_alphanumeric()
+                    || c == '_'
+                    || c == '*'
+                    || c == '@'
+                    || c == '?'
+                    || c == '$'
+                    || c == '!'
+                    || c == '#'
+            })
+        {
+            return Expression::Var {
+                name,
+                meta: HashMap::new(),
+            };
         }
     }
 
@@ -637,7 +816,10 @@ fn word_to_expr(word: &str) -> Expression {
         return expand_var_refs(word);
     }
 
-    Expression::StringLiteral { value: word.to_string(), meta: HashMap::new() }
+    Expression::StringLiteral {
+        value: word.to_string(),
+        meta: HashMap::new(),
+    }
 }
 
 fn expand_var_refs(s: &str) -> Expression {
@@ -649,34 +831,55 @@ fn expand_var_refs(s: &str) -> Expression {
             Some(p) => p,
             None => {
                 if !remaining.is_empty() {
-                    parts.push(Expression::StringLiteral { value: remaining.to_string(), meta: HashMap::new() });
+                    parts.push(Expression::StringLiteral {
+                        value: remaining.to_string(),
+                        meta: HashMap::new(),
+                    });
                 }
                 break;
             }
         };
 
         if dollar_pos > 0 {
-            parts.push(Expression::StringLiteral { value: remaining[..dollar_pos].to_string(), meta: HashMap::new() });
+            parts.push(Expression::StringLiteral {
+                value: remaining[..dollar_pos].to_string(),
+                meta: HashMap::new(),
+            });
         }
 
         let after_dollar = &remaining[dollar_pos + 1..];
         if after_dollar.starts_with('{') {
             if let Some(close) = after_dollar.find('}') {
                 let var_name = after_dollar[1..close].to_string();
-                parts.push(Expression::Var { name: var_name, meta: HashMap::new() });
+                parts.push(Expression::Var {
+                    name: var_name,
+                    meta: HashMap::new(),
+                });
                 remaining = &after_dollar[close + 1..];
             } else {
-                parts.push(Expression::StringLiteral { value: remaining[dollar_pos..].to_string(), meta: HashMap::new() });
+                parts.push(Expression::StringLiteral {
+                    value: remaining[dollar_pos..].to_string(),
+                    meta: HashMap::new(),
+                });
                 break;
             }
         } else {
-            let name_len = after_dollar.chars().take_while(|c| c.is_alphanumeric() || *c == '_').count();
+            let name_len = after_dollar
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .count();
             if name_len > 0 {
                 let var_name = after_dollar[..name_len].to_string();
-                parts.push(Expression::Var { name: var_name, meta: HashMap::new() });
+                parts.push(Expression::Var {
+                    name: var_name,
+                    meta: HashMap::new(),
+                });
                 remaining = &after_dollar[name_len..];
             } else {
-                parts.push(Expression::StringLiteral { value: remaining[dollar_pos..].to_string(), meta: HashMap::new() });
+                parts.push(Expression::StringLiteral {
+                    value: remaining[dollar_pos..].to_string(),
+                    meta: HashMap::new(),
+                });
                 break;
             }
         }
@@ -699,7 +902,13 @@ fn expand_var_refs(s: &str) -> Expression {
 }
 
 fn expr_from_last_stmt(stmts: &[Statement]) -> Expression {
-    stmts.last().map(|s| expr_from_statement(s)).unwrap_or(Expression::BoolLiteral { value: true, meta: HashMap::new() })
+    stmts
+        .last()
+        .map(|s| expr_from_statement(s))
+        .unwrap_or(Expression::BoolLiteral {
+            value: true,
+            meta: HashMap::new(),
+        })
 }
 
 fn expr_from_statement(stmt: &Statement) -> Expression {
@@ -707,22 +916,43 @@ fn expr_from_statement(stmt: &Statement) -> Expression {
         Statement::ExprStmt { expr, .. } => expr.clone(),
         Statement::VarDecl { name, value, .. } => Expression::BinaryOp {
             operator: "=".to_string(),
-            left: Box::new(Expression::Var { name: name.clone(), meta: HashMap::new() }),
+            left: Box::new(Expression::Var {
+                name: name.clone(),
+                meta: HashMap::new(),
+            }),
             right: Box::new(value.clone()),
             meta: HashMap::new(),
         },
-        _ => Expression::BoolLiteral { value: true, meta: HashMap::new() },
+        _ => Expression::BoolLiteral {
+            value: true,
+            meta: HashMap::new(),
+        },
     }
 }
 
-fn wrap_if(cond: Expression, body: Vec<Statement>, else_body: Option<Vec<Statement>>) -> Vec<Statement> {
-    vec![Statement::If { condition: cond, then_body: body, else_body, meta: HashMap::new() }]
+fn wrap_if(
+    cond: Expression,
+    body: Vec<Statement>,
+    else_body: Option<Vec<Statement>>,
+) -> Vec<Statement> {
+    vec![Statement::If {
+        condition: cond,
+        then_body: body,
+        else_body,
+        meta: HashMap::new(),
+    }]
 }
 
 fn cap_meta(namespace: &str, method: &str) -> HashMap<String, serde_json::Value> {
     let mut meta = HashMap::new();
     meta.insert("capability".to_string(), serde_json::Value::Bool(true));
-    meta.insert("namespace".to_string(), serde_json::Value::String(namespace.to_string()));
-    meta.insert("method".to_string(), serde_json::Value::String(method.to_string()));
+    meta.insert(
+        "namespace".to_string(),
+        serde_json::Value::String(namespace.to_string()),
+    );
+    meta.insert(
+        "method".to_string(),
+        serde_json::Value::String(method.to_string()),
+    );
     meta
 }

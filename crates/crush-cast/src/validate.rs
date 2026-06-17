@@ -43,8 +43,13 @@ fn suggest_fix(error_msg: &str, path: &str) -> Option<String> {
     }
 
     // Check for missing Function.meta
-    if error_msg.contains("missing field") && error_msg.contains("meta") && path.contains("functions") {
-        return Some("Field 'meta' is required in Function definitions. Add: \"meta\": {}".to_string());
+    if error_msg.contains("missing field")
+        && error_msg.contains("meta")
+        && path.contains("functions")
+    {
+        return Some(
+            "Field 'meta' is required in Function definitions. Add: \"meta\": {}".to_string(),
+        );
     }
 
     // Check for prompt vs query in AI Query. serde ignores the unknown
@@ -63,7 +68,6 @@ fn suggest_fix(error_msg: &str, path: &str) -> Option<String> {
 
     None
 }
-
 
 /// Validate a CAST JSON string against the schema.
 ///

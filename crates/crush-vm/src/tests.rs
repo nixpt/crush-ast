@@ -178,7 +178,14 @@ fn push_null() {
 #[test]
 fn new_array() {
     let r = run_src("PUSH 1\nPUSH 2\nPUSH 3\nNEW_ARRAY 3\nHALT");
-    assert_eq!(r.stack, vec![Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])]);
+    assert_eq!(
+        r.stack,
+        vec![Value::Array(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3)
+        ])]
+    );
 }
 
 #[test]
@@ -191,7 +198,8 @@ fn arr_get_and_len() {
 
 #[test]
 fn arr_set() {
-    let r = run_src("PUSH 10\nPUSH 20\nNEW_ARRAY 2\nPUSH 0\nPUSH 99\nARR_SET\nPUSH 0\nARR_GET\nHALT");
+    let r =
+        run_src("PUSH 10\nPUSH 20\nNEW_ARRAY 2\nPUSH 0\nPUSH 99\nARR_SET\nPUSH 0\nARR_GET\nHALT");
     assert_eq!(r.stack, vec![Value::Int(99)]);
 }
 
@@ -275,7 +283,10 @@ fn disassemble_roundtrip() {
 #[test]
 fn step_quota_triggers() {
     let prog = assemble("loop:\nJMP loop", None, None).unwrap();
-    let quotas = Quotas { max_steps: 10, ..Default::default() };
+    let quotas = Quotas {
+        max_steps: 10,
+        ..Default::default()
+    };
     assert!(run(&prog, &quotas).is_err());
 }
 
@@ -299,12 +310,14 @@ fn new_obj_creates_empty_map() {
 #[test]
 fn set_field_and_get_field() {
     // NEW_OBJ, DUP, PUSH_STR "hello", SET_FIELD "greeting", GET_FIELD "greeting"
-    let r = run_src(r#"NEW_OBJ
+    let r = run_src(
+        r#"NEW_OBJ
     DUP
     PUSH_STR "hello"
     SET_FIELD "greeting"
     GET_FIELD "greeting"
-    HALT"#);
+    HALT"#,
+    );
     assert_eq!(r.stack.len(), 2);
     assert!(matches!(r.stack[0], Value::Map(_)));
     assert_eq!(r.stack[1], Value::Str("hello".to_string()));
@@ -340,14 +353,18 @@ fn enter_try_and_exit_try_no_error() {
 fn try_catch_catches_throw() {
     // try { throw "err" } catch { pop error, push 99 }
     // THROW pushes the error value onto the stack before jumping to handler
-    let r = run_src("ENTER_TRY handler\nPUSH_STR \"err\"\nTHROW\nEXIT_TRY\nJMP done\nhandler:\nPOP\nPUSH 99\ndone:\nHALT");
+    let r = run_src(
+        "ENTER_TRY handler\nPUSH_STR \"err\"\nTHROW\nEXIT_TRY\nJMP done\nhandler:\nPOP\nPUSH 99\ndone:\nHALT",
+    );
     assert_eq!(r.stack, vec![Value::Int(99)]);
 }
 
 #[test]
 fn throw_error_value_on_stack_in_handler() {
     // try { throw "msg" } catch { the error value is already on stack }
-    let r = run_src("ENTER_TRY handler\nPUSH_STR \"msg\"\nTHROW\nEXIT_TRY\nJMP done\nhandler:\nHALT\ndone:\nHALT");
+    let r = run_src(
+        "ENTER_TRY handler\nPUSH_STR \"msg\"\nTHROW\nEXIT_TRY\nJMP done\nhandler:\nHALT\ndone:\nHALT",
+    );
     // After THROW, the error "msg" is pushed onto the stack for handler
     assert_eq!(r.stack, vec![Value::Str("msg".to_string())]);
 }
@@ -407,7 +424,9 @@ fn arr_push_and_arr_pop() {
 
 #[test]
 fn arr_pop_removes_last() {
-    let r = run_src("NEW_ARRAY 0\nDUP\nPUSH 1\nARR_PUSH\nDUP\nPUSH 2\nARR_PUSH\nDUP\nPUSH 3\nARR_PUSH\nARR_POP\nPOP\nARR_POP\nHALT");
+    let r = run_src(
+        "NEW_ARRAY 0\nDUP\nPUSH 1\nARR_PUSH\nDUP\nPUSH 2\nARR_PUSH\nDUP\nPUSH 3\nARR_PUSH\nARR_POP\nPOP\nARR_POP\nHALT",
+    );
     // Stack after NEW_ARRAY + 3 pushes + 2 pops + 1 pop:
     // After all ARR_PUSH ops: stack has old copies + final array
     // Last element should be 2 (popped value from second ARR_POP)

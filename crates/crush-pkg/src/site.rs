@@ -24,7 +24,7 @@ use ed25519_dalek::SigningKey;
 use walkdir::WalkDir;
 
 use crate::ecap::{
-    create_ecap_package_to_file, EcapManifest, EcapPackage, EcapSection, ManifestSection,
+    EcapManifest, EcapPackage, EcapSection, ManifestSection, create_ecap_package_to_file,
 };
 
 /// Capsule-type marker stored in the reserved metadata section.
@@ -109,7 +109,10 @@ fn meta_section(entry: &str, asset_count: usize) -> anyhow::Result<EcapSection> 
         "entry": entry,
         "asset_count": asset_count,
     });
-    Ok(EcapSection::new(SITE_META_SECTION, serde_json::to_vec(&meta)?))
+    Ok(EcapSection::new(
+        SITE_META_SECTION,
+        serde_json::to_vec(&meta)?,
+    ))
 }
 
 /// Load a 64-byte Ed25519 keypair file (the format `crush-pkg generate-keys`
@@ -181,7 +184,10 @@ pub fn extract_site_capsule(capsule: &Path, out_dir: &Path) -> anyhow::Result<St
             continue;
         }
         if !sec.verify_hash() {
-            anyhow::bail!("hash mismatch for section '{}' (capsule tampered?)", sec.name);
+            anyhow::bail!(
+                "hash mismatch for section '{}' (capsule tampered?)",
+                sec.name
+            );
         }
         let dest = out_dir.join(&sec.name);
         if let Some(parent) = dest.parent() {
@@ -227,8 +233,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_sample_site(dir.path());
         let out = dir.path().join("site.ecap");
-        let n =
-            write_site_capsule(dir.path(), "mysite", "1.0.0", "index.html", &out, None, None).unwrap();
+        let n = write_site_capsule(
+            dir.path(),
+            "mysite",
+            "1.0.0",
+            "index.html",
+            &out,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(n, 3);
 
         let extract_dir = dir.path().join("extracted");
@@ -252,8 +266,12 @@ mod tests {
         // a bytecode-style capsule with no site metadata section
         let manifest = EcapManifest::new("notsite", "1.0.0");
         let out = dir.path().join("bytecode.ecap");
-        create_ecap_package_to_file(&manifest, vec![EcapSection::new("main.cvm", vec![1, 2, 3])], &out)
-            .unwrap();
+        create_ecap_package_to_file(
+            &manifest,
+            vec![EcapSection::new("main.cvm", vec![1, 2, 3])],
+            &out,
+        )
+        .unwrap();
         assert!(extract_site_capsule(&out, &dir.path().join("x")).is_err());
     }
 

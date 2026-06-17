@@ -14,11 +14,15 @@ fn main() -> anyhow::Result<()> {
         buf
     };
 
-    let ext = args.get(1)
+    let ext = args
+        .get(1)
         .filter(|a| *a != "--stdin")
         .and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()))
-        .or_else(|| args.iter().position(|a| a == "--lang")
-            .and_then(|i| args.get(i + 1).map(|s| s.as_str())))
+        .or_else(|| {
+            args.iter()
+                .position(|a| a == "--lang")
+                .and_then(|i| args.get(i + 1).map(|s| s.as_str()))
+        })
         .unwrap_or("js");
 
     let program = crush_lang_js::js_to_cast(&source, ext)?;

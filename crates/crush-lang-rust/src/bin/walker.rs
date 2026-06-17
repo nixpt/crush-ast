@@ -3,8 +3,8 @@
 //! Uses syn to parse Rust source and lower to CAST JSON.
 //! Usage: rust_walker <file.rs>
 
-use std::fs;
 use anyhow::Result;
+use std::fs;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();

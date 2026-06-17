@@ -25,7 +25,11 @@ fn crushc_compiles_to_cvm1_default_output() {
     std::fs::write(&src, "fn main() { io.print(\"hello\") }").unwrap();
 
     let output = run_crushc(&[src.to_str().unwrap()]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(out.exists(), "expected default output file to be created");
 }
 
@@ -36,7 +40,11 @@ fn crushc_check_valid_program() {
     std::fs::write(&src, "fn main() { io.print(\"ok\") }").unwrap();
 
     let output = run_crushc(&["--check", src.to_str().unwrap()]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no errors detected"), "stderr: {stderr}");
 }
@@ -60,7 +68,11 @@ fn crushc_emits_casm() {
     std::fs::write(&src, "fn main() { io.print(\"hi\") }").unwrap();
 
     let output = run_crushc(&["--emit", "casm", src.to_str().unwrap()]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(".func main"), "stdout: {stdout}");
     assert!(stdout.contains("io.print"), "stdout: {stdout}");
@@ -74,14 +86,22 @@ fn crushc_compiled_program_runs() {
     std::fs::write(&src, "fn main() { io.print(\"compiled\") }").unwrap();
 
     let compile = run_crushc(&["-o", out.to_str().unwrap(), src.to_str().unwrap()]);
-    assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr));
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
     assert!(out.exists());
 
     let run = Command::new(crush_run_bin())
         .args(&["run", out.to_str().unwrap()])
         .output()
         .expect("failed to execute crush-run");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("compiled"), "stdout: {stdout}");
 }

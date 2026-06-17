@@ -5,8 +5,8 @@
 //!
 //! Usage: python_walker <file.py>
 
-use std::fs;
 use anyhow::Result;
+use std::fs;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();

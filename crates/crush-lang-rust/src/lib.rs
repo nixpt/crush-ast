@@ -9,21 +9,26 @@ pub mod parser;
 use std::any::Any;
 use std::collections::HashMap;
 
-use crush_cast::{Program, Function, Statement};
+use crush_cast::{Function, Program, Statement};
 use walker_core::{FeatureReport, Frontend};
 
 pub struct RustFrontend;
 
 impl Frontend for RustFrontend {
-    fn language_name(&self) -> &'static str { "rust" }
-    fn file_extensions(&self) -> &[&'static str] { &[".rs"] }
+    fn language_name(&self) -> &'static str {
+        "rust"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &[".rs"]
+    }
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
         Ok(Box::new(parser::parse_source(source)?))
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
-        let file = ast.downcast_ref::<syn::File>()
+        let file = ast
+            .downcast_ref::<syn::File>()
             .ok_or_else(|| anyhow::anyhow!("expected syn::File"))?;
         let mut r = FeatureReport::default();
         r.lang = "rust".to_string();
@@ -45,7 +50,8 @@ impl Frontend for RustFrontend {
     }
 
     fn lower(&self, ast: Box<dyn Any>) -> anyhow::Result<Program> {
-        let file = ast.downcast::<syn::File>()
+        let file = ast
+            .downcast::<syn::File>()
             .map_err(|_| anyhow::anyhow!("expected syn::File"))?;
         file_to_cast(*file)
     }
@@ -65,8 +71,18 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
         match item {
             syn::Item::Fn(_) => {
                 let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()))?;
-                if let Statement::FunctionDef { name, params, body, .. } = lowered {
-                    functions.insert(name, Function { params, body, meta: HashMap::new() });
+                if let Statement::FunctionDef {
+                    name, params, body, ..
+                } = lowered
+                {
+                    functions.insert(
+                        name,
+                        Function {
+                            params,
+                            body,
+                            meta: HashMap::new(),
+                        },
+                    );
                 }
             }
             _ => {
@@ -77,11 +93,14 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
     }
 
     if !main_body.is_empty() {
-        functions.insert("main".to_string(), Function {
-            params: vec![],
-            body: main_body,
-            meta: HashMap::new(),
-        });
+        functions.insert(
+            "main".to_string(),
+            Function {
+                params: vec![],
+                body: main_body,
+                meta: HashMap::new(),
+            },
+        );
     }
 
     Ok(Program {

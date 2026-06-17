@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Builder for a standard set of host capabilities.
 #[derive(Debug, Default)]
@@ -216,13 +216,19 @@ pub struct FsReadCap {
 
 impl FsReadCap {
     pub fn new(root: &str) -> Self {
-        Self { root: root.to_string() }
+        Self {
+            root: root.to_string(),
+        }
     }
 }
 
 impl HostCap for FsReadCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "fs.read".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "fs.read".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -239,20 +245,25 @@ pub struct FsWriteCap {
 
 impl FsWriteCap {
     pub fn new(root: &str) -> Self {
-        Self { root: root.to_string() }
+        Self {
+            root: root.to_string(),
+        }
     }
 }
 
 impl HostCap for FsWriteCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "fs.write".to_string(), argc: Some(2), returns: false }
+        HostCapSpec {
+            name: "fs.write".to_string(),
+            argc: Some(2),
+            returns: false,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = resolve_path(&self.root, &args[0])?;
         let data = crate::caps::value_as_text(&args[1]);
-        std::fs::write(&path, data)
-            .map_err(|e| format!("fs.write {}: {e}", path.display()))?;
+        std::fs::write(&path, data).map_err(|e| format!("fs.write {}: {e}", path.display()))?;
         Ok(None)
     }
 }
@@ -263,13 +274,19 @@ pub struct FsExistsCap {
 
 impl FsExistsCap {
     pub fn new(root: &str) -> Self {
-        Self { root: root.to_string() }
+        Self {
+            root: root.to_string(),
+        }
     }
 }
 
 impl HostCap for FsExistsCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "fs.exists".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "fs.exists".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -284,13 +301,19 @@ pub struct FsListCap {
 
 impl FsListCap {
     pub fn new(root: &str) -> Self {
-        Self { root: root.to_string() }
+        Self {
+            root: root.to_string(),
+        }
     }
 }
 
 impl HostCap for FsListCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "fs.list".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "fs.list".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -320,7 +343,11 @@ impl EnvGetCap {
 
 impl HostCap for EnvGetCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "env.get".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "env.get".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -343,7 +370,11 @@ pub struct TimeNowCap;
 
 impl HostCap for TimeNowCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "time.now".to_string(), argc: Some(0), returns: true }
+        HostCapSpec {
+            name: "time.now".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
     }
 
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -482,7 +513,11 @@ mod tests {
 
         let cap = FsReadCap::new(dir);
         let result = cap.call(vec![Value::Str(
-            tmp.path().file_name().unwrap().to_string_lossy().to_string(),
+            tmp.path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
         )]);
         assert_eq!(result.unwrap(), Some(Value::Str("hello fs".to_string())));
     }
@@ -506,10 +541,12 @@ mod tests {
     #[test]
     fn process_exec_runs_echo() {
         let cap = ProcessExecCap;
-        let result = cap.call(vec![
-            Value::Str("echo".to_string()),
-            Value::Array(vec![Value::Str("hello".to_string())]),
-        ]).unwrap();
+        let result = cap
+            .call(vec![
+                Value::Str("echo".to_string()),
+                Value::Array(vec![Value::Str("hello".to_string())]),
+            ])
+            .unwrap();
         let text = crate::caps::value_as_text(&result.unwrap());
         assert!(text.contains("\"stdout\":\"hello"));
         assert!(text.contains("\"exit_code\":0"));
@@ -531,12 +568,17 @@ mod tests {
         let cap = CryptoRandomCap;
         let result = cap.call(vec![Value::Int(16)]).unwrap();
         let b64 = crate::caps::value_as_text(&result.unwrap());
-        assert_eq!(base64::Engine::decode(
-            &base64::engine::GeneralPurpose::new(
-                &base64::alphabet::STANDARD,
-                base64::engine::GeneralPurposeConfig::default(),
-            ),
-            &b64,
-        ).unwrap().len(), 16);
+        assert_eq!(
+            base64::Engine::decode(
+                &base64::engine::GeneralPurpose::new(
+                    &base64::alphabet::STANDARD,
+                    base64::engine::GeneralPurposeConfig::default(),
+                ),
+                &b64,
+            )
+            .unwrap()
+            .len(),
+            16
+        );
     }
 }

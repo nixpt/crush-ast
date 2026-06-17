@@ -14,7 +14,10 @@ use crush_cast::ImportStatement;
 static SANDBOX_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn next_sandbox_id() -> String {
-    format!("sandbox_{}", SANDBOX_COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "sandbox_{}",
+        SANDBOX_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Polyglot execution context
@@ -145,19 +148,27 @@ impl PolyglotContext {
                 ],
                 path_separator: ".".to_string(),
                 stdlib_modules: vec![
-                    "sys".to_string(), "os".to_string(), "json".to_string(),
-                    "datetime".to_string(), "math".to_string(), "random".to_string(),
+                    "sys".to_string(),
+                    "os".to_string(),
+                    "json".to_string(),
+                    "datetime".to_string(),
+                    "math".to_string(),
+                    "random".to_string(),
                     "collections".to_string(),
                 ],
                 restricted_modules: vec![
-                    "subprocess".to_string(), "socket".to_string(),
-                    "http".to_string(), "urllib".to_string(), "ftplib".to_string(),
+                    "subprocess".to_string(),
+                    "socket".to_string(),
+                    "http".to_string(),
+                    "urllib".to_string(),
+                    "ftplib".to_string(),
                 ],
                 package_managers: vec!["pip".to_string(), "conda".to_string()],
             },
             available_modules: HashMap::new(),
         };
-        self.language_resolvers.insert("python".to_string(), python_resolver);
+        self.language_resolvers
+            .insert("python".to_string(), python_resolver);
 
         let js_resolver = LanguageImportResolver {
             language: "javascript".to_string(),
@@ -169,18 +180,26 @@ impl PolyglotContext {
                 ],
                 path_separator: "/".to_string(),
                 stdlib_modules: vec![
-                    "fs".to_string(), "path".to_string(), "crypto".to_string(),
-                    "events".to_string(), "stream".to_string(), "util".to_string(),
+                    "fs".to_string(),
+                    "path".to_string(),
+                    "crypto".to_string(),
+                    "events".to_string(),
+                    "stream".to_string(),
+                    "util".to_string(),
                 ],
                 restricted_modules: vec![
-                    "child_process".to_string(), "http".to_string(),
-                    "https".to_string(), "net".to_string(), "dgram".to_string(),
+                    "child_process".to_string(),
+                    "http".to_string(),
+                    "https".to_string(),
+                    "net".to_string(),
+                    "dgram".to_string(),
                 ],
                 package_managers: vec!["npm".to_string(), "yarn".to_string()],
             },
             available_modules: HashMap::new(),
         };
-        self.language_resolvers.insert("javascript".to_string(), js_resolver);
+        self.language_resolvers
+            .insert("javascript".to_string(), js_resolver);
 
         let rust_resolver = LanguageImportResolver {
             language: "rust".to_string(),
@@ -191,17 +210,24 @@ impl PolyglotContext {
                 ],
                 path_separator: "::".to_string(),
                 stdlib_modules: vec![
-                    "std".to_string(), "core".to_string(), "alloc".to_string(),
-                    "collections".to_string(), "io".to_string(), "fs".to_string(),
+                    "std".to_string(),
+                    "core".to_string(),
+                    "alloc".to_string(),
+                    "collections".to_string(),
+                    "io".to_string(),
+                    "fs".to_string(),
                 ],
                 restricted_modules: vec![
-                    "std::process".to_string(), "std::net".to_string(), "std::fs".to_string(),
+                    "std::process".to_string(),
+                    "std::net".to_string(),
+                    "std::fs".to_string(),
                 ],
                 package_managers: vec!["cargo".to_string()],
             },
             available_modules: HashMap::new(),
         };
-        self.language_resolvers.insert("rust".to_string(), rust_resolver);
+        self.language_resolvers
+            .insert("rust".to_string(), rust_resolver);
     }
 
     /// Resolve imports within a polyglot block
@@ -322,8 +348,7 @@ impl PolyglotContext {
                 for (alias, item) in &resolution.resolved_items {
                     let _ = alias;
                     let _ = item;
-                    transformed =
-                        format!("// Sandbox import\n{}", transformed);
+                    transformed = format!("// Sandbox import\n{}", transformed);
                 }
             }
         }
@@ -421,10 +446,7 @@ impl PolyglotContext {
 }
 
 impl LanguageImportResolver {
-    fn resolve_import(
-        &self,
-        import: &ImportStatement,
-    ) -> Result<ImportResolution, PolyglotError> {
+    fn resolve_import(&self, import: &ImportStatement) -> Result<ImportResolution, PolyglotError> {
         match import {
             ImportStatement::PolyglotModule {
                 module_path, alias, ..

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use boa_ast::scope::Scope;
-use boa_ast::Script;
 use boa_ast::Module;
+use boa_ast::Script;
+use boa_ast::scope::Scope;
 use boa_interner::Interner;
 use boa_parser::Source;
 

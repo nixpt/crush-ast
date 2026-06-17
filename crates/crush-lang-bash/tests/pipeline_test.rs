@@ -8,7 +8,12 @@ fn bash_simple_echo() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "42", "expected 42, got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "42",
+        "expected 42, got: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -19,7 +24,12 @@ fn bash_variable_echo() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "42", "expected 42, got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "42",
+        "expected 42, got: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -30,7 +40,12 @@ fn bash_function_call() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "42", "expected 42, got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "42",
+        "expected 42, got: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -41,7 +56,12 @@ fn bash_if_true() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "yes", "expected 'yes', got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "yes",
+        "expected 'yes', got: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -52,5 +72,10 @@ fn bash_if_false() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let result = crush_vm::run_with_caps(&vm, &quotas, None).expect("vm run");
-    assert_eq!(result.output.trim(), "no", "expected 'no', got: {}", result.output);
+    assert_eq!(
+        result.output.trim(),
+        "no",
+        "expected 'no', got: {}",
+        result.output
+    );
 }

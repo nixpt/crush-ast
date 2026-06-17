@@ -8,7 +8,7 @@ use boa_ast::expression::operator::binary::BinaryOp;
 use boa_ast::expression::operator::unary::UnaryOp;
 use boa_ast::expression::operator::update::{UpdateOp, UpdateTarget};
 use boa_ast::expression::{Expression, Identifier};
-use boa_ast::function::{FunctionBody, FormalParameterList};
+use boa_ast::function::{FormalParameterList, FunctionBody};
 use boa_ast::property::PropertyName;
 use boa_ast::statement::iteration::{ForLoopInitializer, IterableLoopInitializer};
 use boa_ast::{ModuleItem, Statement, StatementListItem};
@@ -28,7 +28,10 @@ pub struct BoaLower {
 
 impl BoaLower {
     pub fn new(interner: Interner) -> Self {
-        Self { functions: HashMap::new(), interner }
+        Self {
+            functions: HashMap::new(),
+            interner,
+        }
     }
 
     fn sym_str(&self, sym: Sym) -> String {
@@ -57,12 +60,10 @@ impl BoaLower {
         let mut out = Vec::new();
         for item in items {
             match item {
-                ModuleItem::StatementListItem(sli) => {
-                    match sli {
-                        StatementListItem::Statement(s) => out.extend(self.stmt(s)),
-                        StatementListItem::Declaration(d) => out.extend(self.decl(d)),
-                    }
-                }
+                ModuleItem::StatementListItem(sli) => match sli {
+                    StatementListItem::Statement(s) => out.extend(self.stmt(s)),
+                    StatementListItem::Declaration(d) => out.extend(self.decl(d)),
+                },
                 ModuleItem::ImportDeclaration(_) => {
                     // import declarations are handled by the analyzer; skip in lowering
                 }
@@ -76,7 +77,9 @@ impl BoaLower {
     }
 
     fn param_list(&self, params: &FormalParameterList) -> Vec<(String, CastType)> {
-        params.as_ref().iter()
+        params
+            .as_ref()
+            .iter()
             .map(|p| (self.binding_name(p.variable().binding()), CastType::Any))
             .collect()
     }
@@ -93,23 +96,39 @@ impl BoaLower {
             }
             Statement::Empty => vec![],
             Statement::Expression(e) => {
-                vec![CastStmt::ExprStmt { expr: self.expr(e), meta: meta() }]
+                vec![CastStmt::ExprStmt {
+                    expr: self.expr(e),
+                    meta: meta(),
+                }]
             }
             Statement::If(i) => {
                 let condition = self.expr(i.cond());
                 let then_body = self.stmt_wrap(i.body());
                 let else_body = i.else_node().map(|a| self.stmt_wrap(a));
-                vec![CastStmt::If { condition, then_body, else_body, meta: meta() }]
+                vec![CastStmt::If {
+                    condition,
+                    then_body,
+                    else_body,
+                    meta: meta(),
+                }]
             }
             Statement::WhileLoop(w) => {
                 let condition = Box::new(self.expr(w.condition()));
                 let body = self.stmt_wrap(w.body());
-                vec![CastStmt::While { condition, body, meta: meta() }]
+                vec![CastStmt::While {
+                    condition,
+                    body,
+                    meta: meta(),
+                }]
             }
             Statement::DoWhileLoop(dw) => {
                 let condition = Box::new(self.expr(dw.cond()));
                 let body = self.stmt_wrap(dw.body());
-                vec![CastStmt::While { condition, body, meta: meta() }]
+                vec![CastStmt::While {
+                    condition,
+                    body,
+                    meta: meta(),
+                }]
             }
             Statement::ForLoop(fl) => {
                 let mut init_stmts = Vec::new();
@@ -126,28 +145,37 @@ impl BoaLower {
                             }
                         }
                         ForLoopInitializer::Expression(e) => {
-                            init_stmts.push(CastStmt::ExprStmt { expr: self.expr(e), meta: meta() });
+                            init_stmts.push(CastStmt::ExprStmt {
+                                expr: self.expr(e),
+                                meta: meta(),
+                            });
                         }
                     }
                 };
-                let test = fl.condition().map(|c| self.expr(c))
-                    .unwrap_or(CastExpr::BoolLiteral { value: true, meta: meta() });
-                let body = self.stmt_wrap(fl.body());
-                let mut while_body = vec![
-                    CastStmt::If {
-                        condition: CastExpr::UnaryOp {
-                            operator: "!".to_string(),
-                            operand: Box::new(test),
-                            meta: meta(),
-                        },
-                        then_body: vec![CastStmt::Break { meta: meta() }],
-                        else_body: None,
+                let test = fl
+                    .condition()
+                    .map(|c| self.expr(c))
+                    .unwrap_or(CastExpr::BoolLiteral {
+                        value: true,
                         meta: meta(),
-                    }
-                ];
+                    });
+                let body = self.stmt_wrap(fl.body());
+                let mut while_body = vec![CastStmt::If {
+                    condition: CastExpr::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(test),
+                        meta: meta(),
+                    },
+                    then_body: vec![CastStmt::Break { meta: meta() }],
+                    else_body: None,
+                    meta: meta(),
+                }];
                 while_body.extend(body);
                 init_stmts.push(CastStmt::While {
-                    condition: Box::new(CastExpr::BoolLiteral { value: true, meta: meta() }),
+                    condition: Box::new(CastExpr::BoolLiteral {
+                        value: true,
+                        meta: meta(),
+                    }),
                     body: while_body,
                     meta: meta(),
                 });
@@ -157,13 +185,23 @@ impl BoaLower {
                 let variable = iter_loop_var(fi.initializer(), &self.interner);
                 let iterable = Box::new(self.expr(fi.target()));
                 let body = self.stmt_wrap(fi.body());
-                vec![CastStmt::For { variable, iterable, body, meta: meta() }]
+                vec![CastStmt::For {
+                    variable,
+                    iterable,
+                    body,
+                    meta: meta(),
+                }]
             }
             Statement::ForOfLoop(fo) => {
                 let variable = iter_loop_var(fo.initializer(), &self.interner);
                 let iterable = Box::new(self.expr(fo.iterable()));
                 let body = self.stmt_wrap(fo.body());
-                vec![CastStmt::For { variable, iterable, body, meta: meta() }]
+                vec![CastStmt::For {
+                    variable,
+                    iterable,
+                    body,
+                    meta: meta(),
+                }]
             }
             Statement::Switch(s) => {
                 let val = self.expr(s.val());
@@ -203,31 +241,46 @@ impl BoaLower {
             Statement::Break(_) => vec![CastStmt::Break { meta: meta() }],
             Statement::Return(r) => {
                 let value = r.target().map(|e| self.expr(e));
-                vec![CastStmt::Return { value, meta: meta() }]
+                vec![CastStmt::Return {
+                    value,
+                    meta: meta(),
+                }]
             }
-            Statement::Labelled(l) => {
-                match l.item() {
-                    boa_ast::statement::LabelledItem::Statement(s) => self.stmt(s),
-                    boa_ast::statement::LabelledItem::FunctionDeclaration(f) => {
-                        let name = self.sym_str(f.name().sym());
-                        let func = self.make_fn(f.name(), f.parameters(), f.body());
-                        self.functions.insert(name, func);
-                        vec![]
-                    }
+            Statement::Labelled(l) => match l.item() {
+                boa_ast::statement::LabelledItem::Statement(s) => self.stmt(s),
+                boa_ast::statement::LabelledItem::FunctionDeclaration(f) => {
+                    let name = self.sym_str(f.name().sym());
+                    let func = self.make_fn(f.name(), f.parameters(), f.body());
+                    self.functions.insert(name, func);
+                    vec![]
                 }
-            }
+            },
             Statement::Throw(t) => {
                 let value = self.expr(t.target());
-                vec![CastStmt::Throw { value, meta: meta() }]
+                vec![CastStmt::Throw {
+                    value,
+                    meta: meta(),
+                }]
             }
             Statement::Try(try_stmt) => {
                 let body = self.list(try_stmt.block().statement_list().statements());
-                let (error_var, handler) = try_stmt.catch().map(|c| {
-                    let ev = c.parameter().map(|p| self.binding_name(p)).unwrap_or_default();
-                    let h = self.list(c.block().statement_list().statements());
-                    (ev, h)
-                }).unwrap_or_default();
-                vec![CastStmt::TryCatch { body, error_var, handler, meta: meta() }]
+                let (error_var, handler) = try_stmt
+                    .catch()
+                    .map(|c| {
+                        let ev = c
+                            .parameter()
+                            .map(|p| self.binding_name(p))
+                            .unwrap_or_default();
+                        let h = self.list(c.block().statement_list().statements());
+                        (ev, h)
+                    })
+                    .unwrap_or_default();
+                vec![CastStmt::TryCatch {
+                    body,
+                    error_var,
+                    handler,
+                    meta: meta(),
+                }]
             }
             Statement::With(_) => vec![],
         }
@@ -246,31 +299,69 @@ impl BoaLower {
                 let name = self.sym_str(f.name().sym());
                 let func = self.make_fn(f.name(), f.parameters(), f.body());
                 self.functions.insert(name.clone(), func);
-                vec![CastStmt::FunctionDef { name, params: vec![], body: vec![], meta: meta() }]
+                vec![CastStmt::FunctionDef {
+                    name,
+                    params: vec![],
+                    body: vec![],
+                    meta: meta(),
+                }]
             }
             Declaration::AsyncFunctionDeclaration(af) => {
                 let name = self.sym_str(af.name().sym());
                 let func = self.make_fn(af.name(), af.parameters(), af.body());
                 self.functions.insert(name.clone(), func);
-                vec![CastStmt::FunctionDef { name, params: vec![], body: vec![], meta: meta() }]
+                vec![CastStmt::FunctionDef {
+                    name,
+                    params: vec![],
+                    body: vec![],
+                    meta: meta(),
+                }]
             }
             Declaration::GeneratorDeclaration(g) => {
                 let name = self.sym_str(g.name().sym());
                 let body = self.fn_body(g.body());
                 let params = self.param_list(g.parameters());
-                self.functions.insert(name.clone(), Function { params, body, meta: HashMap::new() });
-                vec![CastStmt::FunctionDef { name, params: vec![], body: vec![], meta: meta() }]
+                self.functions.insert(
+                    name.clone(),
+                    Function {
+                        params,
+                        body,
+                        meta: HashMap::new(),
+                    },
+                );
+                vec![CastStmt::FunctionDef {
+                    name,
+                    params: vec![],
+                    body: vec![],
+                    meta: meta(),
+                }]
             }
             Declaration::AsyncGeneratorDeclaration(ag) => {
                 let name = self.sym_str(ag.name().sym());
                 let body = self.fn_body(ag.body());
                 let params = self.param_list(ag.parameters());
-                self.functions.insert(name.clone(), Function { params, body, meta: HashMap::new() });
-                vec![CastStmt::FunctionDef { name, params: vec![], body: vec![], meta: meta() }]
+                self.functions.insert(
+                    name.clone(),
+                    Function {
+                        params,
+                        body,
+                        meta: HashMap::new(),
+                    },
+                );
+                vec![CastStmt::FunctionDef {
+                    name,
+                    params: vec![],
+                    body: vec![],
+                    meta: meta(),
+                }]
             }
             Declaration::ClassDeclaration(c) => {
                 let name = self.sym_str(c.name().sym());
-                vec![CastStmt::StructDef { name, fields: vec![], meta: meta() }]
+                vec![CastStmt::StructDef {
+                    name,
+                    fields: vec![],
+                    meta: meta(),
+                }]
             }
             Declaration::Lexical(lex) => {
                 let mut out = Vec::new();
@@ -288,15 +379,31 @@ impl BoaLower {
 
     fn variable(&mut self, var: &Variable) -> Vec<CastStmt> {
         let name = self.binding_name(var.binding());
-        let value = var.init().map(|e| self.expr(e))
+        let value = var
+            .init()
+            .map(|e| self.expr(e))
             .unwrap_or(CastExpr::NullLiteral { meta: meta() });
-        vec![CastStmt::VarDecl { name, value, type_hint: CastType::Any, meta: meta() }]
+        vec![CastStmt::VarDecl {
+            name,
+            value,
+            type_hint: CastType::Any,
+            meta: meta(),
+        }]
     }
 
-    fn make_fn(&mut self, _name: Identifier, params: &FormalParameterList, body: &FunctionBody) -> Function {
+    fn make_fn(
+        &mut self,
+        _name: Identifier,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+    ) -> Function {
         let body_stmts = self.fn_body(body);
         let params = self.param_list(params);
-        Function { params, body: body_stmts, meta: HashMap::new() }
+        Function {
+            params,
+            body: body_stmts,
+            meta: HashMap::new(),
+        }
     }
 
     fn fn_body(&mut self, body: &FunctionBody) -> Vec<CastStmt> {
@@ -337,14 +444,34 @@ impl BoaLower {
     fn expr(&mut self, expr: &Expression) -> CastExpr {
         match expr {
             Expression::Literal(lit) => match lit.kind() {
-                LiteralKind::String(sym) => CastExpr::StringLiteral { value: self.sym_str(*sym), meta: meta() },
-                LiteralKind::Num(n) => CastExpr::FloatLiteral { value: *n, meta: meta() },
-                LiteralKind::Int(n) => CastExpr::IntLiteral { value: *n as i64, meta: meta() },
-                LiteralKind::Bool(b) => CastExpr::BoolLiteral { value: *b, meta: meta() },
-                LiteralKind::Null | LiteralKind::Undefined => CastExpr::NullLiteral { meta: meta() },
-                LiteralKind::BigInt(_) => CastExpr::IntLiteral { value: 0, meta: meta() },
+                LiteralKind::String(sym) => CastExpr::StringLiteral {
+                    value: self.sym_str(*sym),
+                    meta: meta(),
+                },
+                LiteralKind::Num(n) => CastExpr::FloatLiteral {
+                    value: *n,
+                    meta: meta(),
+                },
+                LiteralKind::Int(n) => CastExpr::IntLiteral {
+                    value: *n as i64,
+                    meta: meta(),
+                },
+                LiteralKind::Bool(b) => CastExpr::BoolLiteral {
+                    value: *b,
+                    meta: meta(),
+                },
+                LiteralKind::Null | LiteralKind::Undefined => {
+                    CastExpr::NullLiteral { meta: meta() }
+                }
+                LiteralKind::BigInt(_) => CastExpr::IntLiteral {
+                    value: 0,
+                    meta: meta(),
+                },
             },
-            Expression::Identifier(id) => CastExpr::Var { name: self.sym_str(id.sym()), meta: meta() },
+            Expression::Identifier(id) => CastExpr::Var {
+                name: self.sym_str(id.sym()),
+                meta: meta(),
+            },
             Expression::Call(c) => {
                 let name = self.call_name(c.function());
                 let args: Vec<_> = c.args().iter().map(|a| self.expr(a)).collect();
@@ -359,38 +486,65 @@ impl BoaLower {
                         meta: meta(),
                     }
                 } else {
-                    CastExpr::Call { function: name, args, meta: meta() }
+                    CastExpr::Call {
+                        function: name,
+                        args,
+                        meta: meta(),
+                    }
                 }
             }
             Expression::New(n) => {
                 let name = self.call_name(n.constructor());
                 let args: Vec<_> = n.arguments().iter().map(|a| self.expr(a)).collect();
-                CastExpr::Call { function: format!("new_{}", name), args, meta: meta() }
+                CastExpr::Call {
+                    function: format!("new_{}", name),
+                    args,
+                    meta: meta(),
+                }
             }
             Expression::PropertyAccess(pa) => self.prop_access_expr(pa),
             Expression::Binary(b) => {
                 let left = Box::new(self.expr(b.lhs()));
                 let right = Box::new(self.expr(b.rhs()));
                 let operator = binary_op_str(&b.op()).to_string();
-                CastExpr::BinaryOp { operator, left, right, meta: meta() }
+                CastExpr::BinaryOp {
+                    operator,
+                    left,
+                    right,
+                    meta: meta(),
+                }
             }
             Expression::Unary(u) => {
                 let operator = unary_op_str(&u.op()).to_string();
                 let operand = Box::new(self.expr(u.target()));
-                CastExpr::UnaryOp { operator, operand, meta: meta() }
+                CastExpr::UnaryOp {
+                    operator,
+                    operand,
+                    meta: meta(),
+                }
             }
             Expression::Update(u) => {
                 let operator = update_op_str(&u.op()).to_string();
                 let target = match u.target() {
-                    UpdateTarget::Identifier(id) => CastExpr::Var { name: self.sym_str(id.sym()), meta: meta() },
+                    UpdateTarget::Identifier(id) => CastExpr::Var {
+                        name: self.sym_str(id.sym()),
+                        meta: meta(),
+                    },
                     UpdateTarget::PropertyAccess(pa) => self.prop_access_expr(pa),
                 };
-                CastExpr::UnaryOp { operator, operand: Box::new(target), meta: meta() }
+                CastExpr::UnaryOp {
+                    operator,
+                    operand: Box::new(target),
+                    meta: meta(),
+                }
             }
             Expression::Assign(a) => {
                 let rhs = self.expr(a.rhs());
                 let lhs_expr = match a.lhs() {
-                    AssignTarget::Identifier(id) => CastExpr::Var { name: self.sym_str(id.sym()), meta: meta() },
+                    AssignTarget::Identifier(id) => CastExpr::Var {
+                        name: self.sym_str(id.sym()),
+                        meta: meta(),
+                    },
                     AssignTarget::Access(pa) => self.prop_access_expr(pa),
                     _ => CastExpr::NullLiteral { meta: meta() },
                 };
@@ -399,7 +553,12 @@ impl BoaLower {
                 } else {
                     format!("{}=", assign_op_str(&a.op()))
                 };
-                CastExpr::BinaryOp { operator, left: Box::new(lhs_expr), right: Box::new(rhs), meta: meta() }
+                CastExpr::BinaryOp {
+                    operator,
+                    left: Box::new(lhs_expr),
+                    right: Box::new(rhs),
+                    meta: meta(),
+                }
             }
             Expression::Conditional(c) => {
                 let test = self.expr(c.condition());
@@ -411,12 +570,24 @@ impl BoaLower {
                     meta: meta(),
                 }
             }
-            Expression::This(_) => CastExpr::Var { name: "this".to_string(), meta: meta() },
+            Expression::This(_) => CastExpr::Var {
+                name: "this".to_string(),
+                meta: meta(),
+            },
             Expression::ArrayLiteral(arr) => {
-                let elements: Vec<_> = arr.as_ref().iter()
-                    .map(|e| e.as_ref().map(|inner| self.expr(inner)).unwrap_or(CastExpr::NullLiteral { meta: meta() }))
+                let elements: Vec<_> = arr
+                    .as_ref()
+                    .iter()
+                    .map(|e| {
+                        e.as_ref()
+                            .map(|inner| self.expr(inner))
+                            .unwrap_or(CastExpr::NullLiteral { meta: meta() })
+                    })
                     .collect();
-                CastExpr::ArrayLiteral { elements, meta: meta() }
+                CastExpr::ArrayLiteral {
+                    elements,
+                    meta: meta(),
+                }
             }
             Expression::ObjectLiteral(obj) => {
                 let mut properties = Vec::new();
@@ -428,18 +599,34 @@ impl BoaLower {
                         }
                         PropertyDefinition::IdentifierReference(id) => {
                             let k = self.sym_str(id.sym());
-                            properties.push((k.clone(), CastExpr::Var { name: k, meta: meta() }));
+                            properties.push((
+                                k.clone(),
+                                CastExpr::Var {
+                                    name: k,
+                                    meta: meta(),
+                                },
+                            ));
                         }
                         PropertyDefinition::SpreadObject(expr) => {
                             properties.push(("__spread__".to_string(), self.expr(expr)));
                         }
                         PropertyDefinition::MethodDefinition(m) => {
                             let key = prop_name_str(m.name(), &self.interner);
-                            let params: Vec<(String, CastType)> = m.parameters().as_ref().iter()
+                            let params: Vec<(String, CastType)> = m
+                                .parameters()
+                                .as_ref()
+                                .iter()
                                 .map(|p| (self.binding_name(p.variable().binding()), CastType::Any))
                                 .collect();
                             let body = self.list(m.body().statements());
-                            properties.push((key, CastExpr::Lambda { params, body, meta: meta() }));
+                            properties.push((
+                                key,
+                                CastExpr::Lambda {
+                                    params,
+                                    body,
+                                    meta: meta(),
+                                },
+                            ));
                         }
                         PropertyDefinition::CoverInitializedName(id, expr) => {
                             let k = self.sym_str(id.sym());
@@ -447,14 +634,20 @@ impl BoaLower {
                         }
                     }
                 }
-                CastExpr::ObjectLiteral { properties, meta: meta() }
+                CastExpr::ObjectLiteral {
+                    properties,
+                    meta: meta(),
+                }
             }
             Expression::TemplateLiteral(t) => {
                 let mut parts = Vec::new();
                 for elem in t.elements() {
                     match elem {
                         TemplateElement::String(sym) => {
-                            parts.push(CastExpr::StringLiteral { value: self.sym_str(*sym), meta: meta() });
+                            parts.push(CastExpr::StringLiteral {
+                                value: self.sym_str(*sym),
+                                meta: meta(),
+                            });
                         }
                         TemplateElement::Expr(e) => {
                             parts.push(self.expr(e));
@@ -462,7 +655,10 @@ impl BoaLower {
                     }
                 }
                 if parts.is_empty() {
-                    return CastExpr::StringLiteral { value: String::new(), meta: meta() };
+                    return CastExpr::StringLiteral {
+                        value: String::new(),
+                        meta: meta(),
+                    };
                 }
                 let mut result = parts.remove(0);
                 for part in parts {
@@ -478,23 +674,45 @@ impl BoaLower {
             Expression::TaggedTemplate(tt) => {
                 let name = self.call_name(tt.tag());
                 let args: Vec<_> = tt.exprs().iter().map(|a| self.expr(a)).collect();
-                CastExpr::Call { function: name, args, meta: meta() }
+                CastExpr::Call {
+                    function: name,
+                    args,
+                    meta: meta(),
+                }
             }
             Expression::FunctionExpression(fe) => {
                 let name = fe.name().map(|n| self.sym_str(n.sym()));
                 let body = self.fn_body(fe.body());
                 let params = self.param_list(fe.parameters());
                 if let Some(n) = name {
-                    self.functions.insert(n.clone(), Function { params: params.clone(), body: body.clone(), meta: HashMap::new() });
-                    CastExpr::Var { name: n, meta: meta() }
+                    self.functions.insert(
+                        n.clone(),
+                        Function {
+                            params: params.clone(),
+                            body: body.clone(),
+                            meta: HashMap::new(),
+                        },
+                    );
+                    CastExpr::Var {
+                        name: n,
+                        meta: meta(),
+                    }
                 } else {
-                    CastExpr::Lambda { params, body, meta: meta() }
+                    CastExpr::Lambda {
+                        params,
+                        body,
+                        meta: meta(),
+                    }
                 }
             }
             Expression::ArrowFunction(af) => {
                 let params = self.param_list(af.parameters());
                 let body = self.fn_body(af.body());
-                CastExpr::Lambda { params, body, meta: meta() }
+                CastExpr::Lambda {
+                    params,
+                    body,
+                    meta: meta(),
+                }
             }
             Expression::ClassExpression(ce) => {
                 let name = ce.name().map(|n| self.sym_str(n.sym())).unwrap_or_default();
@@ -504,16 +722,16 @@ impl BoaLower {
                     CastExpr::Var { name, meta: meta() }
                 }
             }
-            Expression::Await(a) => {
-                CastExpr::Await { expression: Box::new(self.expr(a.target())), meta: meta() }
-            }
-            Expression::Yield(y) => {
-                y.target().map(|e| self.expr(e)).unwrap_or(CastExpr::NullLiteral { meta: meta() })
-            }
+            Expression::Await(a) => CastExpr::Await {
+                expression: Box::new(self.expr(a.target())),
+                meta: meta(),
+            },
+            Expression::Yield(y) => y
+                .target()
+                .map(|e| self.expr(e))
+                .unwrap_or(CastExpr::NullLiteral { meta: meta() }),
             Expression::Spread(spread) => self.expr(spread.target()),
-            Expression::Optional(opt) => {
-                self.expr(opt.target())
-            }
+            Expression::Optional(opt) => self.expr(opt.target()),
             Expression::Parenthesized(p) => self.expr(p.expression()),
             Expression::RegExpLiteral(_)
             | Expression::SuperCall(_)
@@ -556,7 +774,10 @@ impl BoaLower {
                 }
             }
             PropertyAccess::Super(s) => {
-                let target = Box::new(CastExpr::Var { name: "super".to_string(), meta: meta() });
+                let target = Box::new(CastExpr::Var {
+                    name: "super".to_string(),
+                    meta: meta(),
+                });
                 match s.field() {
                     PropertyAccessField::Const(id) => CastExpr::GetField {
                         target,
@@ -673,11 +894,14 @@ pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
             (lower, body)
         }
     };
-    lower.functions.insert("main".to_string(), Function {
-        params: vec![],
-        body,
-        meta: HashMap::new(),
-    });
+    lower.functions.insert(
+        "main".to_string(),
+        Function {
+            params: vec![],
+            body,
+            meta: HashMap::new(),
+        },
+    );
     Ok(Program {
         cast_version: "0.2".to_string(),
         entry: "main".to_string(),
