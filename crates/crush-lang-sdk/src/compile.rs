@@ -32,8 +32,11 @@ pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
 }
 
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
+    use crush_vm::bytecode::*;
     let mut lines: Vec<String> = Vec::new();
     let mut perms: HashSet<String> = HashSet::new();
+    let mut extra_consts: Vec<String> = Vec::new();
+    let mut extra_code: Vec<u8> = Vec::new();
 
     for (_fname, _func) in &program.functions {
         perms.extend(program.manifest.permissions.clone());
@@ -156,12 +159,18 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
                 "index" => "ARR_GET".to_string(),
+                "export_var" => "PRINT".to_string(),
                 "exec_lang" => {
                     let args_json = serde_json::to_string(&instr.args)
                         .map_err(|e| anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}"))?;
-                    format!("EXEC_LANG {args_json:?}")
+                    let idx = extra_consts.len() as u16;
+                    extra_consts.push(args_json);
+                    extra_code.push(EXEC_LANG);
+                    extra_code.extend_from_slice(&idx.to_be_bytes());
+                    // Emit 3 NOPs as placeholder (EXEC_LANG is 3 bytes).
+                    // We'll replace them with the real bytecode post-assembly.
+                    "NOP\n    NOP\n    NOP".to_string()
                 }
-                "export_var" => "PRINT".to_string(),
                 "new_obj" => anyhow::bail!("object literal not supported in CVM1 at {fname}:{i}"),
                 "get_field" => anyhow::bail!("field access not supported in CVM1 at {fname}:{i}"),
                 "set_field" => anyhow::bail!("field mutation not supported in CVM1 at {fname}:{i}"),
@@ -194,13 +203,41 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         }
     }
 
+    // Assemble the normal instructions (with NOP placeholders for EXEC_LANG).
     let assembly = cleaned.join("\n");
     let perms_slice: Vec<&str> = perms.iter().map(|s| s.as_str()).collect();
-    let vm_program = crush_vm::assemble(
+    let mut vm_program = crush_vm::assemble(
         &assembly,
         if perms_slice.is_empty() { None } else { Some(&perms_slice) },
         None,
     )?;
+
+    // Replace each 3-byte NOP+NOP+NOP placeholder with the real EXEC_LANG
+    // bytecode. We scan the code section for three consecutive 0x00 bytes
+    // and replace them with the extra_code entries.
+    if !extra_code.is_empty() {
+        let mut new_code = Vec::with_capacity(vm_program.code.len());
+        let mut code = &vm_program.code[..];
+        let mut ei = 0usize;
+        while !code.is_empty() {
+            if code.len() >= 3 && code[0] == NOP && code[1] == NOP && code[2] == NOP {
+                if ei < extra_code.len() {
+                    new_code.extend_from_slice(&extra_code[ei..ei+3]);
+                    ei += 3;
+                    code = &code[3..];
+                } else {
+                    return Err(anyhow::anyhow!("more EXEC_LANG placeholders than instructions"));
+                }
+            } else {
+                new_code.push(code[0]);
+                code = &code[1..];
+            }
+        }
+        vm_program.code = new_code;
+        // Append the extra consts
+        vm_program.consts.extend(extra_consts);
+    }
+
     Ok(vm_program)
 }
 

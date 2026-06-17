@@ -212,6 +212,9 @@ pub fn map_to_capability(lang: &str, func_name: &str) -> Option<&'static str> {
 
         // Rust
         ("rust", "println!") | ("rust", "print!") => Some(capabilities::IO_PRINT),
+        ("rust", "eprintln!") | ("rust", "eprint!") => Some(capabilities::IO_PRINT),
+        ("rust", "write!") | ("rust", "writeln!") => Some(capabilities::IO_PRINT),
+        ("rust", "dbg!") => Some(capabilities::IO_PRINT),
         ("rust", "std::fs::read") | ("rust", "std::fs::read_to_string") => {
             Some(capabilities::FS_READ)
         }

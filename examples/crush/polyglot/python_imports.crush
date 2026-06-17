@@ -1,0 +1,26 @@
+// Polyglot Demo — inline Python imports
+//
+// Python handles imports natively inside @python blocks.
+// Multiple blocks can share state through the runtime scope.
+
+fn main() {
+    // Block 1: inline import
+    @python {
+        import math
+        result = math.sqrt(144)
+        print(f"sqrt(144) = {result}")
+    }
+
+    // Block 2: another inline import, different module
+    @python {
+        import json
+        data = {"name": "crush", "type": "polyglot"}
+        print(f"JSON: {json.dumps(data)}")
+    }
+
+    // Block 3: string operations
+    @python {
+        import string
+        print(f"uppercase letters: {string.ascii_uppercase[:5]}")
+    }
+}

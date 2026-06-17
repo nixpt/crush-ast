@@ -307,6 +307,48 @@ impl<'a> Visitor<'a> {
                     }),
                 }
             }
+            "macro_invocation" => {
+                // e.g. println!("hello") — macro name is the first identifier child
+                let macro_name = {
+                    let mut name = String::new();
+                    for child in node.children(&mut node.walk()) {
+                        if child.kind() == "identifier" {
+                            name = self.base.text(child)?.to_string();
+                            break;
+                        }
+                    }
+                    format!("{}!", name)
+                };
+                // Extract args from token_tree child
+                let mut args = Vec::new();
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "token_tree" {
+                        for arg in child.children(&mut child.walk()) {
+                            let kind = arg.kind();
+                            if kind != "(" && kind != ")" && kind != "," && !kind.starts_with("\"") {
+                                args.push(self.visit_expression(arg)?);
+                            }
+                        }
+                    }
+                }
+                if let Some(cap_name) = walker_core::map_to_capability("rust", &macro_name) {
+                    Ok(Expression::CapabilityCall {
+                        name: cap_name.to_string(),
+                        args,
+                        meta: {
+                            let mut m = meta;
+                            m.insert("capability".to_string(), json!(true));
+                            if let Some((ns, method)) = cap_name.split_once('.') {
+                                m.insert("namespace".to_string(), json!(ns));
+                                m.insert("method".to_string(), json!(method));
+                            }
+                            m
+                        },
+                    })
+                } else {
+                    Ok(Expression::NullLiteral { meta })
+                }
+            }
             _ => {
                 if node.child_count() == 1 {
                     self.visit_expression(node.child(0).unwrap())

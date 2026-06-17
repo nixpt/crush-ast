@@ -1,0 +1,35 @@
+// Data processing pipeline across polyglot blocks
+//
+// Each block processes data independently; blocks run sequentially.
+
+fn main() {
+    // Step 1: generate data with Python
+    @python {
+        import random
+        import math
+        numbers = [random.randint(1, 100) for _ in range(5)]
+        print(f"numbers: {numbers}")
+        print(f"sum: {sum(numbers)}")
+        print(f"mean: {sum(numbers) / len(numbers):.2f}")
+    }
+
+    // Step 2: process with shell
+    @bash {
+        echo "--- system info ---"
+        echo "kernel: $(uname -r)"
+        echo "cpu: $(nproc) cores"
+        echo "memory: $(free -h | awk '/^Mem:/ {print $3}') used"
+    }
+
+    // Step 3: text processing with Python
+    @python {
+        import textwrap
+        poem = """
+        The Crush language brings together
+        Python, Bash, and Node
+        Polyglot blocks in one file
+        A strange and useful mode
+        """
+        print(textwrap.dedent(poem).strip())
+    }
+}

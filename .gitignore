@@ -11,3 +11,4 @@ __pycache__/
 .dejavue/embedder_circuit.json
 .dejavue/timeline.jsonl.bak-*
 
+tmp_*.rs
