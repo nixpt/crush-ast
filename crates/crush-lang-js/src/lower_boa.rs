@@ -430,7 +430,21 @@ impl BoaLower {
                             let k = self.sym_str(id.sym());
                             properties.push((k.clone(), CastExpr::Var { name: k, meta: meta() }));
                         }
-                        _ => {}
+                        PropertyDefinition::SpreadObject(expr) => {
+                            properties.push(("__spread__".to_string(), self.expr(expr)));
+                        }
+                        PropertyDefinition::MethodDefinition(m) => {
+                            let key = prop_name_str(m.name(), &self.interner);
+                            let params: Vec<(String, CastType)> = m.parameters().as_ref().iter()
+                                .map(|p| (self.binding_name(p.variable().binding()), CastType::Any))
+                                .collect();
+                            let body = self.list(m.body().statements());
+                            properties.push((key, CastExpr::Lambda { params, body, meta: meta() }));
+                        }
+                        PropertyDefinition::CoverInitializedName(id, expr) => {
+                            let k = self.sym_str(id.sym());
+                            properties.push((k, self.expr(expr)));
+                        }
                     }
                 }
                 CastExpr::ObjectLiteral { properties, meta: meta() }
@@ -482,7 +496,14 @@ impl BoaLower {
                 let body = self.fn_body(af.body());
                 CastExpr::Lambda { params, body, meta: meta() }
             }
-            Expression::ClassExpression(_) => CastExpr::NullLiteral { meta: meta() },
+            Expression::ClassExpression(ce) => {
+                let name = ce.name().map(|n| self.sym_str(n.sym())).unwrap_or_default();
+                if name.is_empty() {
+                    CastExpr::NullLiteral { meta: meta() }
+                } else {
+                    CastExpr::Var { name, meta: meta() }
+                }
+            }
             Expression::Await(a) => {
                 CastExpr::Await { expression: Box::new(self.expr(a.target())), meta: meta() }
             }

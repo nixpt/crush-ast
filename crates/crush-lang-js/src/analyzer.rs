@@ -44,6 +44,9 @@ fn analyze_stmt(stmt: &Stmt, r: &mut FeatureReport) {
                     if f.function.is_async {
                         r.uses_async = true;
                     }
+                    if f.function.is_generator {
+                        r.uses_generators = true;
+                    }
                 }
                 Decl::Class(_) => r.uses_classes = true,
                 Decl::Var(_) => {}

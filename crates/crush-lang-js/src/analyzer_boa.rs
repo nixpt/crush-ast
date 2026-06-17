@@ -169,8 +169,14 @@ impl<'a> BoaAnalyzer<'a> {
                 r.uses_functions = true;
                 r.uses_async = true;
             }
-            Declaration::GeneratorDeclaration(_) | Declaration::AsyncGeneratorDeclaration(_) => {
+            Declaration::GeneratorDeclaration(_) => {
                 r.uses_functions = true;
+                r.uses_generators = true;
+            }
+            Declaration::AsyncGeneratorDeclaration(_) => {
+                r.uses_functions = true;
+                r.uses_async = true;
+                r.uses_generators = true;
             }
             Declaration::ClassDeclaration(_) => {
                 r.uses_classes = true;

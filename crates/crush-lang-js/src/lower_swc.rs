@@ -1063,7 +1063,7 @@ fn lower_call_expr(
                     };
                     format!("{}.{}", obj_str, prop_str)
                 }
-                _ => return Err(anyhow::anyhow!("complex call expression not supported")),
+                _ => "__crush_call__".to_string(),
             };
 
             match func_name.as_str() {

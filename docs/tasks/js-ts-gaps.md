@@ -27,10 +27,11 @@ Status as of s289 (2026-06-17). All gaps identified via audit of
 
 ## LOW — graceful degradation / missing analysis
 
-- No `uses_typescript` / `uses_await` / `uses_generators` / `uses_arrow_functions` / `uses_destructuring` / `uses_optional_chaining` / `uses_spread` in `FeatureReport`
-- Boa object literal drops spreads and method definitions (`lower_boa.rs:390-406`)
-- Boa `ClassExpression` returns `NullLiteral` (`lower_boa.rs:454`)
-- Sequence expressions drop intermediate values (swc side-effect-only, `lower_swc.rs:720-726`)
-- `swc-backend` feature flag is a no-op (`Cargo.toml:15`)
-- Complex call expressions hard-error (swc, `lower_swc.rs:916`)
-- Walker binary has no stdin mode, panics on missing args (`src/bin/walker.rs:7`)
+- ~~**No `uses_generators` detection** in JS analyzers~~ ✅ FIXED — `FeatureReport` field already exists; both swc and Boa analyzers now set it
+- ~~**Boa object literal drops spreads and method definitions** (`lower_boa.rs:390-406`)~~ ✅ FIXED — `SpreadObject`, `MethodDefinition`, `CoverInitializedName` now handled
+- ~~**Boa `ClassExpression` returns `NullLiteral`** (`lower_boa.rs:454`)~~ ✅ FIXED — named classes return `Var { name }`
+- ~~**Complex call expressions hard-error** (swc, `lower_swc.rs:916`)~~ ✅ FIXED — falls back to `__crush_call__` name
+- ~~**Walker binary no stdin mode, panics on missing args** (`src/bin/walker.rs:7`)~~ ✅ FIXED — supports `--stdin` flag and `--lang` override; missing args reads stdin
+- No `uses_typescript` / `uses_arrow_functions` / `uses_destructuring` / `uses_optional_chaining` / `uses_spread` in `FeatureReport` (would need new fields)
+- Sequence expressions drop intermediate values (swc side-effect-only, `lower_swc.rs:720-726`) — correct per JS semantics (only last value matters)
+- `swc-backend` feature flag is a no-op (`Cargo.toml:15`) — cosmetic, all swc deps are unconditional
