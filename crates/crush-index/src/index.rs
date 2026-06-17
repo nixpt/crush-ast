@@ -54,6 +54,8 @@ pub struct CrushIndex {
     wip: HashMap<String, crush_cast::manifest::WipNode>,
     /// (module_path, @temporary node) pairs across all programs
     temporaries: Vec<(String, crush_cast::manifest::TemporaryNode)>,
+    /// (module_path, @decision node) pairs across all programs
+    decisions: Vec<(String, crush_cast::manifest::DecisionNode)>,
 }
 
 impl CrushIndex {
@@ -66,6 +68,7 @@ impl CrushIndex {
             match_sites: Vec::new(),
             wip: HashMap::new(),
             temporaries: Vec::new(),
+            decisions: Vec::new(),
         }
     }
 
@@ -134,6 +137,9 @@ impl CrushIndex {
         }
         for tmp in &program.temporaries {
             self.temporaries.push((module_path.to_string(), tmp.clone()));
+        }
+        for dec in &program.decisions {
+            self.decisions.push((module_path.to_string(), dec.clone()));
         }
     }
 
@@ -241,6 +247,11 @@ impl CrushIndex {
     /// All @temporary nodes across all programs.
     pub fn temporaries(&self) -> Vec<&crush_cast::manifest::TemporaryNode> {
         self.temporaries.iter().map(|(_, t)| t).collect()
+    }
+
+    /// All @decision nodes across all programs.
+    pub fn decisions(&self) -> Vec<&crush_cast::manifest::DecisionNode> {
+        self.decisions.iter().map(|(_, d)| d).collect()
     }
 }
 

@@ -172,6 +172,9 @@ print(json_str)
         ai_meta: None,
         manifest: None,
         exhaustive_sites: vec![],
+        wip: None,
+        temporaries: vec![],
+        decisions: vec![],
     };
 
     // Compare by re-serializing both to canonical JSON.

@@ -404,6 +404,8 @@ impl Lexer {
             "covers", "relies-on", "complexity",
             // Phase 2a additions
             "wip", "temporary", "decision",
+            // Phase 2b additions — mutation surface
+            "invalidates", "must-call-before", "must-call-after",
         ];
         if IMPORT_KEYWORDS.contains(&id.as_str()) {
             return Ok(Token::AtIdent(id, at_location));

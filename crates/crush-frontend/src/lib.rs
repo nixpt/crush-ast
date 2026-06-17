@@ -11,6 +11,7 @@ pub mod polyglot_imports;
 pub mod render;
 pub mod semantics;
 pub mod types;
+pub mod mutation_check;
 pub mod wip_check;
 
 use anyhow::Result;
@@ -53,6 +54,7 @@ pub fn check_source(
     let mut diags = exhaustive_check::check_exhaustiveness(&program);
     diags.extend(wip_check::check_wip(&program));
     diags.extend(wip_check::check_temporaries(&program));
+    diags.extend(mutation_check::check_mutation_ordering(&program));
     Ok((program, diags))
 }
 

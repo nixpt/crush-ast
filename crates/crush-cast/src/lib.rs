@@ -9,8 +9,8 @@ pub mod pack;
 pub mod types;
 pub mod validate;
 pub use manifest::{
-    ChangelogEntry, ErrorLikelihood, ExhaustiveMatchSite, FunctionAnnotations, Invariant,
-    ModuleManifest, SourceLoc, TemporaryNode, WeightedError, WipNode,
+    ChangelogEntry, DecisionNode, ErrorLikelihood, ExhaustiveMatchSite, FunctionAnnotations,
+    Invariant, ModuleManifest, SourceLoc, TemporaryNode, WeightedError, WipNode,
 };
 pub use pack::{CAST_VERSION, Format, PackError};
 pub use types::CastType;
@@ -41,6 +41,9 @@ pub struct Program {
     /// Technical-debt nodes from `@temporary { ... }` blocks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub temporaries: Vec<manifest::TemporaryNode>,
+    /// Architectural decision records from `@decision "name" { ... }` blocks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<manifest::DecisionNode>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

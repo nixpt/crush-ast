@@ -35,6 +35,7 @@ pub fn register(caps: &mut HostCaps, index: Arc<CrushIndex>) {
     caps.register(Box::new(CodebaseUncoveredPathsCap(Arc::clone(&index))));
     caps.register(Box::new(CodebaseWipCap(Arc::clone(&index))));
     caps.register(Box::new(CodebaseTemporariesCap(Arc::clone(&index))));
+    caps.register(Box::new(CodebaseDecisionsCap(Arc::clone(&index))));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -351,6 +352,38 @@ impl HostCap for CodebaseTemporariesCap {
                             .map(|s| Value::Str(s.to_string()))
                             .unwrap_or(Value::Null),
                     ),
+                ])
+            })
+            .collect();
+        Ok(Some(Value::new_array(rows)))
+    }
+}
+
+// ── codebase.decisions() ────────────────────────────────────────────────────
+
+struct CodebaseDecisionsCap(Arc<CrushIndex>);
+
+impl HostCap for CodebaseDecisionsCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "codebase.decisions".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let rows: Vec<Value> = self
+            .0
+            .decisions()
+            .into_iter()
+            .map(|dec| {
+                make_map([
+                    ("name", Value::Str(dec.name.clone())),
+                    ("chose", Value::Str(dec.chose.clone())),
+                    ("over", str_list(&dec.over)),
+                    ("because", Value::Str(dec.because.clone())),
+                    ("revisit_if", str_list(&dec.revisit_if)),
                 ])
             })
             .collect();

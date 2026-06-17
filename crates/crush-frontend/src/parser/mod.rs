@@ -7,8 +7,8 @@ mod lexer;
 pub use lexer::{Lexer, ParseError, SourceLocation, Token};
 
 use crush_cast::manifest::{
-    ErrorLikelihood, FunctionAnnotations, Invariant, ModuleManifest, TemporaryNode, WeightedError,
-    WipNode,
+    DecisionNode, ErrorLikelihood, FunctionAnnotations, Invariant, ModuleManifest, TemporaryNode,
+    WeightedError, WipNode,
 };
 use crush_cast::*;
 use crush_cast::{ExternalResourceType, ImportStatement};
@@ -243,6 +243,7 @@ impl Parser {
         let mut pending_fn_annotations: Option<FunctionAnnotations> = None;
         let mut pending_wip: Option<WipNode> = None;
         let mut pending_temporaries: Vec<TemporaryNode> = Vec::new();
+        let mut pending_decisions: Vec<DecisionNode> = Vec::new();
 
         self.skip_newlines();
 
@@ -293,7 +294,8 @@ impl Parser {
                             continue;
                         }
                         "errors" | "reads" | "writes" | "does-not-write" | "covers"
-                        | "relies-on" | "complexity" => {
+                        | "relies-on" | "complexity"
+                        | "invalidates" | "must-call-before" | "must-call-after" => {
                             self.advance();
                             let ann = pending_fn_annotations.get_or_insert_with(Default::default);
                             self.parse_fn_annotation_body(&id, ann);
@@ -307,6 +309,11 @@ impl Parser {
                         "temporary" => {
                             self.advance();
                             pending_temporaries.push(self.parse_temporary_block());
+                            continue;
+                        }
+                        "decision" => {
+                            self.advance();
+                            pending_decisions.push(self.parse_decision_block());
                             continue;
                         }
                         _ => {}
@@ -434,6 +441,7 @@ impl Parser {
             manifest,
             wip: pending_wip,
             temporaries: pending_temporaries,
+            decisions: pending_decisions,
             ..Default::default()
         })
     }
@@ -2207,8 +2215,56 @@ impl Parser {
                     ann.complexity = Some(v);
                 }
             }
+            "invalidates" => ann.invalidates.extend(self.parse_at_items()),
+            "must-call-before" => ann.must_call_before.extend(self.parse_at_items()),
+            "must-call-after" => ann.must_call_after.extend(self.parse_at_items()),
             _ => {}
         }
+    }
+
+    /// Parse a `@decision "name" { chose: ..., over: [...], because: ..., revisit_if: [...] }` block.
+    fn parse_decision_block(&mut self) -> DecisionNode {
+        self.skip_newlines();
+        let name = self.parse_at_string_value();
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            return DecisionNode {
+                name,
+                chose: String::new(),
+                over: Vec::new(),
+                because: String::new(),
+                revisit_if: Vec::new(),
+            };
+        }
+        self.advance(); // consume {
+        let mut node = DecisionNode {
+            name,
+            chose: String::new(),
+            over: Vec::new(),
+            because: String::new(),
+            revisit_if: Vec::new(),
+        };
+        self.skip_newlines();
+        while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let key = self.read_annotation_key();
+            if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+            }
+            match key.as_str() {
+                "chose" => node.chose = self.parse_at_string_value(),
+                "over" => node.over = self.parse_at_list(),
+                "because" | "reason" => node.because = self.parse_at_string_value(),
+                "revisit_if" | "revisit-if" => node.revisit_if = self.parse_at_list(),
+                _ => {
+                    self.skip_at_value();
+                }
+            }
+            self.skip_newlines();
+        }
+        if matches!(self.peek(), Token::RBrace(_)) {
+            self.advance();
+        }
+        node
     }
 
     /// Parse an annotation item list: either `[a, b, c]` or a single bare item.

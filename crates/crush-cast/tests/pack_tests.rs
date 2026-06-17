@@ -110,6 +110,9 @@ fn incompatible_program() -> Program {
         ai_meta: None,
         manifest: None,
         exhaustive_sites: vec![],
+        wip: None,
+        temporaries: vec![],
+        decisions: vec![],
     }
 }
 

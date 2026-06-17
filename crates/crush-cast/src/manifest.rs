@@ -172,6 +172,29 @@ pub struct TemporaryNode {
     pub added: Option<String>,
 }
 
+/// A `@decision` node recording an architectural choice and its rationale.
+///
+/// Agents query `codebase.decisions()` before touching an unusual design to
+/// understand why it was chosen over alternatives — and whether conditions
+/// that should trigger a re-evaluation are now met.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct DecisionNode {
+    /// Machine-readable name. Kebab-case. E.g. `"use-rc-refcell-not-arc-mutex"`.
+    pub name: String,
+    /// The option that was chosen.
+    pub chose: String,
+    /// Alternatives that were considered and rejected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub over: Vec<String>,
+    /// Why this option was chosen.
+    pub because: String,
+    /// Conditions under which this decision should be revisited.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revisit_if: Vec<String>,
+}
+
 /// Function-level semantic annotations.
 ///
 /// Attached to `Function.annotations`. All fields are optional — partial
@@ -232,6 +255,21 @@ pub struct FunctionAnnotations {
     /// Probabilistic error annotations from `@errors { Variant: likely }` blocks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors_weighted: Vec<WeightedError>,
+
+    /// State paths that this function invalidates after it returns.
+    /// Callers must not hold references to these paths across the call.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalidates: Vec<String>,
+
+    /// Functions that MUST be called before this one at every call site.
+    /// `E-MUT-001` is emitted when the ordering is violated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub must_call_before: Vec<String>,
+
+    /// Functions that MUST be called after this one at every call site.
+    /// `E-MUT-002` is emitted when the ordering is violated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub must_call_after: Vec<String>,
 }
 
 /// A site in the CAST where a sum type is matched exhaustively.
