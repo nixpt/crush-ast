@@ -21,6 +21,7 @@ members = [
     "crates/crush-installer",
     "crates/crush-python",
     "crates/crush-lang-python",
+    "crates/crush-lang-rust",
 ]
 
 [workspace.package]
