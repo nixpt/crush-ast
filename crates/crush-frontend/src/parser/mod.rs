@@ -138,7 +138,7 @@ impl Parser {
             Token::Not(loc) => (loc.line, loc.col),
             Token::Assign(loc) => (loc.line, loc.col),
             Token::Pipe(loc) => (loc.line, loc.col),
-            Token::Arrow(loc) => (loc.line, loc.col),
+            Token::Arrow(loc) | Token::FatArrow(loc) => (loc.line, loc.col),
             Token::DoubleColon(loc) => (loc.line, loc.col),
             Token::LParen(loc) => (loc.line, loc.col),
             Token::RParen(loc) => (loc.line, loc.col),
@@ -1421,6 +1421,7 @@ impl Parser {
         self.expect(Token::Match(SourceLocation { line: 0, col: 0 }))?;
         let expression = Box::new(self.parse_expression()?);
         self.expect(Token::LBrace(SourceLocation { line: 0, col: 0 }))?;
+        self.skip_newlines();
 
         let mut arms = Vec::new();
         while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
@@ -1439,7 +1440,20 @@ impl Parser {
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, ()> {
         let pattern = self.parse_pattern()?;
-        self.expect(Token::Arrow(SourceLocation { line: 0, col: 0 }))?;
+        // Accept either `=>` (FatArrow) or `->` (Arrow) as the match arm separator.
+        // FatArrow is preferred; Arrow is kept for backward compat with existing fixtures.
+        match self.peek() {
+            Token::FatArrow(_) | Token::Arrow(_) => { self.advance(); }
+            _ => {
+                let (line, col) = self.get_location(self.peek());
+                self.errors.push(ParseError::Expected {
+                    line, col,
+                    expected: "=> or ->".to_string(),
+                    found: format!("{:?}", self.peek()),
+                });
+                return Err(());
+            }
+        }
 
         let body = if matches!(self.peek(), Token::LBrace(_)) {
             self.expect(Token::LBrace(SourceLocation { line: 0, col: 0 }))?;
@@ -1501,6 +1515,7 @@ impl Parser {
                 } else {
                     self.advance();
                     if matches!(self.peek(), Token::LBrace(_)) {
+                        // name { field: pattern, ... } — named struct pattern
                         self.advance();
                         let mut fields = Vec::new();
                         while !matches!(self.peek(), Token::RBrace(_))
@@ -1526,6 +1541,20 @@ impl Parser {
                         }
                         self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
                         Ok(Pattern::Struct { name: n, fields })
+                    } else if matches!(self.peek(), Token::LParen(_)) {
+                        // name(binding) — tuple-style variant pattern; treated as
+                        // a Struct with the binding captured as a wildcard field.
+                        // The binding variable name is stored in a synthetic "_" field
+                        // so callers only see the variant name.
+                        self.advance(); // consume (
+                        // Skip the binding variable name (if any)
+                        while !matches!(self.peek(), Token::RParen(_) | Token::EOF(_)) {
+                            self.advance();
+                        }
+                        if matches!(self.peek(), Token::RParen(_)) {
+                            self.advance(); // consume )
+                        }
+                        Ok(Pattern::Struct { name: n, fields: Vec::new() })
                     } else {
                         Ok(Pattern::Identifier { name: n })
                     }

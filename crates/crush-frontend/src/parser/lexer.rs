@@ -101,6 +101,7 @@ pub enum Token {
     Assign(SourceLocation),      // =
     Pipe(SourceLocation),        // |>
     Arrow(SourceLocation),       // ->
+    FatArrow(SourceLocation),    // =>  (match arm separator)
     DoubleColon(SourceLocation), // ::
 
     // Delimiters
@@ -649,6 +650,9 @@ impl Lexer {
                 if self.peek() == Some('=') {
                     self.advance();
                     Ok(Token::Eq(location))
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    Ok(Token::FatArrow(location))
                 } else {
                     Ok(Token::Assign(location))
                 }

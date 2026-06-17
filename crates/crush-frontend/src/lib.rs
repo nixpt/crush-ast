@@ -1,4 +1,5 @@
 pub mod ai_runtime;
+pub mod cast_enrich;
 pub mod compiler;
 pub mod import_system;
 pub mod language_walkers;
@@ -11,9 +12,15 @@ pub mod types;
 
 use anyhow::Result;
 
-/// Parse Crush source code into a CAST Program.
+/// Parse Crush source code into an enriched CAST Program.
+///
+/// Runs the parser then the CAST enrichment pass which populates
+/// `Program.exhaustive_sites` from match expressions found in function bodies.
+/// Annotations from `@module`, `@invariant`, `@errors` etc. are already in
+/// the CAST from the parser; enrichment adds derived fields that require
+/// walking the full program tree.
 pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
-    parser::Parser::parse(source).map_err(|errors| {
+    let mut program = parser::Parser::parse(source).map_err(|errors| {
         anyhow::anyhow!(
             "Parse errors: {}",
             errors
@@ -22,7 +29,9 @@ pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
                 .collect::<Vec<_>>()
                 .join(", ")
         )
-    })
+    })?;
+    cast_enrich::enrich_cast(&mut program);
+    Ok(program)
 }
 
 /// Compile an already-parsed CAST Program into CASM bytecode.
