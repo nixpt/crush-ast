@@ -37,3 +37,18 @@ Rejected alternatives:
 Outcome:
 New crates/crush-pkg/src/site.rs (build/write/extract_site_capsule) + CLI 'site' and 'site-extract' subcommands. 5 site tests + CLI smoke (signed build -> extract -> byte-identical). crush-pkg 44+8 tests green, workspace check green. Hosting via openko exo-light noted as future (captured).
 
+
+## 2026-06-17T02:30:51-05:00 — [STRATEGIC] [VERIFIED] Published core crates (crush-errors, crush-cast, casm) v0.2.0 to crates.io
+
+Reason:
+External dependents (openko/fabric, crush-symbols, mycelium-mobile, arniko) can now consume versioned registry deps instead of path deps. Preceded by a clean/format pass (rustfmt the never-formatted core crates, auto-safe clippy), metadata (keywords/categories/readme/homepage), and a licensing reconciliation.
+
+Artifacts: crates/crush-cast/Cargo.toml
+
+Rejected alternatives:
+- **triple-license OCPL/MIT/Apache:OCPL is not an SPDX identifier (crates.io rejects it) and 'at your option' nullifies its protocol-protection intent; OCPL belongs on the openko protocol layer, not foundation IR crates**
+- **OCPL-governed non-SPDX publish (license-file):unusual for a library, loses SPDX badge, contradicts the permissive intent for foundation crates**
+
+Outcome:
+3 crates live at 0.2.0; v0.2.0 tagged+pushed; license now clean dual MIT OR Apache-2.0; copyright 'Antarik / Exosphere Authors' -> 'The Crush Authors'; LICENSE-MIT+LICENSE-APACHE bundled per-crate; stale __pycache__ pyc untracked. Publish order crush-errors -> crush-cast/casm.
+
