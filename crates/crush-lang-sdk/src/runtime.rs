@@ -47,7 +47,10 @@ impl Runtime {
 
     /// Create a runtime from explicit quotas.
     pub fn with_quotas(quotas: Quotas) -> Self {
-        Self { quotas, host_caps: None }
+        Self {
+            quotas,
+            host_caps: None,
+        }
     }
 
     /// Register host capabilities.
@@ -68,13 +71,17 @@ impl Runtime {
 
     /// Run a pre-loaded [`Program`].
     pub fn run(&self, program: &Program) -> Result<VmResult, RuntimeError> {
-        Ok(run_with_caps(program, &self.quotas, self.host_caps.as_ref())?)
+        Ok(run_with_caps(
+            program,
+            &self.quotas,
+            self.host_caps.as_ref(),
+        )?)
     }
 
     /// Load a CVM1 binary blob and run it.
     pub fn run_blob(&self, blob: &[u8]) -> Result<VmResult, RuntimeError> {
-        let program = Program::from_blob(blob)
-            .map_err(|e| RuntimeError::LoadBlob(e.to_string()))?;
+        let program =
+            Program::from_blob(blob).map_err(|e| RuntimeError::LoadBlob(e.to_string()))?;
         self.run(&program)
     }
 

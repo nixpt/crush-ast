@@ -68,43 +68,41 @@ pub const HALT: u8 = 0xFF;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperandKind {
     None,
-    I64,    // 8B signed big-endian
-    F64,    // 8B IEEE-754 big-endian
-    Str,    // 2B const-pool index
-    Slot,   // 2B memory slot
-    Addr,   // 4B byte offset
-    Cap,    // 2B const-pool idx + 1B argc
-    Func,   // 2B const-pool index
-    Count,  // 2B element count
+    I64,   // 8B signed big-endian
+    F64,   // 8B IEEE-754 big-endian
+    Str,   // 2B const-pool index
+    Slot,  // 2B memory slot
+    Addr,  // 4B byte offset
+    Cap,   // 2B const-pool idx + 1B argc
+    Func,  // 2B const-pool index
+    Count, // 2B element count
 }
 
 impl OperandKind {
     #[inline]
     pub fn byte_width(self) -> usize {
         match self {
-            OperandKind::None  => 0,
+            OperandKind::None => 0,
             OperandKind::I64 | OperandKind::F64 => 8,
-            OperandKind::Str | OperandKind::Slot
-            | OperandKind::Func | OperandKind::Count => 2,
-            OperandKind::Addr  => 4,
-            OperandKind::Cap   => 3,
+            OperandKind::Str | OperandKind::Slot | OperandKind::Func | OperandKind::Count => 2,
+            OperandKind::Addr => 4,
+            OperandKind::Cap => 3,
         }
     }
 }
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT
-        | ADD | SUB | MUL | DIV | MOD
-        | EQ | LT | GT | NOT
-        | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
+        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT | ADD | SUB
+        | MUL | DIV | MOD | EQ | LT | GT | NOT | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH
+        | ARR_POP => Some(OperandKind::None),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),
         LOAD | STORE => Some(OperandKind::Slot),
         JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
-        CAP_CALL  => Some(OperandKind::Cap),
-        CALL      => Some(OperandKind::Func),
+        CAP_CALL => Some(OperandKind::Cap),
+        CALL => Some(OperandKind::Func),
         EXEC_LANG => Some(OperandKind::Str),
         SET_FIELD | GET_FIELD => Some(OperandKind::Str),
         NEW_OBJ => Some(OperandKind::None),
@@ -148,12 +146,15 @@ pub struct Program {
 
 impl Program {
     pub fn new(code: Vec<u8>, consts: Vec<String>, manifest: Manifest) -> Self {
-        Self { code, consts, manifest }
+        Self {
+            code,
+            consts,
+            manifest,
+        }
     }
 
     pub fn to_blob(&self) -> Vec<u8> {
-        let manifest_json = serde_json::to_string(&self.manifest)
-            .expect("manifest serialization");
+        let manifest_json = serde_json::to_string(&self.manifest).expect("manifest serialization");
         let mb = manifest_json.as_bytes();
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
@@ -176,12 +177,15 @@ impl Program {
             return Err(crate::Error::BadMagic);
         }
         let mut off = 4usize;
-        let version = blob[off]; off += 1;
+        let version = blob[off];
+        off += 1;
         if !(MIN_VERSION..=VERSION).contains(&version) {
             return Err(crate::Error::UnsupportedVersion(version));
         }
         let man_len = rd_u16(blob, &mut off)? as usize;
-        if off + man_len > blob.len() { return Err(crate::Error::Truncated); }
+        if off + man_len > blob.len() {
+            return Err(crate::Error::Truncated);
+        }
         let manifest: Manifest = serde_json::from_slice(&blob[off..off + man_len])
             .map_err(|e| crate::Error::BadManifest(e.to_string()))?;
         off += man_len;
@@ -189,7 +193,9 @@ impl Program {
         let mut consts = Vec::with_capacity(n_consts);
         for _ in 0..n_consts {
             let slen = rd_u16(blob, &mut off)? as usize;
-            if off + slen > blob.len() { return Err(crate::Error::Truncated); }
+            if off + slen > blob.len() {
+                return Err(crate::Error::Truncated);
+            }
             let s = std::str::from_utf8(&blob[off..off + slen])
                 .map_err(|e| crate::Error::BadManifest(e.to_string()))?
                 .to_string();
@@ -197,21 +203,31 @@ impl Program {
             off += slen;
         }
         let code_len = rd_u32(blob, &mut off)? as usize;
-        if off + code_len > blob.len() { return Err(crate::Error::Truncated); }
+        if off + code_len > blob.len() {
+            return Err(crate::Error::Truncated);
+        }
         let code = blob[off..off + code_len].to_vec();
-        Ok(Self { code, consts, manifest })
+        Ok(Self {
+            code,
+            consts,
+            manifest,
+        })
     }
 }
 
 fn rd_u16(blob: &[u8], off: &mut usize) -> Result<u16, crate::Error> {
-    if *off + 2 > blob.len() { return Err(crate::Error::Truncated); }
+    if *off + 2 > blob.len() {
+        return Err(crate::Error::Truncated);
+    }
     let v = u16::from_be_bytes(blob[*off..*off + 2].try_into().unwrap());
     *off += 2;
     Ok(v)
 }
 
 fn rd_u32(blob: &[u8], off: &mut usize) -> Result<u32, crate::Error> {
-    if *off + 4 > blob.len() { return Err(crate::Error::Truncated); }
+    if *off + 4 > blob.len() {
+        return Err(crate::Error::Truncated);
+    }
     let v = u32::from_be_bytes(blob[*off..*off + 4].try_into().unwrap());
     *off += 4;
     Ok(v)

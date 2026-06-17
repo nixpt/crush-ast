@@ -3,8 +3,12 @@ name = "crush-vm"
 version = "0.2.0"
 edition = "2024"
 repository.workspace = true
+homepage.workspace = true
 description = "CVM1 binary bytecode assembler, disassembler, and sandboxed interpreter — standalone Crush runtime outside exosphere"
 license.workspace = true
+readme = "README.md"
+keywords = ["crush", "vm", "bytecode", "interpreter", "sandbox"]
+categories = ["compilers"]
 
 [[bin]]
 name = "crush-vm"

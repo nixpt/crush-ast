@@ -1,20 +1,28 @@
-pub mod parser;
-pub mod types;
-pub mod semantics;
-pub mod optimizer;
+pub mod ai_runtime;
 pub mod compiler;
-pub mod render;
 pub mod import_system;
 pub mod language_walkers;
-pub mod ai_runtime;
+pub mod optimizer;
+pub mod parser;
 pub mod polyglot_imports;
+pub mod render;
+pub mod semantics;
+pub mod types;
 
 use anyhow::Result;
 
 /// Parse Crush source code into a CAST Program.
 pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
-    parser::Parser::parse(source)
-        .map_err(|errors| anyhow::anyhow!("Parse errors: {}", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ")))
+    parser::Parser::parse(source).map_err(|errors| {
+        anyhow::anyhow!(
+            "Parse errors: {}",
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
 }
 
 /// Compile an already-parsed CAST Program into CASM bytecode.

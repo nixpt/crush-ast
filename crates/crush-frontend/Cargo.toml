@@ -3,8 +3,12 @@ name = "crush-frontend"
 version = "0.2.0"
 edition = "2024"
 repository.workspace = true
+homepage.workspace = true
 description = "Portable Crush language frontend: parser, semantic analyzer, optimizer, and CASM compiler"
 license.workspace = true
+readme = "README.md"
+keywords = ["crush", "compiler", "parser", "frontend"]
+categories = ["compilers"]
 
 [dependencies]
 crush-cast.workspace = true

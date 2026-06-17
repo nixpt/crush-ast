@@ -123,15 +123,14 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // ── Step 1: Parse to CAST (Crush Abstract Syntax Tree) ──────────
-    let mut program = crush_frontend::parser::Parser::parse(&source)
-        .map_err(|errors| {
-            let mut msg = String::from("parse error");
-            for (i, err) in errors.iter().enumerate() {
-                use std::fmt::Write;
-                let _ = write!(msg, "\n  {}. {err}", i + 1);
-            }
-            anyhow::anyhow!(msg)
-        })?;
+    let mut program = crush_frontend::parser::Parser::parse(&source).map_err(|errors| {
+        let mut msg = String::from("parse error");
+        for (i, err) in errors.iter().enumerate() {
+            use std::fmt::Write;
+            let _ = write!(msg, "\n  {}. {err}", i + 1);
+        }
+        anyhow::anyhow!(msg)
+    })?;
 
     if cli.emit == EmitKind::Ast {
         let rendered = crush_frontend::render::render_program(&program);

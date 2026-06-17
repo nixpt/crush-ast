@@ -59,6 +59,11 @@ fn compile(
     });
 
     std::fs::write(&out_path, blob)?;
-    println!("compiled {} → {} ({} bytes)", input.display(), out_path.display(), program.code.len());
+    println!(
+        "compiled {} → {} ({} bytes)",
+        input.display(),
+        out_path.display(),
+        program.code.len()
+    );
     Ok(())
 }

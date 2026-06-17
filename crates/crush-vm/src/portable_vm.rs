@@ -64,7 +64,7 @@ impl PortableVm {
     pub fn new(program: Program) -> Self {
         // Extract permissions before moving program
         let permissions = program.manifest.permissions.clone();
-        
+
         // Build function entry map
         let func_entry: std::collections::HashMap<String, usize> = program
             .manifest
@@ -74,14 +74,19 @@ impl PortableVm {
             .collect();
 
         // Determine entry point
-        let start_ip = program.manifest.entry.as_deref()
+        let start_ip = program
+            .manifest
+            .entry
+            .as_deref()
             .and_then(|e| func_entry.get(e).copied())
             .unwrap_or_else(|| func_entry.values().copied().next().unwrap_or(0));
 
-
         // Initialize call stack with entry frame
         let mut call_stack = Vec::new();
-        call_stack.push(Frame { return_ip: None, memory: std::collections::HashMap::new() });
+        call_stack.push(Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+        });
 
         let declared_caps: std::collections::HashSet<String> = permissions.into_iter().collect();
 
@@ -176,21 +181,31 @@ impl PortableVm {
             NOP => {}
             PUSH => {
                 let val = i64::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 9].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 9]
+                        .try_into()
+                        .unwrap(),
                 );
                 self.push(Value::Int(val));
             }
             PUSH_F64 => {
                 let val = f64::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 9].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 9]
+                        .try_into()
+                        .unwrap(),
                 );
                 self.push(Value::Float(val));
             }
             PUSH_STR => {
                 let idx = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
-                let s = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?;
+                let s = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?;
                 self.push(Value::Str(s.clone()));
             }
             PUSH_NULL => {
@@ -251,26 +266,29 @@ impl PortableVm {
             }
             LOAD => {
                 let slot = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 );
-                let frame = self.call_stack.last()
-                    .ok_or(VmError::StackUnderflow)?;
-                let v = frame.memory.get(&slot)
-                    .ok_or(VmError::UninitSlot(slot))?;
+                let frame = self.call_stack.last().ok_or(VmError::StackUnderflow)?;
+                let v = frame.memory.get(&slot).ok_or(VmError::UninitSlot(slot))?;
                 self.push(v.clone());
             }
             STORE => {
                 let slot = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 );
                 let v = self.pop()?;
-                let frame = self.call_stack.last_mut()
-                    .ok_or(VmError::StackUnderflow)?;
+                let frame = self.call_stack.last_mut().ok_or(VmError::StackUnderflow)?;
                 frame.memory.insert(slot, v);
             }
             JMP | JZ | JNZ => {
                 let target = u32::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 5].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 5]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 if target > self.program.code.len() {
                     return Err(VmError::BadJump(target));
@@ -295,11 +313,18 @@ impl PortableVm {
             }
             CAP_CALL => {
                 let idx = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 let argc = self.program.code[self.ip + 3] as usize;
 
-                let cap = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let cap = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
 
                 let mut args = Vec::with_capacity(argc);
                 for _ in 0..argc {
@@ -314,9 +339,15 @@ impl PortableVm {
             }
             CALL => {
                 let idx = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
-                let fname = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?;
+                let fname = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?;
 
                 let func_entry = self.get_function_entry(fname)?;
                 if self.call_stack.len() >= self.quotas.max_call_depth {
@@ -328,18 +359,17 @@ impl PortableVm {
                 let mut frame = Frame::new(Some(next_ip));
                 if self.stack.len() >= 2 {
                     // Pop args from main stack (top is last pushed)
-                    let arg1 = self.pop()?;  // 5
-                    let arg0 = self.pop()?;  // 10
-                    frame.memory.insert(0, arg0);  // slot 0 = first arg
-                    frame.memory.insert(1, arg1);  // slot 1 = second arg
+                    let arg1 = self.pop()?; // 5
+                    let arg0 = self.pop()?; // 10
+                    frame.memory.insert(0, arg0); // slot 0 = first arg
+                    frame.memory.insert(1, arg1); // slot 1 = second arg
                 }
                 self.call_stack.push(frame);
                 self.ip = func_entry;
             }
             RET => {
                 let return_value = self.pop()?;
-                let frame = self.call_stack.pop()
-                    .ok_or(VmError::StackUnderflow)?;
+                let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
                 match frame.return_ip {
                     None => {
                         self.push(return_value);
@@ -353,7 +383,9 @@ impl PortableVm {
             }
             NEW_ARRAY => {
                 let count = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 let mut vals = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -401,57 +433,69 @@ impl PortableVm {
         if !self.declared_caps.contains(cap) {
             return Err(VmError::CapNotDeclared(cap.to_string()));
         }
-        if let Some(allowed) = &self.quotas.allowed_caps {
-            if !allowed.iter().any(|a| a == cap) {
-                return Err(VmError::CapDenied(cap.to_string()));
-            }
+        if let Some(allowed) = &self.quotas.allowed_caps
+            && !allowed.iter().any(|a| a == cap)
+        {
+            return Err(VmError::CapDenied(cap.to_string()));
         }
 
         // Built-in portable capabilities
         if let Some(spec) = crate::caps::capabilities().get(cap) {
-            if let Some(expected) = spec.argc {
-                if args.len() != expected {
-                    return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
-                }
+            if let Some(expected) = spec.argc
+                && args.len() != expected
+            {
+                return Err(VmError::CapArity {
+                    cap: cap.to_string(),
+                    expected,
+                    got: args.len(),
+                });
             }
             return match cap {
-        "io.print" => {
-            let s: String = args.iter().map(|a| value_to_text(a)).collect::<Vec<_>>().concat();
-            self.out_len += s.len();
-            if self.out_len > self.quotas.max_output {
-                return Err(VmError::OutputQuota(self.quotas.max_output));
-            }
-            self.out_parts.push(s);
-            Ok(None)
-        }
-        "str.concat" => {
-            let s: String = args.iter().map(|a| value_to_text(a)).collect::<Vec<_>>().concat();
-            Ok(Some(Value::Str(s)))
-        }
-        "str.len" => {
-            let s = value_to_text(&args[0]);
-            Ok(Some(Value::Int(s.len() as i64)))
-        }
-        _ => Err(VmError::UnknownCap(cap.to_string())),
-    };
+                "io.print" => {
+                    let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
+                    self.out_len += s.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.out_parts.push(s);
+                    Ok(None)
+                }
+                "str.concat" => {
+                    let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
+                    Ok(Some(Value::Str(s)))
+                }
+                "str.len" => {
+                    let s = value_to_text(&args[0]);
+                    Ok(Some(Value::Int(s.len() as i64)))
+                }
+                _ => Err(VmError::UnknownCap(cap.to_string())),
+            };
         }
 
         // Privilege check for host-provided capabilities
         if !self.privileged_allowed && crate::caps::is_privileged(cap) {
-            return Err(VmError::CapDenied(format!("privileged cap requires elevated grant: {cap}")));
+            return Err(VmError::CapDenied(format!(
+                "privileged cap requires elevated grant: {cap}"
+            )));
         }
 
         // Host-provided capabilities
-        if let Some(host) = &self.host_caps {
-            if let Some(handler) = host.get(cap) {
-                let spec = handler.spec();
-                if let Some(expected) = spec.argc {
-                    if args.len() != expected {
-                        return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
-                    }
-                }
-                return handler.call(args).map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
+        if let Some(host) = &self.host_caps
+            && let Some(handler) = host.get(cap)
+        {
+            let spec = handler.spec();
+            if let Some(expected) = spec.argc
+                && args.len() != expected
+            {
+                return Err(VmError::CapArity {
+                    cap: cap.to_string(),
+                    expected,
+                    got: args.len(),
+                });
             }
+            return handler
+                .call(args)
+                .map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
         }
 
         Err(VmError::UnknownCap(cap.to_string()))
@@ -506,7 +550,10 @@ pub enum VmYield {
     /// VM has finished execution.
     Finished,
     /// VM is waiting for a host capability.
-    HostCall { capability: String, args: Vec<Value> },
+    HostCall {
+        capability: String,
+        args: Vec<Value>,
+    },
     /// VM has hit a breakpoint (for debugging).
     DebugBreak { reason: String },
 }
@@ -515,7 +562,10 @@ pub enum VmYield {
 fn need_array(v: &Value) -> Result<&Vec<Value>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-        _ => Err(VmError::TypeError { expected: "array", got: value_type_name(v) }),
+        _ => Err(VmError::TypeError {
+            expected: "array",
+            got: value_type_name(v),
+        }),
     }
 }
 
@@ -584,7 +634,10 @@ pub fn value_to_text(v: &Value) -> String {
             format!("[{}]", items.join(", "))
         }
         Value::Map(m) => {
-            let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_text(v))).collect();
+            let items: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, value_to_text(v)))
+                .collect();
             format!("{{{}}}", items.join(", "))
         }
         Value::Error(e) => format!("error({})", e),

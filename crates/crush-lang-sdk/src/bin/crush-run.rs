@@ -63,39 +63,39 @@ struct RunArgs {
     #[arg(long)]
     env: bool,
 
-        /// Enable time host capability (time.now).
-        #[arg(long)]
-        time: bool,
+    /// Enable time host capability (time.now).
+    #[arg(long)]
+    time: bool,
 
-        /// Enable message-bus capabilities (message_bus.publish/subscribe/recv).
-        #[arg(long)]
-        bus: bool,
+    /// Enable message-bus capabilities (message_bus.publish/subscribe/recv).
+    #[arg(long)]
+    bus: bool,
 
-        /// Enable task-management capabilities (task.start/stop/list).
-        #[arg(long)]
-        task: bool,
+    /// Enable task-management capabilities (task.start/stop/list).
+    #[arg(long)]
+    task: bool,
 
-        /// Enable knowledge-graph capabilities (akg.write/read/search).
-        #[arg(long)]
-        akg: bool,
+    /// Enable knowledge-graph capabilities (akg.write/read/search).
+    #[arg(long)]
+    akg: bool,
 
-        /// Enable process host capability (process.exec).
-        #[arg(long)]
-        process: bool,
+    /// Enable process host capability (process.exec).
+    #[arg(long)]
+    process: bool,
 
-         /// Enable cryptography host capabilities (crypto.sha256, crypto.random).
-        #[arg(long)]
-        crypto: bool,
+    /// Enable cryptography host capabilities (crypto.sha256, crypto.random).
+    #[arg(long)]
+    crypto: bool,
 
-        /// Enable graphics host capabilities (graphics.canvas/rect/circle/text/to_svg).
-        #[arg(long)]
-        graphics: bool,
+    /// Enable graphics host capabilities (graphics.canvas/rect/circle/text/to_svg).
+    #[arg(long)]
+    graphics: bool,
 
-        /// Enable standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*).
-        #[arg(long)]
-        stdlib: bool,
+    /// Enable standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*).
+    #[arg(long)]
+    stdlib: bool,
 
-        /// Enable network host capabilities (net.http_get, net.http_post).
+    /// Enable network host capabilities (net.http_get, net.http_post).
     #[arg(long)]
     net: bool,
 
@@ -188,7 +188,9 @@ fn list_caps() {
     #[cfg(feature = "stdlib")]
     {
         println!("Standard library capabilities (enable with --stdlib):");
-        println!("  str.len/split/join/trim/replace/contains/starts_with/ends_with/to_upper/to_lower");
+        println!(
+            "  str.len/split/join/trim/replace/contains/starts_with/ends_with/to_upper/to_lower"
+        );
         println!("  str.pad_left/pad_right/repeat/substring/char_at/index_of/format");
         println!("  math.sqrt/abs/floor/ceil/round/sin/cos/tan/pow/min/max/pi");
         println!("  conv.to_int/to_float/to_str/to_bool/parse_int/parse_float/type_of");
@@ -216,14 +218,25 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
             let blob = std::fs::read(&args.path)?;
             crush_vm::Program::from_blob(&blob)?
         }
-        _ => anyhow::bail!("unsupported file extension: {} (expected .crush, .casm, or .cvm1)", ext),
+        _ => anyhow::bail!(
+            "unsupported file extension: {} (expected .crush, .casm, or .cvm1)",
+            ext
+        ),
     };
 
     let mut quotas = Quotas::default();
-    if let Some(n) = args.max_steps { quotas.max_steps = n; }
-    if let Some(n) = args.max_stack { quotas.max_stack = n; }
-    if let Some(n) = args.max_output { quotas.max_output = n; }
-    if let Some(n) = args.max_call_depth { quotas.max_call_depth = n; }
+    if let Some(n) = args.max_steps {
+        quotas.max_steps = n;
+    }
+    if let Some(n) = args.max_stack {
+        quotas.max_stack = n;
+    }
+    if let Some(n) = args.max_output {
+        quotas.max_output = n;
+    }
+    if let Some(n) = args.max_call_depth {
+        quotas.max_call_depth = n;
+    }
 
     #[allow(unused_mut)]
     let mut builder = HostCapsBuilder::new()
@@ -243,12 +256,16 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     }
     #[cfg(not(feature = "graphics"))]
     if args.graphics {
-        eprintln!("warning: --graphics requires the 'graphics' feature (not enabled in this build)");
+        eprintln!(
+            "warning: --graphics requires the 'graphics' feature (not enabled in this build)"
+        );
     }
 
     #[cfg(feature = "net")]
     {
-        builder = builder.net(args.net).net_max_response_bytes(args.net_max_response_bytes);
+        builder = builder
+            .net(args.net)
+            .net_max_response_bytes(args.net_max_response_bytes);
     }
     #[cfg(not(feature = "net"))]
     if args.net {
@@ -275,8 +292,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
 
     let host_caps = builder.build();
 
-    let runtime = Runtime::with_quotas(quotas)
-        .with_host_caps(host_caps);
+    let runtime = Runtime::with_quotas(quotas).with_host_caps(host_caps);
 
     let result = runtime.run(&program)?;
     print_result(&result);

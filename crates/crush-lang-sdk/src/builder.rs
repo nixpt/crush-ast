@@ -97,7 +97,12 @@ mod tests {
             .expect("build should succeed");
 
         assert_eq!(program.manifest.name.as_deref(), Some("test"));
-        assert!(program.manifest.permissions.contains(&"io.print".to_string()));
+        assert!(
+            program
+                .manifest
+                .permissions
+                .contains(&"io.print".to_string())
+        );
         assert!(!program.code.is_empty());
     }
 

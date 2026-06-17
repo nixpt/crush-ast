@@ -2,9 +2,14 @@
 license.workspace = true
 description = "Tree-sitter grammar for the Crush programming language"
 name = "tree-sitter-crush"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["tree-sitter", "crush", "grammar", "parser"]
+categories = ["parser-implementations"]
+exclude = ["crush.so"]
 
 [lib]
 path = "src/lib.rs"

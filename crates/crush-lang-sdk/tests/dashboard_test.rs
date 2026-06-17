@@ -1,5 +1,5 @@
-use crush_lang_sdk::{HostCapsBuilder, Runtime};
 use crush_lang_sdk::compile::compile_crush_source;
+use crush_lang_sdk::{HostCapsBuilder, Runtime};
 
 #[test]
 fn dashboard_comprehensive() {
@@ -48,10 +48,7 @@ fn main() {
 
     let prog = compile_crush_source(source).expect("compile dashboard.crush");
 
-    let host_caps = HostCapsBuilder::new()
-        .env(true)
-        .crypto(true)
-        .build();
+    let host_caps = HostCapsBuilder::new().env(true).crypto(true).build();
 
     let result = Runtime::new()
         .with_host_caps(host_caps)

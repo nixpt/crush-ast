@@ -113,7 +113,11 @@ impl CrushEngine {
             Ok(result) => CrushOutcome {
                 success: result.halted,
                 stdout: result.output.clone(),
-                error: if result.halted { None } else { Some("program fell off end without HALT".into()) },
+                error: if result.halted {
+                    None
+                } else {
+                    Some("program fell off end without HALT".into())
+                },
                 steps: result.steps,
                 wall_ms: start.elapsed().as_millis() as u64,
             },
@@ -141,8 +145,8 @@ impl CrushEngine {
         permissions: &[&str],
         quotas: Quotas,
     ) -> Result<CrushJob, String> {
-        let program = crate::assemble(source, Some(permissions), None)
-            .map_err(|e| e.to_string())?;
+        let program =
+            crate::assemble(source, Some(permissions), None).map_err(|e| e.to_string())?;
         Ok(CrushJob {
             bytecode: program.to_blob(),
             permissions: permissions.iter().map(|s| s.to_string()).collect(),
@@ -193,7 +197,13 @@ mod tests {
 
         let outcome = CrushEngine::new().run(&job);
         assert!(!outcome.success);
-        assert!(outcome.error.as_deref().unwrap().contains("capability denied"));
+        assert!(
+            outcome
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("capability denied")
+        );
     }
 
     #[test]
@@ -212,7 +222,13 @@ mod tests {
         let job = CrushJob::from_blob(program.to_blob()).with_quotas(quotas);
         let outcome = CrushEngine::new().run(&job);
         assert!(!outcome.success);
-        assert!(outcome.error.as_deref().unwrap().contains("instruction quota"));
+        assert!(
+            outcome
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("instruction quota")
+        );
     }
 
     #[test]

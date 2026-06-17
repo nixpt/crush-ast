@@ -9,7 +9,8 @@ fn assert_roundtrip(source: &str) {
     let orig_json = serde_json::to_string_pretty(&original).expect("serialize original");
     let rep_json = serde_json::to_string_pretty(&reparsed).expect("serialize reparsed");
 
-    let orig_val: serde_json::Value = serde_json::from_str(&orig_json).expect("deserialize original");
+    let orig_val: serde_json::Value =
+        serde_json::from_str(&orig_json).expect("deserialize original");
     let rep_val: serde_json::Value = serde_json::from_str(&rep_json).expect("deserialize reparsed");
 
     assert_eq!(
@@ -21,27 +22,32 @@ fn assert_roundtrip(source: &str) {
 
 #[test]
 fn roundtrip_arithmetic_and_literals() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 let a = 1 + 2 * 3
 let b = 10 - 4 / 2
 let c = a > b
 let d = c == false
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_variables_and_exports() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 let x = 42
 let y = "hello"
 export x
 export z = 100
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_functions_and_calls() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 fn add(a: Int, b: Int) {
     return a + b
 }
@@ -50,12 +56,14 @@ fn main() {
     let result = add(1, 2)
     return result
 }
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_if_else() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 if x > 0 {
     let a = 1
 } else if x < 0 {
@@ -63,12 +71,14 @@ if x > 0 {
 } else {
     let c = 0
 }
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_while_and_for() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 let i = 0
 while i < 10 {
     let i = i + 1
@@ -77,53 +87,63 @@ while i < 10 {
 for item in items {
     print(item)
 }
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_try_catch_throw() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 try {
     risky()
 } catch err {
     print(err)
     throw err
 }
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_arrays_objects_indexing() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 let arr = [1, 2, 3]
 let obj = {name: "test", value: 42}
 let first = arr[0]
 let n = obj.name
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_match_expression() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 let result = match x { 1 -> "one", 2 -> "two", _ -> "other" }
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_spawn_await() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 fn double(n: Int) {
     return n * 2
 }
 
 let task = spawn double(5)
 let val = await task
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_imports_and_structs() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 import std.io
 import std.math { sqrt }
 import helpers as h
@@ -131,12 +151,14 @@ import helpers as h
 struct Point { x: Int, y: Int }
 
 let px = 1
-"#);
+"#,
+    );
 }
 
 #[test]
 fn roundtrip_break_continue() {
-    assert_roundtrip(r#"
+    assert_roundtrip(
+        r#"
 while true {
     if done {
         break
@@ -146,7 +168,8 @@ while true {
     }
     work()
 }
-"#);
+"#,
+    );
 }
 
 /// AI-native nodes should render but not be parseable.
@@ -163,13 +186,11 @@ fn render_ai_native_expression() {
                 crush_cast::Function {
                     params: vec![],
                     body: vec![crush_cast::Statement::ExprStmt {
-                        expr: crush_cast::Expression::AI(
-                            crush_cast::ai::AIExpression::Query {
-                                query: "find users".to_string(),
-                                result_type: Some("List<User>".to_string()),
-                                context: std::collections::HashMap::new(),
-                            },
-                        ),
+                        expr: crush_cast::Expression::AI(crush_cast::ai::AIExpression::Query {
+                            query: "find users".to_string(),
+                            result_type: Some("List<User>".to_string()),
+                            context: std::collections::HashMap::new(),
+                        }),
                         meta: std::collections::HashMap::new(),
                     }],
                     meta: std::collections::HashMap::new(),

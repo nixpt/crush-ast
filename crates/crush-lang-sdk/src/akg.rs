@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Register the in-memory AKG capabilities on a [`HostCaps`] registry.
 pub fn register(caps: &mut HostCaps) {
@@ -42,9 +42,7 @@ impl AkgState {
         let q = query.to_lowercase();
         self.units
             .iter()
-            .filter(|(_id, unit)| {
-                unit.to_string().to_lowercase().contains(&q)
-            })
+            .filter(|(_id, unit)| unit.to_string().to_lowercase().contains(&q))
             .map(|(id, unit)| {
                 serde_json::json!({
                     "id": id,
@@ -77,8 +75,8 @@ impl HostCap for AkgWriteCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = crate::caps::value_as_text(&args[0]);
         let unit_json = crate::caps::value_as_text(&args[1]);
-        let unit = serde_json::from_str(&unit_json)
-            .map_err(|e| format!("akg.write invalid JSON: {e}"))?;
+        let unit =
+            serde_json::from_str(&unit_json).map_err(|e| format!("akg.write invalid JSON: {e}"))?;
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         state.write(id, unit);
         Ok(None)
@@ -169,7 +167,9 @@ mod tests {
         let found = read.call(vec![Value::Str("u1".to_string())]).unwrap();
         assert!(matches!(found, Some(Value::Str(_))));
 
-        let results = search.call(vec![Value::Str("greeting".to_string())]).unwrap();
+        let results = search
+            .call(vec![Value::Str("greeting".to_string())])
+            .unwrap();
         if let Value::Array(arr) = results.unwrap() {
             assert_eq!(arr.len(), 1);
         } else {

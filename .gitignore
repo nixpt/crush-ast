@@ -12,3 +12,6 @@ __pycache__/
 .dejavue/timeline.jsonl.bak-*
 
 tmp_*.rs
+
+# compiled tree-sitter grammar artifacts (built from src/parser.c by build.rs)
+*.so

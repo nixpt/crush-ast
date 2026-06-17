@@ -170,7 +170,8 @@ impl AIRuntime {
             .patterns
             .contains_key("crush_statement")
         {
-            suggestions.push("Consider using AI-native constructs for better performance".to_string());
+            suggestions
+                .push("Consider using AI-native constructs for better performance".to_string());
         }
 
         if self.context.knowledge_base.patterns.len() > 3 {

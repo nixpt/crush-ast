@@ -9,8 +9,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
 
-use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::vm::Value;
+use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Register the in-memory message-bus capabilities on a [`HostCaps`] registry.
 pub fn register(caps: &mut HostCaps) {
@@ -176,13 +176,18 @@ fn crush_value_to_json(v: &crush_vm::vm::Value) -> serde_json::Value {
         crush_vm::vm::Value::Null => serde_json::Value::Null,
         crush_vm::vm::Value::Bool(b) => serde_json::Value::Bool(*b),
         crush_vm::vm::Value::Int(i) => serde_json::Value::Number((*i).into()),
-        crush_vm::vm::Value::Float(f) => serde_json::Value::Number(
-            serde_json::Number::from_f64(*f).unwrap_or(0.into()),
-        ),
+        crush_vm::vm::Value::Float(f) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(*f).unwrap_or(0.into()))
+        }
         crush_vm::vm::Value::Str(s) => serde_json::Value::String(s.clone()),
-        crush_vm::vm::Value::Array(a) => serde_json::Value::Array(a.iter().map(crush_value_to_json).collect()),
+        crush_vm::vm::Value::Array(a) => {
+            serde_json::Value::Array(a.iter().map(crush_value_to_json).collect())
+        }
         crush_vm::vm::Value::Map(m) => {
-            let obj: serde_json::Map<String, serde_json::Value> = m.iter().map(|(k, v)| (k.clone(), crush_value_to_json(v))).collect();
+            let obj: serde_json::Map<String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| (k.clone(), crush_value_to_json(v)))
+                .collect();
             serde_json::Value::Object(obj)
         }
         crush_vm::vm::Value::Error(e) => serde_json::Value::String(format!("error({})", e)),

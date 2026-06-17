@@ -71,17 +71,14 @@ fn host_fs_capabilities() {
         .permission("io.print")
         .permission("fs.read")
         .line(".func main")
-        .line(&format!(r#"PUSH_STR "{}""#, file_name))
+        .line(format!(r#"PUSH_STR "{}""#, file_name))
         .line(r#"CAP_CALL "fs.read" 1"#)
         .line(r#"CAP_CALL "io.print" 1"#)
         .line("HALT")
         .build()
         .expect("build");
 
-    let host_caps = HostCapsBuilder::new()
-        .fs(true)
-        .fs_root(dir)
-        .build();
+    let host_caps = HostCapsBuilder::new().fs(true).fs_root(dir).build();
 
     let result = Runtime::new()
         .with_host_caps(host_caps)
@@ -164,7 +161,11 @@ fn host_crypto_capabilities() {
         .run(&program)
         .expect("run");
 
-    assert!(result.output.contains("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"));
+    assert!(
+        result
+            .output
+            .contains("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+    );
 }
 
 #[cfg(feature = "graphics")]
@@ -198,7 +199,11 @@ fn host_graphics_capabilities() {
         .run(&program)
         .expect("run");
 
-    assert!(result.output.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+    assert!(
+        result
+            .output
+            .starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\"")
+    );
     assert!(result.output.contains("<rect"));
 }
 

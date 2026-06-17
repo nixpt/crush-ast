@@ -1,9 +1,8 @@
 fn main() {
     use std::collections::BTreeMap;
 
-    let out = std::path::PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR").unwrap(),
-    ).join("opcodes.json");
+    let out =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("opcodes.json");
 
     let mut opcodes: BTreeMap<&str, u64> = BTreeMap::new();
     opcodes.insert("NOP", 0);
@@ -70,7 +69,6 @@ fn main() {
         "operand_kinds": okinds,
     });
 
-    std::fs::write(&out, serde_json::to_string_pretty(&spec).unwrap())
-        .expect("write opcodes.json");
+    std::fs::write(&out, serde_json::to_string_pretty(&spec).unwrap()).expect("write opcodes.json");
     println!("cargo:rerun-if-changed=build.rs");
 }

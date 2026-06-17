@@ -23,39 +23,42 @@
 //! # Ok(()) }
 //! ```
 
-pub mod builder;
-pub mod compile;
-pub mod caps;
-pub mod compute;
-pub mod host_caps;
-pub mod bus;
-pub mod task;
 pub mod akg;
-#[cfg(feature = "net")]
-pub mod net;
+pub mod builder;
+pub mod bus;
+pub mod caps;
+pub mod compile;
+pub mod compute;
 #[cfg(feature = "db")]
 pub mod db;
 #[cfg(feature = "graphics")]
 pub mod graphics;
-pub mod stdlib;
-pub mod runtime;
+pub mod host_caps;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod repl;
-pub mod repl_util;
 #[cfg(feature = "repl-helper")]
 pub mod repl_helper;
+pub mod repl_util;
+pub mod runtime;
+pub mod stdlib;
+pub mod task;
 
 // Re-export the core crush-vm types a host author needs.
-pub use crush_vm::{assemble, disassemble, Program, Quotas, VmError, VmResult};
-pub use crush_vm::vm::Value;
 pub use crush_vm::run as run_program;
+pub use crush_vm::vm::Value;
 pub use crush_vm::{HostCap, HostCapSpec, HostCaps, run_with_caps};
+pub use crush_vm::{Program, Quotas, VmError, VmResult, assemble, disassemble};
 
 pub use builder::{ProgramBuilder, ProgramBuilderError};
-pub use caps::{CapabilityError, print, concat, len};
+pub use caps::{CapabilityError, concat, len, print};
 pub use compute::{CrushEngine, CrushJob, CrushOutcome};
-pub use host_caps::{HostCapsBuilder, FsReadCap, FsWriteCap, FsExistsCap, FsListCap, EnvGetCap, TimeNowCap, ProcessExecCap, CryptoSha256Cap, CryptoRandomCap};
 #[cfg(feature = "graphics")]
-pub use graphics::{CanvasCreateCap, RectCap, CircleCap, TextCap, ToSvgCap};
+pub use graphics::{CanvasCreateCap, CircleCap, RectCap, TextCap, ToSvgCap};
+pub use host_caps::{
+    CryptoRandomCap, CryptoSha256Cap, EnvGetCap, FsExistsCap, FsListCap, FsReadCap, FsWriteCap,
+    HostCapsBuilder, ProcessExecCap, TimeNowCap,
+};
 pub use runtime::{Runtime, RuntimeError};
 
 /// Current SDK version, kept in lock-step with the workspace version.

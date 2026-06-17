@@ -82,25 +82,23 @@ impl ReplState {
     fn to_exec_program(&self) -> (Program, bool) {
         let mut program = self.to_program();
         let mut converted = false;
-        if let Some(main) = program.functions.get_mut("main") {
-            if let Some(Statement::ExprStmt { expr, meta }) = main.body.last().cloned() {
-                let returns_value = match &expr {
-                    Expression::CapabilityCall { name, .. } => {
-                        crush_vm::capabilities()
-                            .get(name.as_str())
-                            .map(|spec| spec.returns)
-                            .unwrap_or(true)
-                    }
-                    _ => true,
-                };
-                if returns_value {
-                    main.body.pop();
-                    main.body.push(Statement::Return {
-                        value: Some(expr),
-                        meta,
-                    });
-                    converted = true;
-                }
+        if let Some(main) = program.functions.get_mut("main")
+            && let Some(Statement::ExprStmt { expr, meta }) = main.body.last().cloned()
+        {
+            let returns_value = match &expr {
+                Expression::CapabilityCall { name, .. } => crush_vm::capabilities()
+                    .get(name.as_str())
+                    .map(|spec| spec.returns)
+                    .unwrap_or(true),
+                _ => true,
+            };
+            if returns_value {
+                main.body.pop();
+                main.body.push(Statement::Return {
+                    value: Some(expr),
+                    meta,
+                });
+                converted = true;
             }
         }
         (program, converted)
@@ -110,9 +108,9 @@ impl ReplState {
 fn merge_main_statements(state: &mut ReplState, mut statements: Vec<Statement>) {
     for stmt in statements.drain(..) {
         if let Statement::VarDecl { name, .. } = &stmt {
-            state.main_statements.retain(|existing| {
-                !matches!(existing, Statement::VarDecl { name: old, .. } if old == name)
-            });
+            state.main_statements.retain(
+                |existing| !matches!(existing, Statement::VarDecl { name: old, .. } if old == name),
+            );
         }
         state.main_statements.push(stmt);
     }
@@ -280,11 +278,7 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<boo
     Err(anyhow::anyhow!("unknown command: {}", input))
 }
 
-fn evaluate_input(
-    source: &str,
-    state: &mut ReplState,
-    config: &ReplConfig,
-) -> anyhow::Result<()> {
+fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> anyhow::Result<()> {
     let snippet = parse_repl_source(source)?;
     let mut defined: Vec<String> = snippet
         .functions
@@ -460,7 +454,10 @@ mod tests {
         assert!(converted);
         let main = program.functions.get("main").expect("main");
         match main.body.last().expect("last stmt") {
-            Statement::Return { value: Some(Expression::BinaryOp { .. }), .. } => {}
+            Statement::Return {
+                value: Some(Expression::BinaryOp { .. }),
+                ..
+            } => {}
             _ => panic!("expected Return with BinaryOp"),
         }
     }
@@ -484,7 +481,10 @@ mod tests {
         state.merge_snippet(s2);
         assert_eq!(state.main_statements.len(), 1);
         match &state.main_statements[0] {
-            Statement::VarDecl { value: Expression::IntLiteral { value: 2, .. }, .. } => {}
+            Statement::VarDecl {
+                value: Expression::IntLiteral { value: 2, .. },
+                ..
+            } => {}
             _ => panic!("expected x = 2"),
         }
     }
