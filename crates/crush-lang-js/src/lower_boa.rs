@@ -10,7 +10,7 @@ use boa_ast::expression::operator::update::{UpdateOp, UpdateTarget};
 use boa_ast::expression::{Expression, Identifier};
 use boa_ast::function::{FunctionBody, FormalParameterList};
 use boa_ast::property::PropertyName;
-use boa_ast::statement::iteration::ForLoopInitializer;
+use boa_ast::statement::iteration::{ForLoopInitializer, IterableLoopInitializer};
 use boa_ast::{Statement, StatementListItem};
 use boa_ast::Script;
 use boa_interner::{Interner, Sym};
@@ -131,14 +131,16 @@ impl BoaLower {
                 init_stmts
             }
             Statement::ForInLoop(fi) => {
+                let variable = iter_loop_var(fi.initializer(), &self.interner);
                 let iterable = Box::new(self.expr(fi.target()));
                 let body = self.stmt_wrap(fi.body());
-                vec![CastStmt::For { variable: "_".to_string(), iterable, body, meta: meta() }]
+                vec![CastStmt::For { variable, iterable, body, meta: meta() }]
             }
             Statement::ForOfLoop(fo) => {
+                let variable = iter_loop_var(fo.initializer(), &self.interner);
                 let iterable = Box::new(self.expr(fo.iterable()));
                 let body = self.stmt_wrap(fo.body());
-                vec![CastStmt::For { variable: "_".to_string(), iterable, body, meta: meta() }]
+                vec![CastStmt::For { variable, iterable, body, meta: meta() }]
             }
             Statement::Switch(s) => {
                 let _ = self.expr(s.val());
@@ -495,6 +497,13 @@ impl BoaLower {
                 }
             }
         }
+    }
+}
+
+fn iter_loop_var(init: &IterableLoopInitializer, interner: &Interner) -> String {
+    match init {
+        IterableLoopInitializer::Identifier(id) => interner.resolve_expect(id.sym()).to_string(),
+        _ => "_".to_string(),
     }
 }
 
