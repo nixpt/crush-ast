@@ -83,7 +83,7 @@ pub enum Value {
 }
 
 impl Value {
-    fn type_name(&self) -> &'static str {
+    pub(crate) fn type_name(&self) -> &'static str {
         match self {
             Value::Null      => "null",
             Value::Bool(_)   => "bool",
@@ -97,7 +97,7 @@ impl Value {
         }
     }
 
-    fn is_truthy(&self) -> bool {
+    pub(crate) fn is_truthy(&self) -> bool {
         match self {
             Value::Null       => false,
             Value::Bool(b)    => *b,
@@ -111,7 +111,7 @@ impl Value {
         }
     }
 
-    fn as_text(&self) -> String {
+    pub(crate) fn as_text(&self) -> String {
         match self {
             Value::Null      => "null".to_string(),
             Value::Bool(b)   => b.to_string(),
@@ -137,7 +137,7 @@ impl Value {
         }
     }
 
-    fn is_numeric(&self) -> bool {
+    pub(crate) fn is_numeric(&self) -> bool {
         matches!(self, Value::Int(_) | Value::Float(_))
     }
 }

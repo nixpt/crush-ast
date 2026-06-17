@@ -182,13 +182,13 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "exit_try" => "EXIT_TRY".to_string(),
                 "new_obj" => "NEW_OBJ".to_string(),
                 "get_field" => {
-                    let field = instr.args["field"].as_str()
-                        .ok_or_else(|| anyhow::anyhow!("get_field missing field at {fname}:{i}"))?;
+                    let field = instr.args.get("field").or_else(|| instr.args.get("name")).and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("get_field missing field arg at {fname}:{i}"))?;
                     format!("GET_FIELD {field:?}")
                 }
                 "set_field" => {
-                    let field = instr.args["field"].as_str()
-                        .ok_or_else(|| anyhow::anyhow!("set_field missing field at {fname}:{i}"))?;
+                    let field = instr.args.get("field").or_else(|| instr.args.get("name")).and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("set_field missing field arg at {fname}:{i}"))?;
                     format!("SET_FIELD {field:?}")
                 }
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
@@ -285,5 +285,50 @@ mod tests {
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run");
         assert_eq!(result.output, "hello from crush");
         assert!(result.halted);
+    }
+
+    #[test]
+    fn test_compile_with_bool() {
+        let source = "fn main() {\n    let a = true\n    let b = false\n    io.print(a)\n}\n";
+        let prog = compile_crush_source(source).expect("compile bool");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run bool");
+        assert_eq!(result.output, "true");
+    }
+
+    #[test]
+    fn test_compile_with_if_bool_condition() {
+        let source = "fn main() {\n    if true {\n        io.print(\"yes\")\n    } else {\n        io.print(\"no\")\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile if bool");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run if bool");
+        assert_eq!(result.output, "yes");
+    }
+
+    #[test]
+    fn test_compile_with_object() {
+        let source = "fn main() {\n    let obj = {name: \"crush\", version: 42}\n    io.print(obj.name)\n}\n";
+        let prog = compile_crush_source(source).expect("compile object");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run object");
+        assert_eq!(result.output, "crush");
+    }
+
+    #[test]
+    fn test_compile_with_try_catch() {
+        let source = "fn main() {\n    try {\n        io.print(\"in try\")\n    } catch err {\n        io.print(\"in catch\")\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile try/catch");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run try/catch");
+        assert_eq!(result.output, "in try");
+    }
+
+    #[test]
+    fn test_compile_with_throw_and_catch() {
+        let source = "fn main() {\n    try {\n        throw \"error!\"\n        io.print(\"not reached\")\n    } catch err {\n        io.print(\"caught\")\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile throw/catch");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run throw/catch");
+        assert_eq!(result.output, "caught");
     }
 }

@@ -397,6 +397,9 @@ impl SemanticAnalyzer {
                             struct_name
                         )
                     }
+                } else if matches!(target_type, Type::Map(_, _)) {
+                    // Field access on maps returns the value type (Any for now)
+                    Ok(Type::Any)
                 } else {
                     bail!(
                         "Cannot access field '{}' on non-struct type {}",
