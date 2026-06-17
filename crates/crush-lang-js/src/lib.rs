@@ -15,8 +15,7 @@ use walker_core::{FeatureReport, Frontend};
 /// Wrapper for Boa-parsed AST + interner, transported via `Box<dyn Any>`.
 #[cfg(feature = "boa-backend")]
 pub struct BoaParsed {
-    pub script: boa_ast::Script,
-    pub interner: boa_interner::Interner,
+    pub ast: crate::backend::boa::BoaAst,
 }
 
 pub struct JsFrontend {
@@ -49,9 +48,8 @@ impl Frontend for JsFrontend {
 
         #[cfg(feature = "boa-backend")]
         if ext == "js" || ext == "mjs" || ext == "cjs" {
-            let (script, interner) =
-                crate::backend::boa::parse(source)?;
-            return Ok(Box::new(BoaParsed { script, interner }));
+            let ast = crate::backend::boa::parse(source)?;
+            return Ok(Box::new(BoaParsed { ast }));
         }
 
         let parsed = backend::parse(source, ext)?;
@@ -64,10 +62,7 @@ impl Frontend for JsFrontend {
 
         #[cfg(feature = "boa-backend")]
         if let Some(parsed) = ast.downcast_ref::<BoaParsed>() {
-            let analyzer = crate::analyzer_boa::BoaAnalyzer::new(&parsed.interner);
-            for item in parsed.script.statements().statements() {
-                analyzer.walk_statement_list_item(item, &mut r);
-            }
+            crate::analyzer_boa::analyze(&parsed.ast, &mut r)?;
             return Ok(r);
         }
 
@@ -84,7 +79,7 @@ impl Frontend for JsFrontend {
         #[cfg(feature = "boa-backend")]
         match ast.downcast::<BoaParsed>() {
             Ok(parsed) => {
-                return crate::lower_boa::lower_boa_script(&parsed.script, parsed.interner);
+                return crate::lower_boa::lower_boa(parsed.ast);
             }
             Err(a) => {
                 let module = a

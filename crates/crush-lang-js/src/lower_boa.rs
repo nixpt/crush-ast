@@ -11,10 +11,11 @@ use boa_ast::expression::{Expression, Identifier};
 use boa_ast::function::{FunctionBody, FormalParameterList};
 use boa_ast::property::PropertyName;
 use boa_ast::statement::iteration::{ForLoopInitializer, IterableLoopInitializer};
-use boa_ast::{Statement, StatementListItem};
-use boa_ast::Script;
+use boa_ast::{ModuleItem, Statement, StatementListItem};
 use boa_interner::{Interner, Sym};
 use crush_cast::{CastType, Expression as CastExpr, Function, Program, Statement as CastStmt};
+
+use crate::backend::boa::BoaAst;
 
 fn meta() -> HashMap<String, serde_json::Value> {
     HashMap::new()
@@ -47,6 +48,28 @@ impl BoaLower {
             match item {
                 StatementListItem::Statement(s) => out.extend(self.stmt(s)),
                 StatementListItem::Declaration(d) => out.extend(self.decl(d)),
+            }
+        }
+        out
+    }
+
+    fn module_list(&mut self, items: &[ModuleItem]) -> Vec<CastStmt> {
+        let mut out = Vec::new();
+        for item in items {
+            match item {
+                ModuleItem::StatementListItem(sli) => {
+                    match sli {
+                        StatementListItem::Statement(s) => out.extend(self.stmt(s)),
+                        StatementListItem::Declaration(d) => out.extend(self.decl(d)),
+                    }
+                }
+                ModuleItem::ImportDeclaration(_) => {
+                    // import declarations are handled by the analyzer; skip in lowering
+                }
+                ModuleItem::ExportDeclaration(_e) => {
+                    // ExportDeclaration type is not publicly accessible;
+                    // storing most exports is out of scope for this pass.
+                }
             }
         }
         out
@@ -586,9 +609,19 @@ fn assign_op_str(op: &AssignOp) -> &'static str {
     }
 }
 
-pub fn lower_boa_script(script: &Script, interner: Interner) -> anyhow::Result<Program> {
-    let mut lower = BoaLower::new(interner);
-    let body = lower.list(script.statements());
+pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
+    let (mut lower, body) = match ast {
+        BoaAst::Script(script, interner) => {
+            let mut lower = BoaLower::new(interner);
+            let body = lower.list(script.statements());
+            (lower, body)
+        }
+        BoaAst::Module(module, interner) => {
+            let mut lower = BoaLower::new(interner);
+            let body = lower.module_list(module.items().items());
+            (lower, body)
+        }
+    };
     lower.functions.insert("main".to_string(), Function {
         params: vec![],
         body,

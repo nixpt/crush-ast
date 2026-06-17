@@ -1,12 +1,58 @@
+use anyhow;
 use boa_ast::declaration::{Declaration, LexicalDeclaration};
 use boa_ast::expression::access::PropertyAccess;
 use boa_ast::expression::literal::PropertyDefinition;
 use boa_ast::expression::operator::assign::AssignTarget;
 use boa_ast::expression::operator::update::UpdateTarget;
 use boa_ast::expression::Expression;
-use boa_ast::{Statement, StatementListItem};
-use boa_interner::Interner;
+use boa_ast::{ModuleItem, Statement, StatementListItem};
+use boa_interner::{Interner, Sym};
 use walker_core::FeatureReport;
+
+use crate::backend::boa::BoaAst;
+
+pub fn analyze(ast: &BoaAst, r: &mut FeatureReport) -> anyhow::Result<()> {
+    match ast {
+        BoaAst::Script(script, interner) => {
+            let analyzer = BoaAnalyzer::new(interner);
+            for item in script.statements().statements() {
+                analyzer.walk_statement_list_item(item, r);
+            }
+        }
+        BoaAst::Module(module, interner) => {
+            let analyzer = BoaAnalyzer::new(interner);
+            for item in module.items().items() {
+                match item {
+                    ModuleItem::ImportDeclaration(import) => {
+                        let src_sym = import.specifier().sym();
+                        let src = analyzer.sym_str(src_sym);
+                        r.uses_imports.push(src.clone());
+                        if is_dangerous_import(&src) {
+                            r.dangerous_imports.push(src);
+                        }
+                    }
+                    ModuleItem::ExportDeclaration(_) => {
+                        r.uses_imports.push("export".to_string());
+                    }
+                    ModuleItem::StatementListItem(sli) => {
+                        analyzer.walk_statement_list_item(sli, r);
+                    }
+                }
+                r.estimated_complexity += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_dangerous_import(module: &str) -> bool {
+    let dangerous = [
+        "child_process", "fs", "net", "dgram", "cluster", "vm",
+        "worker_threads", "os", "process", "module", "electron",
+    ];
+    let base = module.split('/').next().unwrap_or(module);
+    dangerous.contains(&base)
+}
 
 pub struct BoaAnalyzer<'a> {
     pub interner: &'a Interner,
@@ -15,6 +61,10 @@ pub struct BoaAnalyzer<'a> {
 impl<'a> BoaAnalyzer<'a> {
     pub fn new(interner: &'a Interner) -> Self {
         Self { interner }
+    }
+
+    fn sym_str(&self, sym: Sym) -> String {
+        self.interner.resolve_expect(sym).to_string()
     }
 
     fn walk_statement_list(&self, items: &[StatementListItem], r: &mut FeatureReport) {
