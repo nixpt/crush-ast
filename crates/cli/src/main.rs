@@ -24,6 +24,7 @@ fn walker_binary(ext: &str) -> Option<&'static str> {
         "go" => Some("go_walker"),
         "zig" => Some("zig_walker"),
         "sh" | "bash" => Some("bash_walker"),
+        "zsh" => Some("zsh_walker"),
         "wasm" => Some("wasm_walker"),
         _ => None,
     }

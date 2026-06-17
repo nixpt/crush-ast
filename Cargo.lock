@@ -839,6 +839,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-lang-zsh"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "serde",
+ "serde_json",
+ "walker-core",
+ "zshrs-parse",
+]
+
+[[package]]
 name = "crush-pkg"
 version = "0.2.0"
 dependencies = [
@@ -4319,6 +4334,15 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zshrs-parse"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6a0600b84ac2fc2def1637c68a84d976d188224df136b16154c3554591d31f8"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "zstd"
