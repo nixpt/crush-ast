@@ -1,0 +1,1101 @@
+use std::collections::HashMap;
+
+use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
+use swc_ecma_ast::*;
+
+fn meta() -> HashMap<String, serde_json::Value> {
+    HashMap::new()
+}
+
+fn wtf8_str<'a>(a: &'a swc_atoms::Wtf8Atom) -> &'a str {
+    a.as_str().unwrap_or_default()
+}
+
+pub fn lower_module(module: &Module) -> anyhow::Result<Program> {
+    let mut main_body: Vec<Statement> = Vec::new();
+    let mut functions: HashMap<String, Function> = HashMap::new();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                let name = fn_decl.ident.sym.to_string();
+                let lowered = lower_fn_decl(fn_decl)?;
+                if let Statement::FunctionDef { params, body, .. } = lowered {
+                    functions.insert(name, Function { params, body, meta: HashMap::new() });
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))) => {
+                main_body.push(lower_class_decl(class_decl)?);
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+                for decl in &var_decl.decls {
+                    main_body.extend(lower_var_declarator(decl)?);
+                }
+            }
+            ModuleItem::Stmt(stmt) => {
+                if let Some(s) = lower_stmt(stmt)? {
+                    main_body.push(s);
+                }
+            }
+            ModuleItem::ModuleDecl(module_decl) => {
+                if let Some(s) = lower_module_decl(module_decl)? {
+                    main_body.push(s);
+                }
+            }
+        }
+    }
+
+    if !main_body.is_empty() && !functions.contains_key("main") {
+        functions.insert("main".to_string(), Function {
+            params: vec![],
+            body: main_body,
+            meta: HashMap::new(),
+        });
+    }
+
+    Ok(Program {
+        cast_version: "0.2".to_string(),
+        entry: "main".to_string(),
+        lang: Some("javascript".to_string()),
+        functions,
+        ai_meta: None,
+    })
+}
+
+fn lower_fn_decl(fn_decl: &FnDecl) -> anyhow::Result<Statement> {
+    let params: Vec<(String, CastType)> = fn_decl
+        .function
+        .params
+        .iter()
+        .map(|p| (pat_to_name(&p.pat), CastType::Any))
+        .collect();
+
+    let mut body = Vec::new();
+    if let Some(block) = &fn_decl.function.body {
+        for s in &block.stmts {
+            if let Some(stmt) = lower_stmt(s)? {
+                body.push(stmt);
+            }
+        }
+    }
+
+    Ok(Statement::FunctionDef {
+        name: fn_decl.ident.sym.to_string(),
+        params,
+        body,
+        meta: meta(),
+    })
+}
+
+fn lower_class_decl(class: &ClassDecl) -> anyhow::Result<Statement> {
+    let name = class.ident.sym.to_string();
+
+    let mut properties = Vec::new();
+    for member in &class.class.body {
+        match member {
+            ClassMember::Method(method) => {
+                let key = prop_name_to_string(&method.key);
+                let params: Vec<(String, CastType)> = method
+                    .function
+                    .params
+                    .iter()
+                    .map(|p| (pat_to_name(&p.pat), CastType::Any))
+                    .collect();
+                let body = match &method.function.body {
+                    Some(b) => stmts_to_vec(&b.stmts)?,
+                    None => vec![],
+                };
+                properties.push((key, Expression::Lambda { params, body, meta: meta() }));
+            }
+            ClassMember::ClassProp(prop) => {
+                let key = prop_name_to_string(&prop.key);
+                let val = match &prop.value {
+                    Some(v) => lower_expr(v)?,
+                    None => Expression::NullLiteral { meta: meta() },
+                };
+                properties.push((key, val));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Statement::VarDecl {
+        name,
+        value: Expression::ObjectLiteral { properties, meta: meta() },
+        type_hint: CastType::Any,
+        meta: meta(),
+    })
+}
+
+fn lower_module_decl(decl: &ModuleDecl) -> anyhow::Result<Option<Statement>> {
+    match decl {
+        ModuleDecl::Import(import) => {
+            let mut selective = Vec::new();
+            for specifier in &import.specifiers {
+                match specifier {
+                    ImportSpecifier::Named(named) => {
+                        selective.push(named.local.sym.to_string());
+                    }
+                    ImportSpecifier::Default(default) => {
+                        selective.push(default.local.sym.to_string());
+                    }
+                    ImportSpecifier::Namespace(ns) => {
+                        selective.push(ns.local.sym.to_string());
+                    }
+                }
+            }
+            let src = wtf8_str(&import.src.value).to_string();
+            Ok(Some(Statement::Import {
+                import: ImportStatement::CrushModule {
+                    module_path: src,
+                    alias: None,
+                    selective,
+                },
+                meta: meta(),
+            }))
+        }
+        ModuleDecl::ExportDecl(export) => {
+            match &export.decl {
+                Decl::Fn(fn_decl) => {
+                    let name = fn_decl.ident.sym.to_string();
+                    Ok(Some(Statement::Export {
+                        name: name.clone(),
+                        value: Expression::Var { name, meta: meta() },
+                        meta: meta(),
+                    }))
+                }
+                Decl::Var(var_decl) => {
+                    for d in &var_decl.decls {
+                        let name = pat_to_name(&d.name);
+                        return Ok(Some(Statement::Export {
+                            name: name.clone(),
+                            value: Expression::Var { name, meta: meta() },
+                            meta: meta(),
+                        }));
+                    }
+                    Ok(None)
+                }
+                _ => Ok(Some(Statement::LangBlock {
+                    lang: "javascript".to_string(),
+                    code: "// export — not lowered".to_string(),
+                    variables: vec![],
+                    imports: vec![],
+                    meta: meta(),
+                })),
+            }
+        }
+        ModuleDecl::ExportDefaultDecl(export_default) => {
+            match &export_default.decl {
+                DefaultDecl::Fn(fn_expr) => {
+                    let params: Vec<(String, CastType)> = fn_expr
+                        .function
+                        .params
+                        .iter()
+                        .map(|p| (pat_to_name(&p.pat), CastType::Any))
+                        .collect();
+                    let body = match &fn_expr.function.body {
+                        Some(b) => stmts_to_vec(&b.stmts)?,
+                        None => vec![],
+                    };
+                    Ok(Some(Statement::Export {
+                        name: "default".to_string(),
+                        value: Expression::Lambda { params, body, meta: meta() },
+                        meta: meta(),
+                    }))
+                }
+                _ => Ok(Some(Statement::LangBlock {
+                    lang: "javascript".to_string(),
+                    code: "// export default — not lowered".to_string(),
+                    variables: vec![],
+                    imports: vec![],
+                    meta: meta(),
+                })),
+            }
+        }
+        ModuleDecl::ExportDefaultExpr(expr) => {
+            let val = lower_expr(&expr.expr)?;
+            Ok(Some(Statement::Export {
+                name: "default".to_string(),
+                value: val,
+                meta: meta(),
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Option<Statement>> {
+    Ok(Some(match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => {
+            Statement::ExprStmt { expr: lower_expr(expr)?, meta: meta() }
+        }
+        Stmt::Decl(decl) => {
+            match decl {
+                Decl::Fn(fn_decl) => lower_fn_decl(fn_decl)?,
+                Decl::Var(var_decl) => {
+                    let mut stmts = Vec::new();
+                    for d in &var_decl.decls {
+                        stmts.extend(lower_var_declarator(d)?);
+                    }
+                    if stmts.is_empty() {
+                        return Ok(None);
+                    }
+                    stmts.into_iter().next().unwrap()
+                }
+                Decl::Class(class_decl) => lower_class_decl(class_decl)?,
+                _ => return Ok(None),
+            }
+        }
+        Stmt::Return(ReturnStmt { arg, .. }) => {
+            let value = match arg {
+                Some(expr) => Some(lower_expr(expr)?),
+                None => None,
+            };
+            Statement::Return { value, meta: meta() }
+        }
+        Stmt::Throw(ThrowStmt { arg, .. }) => {
+            Statement::Throw { value: lower_expr(arg)?, meta: meta() }
+        }
+        Stmt::If(IfStmt { test, cons, alt, .. }) => {
+            let condition = lower_expr(test)?;
+            let then_body = block_or_stmt_to_vec(cons)?;
+            let else_body = match alt {
+                Some(alt) => Some(block_or_stmt_to_vec(alt)?),
+                None => None,
+            };
+            Statement::If { condition, then_body, else_body, meta: meta() }
+        }
+        Stmt::While(WhileStmt { test, body, .. }) => {
+            let condition = lower_expr(test)?;
+            let body = block_or_stmt_to_vec(body)?;
+            Statement::While { condition: Box::new(condition), body, meta: meta() }
+        }
+        Stmt::DoWhile(DoWhileStmt { test, body, .. }) => {
+            let condition = lower_expr(test)?;
+            let body = block_or_stmt_to_vec(body)?;
+            Statement::While { condition: Box::new(condition), body, meta: meta() }
+        }
+        Stmt::For(ForStmt { init, test, update: _, body, .. }) => {
+            let variable = match init {
+                Some(_) => "i".to_string(),
+                None => "i".to_string(),
+            };
+            let test_expr = match test {
+                Some(t) => lower_expr(t)?,
+                None => Expression::BoolLiteral { value: true, meta: meta() },
+            };
+            let mut body_stmts = block_or_stmt_to_vec(body)?;
+            body_stmts.insert(0, Statement::If {
+                condition: Expression::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(test_expr),
+                    meta: meta(),
+                },
+                then_body: vec![Statement::Break { meta: meta() }],
+                else_body: None,
+                meta: meta(),
+            });
+            Statement::For {
+                variable,
+                iterable: Box::new(Expression::Call {
+                    function: "make_range".to_string(),
+                    args: vec![],
+                    meta: meta(),
+                }),
+                body: body_stmts,
+                meta: meta(),
+            }
+        }
+        Stmt::ForIn(ForInStmt { left, right, body, .. }) => {
+            let variable = for_head_to_var(left);
+            let iterable = lower_expr(right)?;
+            Statement::For {
+                variable,
+                iterable: Box::new(iterable),
+                body: block_or_stmt_to_vec(body)?,
+                meta: meta(),
+            }
+        }
+        Stmt::ForOf(ForOfStmt { left, right, body, .. }) => {
+            let variable = for_head_to_var(left);
+            let iterable = lower_expr(right)?;
+            Statement::For {
+                variable,
+                iterable: Box::new(iterable),
+                body: block_or_stmt_to_vec(body)?,
+                meta: meta(),
+            }
+        }
+        Stmt::Try(box_try) => {
+            let TryStmt { block, handler, finalizer: _, .. } = box_try.as_ref();
+            let body = stmts_to_vec(&block.stmts)?;
+            let (error_var, handler_body) = match handler {
+                Some(catch) => {
+                    let var = catch
+                        .param
+                        .as_ref()
+                        .map(|p| pat_to_name(p))
+                        .unwrap_or_else(|| "err".to_string());
+                    (var, stmts_to_vec(&catch.body.stmts)?)
+                }
+                None => ("err".to_string(), vec![]),
+            };
+            Statement::TryCatch { body, error_var, handler: handler_body, meta: meta() }
+        }
+        Stmt::Switch(SwitchStmt { discriminant, cases, .. }) => {
+            let cond = lower_expr(discriminant)?;
+            let mut body = Vec::new();
+            body.push(Statement::VarDecl {
+                name: "__switch_val".to_string(),
+                value: cond,
+                type_hint: CastType::Any,
+                meta: meta(),
+            });
+            for case in cases {
+                let test = match &case.test {
+                    Some(t) => lower_expr(t)?,
+                    None => Expression::BoolLiteral { value: true, meta: meta() },
+                };
+                body.push(Statement::If {
+                    condition: Expression::BinaryOp {
+                        operator: "===".to_string(),
+                        left: Box::new(Expression::Var {
+                            name: "__switch_val".to_string(), meta: meta(),
+                        }),
+                        right: Box::new(test),
+                        meta: meta(),
+                    },
+                    then_body: stmts_to_vec(&case.cons)?,
+                    else_body: None,
+                    meta: meta(),
+                });
+            }
+            Statement::ExprStmt {
+                expr: Expression::NullLiteral { meta: meta() },
+                meta: meta(),
+            }
+        }
+        Stmt::Break(_) => Statement::Break { meta: meta() },
+        Stmt::Continue(_) => Statement::Continue { meta: meta() },
+        Stmt::With(_) => anyhow::bail!("'with' statement is not supported"),
+        Stmt::Labeled(LabeledStmt { body, .. }) => {
+            return lower_stmt(body);
+        }
+        Stmt::Block(_) | Stmt::Debugger(_) | Stmt::Empty(_) => return Ok(None),
+    }))
+}
+
+fn lower_var_declarator(decl: &VarDeclarator) -> anyhow::Result<Vec<Statement>> {
+    let name = pat_to_name(&decl.name);
+    let value = match &decl.init {
+        Some(init) => lower_expr(init)?,
+        None => Expression::NullLiteral { meta: meta() },
+    };
+    Ok(vec![Statement::VarDecl {
+        name,
+        value,
+        type_hint: CastType::Any,
+        meta: meta(),
+    }])
+}
+
+fn for_head_to_var(head: &ForHead) -> String {
+    match head {
+        ForHead::VarDecl(var_decl) => {
+            var_decl.decls.first()
+                .map(|d| pat_to_name(&d.name))
+                .unwrap_or_else(|| "i".to_string())
+        }
+        ForHead::Pat(pat) => pat_to_name(pat),
+        ForHead::UsingDecl(using) => {
+            using.decls.first()
+                .map(|d| pat_to_name(&d.name))
+                .unwrap_or_else(|| "i".to_string())
+        }
+    }
+}
+
+fn pat_to_name(pat: &Pat) -> String {
+    match pat {
+        Pat::Ident(binding) => binding.id.sym.to_string(),
+        Pat::Array(_) => "_arr".to_string(),
+        Pat::Object(_) => "_obj".to_string(),
+        Pat::Assign(assign) => pat_to_name(&assign.left),
+        Pat::Rest(rest) => pat_to_name(&rest.arg),
+        Pat::Expr(expr) => {
+            if let Expr::Ident(i) = expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        Pat::Invalid(_) => "_invalid".to_string(),
+    }
+}
+
+fn block_or_stmt_to_vec(stmt: &Stmt) -> anyhow::Result<Vec<Statement>> {
+    match stmt {
+        Stmt::Block(block) => stmts_to_vec(&block.stmts),
+        other => {
+            if let Some(s) = lower_stmt(other)? {
+                Ok(vec![s])
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
+}
+
+fn stmts_to_vec(stmts: &[Stmt]) -> anyhow::Result<Vec<Statement>> {
+    let mut result = Vec::new();
+    for s in stmts {
+        match s {
+            Stmt::Block(b) => {
+                result.extend(stmts_to_vec(&b.stmts)?);
+            }
+            _ => {
+                if let Some(stmt) = lower_stmt(s)? {
+                    result.push(stmt);
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
+    let m = meta();
+    match expr {
+        Expr::Ident(ident) => {
+            Ok(Expression::Var { name: ident.sym.to_string(), meta: m })
+        }
+        Expr::Lit(lit) => lower_lit(lit),
+        Expr::Unary(UnaryExpr { op, arg, .. }) => {
+            let operand = lower_expr(arg)?;
+            let operator = match op {
+                UnaryOp::Minus => "-",
+                UnaryOp::Plus => "+",
+                UnaryOp::Bang => "!",
+                UnaryOp::Tilde => "~",
+                UnaryOp::TypeOf => "typeof",
+                UnaryOp::Void => "void",
+                UnaryOp::Delete => "delete",
+            };
+            Ok(Expression::UnaryOp {
+                operator: operator.to_string(),
+                operand: Box::new(operand),
+                meta: m,
+            })
+        }
+        Expr::Bin(BinExpr { op, left, right, .. }) => {
+            let left = lower_expr(left)?;
+            let right = lower_expr(right)?;
+            let operator = match op {
+                BinaryOp::EqEq => "==",
+                BinaryOp::NotEq => "!=",
+                BinaryOp::EqEqEq => "===",
+                BinaryOp::NotEqEq => "!==",
+                BinaryOp::Lt => "<",
+                BinaryOp::LtEq => "<=",
+                BinaryOp::Gt => ">",
+                BinaryOp::GtEq => ">=",
+                BinaryOp::LShift => "<<",
+                BinaryOp::RShift => ">>",
+                BinaryOp::ZeroFillRShift => ">>>",
+                BinaryOp::Add => "+",
+                BinaryOp::Sub => "-",
+                BinaryOp::Mul => "*",
+                BinaryOp::Div => "/",
+                BinaryOp::Mod => "%",
+                BinaryOp::BitOr => "|",
+                BinaryOp::BitXor => "^",
+                BinaryOp::BitAnd => "&",
+                BinaryOp::LogicalOr => "||",
+                BinaryOp::LogicalAnd => "&&",
+                BinaryOp::In => "in",
+                BinaryOp::InstanceOf => "instanceof",
+                BinaryOp::Exp => "**",
+                BinaryOp::NullishCoalescing => "??",
+            };
+            Ok(Expression::BinaryOp {
+                operator: operator.to_string(),
+                left: Box::new(left),
+                right: Box::new(right),
+                meta: m,
+            })
+        }
+        Expr::Cond(CondExpr { test, cons, alt, .. }) => {
+            let test = lower_expr(test)?;
+            let cons = lower_expr(cons)?;
+            let alt = lower_expr(alt)?;
+            Ok(Expression::Call {
+                function: "__crush_ifexpr__".to_string(),
+                args: vec![test, cons, alt],
+                meta: m,
+            })
+        }
+        Expr::Call(CallExpr { callee, args, .. }) => {
+            lower_call_expr(callee, args, m)
+        }
+        Expr::New(NewExpr { callee, args, .. }) => {
+            let callee_str = match callee.as_ref() {
+                Expr::Ident(i) => i.sym.to_string(),
+                _ => "Object".to_string(),
+            };
+            let mut lowered_args = Vec::new();
+            if let Some(args_list) = args {
+                for a in args_list {
+                    lowered_args.push(lower_expr(&a.expr)?);
+                }
+            }
+            Ok(Expression::Call {
+                function: format!("new {}", callee_str),
+                args: lowered_args,
+                meta: m,
+            })
+        }
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
+            let target = lower_expr(obj)?;
+            match prop {
+                MemberProp::Ident(ident_name) => {
+                    Ok(Expression::GetField {
+                        target: Box::new(target),
+                        field: ident_name.sym.to_string(),
+                        meta: m,
+                    })
+                }
+                MemberProp::Computed(computed) => {
+                    let index = lower_expr(&computed.expr)?;
+                    Ok(Expression::Index {
+                        target: Box::new(target),
+                        index: Box::new(index),
+                        meta: m,
+                    })
+                }
+                MemberProp::PrivateName(pn) => {
+                    Ok(Expression::GetField {
+                        target: Box::new(target),
+                        field: format!("#{}", pn.name),
+                        meta: m,
+                    })
+                }
+            }
+        }
+        Expr::Array(ArrayLit { elems, .. }) => {
+            let mut elements = Vec::new();
+            for elem in elems {
+                match elem {
+                    Some(expr_or_spread) => {
+                        elements.push(lower_expr(&expr_or_spread.expr)?);
+                    }
+                    None => {
+                        elements.push(Expression::NullLiteral { meta: m.clone() });
+                    }
+                }
+            }
+            Ok(Expression::ArrayLiteral { elements, meta: m })
+        }
+        Expr::Object(ObjectLit { props, .. }) => {
+            let mut properties = Vec::new();
+            for prop in props {
+                match prop {
+                    PropOrSpread::Prop(box_prop) => {
+                        match box_prop.as_ref() {
+                            Prop::KeyValue(kv) => {
+                                let key = prop_name_to_string(&kv.key);
+                                let val = lower_expr(&kv.value)?;
+                                properties.push((key, val));
+                            }
+                            Prop::Shorthand(ident) => {
+                                let key = ident.sym.to_string();
+                                properties.push((key, Expression::Var {
+                                    name: ident.sym.to_string(),
+                                    meta: m.clone(),
+                                }));
+                            }
+                            Prop::Method(method) => {
+                                let key = prop_name_to_string(&method.key);
+                                let params: Vec<(String, CastType)> = method
+                                    .function.params.iter()
+                                    .map(|p| (pat_to_name(&p.pat), CastType::Any))
+                                    .collect();
+                                let body = match &method.function.body {
+                                    Some(b) => stmts_to_vec(&b.stmts)?,
+                                    None => vec![],
+                                };
+                                properties.push((key, Expression::Lambda { params, body, meta: m.clone() }));
+                            }
+                            Prop::Getter(getter) => {
+                                let key = prop_name_to_string(&getter.key);
+                                let body = match &getter.body {
+                                    Some(b) => stmts_to_vec(&b.stmts)?,
+                                    None => vec![],
+                                };
+                                properties.push((key, Expression::Lambda {
+                                    params: vec![], body, meta: m.clone(),
+                                }));
+                            }
+                            Prop::Setter(setter) => {
+                                let key = prop_name_to_string(&setter.key);
+                                let param_name = pat_to_name(&setter.param);
+                                properties.push((key, Expression::Lambda {
+                                    params: vec![(param_name, CastType::Any)],
+                                    body: vec![],
+                                    meta: m.clone(),
+                                }));
+                            }
+                            Prop::Assign(_) => {}
+                        }
+                    }
+                    PropOrSpread::Spread(_) => {}
+                }
+            }
+            Ok(Expression::ObjectLiteral { properties, meta: m })
+        }
+        Expr::Arrow(ArrowExpr { params, body, .. }) => {
+            let params: Vec<(String, CastType)> = params
+                .iter()
+                .map(|p| (pat_to_name(p), CastType::Any))
+                .collect();
+            let body = match body.as_ref() {
+                BlockStmtOrExpr::BlockStmt(block) => stmts_to_vec(&block.stmts)?,
+                BlockStmtOrExpr::Expr(expr) => {
+                    vec![Statement::Return {
+                        value: Some(lower_expr(expr)?),
+                        meta: m.clone(),
+                    }]
+                }
+            };
+            Ok(Expression::Lambda { params, body, meta: m })
+        }
+        Expr::Fn(FnExpr { ident: _, function, .. }) => {
+            let params: Vec<(String, CastType)> = function
+                .params
+                .iter()
+                .map(|p| (pat_to_name(&p.pat), CastType::Any))
+                .collect();
+            let body = match &function.body {
+                Some(b) => stmts_to_vec(&b.stmts)?,
+                None => vec![],
+            };
+            Ok(Expression::Lambda { params, body, meta: m })
+        }
+        Expr::Assign(AssignExpr { op, left, right, .. }) => {
+            let name = assign_target_to_name(left);
+            let right = lower_expr(right)?;
+            let value = match op {
+                AssignOp::Assign => right,
+                _ => Expression::BinaryOp {
+                    operator: match op {
+                        AssignOp::AddAssign => "+",
+                        AssignOp::SubAssign => "-",
+                        AssignOp::MulAssign => "*",
+                        AssignOp::DivAssign => "/",
+                        AssignOp::ModAssign => "%",
+                        AssignOp::LShiftAssign => "<<",
+                        AssignOp::RShiftAssign => ">>",
+                        AssignOp::BitOrAssign => "|",
+                        AssignOp::BitXorAssign => "^",
+                        AssignOp::BitAndAssign => "&",
+                        AssignOp::ExpAssign => "**",
+                        AssignOp::AndAssign => "&&",
+                        AssignOp::OrAssign => "||",
+                        AssignOp::NullishAssign => "??",
+                        _ => "=",
+                    }.to_string(),
+                    left: Box::new(Expression::Var { name: name.clone(), meta: m.clone() }),
+                    right: Box::new(right),
+                    meta: m.clone(),
+                },
+            };
+            Ok(Expression::Call {
+                function: "__crush_assign__".to_string(),
+                args: vec![
+                    Expression::Var { name, meta: m.clone() },
+                    value,
+                ],
+                meta: m,
+            })
+        }
+        Expr::Seq(SeqExpr { exprs, .. }) => {
+            let mut last = Expression::NullLiteral { meta: m.clone() };
+            for e in exprs {
+                last = lower_expr(e)?;
+            }
+            Ok(last)
+        }
+        Expr::Tpl(Tpl { exprs, quasis, .. }) => {
+            if exprs.is_empty() {
+                let val = quasis.iter()
+                    .map(|q| q.raw.to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                return Ok(Expression::StringLiteral { value: val, meta: m });
+            }
+            let mut result = Expression::StringLiteral {
+                value: quasis.first().map(|q| q.raw.to_string()).unwrap_or_default(),
+                meta: m.clone(),
+            };
+            for (i, expr) in exprs.iter().enumerate() {
+                let expr = lower_expr(expr)?;
+                result = Expression::BinaryOp {
+                    operator: "+".to_string(),
+                    left: Box::new(result),
+                    right: Box::new(expr),
+                    meta: m.clone(),
+                };
+                if let Some(quasi) = quasis.get(i + 1) {
+                    let text = Expression::StringLiteral {
+                        value: quasi.raw.to_string(),
+                        meta: m.clone(),
+                    };
+                    result = Expression::BinaryOp {
+                        operator: "+".to_string(),
+                        left: Box::new(result),
+                        right: Box::new(text),
+                        meta: m.clone(),
+                    };
+                }
+            }
+            Ok(result)
+        }
+        Expr::TaggedTpl(TaggedTpl { tag, .. }) => {
+            let tag_str = match tag.as_ref() {
+                Expr::Ident(i) => i.sym.to_string(),
+                _ => "tagged_template".to_string(),
+            };
+            anyhow::bail!("tagged template literals not supported: {}", tag_str)
+        }
+        Expr::Await(AwaitExpr { arg, .. }) => {
+            let arg = lower_expr(arg)?;
+            Ok(Expression::Await { expression: Box::new(arg), meta: m })
+        }
+        Expr::Yield(YieldExpr { arg, .. }) => {
+            if let Some(arg) = arg {
+                lower_expr(arg)
+            } else {
+                Ok(Expression::NullLiteral { meta: m })
+            }
+        }
+        Expr::Update(UpdateExpr { op, arg, prefix, .. }) => {
+            let name = match arg.as_ref() {
+                Expr::Ident(i) => i.sym.to_string(),
+                _ => "_expr".to_string(),
+            };
+            let fname = match (op, prefix) {
+                (UpdateOp::PlusPlus, true) => "__crush_pre_inc__",
+                (UpdateOp::MinusMinus, true) => "__crush_pre_dec__",
+                (UpdateOp::PlusPlus, false) => "__crush_post_inc__",
+                (UpdateOp::MinusMinus, false) => "__crush_post_dec__",
+            };
+            Ok(Expression::Call {
+                function: fname.to_string(),
+                args: vec![Expression::Var { name, meta: m.clone() }],
+                meta: m,
+            })
+        }
+        Expr::SuperProp(SuperPropExpr { obj: _, prop, .. }) => {
+            let field = match prop {
+                SuperProp::Ident(i) => i.sym.to_string(),
+                SuperProp::Computed(_) => "[]".to_string(),
+            };
+            Ok(Expression::GetField {
+                target: Box::new(Expression::Var { name: "super".to_string(), meta: m.clone() }),
+                field,
+                meta: m,
+            })
+        }
+        Expr::This(_) => {
+            Ok(Expression::Var { name: "this".to_string(), meta: m })
+        }
+        Expr::MetaProp(_) => {
+            Ok(Expression::Var { name: "import.meta".to_string(), meta: m })
+        }
+        Expr::PrivateName(priv_name) => {
+            Ok(Expression::GetField {
+                target: Box::new(Expression::Var { name: "this".to_string(), meta: m.clone() }),
+                field: format!("#{}", priv_name.name),
+                meta: m,
+            })
+        }
+        Expr::Paren(ParenExpr { expr, .. }) => {
+            lower_expr(expr)
+        }
+        Expr::TsTypeAssertion(TsTypeAssertion { expr, .. }) => lower_expr(expr),
+        Expr::TsAs(TsAsExpr { expr, .. }) => lower_expr(expr),
+        Expr::TsNonNull(TsNonNullExpr { expr, .. }) => lower_expr(expr),
+        Expr::TsSatisfies(TsSatisfiesExpr { expr, .. }) => lower_expr(expr),
+        Expr::TsConstAssertion(TsConstAssertion { expr, .. }) => lower_expr(expr),
+        Expr::TsInstantiation(TsInstantiation { expr, .. }) => lower_expr(expr),
+        Expr::OptChain(OptChainExpr { base, .. }) => {
+            match base.as_ref() {
+                OptChainBase::Member(member) => {
+                    let target = lower_expr(&member.obj)?;
+                    match &member.prop {
+                        MemberProp::Ident(i) => Ok(Expression::GetField {
+                            target: Box::new(target),
+                            field: i.sym.to_string(),
+                            meta: m,
+                        }),
+                        MemberProp::Computed(c) => {
+                            let index = lower_expr(&c.expr)?;
+                            Ok(Expression::Index {
+                                target: Box::new(target),
+                                index: Box::new(index),
+                                meta: m,
+                            })
+                        }
+                        MemberProp::PrivateName(pn) => Ok(Expression::GetField {
+                            target: Box::new(target),
+                            field: format!("#{}", pn.name),
+                            meta: m,
+                        }),
+                    }
+                }
+                OptChainBase::Call(call) => {
+                    let callee = Callee::Expr(call.callee.clone());
+                    lower_call_expr(&callee, &call.args, m)
+                }
+            }
+        }
+        Expr::Class(ClassExpr { class, .. }) => {
+            let mut properties = Vec::new();
+            for member in &class.body {
+                if let ClassMember::Method(method) = member {
+                    let key = prop_name_to_string(&method.key);
+                    let params: Vec<(String, CastType)> = method
+                        .function.params.iter()
+                        .map(|p| (pat_to_name(&p.pat), CastType::Any))
+                        .collect();
+                    let body = match &method.function.body {
+                        Some(b) => stmts_to_vec(&b.stmts)?,
+                        None => vec![],
+                    };
+                    properties.push((key, Expression::Lambda { params, body, meta: m.clone() }));
+                }
+            }
+            Ok(Expression::ObjectLiteral { properties, meta: m })
+        }
+        Expr::JSXElement(_) | Expr::JSXFragment(_) | Expr::JSXMember(_)
+        | Expr::JSXNamespacedName(_) | Expr::JSXEmpty(_) => {
+            anyhow::bail!("JSX expressions are not supported")
+        }
+        Expr::Invalid(_) => {
+            anyhow::bail!("invalid expression in source code")
+        }
+    }
+}
+
+fn lower_call_expr(
+    callee: &Callee,
+    args: &[ExprOrSpread],
+    m: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Expression> {
+    let lowered_args: Vec<Expression> = args
+        .iter()
+        .map(|a| lower_expr(&a.expr))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    match callee {
+        Callee::Expr(callee_expr) => {
+            let expr = callee_expr.as_ref();
+            let func_name = match expr {
+                Expr::Ident(ident) => ident.sym.to_string(),
+                Expr::Member(MemberExpr { obj, prop, .. }) => {
+                    let obj_str = match obj.as_ref() {
+                        Expr::Ident(i) => i.sym.to_string(),
+                        _ => "_expr".to_string(),
+                    };
+                    let prop_str = match prop {
+                        MemberProp::Ident(i) => i.sym.to_string(),
+                        MemberProp::Computed(_) => "[]".to_string(),
+                        MemberProp::PrivateName(pn) => format!("#{}", pn.name),
+                    };
+                    format!("{}.{}", obj_str, prop_str)
+                }
+                _ => return Err(anyhow::anyhow!("complex call expression not supported")),
+            };
+
+            match func_name.as_str() {
+                "console.log" | "console.info" | "console.warn" | "console.error" => {
+                    Ok(Expression::CapabilityCall {
+                        name: "io.print".to_string(), args: lowered_args, meta: m,
+                    })
+                }
+                "fetch" => {
+                    Ok(Expression::CapabilityCall {
+                        name: "net.http_get".to_string(), args: lowered_args, meta: m,
+                    })
+                }
+                "parseInt" | "parseFloat" | "Number" | "String" | "Boolean" | "Array" | "Object" => {
+                    Ok(Expression::Call { function: func_name, args: lowered_args, meta: m })
+                }
+                "Array.isArray" => {
+                    Ok(Expression::Call { function: "is_array".to_string(), args: lowered_args, meta: m })
+                }
+                "Math.max" | "Math.min" | "Math.abs" | "Math.floor" | "Math.ceil"
+                | "Math.round" | "Math.sqrt" | "Math.pow" | "Math.random" => {
+                    Ok(Expression::Call { function: func_name, args: lowered_args, meta: m })
+                }
+                "JSON.parse" => {
+                    Ok(Expression::Call { function: "json_parse".to_string(), args: lowered_args, meta: m })
+                }
+                "JSON.stringify" => {
+                    Ok(Expression::Call { function: "json_stringify".to_string(), args: lowered_args, meta: m })
+                }
+                _ => {
+                    Ok(Expression::Call { function: func_name, args: lowered_args, meta: m })
+                }
+            }
+        }
+        Callee::Super(_) => {
+            Ok(Expression::Call {
+                function: "super".to_string(), args: lowered_args, meta: m,
+            })
+        }
+        Callee::Import(_) => {
+            anyhow::bail!("dynamic import() not supported")
+        }
+    }
+}
+
+fn lower_lit(lit: &Lit) -> anyhow::Result<Expression> {
+    let m = meta();
+    match lit {
+        Lit::Str(s) => Ok(Expression::StringLiteral {
+            value: wtf8_str(&s.value).to_string(),
+            meta: m,
+        }),
+        Lit::Num(n) => {
+            if n.value.fract() == 0.0 && n.value.abs() <= (i64::MAX as f64) {
+                Ok(Expression::IntLiteral { value: n.value as i64, meta: m })
+            } else {
+                Ok(Expression::FloatLiteral { value: n.value, meta: m })
+            }
+        }
+        Lit::Bool(b) => Ok(Expression::BoolLiteral { value: b.value, meta: m }),
+        Lit::Null(_) => Ok(Expression::NullLiteral { meta: m }),
+        Lit::Regex(regex) => {
+            Ok(Expression::Call {
+                function: "RegExp".to_string(),
+                args: vec![
+                    Expression::StringLiteral { value: regex.exp.to_string(), meta: m.clone() },
+                    Expression::StringLiteral { value: regex.flags.to_string(), meta: m.clone() },
+                ],
+                meta: m,
+            })
+        }
+        Lit::BigInt(bi) => {
+            let val = bi.value.to_string();
+            Ok(Expression::Call {
+                function: "BigInt".to_string(),
+                args: vec![Expression::StringLiteral { value: val, meta: m.clone() }],
+                meta: m,
+            })
+        }
+        Lit::JSXText(_) => {
+            anyhow::bail!("JSX text literal not supported")
+        }
+    }
+}
+
+fn assign_target_to_name(target: &AssignTarget) -> String {
+    match target {
+        AssignTarget::Simple(simple) => simple_assign_target_name(simple),
+        AssignTarget::Pat(pat) => match pat {
+            AssignTargetPat::Array(_) => "_arr".to_string(),
+            AssignTargetPat::Object(_) => "_obj".to_string(),
+            AssignTargetPat::Invalid(_) => "_invalid".to_string(),
+        },
+    }
+}
+
+fn simple_assign_target_name(target: &SimpleAssignTarget) -> String {
+    match target {
+        SimpleAssignTarget::Ident(binding) => binding.id.sym.to_string(),
+        SimpleAssignTarget::Member(member) => {
+            let obj = match member.obj.as_ref() {
+                Expr::Ident(i) => i.sym.to_string(),
+                _ => "_expr".to_string(),
+            };
+            let prop = match &member.prop {
+                MemberProp::Ident(i) => i.sym.to_string(),
+                MemberProp::Computed(_) => "[]".to_string(),
+                MemberProp::PrivateName(pn) => format!("#{}", pn.name),
+            };
+            format!("{}.{}", obj, prop)
+        }
+        SimpleAssignTarget::SuperProp(sp) => {
+            let prop_str = match &sp.prop {
+                SuperProp::Ident(i) => i.sym.to_string(),
+                SuperProp::Computed(_) => "[]".to_string(),
+            };
+            format!("super.{}", prop_str)
+        }
+        SimpleAssignTarget::Paren(p) => {
+            if let Expr::Ident(i) = p.expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        SimpleAssignTarget::TsAs(ts_as) => {
+            if let Expr::Ident(i) = ts_as.expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        SimpleAssignTarget::TsNonNull(non_null) => {
+            if let Expr::Ident(i) = non_null.expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        SimpleAssignTarget::TsSatisfies(s) => {
+            if let Expr::Ident(i) = s.expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        SimpleAssignTarget::TsTypeAssertion(ta) => {
+            if let Expr::Ident(i) = ta.expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        SimpleAssignTarget::TsInstantiation(inst) => {
+            if let Expr::Ident(i) = inst.expr.as_ref() {
+                i.sym.to_string()
+            } else {
+                "_expr".to_string()
+            }
+        }
+        SimpleAssignTarget::Invalid(_) => "_invalid".to_string(),
+        SimpleAssignTarget::OptChain(opt) => {
+            match opt.base.as_ref() {
+                OptChainBase::Member(m) => {
+                    if let Expr::Ident(i) = m.obj.as_ref() {
+                        i.sym.to_string()
+                    } else {
+                        "_opt".to_string()
+                    }
+                }
+                OptChainBase::Call(_) => "_opt_call".to_string(),
+            }
+        }
+    }
+}
+
+fn prop_name_to_string(key: &PropName) -> String {
+    match key {
+        PropName::Ident(ident_name) => ident_name.sym.to_string(),
+        PropName::Str(s) => wtf8_str(&s.value).to_string(),
+        PropName::Num(n) => n.value.to_string(),
+        PropName::Computed(_) => "[]".to_string(),
+        PropName::BigInt(bi) => bi.value.to_string(),
+    }
+}

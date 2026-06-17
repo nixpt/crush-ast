@@ -215,7 +215,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "typescript",
             &["ts", "tsx"],
-            "ts_walker",
+            "js_walker",
             LanguageCapabilities {
                 version: "5.0".to_string(),
                 execution_model: ExecutionModel::JIT,
