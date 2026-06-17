@@ -12,6 +12,7 @@ mod merkle;
 mod packer;
 mod runners;
 mod signer;
+mod site;
 
 use builder::PackageBuilder;
 use manifest::Manifest;
@@ -109,6 +110,37 @@ enum Commands {
         /// Path to public key (32 bytes)
         key: PathBuf,
     },
+    /// Bundle a directory of static web assets into a signed .ecap site capsule
+    Site {
+        /// Directory of static web assets (html/css/js/…)
+        dir: PathBuf,
+        /// Capsule name
+        #[arg(long)]
+        name: String,
+        /// Capsule version
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+        /// Entry document (relative path within the assets dir)
+        #[arg(long, default_value = "index.html")]
+        entry: String,
+        /// Output .ecap path (defaults to <name>.ecap)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Optional Ed25519 private key (64-byte keypair) to sign the manifest
+        #[arg(long)]
+        sign: Option<PathBuf>,
+        /// Signer DID recorded in the signature
+        #[arg(long)]
+        did: Option<String>,
+    },
+    /// Extract (and hash-verify) a static-site .ecap capsule to a directory
+    SiteExtract {
+        /// Path to the .ecap site capsule
+        capsule: PathBuf,
+        /// Output directory
+        #[arg(short, long, default_value = "./site")]
+        dir: PathBuf,
+    },
     /// Show package metadata
     Show,
 }
@@ -198,6 +230,42 @@ fn main() -> anyhow::Result<()> {
             println!("checking {} v{}", manifest.capsule.name, manifest.capsule.version);
             let builder = PackageBuilder::new(manifest, root);
             builder.check()?;
+        }
+        Commands::Site {
+            dir,
+            name,
+            version,
+            entry,
+            output,
+            sign,
+            did,
+        } => {
+            let output = output.unwrap_or_else(|| PathBuf::from(format!("{}.ecap", name)));
+            let n = site::write_site_capsule(
+                &dir,
+                &name,
+                &version,
+                &entry,
+                &output,
+                sign.as_deref(),
+                did.as_deref(),
+            )?;
+            println!(
+                "built static-site capsule {} ({} asset(s), entry={}{})",
+                output.display(),
+                n,
+                entry,
+                if sign.is_some() { ", signed" } else { "" }
+            );
+        }
+        Commands::SiteExtract { capsule, dir } => {
+            let entry = site::extract_site_capsule(&capsule, &dir)?;
+            println!(
+                "extracted {} -> {} (entry: {})",
+                capsule.display(),
+                dir.display(),
+                entry
+            );
         }
         Commands::Show => {
             let (manifest, root) = load_manifest()?;
