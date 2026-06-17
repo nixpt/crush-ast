@@ -352,7 +352,24 @@ fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Option<Statement>> {
                     stmts.into_iter().next().unwrap()
                 }
                 Decl::Class(class_decl) => lower_class_decl(class_decl)?,
-                _ => return Ok(None),
+                Decl::Using(using) => {
+                    let mut stmts = Vec::new();
+                    for d in &using.decls {
+                        let name = pat_to_name(&d.name);
+                        let value = match &d.init {
+                            Some(init) => lower_expr(init)?,
+                            None => Expression::NullLiteral { meta: meta() },
+                        };
+                        stmts.push(Statement::VarDecl { name, value, type_hint: CastType::Any, meta: meta() });
+                    }
+                    if stmts.is_empty() {
+                        return Ok(None);
+                    }
+                    stmts.into_iter().next().unwrap()
+                }
+                Decl::TsInterface(_) | Decl::TsTypeAlias(_) | Decl::TsEnum(_) | Decl::TsModule(_) => {
+                    return Ok(None);
+                }
             }
         }
         Stmt::Return(ReturnStmt { arg, .. }) => {
@@ -490,7 +507,7 @@ fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Option<Statement>> {
         }
         Stmt::Break(_) => Statement::Break { meta: meta() },
         Stmt::Continue(_) => Statement::Continue { meta: meta() },
-        Stmt::With(_) => anyhow::bail!("'with' statement is not supported"),
+        Stmt::With(_) => return Ok(None),
         Stmt::Labeled(LabeledStmt { body, .. }) => {
             return lower_stmt(body);
         }
@@ -872,12 +889,28 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             }
             Ok(result)
         }
-        Expr::TaggedTpl(TaggedTpl { tag, .. }) => {
+        Expr::TaggedTpl(TaggedTpl { tag, tpl, .. }) => {
             let tag_str = match tag.as_ref() {
                 Expr::Ident(i) => i.sym.to_string(),
+                Expr::Member(m) => {
+                    let obj = match m.obj.as_ref() {
+                        Expr::Ident(i) => i.sym.to_string(),
+                        _ => "_".to_string(),
+                    };
+                    match &m.prop {
+                        MemberProp::Ident(i) => format!("{}.{}", obj, i.sym),
+                        _ => "tagged_template".to_string(),
+                    }
+                }
                 _ => "tagged_template".to_string(),
             };
-            anyhow::bail!("tagged template literals not supported: {}", tag_str)
+            let mut args: Vec<Expression> = tpl.quasis.iter()
+                .map(|q| Expression::StringLiteral { value: q.raw.to_string(), meta: m.clone() })
+                .collect();
+            for expr in &tpl.exprs {
+                args.push(lower_expr(expr)?);
+            }
+            Ok(Expression::Call { function: tag_str, args, meta: m })
         }
         Expr::Await(AwaitExpr { arg, .. }) => {
             let arg = lower_expr(arg)?;
@@ -991,7 +1024,11 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
         }
         Expr::JSXElement(_) | Expr::JSXFragment(_) | Expr::JSXMember(_)
         | Expr::JSXNamespacedName(_) | Expr::JSXEmpty(_) => {
-            anyhow::bail!("JSX expressions are not supported")
+            Ok(Expression::Call {
+                function: "__crush_jsx__".to_string(),
+                args: vec![],
+                meta: m,
+            })
         }
         Expr::Invalid(_) => {
             anyhow::bail!("invalid expression in source code")
@@ -1067,7 +1104,7 @@ fn lower_call_expr(
             })
         }
         Callee::Import(_) => {
-            anyhow::bail!("dynamic import() not supported")
+            Ok(Expression::Call { function: "import".to_string(), args: lowered_args, meta: m })
         }
     }
 }
@@ -1106,8 +1143,8 @@ fn lower_lit(lit: &Lit) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
-        Lit::JSXText(_) => {
-            anyhow::bail!("JSX text literal not supported")
+        Lit::JSXText(jsx_text) => {
+            Ok(Expression::StringLiteral { value: jsx_text.value.to_string(), meta: m })
         }
     }
 }

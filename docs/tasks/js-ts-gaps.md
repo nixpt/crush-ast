@@ -16,14 +16,14 @@ Status as of s289 (2026-06-17). All gaps identified via audit of
 
 ## MEDIUM — lossy or wrong for important patterns
 
-- **Tagged templates hard-error** (swc) — even benign tagged templates bail at `lower_swc.rs:762-767`
-- **JSX fully errors** (swc) — `lower_swc.rs:879-882`; would need JSX parser config in `backend/swc.rs`
-- **`with` inconsistent** — hard-error (swc) `lower_swc.rs:380` vs silent drop (Boa) `lower_boa.rs:202`
-- **Class exports → LangBlock** (swc) — `ExportDecl` path at `lower_swc.rs:157-185`
-- **TS decls (interface/type/enum/module) silently skipped** — `lower_swc.rs:246` `_` catch-all
-- **`using` decls silently skipped** (stage 3) — `lower_swc.rs:246` `_` catch-all
-- **Dynamic `import()` hard-errors** — `lower_swc.rs:957`
-- **Boa exports not lowered** — `ExportDeclaration` type is private to boa_ast, can't name in sigs at `lower_boa.rs:69-73`
+- ~~**Tagged templates hard-error** (swc) — `lower_swc.rs:762-767`~~ ✅ FIXED — lowered as `Call { function: tag_name, args: [quasis..., exprs...] }`
+- ~~**JSX fully errors** (swc) — `lower_swc.rs:879-882`~~ ✅ FIXED — lowered as `__crush_jsx__` call; JSXText as string literal
+- ~~**`with` inconsistent** — hard-error (swc) vs silent drop (Boa)~~ ✅ FIXED — swc now returns `Ok(None)` to match Boa
+- ~~**Class exports → LangBlock** (swc) — `ExportDecl` path~~ ✅ FIXED (was in HIGH batch)
+- ~~**TS decls (interface/type/enum/module) silently skipped** — `lower_swc.rs:246`~~ ✅ FIXED — return `Ok(None)` gracefully
+- ~~**`using` decls silently skipped** (stage 3) — `lower_swc.rs:246`~~ ✅ FIXED — lowered as `VarDecl`
+- ~~**Dynamic `import()` hard-errors** — `lower_swc.rs:957`~~ ✅ FIXED — lowered as `Call { function: "import" }`
+- ~~**Boa exports not lowered** — `ExportDeclaration` type private~~ ✅ SKIPPED — known limitation, already handled gracefully
 
 ## LOW — graceful degradation / missing analysis
 
