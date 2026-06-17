@@ -411,6 +411,8 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
 
     match cmd_name {
         "" if !args.is_empty() => Some(args.into_iter().next().unwrap()),
+        "true" | ":" => Some(Expression::BoolLiteral { value: true, meta: HashMap::new() }),
+        "false" => Some(Expression::BoolLiteral { value: false, meta: HashMap::new() }),
         "test" => {
             if args.len() == 3 {
                 // Binary: test ARG1 OP ARG2
