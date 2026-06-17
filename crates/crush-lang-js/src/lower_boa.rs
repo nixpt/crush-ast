@@ -166,8 +166,38 @@ impl BoaLower {
                 vec![CastStmt::For { variable, iterable, body, meta: meta() }]
             }
             Statement::Switch(s) => {
-                let _ = self.expr(s.val());
-                vec![]
+                let val = self.expr(s.val());
+                let mut chain: Option<Vec<CastStmt>> = None;
+                for case in s.cases() {
+                    let cond = case.condition().map(|c| self.expr(c));
+                    let body = self.list(case.body().statements());
+                    if let Some(c) = cond {
+                        let then_body = body;
+                        let else_body = chain.take();
+                        chain = Some(vec![CastStmt::If {
+                            condition: CastExpr::BinaryOp {
+                                operator: "===".to_string(),
+                                left: Box::new(val.clone()),
+                                right: Box::new(c),
+                                meta: meta(),
+                            },
+                            then_body,
+                            else_body,
+                            meta: meta(),
+                        }]);
+                    } else {
+                        // default case: attach as else branch of innermost if
+                        if let Some(mut if_chain) = chain.take() {
+                            if let Some(CastStmt::If { else_body, .. }) = if_chain.last_mut() {
+                                *else_body = Some(body);
+                            }
+                            chain = Some(if_chain);
+                        } else {
+                            chain = Some(body);
+                        }
+                    }
+                }
+                chain.unwrap_or_default()
             }
             Statement::Continue(_) => vec![CastStmt::Continue { meta: meta() }],
             Statement::Break(_) => vec![CastStmt::Break { meta: meta() }],
@@ -333,8 +363,9 @@ impl BoaLower {
                 }
             }
             Expression::New(n) => {
-                let _ = self.expr(n.constructor());
-                CastExpr::NullLiteral { meta: meta() }
+                let name = self.call_name(n.constructor());
+                let args: Vec<_> = n.arguments().iter().map(|a| self.expr(a)).collect();
+                CastExpr::Call { function: format!("new_{}", name), args, meta: meta() }
             }
             Expression::PropertyAccess(pa) => self.prop_access_expr(pa),
             Expression::Binary(b) => {
@@ -460,8 +491,7 @@ impl BoaLower {
             }
             Expression::Spread(spread) => self.expr(spread.target()),
             Expression::Optional(opt) => {
-                let _ = opt.target();
-                CastExpr::NullLiteral { meta: meta() }
+                self.expr(opt.target())
             }
             Expression::Parenthesized(p) => self.expr(p.expression()),
             Expression::RegExpLiteral(_)

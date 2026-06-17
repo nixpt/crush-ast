@@ -175,6 +175,25 @@ fn lower_module_decl(decl: &ModuleDecl) -> anyhow::Result<Option<Statement>> {
                     }
                     Ok(None)
                 }
+                Decl::Class(class) => {
+                    let name = class.ident.sym.to_string();
+                    Ok(Some(Statement::Export {
+                        name: name.clone(),
+                        value: Expression::Var { name, meta: meta() },
+                        meta: meta(),
+                    }))
+                }
+                Decl::Using(using) => {
+                    for d in &using.decls {
+                        let name = pat_to_name(&d.name);
+                        return Ok(Some(Statement::Export {
+                            name,
+                            value: Expression::NullLiteral { meta: meta() },
+                            meta: meta(),
+                        }));
+                    }
+                    Ok(None)
+                }
                 _ => Ok(Some(Statement::LangBlock {
                     lang: "javascript".to_string(),
                     code: "// export — not lowered".to_string(),
@@ -203,6 +222,14 @@ fn lower_module_decl(decl: &ModuleDecl) -> anyhow::Result<Option<Statement>> {
                         meta: meta(),
                     }))
                 }
+                DefaultDecl::Class(class) => {
+                    let name = class.ident.as_ref().map(|id| id.sym.to_string()).unwrap_or_default();
+                    Ok(Some(Statement::Export {
+                        name: "default".to_string(),
+                        value: Expression::Var { name, meta: meta() },
+                        meta: meta(),
+                    }))
+                }
                 _ => Ok(Some(Statement::LangBlock {
                     lang: "javascript".to_string(),
                     code: "// export default — not lowered".to_string(),
@@ -220,7 +247,89 @@ fn lower_module_decl(decl: &ModuleDecl) -> anyhow::Result<Option<Statement>> {
                 meta: meta(),
             }))
         }
-        _ => Ok(None),
+        ModuleDecl::ExportNamed(named) => {
+            let src = named.src.as_ref().map(|s| wtf8_str(&s.value).to_string());
+            if let Some(ref module) = src {
+                // re-export from another module: emit as import
+                let mut selective = Vec::new();
+                for spec in &named.specifiers {
+                    if let ExportSpecifier::Named(ns) = spec {
+                        selective.push(ns.orig.atom().to_string());
+                    }
+                }
+                Ok(Some(Statement::Import {
+                    import: ImportStatement::CrushModule {
+                        module_path: module.clone(),
+                        alias: None,
+                        selective,
+                    },
+                    meta: meta(),
+                }))
+            } else {
+                // direct named exports
+                for spec in &named.specifiers {
+                    if let ExportSpecifier::Named(ns) = spec {
+                        let name = ns.exported.as_ref()
+                            .map(|m| m.atom().to_string())
+                            .unwrap_or_else(|| ns.orig.atom().to_string());
+                        let orig = ns.orig.atom().to_string();
+                        return Ok(Some(Statement::Export {
+                            name,
+                            value: Expression::Var { name: orig, meta: meta() },
+                            meta: meta(),
+                        }));
+                    }
+                }
+                Ok(None)
+            }
+        }
+        ModuleDecl::ExportAll(all) => {
+            let src = wtf8_str(&all.src.value).to_string();
+            Ok(Some(Statement::Import {
+                import: ImportStatement::CrushModule {
+                    module_path: src,
+                    alias: None,
+                    selective: vec![],
+                },
+                meta: meta(),
+            }))
+        }
+        ModuleDecl::TsImportEquals(ts) => {
+            let mod_name = match &ts.module_ref {
+                TsModuleRef::TsEntityName(e) => match e {
+                    TsEntityName::Ident(id) => id.sym.to_string(),
+                    TsEntityName::TsQualifiedName(q) => match &q.left {
+                        TsEntityName::Ident(id) => id.sym.to_string(),
+                        _ => "ts-qualified".to_string(),
+                    },
+                },
+                TsModuleRef::TsExternalModuleRef(ext) => wtf8_str(&ext.expr.value).to_string(),
+            };
+            Ok(Some(Statement::LangBlock {
+                lang: "javascript".to_string(),
+                code: format!("// ts import equals: {}", mod_name),
+                variables: vec![],
+                imports: vec![],
+                meta: meta(),
+            }))
+        }
+        ModuleDecl::TsExportAssignment(ts) => {
+            let val = lower_expr(&ts.expr)?;
+            Ok(Some(Statement::Export {
+                name: "default".to_string(),
+                value: val,
+                meta: meta(),
+            }))
+        }
+        ModuleDecl::TsNamespaceExport(ts) => {
+            Ok(Some(Statement::LangBlock {
+                lang: "javascript".to_string(),
+                code: format!("// ts namespace export: {}", ts.id.sym),
+                variables: vec![],
+                imports: vec![],
+                meta: meta(),
+            }))
+        }
     }
 }
 
@@ -275,7 +384,7 @@ fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Option<Statement>> {
             let body = block_or_stmt_to_vec(body)?;
             Statement::While { condition: Box::new(condition), body, meta: meta() }
         }
-        Stmt::For(ForStmt { init, test, update: _, body, .. }) => {
+        Stmt::For(ForStmt { init, test, update, body, .. }) => {
             let variable = match init {
                 Some(_) => "i".to_string(),
                 None => "i".to_string(),
@@ -285,6 +394,10 @@ fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Option<Statement>> {
                 None => Expression::BoolLiteral { value: true, meta: meta() },
             };
             let mut body_stmts = block_or_stmt_to_vec(body)?;
+            if let Some(upd) = update {
+                let update_expr = lower_expr(upd)?;
+                body_stmts.push(Statement::ExprStmt { expr: update_expr, meta: meta() });
+            }
             body_stmts.insert(0, Statement::If {
                 condition: Expression::UnaryOp {
                     operator: "!".to_string(),
