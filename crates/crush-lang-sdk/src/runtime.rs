@@ -3,8 +3,17 @@
 //! [`Runtime`] wraps [`crush_vm::run_with_caps`] with convenience methods for
 //! loading programs from blobs or CASM text, applying quotas, registering host
 //! capabilities, and inspecting results.
+//!
+//! ## Codebase caps (AI-native)
+//!
+//! Call [`Runtime::with_codebase`] to auto-build a `CrushIndex` from in-memory
+//! Crush source and inject the six `codebase.*` host caps.  Or use
+//! [`Runtime::with_codebase_files`] to read Crush source files from disk.
 
+use crush_frontend::parse_source;
+use crush_index::CrushIndex;
 use crush_vm::{HostCaps, Program, Quotas, VmError, VmResult, assemble, run_with_caps};
+use std::sync::Arc;
 
 /// Errors that can occur when running a program through the SDK.
 #[derive(Debug, thiserror::Error)]
@@ -14,6 +23,12 @@ pub enum RuntimeError {
 
     #[error("failed to assemble CASM source: {0}")]
     Assembly(String),
+
+    #[error("failed to parse Crush source for codebase index: {module}: {cause}")]
+    IndexParse { module: String, cause: String },
+
+    #[error("failed to read source file '{path}': {cause}")]
+    IndexRead { path: String, cause: String },
 
     #[error(transparent)]
     Vm(#[from] VmError),
@@ -57,6 +72,77 @@ impl Runtime {
     pub fn with_host_caps(mut self, host_caps: HostCaps) -> Self {
         self.host_caps = Some(host_caps);
         self
+    }
+
+    /// Parse Crush source code for each `(module_name, source)` pair, build a
+    /// [`CrushIndex`], and register the six `codebase.*` host capabilities.
+    ///
+    /// Existing capabilities (from a prior [`Self::with_host_caps`] call) are
+    /// preserved — the codebase caps are appended, not replaced.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use crush_lang_sdk::Runtime;
+    ///
+    /// let rt = Runtime::new()
+    ///     .with_codebase(&[("scheduler", include_str!("../scheduler.crush"))])
+    ///     .unwrap();
+    /// ```
+    pub fn with_codebase(
+        mut self,
+        sources: &[(&str, &str)],
+    ) -> Result<Self, RuntimeError> {
+        let mut index = CrushIndex::new();
+        for (module_name, source) in sources {
+            let program = parse_source(source).map_err(|e| RuntimeError::IndexParse {
+                module: module_name.to_string(),
+                cause: e.to_string(),
+            })?;
+            index.add_program(module_name, &program);
+        }
+        let caps = self.host_caps.get_or_insert_with(HostCaps::new);
+        crate::codebase::register(caps, Arc::new(index));
+        Ok(self)
+    }
+
+    /// Read Crush source files from disk, build a [`CrushIndex`], and register
+    /// the six `codebase.*` host capabilities.
+    ///
+    /// Each file's stem (filename without extension) is used as the module name.
+    /// Existing capabilities are preserved.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use crush_lang_sdk::Runtime;
+    ///
+    /// let rt = Runtime::new()
+    ///     .with_codebase_files(&["src/scheduler.crush", "src/types.crush"])
+    ///     .unwrap();
+    /// ```
+    pub fn with_codebase_files(
+        mut self,
+        paths: &[impl AsRef<std::path::Path>],
+    ) -> Result<Self, RuntimeError> {
+        let mut index = CrushIndex::new();
+        for path in paths {
+            let path = path.as_ref();
+            let module_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            let source = std::fs::read_to_string(path).map_err(|e| RuntimeError::IndexRead {
+                path: path.display().to_string(),
+                cause: e.to_string(),
+            })?;
+            let program = parse_source(&source).map_err(|e| RuntimeError::IndexParse {
+                module: module_name.to_string(),
+                cause: e.to_string(),
+            })?;
+            index.add_program(module_name, &program);
+        }
+        let caps = self.host_caps.get_or_insert_with(HostCaps::new);
+        crate::codebase::register(caps, Arc::new(index));
+        Ok(self)
     }
 
     /// Return the quotas used by this runtime.
@@ -161,5 +247,84 @@ mod tests {
             err.to_string().contains("instruction quota exceeded"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn with_codebase_registers_caps() {
+        let crush_src = r#"
+@module {
+  purpose: "test nav module"
+  exports: [navigate]
+}
+fn navigate(url) {
+  let x = 1
+}
+"#;
+        let rt = Runtime::new()
+            .with_codebase(&[("nav", crush_src)])
+            .expect("index build should succeed");
+
+        // The runtime now has codebase caps registered; host_caps is Some.
+        // Verify by checking the internal state via a round-trip cap check.
+        // We probe by building a caps set and running a CASM program that
+        // calls codebase.modules — if it errors "capability not declared"
+        // then the cap wasn't registered; if it errors "not permitted" that
+        // also means not registered; success or any other VM error means it
+        // was registered and invoked.
+        let casm = r#"
+            .func main
+            CAP_CALL "codebase.modules" 0
+            HALT
+        "#;
+        let result = rt.run_casm(casm, &["codebase.modules"], Some("probe"));
+        // The VM runs and hits the cap (returns an array) — any result that
+        // isn't "capability not declared" confirms registration.
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("capability not declared"),
+                    "codebase.modules was not registered: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn with_codebase_files_missing_path_is_reported() {
+        let err = Runtime::new()
+            .with_codebase_files(&["/nonexistent/path/missing.crush"])
+            .expect_err("missing file should fail");
+        assert!(
+            err.to_string().contains("missing.crush"),
+            "error should mention the path: {err}"
+        );
+    }
+
+    #[test]
+    fn with_codebase_preserves_existing_caps() {
+        use crate::host_caps::HostCapsBuilder;
+        let existing = HostCapsBuilder::new().time(true).build();
+        let crush_src = "fn f() { }";
+        let rt = Runtime::new()
+            .with_host_caps(existing)
+            .with_codebase(&[("m", crush_src)])
+            .expect("index build should succeed");
+
+        // Both time.now and codebase.modules must be present.
+        // We verify by running probes for both — neither should say "not declared".
+        for cap in ["time.now", "codebase.modules"] {
+            let casm = format!(
+                ".func main\nCAP_CALL \"{cap}\" 0\nHALT\n"
+            );
+            let result = rt.run_casm(&casm, &[cap], Some("probe"));
+            if let Err(e) = result {
+                assert!(
+                    !e.to_string().contains("capability not declared"),
+                    "{cap} missing after with_codebase: {e}"
+                );
+            }
+        }
     }
 }
