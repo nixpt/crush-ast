@@ -224,14 +224,18 @@ pub fn disassemble(program: &Program) -> String {
     let name_of: HashMap<u8, &str> = [
         (NOP, "NOP"), (PUSH, "PUSH"), (PUSH_STR, "PUSH_STR"), (POP, "POP"),
         (DUP, "DUP"), (SWAP, "SWAP"), (PUSH_F64, "PUSH_F64"), (PUSH_NULL, "PUSH_NULL"),
+        (PUSH_BOOL, "PUSH_BOOL"),
         (ADD, "ADD"), (SUB, "SUB"), (MUL, "MUL"), (DIV, "DIV"), (MOD, "MOD"),
         (EQ, "EQ"), (LT, "LT"), (GT, "GT"), (NOT, "NOT"),
         (LOAD, "LOAD"), (STORE, "STORE"),
         (JMP, "JMP"), (JZ, "JZ"), (JNZ, "JNZ"),
         (PRINT, "PRINT"), (CAP_CALL, "CAP_CALL"), (CALL, "CALL"), (RET, "RET"),
+        (ENTER_TRY, "ENTER_TRY"), (EXIT_TRY, "EXIT_TRY"), (THROW, "THROW"),
         (EXEC_LANG, "EXEC_LANG"),
+        (NEW_OBJ, "NEW_OBJ"), (SET_FIELD, "SET_FIELD"), (GET_FIELD, "GET_FIELD"),
         (NEW_ARRAY, "NEW_ARRAY"), (ARR_GET, "ARR_GET"), (ARR_SET, "ARR_SET"),
-        (ARR_LEN, "ARR_LEN"), (HALT, "HALT"),
+        (ARR_LEN, "ARR_LEN"), (ARR_PUSH, "ARR_PUSH"), (ARR_POP, "ARR_POP"),
+        (HALT, "HALT"),
     ].iter().copied().collect();
 
     let mut ip = 0usize;
@@ -297,6 +301,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "NOP" => Some(NOP), "PUSH" => Some(PUSH), "PUSH_STR" => Some(PUSH_STR),
         "POP" => Some(POP), "DUP" => Some(DUP), "SWAP" => Some(SWAP),
         "PUSH_F64" => Some(PUSH_F64), "PUSH_NULL" => Some(PUSH_NULL),
+        "PUSH_BOOL" => Some(PUSH_BOOL),
         "ADD" => Some(ADD), "SUB" => Some(SUB), "MUL" => Some(MUL),
         "DIV" => Some(DIV), "MOD" => Some(MOD),
         "EQ" => Some(EQ), "LT" => Some(LT), "GT" => Some(GT), "NOT" => Some(NOT),
@@ -305,8 +310,13 @@ fn opcode_for(name: &str) -> Option<u8> {
         "PRINT" => Some(PRINT), "CAP_CALL" => Some(CAP_CALL),
         "CALL" => Some(CALL), "RET" => Some(RET),
         "EXEC_LANG" => Some(EXEC_LANG),
+        "ENTER_TRY" => Some(ENTER_TRY), "EXIT_TRY" => Some(EXIT_TRY),
+        "THROW" => Some(THROW),
+        "NEW_OBJ" => Some(NEW_OBJ), "SET_FIELD" => Some(SET_FIELD),
+        "GET_FIELD" => Some(GET_FIELD),
         "NEW_ARRAY" => Some(NEW_ARRAY), "ARR_GET" => Some(ARR_GET),
         "ARR_SET" => Some(ARR_SET), "ARR_LEN" => Some(ARR_LEN),
+        "ARR_PUSH" => Some(ARR_PUSH), "ARR_POP" => Some(ARR_POP),
         "HALT" => Some(HALT),
         _ => None,
     }

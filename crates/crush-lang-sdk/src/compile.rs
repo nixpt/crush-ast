@@ -32,11 +32,8 @@ pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
 }
 
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
-    use crush_vm::bytecode::*;
     let mut lines: Vec<String> = Vec::new();
     let mut perms: HashSet<String> = HashSet::new();
-    let mut extra_consts: Vec<String> = Vec::new();
-    let mut extra_code: Vec<u8> = Vec::new();
 
     for (_fname, _func) in &program.functions {
         perms.extend(program.manifest.permissions.clone());
@@ -51,7 +48,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
         let mut target_labels: HashMap<usize, String> = HashMap::new();
         for (_i, instr) in func.body.iter().enumerate() {
-            if instr.op == "jmp" || instr.op == "jmp_if_not" {
+            if instr.op == "jmp" || instr.op == "jmp_if_not" || instr.op == "enter_try" {
                 if let Some(target) = instr.args.get("target").and_then(|v| v.as_u64()) {
                     target_labels.entry(target as usize).or_insert_with(unique_label);
                 }
@@ -82,7 +79,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "push_bool" => {
                     let v = instr.args["value"].as_bool()
                         .ok_or_else(|| anyhow::anyhow!("push_bool missing value at {fname}:{i}"))?;
-                    format!("PUSH {}", if v { 1 } else { 0 })
+                    format!("PUSH_BOOL {}", if v { 1 } else { 0 })
                 }
                 "push_null" => "PUSH_NULL".to_string(),
                 "pop" => "POP".to_string(),
@@ -163,17 +160,30 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "exec_lang" => {
                     let args_json = serde_json::to_string(&instr.args)
                         .map_err(|e| anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}"))?;
-                    let idx = extra_consts.len() as u16;
-                    extra_consts.push(args_json);
-                    extra_code.push(EXEC_LANG);
-                    extra_code.extend_from_slice(&idx.to_be_bytes());
-                    // Emit 3 NOPs as placeholder (EXEC_LANG is 3 bytes).
-                    // We'll replace them with the real bytecode post-assembly.
-                    "NOP\n    NOP\n    NOP".to_string()
+                    // Escape for assembly: \ → \\, " → \"
+                    let esc = args_json.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("EXEC_LANG \"{esc}\"")
                 }
-                "new_obj" => anyhow::bail!("object literal not supported in CVM1 at {fname}:{i}"),
-                "get_field" => anyhow::bail!("field access not supported in CVM1 at {fname}:{i}"),
-                "set_field" => anyhow::bail!("field mutation not supported in CVM1 at {fname}:{i}"),
+                "throw" => "THROW".to_string(),
+                "enter_try" => {
+                    let target = instr.args["target"].as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("enter_try missing target at {fname}:{i}"))? as usize;
+                    let label = target_labels.get(&target)
+                        .ok_or_else(|| anyhow::anyhow!("enter_try to unknown target {target} at {fname}:{i}"))?;
+                    format!("ENTER_TRY {label}")
+                }
+                "exit_try" => "EXIT_TRY".to_string(),
+                "new_obj" => "NEW_OBJ".to_string(),
+                "get_field" => {
+                    let field = instr.args.get("field").or_else(|| instr.args.get("name")).and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("get_field missing field arg at {fname}:{i}"))?;
+                    format!("GET_FIELD {field:?}")
+                }
+                "set_field" => {
+                    let field = instr.args.get("field").or_else(|| instr.args.get("name")).and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("set_field missing field arg at {fname}:{i}"))?;
+                    format!("SET_FIELD {field:?}")
+                }
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));
@@ -203,41 +213,13 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         }
     }
 
-    // Assemble the normal instructions (with NOP placeholders for EXEC_LANG).
     let assembly = cleaned.join("\n");
     let perms_slice: Vec<&str> = perms.iter().map(|s| s.as_str()).collect();
-    let mut vm_program = crush_vm::assemble(
+    let vm_program = crush_vm::assemble(
         &assembly,
         if perms_slice.is_empty() { None } else { Some(&perms_slice) },
         None,
     )?;
-
-    // Replace each 3-byte NOP+NOP+NOP placeholder with the real EXEC_LANG
-    // bytecode. We scan the code section for three consecutive 0x00 bytes
-    // and replace them with the extra_code entries.
-    if !extra_code.is_empty() {
-        let mut new_code = Vec::with_capacity(vm_program.code.len());
-        let mut code = &vm_program.code[..];
-        let mut ei = 0usize;
-        while !code.is_empty() {
-            if code.len() >= 3 && code[0] == NOP && code[1] == NOP && code[2] == NOP {
-                if ei < extra_code.len() {
-                    new_code.extend_from_slice(&extra_code[ei..ei+3]);
-                    ei += 3;
-                    code = &code[3..];
-                } else {
-                    return Err(anyhow::anyhow!("more EXEC_LANG placeholders than instructions"));
-                }
-            } else {
-                new_code.push(code[0]);
-                code = &code[1..];
-            }
-        }
-        vm_program.code = new_code;
-        // Append the extra consts
-        vm_program.consts.extend(extra_consts);
-    }
-
     Ok(vm_program)
 }
 
@@ -268,5 +250,50 @@ mod tests {
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run");
         assert_eq!(result.output, "hello from crush");
         assert!(result.halted);
+    }
+
+    #[test]
+    fn test_compile_with_bool() {
+        let source = "fn main() {\n    let a = true\n    let b = false\n    io.print(a)\n}\n";
+        let prog = compile_crush_source(source).expect("compile bool");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run bool");
+        assert_eq!(result.output, "true");
+    }
+
+    #[test]
+    fn test_compile_with_if_bool_condition() {
+        let source = "fn main() {\n    if true {\n        io.print(\"yes\")\n    } else {\n        io.print(\"no\")\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile if bool");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run if bool");
+        assert_eq!(result.output, "yes");
+    }
+
+    #[test]
+    fn test_compile_with_object() {
+        let source = "fn main() {\n    let obj = {name: \"crush\", version: 42}\n    io.print(obj.name)\n}\n";
+        let prog = compile_crush_source(source).expect("compile object");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run object");
+        assert_eq!(result.output, "crush");
+    }
+
+    #[test]
+    fn test_compile_with_try_catch() {
+        let source = "fn main() {\n    try {\n        io.print(\"in try\")\n    } catch err {\n        io.print(\"in catch\")\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile try/catch");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run try/catch");
+        assert_eq!(result.output, "in try");
+    }
+
+    #[test]
+    fn test_compile_with_throw_and_catch() {
+        let source = "fn main() {\n    try {\n        throw \"error!\"\n        io.print(\"not reached\")\n    } catch err {\n        io.print(\"caught\")\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile throw/catch");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run throw/catch");
+        assert_eq!(result.output, "caught");
     }
 }

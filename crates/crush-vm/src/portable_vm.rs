@@ -238,16 +238,16 @@ impl PortableVm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 let result = match opcode {
-                    EQ => Value::Int(if a == b { 1 } else { 0 }),
-                    LT => Value::Int(if to_i64(&a) < to_i64(&b) { 1 } else { 0 }),
-                    GT => Value::Int(if to_i64(&a) > to_i64(&b) { 1 } else { 0 }),
+                    EQ => Value::Bool(a == b),
+                    LT => Value::Bool(to_i64(&a) < to_i64(&b)),
+                    GT => Value::Bool(to_i64(&a) > to_i64(&b)),
                     _ => unreachable!(),
                 };
                 self.push(result);
             }
             NOT => {
                 let a = self.pop()?;
-                self.push(Value::Int(if value_is_truthy(&a) { 0 } else { 1 }));
+                self.push(Value::Bool(!value_is_truthy(&a)));
             }
             LOAD => {
                 let slot = u16::from_be_bytes(
@@ -554,10 +554,14 @@ fn to_i64(v: &Value) -> i64 {
 fn value_type_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
+        Value::Bool(_) => "bool",
         Value::Int(_) => "int",
         Value::Float(_) => "float",
         Value::Str(_) => "str",
         Value::Array(_) => "array",
+        Value::Map(_) => "map",
+        Value::Error(_) => "error",
+        Value::Bytes(_) => "bytes",
     }
 }
 
@@ -565,6 +569,7 @@ fn value_type_name(v: &Value) -> &'static str {
 pub fn value_to_text(v: &Value) -> String {
     match v {
         Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
         Value::Int(i) => i.to_string(),
         Value::Float(f) => {
             if f.fract() == 0.0 && f.is_finite() {
@@ -578,6 +583,12 @@ pub fn value_to_text(v: &Value) -> String {
             let items: Vec<String> = a.iter().map(value_to_text).collect();
             format!("[{}]", items.join(", "))
         }
+        Value::Map(m) => {
+            let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_text(v))).collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Error(e) => format!("error({})", e),
+        Value::Bytes(b) => format!("<{} bytes>", b.len()),
     }
 }
 
@@ -585,10 +596,14 @@ pub fn value_to_text(v: &Value) -> String {
 fn value_is_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
+        Value::Bool(b) => *b,
         Value::Int(i) => *i != 0,
         Value::Float(f) => *f != 0.0,
         Value::Str(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
+        Value::Map(m) => !m.is_empty(),
+        Value::Error(_) => true,
+        Value::Bytes(b) => !b.is_empty(),
     }
 }
 

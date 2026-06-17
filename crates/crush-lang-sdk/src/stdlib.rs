@@ -92,6 +92,7 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
     args.get(idx)
         .map(|v| match v {
             Value::Str(s) => s.clone(),
+            Value::Bool(b) => b.to_string(),
             Value::Int(i) => i.to_string(),
             Value::Float(f) => {
                 if f.fract() == 0.0 && f.is_finite() {
@@ -102,6 +103,12 @@ fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
             }
             Value::Null => String::new(),
             Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
+            Value::Map(m) => {
+                let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_string(v))).collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            Value::Error(e) => format!("error({})", e),
+            Value::Bytes(b) => format!("<{} bytes>", b.len()),
         })
         .ok_or_else(|| format!("missing argument at index {}", idx))
 }
@@ -110,6 +117,7 @@ fn get_int(args: &[Value], idx: usize) -> Result<i64, String> {
     args.get(idx)
         .and_then(|v| match v {
             Value::Int(i) => Some(*i),
+            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             Value::Float(f) => Some(*f as i64),
             Value::Str(s) => s.parse().ok(),
             _ => None,
@@ -131,6 +139,7 @@ fn get_float(args: &[Value], idx: usize) -> Result<f64, String> {
 fn value_to_string(v: &Value) -> String {
     match v {
         Value::Str(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
         Value::Int(i) => i.to_string(),
         Value::Float(f) => {
             if f.fract() == 0.0 && f.is_finite() {
@@ -141,6 +150,12 @@ fn value_to_string(v: &Value) -> String {
         }
         Value::Null => String::new(),
         Value::Array(a) => a.iter().map(value_to_string).collect::<Vec<_>>().join(", "),
+            Value::Map(m) => {
+                let items: Vec<String> = m.iter().map(|(k, v)| format!("{}: {}", k, value_to_string(v))).collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            Value::Error(e) => format!("error({})", e),
+            Value::Bytes(b) => format!("<{} bytes>", b.len()),
     }
 }
 
@@ -428,11 +443,15 @@ conv_cap!(ConvToStrCap, "to_str", 1, |args: &[Value]| {
 conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
     let v = &args[0];
     let result = match v {
+        Value::Bool(b) => Value::Bool(*b),
         Value::Int(i) => Value::Int(if *i != 0 { 1 } else { 0 }),
         Value::Float(f) => Value::Int(if *f != 0.0 { 1 } else { 0 }),
         Value::Str(s) => Value::Int(if s.is_empty() { 0 } else { 1 }),
         Value::Null => Value::Int(0),
         Value::Array(a) => Value::Int(if a.is_empty() { 0 } else { 1 }),
+        Value::Map(m) => Value::Int(if m.is_empty() { 0 } else { 1 }),
+        Value::Error(_) => Value::Int(1),
+        Value::Bytes(b) => Value::Int(if b.is_empty() { 0 } else { 1 }),
     };
     Ok(Some(result))
 });
@@ -453,11 +472,15 @@ conv_cap!(ConvParseFloatCap, "parse_float", 1, |args: &[Value]| {
 conv_cap!(ConvTypeOfCap, "type_of", 1, |args: &[Value]| {
     let v = &args[0];
     let type_name = match v {
+        Value::Bool(_) => "bool",
         Value::Int(_) => "int",
         Value::Float(_) => "float",
         Value::Str(_) => "string",
         Value::Null => "null",
+        Value::Map(_) => "map",
         Value::Array(_) => "array",
+        Value::Error(_) => "error",
+        Value::Bytes(_) => "bytes",
     };
     Ok(Some(Value::Str(type_name.to_string())))
 });
@@ -610,6 +633,7 @@ macro_rules! json_cap {
 fn value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(b),
         Value::Int(i) => serde_json::json!(*i),
         Value::Float(f) => serde_json::json!(*f),
         Value::Str(s) => serde_json::json!(s),
@@ -621,7 +645,7 @@ fn value_to_json(v: &Value) -> serde_json::Value {
 fn json_to_value(val: serde_json::Value) -> Value {
     match val {
         serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Int(if b { 1 } else { 0 }),
+        serde_json::Value::Bool(b) => Value::Bool(b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() { Value::Int(i) }
             else { Value::Float(n.as_f64().unwrap_or(0.0)) }

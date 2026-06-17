@@ -13,10 +13,11 @@
 use std::collections::HashMap;
 
 use crate::bytecode::{
-    self, ADD, ARR_GET, ARR_LEN, ARR_SET, CALL, CAP_CALL, DIV, DUP, EQ,
-    EXEC_LANG, GT, HALT, JMP, JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY, NOP,
-    NOT, POP, PRINT, PUSH, PUSH_F64, PUSH_NULL, PUSH_STR, RET, STORE, SUB,
-    SWAP, Program,
+    self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
+    DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP,
+    JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT,
+    PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, RET, SET_FIELD, STORE,
+    SUB, SWAP, THROW, Program,
 };
 use crate::caps::capabilities;
 use crate::host::HostCaps;
@@ -63,42 +64,57 @@ pub enum VmError {
     CapArity { cap: String, expected: usize, got: usize },
 }
 
-/// Stack value — the five types the CVM1 supports.
+/// Stack value — the types the CVM1 supports.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
+    Bool(bool),
     Int(i64),
     Float(f64),
     Str(String),
     /// Owned array (copy-on-write; see module doc for the one semantic divergence).
     Array(Vec<Value>),
+    /// String-keyed map (object/dict).
+    Map(std::collections::HashMap<String, Value>),
+    /// Error value (carries a message string).
+    Error(String),
+    /// Binary blob data.
+    Bytes(Vec<u8>),
 }
 
 impl Value {
-    fn type_name(&self) -> &'static str {
+    pub(crate) fn type_name(&self) -> &'static str {
         match self {
             Value::Null      => "null",
+            Value::Bool(_)   => "bool",
             Value::Int(_)    => "int",
             Value::Float(_)  => "float",
             Value::Str(_)    => "str",
             Value::Array(_)  => "array",
+            Value::Map(_)    => "map",
+            Value::Error(_)  => "error",
+            Value::Bytes(_)  => "bytes",
         }
     }
 
-    /// Python truthiness: 0 / 0.0 / "" / null / [] are falsy.
-    fn is_truthy(&self) -> bool {
+    pub(crate) fn is_truthy(&self) -> bool {
         match self {
             Value::Null       => false,
+            Value::Bool(b)    => *b,
             Value::Int(i)     => *i != 0,
             Value::Float(f)   => *f != 0.0,
             Value::Str(s)     => !s.is_empty(),
             Value::Array(a)   => !a.is_empty(),
+            Value::Map(m)     => !m.is_empty(),
+            Value::Error(_)   => true,
+            Value::Bytes(b)   => !b.is_empty(),
         }
     }
 
-    fn as_text(&self) -> String {
+    pub(crate) fn as_text(&self) -> String {
         match self {
             Value::Null      => "null".to_string(),
+            Value::Bool(b)   => b.to_string(),
             Value::Int(i)    => i.to_string(),
             Value::Float(f)  => {
                 if f.fract() == 0.0 && f.is_finite() {
@@ -112,10 +128,16 @@ impl Value {
                 let inner: Vec<_> = a.iter().map(|v| v.as_text()).collect();
                 format!("[{}]", inner.join(", "))
             }
+            Value::Map(m)    => {
+                let inner: Vec<_> = m.iter().map(|(k, v)| format!("{k}: {}", v.as_text())).collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Value::Error(e)  => format!("error({e})"),
+            Value::Bytes(b)  => format!("<{} bytes>", b.len()),
         }
     }
 
-    fn is_numeric(&self) -> bool {
+    pub(crate) fn is_numeric(&self) -> bool {
         matches!(self, Value::Int(_) | Value::Float(_))
     }
 }
@@ -187,6 +209,7 @@ pub fn run_with_caps(
 
     let mut ip = start_ip;
     let mut call_stack: Vec<Frame> = vec![Frame { return_ip: None, memory: HashMap::new() }];
+    let mut try_stack: Vec<usize> = Vec::new();
 
     macro_rules! pop {
         () => {{
@@ -234,6 +257,10 @@ pub fn run_with_caps(
                 let v = f64::from_be_bytes(code[ip+1..ip+9].try_into().unwrap());
                 push!(Value::Float(v));
             }
+            PUSH_BOOL => {
+                let v = i64::from_be_bytes(code[ip+1..ip+9].try_into().unwrap());
+                push!(Value::Bool(v != 0));
+            }
             PUSH_NULL => {
                 push!(Value::Null);
             }
@@ -248,7 +275,7 @@ pub fn run_with_caps(
 
             EQ => {
                 let b = pop!(); let a = pop!();
-                push!(Value::Int(if a == b { 1 } else { 0 }));
+                push!(Value::Bool(a == b));
             }
             ADD | SUB | MUL | DIV | MOD | LT | GT => {
                 let b = need_num!(pop!());
@@ -285,15 +312,15 @@ pub fn run_with_caps(
                             Value::Int(ai - bi * trunc_div(ai, bi))
                         }
                     }
-                    LT => Value::Int(if af < bf { 1 } else { 0 }),
-                    GT => Value::Int(if af > bf { 1 } else { 0 }),
+                    LT => Value::Bool(af < bf),
+                    GT => Value::Bool(af > bf),
                     _ => unreachable!(),
                 };
                 push!(result);
             }
             NOT => {
                 let v = pop!();
-                push!(Value::Int(if v.is_truthy() { 0 } else { 1 }));
+                push!(Value::Bool(!v.is_truthy()));
             }
             NEW_ARRAY => {
                 let count = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
@@ -326,6 +353,18 @@ pub fn run_with_caps(
                 let v = pop!();
                 let len = need_array(v)?.len();
                 push!(Value::Int(len as i64));
+            }
+            ARR_PUSH => {
+                let val = pop!();
+                let mut arr = need_array(pop!())?;
+                arr.push(val);
+                push!(Value::Array(arr));
+            }
+            ARR_POP => {
+                let mut arr = need_array(pop!())?;
+                let val = arr.pop().unwrap_or(Value::Null);
+                push!(Value::Array(arr));
+                push!(val);
             }
             LOAD => {
                 let slot = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap());
@@ -405,35 +444,82 @@ pub fn run_with_caps(
                     serde_json::from_str(&spec_json)
                         .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
-                let code = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
                 let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                // Collect variable names from spec
                 let mut var_names: Vec<String> = Vec::with_capacity(var_count);
+                let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
                 for i in 0..var_count {
                     let key = format!("var_{}", i);
                     if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
                         var_names.push(name.to_string());
+                        // Pop the value that was pushed by the load instruction
+                        var_values.push(pop!());
                     }
                 }
+                // Reverse so values correspond to names in order
+                var_values.reverse();
                 let mut cmd = std::process::Command::new(lang);
-                cmd.arg("-c").arg(code);
-                for name in &var_names {
-                    let v = call_stack.last().unwrap().memory.get(&0).cloned()
-                        .unwrap_or(Value::Null);
-                    cmd.env(name, v.as_text());
+                cmd.arg("-c").arg(code_str);
+                for (name, val) in var_names.iter().zip(var_values.iter()) {
+                    cmd.env(name, val.as_text());
                 }
                 let output = cmd.output()
                     .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
                 if output.status.success() {
-                    let s = String::from_utf8_lossy(&output.stdout).to_string();
+                    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     out_len += s.len();
                     if out_len > quotas.max_output {
                         return Err(VmError::OutputQuota(quotas.max_output));
                     }
-                    out_parts.push(s);
+                    out_parts.push(s.clone());
+                    // Push output back onto stack for the store instruction
+                    push!(Value::Str(s));
                 } else {
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
+            }
+            ENTER_TRY => {
+                let target = u32::from_be_bytes(code[ip+1..ip+5].try_into().unwrap()) as usize;
+                if target > n { return Err(VmError::BadJump(target)); }
+                try_stack.push(target);
+            }
+            EXIT_TRY => {
+                try_stack.pop();
+            }
+            THROW => {
+                let err_val = pop!();
+                if let Some(handler_ip) = try_stack.pop() {
+                    ip = handler_ip;
+                    push!(err_val);
+                    continue;
+                }
+                return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
+            }
+            NEW_OBJ => {
+                push!(Value::Map(std::collections::HashMap::new()));
+            }
+            SET_FIELD => {
+                let idx = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+                let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let val = pop!();
+                let mut map = match pop!() {
+                    Value::Map(m) => m,
+                    other => return Err(VmError::TypeError { expected: "map", got: other.type_name() }),
+                };
+                map.insert(field, val);
+                push!(Value::Map(map));
+            }
+            GET_FIELD => {
+                let idx = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+                let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let map = match pop!() {
+                    Value::Map(m) => m,
+                    other => return Err(VmError::TypeError { expected: "map", got: other.type_name() }),
+                };
+                let val = map.get(&field).cloned().unwrap_or(Value::Null);
+                push!(val);
             }
             HALT => {
                 return Ok(VmResult {

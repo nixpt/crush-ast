@@ -36,15 +36,28 @@ impl Compiler {
         }
     }
 
-    pub fn compile(&mut self, program: Program) -> Result<CasmProgram> {
+    pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
         for (name, _) in &program.functions {
             self.local_functions.insert(name.clone());
         }
-        for (_, func) in &program.functions {
-            for stmt in &func.body {
-                if let Statement::FunctionDef { name, .. } = stmt {
-                    self.local_functions.insert(name.clone());
+        // Pre-pass: track VarDecls and populate LangBlock variables
+        for (_, func) in &mut program.functions {
+            let mut declared: Vec<String> = Vec::new();
+            for stmt in &mut func.body {
+                match stmt {
+                    Statement::VarDecl { name, .. } => {
+                        declared.push(name.clone());
+                    }
+                    Statement::FunctionDef { name, .. } => {
+                        self.local_functions.insert(name.clone());
+                    }
+                    Statement::LangBlock { variables, .. } => {
+                        if variables.is_empty() {
+                            *variables = declared.clone();
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -500,6 +513,15 @@ impl Compiler {
                 }
 
                 instrs.push(self.create_instr("exec_lang", var_args, meta));
+
+                // Store output back to the first variable (if any)
+                if let Some(first_var) = variables.first() {
+                    instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": first_var}),
+                        meta,
+                    ));
+                }
             }
             Statement::Break { meta } => {
                 if !self.loop_stack.is_empty() {

@@ -30,6 +30,7 @@ pub const DUP: u8 = 0x04;
 pub const SWAP: u8 = 0x05;
 pub const PUSH_F64: u8 = 0x06;
 pub const PUSH_NULL: u8 = 0x07;
+pub const PUSH_BOOL: u8 = 0x08;
 pub const ADD: u8 = 0x10;
 pub const SUB: u8 = 0x11;
 pub const MUL: u8 = 0x12;
@@ -48,11 +49,19 @@ pub const PRINT: u8 = 0x50;
 pub const CAP_CALL: u8 = 0x51;
 pub const CALL: u8 = 0x52;
 pub const RET: u8 = 0x53;
+pub const ENTER_TRY: u8 = 0x54;
+pub const EXIT_TRY: u8 = 0x55;
+pub const THROW: u8 = 0x56;
 pub const NEW_ARRAY: u8 = 0x60;
 pub const ARR_GET: u8 = 0x61;
 pub const ARR_SET: u8 = 0x62;
 pub const ARR_LEN: u8 = 0x63;
+pub const ARR_PUSH: u8 = 0x64;
+pub const ARR_POP: u8 = 0x65;
 pub const EXEC_LANG: u8 = 0x70;
+pub const NEW_OBJ: u8 = 0x71;
+pub const SET_FIELD: u8 = 0x72;
+pub const GET_FIELD: u8 = 0x73;
 pub const HALT: u8 = 0xFF;
 
 /// How an opcode's operand bytes are interpreted.
@@ -85,18 +94,20 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | HALT
+        NOP | POP | DUP | SWAP | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | HALT
         | ADD | SUB | MUL | DIV | MOD
         | EQ | LT | GT | NOT
-        | ARR_GET | ARR_SET | ARR_LEN => Some(OperandKind::None),
-        PUSH     => Some(OperandKind::I64),
+        | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
+        PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),
         LOAD | STORE => Some(OperandKind::Slot),
-        JMP | JZ | JNZ => Some(OperandKind::Addr),
+        JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL  => Some(OperandKind::Cap),
         CALL      => Some(OperandKind::Func),
         EXEC_LANG => Some(OperandKind::Str),
+        SET_FIELD | GET_FIELD => Some(OperandKind::Str),
+        NEW_OBJ => Some(OperandKind::None),
         NEW_ARRAY => Some(OperandKind::Count),
         _ => None,
     }
