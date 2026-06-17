@@ -92,7 +92,11 @@ impl VersionMismatch {
     /// (whose `u8` versions are stringified here) onto the unified shape without
     /// disturbing the ABI error itself.
     pub fn ipc(expected: u8, found: u8) -> Self {
-        Self::new(VersionBoundary::Ipc, expected.to_string(), found.to_string())
+        Self::new(
+            VersionBoundary::Ipc,
+            expected.to_string(),
+            found.to_string(),
+        )
     }
 
     /// Capsule-manifest boundary (VER-01).

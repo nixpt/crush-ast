@@ -5,7 +5,7 @@
 //! compiles in its own crate against casm's public surface — sidestepping the
 //! pre-existing uncompilable inline `ecasm.rs` tests (tracked as EXO-151).
 
-use casm::{Format, Program, CASM_VERSION};
+use casm::{CASM_VERSION, Format, Program};
 
 fn program_with_version(v: &str) -> Vec<u8> {
     let mut p = Program::default();

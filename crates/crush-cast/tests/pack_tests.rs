@@ -18,9 +18,10 @@ fn collect_fixtures(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_fixtures(&path, out);
-        } else if path.file_name().is_some_and(|n| {
-            n.to_str().is_some_and(|n| n.ends_with(".cast.json"))
-        }) {
+        } else if path
+            .file_name()
+            .is_some_and(|n| n.to_str().is_some_and(|n| n.ends_with(".cast.json")))
+        {
             out.push(path);
         }
     }
@@ -124,14 +125,18 @@ fn assert_version_rejection(result: Result<Program, PackError>) {
 /// An incompatible major `cast_version` fails closed on the JSON load path.
 #[test]
 fn version_gate_rejects_incompatible_major_json() {
-    let bytes = incompatible_program().serialize(Format::Json).expect("encode");
+    let bytes = incompatible_program()
+        .serialize(Format::Json)
+        .expect("encode");
     assert_version_rejection(Program::deserialize(&bytes, Format::Json));
 }
 
 /// An incompatible major `cast_version` fails closed on the binary load path.
 #[test]
 fn version_gate_rejects_incompatible_major_binary() {
-    let bytes = incompatible_program().serialize(Format::Binary).expect("encode");
+    let bytes = incompatible_program()
+        .serialize(Format::Binary)
+        .expect("encode");
     assert_version_rejection(Program::deserialize(&bytes, Format::Binary));
 }
 

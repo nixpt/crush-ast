@@ -425,10 +425,10 @@ impl EcasmFile {
 
         // Write footer
         writer.write_all(&self.header_hash)?;
-        if self.header.flags.contains(EcasmFlags::SIGNED) {
-            if let Some(sig) = &self.signature {
-                writer.write_all(sig)?;
-            }
+        if self.header.flags.contains(EcasmFlags::SIGNED)
+            && let Some(sig) = &self.signature
+        {
+            writer.write_all(sig)?;
         }
 
         Ok(())
@@ -1003,9 +1003,9 @@ mod tests {
         // Try to decrypt with a different key
         let cipher2 = TestCipher::new([0x22; 32]);
         let result = ecasm.decrypt(|page_idx, ciphertext| {
-            cipher2.decrypt_page(page_idx, ciphertext).map_err(|e| {
-                crush_errors::CrushError::new(crush_errors::ErrorKind::Internal, e)
-            })
+            cipher2
+                .decrypt_page(page_idx, ciphertext)
+                .map_err(|e| crush_errors::CrushError::new(crush_errors::ErrorKind::Internal, e))
         });
 
         // Should fail with authentication error

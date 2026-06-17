@@ -3,8 +3,13 @@ name = "crush-cast"
 version = "0.2.0"
 edition = "2024"
 repository.workspace = true
+homepage.workspace = true
 description = "Crush Abstract Syntax Tree (CAST) - Stable Intermediate Representation"
 license.workspace = true
+readme = "README.md"
+keywords = ["crush", "ast", "compiler", "intermediate-representation"]
+categories = ["compilers", "data-structures"]
+exclude = ["python/__pycache__"]
 
 [features]
 default = []

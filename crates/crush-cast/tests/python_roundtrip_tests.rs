@@ -6,7 +6,8 @@ use std::process::Command;
 /// parse it back into an AST that matches the equivalent Rust construction.
 #[test]
 fn python_dataclass_round_trip() {
-    let python_script = format!(r#"
+    let python_script = format!(
+        r#"
 import dataclasses, json, sys
 sys.path.insert(0, "{}/python")
 from cast_types import (
@@ -58,7 +59,9 @@ program = Program(
 
 json_str = json.dumps(dataclasses.asdict(program), indent=2)
 print(json_str)
-"#, env!("CARGO_MANIFEST_DIR"));
+"#,
+        env!("CARGO_MANIFEST_DIR")
+    );
 
     let output = Command::new("python3")
         .arg("-c")
@@ -182,7 +185,8 @@ print(json_str)
 fn python_import_variant_round_trip() {
     // Specifically verify that the `import_` field in Python maps correctly
     // to the `import` field in Rust via serde(alias).
-    let python_script = format!(r#"
+    let python_script = format!(
+        r#"
 import dataclasses, json, sys
 sys.path.insert(0, "{}/python")
 from cast_types import Program, Function, Import, CrushModule
@@ -201,7 +205,9 @@ program = Program(
     }},
 )
 print(json.dumps(dataclasses.asdict(program)))
-"#, env!("CARGO_MANIFEST_DIR"));
+"#,
+        env!("CARGO_MANIFEST_DIR")
+    );
 
     let output = Command::new("python3")
         .arg("-c")
@@ -220,7 +226,9 @@ print(json.dumps(dataclasses.asdict(program)))
     match &main.body[0] {
         crush_cast::Statement::Import { import, meta } => {
             match import {
-                crush_cast::ImportStatement::CrushModule { module_path, alias, .. } => {
+                crush_cast::ImportStatement::CrushModule {
+                    module_path, alias, ..
+                } => {
                     assert_eq!(module_path, "math");
                     assert_eq!(alias.as_deref(), Some("m"));
                 }
@@ -244,10 +252,7 @@ fn python_bindings_are_up_to_date() {
 
     let committed_bytes = std::fs::read(&committed).unwrap();
 
-    let temp_dir = std::env::temp_dir().join(format!(
-        "cast_types_check_{}",
-        std::process::id()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("cast_types_check_{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).unwrap();
     let temp_out = temp_dir.join("cast_types.py");
 

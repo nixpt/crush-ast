@@ -268,7 +268,10 @@ fn format_normalizes_key_order_and_whitespace() {
         out_a, out_b,
         "Two shuffled variants of the same program should format identically"
     );
-    assert_eq!(out_a, FIXTURE_1_CANONICAL, "Output should match canonical fixture");
+    assert_eq!(
+        out_a, FIXTURE_1_CANONICAL,
+        "Output should match canonical fixture"
+    );
 }
 
 #[test]

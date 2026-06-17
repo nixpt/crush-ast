@@ -83,8 +83,9 @@ impl Program {
     /// plain CBOR with no header.
     pub fn serialize(&self, format: Format) -> Result<Vec<u8>, PackError> {
         match format {
-            Format::Json => serde_json::to_vec_pretty(self)
-                .map_err(|e| PackError::Serialization(e.to_string())),
+            Format::Json => {
+                serde_json::to_vec_pretty(self).map_err(|e| PackError::Serialization(e.to_string()))
+            }
             Format::Binary => cbor4ii::serde::to_vec(Vec::new(), self)
                 .map_err(|e| PackError::Serialization(e.to_string())),
         }

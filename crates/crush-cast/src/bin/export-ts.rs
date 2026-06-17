@@ -5,15 +5,15 @@
 //!
 //! Output is written to `crates/core/crush-cast/bindings/cast.d.ts`.
 
-use crush_cast::{
-    CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
-    ImportStatement, MatchArm, Pattern, Program, Statement,
-};
 use crush_cast::ai::{
-    AdaptationAction, AdaptationStrategy, AdaptationType, AIExpression, AIMetadata, AIStatement,
+    AIExpression, AIMetadata, AIStatement, AdaptationAction, AdaptationStrategy, AdaptationType,
     BackoffStrategy, CollaborationPattern, DelegationStrategy, DiscoveryStrategy, ErrorHandling,
     ExecutionContext, ExecutionStrategy, KnowledgeType, LearningSource, LearningStrategy,
     LearningTarget, ParameterSchema, Priority, RetentionPolicy, ToolCall, ToolSchema,
+};
+use crush_cast::{
+    CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
+    ImportStatement, MatchArm, Pattern, Program, Statement,
 };
 use serde_json::Value;
 use ts_rs::{Config, TS};
