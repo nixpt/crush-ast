@@ -156,6 +156,12 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
                 "index" => "ARR_GET".to_string(),
+                "make_range" => "CAP_CALL \"make_range\" 2".to_string(),
+                "str_contains" => "CAP_CALL \"str.contains\" 2".to_string(),
+                "str_split" => "CAP_CALL \"str.split\" 2".to_string(),
+                "str_replace" => "CAP_CALL \"str.replace\" 3".to_string(),
+                "str_join" => "CAP_CALL \"str.join\" 2".to_string(),
+                "arr_set" => "ARR_SET".to_string(),
                 "export_var" => "PRINT".to_string(),
                 "exec_lang" => {
                     let args_json = serde_json::to_string(&instr.args)

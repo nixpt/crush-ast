@@ -280,8 +280,9 @@ impl SemanticAnalyzer {
                         } else if self.is_numeric(&l_type) && self.is_numeric(&r_type) {
                             Ok(self.numeric_result_type(&l_type, &r_type))
                         } else if l_type == Type::String || r_type == Type::String {
-                            // Auto-convert non-string operand to string
                             Ok(Type::String)
+                        } else if l_type == Type::Any || r_type == Type::Any {
+                            Ok(Type::Any)
                         } else {
                             bail!("Invalid binary op + for types {} and {}", l_type, r_type)
                         }
@@ -289,6 +290,8 @@ impl SemanticAnalyzer {
                     "-" | "*" | "/" | "%" => {
                         if self.is_numeric(&l_type) && self.is_numeric(&r_type) {
                             Ok(self.numeric_result_type(&l_type, &r_type))
+                        } else if l_type == Type::Any || r_type == Type::Any {
+                            Ok(Type::Any)
                         } else {
                             bail!(
                                 "Invalid binary op {} for types {} and {}",
@@ -311,6 +314,8 @@ impl SemanticAnalyzer {
                     }
                     "&&" | "||" => {
                         if l_type == Type::Bool && r_type == Type::Bool {
+                            Ok(Type::Bool)
+                        } else if l_type == Type::Any || r_type == Type::Any {
                             Ok(Type::Bool)
                         } else {
                             bail!(

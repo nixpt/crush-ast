@@ -23,6 +23,7 @@ members = [
     "crates/crush-python",
     "crates/crush-runtime-abi",
     "crates/crush-python-rt",
+    "crates/crush-lang-python",
 ]
 
 [workspace.package]

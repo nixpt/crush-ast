@@ -578,6 +578,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-lang-python"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "rustpython-ast",
+ "rustpython-parser",
+ "serde",
+ "serde_json",
+ "walker-core",
+]
+
+[[package]]
 name = "crush-lang-sdk"
 version = "0.2.0"
 dependencies = [
