@@ -16,31 +16,31 @@ The compiler (`crush-frontend/src/compiler.rs`) emits these instruction strings 
 `casm_to_vm` (`crush-lang-sdk/src/compile.rs`) has **no handler** for. They hit the
 catch-all `other => anyhow::bail!(...)` at compile.rs:200.
 
-### 1.1 DOM opcodes (3)
-| Instruction | Compiler location | Priority |
-|-------------|-------------------|----------|
-| `dom_mutate` | compiler.rs:773 | Low — DOM requires browser host |
-| `dom_event_listener` | compiler.rs:791 | Low |
-| `dom_query` | compiler.rs:1243 | Low |
+### 1.1 DOM opcodes (3) — ✅ Mapped to NOP
+| Instruction | Compiler location |
+|-------------|-------------------|
+| `dom_mutate` | compiler.rs:773 |
+| `dom_event_listener` | compiler.rs:791 |
+| `dom_query` | compiler.rs:1243 |
 
-### 1.2 AI opcodes (10)
-| Instruction | Compiler location | Priority |
-|-------------|-------------------|----------|
-| `ai_goal_decl` | compiler.rs:823 | Low — AI requires external runtime |
-| `ai_progress_update` | compiler.rs:841 | Low |
-| `ai_knowledge_share` | compiler.rs:858 | Low |
-| `ai_capability_discovery` | compiler.rs:874 | Low |
-| `ai_adaptation_request` | compiler.rs:889 | Low |
-| `ai_query` | compiler.rs:1280 | Low |
-| `ai_tool_chain` | compiler.rs:1352 | Low |
-| `ai_agent_delegation` | compiler.rs:1393 | Low |
-| `ai_learning_loop` | compiler.rs:1445 | Low |
-| `ai_context_aware` | compiler.rs:1463 | Low |
+### 1.2 AI opcodes (10) — ✅ Mapped to NOP
+| Instruction | Compiler location |
+|-------------|-------------------|
+| `ai_goal_decl` | compiler.rs:823 |
+| `ai_progress_update` | compiler.rs:841 |
+| `ai_knowledge_share` | compiler.rs:858 |
+| `ai_capability_discovery` | compiler.rs:874 |
+| `ai_adaptation_request` | compiler.rs:889 |
+| `ai_query` | compiler.rs:1280 |
+| `ai_tool_chain` | compiler.rs:1352 |
+| `ai_agent_delegation` | compiler.rs:1393 |
+| `ai_learning_loop` | compiler.rs:1445 |
+| `ai_context_aware` | compiler.rs:1463 |
 
-### 1.3 Other (1)
-| Instruction | Compiler location | Priority | Notes |
-|-------------|-------------------|----------|-------|
-| `new_struct` | compiler.rs:1177 | **Medium** | `OpCode::NewStruct` exists in CASM but translator has no handler |
+### 1.3 Other (1) — ✅ Mapped to NEW_OBJ
+| Instruction | Notes |
+|-------------|-------|
+| `new_struct` | `OpCode::NewStruct` → NEW_OBJ (loses struct name) |
 
 ---
 
@@ -66,11 +66,13 @@ These `OpCode` variants exist in `casm/src/lib.rs` but have NO equivalent in
 | Variant | CASM line | Priority | Notes |
 |---------|-----------|----------|-------|
 | `ImportVar(String)` | lib.rs:82 | Low | Never emitted by compiler |
-| `Rot` | lib.rs:115 | Low | Stack rotate — never emitted |
-| `Pick(usize)` | lib.rs:116 | Low | Stack pick — never emitted |
-| `Roll(usize)` | lib.rs:117 | Low | Stack roll — never emitted |
+| `Rot` | lib.rs:115 | ✅ | Added 0x09, both VMs |
+| `Pick(usize)` | lib.rs:116 | ✅ | Added 0x0A, both VMs |
+| `Roll(usize)` | lib.rs:117 | ✅ | Added 0x0B, both VMs |
 | `Break` | lib.rs:125 | Low | Compiler emits JMP instead |
 | `Continue` | lib.rs:126 | Low | Compiler emits JMP instead |
+| `TypeOf` | lib.rs:148 | ✅ | Added 0x16, both VMs |
+| `Cast(String)` | lib.rs:149 | ✅ | Added 0x17, both VMs |
 | `Spawn` | lib.rs:127 | **Medium** | → NOP in translation |
 | `Yield` | lib.rs:128 | **Medium** | → NOP in translation |
 | `Await { handle }` | lib.rs:129 | **Medium** | → NOP in translation |

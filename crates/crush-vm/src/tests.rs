@@ -43,6 +43,12 @@ fn modulo() {
 }
 
 #[test]
+fn mod_negative_values() {
+    let r = run_src("PUSH -7\nPUSH 3\nMOD\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(-1)]);  // Rust-style truncation: -7 - 3*(-2) = -1
+}
+
+#[test]
 fn float_push() {
     let r = run_src("PUSH_F64 3.14\nHALT");
     assert!(matches!(r.stack.first(), Some(Value::Float(f)) if (f - 3.14).abs() < 1e-10));
@@ -180,7 +186,7 @@ fn new_array() {
     let r = run_src("PUSH 1\nPUSH 2\nPUSH 3\nNEW_ARRAY 3\nHALT");
     assert_eq!(
         r.stack,
-        vec![Value::Array(vec![
+        vec![Value::new_array(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(3)
@@ -414,9 +420,9 @@ fn arr_push_and_arr_pop() {
     let r = run_src("NEW_ARRAY 0\nDUP\nPUSH 1\nARR_PUSH\nDUP\nPUSH 2\nARR_PUSH\nHALT");
     let last = r.stack.last().expect("should have a value");
     if let Value::Array(arr) = last {
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0], Value::Int(1));
-        assert_eq!(arr[1], Value::Int(2));
+        assert_eq!(arr.borrow().len(), 2);
+        assert_eq!(arr.borrow()[0], Value::Int(1));
+        assert_eq!(arr.borrow()[1], Value::Int(2));
     } else {
         panic!("expected array, got {:?}", last);
     }
@@ -439,17 +445,177 @@ fn arr_pop_removes_last() {
         panic!("expected Int, got {:?}", r.stack[len - 1]);
     }
     if let Value::Array(arr) = &r.stack[len - 2] {
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0], Value::Int(1));
+        assert_eq!(arr.borrow().len(), 1);
+        assert_eq!(arr.borrow()[0], Value::Int(1));
     } else {
         panic!("expected Array, got {:?}", r.stack[len - 2]);
     }
 }
 
 #[test]
+// ── bitwise ops ───────────────────────────────────────────────────────────────
+
+#[test]
+fn bitwise_and_or_xor() {
+    let r = run_src("PUSH 12\nPUSH 10\nBITAND\nHALT");  // 12&10 = 8
+    assert_eq!(r.stack, vec![Value::Int(8)]);
+    let r = run_src("PUSH 12\nPUSH 10\nBITOR\nHALT");   // 12|10 = 14
+    assert_eq!(r.stack, vec![Value::Int(14)]);
+    let r = run_src("PUSH 12\nPUSH 10\nBITXOR\nHALT");  // 12^10 = 6
+    assert_eq!(r.stack, vec![Value::Int(6)]);
+}
+
+#[test]
+fn bitwise_not_shift() {
+    let r = run_src("PUSH 0\nBITNOT\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(-1)]);
+    let r = run_src("PUSH 1\nPUSH 4\nSHL\nHALT");  // 1<<4 = 16
+    assert_eq!(r.stack, vec![Value::Int(16)]);
+    let r = run_src("PUSH 16\nPUSH 2\nSHR\nHALT");  // 16>>2 = 4
+    assert_eq!(r.stack, vec![Value::Int(4)]);
+}
+
+// ── native string ops ──────────────────────────────────────────────────────────
+
+#[test]
+fn str_contains_native() {
+    let r = run_src(r#"PUSH_STR "hello world"
+    PUSH_STR "world"
+    STR_CONTAINS
+    HALT"#);
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src(r#"PUSH_STR "hello"
+    PUSH_STR "xyz"
+    STR_CONTAINS
+    HALT"#);
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+}
+
+#[test]
+fn str_split_native() {
+    let r = run_src(r#"PUSH_STR "a,b,c"
+    PUSH_STR ","
+    STR_SPLIT
+    HALT"#);
+    if let Some(Value::Array(arr)) = r.stack.first() {
+        assert_eq!(arr.borrow().len(), 3);
+        assert_eq!(arr.borrow()[0], Value::Str("a".to_string()));
+        assert_eq!(arr.borrow()[1], Value::Str("b".to_string()));
+        assert_eq!(arr.borrow()[2], Value::Str("c".to_string()));
+    } else {
+        panic!("expected array");
+    }
+}
+
+#[test]
+fn str_replace_native() {
+    let r = run_src(r#"PUSH_STR "hello world"
+    PUSH_STR "world"
+    PUSH_STR "there"
+    STR_REPLACE
+    HALT"#);
+    assert_eq!(r.stack, vec![Value::Str("hello there".to_string())]);
+}
+
+#[test]
+fn str_join_native() {
+    let r = run_src(r#"PUSH_STR "a"
+    PUSH_STR "b"
+    PUSH_STR "c"
+    NEW_ARRAY 3
+    PUSH_STR ","
+    STR_JOIN
+    HALT"#);
+    assert_eq!(r.stack, vec![Value::Str("a,b,c".to_string())]);
+}
+
+#[test]
+fn make_range_native() {
+    let r = run_src("PUSH 0\nPUSH 5\nMAKE_RANGE\nHALT");
+    if let Some(Value::Array(arr)) = r.stack.first() {
+        assert_eq!(arr.borrow().len(), 5);
+        assert_eq!(arr.borrow()[0], Value::Int(0));
+        assert_eq!(arr.borrow()[4], Value::Int(4));
+    } else {
+        panic!("expected array");
+    }
+    let r = run_src("PUSH 5\nPUSH 3\nMAKE_RANGE\nHALT");  // empty range
+    assert_eq!(r.stack, vec![Value::new_array(vec![])]);
+}
+
+// ── capability tests ──────────────────────────────────────────────────────────
+
+#[test]
+fn cap_str_contains() {
+    let r = run_src_with_perms(
+        r#"PUSH_STR "hello world"
+    PUSH_STR "world"
+    CAP_CALL "str.contains" 2
+    HALT"#,
+        &["str.contains"],
+    );
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn cap_str_split() {
+    let r = run_src_with_perms(
+        r#"PUSH_STR "a,b,c"
+    PUSH_STR ","
+    CAP_CALL "str.split" 2
+    HALT"#,
+        &["str.split"],
+    );
+    if let Some(Value::Array(arr)) = r.stack.first() {
+        assert_eq!(arr.borrow().len(), 3);
+    } else {
+        panic!("expected array");
+    }
+}
+
+#[test]
+fn cap_str_replace() {
+    let r = run_src_with_perms(
+        r#"PUSH_STR "hello world"
+    PUSH_STR "world"
+    PUSH_STR "there"
+    CAP_CALL "str.replace" 3
+    HALT"#,
+        &["str.replace"],
+    );
+    assert_eq!(r.stack, vec![Value::Str("hello there".to_string())]);
+}
+
+#[test]
+fn cap_str_join() {
+    let r = run_src_with_perms(
+        r#"PUSH_STR "a"
+    PUSH_STR "b"
+    NEW_ARRAY 2
+    PUSH_STR ","
+    CAP_CALL "str.join" 2
+    HALT"#,
+        &["str.join"],
+    );
+    assert_eq!(r.stack, vec![Value::Str("a,b".to_string())]);
+}
+
+#[test]
+fn cap_make_range() {
+    let r = run_src_with_perms(
+        "PUSH 0\nPUSH 5\nCAP_CALL \"make_range\" 2\nHALT",
+        &["make_range"],
+    );
+    if let Some(Value::Array(arr)) = r.stack.first() {
+        assert_eq!(arr.borrow().len(), 5);
+    } else {
+        panic!("expected array");
+    }
+}
+
 fn map_is_truthy_only_when_non_empty() {
-    assert!(!Value::Map(std::collections::HashMap::new()).is_truthy());
+    assert!(!Value::new_map(std::collections::HashMap::new()).is_truthy());
     let mut m = std::collections::HashMap::new();
     m.insert("x".to_string(), Value::Int(1));
-    assert!(Value::Map(m).is_truthy());
+    assert!(Value::new_map(m).is_truthy());
 }

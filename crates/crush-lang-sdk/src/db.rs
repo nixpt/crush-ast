@@ -32,9 +32,10 @@ fn crush_value_to_json(v: &Value) -> serde_json::Value {
             serde_json::Value::Number(serde_json::Number::from_f64(*f).unwrap_or(0.into()))
         }
         Value::Str(s) => serde_json::Value::String(s.clone()),
-        Value::Array(a) => serde_json::Value::Array(a.iter().map(crush_value_to_json).collect()),
+        Value::Array(a) => serde_json::Value::Array(a.borrow().iter().map(crush_value_to_json).collect()),
         Value::Map(m) => {
             let obj: serde_json::Map<String, serde_json::Value> = m
+                .borrow()
                 .iter()
                 .map(|(k, v)| (k.clone(), crush_value_to_json(v)))
                 .collect();
@@ -125,7 +126,7 @@ impl HostCap for DbQueryCap {
                 row.into_iter().map(|(k, v)| (k, v)).collect(),
             ));
         }
-        Ok(Some(Value::Array(
+        Ok(Some(Value::new_array(
             out.into_iter()
                 .map(|v| {
                     serde_json::to_string(&v)

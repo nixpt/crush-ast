@@ -59,6 +59,10 @@ pub struct PortableVm {
     privileged_allowed: bool,
     /// Exception handler stack (target IP for each active try block).
     try_stack: Vec<usize>,
+    /// Next task ID for async spawn.
+    next_task_id: u64,
+    /// Scheduled tasks: task_id → function name.
+    scheduled_tasks: std::collections::HashMap<u64, String>,
 }
 
 impl PortableVm {
@@ -107,6 +111,8 @@ impl PortableVm {
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
+            next_task_id: 1,
+            scheduled_tasks: std::collections::HashMap::new(),
         }
     }
 
@@ -235,6 +241,34 @@ impl PortableVm {
                 self.push(a);
                 self.push(b);
             }
+            ROT => {
+                let a = self.pop()?;
+                let b = self.pop()?;
+                let c = self.pop()?;
+                self.push(b);
+                self.push(c);
+                self.push(a);
+            }
+            PICK => {
+                let n = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                if n >= self.stack.len() {
+                    return Err(VmError::StackUnderflow);
+                }
+                self.push(self.stack[self.stack.len() - 1 - n].clone());
+            }
+            ROLL => {
+                let n = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                if n >= self.stack.len() {
+                    return Err(VmError::StackUnderflow);
+                }
+                let idx = self.stack.len() - 1 - n;
+                let v = self.stack.remove(idx);
+                self.push(v);
+            }
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
@@ -292,7 +326,9 @@ impl PortableVm {
                         if is_float {
                             Value::Float(af % bf)
                         } else {
-                            Value::Int(to_i64(&a) % to_i64(&b))
+                            let ai = to_i64(&a);
+                            let bi = to_i64(&b);
+                            Value::Int(ai - bi * (ai / bi))
                         }
                     }
                     _ => unreachable!(),
@@ -389,6 +425,40 @@ impl PortableVm {
             NOT => {
                 let a = self.pop()?;
                 self.push(Value::Bool(!value_is_truthy(&a)));
+            }
+            TYPEOF => {
+                let v = self.pop()?;
+                self.push(Value::Str(value_type_name(&v).to_string()));
+            }
+            CAST => {
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let type_name = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let v = self.pop()?;
+                match type_name.as_str() {
+                    "str" | "string" => self.push(Value::Str(value_to_text(&v))),
+                    "int" | "i64" => {
+                        self.push(match v {
+                            Value::Int(_) => v,
+                            Value::Float(f) => Value::Int(f as i64),
+                            Value::Str(s) => Value::Int(s.parse().unwrap_or(0)),
+                            Value::Bool(b) => Value::Int(if b { 1 } else { 0 }),
+                            _ => Value::Int(0),
+                        });
+                    }
+                    "float" | "f64" => {
+                        self.push(match v {
+                            Value::Float(_) => v,
+                            Value::Int(i) => Value::Float(i as f64),
+                            Value::Str(s) => Value::Float(s.parse().unwrap_or(0.0)),
+                            Value::Bool(b) => Value::Float(if b { 1.0 } else { 0.0 }),
+                            _ => Value::Float(0.0),
+                        });
+                    }
+                    "bool" => self.push(Value::Bool(value_is_truthy(&v))),
+                    _ => self.push(v),
+                }
             }
             LOAD => {
                 let slot = u16::from_be_bytes(
@@ -507,13 +577,14 @@ impl PortableVm {
                     vals.push(self.pop()?);
                 }
                 vals.reverse();
-                self.push(Value::Array(vals));
+                self.push(Value::new_array(vals));
             }
             ARR_GET => {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let arr = need_array(arr_v)?;
+                let arr_rc = need_array(arr_v)?;
+                let arr = arr_rc.borrow();
                 let len = arr.len();
                 let actual = wrap_index(idx, len)?;
                 self.push(arr[actual].clone());
@@ -523,31 +594,34 @@ impl PortableVm {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let mut arr = need_array(arr_v)?;
-                let len = arr.len();
-                let actual = wrap_index(idx, len)?;
-                arr[actual] = val;
-                self.push(Value::Array(arr));
+                let arr_rc = need_array(arr_v)?;
+                {
+                    let mut arr = arr_rc.borrow_mut();
+                    let len = arr.len();
+                    let actual = wrap_index(idx, len)?;
+                    arr[actual] = val;
+                }
+                self.push(Value::Array(arr_rc));
             }
             ARR_LEN => {
                 let v = self.pop()?;
-                let arr = need_array(v)?;
-                self.push(Value::Int(arr.len() as i64));
+                let arr_rc = need_array(v)?;
+                self.push(Value::Int(arr_rc.borrow().len() as i64));
             }
             ARR_PUSH => {
                 let val = self.pop()?;
-                let mut arr = need_array(self.pop()?)?;
-                arr.push(val);
-                self.push(Value::Array(arr));
+                let arr_rc = need_array(self.pop()?)?;
+                arr_rc.borrow_mut().push(val);
+                self.push(Value::Array(arr_rc));
             }
             ARR_POP => {
-                let mut arr = need_array(self.pop()?)?;
-                let val = arr.pop().unwrap_or(Value::Null);
-                self.push(Value::Array(arr));
+                let arr_rc = need_array(self.pop()?)?;
+                let val = arr_rc.borrow_mut().pop().unwrap_or(Value::Null);
+                self.push(Value::Array(arr_rc.clone()));
                 self.push(val);
             }
             NEW_OBJ => {
-                self.push(Value::Map(std::collections::HashMap::new()));
+                self.push(Value::new_map(std::collections::HashMap::new()));
             }
             SET_FIELD => {
                 let idx = u16::from_be_bytes(
@@ -562,7 +636,7 @@ impl PortableVm {
                     .ok_or(VmError::ConstOutOfRange(idx))?
                     .clone();
                 let val = self.pop()?;
-                let mut map = match self.pop()? {
+                let map_rc = match self.pop()? {
                     Value::Map(m) => m,
                     other => {
                         return Err(VmError::TypeError {
@@ -571,8 +645,8 @@ impl PortableVm {
                         });
                     }
                 };
-                map.insert(field, val);
-                self.push(Value::Map(map));
+                map_rc.borrow_mut().insert(field, val);
+                self.push(Value::Map(map_rc));
             }
             GET_FIELD => {
                 let idx = u16::from_be_bytes(
@@ -586,7 +660,7 @@ impl PortableVm {
                     .get(idx)
                     .ok_or(VmError::ConstOutOfRange(idx))?
                     .clone();
-                let map = match self.pop()? {
+                let map_rc = match self.pop()? {
                     Value::Map(m) => m,
                     other => {
                         return Err(VmError::TypeError {
@@ -595,7 +669,7 @@ impl PortableVm {
                         });
                     }
                 };
-                let val = map.get(&field).cloned().unwrap_or(Value::Null);
+                let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
                 self.push(val);
             }
             ENTER_TRY => {
@@ -641,7 +715,7 @@ impl PortableVm {
                 } else {
                     text.split(&d).map(|p| Value::Str(p.to_string())).collect()
                 };
-                self.push(Value::Array(parts));
+                self.push(Value::new_array(parts));
             }
             STR_REPLACE => {
                 let to = self.pop()?;
@@ -657,7 +731,7 @@ impl PortableVm {
                 let d = value_to_text(&delim);
                 match arr_v {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.iter().map(|v| value_to_text(v)).collect();
+                        let parts: Vec<String> = elems.borrow().iter().map(|v| value_to_text(v)).collect();
                         self.push(Value::Str(parts.join(&d)));
                     }
                     other => {
@@ -695,7 +769,73 @@ impl PortableVm {
                         elems.push(Value::Int(i));
                     }
                 }
-                self.push(Value::Array(elems));
+                self.push(Value::new_array(elems));
+            }
+            EXEC_LANG => {
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let spec_json = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let spec: std::collections::HashMap<String, serde_json::Value> =
+                    serde_json::from_str(&spec_json)
+                        .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
+                let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
+                let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
+                for _ in 0..var_count {
+                    var_values.push(self.pop()?);
+                }
+                var_values.reverse();
+                let mut cmd = std::process::Command::new(lang);
+                cmd.arg("-c").arg(code_str);
+                for (i, val) in var_values.iter().enumerate() {
+                    let key = format!("var_{}", i);
+                    if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
+                        cmd.env(name, value_to_text(val));
+                    }
+                }
+                let output = cmd.output()
+                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
+                if output.status.success() {
+                    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    self.out_len += s.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.out_parts.push(s.clone());
+                    self.push(Value::Str(s));
+                } else {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
+                }
+            }
+            SPAWN => {
+                let fn_name = value_to_text(&self.pop()?);
+                let task_id = self.next_task_id;
+                self.next_task_id += 1;
+                self.scheduled_tasks.insert(task_id, fn_name);
+                self.push(Value::Int(task_id as i64));
+            }
+            YIELD => {
+                std::thread::yield_now();
+            }
+            AWAIT => {
+                let handle = self.pop()?;
+                if let Value::Int(task_id) = handle {
+                    if let Some(fn_name) = self.scheduled_tasks.remove(&(task_id as u64)) {
+                        if let Some(&entry) = self.func_entry.get(&fn_name) {
+                            if self.call_stack.len() >= self.quotas.max_call_depth {
+                                return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                            }
+                            self.call_stack
+                                .push(Frame::new(Some(next_ip)));
+                            self.ip = entry;
+                            return Ok(());
+                        }
+                    }
+                }
+                self.push(Value::Null);
             }
             HALT => {
                 self.halted = true;
@@ -759,7 +899,7 @@ impl PortableVm {
                     } else {
                         s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
                     };
-                    Ok(Some(Value::Array(parts)))
+                    Ok(Some(Value::new_array(parts)))
                 }
                 "str.replace" => {
                     let s = value_to_text(&args[0]);
@@ -772,7 +912,7 @@ impl PortableVm {
                     match &args[0] {
                         Value::Array(elems) => {
                             let parts: Vec<String> =
-                                elems.iter().map(|v| value_to_text(v)).collect();
+                                elems.borrow().iter().map(|v| value_to_text(v)).collect();
                             Ok(Some(Value::Str(parts.join(&delim))))
                         }
                         other => Err(VmError::TypeError {
@@ -806,7 +946,7 @@ impl PortableVm {
                             elems.push(Value::Int(i));
                         }
                     }
-                    Ok(Some(Value::Array(elems)))
+                    Ok(Some(Value::new_array(elems)))
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
@@ -899,7 +1039,7 @@ pub enum VmYield {
 }
 
 /// Helper functions for array operations.
-fn need_array(v: Value) -> Result<Vec<Value>, VmError> {
+fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
         other => Err(VmError::TypeError {
@@ -978,11 +1118,12 @@ pub fn value_to_text(v: &Value) -> String {
         }
         Value::Str(s) => s.clone(),
         Value::Array(a) => {
-            let items: Vec<String> = a.iter().map(value_to_text).collect();
+            let items: Vec<String> = a.borrow().iter().map(value_to_text).collect();
             format!("[{}]", items.join(", "))
         }
         Value::Map(m) => {
             let items: Vec<String> = m
+                .borrow()
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, value_to_text(v)))
                 .collect();
@@ -1001,8 +1142,8 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Int(i) => *i != 0,
         Value::Float(f) => *f != 0.0,
         Value::Str(s) => !s.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Map(m) => !m.is_empty(),
+        Value::Array(a) => !a.borrow().is_empty(),
+        Value::Map(m) => !m.borrow().is_empty(),
         Value::Error(_) => true,
         Value::Bytes(b) => !b.is_empty(),
     }

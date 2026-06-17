@@ -323,7 +323,7 @@ impl HostCap for FsListCap {
             .filter_map(|e| e.ok())
             .filter_map(|e| e.file_name().into_string().ok().map(Value::Str))
             .collect();
-        Ok(Some(Value::Array(entries)))
+        Ok(Some(Value::new_array(entries)))
     }
 }
 
@@ -403,7 +403,7 @@ impl HostCap for ProcessExecCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let cmd = crate::caps::value_as_text(&args[0]);
         let exec_args: Vec<String> = match &args[1] {
-            Value::Array(a) => a.iter().map(crate::caps::value_as_text).collect(),
+            Value::Array(a) => a.borrow().iter().map(crate::caps::value_as_text).collect(),
             v => vec![crate::caps::value_as_text(v)],
         };
 
@@ -544,7 +544,7 @@ mod tests {
         let result = cap
             .call(vec![
                 Value::Str("echo".to_string()),
-                Value::Array(vec![Value::Str("hello".to_string())]),
+                Value::new_array(vec![Value::Str("hello".to_string())]),
             ])
             .unwrap();
         let text = crate::caps::value_as_text(&result.unwrap());

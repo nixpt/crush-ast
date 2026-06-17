@@ -52,11 +52,12 @@ pub fn value_as_text(value: &crush_vm::vm::Value) -> String {
         }
         Value::Str(s) => s.clone(),
         Value::Array(a) => {
-            let inner: Vec<_> = a.iter().map(value_as_text).collect();
+            let inner: Vec<_> = a.borrow().iter().map(value_as_text).collect();
             format!("[{}]", inner.join(", "))
         }
         Value::Map(m) => {
             let items: Vec<String> = m
+                .borrow()
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, value_as_text(v)))
                 .collect();
