@@ -6,7 +6,6 @@ members = [
     "crates/casm",
     "crates/tree-sitter-crush",
     "crates/walker-core",
-    "crates/bash_walker",
     "crates/wasm_walker",
     "crates/cli",
     "crates/go_walker",
@@ -21,6 +20,7 @@ members = [
     "crates/crush-lang-python",
     "crates/crush-lang-rust",
     "crates/crush-lang-js",
+    "crates/crush-lang-bash",
 ]
 
 [workspace.package]
