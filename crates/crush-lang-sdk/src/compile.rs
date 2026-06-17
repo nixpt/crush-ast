@@ -102,22 +102,15 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "div" => "DIV".to_string(),
                 "mod" => "MOD".to_string(),
                 "eq" => "EQ".to_string(),
-                "ne" => "EQ\n    NOT".to_string(),
+                "ne" => "NE".to_string(),
                 "lt" => "LT".to_string(),
                 "gt" => "GT".to_string(),
-                "le" => "GT\n    NOT".to_string(),
-                "ge" => "LT\n    NOT".to_string(),
+                "le" => "LE".to_string(),
+                "ge" => "GE".to_string(),
                 "not" => "NOT".to_string(),
-                "and" => {
-                    let lend = unique_label();
-                    let lfalse = unique_label();
-                    format!("SWAP\n    DUP\n    JZ {lfalse}\n    POP\n    JMP {lend}\n{lfalse}:\n    POP\n    PUSH 0\n{lend}:")
-                }
-                "or" => {
-                    let ltrue = unique_label();
-                    let lend = unique_label();
-                    format!("SWAP\n    DUP\n    JNZ {ltrue}\n    POP\n    JMP {lend}\n{ltrue}:\n    POP\n    PUSH 1\n{lend}:")
-                }
+                "neg" => "NEG".to_string(),
+                "and" => "AND".to_string(),
+                "or" => "OR".to_string(),
                 "call" => {
                     let fn_name = instr.args["function"].as_str()
                         .ok_or_else(|| anyhow::anyhow!("call missing function at {fname}:{i}"))?;

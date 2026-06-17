@@ -15,7 +15,8 @@ use std::collections::HashMap;
 use crate::bytecode::{
     self, ADD, ARR_GET, ARR_LEN, ARR_POP, ARR_PUSH, ARR_SET, CALL, CAP_CALL,
     DIV, DUP, ENTER_TRY, EQ, EXEC_LANG, EXIT_TRY, GET_FIELD, GT, HALT, JMP,
-    JNZ, JZ, LOAD, LT, MOD, MUL, NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT,
+    JNZ, JZ, LOAD, LT, MOD, MUL, NEG, NE, LE, GE, AND, OR,
+    NEW_ARRAY, NEW_OBJ, NOP, NOT, POP, PRINT,
     PUSH, PUSH_BOOL, PUSH_F64, PUSH_NULL, PUSH_STR, RET, SET_FIELD, STORE,
     SUB, SWAP, THROW, Program,
 };
@@ -277,7 +278,11 @@ pub fn run_with_caps(
                 let b = pop!(); let a = pop!();
                 push!(Value::Bool(a == b));
             }
-            ADD | SUB | MUL | DIV | MOD | LT | GT => {
+            NE => {
+                let b = pop!(); let a = pop!();
+                push!(Value::Bool(a != b));
+            }
+            ADD | SUB | MUL | DIV | MOD | LT | GT | LE | GE => {
                 let b = need_num!(pop!());
                 let a = need_num!(pop!());
                 let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
@@ -314,9 +319,29 @@ pub fn run_with_caps(
                     }
                     LT => Value::Bool(af < bf),
                     GT => Value::Bool(af > bf),
+                    NE => Value::Bool(af != bf),
+                    LE => Value::Bool(af <= bf),
+                    GE => Value::Bool(af >= bf),
                     _ => unreachable!(),
                 };
                 push!(result);
+            }
+            NEG => {
+                let v = need_num!(pop!());
+                push!(match v {
+                    Value::Int(i) => Value::Int(-i),
+                    Value::Float(f) => Value::Float(-f),
+                    _ => unreachable!(),
+                });
+            }
+            AND | OR => {
+                let b = pop!();
+                let a = pop!();
+                push!(match opcode {
+                    AND => Value::Bool(a.is_truthy() && b.is_truthy()),
+                    OR  => Value::Bool(a.is_truthy() || b.is_truthy()),
+                    _ => unreachable!(),
+                });
             }
             NOT => {
                 let v = pop!();

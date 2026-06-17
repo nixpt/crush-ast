@@ -234,16 +234,39 @@ impl PortableVm {
                 };
                 self.push(result);
             }
-            EQ | LT | GT => {
+            NEG => {
+                let a = self.pop()?;
+                self.push(Value::Int(-to_i64(&a)));
+            }
+            EQ | NE => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.push(match opcode {
+                    EQ => Value::Bool(a == b),
+                    NE => Value::Bool(a != b),
+                    _ => unreachable!(),
+                });
+            }
+            LT | GT | LE | GE => {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 let result = match opcode {
-                    EQ => Value::Bool(a == b),
                     LT => Value::Bool(to_i64(&a) < to_i64(&b)),
                     GT => Value::Bool(to_i64(&a) > to_i64(&b)),
+                    LE => Value::Bool(to_i64(&a) <= to_i64(&b)),
+                    GE => Value::Bool(to_i64(&a) >= to_i64(&b)),
                     _ => unreachable!(),
                 };
                 self.push(result);
+            }
+            AND | OR => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.push(match opcode {
+                    AND => Value::Bool(value_is_truthy(&a) && value_is_truthy(&b)),
+                    OR  => Value::Bool(value_is_truthy(&a) || value_is_truthy(&b)),
+                    _ => unreachable!(),
+                });
             }
             NOT => {
                 let a = self.pop()?;
