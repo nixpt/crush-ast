@@ -292,7 +292,9 @@ impl PortableVm {
                         if is_float {
                             Value::Float(af % bf)
                         } else {
-                            Value::Int(to_i64(&a) % to_i64(&b))
+                            let ai = to_i64(&a);
+                            let bi = to_i64(&b);
+                            Value::Int(ai - bi * (ai / bi))
                         }
                     }
                     _ => unreachable!(),
@@ -696,6 +698,45 @@ impl PortableVm {
                     }
                 }
                 self.push(Value::Array(elems));
+            }
+            EXEC_LANG => {
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let spec_json = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let spec: std::collections::HashMap<String, serde_json::Value> =
+                    serde_json::from_str(&spec_json)
+                        .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
+                let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
+                let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
+                for _ in 0..var_count {
+                    var_values.push(self.pop()?);
+                }
+                var_values.reverse();
+                let mut cmd = std::process::Command::new(lang);
+                cmd.arg("-c").arg(code_str);
+                for (i, val) in var_values.iter().enumerate() {
+                    let key = format!("var_{}", i);
+                    if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
+                        cmd.env(name, value_to_text(val));
+                    }
+                }
+                let output = cmd.output()
+                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
+                if output.status.success() {
+                    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    self.out_len += s.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.out_parts.push(s.clone());
+                    self.push(Value::Str(s));
+                } else {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
+                }
             }
             HALT => {
                 self.halted = true;

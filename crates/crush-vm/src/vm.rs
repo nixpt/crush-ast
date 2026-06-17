@@ -388,7 +388,6 @@ pub fn run_with_caps(
                     }
                     LT => Value::Bool(af < bf),
                     GT => Value::Bool(af > bf),
-                    NE => Value::Bool(af != bf),
                     LE => Value::Bool(af <= bf),
                     GE => Value::Bool(af >= bf),
                     _ => unreachable!(),
