@@ -9,7 +9,6 @@ members = [
     "crates/bash_walker",
     "crates/wasm_walker",
     "crates/cli",
-    "crates/python_walker",
     "crates/go_walker",
     "crates/rust_walker",
     "crates/js_walker",
