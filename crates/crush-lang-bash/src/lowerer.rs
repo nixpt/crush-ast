@@ -377,6 +377,84 @@ fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Stat
         CompoundCommand::Subshell(ss) => {
             lower_compound_list(&ss.list)
         }
+        CompoundCommand::CaseClause(case_cmd) => {
+            let subject = word_to_expr(&case_cmd.value);
+            let mut stmts = Vec::new();
+            for item in &case_cmd.cases {
+                let condition = if item.patterns.len() == 1 {
+                    Expression::BinaryOp {
+                        operator: "==".to_string(),
+                        left: Box::new(subject.clone()),
+                        right: Box::new(word_to_expr(&item.patterns[0])),
+                        meta: HashMap::new(),
+                    }
+                } else {
+                    let mut or_chain = Expression::BinaryOp {
+                        operator: "==".to_string(),
+                        left: Box::new(subject.clone()),
+                        right: Box::new(word_to_expr(&item.patterns[0])),
+                        meta: HashMap::new(),
+                    };
+                    for pat in &item.patterns[1..] {
+                        or_chain = Expression::BinaryOp {
+                            operator: "or".to_string(),
+                            left: Box::new(or_chain),
+                            right: Box::new(Expression::BinaryOp {
+                                operator: "==".to_string(),
+                                left: Box::new(subject.clone()),
+                                right: Box::new(word_to_expr(pat)),
+                                meta: HashMap::new(),
+                            }),
+                            meta: HashMap::new(),
+                        };
+                    }
+                    or_chain
+                };
+                let body = match &item.cmd {
+                    Some(list) => lower_compound_list(list)?,
+                    None => Vec::new(),
+                };
+                stmts.push(Statement::If {
+                    condition,
+                    then_body: body,
+                    else_body: None,
+                    meta: HashMap::new(),
+                });
+            }
+            Ok(stmts)
+        }
+        CompoundCommand::Arithmetic(arith) => {
+            Ok(vec![Statement::ExprStmt {
+                expr: Expression::CapabilityCall {
+                    name: "bash.arithmetic".to_string(),
+                    args: vec![Expression::StringLiteral { value: arith.expr.value.clone(), meta: HashMap::new() }],
+                    meta: cap_meta("bash", "arithmetic"),
+                },
+                meta: HashMap::new(),
+            }])
+        }
+        CompoundCommand::ArithmeticForClause(for_arith) => {
+            let mut desc = String::new();
+            if let Some(init) = &for_arith.initializer {
+                desc.push_str(&init.value);
+            }
+            desc.push_str("; ");
+            if let Some(cond) = &for_arith.condition {
+                desc.push_str(&cond.value);
+            }
+            desc.push_str("; ");
+            if let Some(upd) = &for_arith.updater {
+                desc.push_str(&upd.value);
+            }
+            Ok(vec![Statement::ExprStmt {
+                expr: Expression::CapabilityCall {
+                    name: "bash.arithmetic_for".to_string(),
+                    args: vec![Expression::StringLiteral { value: desc, meta: HashMap::new() }],
+                    meta: cap_meta("bash", "arithmetic_for"),
+                },
+                meta: HashMap::new(),
+            }])
+        }
         _ => Ok(Vec::new()),
     }
 }

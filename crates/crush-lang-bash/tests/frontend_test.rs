@@ -138,6 +138,79 @@ fn test_bash_return_lowers_to_return() {
 }
 
 #[test]
+fn test_bash_subshell() {
+    let cast = crush_lang_bash::bash_to_cast("(echo hello; echo world)\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 2, "subshell body statements should be inlined");
+}
+
+#[test]
+fn test_bash_brace_group() {
+    let cast = crush_lang_bash::bash_to_cast("{ echo hello; }\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 1, "brace group body statements should be inlined");
+}
+
+#[test]
+fn test_bash_case_statement() {
+    let cast = crush_lang_bash::bash_to_cast("case $x in a) echo 1;; b) echo 2;; esac\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 2, "case should produce one If per branch");
+    for (i, stmt) in main.body.iter().enumerate() {
+        match stmt {
+            Statement::If { condition, then_body, .. } => {
+                assert!(matches!(condition, Expression::BinaryOp { operator, .. } if operator == "=="));
+                assert_eq!(then_body.len(), 1, "each case branch should have one stmt");
+            }
+            _ => panic!("expected If for branch {i}, got {stmt:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_bash_case_with_or_pattern() {
+    let cast = crush_lang_bash::bash_to_cast("case $x in a|b) echo 1;; esac\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 1);
+    if let Some(Statement::If { condition, then_body, .. }) = main.body.first() {
+        assert!(matches!(condition, Expression::BinaryOp { operator, .. } if operator == "or"),
+            "a|b should produce 'or' chain, got: {condition:?}");
+        assert_eq!(then_body.len(), 1);
+    } else {
+        panic!("expected If for case branch");
+    }
+}
+
+#[test]
+fn test_bash_arithmetic_command() {
+    // brush-parser v0.4.0 parses `(( x = 1 + 2 ))` as a simple command
+    // with name "x" (not as an ArithmeticCommand) in sh_mode
+    let cast = crush_lang_bash::bash_to_cast("x=$(( 1 + 2 ))\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert!(main.body.len() >= 1);
+    if let Some(Statement::VarDecl { name, .. }) = main.body.first() {
+        assert_eq!(name, "x");
+    } else {
+        panic!("expected VarDecl for arithmetic expansion assignment");
+    }
+}
+
+#[test]
+fn test_bash_heredoc_does_not_crash() {
+    let source = "cat <<EOF\nhello world\nEOF\n";
+    let cast = crush_lang_bash::bash_to_cast(source).unwrap();
+    let main = cast.functions.get("main").unwrap();
+    // cat is lowered to CapabilityCall("fs.read", ...); heredoc content is part of
+    // the redirect (ignored by lowerer), so the command name still works
+    assert_eq!(main.body.len(), 1, "heredoc command should lower without crashing");
+    if let Some(Statement::ExprStmt { expr, .. }) = main.body.first() {
+        assert!(matches!(expr, Expression::CapabilityCall { name, .. } if name == "fs.read"));
+    } else {
+        panic!("expected CapabilityCall for cat with heredoc");
+    }
+}
+
+#[test]
 fn test_bash_function_def() {
     let source = "greet() {\n    echo \"Hello\"\n}\ngreet\n";
     let cast = crush_lang_bash::bash_to_cast(source).unwrap();
