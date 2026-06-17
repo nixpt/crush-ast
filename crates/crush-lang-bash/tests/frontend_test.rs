@@ -86,6 +86,58 @@ fn test_bash_variable_reference() {
 }
 
 #[test]
+fn test_bash_unset_lowers_to_null() {
+    let cast = crush_lang_bash::bash_to_cast("unset MYVAR\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 1);
+    if let Some(Statement::VarDecl { name, value, .. }) = main.body.first() {
+        assert_eq!(name, "MYVAR");
+        assert!(matches!(value, Expression::NullLiteral { .. }));
+    } else {
+        panic!("expected VarDecl with NullLiteral");
+    }
+}
+
+#[test]
+fn test_bash_source_lowers_to_capability() {
+    let cast = crush_lang_bash::bash_to_cast("source ./setup.sh\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 1);
+    if let Some(Statement::ExprStmt { expr, .. }) = main.body.first() {
+        if let Expression::CapabilityCall { name, args, .. } = expr {
+            assert_eq!(name, "bash.source");
+            assert_eq!(args.len(), 1);
+            if let Expression::StringLiteral { value, .. } = &args[0] {
+                assert_eq!(value, "./setup.sh");
+            } else {
+                panic!("expected StringLiteral arg");
+            }
+        } else {
+            panic!("expected CapabilityCall");
+        }
+    } else {
+        panic!("expected ExprStmt");
+    }
+}
+
+#[test]
+fn test_bash_return_lowers_to_return() {
+    let cast = crush_lang_bash::bash_to_cast("return 42\n").unwrap();
+    let main = cast.functions.get("main").unwrap();
+    assert_eq!(main.body.len(), 1);
+    if let Some(Statement::Return { value, .. }) = main.body.first() {
+        assert!(value.is_some());
+        if let Some(Expression::StringLiteral { value, .. }) = value {
+            assert_eq!(value, "42");
+        } else {
+            panic!("expected StringLiteral value");
+        }
+    } else {
+        panic!("expected Return");
+    }
+}
+
+#[test]
 fn test_bash_function_def() {
     let source = "greet() {\n    echo \"Hello\"\n}\ngreet\n";
     let cast = crush_lang_bash::bash_to_cast(source).unwrap();

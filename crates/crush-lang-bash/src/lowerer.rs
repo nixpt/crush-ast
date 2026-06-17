@@ -236,9 +236,31 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                 });
             }
         }
-        "exit" => {
+        "exit" | "return" => {
             stmts.push(Statement::Return {
                 value: args.into_iter().next(),
+                meta: HashMap::new(),
+            });
+        }
+        "unset" => {
+            for arg in args {
+                if let Expression::StringLiteral { value: name, .. } = &arg {
+                    stmts.push(Statement::VarDecl {
+                        name: name.clone(),
+                        value: Expression::NullLiteral { meta: HashMap::new() },
+                        type_hint: CastType::Any,
+                        meta: HashMap::new(),
+                    });
+                }
+            }
+        }
+        "source" | "." => {
+            stmts.push(Statement::ExprStmt {
+                expr: Expression::CapabilityCall {
+                    name: "bash.source".to_string(),
+                    args,
+                    meta: cap_meta("bash", "source"),
+                },
                 meta: HashMap::new(),
             });
         }
