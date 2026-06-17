@@ -2,7 +2,7 @@
 name = "crush-python-rt"
 version = "0.2.0"
 edition = "2024"
-description = "RustPython guest runtime for CrushVM — run Python code under Crush's capability model"
+description = "Multi-lane Python execution for CrushVM: CAST transpile, RustPython embedded, subprocess"
 license.workspace = true
 repository.workspace = true
 
