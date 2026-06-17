@@ -87,12 +87,9 @@ Source (.crush / .py / .rs / .go / .c / .js / .sh / .zig / .wasm)
 
 ## License
 
-Triple-licensed under the
-[OpenKO Cooperative Protocol License v1.1](LICENSE) (OCPL),
-[MIT](LICENSE-MIT), or [Apache 2.0](LICENSE-Apache-2.0) at your option.
+Licensed under either of [MIT](LICENSE-MIT) or
+[Apache License 2.0](LICENSE-APACHE) at your option.
 
-OCPL protects protocol openness, identity sovereignty, and resistance to
-platform capture — see [openko.network/ocpl](https://openko.network/ocpl).
-
-Crush is an open coordination protocol. Commercial activity built on top of
-it is explicitly permitted and encouraged.
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this work shall be dual-licensed as above,
+without any additional terms or conditions.
