@@ -6,6 +6,7 @@
 mod lexer;
 pub use lexer::{Lexer, ParseError, SourceLocation, Token};
 
+use crush_cast::manifest::{FunctionAnnotations, Invariant, ModuleManifest};
 use crush_cast::*;
 use crush_cast::{ExternalResourceType, ImportStatement};
 use std::collections::HashMap;
@@ -232,6 +233,12 @@ impl Parser {
         let mut statements = Vec::new();
         let mut iterations = 0usize;
 
+        // Accumulated annotation state
+        let mut pending_manifest: Option<ModuleManifest> = None;
+        let mut pending_invariants: Vec<Invariant> = Vec::new();
+        let mut pending_exhaustive_types: Vec<String> = Vec::new();
+        let mut pending_fn_annotations: Option<FunctionAnnotations> = None;
+
         self.skip_newlines();
 
         while !matches!(self.peek(), Token::EOF(_)) {
@@ -253,6 +260,45 @@ impl Parser {
                 break;
             }
 
+            // @-annotation tokens at top level
+            if let Token::AtIdent(id, _) = self.peek().clone() {
+                // Skip if followed by LangBody — that's a polyglot block, handled below
+                let next_is_lang_body =
+                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _)));
+                if !next_is_lang_body {
+                    match id.as_str() {
+                        "module" => {
+                            self.advance();
+                            if let Ok(m) = self.parse_module_block() {
+                                pending_manifest = Some(m);
+                            }
+                            continue;
+                        }
+                        "invariant" => {
+                            self.advance();
+                            if let Ok(inv) = self.parse_invariant_block() {
+                                pending_invariants.push(inv);
+                            }
+                            continue;
+                        }
+                        "exhaustive-match-sites" => {
+                            self.advance();
+                            let items = self.parse_at_items();
+                            pending_exhaustive_types.extend(items);
+                            continue;
+                        }
+                        "errors" | "reads" | "writes" | "does-not-write" | "covers"
+                        | "relies-on" | "complexity" => {
+                            self.advance();
+                            let ann = pending_fn_annotations.get_or_insert_with(Default::default);
+                            self.parse_fn_annotation_body(&id, ann);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             // Try to parse capability declarations first
             if matches!(self.peek(), Token::Capability(_)) {
                 // TODO: Parse capability declarations
@@ -271,10 +317,14 @@ impl Parser {
             // Try to parse function definition
             if matches!(self.peek(), Token::Fn(_)) {
                 match self.parse_function() {
-                    Ok((name, func)) => {
+                    Ok((name, mut func)) => {
+                        if let Some(ann) = pending_fn_annotations.take() {
+                            func.annotations = Some(ann);
+                        }
                         functions.insert(name, func);
                     }
                     Err(_) => {
+                        pending_fn_annotations = None;
                         // Error recovery: synchronize to next statement
                         self.synchronize();
                     }
@@ -299,10 +349,14 @@ impl Parser {
             if is_pub_fn {
                 self.advance(); // consume 'pub'
                 match self.parse_function() {
-                    Ok((name, func)) => {
+                    Ok((name, mut func)) => {
+                        if let Some(ann) = pending_fn_annotations.take() {
+                            func.annotations = Some(ann);
+                        }
                         functions.insert(name, func);
                     }
                     Err(_) => {
+                        pending_fn_annotations = None;
                         self.synchronize();
                     }
                 }
@@ -343,12 +397,26 @@ impl Parser {
             functions.insert("main".to_string(), main_func);
         }
 
+        // Build module manifest from accumulated @module / @invariant / @exhaustive-match-sites
+        let manifest = if pending_manifest.is_some()
+            || !pending_invariants.is_empty()
+            || !pending_exhaustive_types.is_empty()
+        {
+            let mut m = pending_manifest.unwrap_or_default();
+            m.invariants.extend(pending_invariants);
+            m.exhaustive_types.extend(pending_exhaustive_types);
+            Some(m)
+        } else {
+            None
+        };
+
         Ok(Program {
             cast_version: "1.0.0".to_string(),
             entry: "main".to_string(),
             lang: Some("crush".to_string()),
             functions,
             ai_meta: None,
+            manifest,
             ..Default::default()
         })
     }
@@ -1927,6 +1995,348 @@ impl Parser {
 
         Ok(args)
     }
+
+    // ── Annotation helpers ───────────────────────────────────────────────────
+
+    /// Parse `@module { purpose: "...", exports: [...], ... }` → `ModuleManifest`.
+    fn parse_module_block(&mut self) -> Result<ModuleManifest, ()> {
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            let (line, col) = self.get_location(self.peek());
+            self.errors.push(ParseError::Expected {
+                line,
+                col,
+                expected: "{ after @module".to_string(),
+                found: format!("{:?}", self.peek()),
+            });
+            return Err(());
+        }
+        self.advance(); // consume {
+
+        let mut manifest = ModuleManifest::default();
+        self.skip_newlines();
+
+        while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let key = match self.peek() {
+                Token::Ident(k, _) => {
+                    let k = k.clone();
+                    self.advance();
+                    k
+                }
+                _ => break,
+            };
+
+            // Optional colon
+            if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+            }
+
+            match key.as_str() {
+                "purpose" => {
+                    manifest.purpose = self.parse_at_string_value();
+                }
+                "exports" | "related" | "invariants" | "exhaustive_types" | "changelog" => {
+                    let items = self.parse_at_list();
+                    match key.as_str() {
+                        "exports" => manifest.exports = items,
+                        "related" => manifest.related = items,
+                        "invariants" => manifest.invariants.extend(items.into_iter().map(|n| {
+                            Invariant {
+                                name: n,
+                                description: String::new(),
+                                applies_to: Vec::new(),
+                                consequence: None,
+                            }
+                        })),
+                        "exhaustive_types" => manifest.exhaustive_types = items,
+                        _ => {} // changelog as string list is a no-op (needs richer type)
+                    }
+                }
+                _ => {
+                    // Unknown key — skip value token(s)
+                    self.skip_at_value();
+                }
+            }
+            self.skip_newlines();
+        }
+
+        if matches!(self.peek(), Token::RBrace(_)) {
+            self.advance(); // consume }
+        }
+        Ok(manifest)
+    }
+
+    /// Parse `@invariant "name" { description: "...", applies_to: [...], consequence: "..." }`.
+    fn parse_invariant_block(&mut self) -> Result<Invariant, ()> {
+        self.skip_newlines();
+
+        let name = self.parse_at_string_value();
+        self.skip_newlines();
+
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            // Bare `@invariant "name"` with no block is valid — treat as name-only
+            return Ok(Invariant {
+                name,
+                description: String::new(),
+                applies_to: Vec::new(),
+                consequence: None,
+            });
+        }
+        self.advance(); // consume {
+
+        let mut inv = Invariant {
+            name,
+            description: String::new(),
+            applies_to: Vec::new(),
+            consequence: None,
+        };
+        self.skip_newlines();
+
+        while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let key = match self.peek() {
+                Token::Ident(k, _) => {
+                    let k = k.clone();
+                    self.advance();
+                    k
+                }
+                _ => break,
+            };
+
+            if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+            }
+
+            match key.as_str() {
+                "description" | "reason" => {
+                    inv.description = self.parse_at_string_value();
+                }
+                "applies_to" | "applies-to" => {
+                    inv.applies_to = self.parse_at_list();
+                }
+                "consequence" => {
+                    let s = self.parse_at_string_value();
+                    inv.consequence = if s.is_empty() { None } else { Some(s) };
+                }
+                _ => {
+                    self.skip_at_value();
+                }
+            }
+            self.skip_newlines();
+        }
+
+        if matches!(self.peek(), Token::RBrace(_)) {
+            self.advance();
+        }
+        Ok(inv)
+    }
+
+    /// Parse the body of a function-level annotation after the `@name` has been consumed.
+    /// Writes into `ann`.
+    fn parse_fn_annotation_body(&mut self, name: &str, ann: &mut FunctionAnnotations) {
+        match name {
+            "errors" => ann.errors.extend(self.parse_at_items()),
+            "reads" => ann.reads.extend(self.parse_at_items()),
+            "writes" => ann.writes.extend(self.parse_at_items()),
+            "does-not-write" => ann.does_not_write.extend(self.parse_at_items()),
+            "covers" => ann.covers.extend(self.parse_at_items()),
+            "relies-on" => ann.relies_on.extend(self.parse_at_items()),
+            "complexity" => {
+                if let Token::Int(n, _) = self.peek() {
+                    let v = (*n).clamp(0, 100) as u8;
+                    self.advance();
+                    ann.complexity = Some(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Parse an annotation item list: either `[a, b, c]` or a single bare item.
+    /// Returns the items as strings. Items may be qualified (`thread.ip`, `Foo::Bar`).
+    fn parse_at_items(&mut self) -> Vec<String> {
+        self.skip_newlines();
+        if matches!(self.peek(), Token::LBracket(_)) {
+            self.parse_at_list()
+        } else {
+            // Single bare item
+            let s = self.parse_at_qualified_ident();
+            if s.is_empty() {
+                Vec::new()
+            } else {
+                vec![s]
+            }
+        }
+    }
+
+    /// Parse `[ item, item, ... ]` — items are strings or qualified identifiers.
+    fn parse_at_list(&mut self) -> Vec<String> {
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::LBracket(_)) {
+            return Vec::new();
+        }
+        self.advance(); // consume [
+
+        let mut items = Vec::new();
+        self.skip_newlines();
+
+        while !matches!(self.peek(), Token::RBracket(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            let item = match self.peek() {
+                Token::String(s, _) => {
+                    let s = s.clone();
+                    self.advance();
+                    s
+                }
+                Token::Ident(_, _) => self.parse_at_qualified_ident(),
+                _ => {
+                    self.advance(); // skip unexpected token
+                    continue;
+                }
+            };
+            if !item.is_empty() {
+                items.push(item);
+            }
+            self.skip_newlines();
+            if matches!(self.peek(), Token::Comma(_)) {
+                self.advance();
+                self.skip_newlines();
+            }
+        }
+
+        if matches!(self.peek(), Token::RBracket(_)) {
+            self.advance(); // consume ]
+        }
+        items
+    }
+
+    /// Read a single string value: either a `"string"` token or a qualified identifier.
+    fn parse_at_string_value(&mut self) -> String {
+        self.skip_newlines();
+        match self.peek() {
+            Token::String(s, _) => {
+                let s = s.clone();
+                self.advance();
+                s
+            }
+            Token::Ident(_, _) => self.parse_at_qualified_ident(),
+            _ => String::new(),
+        }
+    }
+
+    /// Read a qualified identifier for annotation values.
+    ///
+    /// Handles:
+    /// - `thread.ip`, `vm.types` — dot-qualified
+    /// - `VmError::StackUnderflow` — double-colon qualified
+    /// - `rc-refcell-not-send` — kebab-case (hyphen chains, annotation names only)
+    ///
+    /// The hyphen handling is safe here because this method is called exclusively
+    /// from annotation parsing helpers where `-` as subtraction cannot appear.
+    fn parse_at_qualified_ident(&mut self) -> String {
+        let base = match self.peek() {
+            Token::Ident(s, _) => {
+                let s = s.clone();
+                self.advance();
+                s
+            }
+            _ => return String::new(),
+        };
+
+        let mut result = base;
+        loop {
+            match self.peek() {
+                Token::Dot(_) => {
+                    self.advance();
+                    if let Token::Ident(part, _) = self.peek() {
+                        let part = part.clone();
+                        self.advance();
+                        result.push('.');
+                        result.push_str(&part);
+                    } else {
+                        break;
+                    }
+                }
+                Token::DoubleColon(_) => {
+                    self.advance();
+                    if let Token::Ident(part, _) = self.peek() {
+                        let part = part.clone();
+                        self.advance();
+                        result.push_str("::");
+                        result.push_str(&part);
+                    } else {
+                        break;
+                    }
+                }
+                Token::Minus(_) => {
+                    // Peek two ahead: if next is Ident, treat as kebab-case hyphen
+                    if matches!(self.tokens.get(self.pos + 1), Some(Token::Ident(_, _))) {
+                        self.advance(); // consume -
+                        if let Token::Ident(part, _) = self.peek() {
+                            let part = part.clone();
+                            self.advance();
+                            result.push('-');
+                            result.push_str(&part);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        result
+    }
+
+    /// Skip over an unknown annotation value (string, list, or single token).
+    fn skip_at_value(&mut self) {
+        self.skip_newlines();
+        match self.peek() {
+            Token::String(_, _) | Token::Int(_, _) | Token::Float(_, _) => {
+                self.advance();
+            }
+            Token::LBracket(_) => {
+                self.advance();
+                let mut depth = 1;
+                while depth > 0 && !matches!(self.peek(), Token::EOF(_)) {
+                    match self.peek() {
+                        Token::LBracket(_) => {
+                            depth += 1;
+                            self.advance();
+                        }
+                        Token::RBracket(_) => {
+                            depth -= 1;
+                            self.advance();
+                        }
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+            }
+            Token::LBrace(_) => {
+                self.advance();
+                let mut depth = 1;
+                while depth > 0 && !matches!(self.peek(), Token::EOF(_)) {
+                    match self.peek() {
+                        Token::LBrace(_) => {
+                            depth += 1;
+                            self.advance();
+                        }
+                        Token::RBrace(_) => {
+                            depth -= 1;
+                            self.advance();
+                        }
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+            }
+            Token::Ident(_, _) => {
+                self.advance();
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Simple parameter struct for parsing
@@ -2032,5 +2442,120 @@ let y = 100
         assert!(result.is_ok());
         let program = result.unwrap();
         assert!(program.functions.contains_key("main"));
+    }
+
+    #[test]
+    fn test_module_annotation() {
+        let source = r#"
+@module {
+    purpose: "unit test module"
+    exports: [run, stop]
+    related: [vm.types]
+}
+
+fn run() {
+    return 0
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let manifest = program.manifest.expect("manifest should be set");
+        assert_eq!(manifest.purpose, "unit test module");
+        assert_eq!(manifest.exports, vec!["run", "stop"]);
+        assert_eq!(manifest.related, vec!["vm.types"]);
+        assert!(program.functions.contains_key("run"));
+    }
+
+    #[test]
+    fn test_invariant_annotation() {
+        let source = r#"
+@invariant "no-reenter" {
+    description: "no re-entrancy allowed"
+    applies_to: [dispatch, execute_one]
+    consequence: "deadlock"
+}
+
+fn dispatch() {
+    return 0
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let manifest = program.manifest.expect("manifest should be set");
+        assert_eq!(manifest.invariants.len(), 1);
+        let inv = &manifest.invariants[0];
+        assert_eq!(inv.name, "no-reenter");
+        assert_eq!(inv.description, "no re-entrancy allowed");
+        assert_eq!(inv.applies_to, vec!["dispatch", "execute_one"]);
+        assert_eq!(inv.consequence.as_deref(), Some("deadlock"));
+    }
+
+    #[test]
+    fn test_exhaustive_match_sites_annotation() {
+        let source = r#"
+@exhaustive-match-sites [Value, StepAction]
+
+fn main() {
+    return 0
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let manifest = program.manifest.expect("manifest should be set");
+        assert!(manifest.exhaustive_types.contains(&"Value".to_string()));
+        assert!(manifest.exhaustive_types.contains(&"StepAction".to_string()));
+    }
+
+    #[test]
+    fn test_function_annotations() {
+        let source = r#"
+@errors [VmError::StackUnderflow, VmError::StepQuota]
+@reads [thread.ip, thread.stack]
+@writes [thread.ip, thread.out_parts]
+@does-not-write [program]
+@covers VmError::StackUnderflow
+@relies-on rc-refcell-not-send
+fn execute_one() {
+    return 0
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let func = program.functions.get("execute_one").expect("function should exist");
+        let ann = func.annotations.as_ref().expect("annotations should be set");
+        assert_eq!(ann.errors, vec!["VmError::StackUnderflow", "VmError::StepQuota"]);
+        assert_eq!(ann.reads, vec!["thread.ip", "thread.stack"]);
+        assert_eq!(ann.writes, vec!["thread.ip", "thread.out_parts"]);
+        assert_eq!(ann.does_not_write, vec!["program"]);
+        assert_eq!(ann.covers, vec!["VmError::StackUnderflow"]);
+        assert_eq!(ann.relies_on, vec!["rc-refcell-not-send"]);
+    }
+
+    #[test]
+    fn test_annotations_do_not_apply_to_next_function() {
+        let source = r#"
+@errors [VmError::Foo]
+fn first() {
+    return 0
+}
+fn second() {
+    return 0
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let first = program.functions.get("first").expect("first should exist");
+        let second = program.functions.get("second").expect("second should exist");
+        assert!(first.annotations.is_some());
+        assert!(second.annotations.is_none());
+    }
+
+    #[test]
+    fn test_complexity_annotation() {
+        let source = r#"
+@complexity 75
+fn heavy() {
+    return 0
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let func = program.functions.get("heavy").expect("heavy should exist");
+        let ann = func.annotations.as_ref().expect("annotations should be set");
+        assert_eq!(ann.complexity, Some(75));
     }
 }

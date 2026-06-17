@@ -284,6 +284,21 @@ impl Lexer {
         }
     }
 
+    /// Like `read_identifier` but also accepts `-` (hyphen) for kebab-case `@annotation-names`.
+    /// Returns the raw string — callers convert to a Token::Ident by themselves.
+    fn read_at_identifier(&mut self) -> String {
+        let mut value = String::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+                value.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        value
+    }
+
     fn read_identifier(&mut self) -> Token {
         let start_line = self.line;
         let start_col = self.col;
@@ -376,7 +391,17 @@ impl Lexer {
         id: String,
         at_location: SourceLocation,
     ) -> Result<Token, ParseError> {
-        const IMPORT_KEYWORDS: &[&str] = &["mcp", "cap", "lang", "git", "http", "file"];
+        // These @-names are NOT polyglot block starters — they are either import
+        // keywords or AI-native manifest/annotation keywords.  Their `{` (if any)
+        // must be parsed by the normal token stream, not consumed as a LangBody.
+        const IMPORT_KEYWORDS: &[&str] = &[
+            // import / capability keywords
+            "mcp", "cap", "lang", "git", "http", "file",
+            // AI-native annotation keywords (Step 2 — manifest + function annotations)
+            "module", "invariant", "exhaustive-match-sites",
+            "errors", "reads", "writes", "does-not-write",
+            "covers", "relies-on", "complexity",
+        ];
         if IMPORT_KEYWORDS.contains(&id.as_str()) {
             return Ok(Token::AtIdent(id, at_location));
         }
@@ -691,17 +716,17 @@ impl Lexer {
             }
             '@' => {
                 self.advance();
-                match self.read_identifier() {
-                    Token::Ident(id, _) => self.maybe_consume_polyglot_body(id, location),
-                    _ => {
-                        let line = self.line;
-                        let col = self.col;
-                        Err(ParseError::UnexpectedToken {
-                            line,
-                            col,
-                            msg: "Expected identifier after @".to_string(),
-                        })
-                    }
+                let id = self.read_at_identifier();
+                if id.is_empty() {
+                    let line = self.line;
+                    let col = self.col;
+                    Err(ParseError::UnexpectedToken {
+                        line,
+                        col,
+                        msg: "Expected identifier after @".to_string(),
+                    })
+                } else {
+                    self.maybe_consume_polyglot_body(id, location)
                 }
             }
             _ => {
