@@ -1,0 +1,15 @@
+[package]
+name        = "crush-index"
+description = "Cross-reference index for Crush codebases — consumes CAST, answers agent queries"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+homepage.workspace   = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crush-cast   = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }

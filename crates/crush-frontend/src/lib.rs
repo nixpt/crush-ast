@@ -51,3 +51,85 @@ pub fn compile_crush_source(source: &str) -> Result<casm::Program> {
     let program = parse_source(source)?;
     compile_cast(&program)
 }
+
+// ── Surgical symbol extraction ───────────────────────────────────────────────
+//
+// These functions solve the "1000-line file" problem: instead of reading an
+// entire Crush source file to understand one function, callers extract just
+// the symbol they need — with its annotations rendered inline.
+
+/// Description of a top-level symbol in a Crush source file.
+#[derive(Debug, Clone)]
+pub struct SymbolInfo {
+    /// Symbol name (function or struct name).
+    pub name: String,
+    /// Symbol kind.
+    pub kind: SymbolKind,
+    /// One-line purpose from `@module.exports` or from `@errors` annotation if present.
+    pub annotation_summary: String,
+}
+
+/// Kind of a top-level Crush symbol.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolKind {
+    Function,
+    Struct,
+}
+
+/// List all top-level symbols in a Crush source file.
+///
+/// Returns `(name, kind, annotation_summary)` tuples sorted by name so an
+/// agent can do a cheap "what's in this file?" scan without reading bodies.
+pub fn list_symbols(source: &str) -> Result<Vec<SymbolInfo>> {
+    let program = parse_source(source)?;
+    let mut symbols: Vec<SymbolInfo> = Vec::new();
+
+    for (name, func) in &program.functions {
+        if name == "main" {
+            continue;
+        }
+        let summary = func
+            .annotations
+            .as_ref()
+            .map(|a| {
+                if !a.errors.is_empty() {
+                    format!("errors: {}", a.errors.join(", "))
+                } else if !a.covers.is_empty() {
+                    format!("covers: {}", a.covers.join(", "))
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
+        symbols.push(SymbolInfo {
+            name: name.clone(),
+            kind: SymbolKind::Function,
+            annotation_summary: summary,
+        });
+    }
+
+    symbols.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(symbols)
+}
+
+/// Extract a single named symbol from Crush source and render it back as source.
+///
+/// Includes any `@errors`, `@reads`, `@writes`, `@covers` etc. annotations so
+/// the caller gets the full contract alongside the implementation.
+///
+/// Returns `Err` if the source fails to parse or the symbol is not found.
+pub fn extract_symbol(source: &str, name: &str) -> Result<String> {
+    let program = parse_source(source)?;
+    if let Some(func) = program.functions.get(name) {
+        return Ok(render::render_function_standalone(name, func));
+    }
+    anyhow::bail!("symbol '{}' not found in source", name)
+}
+
+/// Extract the module-level manifest (`@module { ... }`) from Crush source.
+///
+/// Returns `None` if no `@module` annotation was declared.
+pub fn extract_manifest(source: &str) -> Result<Option<String>> {
+    let program = parse_source(source)?;
+    Ok(program.manifest.as_ref().map(render::render_module_manifest))
+}

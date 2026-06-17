@@ -1,8 +1,37 @@
+use crush_cast::manifest::{FunctionAnnotations, Invariant, ModuleManifest};
 use crush_cast::*;
 
 pub fn render_program(program: &Program) -> String {
     let mut renderer = Renderer::new();
     renderer.render_program(program);
+    renderer.output
+}
+
+/// Render a single named function (with its annotations) back to Crush source.
+///
+/// Useful for surgical reads: instead of reading a full 1000-line file, an
+/// agent calls `extract_symbol(source, "fn_name")` and gets back just the
+/// annotated function source.
+pub fn render_function_standalone(name: &str, func: &Function) -> String {
+    let mut renderer = Renderer::new();
+    if let Some(ann) = &func.annotations {
+        renderer.render_fn_annotations(ann);
+    }
+    renderer.render_function_header(name, func);
+    renderer.output
+}
+
+/// Render a `@module { ... }` block from a `ModuleManifest`.
+pub fn render_module_manifest(manifest: &ModuleManifest) -> String {
+    let mut renderer = Renderer::new();
+    renderer.render_manifest(manifest);
+    renderer.output
+}
+
+/// Render a single `@invariant "name" { ... }` block.
+pub fn render_invariant(inv: &Invariant) -> String {
+    let mut renderer = Renderer::new();
+    renderer.render_single_invariant(inv);
     renderer.output
 }
 
@@ -1029,6 +1058,105 @@ impl Renderer {
                 self.push_str("])");
             }
         }
+    }
+
+    // ── annotation rendering ─────────────────────────────────────────────────
+
+    fn render_fn_annotations(&mut self, ann: &FunctionAnnotations) {
+        self.render_at_list("errors", &ann.errors);
+        self.render_at_list("reads", &ann.reads);
+        self.render_at_list("writes", &ann.writes);
+        self.render_at_list("does-not-write", &ann.does_not_write);
+        self.render_at_list("covers", &ann.covers);
+        self.render_at_list("relies-on", &ann.relies_on);
+        if let Some(c) = ann.complexity {
+            self.push_str(&format!("@complexity {}\n", c));
+        }
+    }
+
+    fn render_at_list(&mut self, name: &str, items: &[String]) {
+        if items.is_empty() {
+            return;
+        }
+        self.push_str("@");
+        self.push_str(name);
+        self.push_str(" [");
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                self.push_str(", ");
+            }
+            self.push_str(item);
+        }
+        self.push_str("]\n");
+    }
+
+    fn render_manifest(&mut self, manifest: &ModuleManifest) {
+        self.push_str("@module {\n");
+        self.indent += 1;
+
+        self.write_indent();
+        self.push_str("purpose: \"");
+        self.push_str(&escape_string(&manifest.purpose));
+        self.push_str("\"\n");
+
+        if !manifest.exports.is_empty() {
+            self.write_indent();
+            self.push_str("exports: [");
+            self.push_str(&manifest.exports.join(", "));
+            self.push_str("]\n");
+        }
+        if !manifest.related.is_empty() {
+            self.write_indent();
+            self.push_str("related: [");
+            self.push_str(&manifest.related.join(", "));
+            self.push_str("]\n");
+        }
+        if !manifest.exhaustive_types.is_empty() {
+            self.write_indent();
+            self.push_str("exhaustive_types: [");
+            self.push_str(&manifest.exhaustive_types.join(", "));
+            self.push_str("]\n");
+        }
+
+        self.indent -= 1;
+        self.push_str("}\n");
+
+        // Render each named invariant as a separate top-level @invariant block
+        for inv in &manifest.invariants {
+            if !inv.description.is_empty() {
+                self.newline();
+                self.render_single_invariant(inv);
+            }
+        }
+    }
+
+    fn render_single_invariant(&mut self, inv: &Invariant) {
+        self.push_str("@invariant \"");
+        self.push_str(&escape_string(&inv.name));
+        self.push_str("\" {\n");
+        self.indent += 1;
+
+        if !inv.description.is_empty() {
+            self.write_indent();
+            self.push_str("description: \"");
+            self.push_str(&escape_string(&inv.description));
+            self.push_str("\"\n");
+        }
+        if !inv.applies_to.is_empty() {
+            self.write_indent();
+            self.push_str("applies_to: [");
+            self.push_str(&inv.applies_to.join(", "));
+            self.push_str("]\n");
+        }
+        if let Some(c) = &inv.consequence {
+            self.write_indent();
+            self.push_str("consequence: \"");
+            self.push_str(&escape_string(c));
+            self.push_str("\"\n");
+        }
+
+        self.indent -= 1;
+        self.push_str("}\n");
     }
 }
 
