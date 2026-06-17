@@ -77,6 +77,5 @@ pub fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Statement> {
                 _ => anyhow::bail!("macro invocation not supported: {}", mac_name),
             }
         }
-        _ => anyhow::bail!("unsupported Rust statement"),
     }
 }

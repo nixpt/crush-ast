@@ -116,6 +116,7 @@ pub fn run_scheduled(
                 // ip was already set inside execute_one (CALL, JMP, etc.)
             }
             StepAction::Spawn(fn_name) => {
+                threads[current].ip = next_ip;
                 let new_id = threads.len() as u64;
                 if let Some(&entry) = func_entry.get(fn_name.as_str()) {
                     threads.push(GreenThread::new(entry));

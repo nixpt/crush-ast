@@ -619,3 +619,42 @@ fn map_is_truthy_only_when_non_empty() {
     m.insert("x".to_string(), Value::Int(1));
     assert!(Value::new_map(m).is_truthy());
 }
+
+// ── async / green threads ─────────────────────────────────────────────────────
+
+#[test]
+fn spawn_creates_handle() {
+    // SPAWN with a function name should push a Handle, not null
+    let src = "\
+.func main
+    PUSH_STR \"other\"
+    SPAWN
+    HALT
+.func other
+    HALT";
+    let r = run_src(src);
+    let top = r.stack.last().expect("should have a value");
+    assert!(matches!(top, Value::Handle(_)), "expected Handle, got {top:?}");
+}
+
+#[test]
+fn spawn_await_roundtrip() {
+    // SPAWN a function, AWAIT it, check result
+    let src = "\
+.func main
+    PUSH_STR \"worker\"
+    SPAWN
+    AWAIT
+    HALT
+.func worker
+    PUSH 42
+    HALT";
+    let r = run_src(src);
+    assert_eq!(r.stack, vec![Value::Int(42)]);
+}
+
+#[test]
+fn yield_does_not_crash() {
+    let r = run_src("PUSH 1\nYIELD\nPUSH 2\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(1), Value::Int(2)]);
+}

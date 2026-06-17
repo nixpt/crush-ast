@@ -52,7 +52,6 @@ use anyhow::{Context, Result};
 use crush_cast::{self as ast, Program};
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::Path;
 use tree_sitter::Node;
 
 // ── Frontend trait (replaces Walker for native-parser frontends) ─────────────
