@@ -52,3 +52,15 @@ Rejected alternatives:
 Outcome:
 3 crates live at 0.2.0; v0.2.0 tagged+pushed; license now clean dual MIT OR Apache-2.0; copyright 'Antarik / Exosphere Authors' -> 'The Crush Authors'; LICENSE-MIT+LICENSE-APACHE bundled per-crate; stale __pycache__ pyc untracked. Publish order crush-errors -> crush-cast/casm.
 
+
+## 2026-06-17T03:00:46-05:00 — [STRATEGIC] [VERIFIED] Published Tier-1 crates (crush-vm, crush-frontend, crush-lang-sdk, tree-sitter-crush) v0.2.0 to crates.io
+
+Reason:
+Completes the registry surface so external dependents (openko/fabric, mycelium-mobile, arniko -> crush-lang-sdk; crush-symbols -> tree-sitter-crush) can drop path-deps. Same prep as core-3 (fmt, clippy, metadata, dual MIT/Apache LICENSE bundled, keywords <20ch).
+
+Rejected alternatives:
+- **publish crush-vm with its build.rs intact:build.rs wrote opcodes.json into the source tree -> cargo verify rejects it and it breaks consumers building from the read-only registry cache; dropped build.rs, opcodes.json kept as static artifact**
+
+Outcome:
+All 4 live at 0.2.0. tree-sitter-crush bumped 0.1.0->0.2.0 (workspace consistency). crush.so (prebuilt grammar) untracked+excluded. Hit crates.io new-crate rate limit on the 7th publish; retried crush-lang-sdk after the window. 7/7 crush crates now on crates.io.
+
