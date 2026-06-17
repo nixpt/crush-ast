@@ -834,6 +834,7 @@ dependencies = [
  "clap",
  "crush-cast",
  "crush-frontend",
+ "crush-index",
  "crush-vm",
  "getrandom 0.2.17",
  "rand",

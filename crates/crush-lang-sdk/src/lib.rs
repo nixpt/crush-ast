@@ -27,6 +27,7 @@ pub mod akg;
 pub mod builder;
 pub mod bus;
 pub mod caps;
+pub mod codebase;
 pub mod compile;
 pub mod compute;
 #[cfg(feature = "db")]

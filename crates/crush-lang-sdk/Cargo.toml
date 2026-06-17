@@ -39,6 +39,7 @@ crush-vm.workspace = true
 crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
+crush-index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

@@ -4,13 +4,15 @@
 //! filesystem, environment, and time operations. They are registered
 //! explicitly by the host via [`HostCaps`](crush_vm::HostCaps).
 
+use crush_index::CrushIndex;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 
 /// Builder for a standard set of host capabilities.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct HostCapsBuilder {
     fs: bool,
     env: bool,
@@ -32,6 +34,8 @@ pub struct HostCapsBuilder {
     stdlib: bool,
     fs_root: Option<String>,
     env_vars: HashMap<String, String>,
+    /// Pre-built codebase index for `codebase.*` caps.
+    codebase_index: Option<Arc<CrushIndex>>,
 }
 
 impl HostCapsBuilder {
@@ -136,6 +140,15 @@ impl HostCapsBuilder {
         self
     }
 
+    /// Inject a pre-built `CrushIndex` to enable `codebase.*` capabilities.
+    ///
+    /// Build the index by calling `CrushIndex::add_program` for each compiled
+    /// Crush module, then pass it here before calling `build()`.
+    pub fn codebase(mut self, index: CrushIndex) -> Self {
+        self.codebase_index = Some(Arc::new(index));
+        self
+    }
+
     /// Build the [`HostCaps`] registry.
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
@@ -185,6 +198,9 @@ impl HostCapsBuilder {
         #[cfg(feature = "stdlib")]
         if self.stdlib {
             crate::stdlib::register(&mut caps);
+        }
+        if let Some(idx) = self.codebase_index {
+            crate::codebase::register(&mut caps, idx);
         }
         caps
     }
