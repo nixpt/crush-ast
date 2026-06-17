@@ -59,6 +59,7 @@ fn walk_tree(tree: &Tree, source: &[u8], file_name: &str) -> Result<ast::Program
                 params: vec![],
                 body: main_body,
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -69,6 +70,7 @@ fn walk_tree(tree: &Tree, source: &[u8], file_name: &str) -> Result<ast::Program
         lang: Some("zig".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }
 
@@ -128,7 +130,15 @@ fn visit_function(
         .transpose()?
         .unwrap_or_default();
 
-    functions.insert(name, ast::Function { params, body, meta });
+    functions.insert(
+        name,
+        ast::Function {
+            params,
+            body,
+            meta,
+            ..Default::default()
+        },
+    );
     Ok(())
 }
 

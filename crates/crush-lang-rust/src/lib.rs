@@ -81,6 +81,7 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
                             params,
                             body,
                             meta: HashMap::new(),
+                            ..Default::default()
                         },
                     );
                 }
@@ -99,6 +100,7 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
                 params: vec![],
                 body: main_body,
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -109,5 +111,6 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
         lang: Some("rust".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }

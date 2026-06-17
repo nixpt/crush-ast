@@ -338,6 +338,7 @@ impl Parser {
                 params: Vec::new(),
                 body: statements,
                 meta: HashMap::new(),
+                ..Default::default()
             };
             functions.insert("main".to_string(), main_func);
         }
@@ -348,6 +349,7 @@ impl Parser {
             lang: Some("crush".to_string()),
             functions,
             ai_meta: None,
+            ..Default::default()
         })
     }
 
@@ -469,6 +471,7 @@ impl Parser {
             params: params.into_iter().map(|p| (p.name, p.type_hint)).collect(),
             body,
             meta: HashMap::new(),
+            ..Default::default()
         };
 
         Ok((name, func))

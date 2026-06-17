@@ -104,6 +104,7 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
                         params,
                         body,
                         meta: HashMap::new(),
+                        ..Default::default()
                     },
                 );
             }
@@ -126,6 +127,7 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
                 params: vec![],
                 body: main_body,
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -136,5 +138,6 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
         lang: Some("python".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }

@@ -53,6 +53,7 @@ fn create_program(body: Vec<Statement>) -> Program {
             params: vec![],
             body,
             meta: meta(),
+            ..Default::default()
         },
     );
 
@@ -62,6 +63,7 @@ fn create_program(body: Vec<Statement>) -> Program {
         lang: Some("crush".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     }
 }
 

@@ -194,11 +194,13 @@ fn render_ai_native_expression() {
                         meta: std::collections::HashMap::new(),
                     }],
                     meta: std::collections::HashMap::new(),
+                    ..Default::default()
                 },
             );
             m
         },
         ai_meta: None,
+        ..Default::default()
     };
 
     let rendered = render_program(&program);
@@ -231,11 +233,13 @@ fn render_ai_native_statement() {
                         },
                     )],
                     meta: std::collections::HashMap::new(),
+                    ..Default::default()
                 },
             );
             m
         },
         ai_meta: None,
+        ..Default::default()
     };
 
     let rendered = render_program(&program);

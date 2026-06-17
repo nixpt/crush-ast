@@ -16,6 +16,7 @@ fn create_program(body: Vec<Statement>) -> Program {
             params: vec![],
             body,
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
 
@@ -25,6 +26,7 @@ fn create_program(body: Vec<Statement>) -> Program {
         lang: Some("crush".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     }
 }
 
@@ -35,6 +37,7 @@ fn create_program_with_functions(functions: HashMap<String, Function>) -> Progra
         lang: Some("crush".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     }
 }
 
@@ -194,6 +197,7 @@ fn test_function_return_type_inference_allows_numeric_use() {
                 meta: create_empty_meta(),
             }],
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
     functions.insert(
@@ -217,6 +221,7 @@ fn test_function_return_type_inference_allows_numeric_use() {
                 meta: create_empty_meta(),
             }],
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
 
@@ -252,6 +257,7 @@ fn test_conflicting_function_return_types_fail() {
                 },
             ],
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
     functions.insert(
@@ -267,6 +273,7 @@ fn test_conflicting_function_return_types_fail() {
                 meta: create_empty_meta(),
             }],
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
 

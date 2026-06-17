@@ -240,6 +240,7 @@ impl Renderer {
                     params: params.clone(),
                     body: body.clone(),
                     meta: std::collections::HashMap::new(),
+                    ..Default::default()
                 };
                 self.render_function_header(name, &func);
             }

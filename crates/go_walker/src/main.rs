@@ -70,6 +70,7 @@ impl Walker for GoWalker {
                     params: vec![],
                     body: Vec::new(),
                     meta: HashMap::new(),
+                    ..Default::default()
                 })
                 .body
                 .extend(main_body);
@@ -81,6 +82,7 @@ impl Walker for GoWalker {
             lang: Some("go".to_string()),
             functions,
             ai_meta: None,
+            ..Default::default()
         })
     }
 }
@@ -107,8 +109,15 @@ impl<'a> Visitor<'a> {
                 }
                 let body_node = node.child_by_field_name("body").unwrap();
                 let body = self.visit_block(body_node)?;
-                self.functions
-                    .insert(name, ast::Function { params, body, meta });
+                self.functions.insert(
+                    name,
+                    ast::Function {
+                        params,
+                        body,
+                        meta,
+                        ..Default::default()
+                    },
+                );
                 Ok(None)
             }
             "short_variable_declaration" => {

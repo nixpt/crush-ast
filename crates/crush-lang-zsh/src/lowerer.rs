@@ -26,6 +26,7 @@ pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
                 params: vec![],
                 body: main_body,
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -36,6 +37,7 @@ pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
         lang: Some("zsh".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }
 
@@ -280,6 +282,7 @@ fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                 params: vec![],
                 body: body.clone(),
                 meta: HashMap::new(),
+                ..Default::default()
             },
         ));
     }

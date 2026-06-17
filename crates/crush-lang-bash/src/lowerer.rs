@@ -23,6 +23,7 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
                             params,
                             body,
                             meta: HashMap::new(),
+                            ..Default::default()
                         },
                     );
                     continue;
@@ -41,6 +42,7 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
                 params: vec![],
                 body: main_body,
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -51,6 +53,7 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
         lang: Some("bash".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }
 

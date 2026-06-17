@@ -15,6 +15,7 @@ fn create_program(body: Vec<Statement>) -> Program {
             params: vec![],
             body,
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
 
@@ -24,6 +25,7 @@ fn create_program(body: Vec<Statement>) -> Program {
         lang: Some("crush".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     }
 }
 
@@ -271,6 +273,7 @@ fn test_strength_reduction_mul_by_two() {
                 meta: create_empty_meta(),
             }],
             meta: create_empty_meta(),
+            ..Default::default()
         },
     );
     let mut program = Program {
@@ -279,6 +282,7 @@ fn test_strength_reduction_mul_by_two() {
         lang: Some("crush".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     };
 
     optimize_program(&mut program);

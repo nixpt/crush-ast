@@ -27,6 +27,7 @@ pub fn lower_module(module: &Module) -> anyhow::Result<Program> {
                             params,
                             body,
                             meta: HashMap::new(),
+                            ..Default::default()
                         },
                     );
                 }
@@ -59,6 +60,7 @@ pub fn lower_module(module: &Module) -> anyhow::Result<Program> {
                 params: vec![],
                 body: main_body,
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -69,6 +71,7 @@ pub fn lower_module(module: &Module) -> anyhow::Result<Program> {
         lang: Some("javascript".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }
 

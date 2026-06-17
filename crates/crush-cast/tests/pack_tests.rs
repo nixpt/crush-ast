@@ -108,6 +108,8 @@ fn incompatible_program() -> Program {
         lang: None,
         functions: HashMap::new(),
         ai_meta: None,
+        manifest: None,
+        exhaustive_sites: vec![],
     }
 }
 

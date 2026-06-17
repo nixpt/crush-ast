@@ -66,6 +66,7 @@ impl ReplState {
                 params: Vec::new(),
                 body: self.main_statements.clone(),
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
         Program {
@@ -74,6 +75,7 @@ impl ReplState {
             lang: Some("crush".to_string()),
             functions,
             ai_meta: None,
+            ..Default::default()
         }
     }
 
@@ -259,6 +261,7 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<boo
                 params: Vec::new(),
                 body: Vec::new(),
                 meta: HashMap::new(),
+                ..Default::default()
             })
             .body
             .push(Statement::ExprStmt {

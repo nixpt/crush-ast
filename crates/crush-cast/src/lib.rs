@@ -4,14 +4,18 @@ use std::collections::HashMap;
 pub mod ai;
 pub mod diff;
 pub mod format;
+pub mod manifest;
 pub mod pack;
 pub mod types;
 pub mod validate;
+pub use manifest::{
+    ChangelogEntry, ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, SourceLoc,
+};
 pub use pack::{CAST_VERSION, Format, PackError};
 pub use types::CastType;
 pub use validate::{ValidationError, validate_json};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct Program {
@@ -19,17 +23,30 @@ pub struct Program {
     pub entry: String,
     pub lang: Option<String>,
     pub functions: HashMap<String, Function>,
-    #[serde(default)]
+    /// AI execution metadata (goals, tool-chains, delegation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_meta: Option<ai::AIMetadata>,
+    /// Navigation manifest (@module annotation): purpose, exports, invariants,
+    /// related modules. Consumed by crush-index to build the queryable index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<manifest::ModuleManifest>,
+    /// Exhaustive match sites for tracked sum types (compiler-populated).
+    /// Set for each type listed in `manifest.exhaustive_types`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exhaustive_sites: Vec<manifest::ExhaustiveMatchSite>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct Function {
     pub params: Vec<(String, CastType)>,
     pub body: Vec<Statement>,
     pub meta: HashMap<String, serde_json::Value>,
+    /// Semantic annotations (@errors, @reads, @writes, @covers, @relies-on).
+    /// Absent when no annotations were written; all sub-fields are optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<manifest::FunctionAnnotations>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

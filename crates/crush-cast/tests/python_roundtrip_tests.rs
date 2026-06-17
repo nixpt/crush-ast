@@ -164,11 +164,14 @@ print(json_str)
                         },
                     ],
                     meta: HashMap::new(),
+                    annotations: None,
                 },
             );
             m
         },
         ai_meta: None,
+        manifest: None,
+        exhaustive_sites: vec![],
     };
 
     // Compare by re-serializing both to canonical JSON.

@@ -153,6 +153,7 @@ fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerError> 
                     ("file".to_string(), serde_json::json!(filename)),
                     ("lang".to_string(), serde_json::json!("wasm")),
                 ]),
+                ..Default::default()
             },
         );
     }
@@ -172,6 +173,7 @@ fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerError> 
                     meta: HashMap::new(),
                 }],
                 meta: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -182,5 +184,6 @@ fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerError> 
         lang: Some("wasm".to_string()),
         functions,
         ai_meta: None,
+        ..Default::default()
     })
 }
