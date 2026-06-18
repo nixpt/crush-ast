@@ -5,7 +5,29 @@
 //! registry. Phase-3 caps are synchronous (blocking-accept on the listener
 //! side); the async path is wired through `reactor::Source::try_accept`.
 
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock}};
+
+/// Cache of leaked SNI `&'static str`s, indexed by the originating `&str`.
+/// Each distinct SNI is leaked at most once across the program lifetime
+/// (vs. once per `NetTlsWrapCap::call` invocation under the prior
+/// `Box::leak`-per-call shape). The leak cost falls from `O(calls)` to
+/// `O(distinct SNIs)`; re-parsing via `ServerName::try_from(&str)` is cheap
+/// and runs on every call to produce a fresh `ServerName<'static>`.
+///
+/// Bad (unparseable) SNIs still leak one allocation per crash lifecycle;
+/// accepted as a bounded misallocation to keep `call`'s API shape unchanged.
+static SNI_CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+
+fn cached_sni(sni: &str) -> &'static str {
+    let cache = SNI_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("SNI_CACHE mutex poisoned");
+    if let Some(&cached) = guard.get(sni) {
+        return cached;
+    }
+    let leaked: &'static str = Box::leak(sni.to_owned().into_boxed_str());
+    guard.insert(sni.to_owned(), leaked);
+    leaked
+}
 
 use crush_lang_sdk::{HostCap, HostCapSpec, HostCaps, Value};
 
@@ -207,11 +229,13 @@ pub struct NetTlsWrapCap {
     ///
     /// When non-empty, `handshake()` places them in the client `RootCertStore`
     /// ALONGSIDE `webpki_roots::TLS_SERVER_ROOTS`. Tests use this to inject the
-    /// in-process self-signed cert so the smoke-test handshake validates
-    /// locally. Production callers leave it empty.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
-}
+    /// In-process self-signed cert so the smoke-test handshake validates
+    /// locally. Production callers leave it empty. Crate-internal
+    /// visibility (production); the integration test in `tests/tls_smoke.rs`
+    /// routes through the public `NetTlsWrapCap::with_extra_roots(...)`
+    /// constructor rather than reading this field directly.
+    pub(crate) extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
+    }
 
 #[cfg(feature = "tls")]
 impl NetTlsWrapCap {
@@ -328,7 +352,7 @@ impl HostCap for NetTlsWrapCap {
         // `&str` into 'static storage so the borrow survives into the connection.
         // Phase-5 hardening: cache `ServerName<'static>` per distinct sni string
         // rather than calling `Box::leak` per cap call.
-        let sni_static: &'static str = Box::leak(sni.into_boxed_str());
+        let sni_static: &'static str = cached_sni(&sni);
         let new_id = Self::handshake(&self.state, conn_id, sni_static, &self.extra_roots)?;
         Ok(Some(Value::Int(new_id)))
     }

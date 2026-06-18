@@ -22,6 +22,7 @@ use std::{
     net::TcpListener as StdTcpListener,
     sync::{Arc, Mutex},
     thread,
+    time::Duration,
 };
 
 use crush_lang_sdk::{HostCap, Value};
@@ -43,6 +44,10 @@ fn net_tls_wrap_performs_handshake_and_probe() {
 
     let acceptor = thread::spawn(move || {
         let (sock, _peer) = listener.accept().expect("accept");
+        sock.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("server set_read_timeout");
+        sock.set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("server set_write_timeout");
         let cfg = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], key_der)
@@ -106,6 +111,14 @@ fn net_tls_wrap_performs_handshake_and_probe() {
     // write "ping" (and the server returns only after `write_all("pong")` completes).
     {
         let mut stream = gs.tls_client_conns.get(&new_id).unwrap().lock().unwrap();
+        stream
+            .sock
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("client set_read_timeout");
+        stream
+            .sock
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("client set_write_timeout");
         stream.write_all(b"ping").expect("client write ping");
         let mut buf = [0u8; 4];
         stream.read_exact(&mut buf).expect("client read pong");
