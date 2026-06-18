@@ -6,6 +6,7 @@
 //! side); the async path is wired through `reactor::Source::try_accept`.
 
 use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock}};
+use rustls::pki_types::ServerName;
 
 /// Cache of leaked SNI `&'static str`s, indexed by the originating `&str`.
 /// Each distinct SNI is leaked at most once across the program lifetime
@@ -19,6 +20,7 @@ use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock}};
 static SNI_CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
 
 fn cached_sni(sni: &str) -> &'static str {
+    ServerName::try_from(sni).expect("invalid SNI before cache leak");
     let cache = SNI_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = cache.lock().expect("SNI_CACHE mutex poisoned");
     if let Some(&cached) = guard.get(sni) {
