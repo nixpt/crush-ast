@@ -75,3 +75,24 @@ Rejected alternatives:
 Outcome:
 All 4 live at 0.2.0. tree-sitter-crush bumped 0.1.0->0.2.0 (workspace consistency). crush.so (prebuilt grammar) untracked+excluded. Hit crates.io new-crate rate limit on the 7th publish; retried crush-lang-sdk after the window. 7/7 crush crates now on crates.io.
 
+
+## 2026-06-18T06:32:04Z — Phase-5 / M3 closure
+
+PR-anchored summary of the 4 commits landed across crush-ast and arniko for the Phase-5 advisor + M3 closure.
+
+### crush-ast (branch `agent/buffy/network`)
+- HEAD: `2da6b28` (dejavue: refresh timeline after Phase-5 cargo test gate)
+- `52f01e5` M3 + Phase-5 advisor: TLS SNI cache + ComponentView RAII + .gitignore hygiene
+  - `crates/crush-net/src/caps.rs`: OnceLock SNI cache + `cached_sni` helper + plain pub(crate) extra_roots + structural repair `}` before `#[cfg(feature = "tls")]`
+  - `crates/crush-net/tests/tls_smoke.rs`: timeouts `.expect()`-terminated + rustls 0.23 `.sock` field rewrite
+  - `.gitignore`: scratch hygiene section
+
+### arniko (branch `agent/vibe/ar-m4`)
+- HEAD: `2b95c4c` (dejavue: refresh timeline after Phase-5 cargo test gate)
+- `8d23976` M3 + Phase-5 advisor: TLS SNI cache + ComponentView RAII + .gitignore hygiene
+  - `crates/arniko/tests/reactive_components.rs`: Component trait import widening + ComponentView<C> RAII tests (`component_view_drops_inner_c_on_scope_end` + `component_view_inner_c_not_dropped_while_reactor_alive`)
+  - `.gitignore`: scratch hygiene section
+
+### Verified test results
+- crush-net: 18/18 tests pass (`cargo test -p crush-net --features tls --no-fail-fast`)
+- arniko: 35 tests pass, 0 failed, 2 doctests pass, 14 doctests ignored (`cargo test -p arniko --features 'reactive,launch,components,html' --no-fail-fast`)
