@@ -1,0 +1,35 @@
+[package]
+name = "crush-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Portable, std-only TCP/TLS network stack exposed as CRUSH host capabilities."
+
+[features]
+# Phase 4: opt-in TLS support backed by rustls + webpki-roots.
+# We deliberately do NOT pull rustls-native-certs (which has historically dragged in
+# `time`/`x509-parser` and broken cross-platform builds); webpki-roots embeds the
+# Mozilla root store as compiled-in Rust data and avoids the OS-cert probe.
+tls = ["dep:rustls", "dep:webpki-roots"]
+default = []
+
+[dependencies]
+crush-lang-sdk.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+mesh-proto = { path = "../../../exosphere/crates/mesh-proto" }
+
+# TLS deps (only pulled when the `tls` feature is enabled).
+rustls = { version = "0.23", optional = true, default-features = false, features = ["logging", "std", "tls12", "ring"] }
+webpki-roots = { version = "0.26", optional = true }
+
+[dev-dependencies]
+# `rcgen` is only used by tests/tls_smoke.rs to mint an in-process self-signed cert.
+# Gated on the same `tls` feature so a no-tls build doesn't pull it.
+# Strip optional flag — dev-dependencies may not be optional
+rcgen = "0.13"
+mesh-proto = { path = "../../../exosphere/crates/mesh-proto" }
+
