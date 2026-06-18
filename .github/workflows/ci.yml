@@ -27,6 +27,12 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+      - name: Checkout exosphere sibling (mesh-proto path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: nixpt/exosphere
+          path: ../exosphere
+
         with:
           shared-key: ci-check
 
@@ -49,6 +55,12 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+      - name: Checkout exosphere sibling (mesh-proto path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: nixpt/exosphere
+          path: ../exosphere
+
         with:
           shared-key: ci-test
 

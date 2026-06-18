@@ -23,6 +23,7 @@ members = [
     "crates/crush-lang-js",
     "crates/crush-lang-bash",
     "crates/crush-lang-zsh",
+    "crates/crush-net",
 ]
 
 [workspace.package]
