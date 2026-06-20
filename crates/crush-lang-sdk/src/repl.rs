@@ -174,6 +174,29 @@ fn is_input_complete(source: &str) -> bool {
     !trailing_ops.iter().any(|op| trimmed.ends_with(op))
 }
 
+/// Errors produced for `handle_meta_command`'s callers. `Parse` carries
+/// both the typed `Vec<ParseError>` AND the inner source so the REPL
+/// loop's meta-arm can render multi-line parse diagnostics with snippets
+/// (text mode: `theme::render_parse_errors`; JSON mode: one NDJSON record
+/// per `ParseError` via `JsonDiagnostic::parse_error`). `Other` absorbs
+/// everything else (semantic inference failures, "expected an expression"
+/// structural checks, unknown commands, etc.) — those route to the
+/// blanket `E-IO` code in JSON mode so the stream stays well-formed.
+#[derive(Debug)]
+enum MetaCommandError {
+    Parse {
+        source: String,
+        errors: Vec<ParseError>,
+    },
+    Other(anyhow::Error),
+}
+
+impl From<std::io::Error> for MetaCommandError {
+    fn from(e: std::io::Error) -> Self {
+        MetaCommandError::Other(anyhow::Error::from(e))
+    }
+}
+
 /// Parse a REPL input line. Returns the typed `Vec<ParseError>` on
 /// failure so the caller (the `run` loop) can route both `Text` and
 /// `Json` modes against the same data: themed output via
@@ -183,29 +206,31 @@ fn parse_repl_source(source: &str) -> Result<Program, Vec<ParseError>> {
     Parser::parse(source)
 }
 
-fn parse_single_expr(source: &str) -> anyhow::Result<Expression> {
-    // `parse_repl_source`'s typed `Vec<ParseError>` return doesn't
-    // implement `std::error::Error`, so we can't `?` through anyhow's
-    // blanket `From<E: Error>`. Re-flatten inline (text-mode-equivalent
-    // themed rendering stays consistent with `evaluate_input`'s path).
-    // Meta-command errors only happen on `.type` / `.ast` / `.casm`
-    // subcommands so this re-flatten is fine — readers see the
-    // themed multi-line diagnostic and JSON mode falls back to the
-    // blanket `E-IO` via `handle_meta_command`'s outer arm.
-    let program = parse_repl_source(source).map_err(|errs| {
-        let rendered = crate::theme::render_parse_errors(&errs, None, source);
-        anyhow::anyhow!("{rendered}")
+fn parse_single_expr(source: &str) -> Result<Expression, MetaCommandError> {
+    // Parse errors propagate with the inner source attached so the
+    // REPL loop's meta-arm can render them with correct snippet context.
+    // Non-parse failures (`expected an expression` / `expected a single
+    // expression` structural checks) become `MetaCommandError::Other`
+    // — they don't carry parser coordinates, so they don't belong in
+    // the `Parse` variant and JSON mode routes them to blanket `E-IO`.
+    let program = parse_repl_source(source).map_err(|errors| MetaCommandError::Parse {
+        source: source.to_string(),
+        errors,
     })?;
     let main = program
         .functions
         .get("main")
-        .ok_or_else(|| anyhow::anyhow!("expected an expression"))?;
+        .ok_or_else(|| MetaCommandError::Other(anyhow::anyhow!("expected an expression")))?;
     if main.body.len() != 1 {
-        return Err(anyhow::anyhow!("expected a single expression"));
+        return Err(MetaCommandError::Other(anyhow::anyhow!(
+            "expected a single expression"
+        )));
     }
     match &main.body[0] {
         Statement::ExprStmt { expr, .. } => Ok(expr.clone()),
-        _ => Err(anyhow::anyhow!("expected an expression")),
+        _ => Err(MetaCommandError::Other(anyhow::anyhow!(
+            "expected an expression"
+        ))),
     }
 }
 
@@ -232,7 +257,7 @@ fn is_meta_command(input: &str) -> bool {
     input.starts_with('.')
 }
 
-fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<bool> {
+fn handle_meta_command(input: &str, state: &mut ReplState) -> Result<bool, MetaCommandError> {
     let trimmed = input.trim();
     match trimmed {
         ".help" => {
@@ -255,22 +280,27 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<boo
     }
 
     if let Some(expr_src) = trimmed.strip_prefix(".type ") {
-        let expr = parse_single_expr(expr_src.trim())?;
+        let source = expr_src.trim().to_string();
+        let expr = parse_single_expr(&source)?;
         let program = state.to_program();
         let mut analyzer = SemanticAnalyzer::new();
-        let ty = analyzer.infer_expression_type(&program, &expr)?;
+        let ty = analyzer
+            .infer_expression_type(&program, &expr)
+            .map_err(MetaCommandError::Other)?;
         println!("{}", ty);
         return Ok(false);
     }
 
     if let Some(expr_src) = trimmed.strip_prefix(".ast ") {
-        let expr = parse_single_expr(expr_src.trim())?;
+        let source = expr_src.trim().to_string();
+        let expr = parse_single_expr(&source)?;
         println!("{:#?}", expr);
         return Ok(false);
     }
 
     if let Some(expr_src) = trimmed.strip_prefix(".casm ") {
-        let expr = parse_single_expr(expr_src.trim())?;
+        let source = expr_src.trim().to_string();
+        let expr = parse_single_expr(&source)?;
         let mut preview = state.to_program();
         preview
             .functions
@@ -287,7 +317,7 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<boo
                 meta: HashMap::new(),
             });
 
-        let casm = compile_pipeline(preview)?;
+        let casm = compile_pipeline(preview).map_err(MetaCommandError::Other)?;
         if let Some(main) = casm.functions.get("main") {
             for (i, instr) in main.body.iter().enumerate() {
                 println!("{:04} {:<16} {}", i, instr.op, instr.args);
@@ -296,7 +326,10 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<boo
         return Ok(false);
     }
 
-    Err(anyhow::anyhow!("unknown command: {}", input))
+    Err(MetaCommandError::Other(anyhow::anyhow!(
+        "unknown command: {}",
+        input
+    )))
 }
 
 fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> anyhow::Result<()> {
@@ -408,15 +441,38 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(err) => {
-                    match config.message_format {
-                        MessageFormat::Text => eprintln!("{}", err),
-                        MessageFormat::Json => {
-                            // Unknown-command / parse-while-meta errors
-                            // don't carry typed `ParseError` / `RuntimeError`
-                            // payloads — fall back to a generic I/O code so
-                            // the JSON stream stays well-formed.
+                    // Parse errors propagate as a typed `Vec<ParseError>`
+                    // (with the inner source attached) so JSON mode can
+                    // emit per-error NDJSON records — same shape as the
+                    // eval path. Non-parse failures (semantic inference,
+                    // structural checks, unknown commands) bucket into
+                    // `Other` and stay on blanket `E-IO`.
+                    match (&err, config.message_format) {
+                        (
+                            MetaCommandError::Parse { source, errors },
+                            MessageFormat::Text,
+                        ) => {
+                            eprint!(
+                                "{}",
+                                crate::theme::render_parse_errors(errors, None, source)
+                            );
+                        }
+                        (
+                            MetaCommandError::Parse { source: _, errors },
+                            MessageFormat::Json,
+                        ) => {
+                            let diags: Vec<JsonDiagnostic> = errors
+                                .iter()
+                                .map(|e| JsonDiagnostic::parse_error(e, None))
+                                .collect();
+                            eprint!("{}", crate::theme::render_diagnostics_ndjson(&diags));
+                        }
+                        (MetaCommandError::Other(e), MessageFormat::Text) => {
+                            eprintln!("{}", e);
+                        }
+                        (MetaCommandError::Other(e), MessageFormat::Json) => {
                             let diag = JsonDiagnostic::generic_error(
-                                &err.to_string(),
+                                &e.to_string(),
                                 JsonDiagnostic::CODE_IO,
                             );
                             eprint!("{}\n", diag.to_line());
@@ -634,6 +690,64 @@ mod tests {
     fn test_parse_single_expr_basic() {
         let expr = parse_single_expr("42").expect("parse");
         assert!(matches!(expr, Expression::IntLiteral { value: 42, .. }));
+    }
+
+    #[test]
+    fn test_parse_single_expr_propagates_typed_parse_errors() {
+        // `parse_single_expr` now returns `Result<Expression,
+        // MetaCommandError>` so the REPL loop can dispatch parse
+        // failures to per-error NDJSON records in JSON mode. Unclosed
+        // paren triggers a parse error — variant depends on the parser's
+        // recovery policy (today: `Expected { expected: "RParen", ... }`)
+        // — but the contract being locked here is the WRAPPING shape:
+        // the inner source round-trips intact and the errors vector is
+        // non-empty. The wire-format lockdown (specific `E-PP*` code,
+        // line/col, message text) lives in
+        // `crush_repl_test::crush_repl_emits_json_diagnostic_for_meta_command_parse_error`
+        // so the parser-variant brittleness stays there.
+        let bad = "(1 + 2";
+        let err = parse_single_expr(bad).expect_err("expected error");
+        match err {
+            MetaCommandError::Parse { source, errors } => {
+                assert_eq!(source, bad, "inner source must round-trip");
+                assert!(
+                    !errors.is_empty(),
+                    "expected at least one parse error, got empty vec"
+                );
+                // Spot-check that every error is a `ParseError` (the
+                // variant is opaque — the dispatch site reads it through
+                // `JsonDiagnostic::parse_error(..)`, which is the wire-
+                // level contract we test externally).
+                assert!(
+                    errors.iter().all(|e| matches!(
+                        e,
+                        ParseError::UnexpectedToken { .. }
+                            | ParseError::Expected { .. }
+                            | ParseError::UnexpectedEOF { .. }
+                            | ParseError::InvalidNumber { .. }
+                            | ParseError::UnterminatedString { .. }
+                    )),
+                    "all entries must be ParseError variants, got {errors:?}"
+                );
+            }
+            MetaCommandError::Other(_) => {
+                panic!("unclosed paren should be a typed parse error, not Other");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_single_expr_structural_failure_is_other_variant() {
+        // Multi-statement input like `1\n2` parses cleanly but isn't a
+        // single expression — the structural check should be
+        // `MetaCommandError::Other` so JSON mode routes it to blanket
+        // `E-IO` rather than emitting fake `E-PP*` records.
+        let structural = "io.print(1)\nio.print(2)";
+        let err = parse_single_expr(structural).expect_err("expected error");
+        assert!(
+            matches!(err, MetaCommandError::Other(_)),
+            "multi-statement input should be MetaCommandError::Other, got {err:?}"
+        );
     }
 
     #[test]

@@ -625,6 +625,54 @@ mod tests {
     }
 
     #[test]
+    fn assembler_error_constructor_lock() {
+        // Lock `JsonDiagnostic::assembler_error`'s wire-format contract
+        // so a future regression that drops the file attachment or
+        // shifts the code/level defaults surfaces in CI before editors
+        // see dup-schema records. Pairs with
+        // `parse_error_triple_canonical_codes` (which locks the parse-
+        // error canonical codes) and the external
+        // `crush_compile_test::crush_compile_emits_json_diagnostic_for_assembler_error`
+        // end-to-end test (which locks the conductor + stash plumbing).
+        // This test covers only the constructor's data shape.
+        let d = JsonDiagnostic::assembler_error(
+            "line 3: duplicate label \"foo\"",
+            Some("hello.casm"),
+        );
+        assert_eq!(d.code, JsonDiagnostic::CODE_ASSEMBLER);
+        assert_eq!(
+            d.code, "E-ASM",
+            "E-ASM must be the wire code for assembler diagnostics"
+        );
+        assert_eq!(d.level, "error");
+        assert_eq!(
+            d.message, "line 3: duplicate label \"foo\"",
+            "message must round-trip verbatim"
+        );
+        assert_eq!(
+            d.file.as_deref(),
+            Some("hello.casm"),
+            "file must be preserved when Some"
+        );
+        assert!(d.line.is_none(), "assembler_error must not populate line");
+        assert!(d.col.is_none(), "assembler_error must not populate col");
+        assert!(d.hint.is_none(), "assembler_error must not populate hint");
+
+        // File == None branch: same shape, just no file attached.
+        let d_no_file = JsonDiagnostic::assembler_error("line 1: bad opcode", None);
+        assert_eq!(d_no_file.code, "E-ASM");
+        assert_eq!(d_no_file.level, "error");
+        assert_eq!(d_no_file.message, "line 1: bad opcode");
+        assert!(
+            d_no_file.file.is_none(),
+            "file must be None when caller passes None"
+        );
+        assert!(d_no_file.line.is_none());
+        assert!(d_no_file.col.is_none());
+        assert!(d_no_file.hint.is_none());
+    }
+
+    #[test]
     fn render_parse_error_unexpected_eof() {
         disable_for_test();
         let err = ParseError::UnexpectedEOF { line: 1, col: 1 };

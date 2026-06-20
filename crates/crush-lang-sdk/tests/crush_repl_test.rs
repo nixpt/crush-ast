@@ -16,13 +16,20 @@ fn repl_bin() -> &'static str {
     option_env!("CARGO_BIN_EXE_crush-repl").unwrap_or("crush-repl")
 }
 
-/// Spawn the REPL, write each line + newline to its stdin, then wait
-/// for clean exit. Lines should already be trimmed — we add `\n` here.
+/// Spawn the REPL, write trimmed lines + newline to its stdin, then
+/// wait for clean exit.
+///
+/// **REPL-only pattern**: stdout is `Stdio::null()` to avoid the
+/// 64KB OS pipe-buffer deadlock with `piped + wait_with_output()`
+/// when input scripts grow past 64KB. Assertions live on stderr so
+/// dropping stdout capture is invisible. **One-shot binaries
+/// (`crushc`/`crush-run`/`crush-compile`) produce bounded stdout** —
+/// don't copy this pattern blindly.
 fn run_repl_script(args: &[&str], stdin_lines: &[&str]) -> std::process::Output {
     let mut child = Command::new(repl_bin())
         .args(args)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn crush-repl");
@@ -140,12 +147,11 @@ fn crush_repl_emits_json_diagnostic_for_runtime_error() {
 
 #[test]
 fn crush_repl_emits_json_diagnostic_for_meta_command_error() {
-    // Meta-command errors (`.foo` — unrecognized directive) bubble up
-    // as flat anyhow::Error from `handle_meta_command`. They have no
-    // typed `ParseError` / `RuntimeError` payload so the REPL's JSON
-    // dispatch falls back to `JsonDiagnostic::generic_error(..,
-    // CODE_IO)` — same convention used by `crush-compile` for its
-    // non-assembler errors.
+    // Meta-command errors with NO typed `ParseError` payload (`.foo` —
+    // unrecognized directive) bubble up as flat anyhow::Error from
+    // `handle_meta_command`'s `MetaCommandError::Other` arm. The REPL's
+    // JSON dispatch routes those to blanket `E-IO` — same convention
+    // used by `crush-compile` for its non-assembler errors.
     let output = run_repl_script(
         &["--message-format", "json"],
         &[".bogus", ".quit"],
@@ -167,6 +173,69 @@ fn crush_repl_emits_json_diagnostic_for_meta_command_error() {
             .contains("unknown command"),
         "expected `unknown command` text in message, got: {:?}",
         parsed["message"]
+    );
+}
+
+#[test]
+fn crush_repl_emits_json_diagnostic_for_meta_command_parse_error() {
+    // `.type "unterminated` triggers the meta path's parse-error arm:
+    // `parse_single_expr` propagates the typed `Vec<ParseError>` with
+    // the inner source intact, and the REPL loop's meta-arm emits one
+    // NDJSON record per error via `JsonDiagnostic::parse_error`. Same
+    // dispatch shape as the top-level eval path.
+    let output = run_repl_script(
+        &["--message-format", "json"],
+        &[".type \"unterminated", ".quit"],
+    );
+    assert!(output.status.success(), "REPL `.quit` should exit 0");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let json_lines = ndjson_lines(&stderr);
+    assert!(
+        !json_lines.is_empty(),
+        "expected NDJSON record on stderr for meta-command parse error, got: {stderr}"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_lines[0]).expect("must be valid JSON");
+    let code = parsed["code"].as_str().unwrap_or("");
+    assert!(
+        code.starts_with("E-PP"),
+        "meta-command parse errors must surface as E-PP* (got {code}); \
+         blanket E-IO would mean the typed-Vec propagation regressed"
+    );
+    assert_eq!(parsed["level"].as_str(), Some("error"));
+    assert!(
+        parsed["line"].is_number(),
+        "parse-error records must carry line coordinate, got: {parsed}"
+    );
+    assert!(
+        parsed["col"].is_number(),
+        "parse-error records must carry col coordinate, got: {parsed}"
+    );
+    let msg = parsed["message"].as_str().unwrap_or("");
+    assert!(
+        !msg.is_empty(),
+        "expected non-empty parser message, got: {msg}"
+    );
+}
+
+#[test]
+fn crush_repl_meta_command_parse_error_default_mode_remains_text() {
+    // Parallel lockdown: in default text mode the same meta-command
+    // parse error surfaces as a themed `[E-PP*]` badge, NOT as a JSON
+    // record. Confirms the text/json split inside `run`'s meta-arm.
+    let output = run_repl_script(
+        &[],
+        &[".type \"unterminated", ".quit"],
+    );
+    assert!(output.status.success(), "REPL `.quit` should exit 0");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        ndjson_lines(&stderr).is_empty(),
+        "default text mode unexpectedly emitted JSON on meta-command parse error: {stderr}"
+    );
+    assert!(
+        stderr.lines().any(|l| l.contains("[E-PP")),
+        "expected themed `[E-PP*]` badge in text mode, got: {stderr}"
     );
 }
 
