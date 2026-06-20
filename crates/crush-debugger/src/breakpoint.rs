@@ -8,7 +8,7 @@
 //! The bytecode-address mapping is intentionally `None` today; it
 //! will land alongside `crush-frontend`'s sourcemap.
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 use std::path::PathBuf;
 
 /// A source-level breakpoint target. `file` is the resolved-on-disk
@@ -37,12 +37,12 @@ pub struct Breakpoint {
     pub bytecode_address: Option<u32>,
 }
 
-/// Breakpoint registry. Backed by a `BTreeMap` keyed on
+/// Breakpoint registry. Backed by an `IndexMap` keyed on
 /// `(location, monotonic id)` to keep `add`/`remove` O(log N) AND
 /// preserve insertion order for `list()`.
 #[derive(Debug, Default, Clone)]
 pub struct BreakpointSet {
-    by_location: BTreeMap<(Location, BreakpointId), Breakpoint>,
+    by_location: IndexMap<(Location, BreakpointId), Breakpoint>,
     next_id: u32,
 }
 
@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn list_yields_sorted_by_location() {
+    fn list_yields_insertion_order() {
         let mut set = BreakpointSet::new();
         let a = set.add("a.crush", 1);
         let b = set.add("b.crush", 7);
