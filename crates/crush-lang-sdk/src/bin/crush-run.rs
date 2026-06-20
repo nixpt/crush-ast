@@ -22,7 +22,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use crush_lang_sdk::{HostCapsBuilder, Runtime};
+use crush_lang_sdk::{HostCapsBuilder, MessageFormat, Runtime};
 use crush_vm::{Quotas, VmResult};
 
 #[derive(Parser)]
@@ -122,15 +122,49 @@ struct RunArgs {
     /// Maximum call depth.
     #[arg(long, value_name = "N")]
     max_call_depth: Option<usize>,
+
+    /// Format for diagnostic output on errors: `text` (default, themed
+    /// terminal output with cause-chain walk) or `json` (newline-delimited
+    /// records for editor / IDE / LSP bridge integration).
+    #[arg(long = "message-format", value_name = "FORMAT", default_value = "text")]
+    message_format: MessageFormat,
 }
 
 fn main() {
     let cli = Cli::parse();
+    crush_lang_sdk::theme::init_styling();
     match cli.command {
         Commands::Caps => list_caps(),
         Commands::Run(args) => {
             if let Err(e) = run_file(&args) {
-                eprintln!("crush-run: {e:#}");
+                match args.message_format {
+                    MessageFormat::Text => {
+                        // Walk anyhow's full cause chain — works for any
+                        // error type produced by `run_file`.
+                        eprint!(
+                            "{}",
+                            crush_lang_sdk::theme::render_anyhow_error(&e, "runtime")
+                        );
+                    }
+                    MessageFormat::Json => {
+                        // Map a typed `RuntimeError` to a structured
+                        // diagnostic with a distinct stable code per
+                        // variant. Fall back to a generic I/O code for
+                        // non-RuntimeError arms (load failures, compile
+                        // failures, etc.).
+                        let diag = if let Some(runtime_err) =
+                            e.downcast_ref::<crush_lang_sdk::RuntimeError>()
+                        {
+                            crush_lang_sdk::theme::JsonDiagnostic::runtime_error(runtime_err)
+                        } else {
+                            crush_lang_sdk::theme::JsonDiagnostic::generic_error(
+                                &e.to_string(),
+                                crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                            )
+                        };
+                        eprint!("{}\n", diag.to_line());
+                    }
+                }
                 std::process::exit(1);
             }
         }
@@ -204,26 +238,31 @@ fn list_caps() {
 fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     let ext = args.path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
-    let program = match ext {
-        "crush" => {
-            let source = std::fs::read_to_string(&args.path)?;
-            crush_lang_sdk::compile::compile_crush_source(&source)?
-        }
-        "casm" => {
-            let source = std::fs::read_to_string(&args.path)?;
-            let permissions: Vec<&str> = args.caps.iter().map(|s| s.as_str()).collect();
-            crush_lang_sdk::assemble(&source, Some(&permissions), None)?
-        }
-        "cvm1" => {
-            let blob = std::fs::read(&args.path)?;
-            crush_vm::Program::from_blob(&blob)?
-        }
+    // Pre-validate the extension so feature-gate warnings (e.g. the
+    // "--graphics requires the 'graphics' feature" hint) don't fire for
+    // an unsupported file extension -- originally the extension dispatch
+    // ran before quotas/caps were built, so unknown extensions bailed
+    // cleanly. Hoisting Runtime init above the dispatch would otherwise
+    // reorder those warnings before the bail.
+    match ext {
+        "crush" | "casm" | "cvm1" => {}
         _ => anyhow::bail!(
-            "unsupported file extension: {} (expected .crush, .casm, or .cvm1)",
-            ext
+            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"
         ),
-    };
+    }
 
+    // Build Runtime up-front so the `.cvm1` arm can route through typed
+    // `Runtime::run_blob` (which loads *and* executes), mapping
+    // `Program::from_blob` errors to `RuntimeError::LoadBlob` →
+    // `E-RT01` in JSON diagnostic mode. The previous shape called
+    // `crush_vm::Program::from_blob` directly, whose `CrushError`
+    // blocked the downcast in `main::main` and fell back to generic
+    // `E-IO` — so `E-RT01` was unreachable from this binary.
+    //
+    // The `.crush` and `.casm` arms keep an explicit compile-then-run
+    // shape because no `Runtime::run_*` wrapper exists yet for them
+    // (`CODE_RT_ASSEMBLY` / `CODE_RT_INDEX_PARSE` / `CODE_RT_INDEX_READ`
+    // remain future work — see `JsonDiagnostic` in `theme.rs`).
     let mut quotas = Quotas::default();
     if let Some(n) = args.max_steps {
         quotas.max_steps = n;
@@ -290,11 +329,39 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         eprintln!("warning: --stdlib requires the 'stdlib' feature (not enabled in this build)");
     }
 
-    let host_caps = builder.build();
+    let runtime = Runtime::with_quotas(quotas).with_host_caps(builder.build());
 
-    let runtime = Runtime::with_quotas(quotas).with_host_caps(host_caps);
+    let result = match ext {
+        "cvm1" => {
+            // Route through `Runtime::run_blob` so any blob-decode error
+            // (bad magic, unsupported version, truncated, bad manifest)
+            // becomes a typed `RuntimeError::LoadBlob` rather than a bare
+            // `CrushError` that falls past the JSON downcast.
+            let blob = std::fs::read(&args.path)?;
+            runtime.run_blob(&blob)?
+        }
+        "crush" => {
+            let source = std::fs::read_to_string(&args.path)?;
+            let program = crush_lang_sdk::compile::compile_crush_source(&source)?;
+            runtime.run(&program)?
+        }
+        "casm" => {
+            let source = std::fs::read_to_string(&args.path)?;
+            let permissions: Vec<&str> = args.caps.iter().map(|s| s.as_str()).collect();
+            let program = crush_lang_sdk::assemble(&source, Some(&permissions), None)?;
+            runtime.run(&program)?
+        }
+        // Defensive: the pre-check above already bails on unsupported
+        // extensions, so this arm is unreachable in normal flow. Use
+        // `bail!` rather than `unreachable!` so a contributor who adds
+        // a new extension to the pre-check but forgets to wire the
+        // dispatch sees a clean error message + an actionable TODO
+        // marker, instead of a release-build panic.
+        _ => anyhow::bail!(
+            "unsupported extension {ext} reached dispatch after pre-check (this is a bug)"
+        ),
+    };
 
-    let result = runtime.run(&program)?;
     print_result(&result);
     if !result.halted {
         eprintln!("(program fell off end without HALT)");

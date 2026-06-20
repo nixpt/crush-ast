@@ -4,15 +4,23 @@ use std::io::{self, BufRead, Write};
 use crush_cast::{Expression, Function, Program, Statement};
 use crush_frontend::compiler::Compiler;
 use crush_frontend::optimizer::Optimizer;
-use crush_frontend::parser::Parser;
+use crush_frontend::parser::{ParseError, Parser};
 use crush_frontend::semantics::SemanticAnalyzer;
 use crush_vm::{PortableVm, Quotas};
 
+use crate::cli::MessageFormat;
 use crate::compile;
+use crate::theme::JsonDiagnostic;
 
 pub struct ReplConfig {
     pub quotas: Quotas,
     pub stdlib: bool,
+    /// Diagnostic output mode for per-line errors inside the REPL loop.
+    /// `Text` (default) prints themed output to stderr via `theme::render_*`.
+    /// `Json` emits one NDJSON record per error via `JsonDiagnostic::*`
+    /// so editors / LSP bridges can ingest the stream uniformly with the
+    /// other Crush binaries.
+    pub message_format: MessageFormat,
 }
 
 impl Default for ReplConfig {
@@ -26,6 +34,7 @@ impl Default for ReplConfig {
                 ..Default::default()
             },
             stdlib: false,
+            message_format: MessageFormat::Text,
         }
     }
 }
@@ -165,19 +174,28 @@ fn is_input_complete(source: &str) -> bool {
     !trailing_ops.iter().any(|op| trimmed.ends_with(op))
 }
 
-fn parse_repl_source(source: &str) -> anyhow::Result<Program> {
-    Parser::parse(source).map_err(|errors| {
-        let msg = errors
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(" | ");
-        anyhow::anyhow!("parse error: {}", msg)
-    })
+/// Parse a REPL input line. Returns the typed `Vec<ParseError>` on
+/// failure so the caller (the `run` loop) can route both `Text` and
+/// `Json` modes against the same data: themed output via
+/// `theme::render_parse_errors`, NDJSON records via `JsonDiagnostic::parse_error`
+/// + `render_diagnostics_ndjson`.
+fn parse_repl_source(source: &str) -> Result<Program, Vec<ParseError>> {
+    Parser::parse(source)
 }
 
 fn parse_single_expr(source: &str) -> anyhow::Result<Expression> {
-    let program = parse_repl_source(source)?;
+    // `parse_repl_source`'s typed `Vec<ParseError>` return doesn't
+    // implement `std::error::Error`, so we can't `?` through anyhow's
+    // blanket `From<E: Error>`. Re-flatten inline (text-mode-equivalent
+    // themed rendering stays consistent with `evaluate_input`'s path).
+    // Meta-command errors only happen on `.type` / `.ast` / `.casm`
+    // subcommands so this re-flatten is fine — readers see the
+    // themed multi-line diagnostic and JSON mode falls back to the
+    // blanket `E-IO` via `handle_meta_command`'s outer arm.
+    let program = parse_repl_source(source).map_err(|errs| {
+        let rendered = crate::theme::render_parse_errors(&errs, None, source);
+        anyhow::anyhow!("{rendered}")
+    })?;
     let main = program
         .functions
         .get("main")
@@ -282,7 +300,16 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> anyhow::Result<boo
 }
 
 fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> anyhow::Result<()> {
-    let snippet = parse_repl_source(source)?;
+    let snippet = parse_repl_source(source).map_err(|errors| {
+        // Re-flatten the typed parse-error vector into a `#[error]`-shaped
+        // display so `evaluate_input`'s `anyhow::Result<()>` keeps its
+        // shape. The REPL loop intercepts this case BEFORE calling
+        // `evaluate_input` in JSON mode (see `run`) and renders NDJSON
+        // records per `ParseError`. This path is only hit in `Text` mode
+        // — theme-rendering is the historical behavior.
+        let rendered = crate::theme::render_parse_errors(&errors, None, source);
+        anyhow::anyhow!("{rendered}")
+    })?;
     let mut defined: Vec<String> = snippet
         .functions
         .keys()
@@ -310,14 +337,34 @@ fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> a
                 }
                 if show_result && !result.stack.is_empty() {
                     let top = crush_vm::value_to_text(result.stack.last().unwrap());
-                    eprintln!("=> {}", top);
+                    eprintln!("{}", crate::theme::format_repl_result(&top));
                 }
                 if !result.halted {
+                    // Bracketed — kept verbatim so users who learned the
+                    // original `[fell off end]` notice aren't surprised.
                     eprintln!("[fell off end]");
                 }
             }
             Err(e) => {
-                eprintln!("runtime error: {}", e);
+                match config.message_format {
+                    MessageFormat::Text => {
+                        eprint!("{}", crate::theme::render_runtime_error(&e));
+                    }
+                    MessageFormat::Json => {
+                        // VM errors are not wrapped in `RuntimeError` here
+                        // (the REPL uses `PortableVm` directly, not the
+                        // SDK's `Runtime`). The downcast won't match — fall
+                        // through to the generic I/O code, but use
+                        // `JsonDiagnostic::runtime_error`'s `"E-RT05"`
+                        // arm by wrapping into a synthetic `RuntimeError::Vm`
+                        // — that way editors can branch on the same code
+                        // family they already see from `crush-run`.
+                        let diag = JsonDiagnostic::runtime_error(
+                            &crate::RuntimeError::Vm(e),
+                        );
+                        eprint!("{}\n", diag.to_line());
+                    }
+                }
             }
         }
     }
@@ -331,6 +378,7 @@ fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> a
 }
 
 pub fn run(config: ReplConfig) -> anyhow::Result<()> {
+    crate::theme::init_styling();
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut state = ReplState::new();
@@ -341,9 +389,9 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
 
     loop {
         if pending.is_empty() {
-            print!("crush> ");
+            print!("{}", crate::theme::format_repl_prompt("crush> "));
         } else {
-            print!("...> ");
+            print!("{}", crate::theme::format_repl_prompt("...> "));
         }
         io::stdout().flush()?;
 
@@ -359,7 +407,22 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
             match handle_meta_command(trimmed, &mut state) {
                 Ok(true) => break,
                 Ok(false) => {}
-                Err(err) => eprintln!("{}", err),
+                Err(err) => {
+                    match config.message_format {
+                        MessageFormat::Text => eprintln!("{}", err),
+                        MessageFormat::Json => {
+                            // Unknown-command / parse-while-meta errors
+                            // don't carry typed `ParseError` / `RuntimeError`
+                            // payloads — fall back to a generic I/O code so
+                            // the JSON stream stays well-formed.
+                            let diag = JsonDiagnostic::generic_error(
+                                &err.to_string(),
+                                JsonDiagnostic::CODE_IO,
+                            );
+                            eprint!("{}\n", diag.to_line());
+                        }
+                    }
+                }
             }
             continue;
         }
@@ -384,8 +447,57 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
         }
 
         let source = std::mem::take(&mut pending);
+
+        // Pre-evaluate parse dispatch — `parse_repl_source` returns a
+        // typed `Vec<ParseError>` so we can emit N NDJSON records (one
+        // per error) in JSON mode, mirroring `crushc`'s parse-error
+        // aggregation. Text mode continues to call `evaluate_input`
+        // (which re-flattens the vec for themed rendering).
+        if let Err(errors) = parse_repl_source(&source) {
+            match config.message_format {
+                MessageFormat::Text => {
+                    eprint!(
+                        "{}",
+                        crate::theme::render_parse_errors(&errors, None, &source)
+                    );
+                }
+                MessageFormat::Json => {
+                    let diags: Vec<JsonDiagnostic> = errors
+                        .iter()
+                        .map(|e| JsonDiagnostic::parse_error(e, None))
+                        .collect();
+                    eprint!("{}", crate::theme::render_diagnostics_ndjson(&diags));
+                }
+            }
+            continue;
+        }
+
         if let Err(err) = evaluate_input(&source, &mut state, &config) {
-            eprintln!("{}", err);
+            // Only non-parse errors reach this arm — semantic / compile /
+            // assembly / IO / VM-eval failures. The VM error case is routed
+            // inside `evaluate_input` (above) so this arm sees a
+            // `theme::render_*`'d string for the legacy themed path or a
+            // synthetic-`RuntimeError` rewrap for JSON.
+            match config.message_format {
+                MessageFormat::Text => eprintln!("{}", err),
+                MessageFormat::Json => {
+                    // If the underlying anyhow chain still carries a typed
+                    // `RuntimeError` (rare — only when callers rewrap the
+                    // SDK VM path), surface it; otherwise fall back to the
+                    // generic I/O code.
+                    let diag = if let Some(runtime_err) =
+                        err.downcast_ref::<crate::RuntimeError>()
+                    {
+                        JsonDiagnostic::runtime_error(runtime_err)
+                    } else {
+                        JsonDiagnostic::generic_error(
+                            &err.to_string(),
+                            JsonDiagnostic::CODE_IO,
+                        )
+                    };
+                    eprint!("{}\n", diag.to_line());
+                }
+            }
         }
     }
 
@@ -415,6 +527,20 @@ mod tests {
         let source = "io.print(42)";
         let prog = parse_repl_source(source).expect("parse");
         assert!(prog.functions.contains_key("main"));
+    }
+
+    #[test]
+    fn test_parse_repl_source_returns_typed_vec_on_error() {
+        // The signature change (anyhow → Vec<ParseError>) preserves type
+        // information so the REPL `run` loop can dispatch per-error in
+        // JSON mode. Sanity-check the shape: an unterminated string
+        // yields at least one `UnterminatedString` variant.
+        let bad = "\"unterminated\n";
+        let errs = parse_repl_source(bad).expect_err("expected parse error");
+        assert!(
+            errs.iter().any(|e| matches!(e, ParseError::UnterminatedString { .. })),
+            "expected at least one UnterminatedString error, got {errs:?}"
+        );
     }
 
     #[test]

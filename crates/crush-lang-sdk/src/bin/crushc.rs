@@ -20,6 +20,8 @@ use std::path::PathBuf;
 
 use clap::Parser as ClapParser;
 
+use crush_lang_sdk::MessageFormat;
+
 #[derive(ClapParser)]
 #[command(name = "crushc")]
 #[command(author, version = concat!("0.2.0"))]
@@ -66,6 +68,12 @@ struct Cli {
     /// Print verbose compilation details to stderr.
     #[arg(short = 'v', long)]
     verbose: bool,
+
+    /// Format for diagnostic output on errors: `text` (default, colored
+    /// terminal output) or `json` (newline-delimited records for editor /
+    /// IDE / LSP bridge integration).
+    #[arg(long = "message-format", value_name = "FORMAT", default_value = "text")]
+    message_format: MessageFormat,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -93,8 +101,27 @@ impl std::str::FromStr for EmitKind {
 
 fn main() {
     let cli = Cli::parse();
+    crush_lang_sdk::theme::init_styling();
     if let Err(e) = run_compiler(&cli) {
-        eprintln!("crushc: {e:#}");
+        // Non-themed errors (file I/O, unknown emit kind, etc.) keep the
+        // original `crushc: <msg>` prefix in default text mode. In
+        // `--message-format json` mode they emit a single NDJSON record so
+        // editors see a uniform stream regardless of failure origin. Themed
+        // errors in `run_compiler` already print their own diagnostics
+        // directly and `process::exit(1)` themselves without reaching this
+        // arm.
+        match cli.message_format {
+            MessageFormat::Text => {
+                eprintln!("crushc: {e:#}");
+            }
+            MessageFormat::Json => {
+                let diag = crush_lang_sdk::theme::JsonDiagnostic::generic_error(
+                    &e.to_string(),
+                    crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                );
+                eprint!("{}\n", diag.to_line());
+            }
+        }
         std::process::exit(1);
     }
 }
@@ -123,14 +150,39 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // ── Step 1: Parse to CAST (Crush Abstract Syntax Tree) ──────────
-    let mut program = crush_frontend::parser::Parser::parse(&source).map_err(|errors| {
-        let mut msg = String::from("parse error");
-        for (i, err) in errors.iter().enumerate() {
-            use std::fmt::Write;
-            let _ = write!(msg, "\n  {}. {err}", i + 1);
+    let mut program = match crush_frontend::parser::Parser::parse(&source) {
+        Ok(p) => p,
+        Err(errors) => {
+            let file = cli.input.display().to_string();
+            // Themed output goes to stderr directly; we exit immediately so
+            // the user never sees a duplicated `crushc: parse failed`
+            // message on top of the pretty diagnostic.
+            match cli.message_format {
+                MessageFormat::Text => {
+                    eprint!(
+                        "{}",
+                        crush_lang_sdk::theme::render_parse_errors(&errors, Some(&file), &source)
+                    );
+                }
+                MessageFormat::Json => {
+                    let diags: Vec<crush_lang_sdk::theme::JsonDiagnostic> = errors
+                        .iter()
+                        .map(|e| {
+                            crush_lang_sdk::theme::JsonDiagnostic::parse_error(
+                                e,
+                                Some(&file),
+                            )
+                        })
+                        .collect();
+                    eprint!(
+                        "{}",
+                        crush_lang_sdk::theme::render_diagnostics_ndjson(&diags)
+                    );
+                }
+            }
+            std::process::exit(1);
         }
-        anyhow::anyhow!(msg)
-    })?;
+    };
 
     if cli.emit == EmitKind::Ast {
         let rendered = crush_frontend::render::render_program(&program);
@@ -144,9 +196,28 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     // ── Step 2: Semantic analysis + type-checking ───────────────────
     let mut semantics = crush_frontend::semantics::SemanticAnalyzer::new();
-    semantics
-        .check(&program)
-        .map_err(|e| anyhow::anyhow!("type error: {e}"))?;
+    if let Err(e) = semantics.check(&program) {
+        // Semantic errors don't carry source coordinates; render the
+        // underlying message under a `[type]` badge so the interface still
+        // feels consistent with parse errors. Exit immediately so we don't
+        // double-print at the main() error arm.
+        let body = e.to_string();
+        let file = cli.input.display().to_string();
+        match cli.message_format {
+            MessageFormat::Text => {
+                eprint!(
+                    "{badge} {body}\n",
+                    badge = crush_lang_sdk::theme::paint_error_badge("type"),
+                    body = body,
+                );
+            }
+            MessageFormat::Json => {
+                let diag = crush_lang_sdk::theme::JsonDiagnostic::type_error(&body, Some(&file));
+                eprint!("{}\n", diag.to_line());
+            }
+        }
+        std::process::exit(1);
+    }
 
     if cli.emit == EmitKind::Types {
         let rendered = crush_frontend::render::render_program(&program);

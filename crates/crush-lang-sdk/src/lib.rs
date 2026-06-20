@@ -27,11 +27,14 @@ pub mod akg;
 pub mod builder;
 pub mod bus;
 pub mod caps;
+pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
 #[cfg(feature = "db")]
 pub mod db;
+#[cfg(any(feature = "db", feature = "stdlib"))]
+mod util;
 #[cfg(feature = "graphics")]
 pub mod graphics;
 pub mod host_caps;
@@ -44,6 +47,7 @@ pub mod repl_util;
 pub mod runtime;
 pub mod stdlib;
 pub mod task;
+pub mod theme;
 
 // Re-export the core crush-vm types a host author needs.
 pub use crush_vm::run as run_program;
@@ -53,6 +57,7 @@ pub use crush_vm::{Program, Quotas, VmError, VmResult, assemble, disassemble};
 
 pub use builder::{ProgramBuilder, ProgramBuilderError};
 pub use caps::{CapabilityError, concat, len, print};
+pub use cli::MessageFormat;
 pub use compute::{CrushEngine, CrushJob, CrushOutcome};
 #[cfg(feature = "graphics")]
 pub use graphics::{CanvasCreateCap, CircleCap, RectCap, TextCap, ToSvgCap};

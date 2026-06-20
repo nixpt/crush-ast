@@ -1,4 +1,5 @@
 use clap::Parser;
+use crush_lang_sdk::MessageFormat;
 use crush_lang_sdk::repl::{ReplConfig, run};
 use crush_vm::Quotas;
 
@@ -25,10 +26,18 @@ struct Args {
     /// Maximum call depth.
     #[arg(long, default_value = "64")]
     max_call_depth: usize,
+
+    /// Format for diagnostic output on errors: `text` (default, themed
+    /// per-line errors via `[crush-codepoint-N]` badges) or `json`
+    /// (NDJSON records for editor / IDE / LSP bridge integration).
+    /// Mirrors `crushc` / `crush-run` / `crush-compile`.
+    #[arg(long = "message-format", value_name = "FORMAT", default_value = "text")]
+    message_format: MessageFormat,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    crush_lang_sdk::theme::init_styling();
 
     let config = ReplConfig {
         quotas: Quotas {
@@ -39,7 +48,14 @@ fn main() -> anyhow::Result<()> {
             ..Default::default()
         },
         stdlib: args.stdlib,
+        message_format: args.message_format,
     };
 
+    // Errors during REPL eval are dispatched *inside* `run()` against
+    // `config.message_format` (per-line, both stdin-line parse failures
+    // and runtime eval failures) so the binary's `main` only returns
+    // I/O errors from the underlying read loop / pipe. Those would only
+    // surface under unusual conditions (broken stdin pipe, signal
+    // handler) and aren't part of the JSON-mode observable surface.
     run(config)
 }
