@@ -18,22 +18,21 @@
 //! - [`vm_driver`]: the abstraction seam (`VmDriver` trait) over
 //!   `crush-vm::PortableVm` so REPL + session don't bind to a concrete VM.
 //! - [`session`]: owns the debugger session lifecycle (target capsule,
-//!   attached driver, breakpoint registry, REPL invocation).
+//!   attached driver, breakpoint registry, REPL invocation). The REPL
+//!   eval loop is wired end-to-end; breakpoint pause is hooked into
+//!   `crush_vm::PortableVm::step()` via `VmYield::DebugBreak`.
 //!
 //! # Hook points that deliberately use `todo!()`
 //!
-//! 1. **Real breakpoint pause.** `crush-vm::PortableVm::step()` is
-//!    wrapped today, but the upstream VM does not yet yield on a breakpoint
-//!    hit. The latent comment at `portable_vm.rs:1037` in `crush-vm`
-//!    describes the intended hook; once that lands, `PortableVmDriver`
-//!    collapses a single fixture and the trampoline around it goes away.
-//! 2. **Source `file:line` -> bytecode address.** A breakpoint request
+//! 1. **Source `file:line` -> bytecode address.** A breakpoint request
 //!    is stored by source location; the bytecode-coord mapping will land
-//!    alongside an upcoming `crush-frontend` sourcemap.
-//! 3. **REPL eval loop.** The command *parser* is real (unit-tested
-//!    below); the *eval* loop binds `Command` -> `VmDriver` actions and
-//!    is intentionally `todo!()` until the upstream VM hook lands, since
-//!    any eval that ignores the breakpoint-pause gap would just lie.
+//!    alongside an upcoming `crush-frontend` sourcemap. Until then,
+//!    only breakpoints with `bytecode_address` set (cast.json or manual)
+//!    will trigger in the VM.
+//! 2. **Programmatic breakpoint at bytecode offset.** The VM hook in
+//!    `portable_vm.rs` supports `set_breakpoints(&[usize])` for bytecode-
+//!    level pause; a future `crush-frontend` sourcemap will close the
+//!    `file:line -> offset` gap.
 
 pub mod breakpoint;
 pub mod repl;
@@ -42,7 +41,7 @@ pub mod vm_driver;
 pub mod wire_consumer;
 
 pub use breakpoint::{BreakpointId, BreakpointSet, Location};
-pub use repl::{Command, ParseCommandError, parse_command};
+pub use repl::{Command, ParseCommandError, parse_breakpoint_arg, parse_command};
 pub use session::DebugSession;
 pub use vm_driver::{PortableVmDriver, StepOutcome, VmDriver, VmError, VmRunResult, VmState};
 pub use wire_consumer::{OwnedDiagRecord, ParseRecordError, consume_stream, parse_record};

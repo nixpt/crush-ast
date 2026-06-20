@@ -1,0 +1,6 @@
+.func recurse
+    CALL recurse
+    RET
+.func main
+    CALL recurse
+    HALT

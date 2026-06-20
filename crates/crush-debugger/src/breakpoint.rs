@@ -1,12 +1,14 @@
 //! Breakpoint registry keyed by `<file>:<line>`.
 //!
-//! The SCAFFOLD registers a breakpoint as a `Location` (resolved path
-//! + 1-indexed line). Storing a `BreakpointId` per add() lets a future
-//! REPL `delete <id>` command refer to a single instance without
-//! ambiguity (multiple BPs at the same location get distinct IDs).
+//! Breakpoints carry an optional `bytecode_address` resolved from
+//! the assembler sourcemap at add-time via `DebugSession`. When set,
+//! the VM driver forwards the address to `PortableVm` so the VM
+//! pauses at the matching instruction pointer.
 //!
-//! The bytecode-address mapping is intentionally `None` today; it
-//! will land alongside `crush-frontend`'s sourcemap.
+//! `BreakpointId` is a monotonic counter assigned in `add()` order
+//! so the REPL `delete <id>` command can refer to a single instance
+//! without ambiguity (multiple BPs at the same location get distinct
+//! IDs).
 
 use indexmap::IndexMap;
 use std::path::PathBuf;
@@ -14,7 +16,7 @@ use std::path::PathBuf;
 /// A source-level breakpoint target. `file` is the resolved-on-disk
 /// absolute or relative path that matches what the parser has; `line`
 /// is 1-indexed.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {
     pub file: PathBuf,
     pub line: u32,
@@ -32,8 +34,9 @@ pub struct BreakpointId(pub u32);
 pub struct Breakpoint {
     pub id: BreakpointId,
     pub location: Location,
-    /// Filled by `crush-frontend` once a sourcemap is emitted.
-    /// TODO(DEBUGGER-2): populate via `compile_crush_source` sourcemap.
+    /// Bytecode offset resolved from the assembler sourcemap at add-time.
+    /// `None` if the sourcemap didn't contain a matching line (for programs
+    /// assembled without debug info).
     pub bytecode_address: Option<u32>,
 }
 
@@ -53,8 +56,15 @@ impl BreakpointSet {
 
     /// Register a source-level breakpoint. Multiple breakpoints at the
     /// same location get distinct IDs (so `delete <id>` is unambiguous).
+    /// If `bytecode_address` is `Some`, the VM will pause when the
+    /// instruction pointer reaches that offset.
     /// Returns the assigned ID.
-    pub fn add(&mut self, file: impl Into<PathBuf>, line: u32) -> BreakpointId {
+    pub fn add(
+        &mut self,
+        file: impl Into<PathBuf>,
+        line: u32,
+        bytecode_address: Option<u32>,
+    ) -> BreakpointId {
         let id = BreakpointId(self.next_id);
         self.next_id += 1;
         let location = Location {
@@ -66,7 +76,7 @@ impl BreakpointSet {
             Breakpoint {
                 id,
                 location,
-                bytecode_address: None,
+                bytecode_address,
             },
         );
         id
@@ -119,8 +129,8 @@ mod tests {
     #[test]
     fn add_assigns_distinct_ids_for_same_location() {
         let mut set = BreakpointSet::new();
-        let a = set.add("a.crush", 3);
-        let b = set.add("a.crush", 3);
+        let a = set.add("a.crush", 3, None);
+        let b = set.add("a.crush", 3, None);
         assert_ne!(a, b);
         assert_eq!(set.len(), 2);
     }
@@ -128,7 +138,7 @@ mod tests {
     #[test]
     fn remove_returns_true_for_existing_false_for_missing() {
         let mut set = BreakpointSet::new();
-        let id = set.add("a.crush", 3);
+        let id = set.add("a.crush", 3, None);
         assert!(set.remove(id));
         assert!(!set.remove(id));
         assert_eq!(set.len(), 0);
@@ -137,9 +147,9 @@ mod tests {
     #[test]
     fn list_yields_insertion_order() {
         let mut set = BreakpointSet::new();
-        let a = set.add("a.crush", 1);
-        let b = set.add("b.crush", 7);
-        let c = set.add("a.crush", 5);
+        let a = set.add("a.crush", 1, None);
+        let b = set.add("b.crush", 7, None);
+        let c = set.add("a.crush", 5, None);
         let ids: Vec<BreakpointId> = set.list().into_iter().map(|bp| bp.id).collect();
         assert_eq!(ids, vec![a, b, c]);
     }
@@ -147,7 +157,7 @@ mod tests {
     #[test]
     fn matches_returns_true_only_for_exact_file_line() {
         let mut set = BreakpointSet::new();
-        set.add("a.crush", 3);
+        set.add("a.crush", 3, None);
         assert!(set.matches(std::path::Path::new("a.crush"), 3));
         assert!(!set.matches(std::path::Path::new("a.crush"), 4));
         assert!(!set.matches(std::path::Path::new("b.crush"), 3));

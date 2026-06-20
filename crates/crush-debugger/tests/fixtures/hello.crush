@@ -1,0 +1,4 @@
+.func main
+PUSH_STR "hello"
+CAP_CALL "io.print" 1
+HALT

@@ -25,6 +25,8 @@ pub enum Command {
     Quit,
     /// `help` — print the help banner.
     Help,
+    /// `status` — show VM state (instruction count, paused-at breakpoint).
+    Status,
 }
 
 /// Why a command line didn't parse.
@@ -56,6 +58,22 @@ impl std::fmt::Display for ParseCommandError {
 
 impl std::error::Error for ParseCommandError {}
 
+/// Parse a `break` argument of the form `<file>:<line>`. Split on the
+/// LAST `:` so Windows-style paths like `C:\foo:7` parse as
+/// `file=C:\foo` + `line=7`. Reusable by the CLI `--break` flag parser.
+pub fn parse_breakpoint_arg(arg: &str) -> Result<(std::path::PathBuf, u32), ParseCommandError> {
+    if arg.is_empty() {
+        return Err(ParseCommandError::BadBreakpoint(String::new()));
+    }
+    let (file, line) = arg
+        .rsplit_once(':')
+        .ok_or_else(|| ParseCommandError::BadBreakpoint(arg.to_string()))?;
+    let line: u32 = line
+        .parse()
+        .map_err(|_| ParseCommandError::BadBreakpoint(arg.to_string()))?;
+    Ok((std::path::PathBuf::from(file), line))
+}
+
 /// Parse a single REPL input line into a `Command`. Whitespace is
 /// trimmed; blank lines return `ParseCommandError::Empty`. Single-letter
 /// aliases (`b`, `d`, `s`, `c`, `l`, `p`, `q`, `h`, `?`) are accepted.
@@ -72,20 +90,8 @@ pub fn parse_command(input: &str) -> Result<Command, ParseCommandError> {
     let rest_str = rest.join(" ");
     match verb {
         "break" | "b" => {
-            let arg = rest_str.trim();
-            if arg.is_empty() {
-                return Err(ParseCommandError::BadBreakpoint(String::new()));
-            }
-            let (file, line) = arg
-                .rsplit_once(':')
-                .ok_or_else(|| ParseCommandError::BadBreakpoint(arg.to_string()))?;
-            let line: u32 = line
-                .parse()
-                .map_err(|_| ParseCommandError::BadBreakpoint(arg.to_string()))?;
-            Ok(Command::Break {
-                file: PathBuf::from(file),
-                line,
-            })
+            let (file, line) = parse_breakpoint_arg(rest_str.trim())?;
+            Ok(Command::Break { file, line })
         }
         "delete" | "d" => {
             let n: u32 = rest_str
@@ -102,6 +108,7 @@ pub fn parse_command(input: &str) -> Result<Command, ParseCommandError> {
         }),
         "quit" | "q" => Ok(Command::Quit),
         "help" | "h" | "?" => Ok(Command::Help),
+        "status" | "info" | "i" => Ok(Command::Status),
         other => Err(ParseCommandError::Unknown(other.to_string())),
     }
 }
@@ -170,8 +177,17 @@ mod tests {
         assert_eq!(parse_command("s").unwrap(), Command::Step);
         assert_eq!(parse_command("c").unwrap(), Command::Continue);
         assert_eq!(parse_command("l").unwrap(), Command::List);
+        assert_eq!(parse_command("i").unwrap(), Command::Status);
         assert_eq!(parse_command("q").unwrap(), Command::Quit);
         assert_eq!(parse_command("?").unwrap(), Command::Help);
+        assert_eq!(parse_command("h").unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn parses_status_and_info_aliases() {
+        assert_eq!(parse_command("status").unwrap(), Command::Status);
+        assert_eq!(parse_command("info").unwrap(), Command::Status);
+        assert_eq!(parse_command("i").unwrap(), Command::Status);
     }
 
     #[test]
