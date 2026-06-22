@@ -84,6 +84,7 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 ---
 
 ## ✅ Done log
+- **2026-06-22** — `agent/buffy/CRUSHPVMSPLIT-1-DISPATCH-EXTRACTION` lands extract `execute_instruction` + `dispatch_cap` from `portable_vm.rs` into private submodule `portable_vm/opcodes.rs` (1235 -> 439 lines on parent; 807 lines on submodule). No pub-surface change; 4 new files, 1 modified. `cargo test -p crush-vm` 67 passed / 0 failed (identical to pre-split baseline verified via per-binary test-name diff).
 
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
