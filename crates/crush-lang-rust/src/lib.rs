@@ -114,3 +114,106 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
         ..Default::default()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    //! CRUSHRUST-1: inline parity test suite — adapted from
+    //! `crates/crush-lang-python/tests/{frontend_test,pipeline_test}.rs`
+    //! for the syn-lowering path. Three representative tests:
+    //! (1) Rust-specific feature detection (struct + extern),
+    //! (2) import detection parity,
+    //! (3) safe-code path-through via `rust_to_cast`.
+    //!
+    //! Tests use Rust's *function-call form* `println(x)` rather
+    //! than the *macro form* `println!(x)` because
+    //! `lower_stmt::Stmt::Macro(println)` drops args before lowering.
+    //! The function-call form routes through `lower_expr::Expr::Call`,
+    //! which DOES extract args. Note that `test_rust_lower_safe_code`
+    //! deliberately avoids arithmetic (`x + 1`) because the current
+    //! `lower_expr` does not yet support binary operators — that gap
+    //! is out of scope for this test suite.
+
+    use super::{rust_to_cast, RustFrontend};
+    use walker_core::Frontend;
+
+    /// Mirror of python's `test_analyze` helper: frontend.parse ->
+    /// frontend.analyze on raw rust source.
+    fn test_analyze(source: &str) -> walker_core::FeatureReport {
+        let frontend = RustFrontend;
+        let ast = frontend.parse(source).unwrap();
+        frontend.analyze(&ast).unwrap()
+    }
+
+    /// Test 1 (mirrors python's
+    /// `test_python_frontend_detects_classes_and_async`): exercises
+    /// Rust-specific feature paths — `struct Foo` flips
+    /// `uses_classes`; `extern "C" { ... }` flips `uses_ffi`; absence
+    /// of any top-level `fn` keeps `uses_functions` false.
+    #[test]
+    fn test_rust_analyze_classes_and_ffi() {
+        let report = test_analyze(
+            "struct Foo { x: i32 }\nextern \"C\" { fn bar(); }\n",
+        );
+        assert!(
+            report.uses_classes,
+            "expected `struct Foo` to flip uses_classes (rust-native, not python's class)"
+        );
+        assert!(
+            report.uses_ffi,
+            "expected `extern \"C\" {{ ... }}` to flip uses_ffi"
+        );
+        assert!(
+            !report.uses_functions,
+            "no top-level `fn` in source; uses_functions must stay false"
+        );
+    }
+
+    /// Test 2 (mirrors python's `test_frontend_detects_imports`):
+    /// two `use` statements populate `uses_imports` with 2 entries
+    /// (one per AST item, debug-formatted). Both go through
+    /// `syn::Item::Use` — we deliberately avoid `extern crate`
+    /// because `Item::ExternCrate` carries `#[deprecated]` in
+    /// syn 2.0 and would invite an unrelated lint failure later.
+    #[test]
+    fn test_rust_analyze_imports() {
+        let report = test_analyze(
+            "use std::collections::HashMap;\nuse std::io::Result;\n",
+        );
+        assert_eq!(
+            report.uses_imports.len(),
+            2,
+            "two imports expected, found: {:?}",
+            report.uses_imports
+        );
+        assert!(!report.uses_functions);
+        assert!(!report.uses_classes);
+        assert!(!report.uses_ffi);
+    }
+
+    /// Test 3 (mirrors python's `test_python_frontend_safe_code`):
+    /// a small Rust program parses + lowers to a CAST Program whose
+    /// `functions` map contains `main`. The main body holds exactly
+    /// 2 statements (the let-binding + the `println` call). Note the
+    /// *function-call form* `println(x)` (no `!`, no arithmetic);
+    /// see the module-level docstring for why. We deliberately
+    /// avoid arithmetic here because the current `lower_expr` does
+    /// not yet support binary operators (it returns
+    /// `unsupported binary operator`); exercising that gap is out of
+    /// scope for this test.
+    #[test]
+    fn test_rust_lower_safe_code() {
+        let source = "fn main() {\n    let x = 42;\n    println(x);\n}\n";
+        let program = rust_to_cast(source).unwrap();
+        assert!(
+            program.functions.contains_key("main"),
+            "main function must be registered after lowering"
+        );
+        let main_body = &program.functions["main"].body;
+        assert_eq!(
+            main_body.len(),
+            2,
+            "two stmts expected in main body: let-binding + println call, got: {:?}",
+            main_body
+        );
+    }
+}
