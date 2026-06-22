@@ -376,3 +376,14 @@ The v2 atomic-split script was calibrated against agent/buffy/network (1179-line
 Rejected alternatives:
 - **multi-line-banner regex flaw**: the multi-line banner detection works correctly on the 1179-line file; the regression was not a regex bug but a source-file mismatch
 
+
+## 2026-06-22T15:28:22-05:00 — [STRATEGIC] CRUSHTESTSSPLIT-1 (v3): atomic split of tests.rs into 7 sub-files landed on agent/buffy/network
+
+Reason:
+65 #[test] annotations split across 6 domain sub-files + mod.rs. v3 fixed two issues found in rounds 1-2: (1) branch mismatch — the v2 script was calibrated for agent/buffy/network's 1179-line tests.rs but ran against origin/main's 660-line version; (2) BANNER_RE indentation — ^// did not match the indented cross-parser matrix banner (fix: ^\s*//\s*). Added Gate 0 branch-mismatch pre-flight (abort if tests.rs < 700 lines). Verified: build green, 81 tests pass, per-fn diff IDENTICAL.
+
+Supersedes: CRUSHTESTSSPLIT-1 regression: branch mismatch between script design and worktree source
+
+Rejected alternatives:
+- **multi-line-banner regex flaw**: the multi-line banner detection works correctly; the regression was a branch mismatch, not a regex bug
+
