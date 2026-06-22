@@ -84,6 +84,7 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 ---
 
 ## ✅ Done log
+- **2026-06-22** — `agent/buffy/CRUSHPVMSPLIT-1a-DISPATCH-CAP-ONLY` lands extract `dispatch_cap` (135 lines) from `portable_vm.rs` to private submodule `portable_vm/opcodes.rs` as a single chokepoint fn. `execute_instruction` stays in `portable_vm.rs` for now; CRUSHPVMSPLIT-1b will move it later. Sized XS, sequenced split.
 
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
