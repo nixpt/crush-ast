@@ -85,6 +85,16 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
 ## ✅ Done log
 
+- **2026-06-22** — `agent/buffy/CRUSHCN-1` removes `crush-pkg`'s
+  `ContainerRunner` stub (`runners.rs:117-129` deleted; 2 dispatch
+  arms replaced with comment-only markers; 1 stub-pin test
+  `test_get_runner_container_stub` removed) and adds parse-time
+  hard-error rejection for the legacy `language = "container"`
+  literal via new `Manifest::validate_language` + hook in
+  `Manifest::from_str` (in `manifest.rs`). 79 `crush-pkg --bin` tests
+  green (78 → 79: `-1` + `+2`). Closes Gap 1 of the runner-subsystem
+  catalogue at `TICKETS/CRUSHRUNNERS-1.md` (CRUSHRUNNERS-1 PR #7,
+  commit `2f2b2f5`). No external deps added; pure deletion path.
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
   (ARR_PUSH/POP, NEW_OBJ/SET_FIELD/GET_FIELD, ENTER_TRY/EXIT_TRY/THROW); reconciled
