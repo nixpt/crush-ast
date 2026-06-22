@@ -1,0 +1,50 @@
+[package]
+name = "xtask"
+version = "0.2.0"
+edition = "2024"
+publish = false
+
+# Library exposes the shared `diag` module so both binaries
+# (xtask-audit + lint-dejavue) consume the same NDJSON helper trio
+# via `use xtask::diag::{...}`. Without this, the helper trio would
+# drift across the two binaries and two of the three lockdown test
+# sites would silently desync.
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+# Dev-only CI tooling. The audit logic shells out to rg. regex is used
+# to reliably match SAFE-usage patterns against `Value::*` destructure-binds;
+# without it, character classes like [^=!] and word boundaries \b cannot be
+# expressed without writing a buggy ad-hoc matcher.
+
+[dependencies]
+# regex for SAFE-pattern matching in the audit gate.
+regex = "1"
+
+# Canonical NDJSON wire-format helpers for the cli surface. Re-exported
+# through `xtask::diag` so the audit + lint_dejavue binaries consume the
+# same shape via a single `use xtask::diag::...`. The wire-format
+# lockdown tests that previously lived in this crate's `diag::tests`
+# have been promoted to `crates/crush-diagnostics/tests/wire_format.rs`
+# (one canonical surface for all four wireable binaries).
+crush-diagnostics.workspace = true
+
+# xtask-private hint-byte-cap helper (`hinted_text`) needs
+# `serde_json::to_string` to compute the encoded-length check at
+# RUNTIME (not just under test): the fast-path probe and the
+# release-build `debug_assert!` both call it. Promoting it to a
+# regular dependency rather than dev-only keeps the cap math
+# covered under `cargo build --release` for CI publish builds too.
+serde_json.workspace = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+[[bin]]
+name = "lint-dejavue"
+path = "src/lint_dejavue.rs"
