@@ -1,3 +1,5 @@
+- [2026-06-22] CRUSHTESTSSPLIT-1 — Split `crates/crush-vm/src/tests.rs` into `crates/crush-vm/src/tests/{mod,arith,control_flow,data_types,capabilities,surfaces,async_green,matrix}.rs`. Atomic single-Python-pass; per-binary `^test crush_vm` fn-name diff returns zero differences vs `origin/main`. PR #14.
+
 - [2026-06-22] CRUSHPVMDOCS-1 — Doc-only resolution to portable_vm.rs size concern. Prepended a comprehensive module-level doc-comment to `crates/crush-vm/src/portable_vm.rs` describing the 1,235-line structure, the rationale for keeping it cohesive, and a three-step recipe for any future re-attempt of `CRUSHPVMSPLIT-1b`. Skip the extraction entirely; defer `CRUSHPVMSPLIT-1b` re-attempt until the doc-comment recipe is studied. PR #13 (https://github.com/nixpt/crush-ast/pull/13).
 
 # crush-ast — TASKS / Roadmap
