@@ -172,7 +172,21 @@ pub enum CapsuleType {
     Script(ScriptRuntime),
 }
 
-/// Script runtime preference
+/// Script runtime preference.
+///
+/// CRUSHRUN-S2: the 4-variant shape (Bun/Node/Deno/Python) is an
+/// **intent-aware cap** — extending the enum is mechanical (2 places
+/// per new runtime: add the variant here + add a `get_runtime_command`
+/// arm in `runners.rs`) but is NOT done speculatively. When a real
+/// language demand emerges (Ruby/Go-script/Julia/Perl/R/etc.), add the
+/// variant AND its binary mapping. If activation is exploratory, gate
+/// the new runtime behind `--strict` (the same opt-in gate CRUSHFMT-1
+/// introduced for the unknown-format run path — see PR #10). Until a
+/// real signal exists, the cap is acceptable; if you're tempted to add
+/// a 5th variant speculatively, prefer asking first. Closes Gap 2 of
+/// `TICKETS/CRUSHRUNNERS-1.md` (sister branch
+/// `agent/buffy/CRUSHRUNNERS-1`, PR #7 — file not merged into
+/// `2f2b2f5` yet, forward-looking cross-link).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ScriptRuntime {
     #[default]

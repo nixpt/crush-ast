@@ -85,6 +85,17 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
 ## ✅ Done log
 
+- **2026-06-22** — `agent/buffy/CRUSHRUN-S2` documents the `crush-pkg`
+  `ScriptRuntime` 4-variant cap (`manifest.rs:174`) as an
+  **intent-aware cap** — extending the enum is mechanical (2 places per
+  new runtime) but NOT done speculatively. Inline doc comment added
+  above `pub enum ScriptRuntime`. New runtimes (Ruby / Go-script /
+  Julia / Perl / R / ...) should be added on real demand; if activation
+  is exploratory, gate behind `--strict` (mirror CRUSHFMT-1). 78
+  `crush-pkg --bin` tests unchanged. Closes Gap 2 of
+  `TICKETS/CRUSHRUNNERS-1.md` (sister branch PR #7 — forward-looking
+  cross-link until that ticket merges). Pure docs delta; no Rust
+  behavior change.
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
   (ARR_PUSH/POP, NEW_OBJ/SET_FIELD/GET_FIELD, ENTER_TRY/EXIT_TRY/THROW); reconciled
