@@ -1,0 +1,26 @@
+# Threads (deferred work + parking lot)
+
+
+## a-4b-equivalent: workspace regression --  fails in  (rustls missing) -- OPEN
+
+- **Date:** 2026-06-18
+- **Status:** OPEN -- INVESTIGATION captured; no fix proposed (NOT YET ROOT-CAUSED).
+- **Findings (this session):**
+  - `cargo check --workspace` from `/workspace/projects/crush-ast` fails with a rustls-related error inside `crush-net`. The failure is reproducible.
+  - `crates/crush-net/Cargo.toml` declares rustls as a dependency (per dependency scan).
+  - `crates/crush-net/src` imports at least one symbol from `rustls` (per grep).
+  - The error message + location is captured in `/tmp/cargo-check-workspace.log` (above).```
+- **Failure verbatim (filtered to essential lines):**
+```
+error[E0433]: cannot find module or crate `rustls` in this scope
+ --> crates/crush-net/src/caps.rs:9:5
+error: could not compile `crush-net` (lib) due to 1 previous error
+```
+- **Pre-existing nature:** the issue was surfaced during `cargo check --workspace` regression checking after the xtask hardening pass. It is NOT caused by any of the 4 splices landed in this branch.
+- **Why this ticket exists:** the user wants the workspace-level gate to pass cleanly on a follow-up `cargo check --workspace` run before any further xtask edits, so the issue must be catalogued IN dejavue (not fixed in this turn -- per scope discipline of "don't surprise the user").
+- **Recommended next-step (NOT opened here):**
+  1. Determine whether the rustls dep in `crush-net/Cargo.toml` is missing a feature flag (e.g. `features = ["tls12"]`) or has a wrong version pin.
+  2. If the failure is referring to `rustls` as a transitive dep brought in by another crate (e.g. `reqwest`, `hyper`), pin `rustls` to a specific version at workspace level.
+  3. Verify with `cargo check --workspace` post-fix.
+- **Forward-tickets already captured:** all 3 of the original hardening pass items are now landed (the empty-marker guard, VARIANTS threading + byte-match + integration test, and the extended docstring rewrite).
+

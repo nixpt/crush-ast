@@ -174,18 +174,55 @@ fn is_input_complete(source: &str) -> bool {
     !trailing_ops.iter().any(|op| trimmed.ends_with(op))
 }
 
-/// Errors produced for `handle_meta_command`'s callers. `Parse` carries
-/// both the typed `Vec<ParseError>` AND the inner source so the REPL
-/// loop's meta-arm can render multi-line parse diagnostics with snippets
-/// (text mode: `theme::render_parse_errors`; JSON mode: one NDJSON record
-/// per `ParseError` via `JsonDiagnostic::parse_error`). `Other` absorbs
-/// everything else (semantic inference failures, "expected an expression"
-/// structural checks, unknown commands, etc.) — those route to the
-/// blanket `E-IO` code in JSON mode so the stream stays well-formed.
+/// Errors produced for `handle_meta_command`'s callers, exposed for
+/// external hosts that embed the REPL (TUI panels, IDE LSP bridges,
+/// custom dispatch layers).
+///
+/// Two variants, two distinct host responsibilities:
+///
+/// - [`MetaCommandError::Parse`] — emitted when the inner expression
+///   inside a `.type` / `.ast` / `.casm` subcommand fails to parse.
+///   Carries the inner `source` so the host can render multi-line
+///   themed diagnostics with snippets ([`crate::theme::render_parse_errors`]
+///   in text mode; one NDJSON record per `ParseError` via
+///   [`crate::theme::JsonDiagnostic::parse_error`] in JSON mode).
+///
+/// - [`MetaCommandError::Other`] — absorbed everything else: semantic
+///   inference failures from [`crate::repl`]'s `.type` / `.casm`
+///   subcommands, structural `expected an expression` checks, unknown
+///   `.foo`-style meta commands, and `std::io::Error`s from the
+///   `.clear` flush. The wrapped [`anyhow::Error`] keeps the typed
+///   source chain so hosts that want to walk `Error::source()` can
+///   still do so; consumers that prefer a single code path flatten it
+///   to a generic `E-IO` JSON envelope or themed [`anyhow!`] text.
+///
+/// # Example host-side dispatch
+///
+/// ```ignore
+/// use crush_lang_sdk::repl::MetaCommandError;
+///
+/// match err {
+///     MetaCommandError::Parse { source, errors } => {
+///         for e in errors {
+///             emit_ndjson_record(JsonDiagnostic::parse_error(e, None));
+///             // emit themed diag in text mode via render_parse_errors(&[e], None, &source)
+///         }
+///     }
+///     MetaCommandError::Other(e) => {
+///         eprintln!("{}", e); // themed generic path
+///     }
+/// }
+/// ```
 #[derive(Debug)]
-enum MetaCommandError {
+pub enum MetaCommandError {
     Parse {
+        /// The inner expression source the parser failed on (e.g.
+        /// the substring after `.type `). Carried so hosts can
+        /// render source snippets with `theme::render_source_snippet`
+        /// without re-deriving the input.
         source: String,
+        /// Typed parser errors. One NDJSON record per error in JSON
+        /// mode; an aggregate themed diagnostic in text mode.
         errors: Vec<ParseError>,
     },
     Other(anyhow::Error),

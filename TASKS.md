@@ -17,11 +17,14 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
   with `Value::Bool` type errors (fallout from the s298 VM type expansion that
   added `Bool`/`Map`/`Error`/`Bytes`). Default build + `cargo test --workspace`
   are green; only the feature-gated arms break. *(crush-lang-sdk)*
-- [ ] **portable_vm parity** — `crates/crush-vm/src/portable_vm.rs` is missing
-  the opcodes the main `vm.rs` already implements: `PUSH_BOOL`, `NEW_OBJ` /
-  `SET_FIELD` / `GET_FIELD`, `EXEC_LANG`, `ENTER_TRY` / `EXIT_TRY` / `THROW`,
-  `ARR_PUSH` / `ARR_POP`. The portable VM diverges from the canonical one until
-  these land.
+- [x] **portable_vm parity** — `crates/crush-vm/src/portable_vm.rs` was found
+  to already implement all 10 opcodes (`PUSH_BOOL`, `NEW_OBJ` / `SET_FIELD`
+  / `GET_FIELD`, `ENTER_TRY` / `EXIT_TRY` / `THROW`, `ARR_PUSH` / `ARR_POP`);
+  only the parity test surface was missing. Closed by adding 11
+  `test_portable_*` tests in `portable_vm.rs::mod tests` mirroring
+  canonical `tests.rs` (`EXEC_LANG` gated intentionally — see
+  `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md` for the pop-on-name followup).
+  80 `crush-vm --lib` tests green.
 
 ## 🟡 P1 — coverage & language completeness
 
@@ -85,6 +88,14 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
 ## ✅ Done log
 
+- **2026-06-22** — `agent/buffy/CRUSHVM-1-PORTABLE-PARITY` lands 11
+  `test_portable_*` parity tests in
+  `crates/crush-vm/src/portable_vm.rs::mod tests` mirroring canonical
+  `tests.rs` for `PUSH_BOOL`, `NEW_OBJ` / `SET_FIELD` / `GET_FIELD`,
+  `ENTER_TRY` / `EXIT_TRY` / `THROW`, `ARR_PUSH` / `ARR_POP`, and the
+  `Value::Map` type-name. `EXEC_LANG` followup captured as
+  `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md`. 80 `crush-vm --lib` tests
+  green (was 69). Closes `TASKS.md` 🔴 P0 *portable_vm parity*.
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
   (ARR_PUSH/POP, NEW_OBJ/SET_FIELD/GET_FIELD, ENTER_TRY/EXIT_TRY/THROW); reconciled

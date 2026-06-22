@@ -17,6 +17,7 @@ members = [
     "crates/crush-index",
     "crates/crush-pkg",
     "crates/crush-installer",
+    "crates/crush-diagnostics",
     "crates/crush-python",
     "crates/crush-lang-python",
     "crates/crush-lang-rust",
@@ -24,7 +25,8 @@ members = [
     "crates/crush-lang-bash",
     "crates/crush-lang-zsh",
     "crates/crush-net",
-]
+    "xtask"
+    ]
 
 [workspace.package]
 version       = "0.2.0"
@@ -42,6 +44,7 @@ crush-vm          = { path = "crates/crush-vm",          version = "0.2.0" }
 crush-frontend    = { path = "crates/crush-frontend",    version = "0.2.0" }
 crush-index       = { path = "crates/crush-index",       version = "0.2.0" }
 crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.2.0" }
+crush-diagnostics = { path = "crates/crush-diagnostics", version = "0.2.0" }
 tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.2.0" }
 walker-core       = { path = "crates/walker-core",       version = "0.1.0" }
 
@@ -51,3 +54,8 @@ anyhow      = "1.0"
 thiserror   = "1.0"
 tree-sitter = "0.25"
 clap        = { version = "4.0", features = ["derive"] }
+yansi       = { version = "1.0", default-features = false }
+# `clock` is required for `Utc::now()`. `default-features = false` keeps the
+# `iana-time-zone` machinery opt-in elsewhere (it's only needed when callers
+# ask for the local-timezone offset, which crush-frontend never does).
+chrono      = { version = "0.4", default-features = false, features = ["clock", "std"] }

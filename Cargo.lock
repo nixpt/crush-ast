@@ -724,6 +724,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-diagnostics"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crush-errors"
 version = "0.2.0"
 dependencies = [
@@ -739,9 +747,11 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "casm",
+ "chrono",
  "criterion",
  "crush-cast",
  "crush-errors",
+ "crush-index",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -752,6 +762,7 @@ name = "crush-index"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crush-cast",
  "serde",
  "serde_json",
@@ -763,6 +774,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crush-diagnostics",
  "dirs",
  "serde",
  "serde_json",
@@ -840,8 +852,10 @@ dependencies = [
  "anyhow",
  "base64",
  "casm",
+ "chrono",
  "clap",
  "crush-cast",
+ "crush-errors",
  "crush-frontend",
  "crush-index",
  "crush-vm",
@@ -856,6 +870,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "ureq",
+ "yansi",
 ]
 
 [[package]]
@@ -897,6 +912,7 @@ dependencies = [
  "chrono",
  "clap",
  "crush-cast",
+ "crush-diagnostics",
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
@@ -928,6 +944,7 @@ dependencies = [
 name = "crush-vm"
 version = "0.2.0"
 dependencies = [
+ "crush-diagnostics",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -4275,6 +4292,21 @@ dependencies = [
  "libc",
  "rustix 1.1.4",
 ]
+
+[[package]]
+name = "xtask"
+version = "0.2.0"
+dependencies = [
+ "crush-diagnostics",
+ "regex",
+ "serde_json",
+]
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yasna"

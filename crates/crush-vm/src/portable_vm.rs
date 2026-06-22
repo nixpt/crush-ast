@@ -1232,4 +1232,223 @@ mod tests {
         let result = vm.run().unwrap();
         assert_eq!(result.output, "3");
     }
+
+    // ── parity tests (mirror canonical src/tests.rs for these opcodes) ─────
+    //
+    // The canonical VM in `src/tests.rs` exercises each operand/type via
+    // `run_src(<source>) -> VmResult`. These parity tests do the same shape
+    // against `PortableVm` to lock the implementations in lockstep. Naming
+    // uses a `test_portable_` prefix so they cannot collide with the canonical
+    // `mod tests` once both run in the same `cargo test --workspace` build.
+    //
+    // EXEC_LANG is intentionally not mirrored here — it shells out via
+    // `std::process::Command::new(lang).arg("-c")` and depends on a host
+    // interpreter being installed, which would make the test environment
+    // dependent. Its implementation parity is verified through compile-time
+    // match-arm presence and the existing `ModularVm` crash tests.
+
+    #[test]
+    fn test_portable_push_bool() {
+        // PUSH_BOOL operand is i64 (0/1); map to bool value via `v != 0`.
+        let program = assemble("PUSH_BOOL 1\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Bool(true)]);
+
+        let program = assemble("PUSH_BOOL 0\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Bool(false)]);
+    }
+
+    #[test]
+    fn test_portable_new_obj_creates_empty_map() {
+        let program = assemble("NEW_OBJ\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack.len(), 1);
+        assert!(matches!(r.stack[0], Value::Map(_)));
+    }
+
+    #[test]
+    fn test_portable_set_field_and_get_field() {
+        let source = r#"NEW_OBJ
+DUP
+PUSH_STR "hello"
+SET_FIELD "greeting"
+GET_FIELD "greeting"
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack.len(), 2);
+        assert!(matches!(r.stack[0], Value::Map(_)));
+        assert_eq!(r.stack[1], Value::Str("hello".to_string()));
+    }
+
+    #[test]
+    fn test_portable_get_field_missing_returns_null() {
+        let program = assemble(
+            r#"NEW_OBJ
+GET_FIELD "missing"
+HALT"#,
+            None,
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Null]);
+    }
+
+    #[test]
+    fn test_portable_map_type_name() {
+        // Mirrors canonical `tests.rs::map_type_name` (the `Value::type_name`
+        // method is `pub(crate)` on `crush_vm::vm::Value`, so the test — in the
+        // same crate — can call it directly).
+        let program = assemble("NEW_OBJ\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert!(matches!(r.stack[0], Value::Map(_)));
+        assert_eq!(r.stack[0].type_name(), "map");
+    }
+
+    #[test]
+    fn test_portable_throw_basic() {
+        // Uncaught THROW (no enter_try on the stack) must produce an error.
+        let program = assemble(
+            r#"PUSH_STR "oops"
+THROW
+HALT"#,
+            None,
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run();
+        assert!(result.is_err(), "expected uncaught THROW to error");
+    }
+
+    #[test]
+    fn test_portable_enter_try_and_exit_try_no_error() {
+        // try { push 1 } catch { push 2 }
+        // No throw occurs; EXIT_TRY should pop the handler and fall through
+        // to `done:`. Stack must equal `[1]`.
+        let source = r#"ENTER_TRY handler
+PUSH 1
+EXIT_TRY
+JMP done
+handler:
+PUSH 2
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Int(1)]);
+    }
+
+    #[test]
+    fn test_portable_try_catch_catches_throw() {
+        // try { throw "err" } catch { pop error, push 99 }
+        // After THROW the error value is pushed onto the stack and the ip
+        // jumps to handler:. Catch handler pops the error and pushes 99.
+        let source = r#"ENTER_TRY handler
+PUSH_STR "err"
+THROW
+EXIT_TRY
+JMP done
+handler:
+POP
+PUSH 99
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Int(99)]);
+    }
+
+    #[test]
+    fn test_portable_throw_error_value_on_stack_in_handler() {
+        // try { throw "msg" } catch { the error value is already on stack }
+        // The handler exits with HALT, leaving "msg" on the stack.
+        let source = r#"ENTER_TRY handler
+PUSH_STR "msg"
+THROW
+EXIT_TRY
+JMP done
+handler:
+HALT
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Str("msg".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_arr_push_and_arr_pop() {
+        // Build [1, 2] using ARR_PUSH: each push leaves the array on the
+        // stack (DUP-first). Final array on the stack should hold [1,2].
+        let source = r#"NEW_ARRAY 0
+    DUP
+    PUSH 1
+    ARR_PUSH
+    DUP
+    PUSH 2
+    ARR_PUSH
+    HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        let last = r.stack.last().expect("should have a value");
+        match last {
+            Value::Array(arr) => {
+                let borrowed = arr.borrow();
+                assert_eq!(borrowed.len(), 2);
+                assert_eq!(borrowed[0], Value::Int(1));
+                assert_eq!(borrowed[1], Value::Int(2));
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_portable_arr_pop_removes_last() {
+        // Build [1, 2, 3], pop once (yields 3 + [1,2]), pop once more
+        // (yields 2 + [1]). Stack top is 2; second-to-top is [1].
+        let source = r#"NEW_ARRAY 0
+    DUP
+    PUSH 1
+    ARR_PUSH
+    DUP
+    PUSH 2
+    ARR_PUSH
+    DUP
+    PUSH 3
+    ARR_PUSH
+    ARR_POP
+    POP
+    ARR_POP
+    HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        let len = r.stack.len();
+        assert!(len >= 2, "expected at least 2 values, got {len}");
+        match &r.stack[len - 1] {
+            Value::Int(v) => assert_eq!(*v, 2),
+            other => panic!("expected Int(2), got {other:?}"),
+        }
+        match &r.stack[len - 2] {
+            Value::Array(arr) => {
+                let borrowed = arr.borrow();
+                assert_eq!(borrowed.len(), 1);
+                assert_eq!(borrowed[0], Value::Int(1));
+            }
+            other => panic!("expected Array([1]), got {other:?}"),
+        }
+    }
 }

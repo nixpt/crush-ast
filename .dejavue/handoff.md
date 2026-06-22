@@ -1,30 +1,12 @@
 # Handoff
 
-Read `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.
+Updated: 2026-06-22T15:03:01-05:00
 
-## Current State
-
-Crush is in good shape. 414+ tests, 0 warnings. Three branches worth of work have converged:
-- `agent/opencode/types` — VM type expansion (Bool, Map, Error, Bytes + 11 new opcodes)
-- `agent/opencode/polyglot` — EXEC_LANG, polyglot stdlib, rust_walker macro handling
-- `agent/opencode/rustpython` — Native parser migration, Frontend trait, Python + Rust frontends
-
-All three branches have been merged into `agent/opencode/rustpython` (the active branch).
+## Summary
+CRUSHTESTSSPLIT-1 root cause resolved: branch mismatch. The v2 split script was designed for agent/buffy/network (1179-line tests.rs) but ran against origin/main (660-line). Fix: create worktree from agent/buffy/network, fix BANNER_RE indentation (^// -> ^\\s*//). See dejavue decisions.md for full analysis.
 
 ## Next Steps
+1. Re-attempt CRUSHTESTSSPLIT-1 on agent/buffy/network branch (not origin/main). 2. Fix BANNER_RE indentation (^// -> ^\\s*//) for the indented cross-parser matrix banner. 3. Add branch-mismatch pre-flight gate (abort if len(lines) < 700). 4. Verify per-file annotation count == cargo test count before opening PR.
 
-### High Priority
-1. **Publish core crates** (crush-errors, crush-cast, casm) to crates.io so external dependents (openko, crush-symbols, mycelium-mobile, arniko) can version-dep instead of path-dep.
-2. **Merge `agent/opencode/rustpython` to `main`** — currently living on a feature branch, needs to land.
-
-### Medium Priority
-3. **JS/TS walker** — implement `crush-lang-js` with `boa_parser` (plan at `crates/crush-lang-js/PLAN.md`). No TypeScript support until boa adds it.
-4. **Bash walker** — implement `crush-lang-bash` with `brush-parser`. API mismatch issues last attempted.
-5. **Fix `--all-features` build** — `db` and `stdlib` features currently fail with Value::Bool type errors.
-6. **Portable VM parity** — portable_vm.rs lacks EXEC_LANG, ENTER_TRY/EXIT_TRY/THROW, NEW_OBJ/SET_FIELD/GET_FIELD, ARR_PUSH/POP, PUSH_BOOL.
-
-### Low Priority
-7. **Lambda and Match compilation** — currently bail at compile time.
-8. **Async/await** — parsed but not executable.
-9. **Doc warnings** — 12 doc warnings across casm and SDK crates.
-10. **More polyglot examples** — test variable wiring across Python/Bash/JS blocks.
+## Boot Instructions
+Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.

@@ -12,6 +12,12 @@ pub struct Compiler {
     loop_stack: Vec<LoopInfo>,
     last_debug_info: Option<DebugInfo>,
     local_functions: HashSet<String>,
+    /// When true, every function whose name appears in an `Invariant`'s
+    /// `applies_to` list AND that has a non-empty `check_source` gets a
+    /// `cap_call "invariant.evaluate"` instruction prepended, AFTER the
+    /// parameter stores (so the call may read function arguments). Off by
+    /// default; toggle via [`Compiler::with_invariant_runtime`].
+    invariant_runtime: bool,
 }
 
 struct LoopInfo {
@@ -33,7 +39,18 @@ impl Compiler {
             loop_stack: Vec::new(),
             last_debug_info: None,
             local_functions: HashSet::new(),
+            invariant_runtime: false,
         }
+    }
+
+    /// Builder: enable (`true`) or disable (`false`) emission of
+    /// `cap_call "invariant.evaluate"` instructions for matching
+    /// `@invariant` blocks. Default: `false` (compiler is an offline tool;
+    /// runtime invariant evaluation is opt-in to avoid surprising existing
+    /// callers).
+    pub fn with_invariant_runtime(mut self, enabled: bool) -> Self {
+        self.invariant_runtime = enabled;
+        self
     }
 
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
@@ -118,6 +135,44 @@ impl Compiler {
                     serde_json::json!({"name": param_name}),
                     &func.meta,
                 ));
+            }
+
+            // Optionally emit `cap_call "invariant.evaluate"` for every
+            // `@invariant` that targets this function name AND carries a
+            // non-empty `check_source`. Toggle on via
+            // `Compiler::with_invariant_runtime(true)`. Emitted *after* the
+            // param-store loop so the runtime evaluator may read function
+            // arguments from the operand stack if the check expression
+            // references them.
+            if self.invariant_runtime {
+                if let Some(manifest) = &program.manifest {
+                    for inv in &manifest.invariants {
+                        if !inv.applies_to.contains(&name) {
+                            continue;
+                        }
+                        let Some(src) = inv.check_source.as_deref() else {
+                            continue;
+                        };
+                        // Empty `check_source` is a doc stub — no evaluator
+                        // can run an empty expression. Asking the runtime to
+                        // fetch a cap for it would just produce an unhelpful
+                        // cap_error, so skip silently (same policy as the
+                        // missing-source case immediately above).
+                        if src.is_empty() {
+                            continue;
+                        }
+                        self.all_permissions.insert("invariant.evaluate".to_string());
+
+                        let args = serde_json::json!({
+                            "name": "invariant.evaluate",
+                            "argc": 0,
+                            "invariant_name": inv.name.clone(),
+                            "function_name": name.clone(),
+                            "check_source": src,
+                        });
+                        instrs.push(self.create_instr("cap_call", args, &func.meta));
+                    }
+                }
             }
             for stmt in &func.body {
                 if !matches!(stmt, Statement::FunctionDef { .. }) {

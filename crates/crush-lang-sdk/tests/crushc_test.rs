@@ -58,7 +58,136 @@ fn crushc_reports_type_error() {
     let output = run_crushc(&[src.to_str().unwrap()]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("type error"), "stderr: {stderr}");
+    // Post-readability pass the CLI uses a `[type]` badge for type-check
+    // errors; the inner message still describes the underlying mismatch.
+    assert!(
+        stderr.contains("[type]") && stderr.contains("Invalid binary op +"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn crushc_emits_json_diagnostic_for_parse_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("bad.crush");
+    // Unterminated curly — produces exactly one parse error.
+    std::fs::write(&src, "fn main() {").unwrap();
+
+    let output = run_crushc(&["--message-format", "json", src.to_str().unwrap()]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // One NDJSON record on stderr.
+    assert_eq!(
+        stderr.lines().filter(|l| !l.is_empty()).count(),
+        1,
+        "expected exactly one NDJSON record, got stderr: {stderr}"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
+    assert!(parsed["code"].is_string(), "code: {}", parsed);
+    assert_eq!(parsed["level"].as_str(), Some("error"));
+    assert!(parsed["file"].is_string());
+    assert!(parsed["line"].as_u64().is_some());
+    assert!(parsed["col"].as_u64().is_some());
+    assert!(parsed["message"].is_string());
+    assert!(parsed["hint"].is_null() || parsed["hint"].is_string());
+}
+
+#[test]
+fn crushc_emits_json_diagnostic_for_type_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("bad.crush");
+    std::fs::write(&src, "fn main() { let x = true + 1 }").unwrap();
+
+    let output = run_crushc(&["--message-format", "json", src.to_str().unwrap()]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.lines().filter(|l| !l.is_empty()).count(),
+        1,
+        "expected exactly one NDJSON record, got stderr: {stderr}"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
+    assert_eq!(parsed["code"].as_str(), Some("E-TP01"));
+    assert_eq!(parsed["level"].as_str(), Some("error"));
+    assert!(parsed["file"].is_string());
+    // Semantic errors don't yet carry source coordinates.
+    assert!(parsed["line"].is_null());
+    assert!(parsed["col"].is_null());
+    assert!(parsed["message"].as_str().unwrap_or("").contains("binary"));
+}
+
+#[test]
+fn crushc_default_message_format_remains_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("bad.crush");
+    std::fs::write(&src, "fn main() { let x = true + 1 }").unwrap();
+
+    let output = run_crushc(&[src.to_str().unwrap()]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Default is text — must not emit raw JSON to stderr.
+    assert!(
+        !stderr.trim_start().starts_with('{'),
+        "default mode unexpectedly emitted JSON: {stderr}"
+    );
+    assert!(stderr.contains("[type]"), "stderr: {stderr}");
+}
+
+#[test]
+fn crushc_emits_json_diagnostic_for_io_error() {
+    // --message-format json covers non-themed failures (file-not-found,
+    // unknown emit kind, etc.) so editors get a uniform NDJSON stream.
+    let output = run_crushc(&[
+        "--message-format",
+        "json",
+        "/nonexistent/crush-ast-path/missing.crush",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.lines().filter(|l| !l.is_empty()).count(),
+        1,
+        "expected exactly one NDJSON record, got stderr: {stderr}"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
+    assert_eq!(parsed["code"].as_str(), Some("E-IO"));
+    assert_eq!(parsed["level"].as_str(), Some("error"));
+    // IO failures don't carry source coordinates.
+    assert!(parsed["file"].is_null());
+    assert!(parsed["line"].is_null());
+    assert!(parsed["col"].is_null());
+    assert!(
+        parsed["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("No such file")
+            || parsed["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("cannot read"),
+        "expected human-readable IO message, got: {}",
+        parsed["message"]
+    );
+}
+
+#[test]
+fn crushc_default_message_format_remains_text_for_io_error() {
+    // Symmetry check: default text mode on a missing file still emits
+    // a `crushc: ...` prefix line and not JSON.
+    let output = run_crushc(&["/nonexistent/crush-ast-path/missing.crush"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.trim_start().starts_with('{'),
+        "default mode unexpectedly emitted JSON: {stderr}"
+    );
+    assert!(
+        stderr.contains("crushc:"),
+        "expected `crushc:` prefix in default text mode, got: {stderr}"
+    );
 }
 
 #[test]

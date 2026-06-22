@@ -327,6 +327,7 @@ impl BoaLower {
                         params,
                         body,
                         meta: HashMap::new(),
+                        ..Default::default()
                     },
                 );
                 vec![CastStmt::FunctionDef {
@@ -346,6 +347,7 @@ impl BoaLower {
                         params,
                         body,
                         meta: HashMap::new(),
+                        ..Default::default()
                     },
                 );
                 vec![CastStmt::FunctionDef {
@@ -403,6 +405,7 @@ impl BoaLower {
             params,
             body: body_stmts,
             meta: HashMap::new(),
+            ..Default::default()
         }
     }
 
@@ -691,6 +694,7 @@ impl BoaLower {
                             params: params.clone(),
                             body: body.clone(),
                             meta: HashMap::new(),
+                            ..Default::default()
                         },
                     );
                     CastExpr::Var {
@@ -900,6 +904,7 @@ pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
             params: vec![],
             body,
             meta: HashMap::new(),
+            ..Default::default()
         },
     );
     Ok(Program {
@@ -908,5 +913,6 @@ pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
         lang: Some("javascript".to_string()),
         functions: lower.functions,
         ai_meta: None,
+        ..Default::default()
     })
 }

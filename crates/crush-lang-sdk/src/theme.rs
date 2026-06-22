@@ -17,6 +17,114 @@
 //! grep substrings like `"instruction quota exceeded"` or
 //! `"capability not declared"` keep working untouched.
 //!
+//! # `JsonDiagnostic` NDJSON wire format
+//!
+//! The four CLI binaries (`crushc`, `crush-run`, `crush-compile`,
+//! `crush-repl`) emit error and warning events as **one NDJSON
+//! line per record** on stderr when invoked with
+//! `--message-format json`. This section is the stable contract
+//! for that stream — embedders should be able to route on the
+//! `code` field alone without parsing English `message` text.
+//!
+//! ## Canonical code table
+//!
+//! Codes are the routing field. They're organised into families
+//! so a future `E-PP06`, `E-RT06`, etc. can be appended without
+//! breaking prefix-based routing.
+//!
+//! | Family        | Code         | Emitted by                                  |
+//! |---------------|--------------|---------------------------------------------|
+//! | Parse errors  | `E-PP01..05` | `parse_error_triple` (inline `&'static str`; not on `JsonDiagnostic::CODE_*`) |
+//! | Type / sema   | `E-TP01`     | `JsonDiagnostic::CODE_TYPE`                 |
+//! | Runtime load  | `E-RT01`     | `JsonDiagnostic::CODE_RT_LOAD_BLOB`         |
+//! | Runtime asm   | `E-RT02`     | `JsonDiagnostic::CODE_RT_ASSEMBLY`         |
+//! | Runtime idx-p | `E-RT03`     | `JsonDiagnostic::CODE_RT_INDEX_PARSE`       |
+//! | Runtime idx-r | `E-RT04`     | `JsonDiagnostic::CODE_RT_INDEX_READ`        |
+//! | Runtime VM    | `E-RT05`     | `JsonDiagnostic::CODE_RT_VM`                |
+//! | CLI assembler | `E-ASM`      | `JsonDiagnostic::CODE_ASSEMBLER`            |
+//! | Generic I/O   | `E-IO`       | `JsonDiagnostic::CODE_IO`                   |
+//!
+//! Unlike the runtime-side codes (`E-RT*`, `E-TP*`, `E-IO`,
+//! `E-ASM`) which live as `pub const CODE_*` on `JsonDiagnostic`,
+//! the parse-error codes `E-PP01..05` are emitted as inline
+//! `&'static str` literals inside `parse_error_triple`. Both
+//! shapes are equally stable; embedders should match on a prefix
+//! rather than reach for an individual constant that may not
+//! exist.
+//!
+//! ## Codes emitted by CLI surfaces outside the four Crush binaries
+//!
+//! The Crush CI toolchain has additional emitters that re-use the
+//! NDJSON shape above so editors see a uniform stream regardless
+//! of which CLI produced the record. These extend the inline-literal
+//! convention (parallel to `E-PP01..05`) and live as `const` in
+//! each binary's `main.rs` rather than on `JsonDiagnostic`:
+//!
+//! | Code         | Emitted by                                         |
+//! |--------------|----------------------------------------------------|
+//! | `E-AUDIT`    | `xtask/src/main.rs::run_audit` (cargo xtask audit)  |
+//! | `E-LINT`     | `xtask/src/lint_dejavue.rs::main` (cargo xtask lint-dejavue) |
+//!
+//! Each emitter threads `json_mode: bool` (hand-rolled, no clap dep +
+//! no `crush-lang-sdk` dep) and emits via a local `json_diag_line`
+//! helper whose seven-field shape is locked by a `json_diag_line_field_order_is_canonical`
+//! unit test in the binary's `mod tests`. The lockdown test is what
+//! keeps the wire format in lock-step with the canonical struct here:
+//! a contributor who reorders derive-field order on `JsonDiagnostic`
+//! breaks BOTH the canonical test in this file AND the per-binary
+//! lockdown tests in `xtask/src/main.rs::tests`,
+//! `xtask/src/lint_dejavue.rs::tests`, and
+//! `crush-vm/src/main.rs::tests`.
+//!
+//! ## Level convention
+//!
+//! `level` is always one of `"error"`, `"warning"`, or `"note"`,
+//! matching the [`Severity`] enum. Today every wire record emits
+//! `"error"`; `"warning"` and `"note"` are reserved for future
+//! lint / hint surfaces. Editors should accept any of the three —
+//! newer levels will land as additional `Severity` variants with
+//! matching lowercase strings.
+//!
+//! ## Field-shape invariants
+//!
+//! - `code` — always present, stable per the table above.
+//! - `level` — always present, one of `{"error", "warning", "note"}`.
+//! - `message` — always present; non-empty for typed errors
+//!   EXCEPT the `RuntimeError::Vm` arm (see dedupe below).
+//! - `file` — `Some(path)` when the constructor accepts a path;
+//!   `None` for failures with no source location
+//!   (runtime load failures, fallback I/O, VM eval failures).
+//! - `line` / `col` — `Some(N)` only for `parse_error`; every
+//!   other constructor leaves them `None` so the "carries source
+//!   range" signal has a single shape across the stream.
+//! - `hint` — populated ONLY for the `RuntimeError::Vm` arm. The
+//!   inner `#[error(transparent)]` makes `RuntimeError::to_string()`
+//!   and `VmError::to_string()` byte-identical; the
+//!   `message=""` + `hint=Some(vm_err.to_string())` dedupe prevents
+//!   surfacing the same text in two fields. Editors should treat
+//!   `hint` as the headline for `E-RT05` records.
+//!
+//! ## Attachability per constructor
+//!
+//! | Constructor                       | file       | line | col  | hint |
+//! |-----------------------------------|------------|------|------|------|
+//! | `parse_error`                     | caller-set | Some | Some | None |
+//! | `type_error`                      | caller-set | None | None | None |
+//! | `generic_error`                   | None       | None | None | None |
+//! | `assembler_error`                 | caller-set | None | None | None |
+//! | `runtime_error` LoadBlob          | None       | None | None | None |
+//! | `runtime_error` Assembly          | None       | None | None | None |
+//! | `runtime_error` IndexParse        | None       | None | None | None |
+//! | `runtime_error` IndexRead         | None       | None | None | None |
+//! | `runtime_error` Vm                | None       | None | None | Some |
+//!
+//! ## Stability guarantees
+//!
+//! Codes and `level` strings are stable across minor releases;
+//! new fields MAY be appended to the record; existing fields are
+//! NEVER removed or repurposed. Today's wire can be parsed by
+//! tomorrow's clients without a schema-version handshake.
+//!
 //! Public stable surface:
 //! - [`Severity`] — discriminator for the leading `[…]` badge.
 //! - [`init_styling`] — call once before printing anything.

@@ -280,3 +280,79 @@ fn quotas_stop_infinite_loops() {
 
     assert!(err.to_string().contains("instruction quota exceeded"));
 }
+
+/// Surface the new `errors_weighted` field on `codebase.definition`.
+///
+/// Runs the full parse → cast → index → cap → serialise pipeline against
+/// `@errors { Foo: likely, Bar: rare }` source syntax: nothing is
+/// hand-built at the annotation layer, so this test catches regressions
+/// in three independent places at once — the parser stops recognising the
+/// `{ ... }` weighted form, the indexer drops the field, or the cap
+/// silently strips it from the response map.
+#[test]
+fn codebase_definition_surfaces_errors_weighted_with_likelihood_tags() {
+    use crush_cast::Program;
+    use crush_frontend::parser::Parser;
+    use crush_index::CrushIndex;
+
+    let source = "\
+@module {
+    purpose: \"integration test\"
+}
+
+@errors { Foo: likely, Bar: rare }
+fn f() -> i32 {
+    return 0
+}
+";
+    let mut prog: Program = Parser::parse(source).expect("parse");
+
+    let mut index = CrushIndex::new();
+    index.add_program("testmod", &prog);
+
+    let host_caps = HostCapsBuilder::new().codebase(index).build();
+
+    let program = ProgramBuilder::new()
+        .permission("io.print")
+        .permission("codebase.definition")
+        .line(".func main")
+        .line(r#"PUSH_STR "f""#)
+        .line(r#"CAP_CALL "codebase.definition" 1"#)
+        .line(r#"CAP_CALL "io.print" 1"#)
+        .line("HALT")
+        .build()
+        .expect("build");
+
+    let result = Runtime::new()
+        .with_host_caps(host_caps)
+        .run(&program)
+        .expect("run");
+
+    // `Value::Display` for `Map`/`Str` produces unquoted keys/values
+    // (`{variant: Foo, likelihood: likely}`), not JSON-style
+    // (`{"variant":"Foo","likelihood":"likely"}`) — match the actual
+    // rendering rather than asserting on a format that `io.print` never
+    // emits. We substring-match on the colon-separated key/value pair so
+    // the test stays robust against the HashMap iteration order
+    // (`{likelihood: rare, variant: Bar}` vs `{variant: Bar, likelihood: rare}`).
+    assert!(
+        result.output.contains("variant: Foo"),
+        "Foo variant should be preserved: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("likelihood: likely"),
+        "Foo likelihood 'likely' should be preserved: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("variant: Bar"),
+        "Bar variant should be preserved: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("likelihood: rare"),
+        "Bar likelihood 'rare' should be preserved: {}",
+        result.output
+    );
+}

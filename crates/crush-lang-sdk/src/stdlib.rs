@@ -90,31 +90,13 @@ pub fn register(caps: &mut HostCaps) {
 
 fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
     args.get(idx)
-        .map(|v| match v {
-            Value::Str(s) => s.clone(),
-            Value::Bool(b) => b.to_string(),
-            Value::Int(i) => i.to_string(),
-            Value::Float(f) => {
-                if f.fract() == 0.0 && f.is_finite() {
-                    format!("{f:.1}")
-                } else {
-                    f.to_string()
-                }
-            }
-            Value::Null => String::new(),
-            Value::Array(a) => a.borrow().iter().map(value_to_string).collect::<Vec<_>>().join(", "),
-            Value::Map(m) => {
-                let items: Vec<String> = m
-                    .borrow()
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, value_to_string(v)))
-                    .collect();
-                format!("{{{}}}", items.join(", "))
-            }
-            Value::Error(e) => format!("error({})", e),
-            Value::Bytes(b) => format!("<{} bytes>", b.len()),
-            Value::Handle(id) => format!("<handle {}>", id),
-        })
+        // Delegate to the canonical `impl Display for Value` in
+        // `crush_vm::vm::vm.rs` — replaces 14 lines of duplicated match
+        // arms that previously had to be kept in lockstep with
+        // `caps::value_as_text` + `vm::as_text`. `Display` is now the
+        // single source of truth for how every CVM1 value surfaces as
+        // a string.
+        .map(|v| v.to_string())
         .ok_or_else(|| format!("missing argument at index {}", idx))
 }
 
@@ -141,32 +123,15 @@ fn get_float(args: &[Value], idx: usize) -> Result<f64, String> {
         .ok_or_else(|| format!("expected number at index {}", idx))
 }
 
+// Delegate to the canonical `impl Display for Value` in
+// `crush_vm::vm::vm.rs` — replaces 14 lines of duplicated match arms
+// that previously had to be kept in lockstep with `caps::value_as_text`
+// and `vm::as_text`. The `Display` impl is now the single source of
+// truth for how every CVM1 value surfaces as a string; if you find
+// yourself wanting Value-specific formatting here, add it to the
+// `Display` impl instead.
 fn value_to_string(v: &Value) -> String {
-    match v {
-        Value::Str(s) => s.clone(),
-        Value::Bool(b) => b.to_string(),
-        Value::Int(i) => i.to_string(),
-        Value::Float(f) => {
-            if f.fract() == 0.0 && f.is_finite() {
-                format!("{f:.1}")
-            } else {
-                f.to_string()
-            }
-        }
-        Value::Null => String::new(),
-        Value::Array(a) => a.borrow().iter().map(value_to_string).collect::<Vec<_>>().join(", "),
-        Value::Map(m) => {
-            let items: Vec<String> = m
-                .borrow()
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k, value_to_string(v)))
-                .collect();
-            format!("{{{}}}", items.join(", "))
-        }
-        Value::Error(e) => format!("error({})", e),
-        Value::Bytes(b) => format!("<{} bytes>", b.len()),
-        Value::Handle(id) => format!("<handle {}>", id),
-    }
+    v.to_string()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -651,48 +616,49 @@ macro_rules! json_cap {
     };
 }
 
-#[cfg(feature = "stdlib")]
-fn value_to_json(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(b),
-        Value::Int(i) => serde_json::json!(*i),
-        Value::Float(f) => serde_json::json!(*f),
-        Value::Str(s) => serde_json::json!(s),
-        Value::Array(a) => serde_json::Value::Array(a.borrow().iter().map(value_to_json).collect()),
-    }
-}
+// (The previous local `value_to_json` thin-wrapper that delegated to
+// `crate::util::value_to_json` has been deleted. The canonical JSON
+// conversion path is now `impl serde::Serialize for Value` on
+// `crush_vm::vm::Value`; `serde_json::to_string(&args[0]).map_err(...)?`
+// in the `json.stringify*` caps below invokes that trait impl
+// directly — single source of truth, no helper needed.)
 
-#[cfg(feature = "stdlib")]
-fn json_to_value(val: serde_json::Value) -> Value {
-    match val {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Int(i)
-            } else {
-                Value::Float(n.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::String(s) => Value::Str(s),
-        serde_json::Value::Array(arr) => Value::new_array(arr.into_iter().map(json_to_value).collect()),
-        serde_json::Value::Object(_) => Value::Null, // No map support yet
-    }
-}
+// (The previous local `json_to_value` thin-wrapper that duplicated
+// the canonical JSON-from-`Value` parsing path has been deleted. The
+// canonical inverse is now `impl serde::Deserialize for Value` in
+// `crush-vm/src/vm.rs` (placed next to the existing `impl Serialize`
+// and `impl Display` — three canonical traits on `Value`). `json.parse`
+// below invokes `serde_json::from_str::<Value>(&s)` directly, so
+// every JSON consumer (the cap, future parsers) goes through the
+// single source of truth.
+//
+// Note: this also fixes a pre-existing bug in the deleted `json_to_value`
+// where JSON objects were silently mapped to `Value::Null` ("// No map
+// support yet"). The canonical Deserialize impl dispatches `visit_map`
+// to `Value::new_map(...)` correctly, so JSON objects now parse into
+// Crush maps without any per-call-site workaround.)
 
 #[cfg(feature = "stdlib")]
 json_cap!(JsonParseCap, "parse", 1, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let parsed: serde_json::Value =
+    // **Canonical path**: route through `impl serde::Deserialize for Value`
+    // (defined on `crush_vm::vm::Value`) — no helper. `serde_json::from_str::<Value>`
+    // invokes the trait impl directly via the visitor pattern.
+    let parsed: Value =
         serde_json::from_str(&s).map_err(|e| format!("json.parse: {}", e))?;
-    Ok(Some(json_to_value(parsed)))
+    Ok(Some(parsed))
 });
 
 #[cfg(feature = "stdlib")]
 json_cap!(JsonStringifyCap, "stringify", 1, |args: &[Value]| {
-    let json = value_to_json(&args[0]);
-    let s = serde_json::to_string(&json).map_err(|e| format!("json.stringify: {}", e))?;
+    // **Canonical path**: route through `impl serde::Serialize for Value`
+    // (defined on `crush_vm::vm::Value`) — no helper. The previous local
+    // `value_to_json` wrapper that delegated to `crate::util::value_to_json`
+    // has been deleted; `serde_json::to_string(&args[0])` invokes the
+    // trait impl directly so JSON produced here is identical to JSON
+    // produced by `db.query` and `message_bus.publish`.
+    let s = serde_json::to_string(&args[0])
+        .map_err(|e| format!("json.stringify: {}", e))?;
     Ok(Some(Value::Str(s)))
 });
 
@@ -702,8 +668,8 @@ json_cap!(
     "stringify_pretty",
     1,
     |args: &[Value]| {
-        let json = value_to_json(&args[0]);
-        let s = serde_json::to_string_pretty(&json)
+        // See `JsonStringifyCap` above for the canonical-path rationale.
+        let s = serde_json::to_string_pretty(&args[0])
             .map_err(|e| format!("json.stringify_pretty: {}", e))?;
         Ok(Some(Value::Str(s)))
     }
@@ -1254,9 +1220,13 @@ mod tests {
             cap.call(vec![Value::Float(3.14)]).unwrap(),
             Some(Value::Str("3.14".to_string()))
         );
+        // `Value::Null` now matches `io.print`'s formatter (literal `"null"`,
+        // not `""`) — see `get_str` / `value_to_string` breadcrumbs in
+        // `stdlib.rs`. Caps `str.join`, `str.format`, `conv.to_str`,
+        // `path.*` all flow through this same path now.
         assert_eq!(
             cap.call(vec![Value::Null]).unwrap(),
-            Some(Value::Str("".to_string()))
+            Some(Value::Str("null".to_string()))
         );
     }
 
@@ -1495,7 +1465,629 @@ mod tests {
         let result = cap
             .call(vec![Value::Str(r#"[1,2,3]"#.to_string())])
             .unwrap();
-        assert!(matches!(result, Some(Value::Array(arr)) if arr.len() == 3));
+        // `array.len()` was previously called directly on the `Rc<RefCell<...>>`
+        // which fails to compile (3 such errors were masked behind
+        // `#[cfg(feature = "stdlib")]`). Fixed by routing through `.borrow()`.
+        assert!(matches!(result, Some(Value::Array(arr)) if arr.borrow().len() == 3));
+    }
+
+    #[cfg(feature = "stdlib")]
+    #[test]
+    fn test_json_parse_object() {
+        // End-to-end lock for the canonical Deserialize path through
+        // `json.parse` exercising a JSON object. The pre-extraction
+        // `stdlib::json_to_value` had `serde_json::Value::Object(_) =>
+        // Value::Null` (a documented "No map support yet" stub) which
+        // silently dropped every JSON object into `Value::Null`,
+        // destroying caller data. The canonical `impl
+        // serde::Deserialize for Value` in `crush-vm/src/vm.rs::impl
+        // Deserialize` dispatches `visit_map` to `Value::new_map(...)`
+        // correctly; this test pins that fix CI-side.
+        let caps = setup_caps();
+        let cap = caps.get("json.parse").unwrap();
+        let result = cap
+            .call(vec![Value::Str(r#"{"k": 1, "k2": null}"#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Map(m)) => {
+                let m = m.borrow();
+                // 2 entries preserved, NOT collapsed to Null under
+                // the deleted `json_to_value`'s `Object(_) => Null`
+                // branch.
+                assert_eq!(m.len(), 2, "expected 2 entries in parsed map, got {}", m.len());
+                assert_eq!(
+                    m.get("k").cloned().unwrap_or(Value::Null),
+                    Value::Int(1),
+                    "k should be Int(1)"
+                );
+                assert_eq!(
+                    m.get("k2").cloned().unwrap_or(Value::Str("".to_string())),
+                    Value::Null,
+                    "k2 should be Null"
+                );
+            }
+            Some(Value::Null) => panic!(
+                "FAIL: json.parse(`{{\"k\": 1, \"k2\": null}}`) returned Null; \
+                 this is the exact pre-existing bug the canonical Deserialize \
+                 refactor was meant to fix — visit_map should route to Value::Map"
+            ),
+            other => panic!(
+                "expected Value::Map from json.parse object input, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[cfg(feature = "stdlib")]
+    #[test]
+    fn test_json_parse_object_round_trip() {
+        // Round-trip lock: serialize a map via Display-style string
+        // representation, parse it back via json.parse, and verify
+        // round-trip identity. Locks the canonical Serialize ∘
+        // Deserialize inverse for object inputs through the cap-gated
+        // path — i.e., the same path `db.query` rows and
+        // `message_bus.recv` payloads would take.
+        let caps = setup_caps();
+        let stringify = caps.get("json.stringify").unwrap();
+        let parse = caps.get("json.parse").unwrap();
+
+        let mut m = std::collections::HashMap::new();
+        m.insert("name".to_string(), Value::Str("test".to_string()));
+        m.insert("count".to_string(), Value::Int(42));
+        m.insert("flag".to_string(), Value::Bool(true));
+        let original = Value::new_map(m);
+
+        let serialized = stringify.call(vec![original.clone()]).unwrap().unwrap();
+        let serialized_str = match serialized {
+            Value::Str(s) => s,
+            other => panic!("json.stringify should produce Value::Str, got {:?}", other),
+        };
+        let parsed = parse.call(vec![Value::Str(serialized_str)]).unwrap();
+
+        match parsed {
+            Some(Value::Map(roundtripped)) => {
+                let r = roundtripped.borrow();
+                assert_eq!(r.len(), 3);
+                assert_eq!(
+                    r.get("name").cloned().unwrap_or(Value::Null),
+                    Value::Str("test".to_string())
+                );
+                assert_eq!(
+                    r.get("count").cloned().unwrap_or(Value::Null),
+                    Value::Int(42)
+                );
+                assert_eq!(
+                    r.get("flag").cloned().unwrap_or(Value::Null),
+                    Value::Bool(true)
+                );
+            }
+            other => panic!(
+                "expected Value::Map from json.parse round-trip, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[cfg(feature = "stdlib")]
+    #[test]
+    fn test_json_parse_nested_object() {
+        // Locks `visit_map` recursion through the cap gateway: a JSON
+        // object containing another JSON object hydrates into a nested
+        // `Value::Map({Value::Map(...)})`. The canonical
+        // `impl serde::Deserialize for Value` dispatches `visit_map`
+        // once per `{...}` token, so the inner-object keys become a
+        // child `HashMap<String, Value>` under the outer key. Without
+        // `visit_map` recursion (e.g. a stubbed Deserialize impl,
+        // pre-extraction `stdlib::json_to_value`'s
+        // `Object(_) => Null` arm), the inner object would either
+        // fail to parse or be silently downgraded — this fixture
+        // ensures the recursive dispatch holds end-to-end through
+        // the `json.parse` cap.
+        let caps = setup_caps();
+        let cap = caps.get("json.parse").unwrap();
+        let result = cap
+            .call(vec![Value::Str(r#"{"outer": {"inner": 1}}"#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Map(outer_rc)) => {
+                let outer = outer_rc.borrow();
+                assert_eq!(
+                    outer.len(),
+                    1,
+                    "outer map should have 1 entry, got {}",
+                    outer.len()
+                );
+                let inner_value = outer
+                    .get("outer")
+                    .cloned()
+                    .expect("'outer' key should be present");
+                match inner_value {
+                    Value::Map(inner_rc) => {
+                        let inner = inner_rc.borrow();
+                        assert_eq!(
+                            inner.len(),
+                            1,
+                            "inner map should have 1 entry, got {}",
+                            inner.len()
+                        );
+                        assert_eq!(
+                            inner.get("inner").cloned().unwrap_or(Value::Null),
+                            Value::Int(1),
+                            "outer.outer.inner should be Int(1)"
+                        );
+                    }
+                    other => panic!(
+                        "outer['outer'] should be Value::Map (nested), got {:?}",
+                        other
+                    ),
+                }
+            }
+            Some(Value::Null) => panic!(
+                "FAIL: json.parse(`{{\"outer\": {{\"inner\": 1}}}}`) returned Null; \
+                 this is the exact pre-existing bug the canonical Deserialize \
+                 refactor was meant to fix — visit_map recursion missing"
+            ),
+            other => panic!(
+                "expected Value::Map from json.parse nested-object input, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[cfg(feature = "stdlib")]
+    #[test]
+    fn test_json_parse_mixed_types_object() {
+        // Locks `visit_seq` recursion plus family-mixing under the
+        // cap gateway: a JSON object whose value is an array with
+        // elements from three different `Value` families (`Int`,
+        // `Str`, `Null`) hydrates as
+        // `Value::Map({items: Value::Array([Int(1), Str("two"), Null])})`.
+        // The flat-object test in `test_json_parse_object` covers
+        // `Map` + `visit_map` at a single level; this fixture
+        // extends coverage to `Map` → `visit_seq` → mixed-family
+        // `visit_bool/i64/str/unit` dispatch in a single parse
+        // pipeline. Each family is already covered individually by
+        // `Value::Int` / `Value::Str` / `Value::Null` literals in
+        // the matrix test, but the combined Map+Array+Int+Str+Null
+        // shape is unique to this fixture.
+        let caps = setup_caps();
+        let cap = caps.get("json.parse").unwrap();
+        let result = cap
+            .call(vec![Value::Str(
+                r#"{"items": [1, "two", null]}"#.to_string(),
+            )])
+            .unwrap();
+        match result {
+            Some(Value::Map(m_rc)) => {
+                let m = m_rc.borrow();
+                assert_eq!(
+                    m.len(),
+                    1,
+                    "outer map should have 1 entry, got {}",
+                    m.len()
+                );
+                let items_value = m
+                    .get("items")
+                    .cloned()
+                    .expect("'items' key should be present");
+                match items_value {
+                    Value::Array(arr_rc) => {
+                        let arr = arr_rc.borrow();
+                        assert_eq!(
+                            arr.len(),
+                            3,
+                            "items array should have 3 elements, got {}",
+                            arr.len()
+                        );
+                        assert_eq!(
+                            arr[0],
+                            Value::Int(1),
+                            "items[0] should be Int(1), got {:?}",
+                            arr[0]
+                        );
+                        assert_eq!(
+                            arr[1],
+                            Value::Str("two".to_string()),
+                            "items[1] should be Str(\"two\"), got {:?}",
+                            arr[1]
+                        );
+                        assert_eq!(
+                            arr[2],
+                            Value::Null,
+                            "items[2] should be Null, got {:?}",
+                            arr[2]
+                        );
+                    }
+                    other => panic!(
+                        "items should be Value::Array (visit_seq recursion), got {:?}",
+                        other
+                    ),
+                }
+            }
+            Some(Value::Null) => panic!(
+                "FAIL: json.parse(`{{\"items\": [1, \"two\", null]}}`) returned Null; \
+                 visit_map dispatch missing on object wrapper"
+            ),
+            other => panic!(
+                "expected Value::Map from json.parse mixed-types input, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[cfg(feature = "stdlib")]
+    #[test]
+    fn test_json_parse_tagged_forms() {
+        // Locks the `visit_str` tagged-form precedence that mirrors
+        // the canonical `impl serde::Serialize for Value` tagged-form
+        // contract, exercised end-to-end through the `json.parse` cap
+        // gateway. Each input is a JSON-quoted string literal
+        // (`"<handle 42>"`), which serde_json strips the surrounding
+        // JSON quotes from BEFORE calling `visit_str` — so visit_str
+        // sees `<handle 42>` (no quotes), then matches the canonical
+        // precedence.
+        //
+        // Precedence in `crush_vm::vm::Value::impl Deserialize::visit_str`:
+        //   1. `<handle N>`  (most specific — exact prefix `<handle `)
+        //   2. `<N bytes>`   (general `<...>` shape + ` bytes>` suffix)
+        //   3. `error(msg)`  (literal prefix + literal suffix)
+        //   4. `Value::Str`  fallback
+        //
+        // Without locked precedence, the canonical round-trip would
+        // be broken: e.g. `Value::Handle(42).serialize()` produces
+        // `"<handle 42>"`, and parsing `"<handle 42>"` should return
+        // `Value::Handle(42)`, NOT `Value::Str("<handle 42>")` — the
+        // exact symmetry-mirror the `all_traits_round_trip` matrix
+        // asserts at the trait level, here locked end-to-end through
+        // the cap (so a future cap-layer regression would surface
+        // here, NOT silently break the trait invariant).
+        let caps = setup_caps();
+        let cap = caps.get("json.parse").unwrap();
+
+        // 1. `<handle N>` → Value::Handle(N). Both ends of the
+        //    round-trip (publish-side Serialize produces
+        //    `"<handle 42>"`; receive-side Deserialize parses it back)
+        //    flow through the `Handle` tag together.
+        let result = cap
+            .call(vec![Value::Str(r#""<handle 42>""#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Handle(id)) => assert_eq!(
+                id, 42,
+                "expected Handle(42) for `\"<handle 42>\"` input, got Handle({id})"
+            ),
+            Some(Value::Str(s)) => panic!(
+                "FAIL: visit_str missed the `<handle N>` tag (precedence broken); \
+                 fell through to Value::Str({s:?}) instead of Value::Handle(42)"
+            ),
+            other => panic!(
+                "expected Value::Handle(42) for `\"<handle 42>\"` input, got {:?}",
+                other
+            ),
+        }
+
+        // 2. `<N bytes>` → Value::Bytes(vec![0; N]). Documented
+        //    length-only caveat: canonical Serialize preserves only
+        //    the byte COUNT (not the actual content), so the
+        //    reconstructed Vec<u8> is zero-filled to that length.
+        //    This is the exact inverse contract — round-trip
+        //    identity holds only for all-zero `Value::Bytes`
+        //    payloads, as documented in
+        //    `crush-vm::vm::impl Deserialize`.
+        let result = cap
+            .call(vec![Value::Str(r#""<3 bytes>""#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Bytes(b)) => assert_eq!(
+                b,
+                vec![0, 0, 0],
+                "expected Bytes(vec![0,0,0]) (zero-fill per the length-only caveat), got {:?}",
+                b
+            ),
+            Some(Value::Str(s)) => panic!(
+                "FAIL: visit_str missed the `<N bytes>` tag (precedence broken); \
+                 fell through to Value::Str({s:?}) instead of Value::Bytes(vec![0,0,0])"
+            ),
+            other => panic!(
+                "expected Value::Bytes(vec![0,0,0]) for `\"<3 bytes>\"` input, got {:?}",
+                other
+            ),
+        }
+
+        // 3. `error(msg)` → Value::Error(msg). The Display form
+        //    `error(oops)` (no quotes) and the Serialize form
+        //    `"error(oops)"` (JSON-quoted) are both canonical; the
+        //    `visit_str` branch matches the inner literal `error(...)`
+        //    shape and slices off the wrapping `error(` / `)` chars,
+        //    yielding `Value::Error("oops")` from the inner `oops`
+        //    payload.
+        let result = cap
+            .call(vec![Value::Str(r#""error(oops)""#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Error(msg)) => assert_eq!(
+                msg, "oops",
+                "expected Error(\"oops\") for `\"error(oops)\"` input, got Error({msg:?})"
+            ),
+            Some(Value::Str(s)) => panic!(
+                "FAIL: visit_str missed the `error(msg)` tag (precedence broken); \
+                 fell through to Value::Str({s:?}) instead of Value::Error(\"oops\")"
+            ),
+            other => panic!(
+                "expected Value::Error(\"oops\") for `\"error(oops)\"` input, got {:?}",
+                other
+            ),
+        }
+
+        // 4. `error((foo)` → Value::Error("(foo"). Nested-paren
+        //    boundary: the canonical Deserialize Error branch
+        //    `v[6..v.len() - 1]` strips only ONE leading wrap
+        //    (the prefix `error(`) and ONE trailing wrap (the
+        //    suffix check `)`). The 11-char input `error((foo)`
+        //    after the slice yields the 4-char payload `(foo` —
+        //    the inner-most opening paren is preserved; the
+        //    outer trailing close is consumed by the suffix
+        //    check. This is NOT a balanced-paren walk; the
+        //    asymmetry w.r.t. case 5 reflects the canonical
+        //    `v[6..s.len() - 1]` slice arithmetic exactly.
+        let result = cap
+            .call(vec![Value::Str(r#""error((foo)""#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Error(msg)) => assert_eq!(
+                msg, "(foo",
+                "expected canonical 4-char slice '(foo' for `\"error((foo)\"` input \
+                 (one leading `(` + one trailing `)` stripped, inner-most paren preserved), \
+                 got Error({msg:?})"
+            ),
+            Some(Value::Str(s)) => panic!(
+                "FAIL: visit_str missed the `error(msg)` tag for `\"error((foo)\"`; \
+                 fell through to Value::Str({s:?}) instead of Value::Error(\"(foo\")"
+            ),
+            other => panic!(
+                "expected Value::Error for `\"error((foo)\"` input, got {other:?}"
+            ),
+        }
+
+        // 5. `error(foo))` → Value::Error("foo)"). Nested-paren
+        //    boundary: same `v[6..v.len() - 1]` slice semantics
+        //    as case 4. 11-char input `error(foo))` after the
+        //    slice yields `foo)` (4 chars, ONE trailing `)` is
+        //    consumed by the suffix check; the inner-most `)` is
+        //    preserved). Symmetric in shape to case 4: the slice
+        //    removes exactly one outer wrap, no balanced-paren
+        //    walk. Locks the multi-close handler CI-side.
+        let result = cap
+            .call(vec![Value::Str(r#""error(foo))""#.to_string())])
+            .unwrap();
+        match result {
+            Some(Value::Error(msg)) => assert_eq!(
+                msg, "foo)",
+                "expected canonical 4-char slice 'foo)' for `\"error(foo))\"` input \
+                 (one trailing `)` stripped, inner-most closing paren preserved), \
+                 got Error({msg:?})"
+            ),
+            Some(Value::Str(s)) => panic!(
+                "FAIL: visit_str missed the `error(msg)` tag for `\"error(foo))\"`; \
+                 fell through to Value::Str({s:?}) instead of Value::Error(\"foo)\")"
+            ),
+            other => panic!(
+                "expected Value::Error for `\"error(foo))\"` input, got {other:?}"
+            ),
+        }
+
+        // 6. Bytes round-trip is LOSSY by design. Canonical
+        //    `impl Serialize for Value::Bytes(b)` emits ONLY the
+        //    length-prefix inner-content `<{N} bytes>` (9 chars for
+        //    N=3) — actual byte contents are NOT preserved through
+        //    the JSON wire. The cap-layer string returned by
+        //    `json.stringify` is the JSON-quoted form
+        //    `"<3 bytes>"` (11 chars total: opening `"` + 9-char
+        //    content + closing `"`) because `serde_json::to_string`
+        //    wraps the trait-emitted blob with surrounding JSON
+        //    quotes before returning. Re-parsing the recovered
+        //    JSON-quoted tag through canonical
+        //    `impl Deserialize for Value::visit_str` reconstructs
+        //    a ZERO-FILLED `Vec<u8>` of the same length — NOT the
+        //    original byte payload. This fixture exercises both
+        //    caps to pin the documented length-only caveat
+        //    CI-side; a future change to either side that
+        //    restored byte fidelity would surface here as a
+        //    panic on the assert_eq! calls.
+        let stringify = caps.get("json.stringify").unwrap();
+        let payload = vec![1u8, 2, 3];
+        let serialized = stringify
+            .call(vec![Value::Bytes(payload)])
+            .unwrap()
+            .expect("json.stringify produces Some");
+        let serialized_str = match serialized {
+            Value::Str(s) => s,
+            other => panic!(
+                "json.stringify should return Value::Str for byte payload, got {:?}",
+                other
+            ),
+        };
+        // Pin the Serialize-side output: byte CONTENTS dropped,
+        // length preserved. The cap-layer output is the
+        // JSON-quoted form `r#""<3 bytes>""#` (11 chars) — the
+        // bare tag `<3 bytes>` (9 chars) emitted by the trait impl
+        // is wrapped in JSON quotes by `serde_json::to_string`
+        // BEFORE being returned to the cap caller.
+        assert_eq!(
+            serialized_str, r#""<3 bytes>""#,
+            "canonical Serialize for Value::Bytes(vec![1,2,3]) at the cap layer should \
+             emit the JSON-quoted length-tag \"<3 bytes>\" (byte contents intentionally \
+             stripped), got {serialized_str:?}"
+        );
+        // Pin the Deserialize-side reconstruction: zero-filled.
+        let parsed = cap
+            .call(vec![Value::Str(serialized_str)])
+            .unwrap();
+        match parsed {
+            Some(Value::Bytes(b)) => assert_eq!(
+                b, vec![0u8, 0, 0],
+                "LOSSY ROUND-TRIP: canonical Deserialize for \"<3 bytes>\" \
+                 reconstructs a ZERO-FILLED Vec<u8> of length N, NOT the \
+                 original byte payload vec![1,2,3]. Got {:?}, expected vec![0,0,0].",
+                b
+            ),
+            Some(Value::Str(s)) => panic!(
+                "FAIL: visit_str missed the `<N bytes>` tag in round-trip for \
+                 Value::Bytes(vec![1,2,3]) -> \"<3 bytes>\" -> parse; \
+                 fell through to Value::Str({s:?}) instead of zero-filled Value::Bytes"
+            ),
+            other => panic!(
+                "expected Value::Bytes(vec![0,0,0]) after `\"<3 bytes>\"` round-trip, got {other:?}"
+            ),
+        }
+    }
+
+    #[cfg(feature = "stdlib")]
+    #[test]
+    fn test_bus_publish_recovers_handle_payload() {
+        // Closes the loop on the `<handle N>` tagged form end-to-end
+        // through the bus cap gateway. Fixtures 1 and 4 of
+        // `test_json_parse_tagged_forms` cover the parse-side
+        // reconstruction from a JSON-quoted tag string into a typed
+        // `Value::Handle(N)`; this test covers the publish side
+        // AND the recv-side re-serialization envelope path together.
+        //
+        // End-to-end loop:
+        //   publish(Value::Handle(42))
+        //     → canonical `impl Serialize for Value`
+        //       → in-memory bus stores the JSON-quoted form `"<handle 42>"`
+        //         → recv() pops
+        //           → canonical `impl Deserialize for Value::visit_str`
+        //             reconstructs `Value::Handle(42)`
+        //             → canonical `impl Serialize for Value::new_map(envelope)`
+        //               re-emits the envelope as a JSON string
+        //                 → returned to the test caller as `Value::Str(...)`
+        //                   → test re-parses via `json.parse`
+        //                     → canonical `impl Deserialize for Value`
+        //                       drills into `payload` slot
+        //                         → MUST equal `Value::Handle(42)`.
+        //
+        // Both contract violations (the publish-side canonical
+        // Serialize drifting away from `<handle N>`, OR the recv-side
+        // canonical Deserialize missing the `<handle N>` precedence)
+        // would surface here as a panic on the final `Value::Handle(_)`
+        // match arm with the explicit `Value::Str` anti-regression
+        // message.
+        let mut caps = HostCaps::new();
+        crate::stdlib::register(&mut caps);
+        crate::bus::register(&mut caps);
+
+        let publish = caps
+            .get("message_bus.publish")
+            .expect("message_bus.publish registered");
+        let subscribe = caps
+            .get("message_bus.subscribe")
+            .expect("message_bus.subscribe registered");
+        let recv = caps
+            .get("message_bus.recv")
+            .expect("message_bus.recv registered");
+        let parse = caps.get("json.parse").expect("json.parse registered");
+
+        // Subscribe FIRST so the in-memory bus maintains a queue for
+        // "t_handle". The order subscribe → publish → recv is the same
+        // sequence the production code path would take.
+        subscribe
+            .call(vec![Value::Str("t_handle".to_string())])
+            .expect("message_bus.subscribe should succeed for t_handle");
+
+        // Publish the `Value::Handle(42)` payload. The canonical
+        // `impl Serialize for Value::Handle(42)` emits the bare tag
+        // `<handle 42>` (11 chars). `serde_json::to_value` wraps the
+        // trait-emitted blob in surrounding JSON quotes, storing
+        // `serde_json::Value::String("<handle 42>")` (13 chars) in
+        // the in-memory queue. publish returns `Ok(None)` per its
+        // `HostCapSpec` (returns = false).
+        let publish_result = publish
+            .call(vec![
+                Value::Str("t_handle".to_string()),
+                Value::Handle(42),
+            ])
+            .expect("message_bus.publish should succeed");
+        assert!(
+            publish_result.is_none(),
+            "message_bus.publish spec returns None (HostCapSpec.returns = false); \
+             got {:?}",
+            publish_result
+        );
+
+        // Recv the published message. The recv-side deserialize runs
+        // the stored `serde_json::Value::String("<handle 42>")`
+        // through canonical `impl Deserialize for Value::visit_str`,
+        // which matches the `<handle N>` precedence and reconstructs
+        // `Value::Handle(42)`. The cap wraps this typed payload with
+        // the topic in a `Value::Map({topic, payload})`, then re-emits
+        // via canonical `impl Serialize for Value` →
+        // `serde_json::to_string` returns a JSON-quoted envelope
+        // string. The cap returns `Value::Str(envelope_json_string)`.
+        let recv_envelope = recv.call(vec![]).expect("message_bus.recv should succeed");
+        let envelope_string = match recv_envelope {
+            Some(Value::Str(s)) => s,
+            other => panic!(
+                "message_bus.recv should return Value::Str(JSON envelope), got {:?}",
+                other
+            ),
+        };
+
+        // Re-parse the envelope through `json.parse` to exercise the
+        // canonical Deserialize path end-to-end. This is the
+        // OUTERMOST loop-closure: the JSON envelope string is itself
+        // JSON, so re-parsing it through the canonical Deserialize
+        // path reconstructs the typed envelope map, with the payload
+        // slot routed through `visit_str` once more. The two
+        // `visit_str` passages (one inside recv, one inside
+        // `json.parse`) MUST both hit the `<handle N>` precedence —
+        // any drift in either layer would fail this match arm.
+        let parsed_envelope = parse
+            .call(vec![Value::Str(envelope_string)])
+            .expect("json.parse of recv envelope should succeed");
+        let envelope_map_rc = match parsed_envelope {
+            Some(Value::Map(m_rc)) => m_rc,
+            other => panic!(
+                "json.parse of recv envelope should yield Value::Map envelope, got {:?}",
+                other
+            ),
+        };
+        let payload_value = {
+            let envelope_map = envelope_map_rc.borrow();
+            envelope_map
+                .get("payload")
+                .cloned()
+                .expect("envelope map should contain 'payload' key")
+        };
+
+        // The regression-locking assertion: the canonical `<handle N>`
+        // tagged form must round-trip through bus.publish → bus.recv
+        // → json.parse as `Value::Handle(42)`, NOT fall through to
+        // the generic-value path and land as `Value::Str("<handle 42>")`.
+        // Drift in either the canonical Serialize (publish side) or
+        // the canonical Deserialize (recv side or json.parse side)
+        // would surface here with an explicit panic message.
+        match payload_value {
+            Value::Handle(id) => assert_eq!(
+                id, 42,
+                "expected Handle(42) end-to-end through message_bus.publish/recv \
+                 + json.parse, got Handle({id})"
+            ),
+            Value::Str(s) => panic!(
+                "FAIL: the `<handle N>` tagged form did NOT survive the end-to-end \
+                 bus round-trip; payload reconstructed as Value::Str({s:?}) instead \
+                 of Value::Handle(42). Likely cause: drift in canonical \
+                 `impl Serialize for Value::Handle(N)` (publish-side) or canonical \
+                 `impl Deserialize for Value::visit_str` (recv-side OR \
+                 json.parse-side). Compare to fixtures 1 and 4 of \
+                 `test_json_parse_tagged_forms` which lock the parse-side precedence."
+            ),
+            other => panic!(
+                "expected Value::Handle(42) end-to-end through message_bus.publish/recv \
+                 + json.parse, got {:?}",
+                other
+            ),
+        }
     }
 
     #[cfg(feature = "stdlib")]
@@ -1659,7 +2251,9 @@ mod tests {
                 Value::Str("123-456".to_string()),
             ])
             .unwrap();
-        assert!(matches!(result, Some(Value::Array(arr)) if arr.len() >= 2));
+        // See breadcrumb in `test_json_parse` above describing the
+        // `.borrow()` fix for `Value::Array(arr)` matches! patterns.
+        assert!(matches!(result, Some(Value::Array(arr)) if arr.borrow().len() >= 2));
     }
 
     #[cfg(feature = "stdlib")]
@@ -1673,7 +2267,9 @@ mod tests {
                 Value::Str("a1b23c4".to_string()),
             ])
             .unwrap();
-        assert!(matches!(result, Some(Value::Array(arr)) if arr.len() == 3));
+        // See breadcrumb in `test_json_parse` above describing the
+        // `.borrow()` fix for `Value::Array(arr)` matches! patterns.
+        assert!(matches!(result, Some(Value::Array(arr)) if arr.borrow().len() == 3));
     }
 
     #[cfg(feature = "stdlib")]

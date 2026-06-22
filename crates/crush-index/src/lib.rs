@@ -16,6 +16,7 @@
 
 pub mod index;
 pub mod query;
+pub mod stale;
 
 pub use index::{CrushIndex, FunctionEntry, ModuleEntry};
 pub use query::{CallSite, CoverageGap};

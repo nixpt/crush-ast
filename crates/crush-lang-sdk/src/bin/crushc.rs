@@ -53,6 +53,14 @@ struct Cli {
     #[arg(short = 'O', long)]
     optimize: bool,
 
+    /// Emit `cap_call "invariant.evaluate"` instructions at the top of every
+    /// function targeted by an `@invariant` block with a non-empty
+    /// `check_source`. Default: off (invariant.check_source is stored, not
+    /// executed, at compile-time). When enabled, the compiler also registers
+    /// the `invariant.evaluate` capability permission automatically.
+    #[arg(long)]
+    invariant_runtime: bool,
+
     /// Declare a capability permission (repeatable).
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
@@ -248,16 +256,21 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // ── Step 4: Compile to CASM then VM ─────────────────────────────
+    if cli.verbose && cli.invariant_runtime {
+        eprintln!("crushc: invariant runtime checks enabled");
+    }
     match cli.emit {
         EmitKind::Casm => {
-            let mut compiler = crush_frontend::compiler::Compiler::new();
+            let mut compiler = crush_frontend::compiler::Compiler::new()
+                .with_invariant_runtime(cli.invariant_runtime);
             let casm_prog = compiler.compile(program)?;
             let casm_text = format_casm_program(&casm_prog, &cli.caps);
             emit_text_output(cli, &casm_text)?;
             Ok(())
         }
         EmitKind::Vm => {
-            let mut compiler = crush_frontend::compiler::Compiler::new();
+            let mut compiler = crush_frontend::compiler::Compiler::new()
+                .with_invariant_runtime(cli.invariant_runtime);
             let casm_prog = compiler.compile(program)?;
             let vm_program = crush_lang_sdk::compile::casm_to_vm(&casm_prog)?;
 

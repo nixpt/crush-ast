@@ -240,6 +240,48 @@ fn crush_repl_meta_command_parse_error_default_mode_remains_text() {
 }
 
 #[test]
+fn crush_repl_meta_command_error_is_public_api() {
+    // Compile-time + minimal-runtime lockdown that `MetaCommandError`
+    // is reachable at `crush_lang_sdk::repl::MetaCommandError` AND
+    // that the `Parse` struct-variant's fields are `pub` (so external
+    // hosts can destructure `MetaCommandError::Parse { source, errors }`
+    // in their own dispatch envelopes). If a future contributor
+    // regresses the type to private OR the fields to private, this
+    // test fails to compile — locking the public surface so host
+    // authors don't get silently broken.
+    use crush_lang_sdk::repl::MetaCommandError;
+
+    // Parse variant: fields must be destructurable from outside the
+    // `repl` module. Empty Vec is enough — we don't need a real
+    // `crush_frontend::parser::ParseError` to assert field visibility.
+    let parse = MetaCommandError::Parse {
+        source: "let = ".to_string(),
+        errors: Vec::new(),
+    };
+    match parse {
+        MetaCommandError::Parse { source, errors } => {
+            assert_eq!(source, "let = ");
+            assert!(errors.is_empty());
+        }
+        MetaCommandError::Other(_) => {
+            panic!("expected Parse variant after construct + match");
+        }
+    }
+
+    // Other variant: wrapped anyhow::Error must be accessible so
+    // hosts can walk the source chain in their own dispatch.
+    let other = MetaCommandError::Other(anyhow::anyhow!("smoke-test other"));
+    match other {
+        MetaCommandError::Other(e) => {
+            assert_eq!(e.to_string(), "smoke-test other");
+        }
+        MetaCommandError::Parse { .. } => {
+            panic!("expected Other variant after construct + match");
+        }
+    }
+}
+
+#[test]
 fn crush_repl_happy_path_json_mode_emits_no_diagnostic() {
     // Successful literal eval — no NDJSON records on stderr. Guards a
     // regression where a future contributor moves an `eprintln!` outside

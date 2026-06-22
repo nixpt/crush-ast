@@ -2,6 +2,7 @@ use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
     ImportStatement, Program, Statement,
 };
+use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_frontend::compiler::Compiler;
 use std::collections::HashMap;
 
@@ -864,5 +865,183 @@ fn compiles_whitespace_only_program() {
         result.is_ok(),
         "whitespace only should compile: {:?}",
         result.err()
+    );
+}
+
+/// Build a manifest with a single invariant that targets `func_name` and
+/// carries the given `check_source`. Invariant.name is derived from
+/// `func_name` so two tests can coexist without shared-state collisions.
+fn manifest_for_function(func_name: &str, check_source: &str) -> ModuleManifest {
+    ModuleManifest {
+        purpose: "test".to_string(),
+        invariants: vec![Invariant {
+            name: format!("{func_name}_invariant"),
+            description: "test".to_string(),
+            applies_to: vec![func_name.to_string()],
+            consequence: None,
+            check_source: Some(check_source.to_string()),
+        }],
+        ..Default::default()
+    }
+}
+
+/// When `with_invariant_runtime(true)` is set, every matching `@invariant`
+/// gets a `cap_call "invariant.evaluate"` instruction after the function's
+/// param-store loop, with structured args carrying invariant_name,
+/// function_name, and check_source. Non-matching invariants do NOT emit,
+/// and the cap_call permission is registered in `casm.manifest.permissions`.
+#[test]
+fn emits_runtime_invariant_cap_calls_when_flag_enabled() {
+    let mut program = create_program(vec![Statement::VarDecl {
+        name: "x".to_string(),
+        value: int(7),
+        type_hint: CastType::Any,
+        meta: meta(),
+    }]);
+    program.manifest = Some(ModuleManifest {
+        purpose: "test".to_string(),
+        invariants: vec![
+            Invariant {
+                name: "matching".to_string(),
+                description: "applies to main".to_string(),
+                applies_to: vec!["main".to_string()],
+                consequence: None,
+                check_source: Some("ctx > 0".to_string()),
+            },
+            Invariant {
+                name: "non_matching".to_string(),
+                description: "targets a different function".to_string(),
+                applies_to: vec!["unrelated_fn".to_string()],
+                consequence: None,
+                check_source: Some("never_runs".to_string()),
+            },
+            Invariant {
+                // An invariant that *targets main* but lacks a check_source
+                // should be silently skipped (consistent with `wip_check.rs`
+                // silent-skip on missing data) — guards against the cap_call
+                // cap from being requested accidentally on design-only docs.
+                name: "design_only".to_string(),
+                description: "doc-only invariant, no check_source".to_string(),
+                applies_to: vec!["main".to_string()],
+                consequence: Some("if violated → data corruption".to_string()),
+                check_source: None,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let mut compiler = Compiler::new().with_invariant_runtime(true);
+    let casm = compiler.compile(program).expect("compile");
+    let main_body = &casm
+        .functions
+        .get("main")
+        .expect("main function missing")
+        .body;
+
+    // Exactly one cap_call produced: the matching invariant.
+    let cap_calls: Vec<_> = main_body
+        .iter()
+        .filter(|ins| ins.op == "cap_call" && ins.args["name"] == "invariant.evaluate")
+        .collect();
+    assert_eq!(
+        cap_calls.len(),
+        1,
+        "expected exactly one invariant cap_call, got {cap_calls:?}"
+    );
+
+    let cap = cap_calls[0];
+    assert_eq!(cap.args["invariant_name"], "matching");
+    assert_eq!(cap.args["function_name"], "main");
+    assert_eq!(cap.args["check_source"], "ctx > 0");
+    assert_eq!(cap.args["argc"], 0);
+
+    // Non-matching invariant must NOT have produced a cap_call.
+    let non_matching_present = main_body
+        .iter()
+        .any(|ins| ins.args.get("invariant_name").and_then(|v| v.as_str()) == Some("non_matching"));
+    assert!(
+        !non_matching_present,
+        "invariant targeting a different function must not emit"
+    );
+
+    // Design-only invariant (no check_source) must also NOT have emitted.
+    let design_only_present = main_body
+        .iter()
+        .any(|ins| ins.args.get("invariant_name").and_then(|v| v.as_str()) == Some("design_only"));
+    assert!(
+        !design_only_present,
+        "invariant without check_source must be skipped silently"
+    );
+
+    // Permission was registered in casm.manifest.
+    assert!(
+        casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        "invariant.evaluate must appear in casm.manifest.permissions"
+    );
+}
+
+/// Default behaviour (no builder call) must NOT emit any cap_call for
+/// matching invariants, and must NOT register the cap permission.
+#[test]
+fn invariant_runtime_is_disabled_by_default() {
+    let mut program = create_program(vec![Statement::Return {
+        value: Some(int(0)),
+        meta: meta(),
+    }]);
+    program.manifest = Some(manifest_for_function("main", "true"));
+
+    // Use the explicit `Compiler::new().compile(program)` shape because the
+    // `compile_program` helper at the top of this file takes `Vec<Statement>`
+    // (it constructs a fresh `Program` from the body and loses our manifest
+    // attachment). The explicit form preserves the manifest so this test
+    // actually exercises the default-off path with a matching invariant.
+    let mut compiler = Compiler::new();
+    let casm = compiler.compile(program).expect("compile");
+    let main_body = &casm
+        .functions
+        .get("main")
+        .expect("main function missing")
+        .body;
+
+    assert!(
+        !main_body
+            .iter()
+            .any(|ins| ins.op == "cap_call" && ins.args["name"] == "invariant.evaluate"),
+        "no invariant cap_calls should be emitted by default"
+    );
+    assert!(
+        !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        "no invariant.evaluate permission without flag"
+    );
+}
+
+/// Mirrors the matching-invariant emit block: an `@invariant` whose
+/// `check_source` is `Some("")` is effectively a doc stub — no evaluator can
+/// run an empty expression. Confirm such stubs are silently skipped.
+#[test]
+fn empty_check_source_invariance_is_silently_skipped() {
+    let mut program = create_program(vec![Statement::Return {
+        value: Some(int(0)),
+        meta: meta(),
+    }]);
+    program.manifest = Some(manifest_for_function("main", ""));
+
+    let mut compiler = Compiler::new().with_invariant_runtime(true);
+    let casm = compiler.compile(program).expect("compile");
+    let main_body = &casm
+        .functions
+        .get("main")
+        .expect("main function missing")
+        .body;
+
+    assert!(
+        !main_body
+            .iter()
+            .any(|ins| ins.op == "cap_call" && ins.args["name"] == "invariant.evaluate"),
+        "empty check_source should be silently skipped, not emitted"
+    );
+    assert!(
+        !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        "no permission registered when check_source is empty"
     );
 }
