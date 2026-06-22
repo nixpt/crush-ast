@@ -137,3 +137,25 @@ Original sequence (thinker-recommended 2026-06-17) was: merge `crush-ast` PR #2 
 - A-5 (strip 18 component warnings) still open (P2).
 - dogfood-m4 arc active on `agent/vibe/dogfood-m4` at `977c489`.
 
+## 2026-06-22T15:00:00-05:00 — [REGISTRATION] crush-pkg fedpath contract retro-registered (CRUSHDEJAVUE-1)
+
+Reason:
+The crush-pkg fedpath byte-exact NDJSON contract shipped in commit `2f2b2f5` on `agent/buffy/network` (2026-06-20) without a prompt cross-reference to STATE.md / TASKS.md. Editor + CI + future contributors were therefore blind to a load-bearing cross-boundary contract. CRUSHPKG-1 (PR #6) closed the gap retroactively on 2026-06-22; CRUSHRUNNERS-1 (PR #7) catalogued 3 sibling runner-subsystem gaps surfaced alongside. CRUSHDEJAVUE-1 (this entry) is the dejavue-side backfill so a future agent context-boot via `dejavue context` skips the re-discovery arc.
+
+**Branch state at this backfill:**
+- `agent/buffy/CRUSHDEJAVUE-1` (this worktree) at `2f2b2f5` (the implementation commit being registered).
+- Prior registration branches: `agent/buffy/CRUSHPKG-1` (STATE.md + TASKS.md); `agent/buffy/CRUSHRUNNERS-1` (TICKETS/CRUSHRUNNERS-1.md, 3 runner gaps).
+
+**Registration surface (test pins at `crates/crush-pkg/src/main.rs::mod tests`):**
+- `handle_lint_with_byte_exact_three_rule_fedpath` — byte-exact NDJSON stream across the 3 dead-code rule families (`ObsoleteKey` + `PlaceholderValue` + `UnreferencedDependency`) in TOML-line order.
+- `handle_lint_with_referenced_dep_suppresses_finding_end_to_end` — full entry-aware cross-ref pin: `Manifest::from_str` → `parent().join(&entry)` → `scan_entry_file_references` → `lint_capsule_toml_with_entry`.
+- `scan_entry_file_references` URL-fragment fix at `builder.rs:998-1007` — locks down the whitespace-or-BOL `#` gate so the byte-exact NDJSON isn't corrupted by stray URL-fragment lines.
+
+**Why retro vs prompt:**
+The fedpath work was the centrepiece of a squash-merged branch on `agent/buffy/network`. The squash collapsed ~30 atomic commits into a single `2f2b2f5` commit; cross-references to STATE.md / TASKS.md were not part of the squash. Replaying the squash atomic-by-atomic would have been costlier than a focused docs-only registration pass (CRUSHPKG-1) + a dejavue backfill (this entry). Mirrors the established CRUSHVM-1 / CRUSHRUST-1 retroactive pattern.
+
+**Trade-off:**
+- The registration is post-hoc. Future contributors between 2026-06-20 and 2026-06-22 (2-day window) saw the fedpath contract without STATE.md / TASKS.md cross-references.
+- The retroactive path is cheaper than forward-only registration and matches the squad's existing documented pattern.
+- The 3 runner gaps exposed by CRUSHRUNNERS-1 are tracked under separate tickets (each sized S) so future registration passes don't bottleneck on a single arc.
+
