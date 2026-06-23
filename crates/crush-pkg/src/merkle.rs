@@ -1,3 +1,16 @@
+//! Merkle-tree primitives for hash-verifying capsule sets.
+//!
+//! Internal helper for the multi-capsule publication path — not yet
+//! wired into the `crush-pkg` CLI surface. Kept as `mod` (private)
+//! in `lib.rs` rather than `pub mod` because nothing outside
+//! `crush-pkg` reaches it today. The `#[allow(dead_code)]` here is
+//! the per-module corollary: `lib.rs` crate-wide allow was rejected
+//! in round-1 review as too broad; this is the same effect, scoped
+//! tightly to the one module that has orphan `pub` items used only
+//! by its own `#[cfg(test)] mod tests`.
+
+#![allow(dead_code)]
+
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------

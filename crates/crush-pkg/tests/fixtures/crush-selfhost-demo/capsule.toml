@@ -1,0 +1,22 @@
+# crush-selfhost-demo / capsule.toml
+#
+# Reference fixture for the "Crush can grow itself" arc.
+#
+# Authored entirely in Crush (see main.crush) — zero Rust touched to ship
+# the feature. The legacy `capsule_type = "Crush"` field is set explicitly
+# to match the canonical schema historically shipped by crush-pkg; the
+# modern field is `language = "crush"` (what the runner dispatch actually
+# keys on). `Manifest::from_str` consumes `capsule_type` as the
+# auto-migration signal and lifts it into `language` — the struct field
+# `capsule_type` is `skip_serializing` on both read and write paths, so
+# the *observable* schema signal is the `language = "crush"` line, not
+# the legacy value.
+
+[capsule]
+name = "crush-selfhost-demo"
+version = "0.1.0"
+description = "Reference fixture: a non-trivial feature authored entirely in Crush."
+entry = "main.crush"
+language = "crush"
+capsule_type = "Crush"
+author = "crush-ast self-extension test suite"

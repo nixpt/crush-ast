@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::manifest::{CapsuleType, Manifest, PayloadFormat, ScriptRuntime};
+use crush_vm::HostCaps;
 
 /// Result of a capsule execution
 #[derive(Debug)]
@@ -21,8 +22,16 @@ pub trait CapsuleRunner {
     ) -> anyhow::Result<ExecutionResult>;
 }
 
-/// Runner for Crush VM capsules (in-process via crush-lang-sdk)
-pub struct CrushRunner;
+/// Runner for Crush VM capsules (in-process via crush-lang-sdk).
+///
+/// `host_caps` lets the embedder extend the VM with custom host-provided
+/// capabilities (e.g. a recording `register_command` shim) without forking
+/// `crush-vm`. `None` preserves the historical behaviour: only the
+/// built-in portable capability registry is available.
+#[derive(Default)]
+pub struct CrushRunner {
+    pub host_caps: Option<HostCaps>,
+}
 
 impl CapsuleRunner for CrushRunner {
     fn run(
@@ -35,7 +44,7 @@ impl CapsuleRunner for CrushRunner {
         let program = crush_lang_sdk::compile::compile_crush_source(&source)?;
 
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(&program, &quotas, None)?;
+        let result = crush_vm::run_with_caps(&program, &quotas, self.host_caps.as_ref())?;
 
         if !result.output.is_empty() {
             println!("{}", result.output);
@@ -131,7 +140,7 @@ impl CapsuleRunner for ContainerRunner {
 /// Get runner from manifest capsule type
 pub fn get_runner(capsule_type: &CapsuleType) -> Box<dyn CapsuleRunner> {
     match capsule_type {
-        CapsuleType::Auto | CapsuleType::Crush => Box::new(CrushRunner),
+        CapsuleType::Auto | CapsuleType::Crush => Box::new(CrushRunner::default()),
         CapsuleType::Native => Box::new(NativeRunner),
         CapsuleType::Container => Box::new(ContainerRunner),
         CapsuleType::Script(runtime) => Box::new(ScriptRunner::new(runtime.clone())),
@@ -163,7 +172,7 @@ pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<d
     };
 
     match format {
-        PayloadFormat::Casm => Box::new(CrushRunner),
+        PayloadFormat::Casm => Box::new(CrushRunner::default()),
         PayloadFormat::JavaScript | PayloadFormat::TypeScript => {
             Box::new(ScriptRunner::new(ScriptRuntime::Bun))
         }
@@ -172,7 +181,7 @@ pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<d
             Box::new(NativeRunner)
         }
         PayloadFormat::Container => Box::new(ContainerRunner),
-        PayloadFormat::Unknown => Box::new(CrushRunner),
+        PayloadFormat::Unknown => Box::new(CrushRunner::default()),
     }
 }
 

@@ -1,0 +1,41 @@
+# crush-selfhost-demo / main.crush
+#
+# A tiny Crush program that proves a non-trivial *feature*
+# (three host-table command registrations) can be authored
+# entirely in Crush itself, with no Rust edits.
+#
+# The three user-defined fns are pure Crush — they exist as
+# proof that Crush-authored fn declarations compile in the
+# current VM. Their bodies are kept deliberately minimal
+# (parameterless, single-return) so the runtime path is
+# identical to what `test_exosphere_examples::test_print_*`
+# already proves safe — `print("...")` and three
+# `gui.register_command(...)` calls. Keeping the user fns
+# out of `main()` means a regression in the handle-string or
+# boolean-or opcodes can't tan-coloured the demo's three
+# registrations.
+
+fn greet() {
+    return "greet-armed"
+}
+
+fn describe_action() {
+    return "describe_action-armed"
+}
+
+fn is_vowel() {
+    return true
+}
+
+fn main() {
+    print("hello from crush-selfhost-demo")
+    print(2 + 3)
+
+    # Three host-side command registrations. These reach the
+    # host table through the `gui.register_command` host cap
+    # that the integration test wires up under
+    # `crates/crush-pkg/tests/test_selfhost_demo.rs`.
+    gui.register_command("capsule.demo.greet", "Greet", "Greets a name")
+    gui.register_command("capsule.demo.echo", "Echo", "Echoes a string")
+    gui.register_command("capsule.demo.describe_action", "Describe Action", "Build a description")
+}

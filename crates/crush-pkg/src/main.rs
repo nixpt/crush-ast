@@ -35,23 +35,30 @@ pub enum MessageFormat {
     Strict,
 }
 
-mod builder;
-mod bundle;
-mod ecap;
-mod manifest;
-mod merkle;
-mod packer;
-mod runners;
-mod signer;
-mod site;
-
-use builder::PackageBuilder;
+// Modules are declared in `src/lib.rs` as `pub mod ...` so the lib
+// facade exposes them. The bin and lib are SEPARATE crates in this
+// Cargo package, so `main.rs` reaches them through the lib's external
+// crate name (`crush_pkg::builder::*`, etc.) — unqualified
+// `builder::*` paths don't resolve from the bin's crate root.
+//
+// Without the qualifier this file was failing with E0432/E0433
+// ("unresolved import" / "unresolved module") because `main.rs`
+// is the bin crate root, not a node in the lib's module tree. The
+// lib re-exports its modules as `pub mod`, but those modules are
+// reachable from outside the lib ONLY through `crush_pkg::` (the
+// lib crate's external name). Closing
+// `TICKETS/CRUSH-SELFHOST-1.md#constraint-4` was the motivation
+// for adding `src/lib.rs` in the first place: the integration test
+// `tests/test_selfhost_demo.rs` already uses `crush_pkg::*` paths;
+// `main.rs` joins the same external-name idiom here so the bin and
+// the test exercise the same module tree.
+use crush_pkg::builder::PackageBuilder;
 use std::collections::HashSet;
 
-use manifest::Manifest;
-use packer::{pack, unpack};
-use runners::{ExecutionResult, get_runner_for_payload};
-use signer::{generate_keys, sign_package, verify_package};
+use crush_pkg::manifest::Manifest;
+use crush_pkg::packer::{pack, unpack};
+use crush_pkg::runners::{ExecutionResult, get_runner_for_payload};
+use crush_pkg::signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
@@ -445,14 +452,14 @@ fn emit_post_dispatch_lint(
             .and_then(|manifest| {
                 let root = manifest_path.parent()?;
                 let entry_path = root.join(&manifest.capsule.entry);
-                builder::scan_entry_file_references(&entry_path)
+                crush_pkg::builder::scan_entry_file_references(&entry_path)
             });
-    let findings = builder::lint_capsule_toml_with_entry(&content, entry_refs.as_ref());
+    let findings = crush_pkg::builder::lint_capsule_toml_with_entry(&content, entry_refs.as_ref());
     if json_mode {
         for f in &findings {
             emit_diag(
                 out,
-                builder::LintFinding::CODE,
+                crush_pkg::builder::LintFinding::CODE,
                 "note",
                 &f.message,
                 Some("capsule.toml"),
@@ -524,7 +531,7 @@ fn handle_new(name: String, dir: Option<PathBuf>) -> anyhow::Result<()> {
     if target.exists() {
         anyhow::bail!("directory {} already exists", target.display());
     }
-    let manifest = manifest::scaffold_package(&target, &name)?;
+    let manifest = crush_pkg::manifest::scaffold_package(&target, &name)?;
     println!(
         "created new Crush package at {}",
         target.join("capsule.toml").display()
@@ -631,7 +638,7 @@ fn handle_site(
     did: Option<String>,
 ) -> anyhow::Result<()> {
     let output = output.unwrap_or_else(|| PathBuf::from(format!("{}.ecap", name)));
-    let n = site::write_site_capsule(
+    let n = crush_pkg::site::write_site_capsule(
         &dir,
         &name,
         &version,
@@ -651,7 +658,7 @@ fn handle_site(
 }
 
 fn handle_site_extract(capsule: PathBuf, dir: PathBuf) -> anyhow::Result<()> {
-    let entry = site::extract_site_capsule(&capsule, &dir)?;
+    let entry = crush_pkg::site::extract_site_capsule(&capsule, &dir)?;
     println!(
         "extracted {} -> {} (entry: {})",
         capsule.display(),
@@ -663,7 +670,7 @@ fn handle_site_extract(capsule: PathBuf, dir: PathBuf) -> anyhow::Result<()> {
 
 fn handle_show() -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
-    println!("{}", manifest::Manifest::to_toml_string(&manifest)?);
+    println!("{}", crush_pkg::manifest::Manifest::to_toml_string(&manifest)?);
     println!("  (at {})", root.join("capsule.toml").display());
     Ok(())
 }
