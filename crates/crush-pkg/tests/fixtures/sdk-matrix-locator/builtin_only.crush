@@ -35,11 +35,26 @@
 //
 // Cross-link. CELL 4-in-main (the multi-cap flow that fires
 // `io.print("builtin-caps-fire-from-source")` from inside `main.crush`)
-// is compile-locked via CELL 7's `assert!(!program_via_compile.code.is_empty())`
-// (cell 7's non-empty code is the proof that `main.crush` parsed +
-// compiled successfully, including its CELL 4 inline `io.print` call).
-// Reaching CELL 4 in `main.crush`'s execution flow is implicit; CELL
-// 4 reachability via this dedicated isolation is explicit.
+// is **compile-reachable** but coarse-grained:
+//   (a) CELL 7's `assert!(!program_via_compile.code.is_empty())` confirms
+//       `main.crush` parsed + compile emitted SOME bytecode; this does
+//       NOT verify that the io.print statement specifically produced
+//       its own PRINT opcode (a regression that degraded io.print to
+//       a no-op opcode would still pass the `code.is_empty()` check
+//       as long as OTHER statements in fn main() emitted opcodes).
+//   (b) Statement-level reachability in main.crush is implicit: if a
+//       statement in `fn main()` fails, `CrushRunner::run(...)` either
+//       panics on `.expect(...)` OR halts mid-fn, which means the cap
+//       capturer carries fewer than the expected 3 cell-capturer-recorded
+//       calls (`capsule.cell_1`, `capsule.cell_3`, `repl_runtime.cell_5`).
+//       `io.print` itself is invisible to the capturer (built-in caps
+//       dispatch through `crush-vm::caps::capabilities`, not via
+//       `HostCap::call`), so the capturer is a PARTIAL per-statement
+//       signal — fine for CELLS 1, 3, 5; insufficient for CELL 4.
+//
+// The dedicated isolation in this fixture gives CELL 4 the only explicit,
+// fine-grained regression guard — a per-statement sentinel assertion
+// via `run_with_caps(&program, &quotas, None)`.
 //
 // The compact 1-line program body fits `cat`-discoverability for
 // review-by-cell (matrix ticket claim: "a reviewer can `cat` the
