@@ -1,0 +1,33 @@
+# =============================================================================
+# tests/fixtures/sdk-matrix-locator/capsule.toml  [FIXTURE]
+#
+# Structural-lockstep fixture for
+#   crush-pkg/tests/test_selfhost_sdk_matrix.rs
+# Matrix ticket: TICKETS/CRUSH-SELFHOST-1.md
+# Audit-resolution ticket: TICKETS/CRUSH-SELFHOST-1-AMEND-1.md (RESOLVED)
+#
+# CELL 2 (language dispatch). `language = "crush"` (lowercase, the shard
+# the dispatcher in `crates/crush-pkg/src/manifest.rs::language_to_capsule_type`
+# keys on). The lockstep proof for cell 2 lives in
+# `test_selfhost_sdk_matrix.rs::sdk_matrix_cell_2_legacy_capsule_type_auto_migrates_to_language`,
+# which pins BOTH halves of CRUSH-SELFHOST-1-AMEND-1:
+#
+#   HALF 1: legacy `capsule_type = "Crush"` is auto-migrated to
+#           `language = "crush"` (lowercase) by `Manifest::from_str`.
+#   HALF 2: `language_to_capsule_type("crush")` AND `language_to_capsule_type("Crush")`
+#           BOTH return `CapsuleType::Crush` (case-insensitive).
+#
+# The fixture itself sets `language = "crush"` (the canonical form, no
+# legacy migration path triggered). The lockstep test's audit-trail
+# case writes a SEPARATE legacy fixture on the fly (since the matrix
+# test pins the auto-migrate, not just the canonical case).
+#
+# ENTRY. `entry = "main.crush"` points at the fixture directory's
+# own `main.crush`, which contains the four cap-side cells (1, 3, 4, 5)
+# with inline cell-mapping comments.
+# =============================================================================
+
+[capsule]
+name = "matrix-locator-fixture"
+language = "crush"
+entry = "main.crush"

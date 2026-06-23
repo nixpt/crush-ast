@@ -1,0 +1,39 @@
+// =============================================================================
+// tests/fixtures/sdk-matrix-locator/runtime_api.crush  [FIXTURE]
+//
+// Structural-lockstep fixture for
+//   crush-pkg/tests/test_selfhost_sdk_matrix.rs
+// Matrix ticket: TICKETS/CRUSH-SELFHOST-1.md
+//
+// CELL 6 (Runtime API) — **dedicated isolation**.
+//
+// CELL 6 pins the higher-level `crush_lang_sdk::Runtime` API
+// (re-exported at `crush-lang-sdk/src/lib.rs:53`) which loads +
+// assembles + executes a `Program`. CELL 7 (Compile API, in the
+// SAME function-family) is also Runtime-adjacent — it feeds
+// `compile_crush_source(s) -> Program` to either
+// (a) `CrushRunner::run(...)` (the production path in main.crush's
+//     fixture-driven cell), or
+// (b) `Runtime::new().run(...)` (this dedicated path).
+//
+// The matrix test exercises BOTH paths separately so a regression
+// in either the compile-to-program API or the Runtime.exec path
+// surfaces independently:
+//
+//   * CELL 7 / production-path: `compile_crush_source(PROGRAM_SRC)`
+//     where `PROGRAM_SRC` is `include_str!(".../main.crush")`. The
+//     produced `Program.code.len()` must be non-empty.
+//   * CELL 6 / Runtime-path:    `compile_crush_source(<this fixture's
+//     body>) -> Runtime::new().run(&program)` — a SEPARATE invocation
+//     proving that loading + assembling + executing through the
+//     `Runtime` wrapper succeeds with the sentinel `"from Runtime API"`
+//     appearing in `runtime_result.output`.
+//
+// The compact 1-line program body fits `cat`-discoverability for
+// review-by-cell (matrix ticket claim: "a reviewer can `cat` the
+// fixture and read the cell references inline").
+// =============================================================================
+
+fn main() {
+    io.print("from Runtime API")
+}
