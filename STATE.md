@@ -67,6 +67,19 @@ main.rs / Cargo.toml. Test invariant: 78 `crush-pkg --bin` tests
 of the runner-subsystem catalogue at `TICKETS/CRUSHRUNNERS-1.md`
 (CRUSHRUNNERS-1 PR #7).
 
+**Doc hardening (CRUSHRUN-S2):** `crush-pkg`'s runner subsystem
+documents the `ScriptRuntime` 4-variant cap (`manifest.rs:174`) as an
+**intent-aware cap** — extending the enum is mechanical (2 places per
+new runtime: add variant + `get_runtime_command` arm in `runners.rs`)
+but NOT done speculatively. When a real language demand emerges
+(Ruby / Go-script / Julia / Perl / R / ...), add the variant + binary
+mapping; if activation is exploratory, gate the new runtime behind
+`--strict` (the same opt-in gate CRUSHFMT-1 introduced for the
+unknown-format run path — see PR #10). 78 `crush-pkg --bin` tests
+unchanged (docs-only delta; no Rust code touched). Closes Gap 2 of
+`TICKETS/CRUSHRUNNERS-1.md` (sister branch `agent/buffy/CRUSHRUNNERS-1`,
+PR #7 — ticket file not yet merged into `2f2b2f5`).
+
 **Live memory = `.dejavue/`** (boot with `dejavue context` — handoff/state/decisions/timeline). This STATE.md is a foreman-resume pointer; the dejavue is the source of truth. **Open work / roadmap → `TASKS.md`.**
 
 **Foreman registration + cross-audit vs exosphere in-tree crush + known gaps:** see `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
