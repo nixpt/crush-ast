@@ -842,6 +842,7 @@ dependencies = [
  "casm",
  "clap",
  "crush-cast",
+ "crush-errors",
  "crush-frontend",
  "crush-index",
  "crush-vm",
@@ -856,6 +857,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "ureq",
+ "yansi",
 ]
 
 [[package]]
@@ -4275,6 +4277,12 @@ dependencies = [
  "libc",
  "rustix 1.1.4",
 ]
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yasna"
