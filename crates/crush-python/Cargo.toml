@@ -8,9 +8,14 @@ repository.workspace = true
 
 [lib]
 name = "crush_python"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 crush-cast.workspace = true
 serde_json.workspace = true
-pyo3 = { version = "0.23", features = ["extension-module", "abi3", "abi3-py311"] }
+pyo3 = { version = "0.23", features = ["abi3", "abi3-py311"] }
+
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+

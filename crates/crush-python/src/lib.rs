@@ -38,3 +38,45 @@ fn crush(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cast_version, m)?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cast_version() {
+        assert_eq!(cast_version(), "0.2");
+    }
+
+    #[test]
+    fn test_parse_cast_valid() {
+        let json = r#"{"cast_version":"0.2","entry":"main","functions":{}}"#;
+        let result = parse_cast(json);
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        assert!(val.contains("0.2"));
+    }
+
+    #[test]
+    fn test_parse_cast_invalid() {
+        let json = r#"{"invalid_field":true}"#;
+        let result = parse_cast(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_cast_valid() {
+        let json = r#"{"cast_version":"0.2","entry":"main","functions":{}}"#;
+        let result = validate_cast(json);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn test_validate_cast_invalid() {
+        let json = r#"{"invalid_field":true}"#;
+        let result = validate_cast(json);
+        assert!(result.is_err());
+    }
+}
+

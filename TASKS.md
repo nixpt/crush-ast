@@ -31,7 +31,7 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 - [x] **Test the Rust frontend** — `crush-lang-rust` (`syn` → CAST) ships but has
   **0 tests**. Mirror the `crush-lang-python` test shape (feature detection +
   lowering round-trip).
-- [ ] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.
+- [x] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.
 - [ ] **Lambda + Match compilation** — currently parse but bail at compile time.
   Wire through `crush-frontend` → CASM.
 - [ ] **async/await execution** — parsed but not executable; design the
