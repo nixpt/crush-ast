@@ -724,6 +724,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-diagnostics"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crush-errors"
 version = "0.2.0"
 dependencies = [
@@ -899,6 +907,7 @@ dependencies = [
  "chrono",
  "clap",
  "crush-cast",
+ "crush-diagnostics",
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",

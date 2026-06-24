@@ -84,8 +84,9 @@ impl Runtime {
     /// ```rust,no_run
     /// use crush_lang_sdk::Runtime;
     ///
+    /// let scheduler = "fn main() { io.print(\"tick\") }";
     /// let rt = Runtime::new()
-    ///     .with_codebase(&[("scheduler", include_str!("../scheduler.crush"))])
+    ///     .with_codebase(&[("scheduler", scheduler)])
     ///     .unwrap();
     /// ```
     pub fn with_codebase(
