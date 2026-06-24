@@ -168,7 +168,6 @@ pub enum CapsuleType {
     Auto,
     Crush,
     Native,
-    Container,
     Script(ScriptRuntime),
 }
 
@@ -192,7 +191,6 @@ pub enum PayloadFormat {
     NativeElf,
     NativeMachO,
     NativePe,
-    Container,
     Unknown,
 }
 
@@ -246,7 +244,9 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
     match language {
         "crush" => CapsuleType::Crush,
         "native" | "rust" | "c" => CapsuleType::Native,
-        "container" => CapsuleType::Container,
+        // Legacy "container" arm removed (CRUSHCN-1) — see validate_language() below and
+        // TICKETS/CRUSHRUNNERS-1.md Gap 1. Falls through to `CapsuleType::Auto` and is
+        // then rejected at parse time by `Manifest::from_str` via validate_language().
         "javascript" | "js" | "ts" | "typescript" | "bun" => {
             CapsuleType::Script(ScriptRuntime::Bun)
         }
@@ -255,6 +255,32 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
         "python" | "py" => CapsuleType::Script(ScriptRuntime::Python),
         _ => CapsuleType::Auto,
     }
+}
+
+/// Strict validation for the legacy `"container"` language value.
+///
+/// Returns `Err` with a user-friendly migration message when `language =
+/// "container"` is encountered. Passes silently for empty strings (auto-detect)
+/// and all other unknown languages (which fall through to `CapsuleType::Auto`
+/// at the `language_to_capsule_type` match above — unknown extensions still
+/// get an honest crush-syntax error instead of being silently mis-routed).
+///
+/// Rationale (CRUSHCN-1): the `ContainerRunner` stub was deleted because
+/// there is no roadmap signal for any of the three candidate models
+/// (Docker-spawn / OCI hooks / WASI-bundle). The legacy literal `"container"`
+/// now fails loudly at parse time instead of silently routing to a stub-bail
+/// at run time. See `TICKETS/CRUSHRUNNERS-1.md` Gap 1 for the thread history
+/// and re-introduction path.
+pub fn validate_language(language: &str) -> anyhow::Result<()> {
+    if language == "container" {
+        anyhow::bail!(
+            "language = \"container\" is no longer supported in crush-pkg. \
+             The Container runner stub was removed (CRUSHCN-1); pick a real \
+             runtime (crush / native / python / javascript / ...) or remove \
+             the language field and let entry-extension detection fill it in."
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +394,11 @@ impl Manifest {
         if manifest.capsule.language.is_empty() {
             manifest.capsule.language = detect_language_from_entry(&manifest.capsule.entry);
         }
+
+        // CRUSHCN-1: reject the legacy "container" stub value at parse time.
+        // Any other unknown language still falls through to `CapsuleType::Auto`
+        // via `language_to_capsule_type` above (no silent fallback here either).
+        validate_language(&manifest.capsule.language)?;
 
         manifest.validate()?;
         Ok(manifest)
@@ -600,5 +631,42 @@ path = "../stdlib"
         let m = Manifest::from_str(toml, Path::new("")).unwrap();
         assert_eq!(m.dependencies.len(), 1);
         assert_eq!(m.dependencies[0].name, "stdlib");
+    }
+
+    #[test]
+    fn language_container_string_rejected_at_parse() {
+        let toml = r#"[capsule]
+name = "legacy-container"
+entry = "Dockerfile"
+language = "container"
+"#;
+        let err = Manifest::from_str(toml, Path::new(""))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no longer supported"),
+            "expected hard-error message containing 'no longer supported', got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn language_unknown_string_still_falls_through_to_auto() {
+        // Non-container unknown languages must NOT be hard-rejected — the
+        // validate_language hook is narrowly scoped to the legacy "container"
+        // literal. Unknown extensions still auto-route via CapsuleType::Auto,
+        // which surfaces an honest crush-syntax error at run time (better than
+        // a misleading "container not supported" message for a real but
+        // unrecognized language).
+        let toml = r#"[capsule]
+name = "future-lang"
+entry = "main.crush"
+language = "rust-script"
+"#;
+        let m = Manifest::from_str(toml, Path::new("")).unwrap();
+        assert_eq!(
+            language_to_capsule_type(&m.capsule.language),
+            CapsuleType::Auto
+        );
     }
 }

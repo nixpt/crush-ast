@@ -51,6 +51,22 @@ The NDJSON wire shape `crush-pkg` emits is locked at multi-rule
 fedpath + entry-aware cross-ref granularity — no longer by
 inspection. Implementation shipped in commit `2f2b2f5`.
 
+**Test hardening (CRUSHCN-1):** `crush-pkg`'s runner subsystem drops
+the `ContainerRunner` stub (`runners.rs:113-129` deleted; 2 dispatch
+arms in `get_runner` + `get_runner_for_payload` replaced with
+comment-only markers; 1 stub-pin test `test_get_runner_container_stub`
+removed) and rejects `language = "container"` at parse-time via new
+`Manifest::validate_language` + bail hook in `Manifest::from_str`
+(`manifest.rs`). Deletion path selected per the user's "if no
+container story is on the roadmap" conditional — zero refs to
+container / docker / oci / wasi in STATE.md / TASKS.md / builder.rs /
+main.rs / Cargo.toml. Test invariant: 78 `crush-pkg --bin` tests
+→ 79 (lost `test_get_runner_container_stub`, gained
+`language_container_string_rejected_at_parse` +
+`language_unknown_string_still_falls_through_to_auto`). Closes Gap 1
+of the runner-subsystem catalogue at `TICKETS/CRUSHRUNNERS-1.md`
+(CRUSHRUNNERS-1 PR #7).
+
 **Live memory = `.dejavue/`** (boot with `dejavue context` — handoff/state/decisions/timeline). This STATE.md is a foreman-resume pointer; the dejavue is the source of truth. **Open work / roadmap → `TASKS.md`.**
 
 **Foreman registration + cross-audit vs exosphere in-tree crush + known gaps:** see `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
