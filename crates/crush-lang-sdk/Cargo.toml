@@ -39,6 +39,7 @@ crush-vm.workspace = true
 crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
+crush-errors.workspace = true
 crush-index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -52,6 +53,7 @@ ureq = { version = "2", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 regex = { version = "1.10", optional = true }
 rustyline = { version = "10.0", optional = true }
+yansi.workspace = true
 
 # wasm32 has no OS RNG; `rand`'s getrandom-0.2 backend needs the `js` source.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

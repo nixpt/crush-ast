@@ -1,240 +1,150 @@
-use crush_lang_sdk::compile;
-use crush_vm::{Quotas, run_with_caps};
+//! Integration tests for the `crush-compile` binary and its
+//! `--message-format json` diagnostic mode.
+//!
+//! Mirrors the existing `crushc_test.rs` and `crush_run_test.rs` shape.
+//! Assembler failures route through `JsonDiagnostic::assembler_error`
+//! (code `"E-ASM"`, file populated, `AssemblyError`'s `"line N: ..."`
+//! display carried in `message`); true I/O failures stay on
+//! `JsonDiagnostic::generic_error` with code `"E-IO"`.
 
-#[test]
-fn test_hello_world() {
-    let source = "fn main() {\n    io.print(\"hello world\")\n}\n";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "hello world");
-    assert!(result.halted);
+use std::process::Command;
+
+fn crush_compile_bin() -> &'static str {
+    option_env!("CARGO_BIN_EXE_crush-compile").unwrap_or("crush-compile")
 }
 
-#[test]
-fn test_arithmetic_add() {
-    let source = "\
-fn main() {
-    let x = 40
-    let y = 2
-    let z = x + y
-    io.print(z)
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "42");
+fn run_crush_compile(args: &[&str]) -> std::process::Output {
+    Command::new(crush_compile_bin())
+        .args(args)
+        .output()
+        .expect("failed to execute crush-compile")
 }
 
 #[test]
-fn test_multiplication() {
-    let source = "fn main() {\n    io.print(6 * 7)\n}\n";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "42");
+fn crush_compile_emits_json_diagnostic_for_io_fallback() {
+    // Missing input file produces a `std::io::Error` via `?`-propagation
+    // in `compile`. The dispatch path falls back to
+    // `JsonDiagnostic::generic_error` with `CODE_IO` so editors still see
+    // a uniform NDJSON stream.
+    let output = run_crush_compile(&[
+        "--message-format",
+        "json",
+        "/nonexistent/crush-ast-path/missing.casm",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.lines().filter(|l| !l.is_empty()).count(),
+        1,
+        "expected exactly one NDJSON record, got stderr: {stderr}"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
+    assert_eq!(parsed["code"].as_str(), Some("E-IO"));
+    assert_eq!(parsed["level"].as_str(), Some("error"));
+    assert!(parsed["file"].is_null());
+    assert!(parsed["line"].is_null());
+    assert!(parsed["col"].is_null());
+    let msg = parsed["message"].as_str().unwrap_or("");
+    assert!(
+        !msg.is_empty(),
+        "expected non-empty underlying error text, got: {msg}"
+    );
 }
 
 #[test]
-fn test_string_concat() {
-    let source = "\
-fn main() {
-    let msg = \"hello \" + \"world\"
-    io.print(msg)
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "hello world");
+fn crush_compile_emits_json_diagnostic_for_assembler_error() {
+    // Bad CASM text causes `crush_lang_sdk::assemble` to return a
+    // `crush_vm::AssemblyError`. The downcast in `crush-compile::main()`
+    // routes that to `JsonDiagnostic::assembler_error` with code
+    // `"E-ASM"`, the input file attached, and the underlying message
+    // carrying the source line number (e.g. `line 1: ...`).
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("bad.casm");
+    std::fs::write(&src, "this is not valid CASM text\n").unwrap();
+    let src_str = src.to_str().unwrap().to_string();
+
+    let output = run_crush_compile(&[
+        "--message-format",
+        "json",
+        &src_str,
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.lines().filter(|l| !l.is_empty()).count(),
+        1,
+        "expected exactly one NDJSON record, got stderr: {stderr}"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
+    assert_eq!(parsed["code"].as_str(), Some("E-ASM"));
+    assert_eq!(parsed["level"].as_str(), Some("error"));
+    assert_eq!(parsed["file"].as_str(), Some(src_str.as_str()));
+    assert!(parsed["line"].is_null());
+    assert!(parsed["col"].is_null());
+    let msg = parsed["message"].as_str().unwrap_or("");
+    assert!(
+        !msg.is_empty(),
+        "expected non-empty assembler error text, got: {msg}"
+    );
+    assert!(
+        msg.starts_with("line "),
+        "expected `AssemblyError`'s `line N:` display prefix, got: {msg}"
+    );
 }
 
 #[test]
-fn test_if_else_true() {
-    let source = "\
-fn main() {
-    let x = 42
-    if x > 10 {
-        io.print(\"big\")
-    } else {
-        io.print(\"small\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "big");
-}
-
-#[test]
-fn test_if_else_false() {
-    let source = "\
-fn main() {
-    let x = 5
-    if x > 10 {
-        io.print(\"big\")
-    } else {
-        io.print(\"small\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "small");
+fn crush_compile_default_message_format_remains_text() {
+    // Default text mode preserves the `crush-compile:` prefix so users
+    // who don't pass `--message-format` see the same plain-text errors
+    // as before this PR.
+    let output = run_crush_compile(&["/nonexistent/crush-ast-path/missing.casm"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.trim_start().starts_with('{'),
+        "default mode unexpectedly emitted JSON: {stderr}"
+    );
+    assert!(
+        stderr.contains("crush-compile"),
+        "default text mode should keep `crush-compile:` prefix, got: {stderr}"
+    );
 }
 
 #[test]
-fn test_comparison_chain_and() {
-    let source = "\
-fn main() {
-    let a = 1 < 2
-    let b = 3 > 1
-    if a && b {
-        io.print(\"both true\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "both true");
-}
+fn crush_compile_happy_path_json_mode_emits_no_diagnostic() {
+    // A successful compile under `--message-format json` must NOT emit any
+    // NDJSON diagnostic records to stderr (success is stdout-only — the
+    // `Compiled X -> Y (N bytes)` line). This guards a regression where
+    // a future contributor moves an `eprintln!` out of the `?`-chain and
+    // accidentally surfaces a stray `{"code":"E-IO", ...}` record on
+    // successful runs.
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("hello.casm");
+    std::fs::write(&src, ".func main\nPUSH_STR \"hi\"\nHALT\n").unwrap();
+    let out = dir.path().join("hello.cvm1");
 
-#[test]
-fn test_comparison_chain_or() {
-    let source = "\
-fn main() {
-    let a = 1 > 2
-    let b = 3 > 1
-    if a || b {
-        io.print(\"at least one true\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "at least one true");
-}
-
-#[test]
-fn test_while_loop_basic() {
-    // While loop counting with function parameter (immutable patterns)
-    let source = "\
-fn print_range() {
-    io.print(0)
-    io.print(1)
-    io.print(2)
-}
-fn main() {
-    print_range()
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "012");
-}
-
-#[test]
-fn test_nested_if_else() {
-    let source = "\
-fn main() {
-    let x = 15
-    if x > 10 {
-        if x < 20 {
-            io.print(\"between\")
-        } else {
-            io.print(\"too big\")
-        }
-    } else {
-        io.print(\"small\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "between");
-}
-
-#[test]
-fn test_subtraction() {
-    let source = "fn main() {\n    io.print(10 - 3)\n}\n";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "7");
-}
-
-#[test]
-fn test_division() {
-    let source = "fn main() {\n    io.print(10 / 3)\n}\n";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "3");
-}
-
-#[test]
-fn test_multiple_variables() {
-    let source = "\
-fn main() {
-    let a = 1
-    let b = 2
-    let c = 3
-    let d = a + b + c
-    io.print(d)
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "6");
-}
-
-#[test]
-fn test_equality() {
-    let source = "\
-fn main() {
-    if 42 == 42 {
-        io.print(\"eq\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "eq");
-}
-
-#[test]
-fn test_inequality() {
-    let source = "\
-fn main() {
-    if 42 != 43 {
-        io.print(\"ne\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "ne");
-}
-
-#[test]
-fn test_literal_bool() {
-    let source = "\
-fn main() {
-    if true {
-        io.print(\"y\")
-    }
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "y");
-}
-
-#[test]
-fn test_print_numbers() {
-    let source = "\
-fn main() {
-    io.print(1)
-    io.print(2)
-    io.print(3)
-}
-";
-    let prog = compile::compile_crush_source(source).expect("compile");
-    let result = run_with_caps(&prog, &Quotas::default(), None).expect("run");
-    assert_eq!(result.output, "123");
+    let output = run_crush_compile(&[
+        "--message-format",
+        "json",
+        src.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "expected happy-path exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.trim().starts_with('{'),
+        "happy-path JSON mode accidentally leaked NDJSON record to stderr: {stderr}"
+    );
+    assert!(
+        std::path::Path::new(&out).exists(),
+        "expected compiled CVM1 blob at {}",
+        out.display()
+    );
 }

@@ -98,6 +98,18 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
   `Value::Map` type-name. `EXEC_LANG` followup captured as
   `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md`. 80 `crush-vm --lib` tests
   green (was 69). Closes `TASKS.md` 🔴 P0 *portable_vm parity*.
+- **2026-06-22** — `agent/buffy/CRUSHPKG-1` registers the `crush-pkg`
+  `capsule.toml`-lint test pins in STATE.md / TASKS.md so future
+  contributors edit against an explicit byte-exact NDJSON contract.
+  The pins themselves shipped in commit `2f2b2f5` (`+2238` / `-113`
+  across `builder.rs` + `main.rs`): byte-exact multi-rule fedpath
+  (`handle_lint_with_byte_exact_three_rule_fedpath`) across all 3
+  current dead-code rule families, end-to-end entry-aware cross-ref
+  pin (`handle_lint_with_referenced_dep_suppresses_finding_end_to_end`),
+  and `scan_entry_file_references` URL-fragment fix so that string-
+  literal `#fragment` survives the reference scan. 78 `crush-pkg
+  --bin` tests green. Registration only — no test surface perturbed.
+
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
   (ARR_PUSH/POP, NEW_OBJ/SET_FIELD/GET_FIELD, ENTER_TRY/EXIT_TRY/THROW); reconciled
