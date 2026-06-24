@@ -13,7 +13,7 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 
 ## 🔴 P0 — correctness / build health
 
-- [ ] **Fix `--all-features` build** — `db` and `stdlib` features fail to compile
+- [x] **Fix `--all-features` build** — `db` and `stdlib` features fail to compile
   with `Value::Bool` type errors (fallout from the s298 VM type expansion that
   added `Bool`/`Map`/`Error`/`Bytes`). Default build + `cargo test --workspace`
   are green; only the feature-gated arms break. *(crush-lang-sdk)*
@@ -47,14 +47,14 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 The `Frontend` abstraction (native parser → CAST) is the active direction; the
 remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
-- [ ] **JavaScript/TypeScript frontend** (`crush-lang-js`) → **dual-backend**:
+- [x] **JavaScript/TypeScript frontend** (`crush-lang-js`) → **dual-backend**:
   **swc** primary/default (full JS + TS + JSX/TSX, the completeness guarantee) +
   **boa** optional (`boa-backend` feature, JS-only, Boa-aligned). Both lower to one
   CAST. (Walkers are subprocess binaries → swc does NOT land in surfer's graph, so
   its weight isn't a surfer cost; boa exists for a future in-process embedding.)
   Full dispatch-ready spec: **`docs/tasks/js-ts-frontend.md`** (task CA-JS-1).
   Highest-value next frontend; enables "Crush as surfer's script language."
-- [ ] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
+- [x] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
   (prior attempt hit an API mismatch). The planned `crush-lang-bash` crate is its
   home.
 - [ ] **Go / C / Zig / wasm walkers** — scaffold-level; mature on demand (no pure

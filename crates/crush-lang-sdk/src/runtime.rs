@@ -107,7 +107,7 @@ impl Runtime {
     ///
     /// let today = Utc::now().date_naive() - Duration::days(30);
     /// let rt = Runtime::new()
-    ///     .with_codebase_at(&[("scheduler", include_str!("../scheduler.crush"))], today)
+    ///     .with_codebase_at(&[("scheduler", ".func main\nHALT")], today)
     ///     .unwrap();
     /// ```
     pub fn with_codebase_at(
@@ -147,7 +147,7 @@ impl Runtime {
     /// use crush_lang_sdk::Runtime;
     ///
     /// let rt = Runtime::new()
-    ///     .with_codebase(&[("scheduler", include_str!("../scheduler.crush"))])
+    ///     .with_codebase(&[("scheduler", ".func main\nHALT")])
     ///     .unwrap();
     /// ```
     pub fn with_codebase(

@@ -4296,6 +4296,11 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "crush-diagnostics",
+ "regex",
+ "serde_json",
+]
 
 [[package]]
 name = "yansi"

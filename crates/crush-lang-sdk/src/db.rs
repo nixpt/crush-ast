@@ -44,7 +44,7 @@ fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
         ),
         Value::Error(e) => rusqlite::types::Value::Text(format!("error({})", e)),
         Value::Bytes(b) => rusqlite::types::Value::Blob(b.clone()),
-        Value::Handle(h) => rusqlite::types::Value::Text(h.to_string()),
+        Value::Handle(h) => rusqlite::types::Value::Text(format!("<handle {}>", h)),
     }
 }
 
@@ -72,7 +72,24 @@ fn value_ref_to_crush_value(v: ValueRef<'_>) -> Result<Value, rusqlite::Error> {
             }
         }
         ValueRef::Text(s) => {
-            Value::Str(std::str::from_utf8(s).unwrap_or("").to_string())
+            let s_str = std::str::from_utf8(s).unwrap_or("");
+            if s_str.starts_with("<handle ") && s_str.ends_with('>') {
+                if let Ok(id) = s_str[8..s_str.len() - 1].parse::<u64>() {
+                    Value::Handle(id)
+                } else {
+                    Value::Str(s_str.to_string())
+                }
+            } else if s_str.starts_with('<') && s_str.ends_with(" bytes>") {
+                if let Ok(n) = s_str[1..s_str.len() - 7].parse::<usize>() {
+                    Value::Bytes(vec![0; n])
+                } else {
+                    Value::Str(s_str.to_string())
+                }
+            } else if s_str.starts_with("error(") && s_str.ends_with(')') {
+                Value::Error(s_str[6..s_str.len() - 1].to_string())
+            } else {
+                Value::Str(s_str.to_string())
+            }
         }
         ValueRef::Blob(b) => Value::Bytes(b.to_vec()),
     })
