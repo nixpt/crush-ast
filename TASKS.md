@@ -28,7 +28,7 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 
 ## 🟡 P1 — coverage & language completeness
 
-- [ ] **Test the Rust frontend** — `crush-lang-rust` (`syn` → CAST) ships but has
+- [x] **Test the Rust frontend** — `crush-lang-rust` (`syn` → CAST) ships but has
   **0 tests**. Mirror the `crush-lang-python` test shape (feature detection +
   lowering round-trip).
 - [ ] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.

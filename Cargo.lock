@@ -839,6 +839,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
  "serde",
  "serde_json",
  "syn",

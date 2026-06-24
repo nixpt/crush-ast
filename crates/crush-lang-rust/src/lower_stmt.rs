@@ -54,10 +54,55 @@ pub fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Statement> {
             }
             _ => anyhow::bail!("unsupported item"),
         },
-        Stmt::Expr(expr, _) => {
-            let expr = lower_expr(expr)?;
-            Ok(Statement::ExprStmt { expr, meta })
-        }
+        Stmt::Expr(expr, _) => match expr {
+            syn::Expr::Return(e_ret) => {
+                let value = match &e_ret.expr {
+                    Some(val_expr) => Some(lower_expr(val_expr)?),
+                    None => None,
+                };
+                Ok(Statement::Return { value, meta })
+            }
+            syn::Expr::If(e_if) => {
+                let condition = lower_expr(&e_if.cond)?;
+                let mut then_body = Vec::new();
+                for s in &e_if.then_branch.stmts {
+                    then_body.push(lower_stmt(s)?);
+                }
+                let else_body = match &e_if.else_branch {
+                    Some((_, else_expr)) => match else_expr.as_ref() {
+                        syn::Expr::Block(eb) => {
+                            let mut elses = Vec::new();
+                            for s in &eb.block.stmts {
+                                elses.push(lower_stmt(s)?);
+                            }
+                            Some(elses)
+                        }
+                        syn::Expr::If(nested_if) => {
+                            let nested = lower_stmt(&syn::Stmt::Expr(
+                                syn::Expr::If(nested_if.clone()),
+                                None,
+                            ))?;
+                            Some(vec![nested])
+                        }
+                        _ => {
+                            let stmt = lower_stmt(&syn::Stmt::Expr(*else_expr.clone(), None))?;
+                            Some(vec![stmt])
+                        }
+                    },
+                    None => None,
+                };
+                Ok(Statement::If {
+                    condition,
+                    then_body,
+                    else_body,
+                    meta,
+                })
+            }
+            _ => {
+                let expr = lower_expr(expr)?;
+                Ok(Statement::ExprStmt { expr, meta })
+            }
+        },
         Stmt::Macro(mac) => {
             let mac_name = mac
                 .mac

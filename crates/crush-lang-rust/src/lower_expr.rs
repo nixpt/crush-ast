@@ -20,27 +20,26 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
         Expr::Binary(e) => {
             let left = lower_expr(&e.left)?;
             let right = lower_expr(&e.right)?;
-            let op_str = format!("{:?}", e.op);
-            let operator = match op_str.as_str() {
-                "Add" => "+",
-                "Sub" => "-",
-                "Mul" => "*",
-                "Div" => "/",
-                "Rem" => "%",
-                "Eq" => "==",
-                "Ne" => "!=",
-                "Lt" => "<",
-                "Le" => "<=",
-                "Gt" => ">",
-                "Ge" => ">=",
-                "And" => "&&",
-                "Or" => "||",
-                "BitAnd" => "&",
-                "BitOr" => "|",
-                "BitXor" => "^",
-                "Shl" => "<<",
-                "Shr" => ">>",
-                _ => anyhow::bail!("unsupported binary operator: {}", op_str),
+            let operator = match e.op {
+                syn::BinOp::Add(_) => "+",
+                syn::BinOp::Sub(_) => "-",
+                syn::BinOp::Mul(_) => "*",
+                syn::BinOp::Div(_) => "/",
+                syn::BinOp::Rem(_) => "%",
+                syn::BinOp::Eq(_) => "==",
+                syn::BinOp::Ne(_) => "!=",
+                syn::BinOp::Lt(_) => "<",
+                syn::BinOp::Le(_) => "<=",
+                syn::BinOp::Gt(_) => ">",
+                syn::BinOp::Ge(_) => ">=",
+                syn::BinOp::And(_) => "&&",
+                syn::BinOp::Or(_) => "||",
+                syn::BinOp::BitAnd(_) => "&",
+                syn::BinOp::BitOr(_) => "|",
+                syn::BinOp::BitXor(_) => "^",
+                syn::BinOp::Shl(_) => "<<",
+                syn::BinOp::Shr(_) => ">>",
+                _ => anyhow::bail!("unsupported binary operator: {:?}", e.op),
             };
             Ok(Expression::BinaryOp {
                 operator: operator.to_string(),
@@ -51,12 +50,11 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
         }
         Expr::Unary(e) => {
             let operand = lower_expr(&e.expr)?;
-            let op_str = format!("{:?}", e.op);
-            let operator = match op_str.as_str() {
-                "Deref" => "*",
-                "Not" => "!",
-                "Neg" => "-",
-                _ => anyhow::bail!("unsupported unary operator: {}", op_str),
+            let operator = match e.op {
+                syn::UnOp::Deref(_) => "*",
+                syn::UnOp::Not(_) => "!",
+                syn::UnOp::Neg(_) => "-",
+                _ => anyhow::bail!("unsupported unary operator: {:?}", e.op),
             };
             Ok(Expression::UnaryOp {
                 operator: operator.to_string(),
