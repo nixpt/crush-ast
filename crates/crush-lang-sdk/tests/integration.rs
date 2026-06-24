@@ -356,3 +356,35 @@ fn f() -> i32 {
         result.output
     );
 }
+
+#[test]
+fn test_lambda_compilation_and_execution() {
+    let source = r#"
+        fn main() {
+            let twice = |>x: Int|> -> x * 2;
+            let val = twice(5);
+            print(val);
+        }
+    "#;
+    let program = crush_lang_sdk::compile::compile_crush_source(source).expect("compile");
+    let result = Runtime::new().run(&program).expect("run");
+    assert_eq!(result.output, "10");
+}
+
+#[test]
+fn test_match_compilation_and_execution() {
+    let source = r#"
+        fn main() {
+            let val = 2;
+            let label = match val {
+                1 => "one",
+                2 => "two",
+                _ => "other"
+            };
+            print(label);
+        }
+    "#;
+    let program = crush_lang_sdk::compile::compile_crush_source(source).expect("compile");
+    let result = Runtime::new().run(&program).expect("run");
+    assert_eq!(result.output, "two");
+}

@@ -18,6 +18,7 @@ pub struct Compiler {
     /// parameter stores (so the call may read function arguments). Off by
     /// default; toggle via [`Compiler::with_invariant_runtime`].
     invariant_runtime: bool,
+    lambdas: HashMap<String, CasmFunction>,
 }
 
 struct LoopInfo {
@@ -40,6 +41,7 @@ impl Compiler {
             last_debug_info: None,
             local_functions: HashSet::new(),
             invariant_runtime: false,
+            lambdas: HashMap::new(),
         }
     }
 
@@ -55,6 +57,7 @@ impl Compiler {
 
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
+        self.lambdas.clear();
         for name in program.functions.keys() {
             self.local_functions.insert(name.clone());
         }
@@ -193,6 +196,11 @@ impl Compiler {
             );
         }
 
+        // Merge lambdas
+        for (name, func) in self.lambdas.drain() {
+            casm_program.functions.insert(name, func);
+        }
+
         if !self.all_permissions.is_empty() {
             casm_program.manifest = Manifest {
                 permissions: self.all_permissions.iter().cloned().collect(),
@@ -273,12 +281,74 @@ impl Compiler {
         }
     }
 
+    fn compile_pattern(
+        &mut self,
+        pattern: &Pattern,
+        matched_val: &str,
+        instrs: &mut Vec<Instruction>,
+        fail_jumps: &mut Vec<usize>,
+    ) -> Result<()> {
+        match pattern {
+            Pattern::Wildcard => {}
+            Pattern::Literal { value } => {
+                self.compile_expr(value, instrs)?;
+                instrs.push(self.create_instr(
+                    "load",
+                    serde_json::json!({"name": matched_val}),
+                    &HashMap::new(),
+                ));
+                instrs.push(self.create_instr("eq", serde_json::json!({}), &HashMap::new()));
+                fail_jumps.push(instrs.len());
+                instrs.push(self.create_instr(
+                    "jmp_if_not",
+                    serde_json::json!({"target": 0}),
+                    &HashMap::new(),
+                ));
+            }
+            Pattern::Identifier { name } => {
+                instrs.push(self.create_instr(
+                    "load",
+                    serde_json::json!({"name": matched_val}),
+                    &HashMap::new(),
+                ));
+                instrs.push(self.create_instr(
+                    "store",
+                    serde_json::json!({"name": name}),
+                    &HashMap::new(),
+                ));
+            }
+            Pattern::Struct { name: _, fields } => {
+                for (field_name, sub_pattern) in fields {
+                    instrs.push(self.create_instr(
+                        "load",
+                        serde_json::json!({"name": matched_val}),
+                        &HashMap::new(),
+                    ));
+                    instrs.push(self.create_instr(
+                        "get_field",
+                        serde_json::json!({"field": field_name}),
+                        &HashMap::new(),
+                    ));
+                    let sub_temp = format!("__match_sub_{}_{}", field_name, self.temp_counter);
+                    self.temp_counter += 1;
+                    instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": sub_temp}),
+                        &HashMap::new(),
+                    ));
+                    self.compile_pattern(sub_pattern, &sub_temp, instrs, fail_jumps)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn compile_stmt(&mut self, stmt: &Statement, instrs: &mut Vec<Instruction>) -> Result<()> {
         match stmt {
             Statement::VarDecl {
                 name, value, meta, ..
             } => {
-                self.compile_expr(value, instrs)?;
+                self.compile_expr_with_name_hint(value, instrs, Some(name))?;
                 instrs.push(self.create_instr("store", serde_json::json!({"name": name}), meta));
             }
             Statement::Export { name, value, meta } => {
@@ -961,6 +1031,15 @@ impl Compiler {
     }
 
     fn compile_expr(&mut self, expr: &Expression, instrs: &mut Vec<Instruction>) -> Result<()> {
+        self.compile_expr_with_name_hint(expr, instrs, None)
+    }
+
+    fn compile_expr_with_name_hint(
+        &mut self,
+        expr: &Expression,
+        instrs: &mut Vec<Instruction>,
+        name_hint: Option<&str>,
+    ) -> Result<()> {
         match expr {
             Expression::IntLiteral { value, meta } => {
                 instrs.push(self.create_instr(
@@ -1304,13 +1383,103 @@ impl Compiler {
                     meta,
                 ));
             }
-            Expression::Lambda { .. } => {
-                bail!("Lambda compilation is not yet supported in this version of Crush.");
-            }
-            Expression::Match { .. } => {
-                bail!(
-                    "Match expression compilation is not yet supported in this version of Crush."
+            Expression::Lambda { params, body, meta } => {
+                let lambda_name = if let Some(hint) = name_hint {
+                    hint.to_string()
+                } else {
+                    format!("__lambda_{}", self.temp_counter)
+                };
+                self.temp_counter += 1;
+                self.local_functions.insert(lambda_name.clone());
+
+                let mut func_instrs = Vec::new();
+                for (param_name, _) in params {
+                    func_instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": param_name}),
+                        meta,
+                    ));
+                }
+                for inner_stmt in body {
+                    self.compile_stmt(inner_stmt, &mut func_instrs)?;
+                }
+                self.ensure_return(&mut func_instrs, Some(meta));
+
+                self.lambdas.insert(
+                    lambda_name.clone(),
+                    CasmFunction {
+                        params: params.iter().map(|(n, _)| n.clone()).collect(),
+                        locals: vec![],
+                        body: func_instrs,
+                    },
                 );
+
+                instrs.push(self.create_instr(
+                    "push_str",
+                    serde_json::json!({"value": lambda_name}),
+                    meta,
+                ));
+            }
+            Expression::Match { expression, arms, meta } => {
+                self.compile_expr(expression, instrs)?;
+                let temp_var = format!("__match_val_{}", self.temp_counter);
+                self.temp_counter += 1;
+                instrs.push(self.create_instr(
+                    "store",
+                    serde_json::json!({"name": temp_var}),
+                    meta,
+                ));
+
+                let mut end_jumps: Vec<usize> = Vec::new();
+                let mut prev_fail_jumps: Vec<usize> = Vec::new();
+
+                for (arm_idx, arm) in arms.iter().enumerate() {
+                    if arm_idx > 0 {
+                        let arm_start = instrs.len();
+                        for jmp_idx in prev_fail_jumps {
+                            instrs[jmp_idx].args = serde_json::json!({"target": arm_start});
+                        }
+                    }
+
+                    let mut current_fail_jumps = Vec::new();
+                    self.compile_pattern(&arm.pattern, &temp_var, instrs, &mut current_fail_jumps)?;
+
+                    if arm.body.is_empty() {
+                        instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                    } else {
+                        for stmt in &arm.body[..arm.body.len() - 1] {
+                            self.compile_stmt(stmt, instrs)?;
+                        }
+                        let last_stmt = &arm.body[arm.body.len() - 1];
+                        if let Statement::ExprStmt { expr: last_expr, .. } = last_stmt {
+                            self.compile_expr(last_expr, instrs)?;
+                        } else {
+                            self.compile_stmt(last_stmt, instrs)?;
+                            instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                        }
+                    }
+
+                    end_jumps.push(instrs.len());
+                    instrs.push(self.create_instr(
+                        "jmp",
+                        serde_json::json!({"target": 0}),
+                        meta,
+                    ));
+
+                    prev_fail_jumps = current_fail_jumps;
+                }
+
+                let match_end = instrs.len();
+                for jmp_idx in prev_fail_jumps {
+                    instrs[jmp_idx].args = serde_json::json!({"target": match_end});
+                }
+
+                instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+
+                let match_end_final = instrs.len();
+                for jmp_idx in end_jumps {
+                    instrs[jmp_idx].args = serde_json::json!({"target": match_end_final});
+                }
             }
             Expression::AI(ai_expr) => {
                 // Compile AI-specific expressions

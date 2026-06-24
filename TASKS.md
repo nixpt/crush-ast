@@ -32,7 +32,7 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
   **0 tests**. Mirror the `crush-lang-python` test shape (feature detection +
   lowering round-trip).
 - [x] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.
-- [ ] **Lambda + Match compilation** — currently parse but bail at compile time.
+- [x] **Lambda + Match compilation** — currently parse but bail at compile time.
   Wire through `crush-frontend` → CASM.
 - [ ] **async/await execution** — parsed but not executable; design the
   fiber/coroutine lowering (see `docs/design/crushvm-rustpython.md` §8 — async →

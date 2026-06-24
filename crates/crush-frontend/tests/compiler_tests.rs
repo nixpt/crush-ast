@@ -1,6 +1,6 @@
 use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
-    ImportStatement, Program, Statement,
+    ImportStatement, Program, Statement, MatchArm, Pattern,
 };
 use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_frontend::compiler::Compiler;
@@ -703,7 +703,7 @@ fn unsupported_operator_is_rejected() {
 }
 
 #[test]
-fn lambda_and_match_are_rejected_until_implemented() {
+fn lambda_and_match_compile_successfully() {
     let mut compiler = Compiler::new();
 
     let lambda_result = compiler.compile(create_program(vec![Statement::ExprStmt {
@@ -714,29 +714,20 @@ fn lambda_and_match_are_rejected_until_implemented() {
         },
         meta: meta(),
     }]));
-    assert!(lambda_result.is_err());
-    assert!(
-        lambda_result
-            .unwrap_err()
-            .to_string()
-            .contains("Lambda compilation is not yet supported")
-    );
+    assert!(lambda_result.is_ok());
 
     let match_result = compiler.compile(create_program(vec![Statement::ExprStmt {
         expr: Expression::Match {
             expression: Box::new(int(1)),
-            arms: vec![],
+            arms: vec![MatchArm {
+                pattern: Pattern::Wildcard,
+                body: vec![],
+            }],
             meta: meta(),
         },
         meta: meta(),
     }]));
-    assert!(match_result.is_err());
-    assert!(
-        match_result
-            .unwrap_err()
-            .to_string()
-            .contains("Match expression compilation is not yet supported")
-    );
+    assert!(match_result.is_ok());
 }
 
 #[test]
