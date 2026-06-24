@@ -37,7 +37,7 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 - [ ] **async/await execution** — parsed but not executable; design the
   fiber/coroutine lowering (see `docs/design/crushvm-rustpython.md` §8 — async →
   Crush fibers is an open question).
-- [ ] **Publish core crates to crates.io** — `crush-errors`, `crush-cast`,
+- [x] **Publish core crates to crates.io** — `crush-errors`, `crush-cast`,
   `casm`. External path-dep consumers (openko/fabric, crush-symbols,
   mycelium-mobile, arniko) currently pin via path; publishing unblocks versioned
   deps. *(`workspace = true` already set per the s298 decision.)*
