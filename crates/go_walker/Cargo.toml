@@ -5,6 +5,13 @@ name = "go_walker"
 version = "0.1.0"
 edition = "2021"
 repository.workspace = true
+[lib]
+name = "go_walker"
+
+[[bin]]
+name = "go_walker"
+path = "src/main.rs"
+
 
 [dependencies]
 serde.workspace = true

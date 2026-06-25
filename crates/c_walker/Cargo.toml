@@ -5,6 +5,13 @@ name = "c_walker"
 version = "0.1.0"
 edition = "2021"
 repository.workspace = true
+[lib]
+name = "c_walker"
+
+[[bin]]
+name = "c_walker"
+path = "src/main.rs"
+
 
 [dependencies]
 serde.workspace = true
