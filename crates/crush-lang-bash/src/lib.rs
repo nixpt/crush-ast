@@ -4,7 +4,7 @@ pub mod parser;
 
 use crush_cast::Program;
 use std::any::Any;
-use walker_core::{FeatureReport, Frontend};
+use walker_core::{FeatureReport, Frontend, LowerCtx};
 
 pub struct BashFrontend;
 
@@ -18,21 +18,22 @@ impl Frontend for BashFrontend {
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
         let program = parser::parse_source(source)?;
-        Ok(Box::new(program))
+        Ok(Box::new((source.to_string(), program)))
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
-        let program = ast
-            .downcast_ref::<brush_parser::ast::Program>()
-            .ok_or_else(|| anyhow::anyhow!("expected brush-parser Program"))?;
+        let (_, program) = ast
+            .downcast_ref::<(String, brush_parser::ast::Program)>()
+            .ok_or_else(|| anyhow::anyhow!("expected (String, Program)"))?;
         Ok(analyzer::analyze_program(program))
     }
 
     fn lower(&self, ast: Box<dyn Any>) -> anyhow::Result<Program> {
-        let program = ast
-            .downcast::<brush_parser::ast::Program>()
-            .map_err(|_| anyhow::anyhow!("expected brush-parser Program"))?;
-        lowerer::lower_program(*program)
+        let (source, program) = *ast
+            .downcast::<(String, brush_parser::ast::Program)>()
+            .map_err(|_| anyhow::anyhow!("expected (String, Program)"))?;
+        let ctx = LowerCtx::new(&source, "<crush>", "bash");
+        lowerer::lower_program(program, &ctx)
     }
 }
 

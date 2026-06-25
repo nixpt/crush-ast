@@ -1,6 +1,7 @@
 //! Python AST statement → CAST statement lowering.
 
-use std::collections::HashMap;
+use py_ast::Ranged;
+use walker_core::LowerCtx;
 
 use crush_cast::{CastType, Expression, ImportStatement, Statement};
 use rustpython_ast as py_ast;
@@ -8,8 +9,9 @@ use rustpython_ast as py_ast;
 use crate::lower_expr::lower_expr;
 
 /// Lower a Python AST statement to a CAST statement.
-pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
-    let meta = HashMap::new();
+pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
+    let offset = u32::from(stmt.start()) as usize;
+    let meta = ctx.meta_at(offset);
     match stmt {
         py_ast::Stmt::FunctionDef(py_ast::StmtFunctionDef {
             name, args, body, ..
@@ -21,7 +23,7 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
                 .collect();
             let mut lowered_body = Vec::new();
             for s in body {
-                lowered_body.push(lower_stmt(s)?);
+                lowered_body.push(lower_stmt(s, ctx)?);
             }
             Ok(Statement::FunctionDef {
                 name: name.to_string(),
@@ -32,13 +34,13 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
         }
         py_ast::Stmt::Return(py_ast::StmtReturn { value, .. }) => {
             let value = match value {
-                Some(v) => Some(lower_expr(v)?),
+                Some(v) => Some(lower_expr(v, ctx)?),
                 None => None,
             };
             Ok(Statement::Return { value, meta })
         }
         py_ast::Stmt::Assign(py_ast::StmtAssign { targets, value, .. }) => {
-            let value = lower_expr(value)?;
+            let value = lower_expr(value, ctx)?;
             if targets.len() != 1 {
                 anyhow::bail!("multi-target assignment not yet supported");
             }
@@ -53,7 +55,7 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
                 py_ast::Expr::Attribute(py_ast::ExprAttribute {
                     value: obj, attr, ..
                 }) => {
-                    let target = lower_expr(obj)?;
+                    let target = lower_expr(obj, ctx)?;
                     Ok(Statement::SetField {
                         target,
                         field: attr.to_string(),
@@ -64,8 +66,8 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
                 py_ast::Expr::Subscript(py_ast::ExprSubscript {
                     value: obj, slice, ..
                 }) => {
-                    let target = lower_expr(obj)?;
-                    let index = lower_expr(slice)?;
+                    let target = lower_expr(obj, ctx)?;
+                    let index = lower_expr(slice, ctx)?;
                     Ok(Statement::ExprStmt {
                         expr: Expression::Call {
                             function: "__crush_setindex__".to_string(),
@@ -85,7 +87,7 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
                 py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
                 _ => anyhow::bail!("augmented assignment target must be a name"),
             };
-            let val = lower_expr(value)?;
+            let val = lower_expr(value, ctx)?;
             Ok(Statement::VarDecl {
                 name: target_name.to_string(),
                 value: Expression::BinaryOp {
@@ -109,16 +111,16 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
             })
         }
         py_ast::Stmt::Expr(py_ast::StmtExpr { value, .. }) => {
-            let expr = lower_expr(value)?;
+            let expr = lower_expr(value, ctx)?;
             Ok(Statement::ExprStmt { expr, meta })
         }
         py_ast::Stmt::If(py_ast::StmtIf {
             test, body, orelse, ..
         }) => {
-            let condition = lower_expr(test)?;
+            let condition = lower_expr(test, ctx)?;
             let then_body: Vec<Statement> = body
                 .iter()
-                .map(|s| lower_stmt(s))
+                .map(|s| lower_stmt(s, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             let else_body: Option<Vec<Statement>> = if orelse.is_empty() {
                 None
@@ -126,7 +128,7 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
                 Some(
                     orelse
                         .iter()
-                        .map(|s| lower_stmt(s))
+                        .map(|s| lower_stmt(s, ctx))
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             };
@@ -138,10 +140,10 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
             })
         }
         py_ast::Stmt::While(py_ast::StmtWhile { test, body, .. }) => {
-            let condition = lower_expr(test)?;
+            let condition = lower_expr(test, ctx)?;
             let body: Vec<Statement> = body
                 .iter()
-                .map(|s| lower_stmt(s))
+                .map(|s| lower_stmt(s, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Statement::While {
                 condition: Box::new(condition),
@@ -156,10 +158,10 @@ pub fn lower_stmt(stmt: &py_ast::Stmt) -> anyhow::Result<Statement> {
                 py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
                 _ => anyhow::bail!("for loop target must be a name"),
             };
-            let iterable = lower_expr(iter)?;
+            let iterable = lower_expr(iter, ctx)?;
             let body: Vec<Statement> = body
                 .iter()
-                .map(|s| lower_stmt(s))
+                .map(|s| lower_stmt(s, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Statement::For {
                 variable,

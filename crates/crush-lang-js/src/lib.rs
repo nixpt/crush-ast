@@ -10,7 +10,7 @@ pub mod lower_boa;
 use std::any::Any;
 
 use crush_cast::Program;
-use walker_core::{FeatureReport, Frontend};
+use walker_core::{FeatureReport, Frontend, LowerCtx};
 
 /// Wrapper for Boa-parsed AST + interner, transported via `Box<dyn Any>`.
 #[cfg(feature = "boa-backend")]
@@ -51,11 +51,11 @@ impl Frontend for JsFrontend {
         #[cfg(feature = "boa-backend")]
         if ext == "js" || ext == "mjs" || ext == "cjs" {
             let ast = crate::backend::boa::parse(source)?;
-            return Ok(Box::new(BoaParsed { ast }));
+            return Ok(Box::new((source.to_string(), BoaParsed { ast })));
         }
 
         let parsed = backend::parse(source, ext)?;
-        Ok(Box::new(parsed))
+        Ok(Box::new((source.to_string(), parsed)))
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
@@ -63,14 +63,15 @@ impl Frontend for JsFrontend {
         r.lang = "javascript".to_string();
 
         #[cfg(feature = "boa-backend")]
-        if let Some(parsed) = ast.downcast_ref::<BoaParsed>() {
+        if let Some((_, parsed)) = ast.downcast_ref::<(String, BoaParsed)>() {
             crate::analyzer_boa::analyze(&parsed.ast, &mut r)?;
             return Ok(r);
         }
 
         let module = ast
-            .downcast_ref::<swc_ecma_ast::Module>()
-            .ok_or_else(|| anyhow::anyhow!("expected swc Module"))?;
+            .downcast_ref::<(String, swc_ecma_ast::Module)>()
+            .map(|(_, m)| m)
+            .ok_or_else(|| anyhow::anyhow!("expected (String, swc Module)"))?;
         for item in &module.body {
             analyzer::analyze_item(item, &mut r);
         }
@@ -79,24 +80,28 @@ impl Frontend for JsFrontend {
 
     fn lower(&self, ast: Box<dyn Any>) -> anyhow::Result<Program> {
         #[cfg(feature = "boa-backend")]
-        match ast.downcast::<BoaParsed>() {
-            Ok(parsed) => {
-                return crate::lower_boa::lower_boa(parsed.ast);
+        match ast.downcast::<(String, BoaParsed)>() {
+            Ok(tuple_box) => {
+                let (source, parsed) = *tuple_box;
+                let ctx = LowerCtx::new(&source, "input.js", "javascript");
+                return crate::lower_boa::lower_boa(parsed.ast, &ctx);
             }
             Err(a) => {
-                let module = a
-                    .downcast::<swc_ecma_ast::Module>()
-                    .map_err(|_| anyhow::anyhow!("expected swc Module"))?;
-                return lower_swc::lower_module(&module);
+                let (source, module) = *a
+                    .downcast::<(String, swc_ecma_ast::Module)>()
+                    .map_err(|_| anyhow::anyhow!("expected (String, swc Module)"))?;
+                let ctx = LowerCtx::new(&source, "input.js", "javascript");
+                return lower_swc::lower_module(&module, &ctx);
             }
         }
 
         #[cfg(not(feature = "boa-backend"))]
         {
-            let module = ast
-                .downcast::<swc_ecma_ast::Module>()
-                .map_err(|_| anyhow::anyhow!("expected swc Module"))?;
-            lower_swc::lower_module(&module)
+            let (source, module) = *ast
+                .downcast::<(String, swc_ecma_ast::Module)>()
+                .map_err(|_| anyhow::anyhow!("expected (String, swc Module)"))?;
+            let ctx = LowerCtx::new(&source, "input.js", "javascript");
+            lower_swc::lower_module(&module, &ctx)
         }
     }
 }

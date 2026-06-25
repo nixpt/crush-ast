@@ -1,5 +1,8 @@
 //! Python AST expression → CAST expression lowering.
 
+use py_ast::Ranged;
+use walker_core::LowerCtx;
+
 use std::collections::HashMap;
 use std::convert::TryInto;
 
@@ -7,17 +10,18 @@ use crush_cast::Expression;
 use rustpython_ast as py_ast;
 
 /// Lower a Python AST expression to a CAST expression.
-pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
-    let meta = HashMap::new();
+pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+    let offset = u32::from(expr.start()) as usize;
+    let meta = ctx.meta_at(offset);
     match expr {
         py_ast::Expr::BoolOp(py_ast::ExprBoolOp { op, values, .. }) => {
             let mut iter = values.iter();
             let first = iter
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("empty bool op"))?;
-            let mut result = lower_expr(first)?;
+            let mut result = lower_expr(first, ctx)?;
             for val in iter {
-                let right = lower_expr(val)?;
+                let right = lower_expr(val, ctx)?;
                 let operator = match op {
                     py_ast::BoolOp::And => "and",
                     py_ast::BoolOp::Or => "or",
@@ -32,7 +36,7 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             Ok(result)
         }
         py_ast::Expr::NamedExpr(py_ast::ExprNamedExpr { target, value, .. }) => {
-            let value_expr = lower_expr(value)?;
+            let value_expr = lower_expr(value, ctx)?;
             let name = name_from_expr(target)?;
             Ok(Expression::Call {
                 function: "__crush_assign__".to_string(),
@@ -49,8 +53,8 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
         py_ast::Expr::BinOp(py_ast::ExprBinOp {
             left, op, right, ..
         }) => {
-            let left = lower_expr(left)?;
-            let right = lower_expr(right)?;
+            let left = lower_expr(left, ctx)?;
+            let right = lower_expr(right, ctx)?;
             let operator = match op {
                 py_ast::Operator::Add => "+",
                 py_ast::Operator::Sub => "-",
@@ -74,7 +78,7 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             })
         }
         py_ast::Expr::UnaryOp(py_ast::ExprUnaryOp { op, operand, .. }) => {
-            let operand = lower_expr(operand)?;
+            let operand = lower_expr(operand, ctx)?;
             let operator = match op {
                 py_ast::UnaryOp::USub => "-",
                 py_ast::UnaryOp::UAdd => "+",
@@ -93,9 +97,9 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
         py_ast::Expr::IfExp(py_ast::ExprIfExp {
             test, body, orelse, ..
         }) => {
-            let test = lower_expr(test)?;
-            let body = lower_expr(body)?;
-            let orelse = lower_expr(orelse)?;
+            let test = lower_expr(test, ctx)?;
+            let body = lower_expr(body, ctx)?;
+            let orelse = lower_expr(orelse, ctx)?;
             Ok(Expression::Call {
                 function: "__crush_ifexpr__".to_string(),
                 args: vec![test, body, orelse],
@@ -109,7 +113,7 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
                     Some(k) => constant_to_string(k)?,
                     None => anyhow::bail!("dict splat (**expr) not yet supported"),
                 };
-                let val = lower_expr(v)?;
+                let val = lower_expr(v, ctx)?;
                 properties.push((key, val));
             }
             Ok(Expression::ObjectLiteral { properties, meta })
@@ -131,9 +135,9 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             comparators,
             ..
         }) => {
-            let left = lower_expr(left)?;
+            let left = lower_expr(left, ctx)?;
             let op = &ops[0];
-            let right = lower_expr(&comparators[0])?;
+            let right = lower_expr(&comparators[0], ctx)?;
             let operator = match op {
                 py_ast::CmpOp::Eq => "==",
                 py_ast::CmpOp::NotEq => "!=",
@@ -160,10 +164,10 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             args,
             keywords,
             ..
-        }) => lower_call(func, args, keywords, meta),
+        }) => lower_call(func, args, keywords, ctx, meta),
         py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => lower_constant(value, meta),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
-            let target = lower_expr(value)?;
+            let target = lower_expr(value, ctx)?;
             Ok(Expression::GetField {
                 target: Box::new(target),
                 field: attr.to_string(),
@@ -171,8 +175,8 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
             })
         }
         py_ast::Expr::Subscript(py_ast::ExprSubscript { value, slice, .. }) => {
-            let target = lower_expr(value)?;
-            let index = lower_expr(slice)?;
+            let target = lower_expr(value, ctx)?;
+            let index = lower_expr(slice, ctx)?;
             Ok(Expression::Index {
                 target: Box::new(target),
                 index: Box::new(index),
@@ -187,14 +191,14 @@ pub fn lower_expr(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
         py_ast::Expr::List(py_ast::ExprList { elts, .. }) => {
             let elements: Vec<Expression> = elts
                 .iter()
-                .map(|e| lower_expr(e))
+                .map(|e| lower_expr(e, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         py_ast::Expr::Tuple(py_ast::ExprTuple { elts, .. }) => {
             let elements: Vec<Expression> = elts
                 .iter()
-                .map(|e| lower_expr(e))
+                .map(|e| lower_expr(e, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
@@ -230,11 +234,12 @@ fn lower_call(
     func: &py_ast::Expr,
     args: &[py_ast::Expr],
     _keywords: &[py_ast::Keyword],
+    ctx: &LowerCtx<'_>,
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
     let lowered_args: Vec<Expression> = args
         .iter()
-        .map(|a| lower_expr(a))
+        .map(|a| lower_expr(a, ctx))
         .collect::<Result<Vec<_>, _>>()?;
 
     let func_name = match func {

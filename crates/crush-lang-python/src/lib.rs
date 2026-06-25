@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
 use rustpython_ast as py_ast;
-use walker_core::{FeatureReport, Frontend};
+use walker_core::{FeatureReport, Frontend, LowerCtx};
 
 /// Python language frontend implementing the `Frontend` trait.
 pub struct PythonFrontend;
@@ -28,13 +28,14 @@ impl Frontend for PythonFrontend {
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
         let stmts = parser::parse_source(source)?;
-        Ok(Box::new(stmts))
+        Ok(Box::new((source.to_string(), stmts)))
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
         let stmts = ast
-            .downcast_ref::<Vec<py_ast::Stmt>>()
-            .ok_or_else(|| anyhow::anyhow!("expected Python Stmt vec"))?;
+            .downcast_ref::<(String, Vec<py_ast::Stmt>)>()
+            .map(|(_, stmts)| stmts)
+            .ok_or_else(|| anyhow::anyhow!("expected (String, Stmt vec)"))?;
         let mut r = FeatureReport::default();
         r.lang = "python".to_string();
         for stmt in stmts {
@@ -71,10 +72,10 @@ impl Frontend for PythonFrontend {
     }
 
     fn lower(&self, ast: Box<dyn Any>) -> anyhow::Result<Program> {
-        let stmts = ast
-            .downcast::<Vec<py_ast::Stmt>>()
-            .map_err(|_| anyhow::anyhow!("expected Python Stmt vec"))?;
-        stmts_to_cast(*stmts)
+        let (source, stmts) = *ast
+            .downcast::<(String, Vec<py_ast::Stmt>)>()
+            .map_err(|_| anyhow::anyhow!("expected (String, Stmt vec)"))?;
+        stmts_to_cast(stmts, &source)
     }
 }
 
@@ -84,13 +85,14 @@ pub fn python_to_cast(source: &str) -> anyhow::Result<Program> {
     Ok(program)
 }
 
-fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
+fn stmts_to_cast(stmts: Vec<py_ast::Stmt>, source: &str) -> anyhow::Result<Program> {
+    let ctx = LowerCtx::new(source, "<crush>", "python");
     let mut main_body = Vec::new();
     let mut functions: HashMap<String, Function> = HashMap::new();
 
     for stmt in &stmts {
         if let py_ast::Stmt::FunctionDef(py_ast::StmtFunctionDef { .. }) = stmt {
-            let lowered = lower_stmt::lower_stmt(stmt)?;
+            let lowered = lower_stmt::lower_stmt(stmt, &ctx)?;
             if let Statement::FunctionDef {
                 name: fn_name,
                 params,
@@ -115,7 +117,7 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>) -> anyhow::Result<Program> {
         match stmt {
             py_ast::Stmt::FunctionDef { .. } | py_ast::Stmt::AsyncFunctionDef { .. } => {}
             _ => {
-                main_body.push(lower_stmt::lower_stmt(stmt)?);
+                main_body.push(lower_stmt::lower_stmt(stmt, &ctx)?);
             }
         }
     }
