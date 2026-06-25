@@ -782,18 +782,20 @@ impl PortableVm {
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
                 let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
                 let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let mut var_names: Vec<String> = Vec::with_capacity(var_count);
                 let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
-                for _ in 0..var_count {
-                    var_values.push(self.pop()?);
+                for i in 0..var_count {
+                    let key = format!("var_{}", i);
+                    if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
+                        var_names.push(name.to_string());
+                        var_values.push(self.pop()?);
+                    }
                 }
                 var_values.reverse();
                 let mut cmd = std::process::Command::new(lang);
                 cmd.arg("-c").arg(code_str);
-                for (i, val) in var_values.iter().enumerate() {
-                    let key = format!("var_{}", i);
-                    if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
-                        cmd.env(name, value_to_text(val));
-                    }
+                for (name, val) in var_names.iter().zip(var_values.iter()) {
+                    cmd.env(name, value_to_text(val));
                 }
                 let output = cmd.output()
                     .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
@@ -1241,11 +1243,11 @@ mod tests {
     // uses a `test_portable_` prefix so they cannot collide with the canonical
     // `mod tests` once both run in the same `cargo test --workspace` build.
     //
-    // EXEC_LANG is intentionally not mirrored here — it shells out via
-    // `std::process::Command::new(lang).arg("-c")` and depends on a host
-    // interpreter being installed, which would make the test environment
-    // dependent. Its implementation parity is verified through compile-time
-    // match-arm presence and the existing `ModularVm` crash tests.
+    // EXEC_LANG parity is verified by `test_portable_exec_lang_partial_binding`
+    // below — the pop-on-name pattern used here matches the canonical
+    // green-thread scheduler (scheduler.rs EXEC_LANG arm). Both VMs now
+    // produce identical subprocess env-var sets on any EXEC_LANG-shaped
+    // program, including the partial-binding case (var_count > name_count).
 
     #[test]
     fn test_portable_push_bool() {
@@ -1450,5 +1452,48 @@ HALT"#;
             }
             other => panic!("expected Array([1]), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_portable_exec_lang_partial_binding() {
+        // EXEC_LANG with var_count=3 but only var_0 is named.
+        // Pop-on-name should pop 1 value (for var_0); unconditional pop would
+        // pop 3 and crash with StackUnderflow.
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n $FOO",
+            "var_count": 3,
+            "var_0": "FOO",
+        });
+        let src = format!(
+            "PUSH_STR \"hello\"\nEXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let program = assemble(&src, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "hello");
+        assert!(result.halted);
+    }
+
+    #[test]
+    fn test_portable_exec_lang_all_named() {
+        // Common path: var_count == number of named slots (k == N).
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n ${X}${Y}",
+            "var_count": 2,
+            "var_0": "X",
+            "var_1": "Y",
+        });
+        let src = format!(
+            "PUSH_STR \"ab\"\nPUSH_STR \"AB\"\nEXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let program = assemble(&src, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "abAB");
+        assert!(result.halted);
     }
 }
