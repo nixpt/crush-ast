@@ -303,6 +303,27 @@ impl WalkerRegistry {
         )));
 
         registry.register_walker(Box::new(SubprocessWalker::new(
+            "zig",
+            &["zig"],
+            "zig_walker",
+            LanguageCapabilities {
+                version: "0.11".to_string(),
+                execution_model: ExecutionModel::Compiled,
+                type_system: TypeSystemFeatures {
+                    static_typing: true,
+                    type_inference: true,
+                    generics: true,
+                    traits_interfaces: false,
+                    structural_typing: false,
+                },
+                stdlib_available: true,
+                package_manager: Some("zig build".to_string()),
+                jit_supported: false,
+                native_supported: true,
+            },
+        )));
+
+        registry.register_walker(Box::new(SubprocessWalker::new(
             "bash",
             &["sh", "bash"],
             "bash_walker",

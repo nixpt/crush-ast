@@ -332,7 +332,15 @@ impl SemanticAnalyzer {
                 }
             }
             Expression::Call { function, args, .. } => {
-                if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {
+                let func_type = if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {
+                    Some((arg_types, ret_type))
+                } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function) {
+                    Some((arg_types, *ret_type))
+                } else {
+                    None
+                };
+
+                if let Some((arg_types, ret_type)) = func_type {
                     if args.len() != arg_types.len() {
                         bail!(
                             "Function '{}' expects {} arguments, found {}",
@@ -354,6 +362,11 @@ impl SemanticAnalyzer {
                         }
                     }
                     Ok(ret_type)
+                } else if let Some(Type::Any) = self.resolve_var(function) {
+                    for arg in args {
+                        self.check_expr(arg)?;
+                    }
+                    Ok(Type::Any)
                 } else {
                     bail!("Undefined function: {}", function)
                 }

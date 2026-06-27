@@ -10,7 +10,7 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
-use walker_core::{FeatureReport, Frontend};
+use walker_core::{FeatureReport, Frontend, LowerCtx};
 
 pub struct RustFrontend;
 
@@ -23,13 +23,14 @@ impl Frontend for RustFrontend {
     }
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
-        Ok(Box::new(parser::parse_source(source)?))
+        let file = parser::parse_source(source)?;
+        Ok(Box::new((source.to_string(), file)))
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
-        let file = ast
-            .downcast_ref::<syn::File>()
-            .ok_or_else(|| anyhow::anyhow!("expected syn::File"))?;
+        let (_, file) = ast
+            .downcast_ref::<(String, syn::File)>()
+            .ok_or_else(|| anyhow::anyhow!("expected (String, syn::File)"))?;
         let mut r = FeatureReport::default();
         r.lang = "rust".to_string();
         for item in &file.items {
@@ -50,10 +51,10 @@ impl Frontend for RustFrontend {
     }
 
     fn lower(&self, ast: Box<dyn Any>) -> anyhow::Result<Program> {
-        let file = ast
-            .downcast::<syn::File>()
-            .map_err(|_| anyhow::anyhow!("expected syn::File"))?;
-        file_to_cast(*file)
+        let (source, file) = *ast
+            .downcast::<(String, syn::File)>()
+            .map_err(|_| anyhow::anyhow!("expected (String, syn::File)"))?;
+        file_to_cast(file, &source)
     }
 }
 
@@ -63,14 +64,15 @@ pub fn rust_to_cast(source: &str) -> anyhow::Result<Program> {
     Ok(program)
 }
 
-fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
+fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
+    let ctx = LowerCtx::new(source, "<crush>", "rust");
     let mut main_body = Vec::new();
     let mut functions: HashMap<String, Function> = HashMap::new();
 
     for item in &file.items {
         match item {
             syn::Item::Fn(_) => {
-                let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()))?;
+                let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()), &ctx)?;
                 if let Statement::FunctionDef {
                     name, params, body, ..
                 } = lowered
@@ -88,7 +90,7 @@ fn file_to_cast(file: syn::File) -> anyhow::Result<Program> {
             }
             _ => {
                 let stmt = syn::Stmt::Item(item.clone());
-                main_body.push(lower_stmt::lower_stmt(&stmt)?);
+                main_body.push(lower_stmt::lower_stmt(&stmt, &ctx)?);
             }
         }
     }

@@ -30,6 +30,7 @@ fn program_with_fn(fn_name: &str, annotations: Option<FunctionAnnotations>) -> P
             body: Vec::new(),
             meta: HashMap::new(),
             annotations,
+            ..Default::default()
         },
     );
     Program {
@@ -79,7 +80,7 @@ fn test_callers_query() {
     let mut functions = HashMap::new();
     functions.insert(
         "helper".to_string(),
-        Function { params: Vec::new(), body: Vec::new(), meta: HashMap::new(), annotations: None },
+        Function { params: Vec::new(), body: Vec::new(), meta: HashMap::new(), annotations: None, ..Default::default() },
     );
     functions.insert(
         "main".to_string(),
@@ -95,6 +96,7 @@ fn test_callers_query() {
             }],
             meta: HashMap::new(),
             annotations: None,
+            ..Default::default()
         },
     );
     let prog = Program {

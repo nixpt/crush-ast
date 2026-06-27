@@ -338,7 +338,7 @@ impl Parser {
 
             // Try to parse function definition
             if matches!(self.peek(), Token::Fn(_)) {
-                match self.parse_function() {
+                match self.parse_function(false) {
                     Ok((name, mut func)) => {
                         if let Some(ann) = pending_fn_annotations.take() {
                             func.annotations = Some(ann);
@@ -348,6 +348,58 @@ impl Parser {
                     Err(_) => {
                         pending_fn_annotations = None;
                         // Error recovery: synchronize to next statement
+                        self.synchronize();
+                    }
+                }
+                continue;
+            }
+
+            // async fn — consume 'async' and delegate to parse_function
+            if self.pos + 1 < self.tokens.len() {
+                if matches!(self.peek(), Token::Async(_))
+                    && matches!(&self.tokens[self.pos + 1], Token::Fn(_))
+                {
+                    self.advance(); // consume 'async'
+                    match self.parse_function(true) {
+                        Ok((name, mut func)) => {
+                            if let Some(ann) = pending_fn_annotations.take() {
+                                func.annotations = Some(ann);
+                            }
+                            functions.insert(name, func);
+                        }
+                        Err(_) => {
+                            pending_fn_annotations = None;
+                            self.synchronize();
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            // pub async fn — consume 'pub' 'async' and delegate to parse_function
+            let is_pub_async_fn = if self.pos + 2 < self.tokens.len() {
+                let ident_is_pub = match &self.tokens[self.pos] {
+                    Token::Ident(s, _) => s == "pub",
+                    _ => false,
+                };
+                let next_is_async = matches!(&self.tokens[self.pos + 1], Token::Async(_));
+                let next_is_fn = matches!(&self.tokens[self.pos + 2], Token::Fn(_));
+                ident_is_pub && next_is_async && next_is_fn
+            } else {
+                false
+            };
+            if is_pub_async_fn {
+                self.advance(); // consume 'pub'
+                self.advance(); // consume 'async'
+                match self.parse_function(true) {
+                    Ok((name, mut func)) => {
+                        if let Some(ann) = pending_fn_annotations.take() {
+                            func.annotations = Some(ann);
+                        }
+                        functions.insert(name, func);
+                    }
+                    Err(_) => {
+                        pending_fn_annotations = None;
                         self.synchronize();
                     }
                 }
@@ -370,7 +422,7 @@ impl Parser {
             };
             if is_pub_fn {
                 self.advance(); // consume 'pub'
-                match self.parse_function() {
+                match self.parse_function(false) {
                     Ok((name, mut func)) => {
                         if let Some(ann) = pending_fn_annotations.take() {
                             func.annotations = Some(ann);
@@ -447,7 +499,7 @@ impl Parser {
     }
 
     /// Parse a function definition with error recovery
-    fn parse_function(&mut self) -> Result<(String, Function), ()> {
+    fn parse_function(&mut self, is_async: bool) -> Result<(String, Function), ()> {
         match self.peek() {
             Token::Fn(_) => {
                 self.advance();
@@ -564,6 +616,7 @@ impl Parser {
             params: params.into_iter().map(|p| (p.name, p.type_hint)).collect(),
             body,
             meta: HashMap::new(),
+            is_async,
             ..Default::default()
         };
 

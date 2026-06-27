@@ -1,10 +1,18 @@
 use std::collections::HashMap;
 
-use brush_parser::ast::{self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline};
+use brush_parser::ast::{self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline, SourceLocation};
 use crush_cast::{CastType, Expression, Function, Program, Statement};
+use walker_core::LowerCtx;
+
+/// Get source position metadata from a brush-parser AST node.
+fn node_meta<T: SourceLocation>(node: &T, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
+    node.location()
+        .map(|loc| ctx.meta_lc(loc.start.line, loc.start.column))
+        .unwrap_or_else(|| ctx.meta_at(0))
+}
 
 /// Lower a brush-parser Program to a CAST Program.
-pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
+pub fn lower_program(program: ast::Program, ctx: &LowerCtx) -> anyhow::Result<Program> {
     let mut functions: HashMap<String, Function> = HashMap::new();
     let mut main_body: Vec<Statement> = Vec::new();
 
@@ -12,7 +20,7 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
         for item in &complete.0 {
             let and_or = &item.0;
             // First pass: extract function definitions
-            if let Some(func_stmt) = extract_function_def(and_or) {
+            if let Some(func_stmt) = extract_function_def(and_or, ctx) {
                 if let Statement::FunctionDef {
                     name, params, body, ..
                 } = func_stmt
@@ -22,14 +30,14 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
                         Function {
                             params,
                             body,
-                            meta: HashMap::new(),
+                            meta: node_meta(&program, ctx),
                             ..Default::default()
                         },
                     );
                     continue;
                 }
             }
-            for stmt in lower_and_or_list(and_or)? {
+            for stmt in lower_and_or_list(and_or, ctx)? {
                 main_body.push(stmt);
             }
         }
@@ -41,7 +49,7 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
             Function {
                 params: vec![],
                 body: main_body,
-                meta: HashMap::new(),
+                meta: node_meta(&program, ctx),
                 ..Default::default()
             },
         );
@@ -57,25 +65,25 @@ pub fn lower_program(program: ast::Program) -> anyhow::Result<Program> {
     })
 }
 
-fn extract_function_def(and_or: &AndOrList) -> Option<Statement> {
+fn extract_function_def(and_or: &AndOrList, ctx: &LowerCtx) -> Option<Statement> {
     let cmd = and_or.first.seq.first()?;
     match cmd {
         Command::Function(func) => {
-            let body_stmts = lower_compound_for_body(&func.body.0);
+            let body_stmts = lower_compound_for_body(&func.body.0, ctx);
             Some(Statement::FunctionDef {
                 name: func.fname.value.clone(),
                 params: vec![],
                 body: body_stmts,
-                meta: HashMap::new(),
+                meta: node_meta(and_or, ctx),
             })
         }
         _ => None,
     }
 }
 
-fn lower_and_or_list(and_or: &AndOrList) -> anyhow::Result<Vec<Statement>> {
+fn lower_and_or_list(and_or: &AndOrList, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     let mut stmts = Vec::new();
-    let first_stmts = lower_pipeline(&and_or.first)?;
+    let first_stmts = lower_pipeline(&and_or.first, ctx)?;
     let mut prev = if first_stmts.len() == 1 {
         let s = first_stmts.into_iter().next().unwrap();
         let expr = expr_from_statement(&s);
@@ -93,14 +101,14 @@ fn lower_and_or_list(and_or: &AndOrList) -> anyhow::Result<Vec<Statement>> {
             AndOr::And(pipeline) => {
                 let cond = prev.take().unwrap_or(Expression::BoolLiteral {
                     value: true,
-                    meta: HashMap::new(),
+                    meta: node_meta(and_or, ctx),
                 });
-                let body = lower_pipeline(pipeline)?;
+                let body = lower_pipeline(pipeline, ctx)?;
                 stmts.push(Statement::If {
                     condition: cond,
                     then_body: body,
                     else_body: None,
-                    meta: HashMap::new(),
+                    meta: node_meta(and_or, ctx),
                 });
             }
             AndOr::Or(pipeline) => {
@@ -109,17 +117,17 @@ fn lower_and_or_list(and_or: &AndOrList) -> anyhow::Result<Vec<Statement>> {
                     .map(|e| Expression::UnaryOp {
                         operator: "!".to_string(),
                         operand: Box::new(e),
-                        meta: HashMap::new(),
+                        meta: node_meta(and_or, ctx),
                     })
                     .unwrap_or(Expression::BoolLiteral {
                         value: true,
-                        meta: HashMap::new(),
+                        meta: node_meta(and_or, ctx),
                     });
                 stmts.push(Statement::If {
                     condition: cond,
-                    then_body: lower_pipeline(pipeline)?,
+                    then_body: lower_pipeline(pipeline, ctx)?,
                     else_body: None,
-                    meta: HashMap::new(),
+                    meta: node_meta(and_or, ctx),
                 });
             }
         }
@@ -129,16 +137,16 @@ fn lower_and_or_list(and_or: &AndOrList) -> anyhow::Result<Vec<Statement>> {
     Ok(stmts)
 }
 
-fn lower_pipeline(pipeline: &Pipeline) -> anyhow::Result<Vec<Statement>> {
+fn lower_pipeline(pipeline: &Pipeline, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     if pipeline.seq.is_empty() {
         return Ok(Vec::new());
     }
     if pipeline.seq.len() == 1 {
-        return lower_command(&pipeline.seq[0]);
+        return lower_command(&pipeline.seq[0], ctx);
     }
     let mut segments = Vec::new();
     for cmd in &pipeline.seq {
-        let stmts = lower_command(cmd)?;
+        let stmts = lower_command(cmd, ctx)?;
         for s in stmts {
             segments.push(expr_from_statement(&s));
         }
@@ -146,22 +154,22 @@ fn lower_pipeline(pipeline: &Pipeline) -> anyhow::Result<Vec<Statement>> {
     Ok(vec![Statement::ExprStmt {
         expr: Expression::Pipeline {
             segments,
-            meta: HashMap::new(),
+            meta: node_meta(pipeline, ctx),
         },
-        meta: HashMap::new(),
+        meta: node_meta(pipeline, ctx),
     }])
 }
 
-fn lower_command(cmd: &Command) -> anyhow::Result<Vec<Statement>> {
+fn lower_command(cmd: &Command, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     match cmd {
-        Command::Simple(simple) => lower_simple_command(simple),
-        Command::Compound(compound, _) => lower_compound_command(compound),
+        Command::Simple(simple) => lower_simple_command(simple, ctx),
+        Command::Compound(compound, _) => lower_compound_command(compound, ctx),
         Command::Function(_) => Ok(Vec::new()),
         Command::ExtendedTest(..) => Ok(Vec::new()),
     }
 }
 
-fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<Statement>> {
+fn lower_simple_command(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     let mut stmts: Vec<Statement> = Vec::new();
 
     if let Some(prefix) = &simple.prefix {
@@ -172,17 +180,17 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     ast::AssignmentName::ArrayElementName(n, _) => n.clone(),
                 };
                 let val = match &assignment.value {
-                    ast::AssignmentValue::Scalar(w) => word_to_expr(w),
+                    ast::AssignmentValue::Scalar(w) => word_to_expr(w, ctx),
                     ast::AssignmentValue::Array(..) => Expression::StringLiteral {
                         value: String::new(),
-                        meta: HashMap::new(),
+                        meta: node_meta(simple, ctx),
                     },
                 };
                 stmts.push(Statement::VarDecl {
                     name,
                     value: val,
                     type_hint: CastType::Any,
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 });
             }
         }
@@ -202,7 +210,7 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
         for item in &suffix.0 {
             match item {
                 ast::CommandPrefixOrSuffixItem::Word(w) => {
-                    args.push(word_to_expr(w));
+                    args.push(word_to_expr(w, ctx));
                 }
                 ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, _w) => {
                     let name = match &assignment.name {
@@ -210,10 +218,10 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                         ast::AssignmentName::ArrayElementName(n, _) => n.clone(),
                     };
                     let val = match &assignment.value {
-                        ast::AssignmentValue::Scalar(w) => word_to_expr(w),
+                        ast::AssignmentValue::Scalar(w) => word_to_expr(w, ctx),
                         ast::AssignmentValue::Array(..) => Expression::StringLiteral {
                             value: String::new(),
-                            meta: HashMap::new(),
+                            meta: node_meta(simple, ctx),
                         },
                     };
                     suffix_assignments.push((name, val));
@@ -236,7 +244,7 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     args,
                     meta: cap_meta("io", "print"),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
         "read" => {
@@ -246,7 +254,7 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     args,
                     meta: cap_meta("io", "readline"),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
         "cat" | "head" | "tail" | "wc" | "sort" | "grep" => {
@@ -256,7 +264,7 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     args,
                     meta: cap_meta("fs", "read"),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
         "local" => {
@@ -265,14 +273,14 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     name,
                     value: val,
                     type_hint: CastType::Any,
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 });
             }
         }
         "exit" | "return" => {
             stmts.push(Statement::Return {
                 value: args.into_iter().next(),
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
         "unset" => {
@@ -281,10 +289,10 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     stmts.push(Statement::VarDecl {
                         name: name.clone(),
                         value: Expression::NullLiteral {
-                            meta: HashMap::new(),
+                            meta: node_meta(simple, ctx),
                         },
                         type_hint: CastType::Any,
-                        meta: HashMap::new(),
+                        meta: node_meta(simple, ctx),
                     });
                 }
             }
@@ -296,7 +304,7 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     args,
                     meta: cap_meta("bash", "source"),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
         "cd" => {
@@ -306,18 +314,18 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     args: vec![
                         Expression::StringLiteral {
                             value: "PWD".to_string(),
-                            meta: HashMap::new(),
+                            meta: node_meta(simple, ctx),
                         },
                         args.into_iter()
                             .next()
                             .unwrap_or(Expression::StringLiteral {
                                 value: "~".to_string(),
-                                meta: HashMap::new(),
+                                meta: node_meta(simple, ctx),
                             }),
                     ],
                     meta: cap_meta("env", "set"),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
         "export" => {
@@ -326,16 +334,16 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                     stmts.push(Statement::Export {
                         name,
                         value: val,
-                        meta: HashMap::new(),
+                        meta: node_meta(simple, ctx),
                     });
                 }
             } else if !args.is_empty() {
                 stmts.push(Statement::Export {
                     name: String::new(),
                     value: args.into_iter().next().unwrap_or(Expression::NullLiteral {
-                        meta: HashMap::new(),
+                        meta: node_meta(simple, ctx),
                     }),
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 });
             }
         }
@@ -345,9 +353,9 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
                 expr: Expression::Call {
                     function: cmd_name,
                     args,
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(simple, ctx),
             });
         }
     }
@@ -355,11 +363,11 @@ fn lower_simple_command(simple: &ast::SimpleCommand) -> anyhow::Result<Vec<State
     Ok(stmts)
 }
 
-fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Statement>> {
+fn lower_compound_command(compound: &CompoundCommand, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     match compound {
         CompoundCommand::IfClause(if_cmd) => {
-            let condition = compound_list_to_expr(&if_cmd.condition);
-            let then_body = lower_compound_list(&if_cmd.then)?;
+            let condition = compound_list_to_expr(&if_cmd.condition, ctx);
+            let then_body = lower_compound_list(&if_cmd.then, ctx)?;
             let else_body = if let Some(elses) = &if_cmd.elses {
                 if elses.is_empty() {
                     None
@@ -367,16 +375,16 @@ fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Stat
                     let mut else_stmts = Vec::new();
                     for else_clause in elses {
                         if let Some(cond) = &else_clause.condition {
-                            let cond_expr = compound_list_to_expr(cond);
-                            let body = lower_compound_list(&else_clause.body)?;
+                            let cond_expr = compound_list_to_expr(cond, ctx);
+                            let body = lower_compound_list(&else_clause.body, ctx)?;
                             else_stmts.push(Statement::If {
                                 condition: cond_expr,
                                 then_body: body,
                                 else_body: None,
-                                meta: HashMap::new(),
+                                meta: node_meta(compound, ctx),
                             });
                         } else {
-                            let body = lower_compound_list(&else_clause.body)?;
+                            let body = lower_compound_list(&else_clause.body, ctx)?;
                             else_stmts.extend(body);
                         }
                     }
@@ -389,58 +397,58 @@ fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Stat
                 condition,
                 then_body,
                 else_body,
-                meta: HashMap::new(),
+                meta: node_meta(compound, ctx),
             }])
         }
         CompoundCommand::WhileClause(cmd) | CompoundCommand::UntilClause(cmd) => {
-            let condition = compound_list_to_expr(&cmd.0);
-            let body = lower_compound_list(&cmd.1.list)?;
+            let condition = compound_list_to_expr(&cmd.0, ctx);
+            let body = lower_compound_list(&cmd.1.list, ctx)?;
             Ok(vec![Statement::While {
                 condition: Box::new(condition),
                 body,
-                meta: HashMap::new(),
+                meta: node_meta(compound, ctx),
             }])
         }
         CompoundCommand::ForClause(for_cmd) => {
             let iterable = if let Some(values) = &for_cmd.values {
-                let elements: Vec<Expression> = values.iter().map(|w| word_to_expr(w)).collect();
+                let elements: Vec<Expression> = values.iter().map(|w| word_to_expr(w, ctx)).collect();
                 Expression::ArrayLiteral {
                     elements,
-                    meta: HashMap::new(),
+                    meta: node_meta(compound, ctx),
                 }
             } else {
                 Expression::Var {
                     name: "@".to_string(),
-                    meta: HashMap::new(),
+                    meta: node_meta(compound, ctx),
                 }
             };
-            let body = lower_compound_list(&for_cmd.body.list)?;
+            let body = lower_compound_list(&for_cmd.body.list, ctx)?;
             Ok(vec![Statement::For {
                 variable: for_cmd.variable_name.clone(),
                 iterable: Box::new(iterable),
                 body,
-                meta: HashMap::new(),
+                meta: node_meta(compound, ctx),
             }])
         }
-        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list),
-        CompoundCommand::Subshell(ss) => lower_compound_list(&ss.list),
+        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list, ctx),
+        CompoundCommand::Subshell(ss) => lower_compound_list(&ss.list, ctx),
         CompoundCommand::CaseClause(case_cmd) => {
-            let subject = word_to_expr(&case_cmd.value);
+            let subject = word_to_expr(&case_cmd.value, ctx);
             let mut stmts = Vec::new();
             for item in &case_cmd.cases {
                 let condition = if item.patterns.len() == 1 {
                     Expression::BinaryOp {
                         operator: "==".to_string(),
                         left: Box::new(subject.clone()),
-                        right: Box::new(word_to_expr(&item.patterns[0])),
-                        meta: HashMap::new(),
+                        right: Box::new(word_to_expr(&item.patterns[0], ctx)),
+                        meta: node_meta(compound, ctx),
                     }
                 } else {
                     let mut or_chain = Expression::BinaryOp {
                         operator: "==".to_string(),
                         left: Box::new(subject.clone()),
-                        right: Box::new(word_to_expr(&item.patterns[0])),
-                        meta: HashMap::new(),
+                        right: Box::new(word_to_expr(&item.patterns[0], ctx)),
+                        meta: node_meta(compound, ctx),
                     };
                     for pat in &item.patterns[1..] {
                         or_chain = Expression::BinaryOp {
@@ -449,23 +457,23 @@ fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Stat
                             right: Box::new(Expression::BinaryOp {
                                 operator: "==".to_string(),
                                 left: Box::new(subject.clone()),
-                                right: Box::new(word_to_expr(pat)),
-                                meta: HashMap::new(),
+                                right: Box::new(word_to_expr(pat, ctx)),
+                                meta: node_meta(compound, ctx),
                             }),
-                            meta: HashMap::new(),
+                            meta: node_meta(compound, ctx),
                         };
                     }
                     or_chain
                 };
                 let body = match &item.cmd {
-                    Some(list) => lower_compound_list(list)?,
+                    Some(list) => lower_compound_list(list, ctx)?,
                     None => Vec::new(),
                 };
                 stmts.push(Statement::If {
                     condition,
                     then_body: body,
                     else_body: None,
-                    meta: HashMap::new(),
+                    meta: node_meta(compound, ctx),
                 });
             }
             Ok(stmts)
@@ -475,11 +483,11 @@ fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Stat
                 name: "bash.arithmetic".to_string(),
                 args: vec![Expression::StringLiteral {
                     value: arith.expr.value.clone(),
-                    meta: HashMap::new(),
+                    meta: node_meta(compound, ctx),
                 }],
                 meta: cap_meta("bash", "arithmetic"),
             },
-            meta: HashMap::new(),
+            meta: node_meta(compound, ctx),
         }]),
         CompoundCommand::ArithmeticForClause(for_arith) => {
             let mut desc = String::new();
@@ -499,34 +507,34 @@ fn lower_compound_command(compound: &CompoundCommand) -> anyhow::Result<Vec<Stat
                     name: "bash.arithmetic_for".to_string(),
                     args: vec![Expression::StringLiteral {
                         value: desc,
-                        meta: HashMap::new(),
+                        meta: node_meta(compound, ctx),
                     }],
                     meta: cap_meta("bash", "arithmetic_for"),
                 },
-                meta: HashMap::new(),
+                meta: node_meta(compound, ctx),
             }])
         }
         _ => Ok(Vec::new()),
     }
 }
 
-fn lower_compound_list(list: &CompoundList) -> anyhow::Result<Vec<Statement>> {
+fn lower_compound_list(list: &CompoundList, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     let mut stmts = Vec::new();
     for item in &list.0 {
-        stmts.extend(lower_and_or_list(&item.0)?);
+        stmts.extend(lower_and_or_list(&item.0, ctx)?);
     }
     Ok(stmts)
 }
 
-fn compound_list_to_expr(list: &CompoundList) -> Expression {
+fn compound_list_to_expr(list: &CompoundList, ctx: &LowerCtx) -> Expression {
     let mut last_expr = Expression::BoolLiteral {
         value: true,
-        meta: HashMap::new(),
+        meta: node_meta(list, ctx),
     };
     for item in &list.0 {
         let and_or = &item.0;
         for cmd in &and_or.first.seq {
-            if let Some(expr) = expr_from_command(cmd) {
+            if let Some(expr) = expr_from_command(cmd, ctx) {
                 last_expr = expr;
             }
         }
@@ -534,7 +542,7 @@ fn compound_list_to_expr(list: &CompoundList) -> Expression {
             match additional {
                 AndOr::And(p) | AndOr::Or(p) => {
                     for cmd in &p.seq {
-                        if let Some(expr) = expr_from_command(cmd) {
+                        if let Some(expr) = expr_from_command(cmd, ctx) {
                             last_expr = expr;
                         }
                     }
@@ -545,14 +553,14 @@ fn compound_list_to_expr(list: &CompoundList) -> Expression {
     last_expr
 }
 
-fn expr_from_command(cmd: &Command) -> Option<Expression> {
+fn expr_from_command(cmd: &Command, ctx: &LowerCtx) -> Option<Expression> {
     match cmd {
-        Command::Simple(simple) => expr_from_simple(simple),
+        Command::Simple(simple) => expr_from_simple(simple, ctx),
         _ => None,
     }
 }
 
-fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
+fn expr_from_simple(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> Option<Expression> {
     let cmd_name = simple
         .word_or_name
         .as_ref()
@@ -564,7 +572,7 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
         .map(|s| {
             s.0.iter()
                 .filter_map(|item| match item {
-                    ast::CommandPrefixOrSuffixItem::Word(w) => Some(word_to_expr(w)),
+                    ast::CommandPrefixOrSuffixItem::Word(w) => Some(word_to_expr(w, ctx)),
                     _ => None,
                 })
                 .collect()
@@ -575,11 +583,11 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
         "" if !args.is_empty() => Some(args.into_iter().next().unwrap()),
         "true" | ":" => Some(Expression::BoolLiteral {
             value: true,
-            meta: HashMap::new(),
+            meta: node_meta(simple, ctx),
         }),
         "false" => Some(Expression::BoolLiteral {
             value: false,
-            meta: HashMap::new(),
+            meta: node_meta(simple, ctx),
         }),
         "test" => {
             if args.len() == 3 {
@@ -591,7 +599,7 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
                     },
                     left: Box::new(args[0].clone()),
                     right: Box::new(args[2].clone()),
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 })
             } else if args.len() == 2 {
                 // Unary: test OP ARG
@@ -604,7 +612,7 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
                         }
                     ),
                     args: vec![args[1].clone()],
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 })
             } else if args.len() == 1 {
                 Some(args.into_iter().next().unwrap())
@@ -628,7 +636,7 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
                     },
                     left: Box::new(stripped[0].clone()),
                     right: Box::new(stripped[2].clone()),
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 })
             } else if stripped.len() == 2 {
                 Some(Expression::Call {
@@ -640,7 +648,7 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
                         }
                     ),
                     args: vec![stripped[1].clone()],
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 })
             } else if stripped.len() == 1 {
                 Some(stripped.into_iter().next().unwrap())
@@ -653,7 +661,7 @@ fn expr_from_simple(simple: &ast::SimpleCommand) -> Option<Expression> {
                 Some(Expression::Call {
                     function: cmd_name.to_string(),
                     args,
-                    meta: HashMap::new(),
+                    meta: node_meta(simple, ctx),
                 })
             } else {
                 None
@@ -719,7 +727,7 @@ fn extract_var_refs(s: &str) -> (Vec<(String, String)>, String) {
     }
 }
 
-pub fn word_to_expr(word: &ast::Word) -> Expression {
+pub fn word_to_expr(word: &ast::Word, ctx: &LowerCtx) -> Expression {
     let raw = &word.value;
 
     // Bare $VAR reference (unquoted)
@@ -732,12 +740,12 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
         if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Expression::Var {
                 name,
-                meta: HashMap::new(),
+                meta: node_meta(word, ctx),
             };
         }
         return Expression::StringLiteral {
             value: raw.clone(),
-            meta: HashMap::new(),
+            meta: node_meta(word, ctx),
         };
     }
 
@@ -751,7 +759,7 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
         if is_single_quoted {
             return Expression::StringLiteral {
                 value: inner.to_string(),
-                meta: HashMap::new(),
+                meta: node_meta(word, ctx),
             };
         }
 
@@ -762,7 +770,7 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
             if var_parts.is_empty() {
                 return Expression::StringLiteral {
                     value: inner.to_string(),
-                    meta: HashMap::new(),
+                    meta: node_meta(word, ctx),
                 };
             }
 
@@ -770,7 +778,7 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
             if var_parts.len() == 1 && var_parts[0].0.is_empty() && final_lit.is_empty() {
                 return Expression::Var {
                     name: var_parts[0].1.clone(),
-                    meta: HashMap::new(),
+                    meta: node_meta(word, ctx),
                 };
             }
 
@@ -779,11 +787,11 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
                 if !lit.is_empty() {
                     let lit_expr = Expression::StringLiteral {
                         value: lit.clone(),
-                        meta: HashMap::new(),
+                        meta: node_meta(word, ctx),
                     };
                     let var_expr = Expression::Var {
                         name: var_name.clone(),
-                        meta: HashMap::new(),
+                        meta: node_meta(word, ctx),
                     };
                     result = Some(match result {
                         Some(acc) => Expression::BinaryOp {
@@ -793,28 +801,28 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
                                 operator: "+".to_string(),
                                 left: Box::new(lit_expr),
                                 right: Box::new(var_expr),
-                                meta: HashMap::new(),
+                                meta: node_meta(word, ctx),
                             }),
-                            meta: HashMap::new(),
+                            meta: node_meta(word, ctx),
                         },
                         None => Expression::BinaryOp {
                             operator: "+".to_string(),
                             left: Box::new(lit_expr),
                             right: Box::new(var_expr),
-                            meta: HashMap::new(),
+                            meta: node_meta(word, ctx),
                         },
                     });
                 } else {
                     let var_expr = Expression::Var {
                         name: var_name.clone(),
-                        meta: HashMap::new(),
+                        meta: node_meta(word, ctx),
                     };
                     result = Some(match result {
                         Some(acc) => Expression::BinaryOp {
                             operator: "+".to_string(),
                             left: Box::new(acc),
                             right: Box::new(var_expr),
-                            meta: HashMap::new(),
+                            meta: node_meta(word, ctx),
                         },
                         None => var_expr,
                     });
@@ -823,33 +831,33 @@ pub fn word_to_expr(word: &ast::Word) -> Expression {
             if !final_lit.is_empty() {
                 let lit_expr = Expression::StringLiteral {
                     value: final_lit,
-                    meta: HashMap::new(),
+                    meta: node_meta(word, ctx),
                 };
                 result = Some(match result {
                     Some(acc) => Expression::BinaryOp {
                         operator: "+".to_string(),
                         left: Box::new(acc),
                         right: Box::new(lit_expr),
-                        meta: HashMap::new(),
+                        meta: node_meta(word, ctx),
                     },
                     None => lit_expr,
                 });
             }
             return result.unwrap_or(Expression::StringLiteral {
                 value: inner.to_string(),
-                meta: HashMap::new(),
+                meta: node_meta(word, ctx),
             });
         }
 
         return Expression::StringLiteral {
             value: inner.to_string(),
-            meta: HashMap::new(),
+            meta: node_meta(word, ctx),
         };
     }
 
     Expression::StringLiteral {
         value: raw.to_string(),
-        meta: HashMap::new(),
+        meta: node_meta(word, ctx),
     }
 }
 
@@ -867,9 +875,9 @@ fn cap_meta(namespace: &str, method: &str) -> HashMap<String, serde_json::Value>
     meta
 }
 
-fn lower_compound_for_body(compound: &CompoundCommand) -> Vec<Statement> {
+fn lower_compound_for_body(compound: &CompoundCommand, ctx: &LowerCtx) -> Vec<Statement> {
     match compound {
-        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list).unwrap_or_default(),
-        _ => lower_compound_command(compound).unwrap_or_default(),
+        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list, ctx).unwrap_or_default(),
+        _ => lower_compound_command(compound, ctx).unwrap_or_default(),
     }
 }

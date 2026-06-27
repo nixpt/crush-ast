@@ -13,28 +13,31 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 
 ## 🔴 P0 — correctness / build health
 
-- [ ] **Fix `--all-features` build** — `db` and `stdlib` features fail to compile
+- [x] **Fix `--all-features` build** — `db` and `stdlib` features fail to compile
   with `Value::Bool` type errors (fallout from the s298 VM type expansion that
   added `Bool`/`Map`/`Error`/`Bytes`). Default build + `cargo test --workspace`
   are green; only the feature-gated arms break. *(crush-lang-sdk)*
-- [ ] **portable_vm parity** — `crates/crush-vm/src/portable_vm.rs` is missing
-  the opcodes the main `vm.rs` already implements: `PUSH_BOOL`, `NEW_OBJ` /
-  `SET_FIELD` / `GET_FIELD`, `EXEC_LANG`, `ENTER_TRY` / `EXIT_TRY` / `THROW`,
-  `ARR_PUSH` / `ARR_POP`. The portable VM diverges from the canonical one until
-  these land.
+- [x] **portable_vm parity** — `crates/crush-vm/src/portable_vm.rs` was found
+  to already implement all 10 opcodes (`PUSH_BOOL`, `NEW_OBJ` / `SET_FIELD`
+  / `GET_FIELD`, `ENTER_TRY` / `EXIT_TRY` / `THROW`, `ARR_PUSH` / `ARR_POP`);
+  only the parity test surface was missing. Closed by adding 11
+  `test_portable_*` tests in `portable_vm.rs::mod tests` mirroring
+  canonical `tests.rs` (`EXEC_LANG` gated intentionally — see
+  `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md` for the pop-on-name followup).
+  80 `crush-vm --lib` tests green.
 
 ## 🟡 P1 — coverage & language completeness
 
-- [ ] **Test the Rust frontend** — `crush-lang-rust` (`syn` → CAST) ships but has
+- [x] **Test the Rust frontend** — `crush-lang-rust` (`syn` → CAST) ships but has
   **0 tests**. Mirror the `crush-lang-python` test shape (feature detection +
   lowering round-trip).
-- [ ] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.
-- [ ] **Lambda + Match compilation** — currently parse but bail at compile time.
+- [x] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.
+- [x] **Lambda + Match compilation** — currently parse but bail at compile time.
   Wire through `crush-frontend` → CASM.
 - [ ] **async/await execution** — parsed but not executable; design the
   fiber/coroutine lowering (see `docs/design/crushvm-rustpython.md` §8 — async →
   Crush fibers is an open question).
-- [ ] **Publish core crates to crates.io** — `crush-errors`, `crush-cast`,
+- [x] **Publish core crates to crates.io** — `crush-errors`, `crush-cast`,
   `casm`. External path-dep consumers (openko/fabric, crush-symbols,
   mycelium-mobile, arniko) currently pin via path; publishing unblocks versioned
   deps. *(`workspace = true` already set per the s298 decision.)*
@@ -44,14 +47,14 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 The `Frontend` abstraction (native parser → CAST) is the active direction; the
 remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
-- [ ] **JavaScript/TypeScript frontend** (`crush-lang-js`) → **dual-backend**:
+- [x] **JavaScript/TypeScript frontend** (`crush-lang-js`) → **dual-backend**:
   **swc** primary/default (full JS + TS + JSX/TSX, the completeness guarantee) +
   **boa** optional (`boa-backend` feature, JS-only, Boa-aligned). Both lower to one
   CAST. (Walkers are subprocess binaries → swc does NOT land in surfer's graph, so
   its weight isn't a surfer cost; boa exists for a future in-process embedding.)
   Full dispatch-ready spec: **`docs/tasks/js-ts-frontend.md`** (task CA-JS-1).
   Highest-value next frontend; enables "Crush as surfer's script language."
-- [ ] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
+- [x] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
   (prior attempt hit an API mismatch). The planned `crush-lang-bash` crate is its
   home.
 - [ ] **Go / C / Zig / wasm walkers** — scaffold-level; mature on demand (no pure
@@ -85,6 +88,14 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 
 ## ✅ Done log
 
+- **2026-06-22** — `agent/buffy/CRUSHVM-1-PORTABLE-PARITY` lands 11
+  `test_portable_*` parity tests in
+  `crates/crush-vm/src/portable_vm.rs::mod tests` mirroring canonical
+  `tests.rs` for `PUSH_BOOL`, `NEW_OBJ` / `SET_FIELD` / `GET_FIELD`,
+  `ENTER_TRY` / `EXIT_TRY` / `THROW`, `ARR_PUSH` / `ARR_POP`, and the
+  `Value::Map` type-name. `EXEC_LANG` followup captured as
+  `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md`. 80 `crush-vm --lib` tests
+  green (was 69). Closes `TASKS.md` 🔴 P0 *portable_vm parity*.
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
   (ARR_PUSH/POP, NEW_OBJ/SET_FIELD/GET_FIELD, ENTER_TRY/EXIT_TRY/THROW); reconciled

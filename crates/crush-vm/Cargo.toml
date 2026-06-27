@@ -18,5 +18,10 @@ path = "src/main.rs"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# Canonical NDJSON wire-format helpers (DiagRecord + diag_line +
+# diag_line_from + wants_json). Replaces the previously inlined
+# seven-field-shape trio in `src/main.rs::tests`; canonical wire-
+# format lockdown lives in `crates/crush-diagnostics/tests/wire_format.rs`.
+crush-diagnostics.workspace = true
 
 [dev-dependencies]

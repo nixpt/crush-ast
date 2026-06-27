@@ -179,7 +179,7 @@ fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerError> 
     }
 
     Ok(Program {
-        cast_version: "0.1".to_string(),
+        cast_version: "0.2".to_string(),
         entry: "main".to_string(),
         lang: Some("wasm".to_string()),
         functions,

@@ -1,0 +1,56 @@
+// =============================================================================
+// tests/fixtures/sdk-matrix-locator/main.crush  [FIXTURE]
+//
+// Structural-lockstep fixture for
+//   crush-pkg/tests/test_selfhost_sdk_matrix.rs
+// Matrix ticket: TICKETS/CRUSH-SELFHOST-1.md
+// Audit-resolution ticket: TICKETS/CRUSH-SELFHOST-1-AMEND-1.md (RESOLVED)
+//
+// Each cap call below maps to a cell in the matrix's authoring-surface table.
+// Reading `cat` a reviewer sees all `cap-side` cells inline:
+//
+//   CELL 1 (program body)          `fn main()` itself — the program body
+//                                  is reachable; cap-side side effects
+//                                  execute as written.
+//   CELL 3 (host table plumbing)   `capsule.cell_3(..., 7)` — the call
+//                                  reaches a `HostCap` registered into
+//                                  `CrushRunner.host_caps`.
+//   CELL 4 (built-in cap)          `io.print(...)` — the dispatch arm
+//                                  in `crates/crush-vm/src/scheduler.rs::dispatch_cap`
+//                                  resolves built-ins from `caps.rs::capabilities()`
+//                                  WITHOUT delegating to any `HostCap`.
+//   CELL 5 (user-extended cap)     `repl_runtime.cell_5(..., 42)` — the
+//                                  call reaches a `HostCap` registered
+//                                  via `HostCaps::register` (any cap
+//                                  written outside the built-in registry).
+//
+// CELL 2 (language dispatch) is pinned by `capsule.toml` (next door in
+// this fixture directory): `language = "crush"` and the dispatcher
+// `crush_pkg::manifest::language_to_capsule_type("crush") == CapsuleType::Crush`
+// is asserted in
+// `sdk_matrix_cell_2_legacy_capsule_type_auto_migrates_to_language` (lockstep
+// proof for CRUSH-SELFHOST-1-AMEND-1).
+//
+// CELL 6 (Runtime API) and CELL 7 (compile API) are exercised by
+// APPLYING `compile_crush_source(...)` to this exact `fn main()` body
+// at the Rust boundary in `test_selfhost_sdk_matrix.rs`; both API-side
+// assertions are pinned there, not in this fixture.
+//
+// CAP-NAME SHAPE. Each cap-side call is a 2-segment dotted name
+// (`capsule.cell_1`, `capsule.cell_3`, `repl_runtime.cell_5`). The
+// parser accepts dotted cap dispatch at 1- or 2-segment depths; deeper
+// nesting (3+) parses as member access, then the call arm fails at
+// codegen with `Cannot call non-function`. The 2-segment form matches
+// the working `gui.register_command` shape in `tests/test_selfhost_demo.rs`.
+// See the module docstring of `test_selfhost_sdk_matrix.rs` for the
+// full cap-name-shape rationale.
+// =============================================================================
+
+fn main() {
+    // CELL_1 + CELL_4 + CELL_3 + CELL_5 — four cap-side cells in ONE
+    // main() so the structural lockstep fires a single program-load.
+    capsule.cell_1("capsule-body")
+    io.print("builtin-caps-fire-from-source")
+    capsule.cell_3("from CrushRunner.host_caps", 7)
+    repl_runtime.cell_5("from HostCaps::register", 42)
+}

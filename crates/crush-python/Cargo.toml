@@ -8,9 +8,23 @@ repository.workspace = true
 
 [lib]
 name = "crush_python"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 crush-cast.workspace = true
 serde_json.workspace = true
-pyo3 = { version = "0.23", features = ["extension-module", "abi3", "abi3-py311"] }
+pyo3 = { version = "0.23", features = ["abi3", "abi3-py311"] }
+
+[dev-dependencies]
+# Ensure libpython is linked for `cargo test`. The extension-module feature
+# must NOT appear in [features].default — when active, pyo3 skips linking
+# libpython (correct for a .so loaded by the interpreter), but `cargo test`
+# builds a standalone binary that needs it resolved at link time.
+# Maturin/wheel builds pass `--features extension-module` explicitly.
+
+[features]
+# NOTE: extension-module is intentionally NOT in default.
+# Add --features extension-module when building with maturin or as a cdylib.
+# See: https://pyo3.rs/v0.23/building-and-distribution.html
+extension-module = ["pyo3/extension-module"]
+

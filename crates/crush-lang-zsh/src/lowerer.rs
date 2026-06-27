@@ -1,5 +1,6 @@
 use crush_cast::{CastType, Expression, Function, Program, Statement};
 use std::collections::HashMap;
+use walker_core::LowerCtx;
 use zshrs_parse::lexer::untokenize;
 use zshrs_parse::parser::*;
 
@@ -7,12 +8,12 @@ fn clean(s: &str) -> String {
     untokenize(s)
 }
 
-pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
+pub fn lower_program(program: &ZshProgram, ctx: &LowerCtx) -> anyhow::Result<Program> {
     let mut functions: HashMap<String, Function> = HashMap::new();
     let mut main_body: Vec<Statement> = Vec::new();
 
     for list in &program.lists {
-        let (stmts, funcs) = lower_sublist(&list.sublist)?;
+        let (stmts, funcs) = lower_sublist(&list.sublist, ctx)?;
         for (name, func) in funcs {
             functions.entry(name).or_insert(func);
         }
@@ -25,7 +26,7 @@ pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
             Function {
                 params: vec![],
                 body: main_body,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
                 ..Default::default()
             },
         );
@@ -45,27 +46,27 @@ pub fn lower_program(program: &ZshProgram) -> anyhow::Result<Program> {
 /// by && or ||. Returns extracted function definitions too.
 fn lower_sublist(
     sublist: &ZshSublist,
-) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let (stmts, funcs) = lower_pipe(&sublist.pipe)?;
+    ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let (stmts, funcs) = lower_pipe(&sublist.pipe, ctx)?;
 
     if let Some((op, next)) = &sublist.next {
-        let (next_stmts, next_funcs) = lower_sublist(next)?;
+        let (next_stmts, next_funcs) = lower_sublist(next, ctx)?;
         let mut all_funcs = funcs;
         all_funcs.extend(next_funcs);
 
         match op {
             SublistOp::And => {
-                let cond = expr_from_last_stmt(&stmts);
-                Ok((wrap_if(cond, next_stmts, None), all_funcs))
+                let cond = expr_from_last_stmt(&stmts, ctx);
+                Ok((wrap_if(cond, next_stmts, None, ctx), all_funcs))
             }
             SublistOp::Or => {
-                let cond = expr_from_last_stmt(&stmts);
+                let cond = expr_from_last_stmt(&stmts, ctx);
                 let not_cond = Expression::UnaryOp {
                     operator: "!".to_string(),
                     operand: Box::new(cond),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 };
-                Ok((wrap_if(not_cond, next_stmts, None), all_funcs))
+                Ok((wrap_if(not_cond, next_stmts, None, ctx), all_funcs))
             }
         }
     } else {
@@ -76,19 +77,19 @@ fn lower_sublist(
 /// Lower a ZshPipe to statements. A pipe is commands connected by |.
 /// For a single command, return its statements directly.
 /// For a multi-command pipeline, wrap in a Pipeline expression.
-fn lower_pipe(pipe: &ZshPipe) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_pipe(pipe: &ZshPipe, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     if pipe.next.is_none() {
-        return lower_command(&pipe.cmd);
+        return lower_command(&pipe.cmd, ctx);
     }
 
     let mut segments: Vec<Expression> = Vec::new();
     let mut funcs = Vec::new();
     let mut current = Some(pipe);
     while let Some(p) = current {
-        let (stmts, mut fs) = lower_command(&p.cmd)?;
+        let (stmts, mut fs) = lower_command(&p.cmd, ctx)?;
         funcs.extend(fs.drain(..));
         for s in stmts {
-            segments.push(expr_from_statement(&s));
+            segments.push(expr_from_statement(&s, ctx));
         }
         current = p.next.as_deref();
     }
@@ -97,20 +98,20 @@ fn lower_pipe(pipe: &ZshPipe) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
         vec![Statement::ExprStmt {
             expr: Expression::Pipeline {
                 segments,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             },
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         funcs,
     ))
 }
 
-fn lower_command(cmd: &ZshCommand) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_command(cmd: &ZshCommand, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     match cmd {
-        ZshCommand::Simple(simple) => lower_simple(simple),
-        ZshCommand::FuncDef(func) => lower_funcdef(func),
+        ZshCommand::Simple(simple) => lower_simple(simple, ctx),
+        ZshCommand::FuncDef(func) => lower_funcdef(func, ctx),
         ZshCommand::Subsh(prog) | ZshCommand::Cursh(prog) => {
-            let lowered = lower_program(prog.as_ref())?;
+            let lowered = lower_program(prog.as_ref(), ctx)?;
             let body = lowered
                 .functions
                 .get("main")
@@ -118,36 +119,36 @@ fn lower_command(cmd: &ZshCommand) -> anyhow::Result<(Vec<Statement>, Vec<(Strin
                 .unwrap_or_default();
             Ok((body, Vec::new()))
         }
-        ZshCommand::If(if_cmd) => lower_if(if_cmd),
-        ZshCommand::While(w) => lower_while(w),
-        ZshCommand::Until(w) => lower_until(w),
-        ZshCommand::For(f) => lower_for(f),
-        ZshCommand::Case(case) => lower_case(case),
-        ZshCommand::Repeat(rep) => lower_repeat(rep),
-        ZshCommand::Try(try_cmd) => lower_try(try_cmd),
-        ZshCommand::Cond(cond) => lower_cond(cond),
-        ZshCommand::Arith(expr) => lower_arith(expr),
+        ZshCommand::If(if_cmd) => lower_if(if_cmd, ctx),
+        ZshCommand::While(w) => lower_while(w, ctx),
+        ZshCommand::Until(w) => lower_until(w, ctx),
+        ZshCommand::For(f) => lower_for(f, ctx),
+        ZshCommand::Case(case) => lower_case(case, ctx),
+        ZshCommand::Repeat(rep) => lower_repeat(rep, ctx),
+        ZshCommand::Try(try_cmd) => lower_try(try_cmd, ctx),
+        ZshCommand::Cond(cond) => lower_cond(cond, ctx),
+        ZshCommand::Arith(expr) => lower_arith(expr, ctx),
         ZshCommand::Time(body) => {
             if let Some(sublist) = body {
-                lower_sublist(sublist)
+                lower_sublist(sublist, ctx)
             } else {
                 Ok((Vec::new(), Vec::new()))
             }
         }
-        ZshCommand::Redirected(cmd_inner, _) => lower_command(cmd_inner),
+        ZshCommand::Redirected(cmd_inner, _) => lower_command(cmd_inner, ctx),
     }
 }
 
-fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_simple(simple: &ZshSimple, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let mut stmts: Vec<Statement> = Vec::new();
 
     for assign in &simple.assigns {
-        let value = assign_value_to_expr(&assign.value);
+        let value = assign_value_to_expr(&assign.value, ctx);
         stmts.push(Statement::VarDecl {
             name: assign.name.clone(),
             value,
             type_hint: CastType::Any,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         });
     }
 
@@ -156,7 +157,7 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
     }
 
     let cmd_name = &simple.words[0];
-    let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w)).collect();
+    let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w, ctx)).collect();
 
     match cmd_name.as_str() {
         "echo" | "printf" => {
@@ -166,7 +167,7 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                     args,
                     meta: cap_meta("io", "print"),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         "read" => {
@@ -176,7 +177,7 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                     args,
                     meta: cap_meta("io", "readline"),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         "cat" | "head" | "tail" | "wc" | "sort" | "grep" => {
@@ -186,13 +187,13 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                     args,
                     meta: cap_meta("fs", "read"),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         "exit" | "return" => {
             stmts.push(Statement::Return {
                 value: args.into_iter().next(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         "unset" => {
@@ -201,10 +202,10 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                     stmts.push(Statement::VarDecl {
                         name: name.clone(),
                         value: Expression::NullLiteral {
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         },
                         type_hint: CastType::Any,
-                        meta: HashMap::new(),
+                        meta: ctx.meta_at(0),
                     });
                 }
             }
@@ -216,7 +217,7 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                     args,
                     meta: cap_meta("bash", "source"),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         "cd" => {
@@ -226,18 +227,18 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                     args: vec![
                         Expression::StringLiteral {
                             value: "PWD".to_string(),
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         },
                         args.into_iter()
                             .next()
                             .unwrap_or(Expression::StringLiteral {
                                 value: "~".to_string(),
-                                meta: HashMap::new(),
+                                meta: ctx.meta_at(0),
                             }),
                     ],
                     meta: cap_meta("env", "set"),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         "export" => {
@@ -245,7 +246,7 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                 stmts.push(Statement::Export {
                     name: String::new(),
                     value: arg,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 });
             }
         }
@@ -256,9 +257,9 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                 expr: Expression::Call {
                     function: cmd_name.clone(),
                     args,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
     }
@@ -266,8 +267,8 @@ fn lower_simple(simple: &ZshSimple) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
     Ok((stmts, Vec::new()))
 }
 
-fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let body_prog = lower_program(func.body.as_ref())?;
+fn lower_funcdef(func: &ZshFuncDef, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let body_prog = lower_program(func.body.as_ref(), ctx)?;
     let body = body_prog
         .functions
         .get("main")
@@ -281,7 +282,7 @@ fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
             Function {
                 params: vec![],
                 body: body.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
                 ..Default::default()
             },
         ));
@@ -293,7 +294,7 @@ fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
             .iter()
             .map(|a| Expression::StringLiteral {
                 value: a.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             })
             .collect();
         if let Some(name) = func.names.first() {
@@ -301,9 +302,9 @@ fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
                 expr: Expression::Call {
                     function: name.clone(),
                     args: call_args,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
     }
@@ -311,9 +312,9 @@ fn lower_funcdef(func: &ZshFuncDef) -> anyhow::Result<(Vec<Statement>, Vec<(Stri
     Ok((stmts, funcs))
 }
 
-fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let condition = program_to_expr(&if_cmd.cond);
-    let then_prog = lower_program(if_cmd.then.as_ref())?;
+fn lower_if(if_cmd: &ZshIf, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let condition = program_to_expr(&if_cmd.cond, ctx);
+    let then_prog = lower_program(if_cmd.then.as_ref(), ctx)?;
     let then_body = then_prog
         .functions
         .get("main")
@@ -324,8 +325,8 @@ fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Func
     if !if_cmd.elif.is_empty() || if_cmd.else_.is_some() {
         let mut combined = Vec::new();
         for (elif_cond, elif_then) in &if_cmd.elif {
-            let elif_cond_expr = program_to_expr(elif_cond);
-            let elif_then_prog = lower_program(elif_then)?;
+            let elif_cond_expr = program_to_expr(elif_cond, ctx);
+            let elif_then_prog = lower_program(elif_then, ctx)?;
             let elif_then_body = elif_then_prog
                 .functions
                 .get("main")
@@ -335,11 +336,11 @@ fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Func
                 condition: elif_cond_expr,
                 then_body: elif_then_body,
                 else_body: None,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
         if let Some(else_) = &if_cmd.else_ {
-            let else_prog = lower_program(else_.as_ref())?;
+            let else_prog = lower_program(else_.as_ref(), ctx)?;
             let else_body_stmts = else_prog
                 .functions
                 .get("main")
@@ -355,15 +356,15 @@ fn lower_if(if_cmd: &ZshIf) -> anyhow::Result<(Vec<Statement>, Vec<(String, Func
             condition,
             then_body,
             else_body,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         Vec::new(),
     ))
 }
 
-fn lower_while(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let condition = program_to_expr(&w.cond);
-    let body_prog = lower_program(w.body.as_ref())?;
+fn lower_while(w: &ZshWhile, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let condition = program_to_expr(&w.cond, ctx);
+    let body_prog = lower_program(w.body.as_ref(), ctx)?;
     let body = body_prog
         .functions
         .get("main")
@@ -374,19 +375,19 @@ fn lower_while(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fun
         vec![Statement::While {
             condition: Box::new(condition),
             body,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         Vec::new(),
     ))
 }
 
-fn lower_until(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_until(w: &ZshWhile, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let condition = Expression::UnaryOp {
         operator: "!".to_string(),
-        operand: Box::new(program_to_expr(&w.cond)),
-        meta: HashMap::new(),
+        operand: Box::new(program_to_expr(&w.cond, ctx)),
+        meta: ctx.meta_at(0),
     };
-    let body_prog = lower_program(w.body.as_ref())?;
+    let body_prog = lower_program(w.body.as_ref(), ctx)?;
     let body = body_prog
         .functions
         .get("main")
@@ -397,24 +398,24 @@ fn lower_until(w: &ZshWhile) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fun
         vec![Statement::While {
             condition: Box::new(condition),
             body,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         Vec::new(),
     ))
 }
 
-fn lower_for(f: &ZshFor) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_for(f: &ZshFor, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let iterable = match &f.list {
         ForList::Words(words) => {
-            let elements: Vec<Expression> = words.iter().map(|w| word_to_expr(w)).collect();
+            let elements: Vec<Expression> = words.iter().map(|w| word_to_expr(w, ctx)).collect();
             Expression::ArrayLiteral {
                 elements,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }
         }
         ForList::Positional => Expression::Var {
             name: "@".to_string(),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
         ForList::CStyle { init, cond, step } => {
             let desc = format!("{}; {}; {}", init, cond, step);
@@ -422,14 +423,14 @@ fn lower_for(f: &ZshFor) -> anyhow::Result<(Vec<Statement>, Vec<(String, Functio
                 name: "bash.arithmetic_for".to_string(),
                 args: vec![Expression::StringLiteral {
                     value: desc,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 }],
                 meta: cap_meta("bash", "arithmetic_for"),
             }
         }
     };
 
-    let body_prog = lower_program(f.body.as_ref())?;
+    let body_prog = lower_program(f.body.as_ref(), ctx)?;
     let body = body_prog
         .functions
         .get("main")
@@ -441,14 +442,14 @@ fn lower_for(f: &ZshFor) -> anyhow::Result<(Vec<Statement>, Vec<(String, Functio
             variable: f.var.clone(),
             iterable: Box::new(iterable),
             body,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         Vec::new(),
     ))
 }
 
-fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let subject = word_to_expr(&case.word);
+fn lower_case(case: &ZshCase, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let subject = word_to_expr(&case.word, ctx);
     let mut stmts = Vec::new();
 
     for arm in &case.arms {
@@ -458,9 +459,9 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
                 left: Box::new(subject.clone()),
                 right: Box::new(Expression::StringLiteral {
                     value: arm.patterns[0].clone(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 }),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }
         } else {
             let mut or_chain = Expression::BinaryOp {
@@ -468,9 +469,9 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
                 left: Box::new(subject.clone()),
                 right: Box::new(Expression::StringLiteral {
                     value: arm.patterns[0].clone(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 }),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             };
             for pat in &arm.patterns[1..] {
                 or_chain = Expression::BinaryOp {
@@ -481,17 +482,17 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
                         left: Box::new(subject.clone()),
                         right: Box::new(Expression::StringLiteral {
                             value: pat.clone(),
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         }),
-                        meta: HashMap::new(),
+                        meta: ctx.meta_at(0),
                     }),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 };
             }
             or_chain
         };
 
-        let body_prog = lower_program(&arm.body)?;
+        let body_prog = lower_program(&arm.body, ctx)?;
         let body = body_prog
             .functions
             .get("main")
@@ -502,16 +503,16 @@ fn lower_case(case: &ZshCase) -> anyhow::Result<(Vec<Statement>, Vec<(String, Fu
             condition,
             then_body: body,
             else_body: None,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         });
     }
 
     Ok((stmts, Vec::new()))
 }
 
-fn lower_repeat(rep: &ZshRepeat) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let count = word_to_expr(&rep.count);
-    let body_prog = lower_program(rep.body.as_ref())?;
+fn lower_repeat(rep: &ZshRepeat, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let count = word_to_expr(&rep.count, ctx);
+    let body_prog = lower_program(rep.body.as_ref(), ctx)?;
     let body = body_prog
         .functions
         .get("main")
@@ -522,13 +523,13 @@ fn lower_repeat(rep: &ZshRepeat) -> anyhow::Result<(Vec<Statement>, Vec<(String,
         operator: ">".to_string(),
         left: Box::new(Expression::Var {
             name: "__repeat_i".to_string(),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }),
         right: Box::new(Expression::StringLiteral {
             value: "0".to_string(),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }),
-        meta: HashMap::new(),
+        meta: ctx.meta_at(0),
     };
 
     let mut loop_body = body;
@@ -537,15 +538,15 @@ fn lower_repeat(rep: &ZshRepeat) -> anyhow::Result<(Vec<Statement>, Vec<(String,
             operator: "-=".to_string(),
             left: Box::new(Expression::Var {
                 name: "__repeat_i".to_string(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }),
             right: Box::new(Expression::StringLiteral {
                 value: "1".to_string(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
-        meta: HashMap::new(),
+        meta: ctx.meta_at(0),
     });
 
     Ok((
@@ -554,26 +555,26 @@ fn lower_repeat(rep: &ZshRepeat) -> anyhow::Result<(Vec<Statement>, Vec<(String,
                 name: "__repeat_i".to_string(),
                 value: count,
                 type_hint: CastType::Any,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             },
             Statement::While {
                 condition: Box::new(condition),
                 body: loop_body,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             },
         ],
         Vec::new(),
     ))
 }
 
-fn lower_try(try_cmd: &ZshTry) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let try_prog = lower_program(try_cmd.try_block.as_ref())?;
+fn lower_try(try_cmd: &ZshTry, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let try_prog = lower_program(try_cmd.try_block.as_ref(), ctx)?;
     let try_body = try_prog
         .functions
         .get("main")
         .map(|f| f.body.clone())
         .unwrap_or_default();
-    let always_prog = lower_program(try_cmd.always.as_ref())?;
+    let always_prog = lower_program(try_cmd.always.as_ref(), ctx)?;
     let always_body = always_prog
         .functions
         .get("main")
@@ -584,161 +585,161 @@ fn lower_try(try_cmd: &ZshTry) -> anyhow::Result<(Vec<Statement>, Vec<(String, F
     Ok((body, Vec::new()))
 }
 
-fn lower_cond(cond: &ZshCond) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
-    let expr = cond_to_expr(cond);
+fn lower_cond(cond: &ZshCond, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    let expr = cond_to_expr(cond, ctx);
     Ok((
         vec![Statement::ExprStmt {
             expr,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         Vec::new(),
     ))
 }
 
-fn lower_arith(expr: &str) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_arith(expr: &str, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     Ok((
         vec![Statement::ExprStmt {
             expr: Expression::CapabilityCall {
                 name: "bash.arithmetic".to_string(),
                 args: vec![Expression::StringLiteral {
                     value: expr.to_string(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 }],
                 meta: cap_meta("bash", "arithmetic"),
             },
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }],
         Vec::new(),
     ))
 }
 
-fn cond_to_expr(cond: &ZshCond) -> Expression {
+fn cond_to_expr(cond: &ZshCond, ctx: &LowerCtx) -> Expression {
     match cond {
         ZshCond::Not(inner) => Expression::UnaryOp {
             operator: "!".to_string(),
-            operand: Box::new(cond_to_expr(inner)),
-            meta: HashMap::new(),
+            operand: Box::new(cond_to_expr(inner, ctx)),
+            meta: ctx.meta_at(0),
         },
         ZshCond::And(a, b) => Expression::BinaryOp {
             operator: "and".to_string(),
-            left: Box::new(cond_to_expr(a)),
-            right: Box::new(cond_to_expr(b)),
-            meta: HashMap::new(),
+            left: Box::new(cond_to_expr(a, ctx)),
+            right: Box::new(cond_to_expr(b, ctx)),
+            meta: ctx.meta_at(0),
         },
         ZshCond::Or(a, b) => Expression::BinaryOp {
             operator: "or".to_string(),
-            left: Box::new(cond_to_expr(a)),
-            right: Box::new(cond_to_expr(b)),
-            meta: HashMap::new(),
+            left: Box::new(cond_to_expr(a, ctx)),
+            right: Box::new(cond_to_expr(b, ctx)),
+            meta: ctx.meta_at(0),
         },
         ZshCond::Unary(op, val) => Expression::Call {
             function: format!("test_{}", op),
             args: vec![Expression::StringLiteral {
                 value: val.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }],
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
         ZshCond::Binary(a, op, b) => Expression::BinaryOp {
             operator: op.clone(),
             left: Box::new(Expression::StringLiteral {
                 value: a.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }),
             right: Box::new(Expression::StringLiteral {
                 value: b.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
         ZshCond::Regex(val, pat) => Expression::Call {
             function: "test_regex".to_string(),
             args: vec![
                 Expression::StringLiteral {
                     value: val.clone(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
                 Expression::StringLiteral {
                     value: pat.clone(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
             ],
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
     }
 }
 
-fn program_to_expr(prog: &ZshProgram) -> Expression {
+fn program_to_expr(prog: &ZshProgram, ctx: &LowerCtx) -> Expression {
     let mut last_expr = Expression::BoolLiteral {
         value: true,
-        meta: HashMap::new(),
+        meta: ctx.meta_at(0),
     };
     for list in &prog.lists {
-        last_expr = sublist_to_expr(&list.sublist);
+        last_expr = sublist_to_expr(&list.sublist, ctx);
     }
     last_expr
 }
 
-fn sublist_to_expr(sublist: &ZshSublist) -> Expression {
-    pipe_to_expr(&sublist.pipe)
+fn sublist_to_expr(sublist: &ZshSublist, ctx: &LowerCtx) -> Expression {
+    pipe_to_expr(&sublist.pipe, ctx)
 }
 
-fn pipe_to_expr(pipe: &ZshPipe) -> Expression {
-    command_to_expr(&pipe.cmd)
+fn pipe_to_expr(pipe: &ZshPipe, ctx: &LowerCtx) -> Expression {
+    command_to_expr(&pipe.cmd, ctx)
 }
 
-fn command_to_expr(cmd: &ZshCommand) -> Expression {
+fn command_to_expr(cmd: &ZshCommand, ctx: &LowerCtx) -> Expression {
     match cmd {
         ZshCommand::Simple(simple) => {
             let first = simple.words.first().map(|s| s.as_str()).unwrap_or("");
-            let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w)).collect();
+            let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w, ctx)).collect();
 
             match first {
                 "true" | ":" => Expression::BoolLiteral {
                     value: true,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
                 "false" => Expression::BoolLiteral {
                     value: false,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
-                "test" => expr_from_test_call(args),
-                "[" => expr_from_test_call(args),
+                "test" => expr_from_test_call(args, ctx),
+                "[" => expr_from_test_call(args, ctx),
                 _ => {
                     if !first.is_empty() {
                         Expression::Call {
                             function: first.to_string(),
                             args,
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         }
                     } else {
                         Expression::BoolLiteral {
                             value: true,
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         }
                     }
                 }
             }
         }
-        ZshCommand::Subsh(prog) | ZshCommand::Cursh(prog) => program_to_expr(prog),
-        ZshCommand::Cond(cond) => cond_to_expr(cond),
+        ZshCommand::Subsh(prog) | ZshCommand::Cursh(prog) => program_to_expr(prog, ctx),
+        ZshCommand::Cond(cond) => cond_to_expr(cond, ctx),
         ZshCommand::Arith(expr) => Expression::CapabilityCall {
             name: "bash.arithmetic".to_string(),
             args: vec![Expression::StringLiteral {
                 value: expr.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }],
             meta: cap_meta("bash", "arithmetic"),
         },
-        ZshCommand::Redirected(cmd_inner, _) => command_to_expr(cmd_inner),
+        ZshCommand::Redirected(cmd_inner, _) => command_to_expr(cmd_inner, ctx),
         _ => Expression::BoolLiteral {
             value: true,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
     }
 }
 
-fn expr_from_test_call(args: Vec<Expression>) -> Expression {
+fn expr_from_test_call(args: Vec<Expression>, ctx: &LowerCtx) -> Expression {
     if args.len() == 3 {
         Expression::BinaryOp {
             operator: match &args[1] {
@@ -747,7 +748,7 @@ fn expr_from_test_call(args: Vec<Expression>) -> Expression {
             },
             left: Box::new(args[0].clone()),
             right: Box::new(args[2].clone()),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }
     } else if args.len() == 2 {
         Expression::Call {
@@ -759,32 +760,32 @@ fn expr_from_test_call(args: Vec<Expression>) -> Expression {
                 }
             ),
             args: vec![args[1].clone()],
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }
     } else if args.len() == 1 {
         args.into_iter().next().unwrap()
     } else {
         Expression::BoolLiteral {
             value: true,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         }
     }
 }
 
-fn assign_value_to_expr(value: &ZshAssignValue) -> Expression {
+fn assign_value_to_expr(value: &ZshAssignValue, ctx: &LowerCtx) -> Expression {
     match value {
-        ZshAssignValue::Scalar(s) => word_to_expr(s),
+        ZshAssignValue::Scalar(s) => word_to_expr(s, ctx),
         ZshAssignValue::Array(elems) => {
-            let elements: Vec<Expression> = elems.iter().map(|e| word_to_expr(e)).collect();
+            let elements: Vec<Expression> = elems.iter().map(|e| word_to_expr(e, ctx)).collect();
             Expression::ArrayLiteral {
                 elements,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }
         }
     }
 }
 
-fn word_to_expr(word: &str) -> Expression {
+fn word_to_expr(word: &str, ctx: &LowerCtx) -> Expression {
     let cleaned = clean(word);
     let word = cleaned.as_str();
 
@@ -809,23 +810,23 @@ fn word_to_expr(word: &str) -> Expression {
         {
             return Expression::Var {
                 name,
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             };
         }
     }
 
     // Expand $VAR references anywhere in the word
     if word.contains('$') {
-        return expand_var_refs(word);
+        return expand_var_refs(word, ctx);
     }
 
     Expression::StringLiteral {
         value: word.to_string(),
-        meta: HashMap::new(),
+        meta: ctx.meta_at(0),
     }
 }
 
-fn expand_var_refs(s: &str) -> Expression {
+fn expand_var_refs(s: &str, ctx: &LowerCtx) -> Expression {
     let mut parts: Vec<Expression> = Vec::new();
     let mut remaining = s;
 
@@ -836,7 +837,7 @@ fn expand_var_refs(s: &str) -> Expression {
                 if !remaining.is_empty() {
                     parts.push(Expression::StringLiteral {
                         value: remaining.to_string(),
-                        meta: HashMap::new(),
+                        meta: ctx.meta_at(0),
                     });
                 }
                 break;
@@ -846,7 +847,7 @@ fn expand_var_refs(s: &str) -> Expression {
         if dollar_pos > 0 {
             parts.push(Expression::StringLiteral {
                 value: remaining[..dollar_pos].to_string(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             });
         }
 
@@ -856,13 +857,13 @@ fn expand_var_refs(s: &str) -> Expression {
                 let var_name = after_dollar[1..close].to_string();
                 parts.push(Expression::Var {
                     name: var_name,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 });
                 remaining = &after_dollar[close + 1..];
             } else {
                 parts.push(Expression::StringLiteral {
                     value: remaining[dollar_pos..].to_string(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 });
                 break;
             }
@@ -875,13 +876,13 @@ fn expand_var_refs(s: &str) -> Expression {
                 let var_name = after_dollar[..name_len].to_string();
                 parts.push(Expression::Var {
                     name: var_name,
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 });
                 remaining = &after_dollar[name_len..];
             } else {
                 parts.push(Expression::StringLiteral {
                     value: remaining[dollar_pos..].to_string(),
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 });
                 break;
             }
@@ -898,37 +899,37 @@ fn expand_var_refs(s: &str) -> Expression {
             operator: "+".to_string(),
             left: Box::new(result),
             right: Box::new(part),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         };
     }
     result
 }
 
-fn expr_from_last_stmt(stmts: &[Statement]) -> Expression {
+fn expr_from_last_stmt(stmts: &[Statement], ctx: &LowerCtx) -> Expression {
     stmts
         .last()
-        .map(|s| expr_from_statement(s))
+        .map(|s| expr_from_statement(s, ctx))
         .unwrap_or(Expression::BoolLiteral {
             value: true,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         })
 }
 
-fn expr_from_statement(stmt: &Statement) -> Expression {
+fn expr_from_statement(stmt: &Statement, ctx: &LowerCtx) -> Expression {
     match stmt {
         Statement::ExprStmt { expr, .. } => expr.clone(),
         Statement::VarDecl { name, value, .. } => Expression::BinaryOp {
             operator: "=".to_string(),
             left: Box::new(Expression::Var {
                 name: name.clone(),
-                meta: HashMap::new(),
+                meta: ctx.meta_at(0),
             }),
             right: Box::new(value.clone()),
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
         _ => Expression::BoolLiteral {
             value: true,
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         },
     }
 }
@@ -937,12 +938,12 @@ fn wrap_if(
     cond: Expression,
     body: Vec<Statement>,
     else_body: Option<Vec<Statement>>,
-) -> Vec<Statement> {
+    ctx: &LowerCtx) -> Vec<Statement> {
     vec![Statement::If {
         condition: cond,
         then_body: body,
         else_body,
-        meta: HashMap::new(),
+        meta: ctx.meta_at(0),
     }]
 }
 

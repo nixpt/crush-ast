@@ -48,7 +48,14 @@ impl BusState {
     }
 
     fn publish(&self, topic: String, payload: Value) {
-        let payload_json = crush_value_to_json(&payload);
+        // **Canonical path**: route through `impl serde::Serialize for Value`
+        // (defined on `crush_vm::vm::Value`). The previous local
+        // `crush_value_to_json` duplicate is now deleted; the `Serialize`
+        // impl is the single source of truth for every JSON consumer.
+        // `.unwrap()` is safe: the only failure mode of `serde_json::to_value`
+        // for our variant list is unreachable (we never emit a `Map`-key
+        // that isn't `String`, never recurse into cyclic data).
+        let payload_json = serde_json::to_value(&payload).unwrap();
         let mut queues = self.inner.queues.lock().unwrap();
         queues
             .entry(topic.clone())
@@ -164,40 +171,35 @@ impl HostCap for MessageBusRecvCap {
 
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
         let msg = self.state.recv()?;
-        let mut map = serde_json::Map::new();
-        map.insert("topic".to_string(), serde_json::Value::String(msg.topic));
-        map.insert("payload".to_string(), msg.payload_json);
-        Ok(Some(Value::Str(
-            serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default(),
-        )))
+        // **Canonical path**: hydrate the stored `payload_json` through
+        // `impl<'de> serde::Deserialize<'de> for Value` (in
+        // `crush_vm::vm::Value`), then wrap the typed payload in a
+        // canonical `Value::Map` envelope and re-emit it via
+        // `impl serde::Serialize for Value` — both sides of the
+        // round-trip go through the canonical trait impls, matching the
+        // JSON.parse cleanup symmetry (input JSON form → canonical
+        // Deserialize, output JSON form → canonical Serialize).
+        // The legacy `serde_json::Value::Object + to_string +
+        // Value::Str(json)` construction is replaced: the receive-side
+        // AST manipulation is gone, replaced by typed `Value`
+        // composition between two canonical `serde` round-trips.
+        let payload: Value = serde_json::from_value(msg.payload_json)
+            .map_err(|e| format!("message_bus.recv payload deserialize: {e}"))?;
+        let mut map = std::collections::HashMap::new();
+        map.insert("topic".to_string(), Value::Str(msg.topic));
+        map.insert("payload".to_string(), payload);
+        let json = serde_json::to_string(&Value::new_map(map))
+            .map_err(|e| format!("message_bus.recv serialize: {e}"))?;
+        Ok(Some(Value::Str(json)))
     }
 }
 
-fn crush_value_to_json(v: &crush_vm::vm::Value) -> serde_json::Value {
-    match v {
-        crush_vm::vm::Value::Null => serde_json::Value::Null,
-        crush_vm::vm::Value::Bool(b) => serde_json::Value::Bool(*b),
-        crush_vm::vm::Value::Int(i) => serde_json::Value::Number((*i).into()),
-        crush_vm::vm::Value::Float(f) => {
-            serde_json::Value::Number(serde_json::Number::from_f64(*f).unwrap_or(0.into()))
-        }
-        crush_vm::vm::Value::Str(s) => serde_json::Value::String(s.clone()),
-        crush_vm::vm::Value::Array(a) => {
-            serde_json::Value::Array(a.borrow().iter().map(crush_value_to_json).collect())
-        }
-        crush_vm::vm::Value::Map(m) => {
-            let obj: serde_json::Map<String, serde_json::Value> = m
-                .borrow()
-                .iter()
-                .map(|(k, v)| (k.clone(), crush_value_to_json(v)))
-                .collect();
-            serde_json::Value::Object(obj)
-        }
-        crush_vm::vm::Value::Error(e) => serde_json::Value::String(format!("error({})", e)),
-        crush_vm::vm::Value::Bytes(b) => serde_json::Value::String(format!("<{} bytes>", b.len())),
-        crush_vm::vm::Value::Handle(id) => serde_json::Value::String(format!("<handle {}>", id)),
-    }
-}
+// (The previous local `crush_value_to_json` duplicate of the canonical
+// `impl serde::Serialize for Value` in `crush-vm/src/vm.rs` has been
+// deleted. The `publish` callsite now invokes `serde_json::to_value` on
+// the `Value` directly, eliminating the drift between util's colon-form
+// `handle:N` (deleted) and the rest of the bus's angle-bracket `<handle N>`
+// (now the only canonical form, matching `Display` for line rendering).
 
 #[cfg(test)]
 mod tests {
@@ -219,6 +221,13 @@ mod tests {
             .unwrap();
 
         let result = recv_cap.call(vec![]).unwrap();
+        // Substring asserts on the JSON-envelope output produced by the
+        // canonical `impl Serialize for Value` (called from
+        // MessageBusRecvCap after the receive-path Deserialize). The
+        // retrieve-side flow is now: stored payload_json → canonical
+        // `Deserialize` → typed `Value` → canonical `Serialize` →
+        // JSON string envelope. The substring checks confirm the typed
+        // payload re-emitted intact through the canonical round-trip.
         let s = crate::caps::value_as_text(&result.unwrap());
         assert!(s.contains("\"topic\":\"t1\""));
         assert!(s.contains("\"payload\":\"hello\""));

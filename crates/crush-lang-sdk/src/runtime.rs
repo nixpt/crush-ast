@@ -10,6 +10,7 @@
 //! Crush source and inject the six `codebase.*` host caps.  Or use
 //! [`Runtime::with_codebase_files`] to read Crush source files from disk.
 
+use chrono::{NaiveDate, Utc};
 use crush_frontend::parse_source;
 use crush_index::CrushIndex;
 use crush_vm::{HostCaps, Program, Quotas, VmError, VmResult, assemble, run_with_caps};
@@ -75,22 +76,44 @@ impl Runtime {
     }
 
     /// Parse Crush source code for each `(module_name, source)` pair, build a
-    /// [`CrushIndex`], and register the six `codebase.*` host capabilities.
+    /// [`CrushIndex`], and register the six `codebase.*` host capabilities,
+    /// pinned to the supplied `today`.
     ///
-    /// Existing capabilities (from a prior [`Self::with_host_caps`] call) are
-    /// preserved — the codebase caps are appended, not replaced.
+    /// **Wall-clock-independent variant of [`Self::with_codebase`]** — the
+    /// staleness predicates on `codebase.temporaries()` /
+    /// `codebase.stale_temporaries()` will evaluate against the anchored
+    /// date you pass, not against `chrono::Utc::now()` at runtime
+    /// construction. Use this in:
+    ///
+    /// - **Production hosts that want reproducible first-boot checks** —
+    ///   cache the pinned `today` in a config file, so a restart on
+    ///   Friday vs Saturday evaluates the 90-day boundary identically.
+    /// - **Tests** — the existing `crush-lang-sdk` E2E test
+    ///   `crush-lang-sdk/tests/codebase_stale_e2e.rs` constructs caps
+    ///   manually because this chain method didn't exist; it can now be
+    ///   expressed identically via the chain.
+    ///
+    /// For the wall-clock-bound convenience path, use [`Self::with_codebase`]
+    /// (which is now a one-line wrapper around this method, anchored to
+    /// `Utc::now().date_naive()` at call time).
+    ///
+    /// Existing capabilities (from a prior [`Self::with_host_caps`] call)
+    /// are preserved — the codebase caps are appended, not replaced.
     ///
     /// # Example
     /// ```rust,no_run
+    /// use chrono::{Duration, NaiveDate, Utc};
     /// use crush_lang_sdk::Runtime;
     ///
+    /// let today = Utc::now().date_naive() - Duration::days(30);
     /// let rt = Runtime::new()
-    ///     .with_codebase(&[("scheduler", include_str!("../scheduler.crush"))])
+    ///     .with_codebase_at(&[("scheduler", ".func main\nHALT")], today)
     ///     .unwrap();
     /// ```
-    pub fn with_codebase(
+    pub fn with_codebase_at(
         mut self,
         sources: &[(&str, &str)],
+        today: NaiveDate,
     ) -> Result<Self, RuntimeError> {
         let mut index = CrushIndex::new();
         for (module_name, source) in sources {
@@ -101,8 +124,37 @@ impl Runtime {
             index.add_program(module_name, &program);
         }
         let caps = self.host_caps.get_or_insert_with(HostCaps::new);
-        crate::codebase::register(caps, Arc::new(index));
+        crate::codebase::register_at(caps, Arc::new(index), today);
         Ok(self)
+    }
+
+    /// Parse Crush source code for each `(module_name, source)` pair, build a
+    /// [`CrushIndex`], and register the six `codebase.*` host capabilities,
+    /// pinned to `chrono::Utc::now().date_naive()` at the time this method
+    /// is called.
+    ///
+    /// Wall-clock-bound stub for [`Self::with_codebase_at`] — there is one
+    /// builder body, and `with_codebase_at` owns it. Use `with_codebase`
+    /// when you don't care about reproducibility (one-shot CLI runs,
+    /// ad-hoc queries); use `with_codebase_at` when you do (long-lived
+    /// hosts, tests, anything crossing a reboot boundary).
+    ///
+    /// Existing capabilities (from a prior [`Self::with_host_caps`] call) are
+    /// preserved — the codebase caps are appended, not replaced.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use crush_lang_sdk::Runtime;
+    ///
+    /// let rt = Runtime::new()
+    ///     .with_codebase(&[("scheduler", ".func main\nHALT")])
+    ///     .unwrap();
+    /// ```
+    pub fn with_codebase(
+        self,
+        sources: &[(&str, &str)],
+    ) -> Result<Self, RuntimeError> {
+        self.with_codebase_at(sources, Utc::now().date_naive())
     }
 
     /// Read Crush source files from disk, build a [`CrushIndex`], and register
@@ -323,6 +375,40 @@ fn navigate(url) {
                 assert!(
                     !e.to_string().contains("capability not declared"),
                     "{cap} missing after with_codebase: {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn with_codebase_at_registers_caps_with_pinned_today() {
+        // Pin a fixed `today` so the chain call is wall-clock-independent.
+        // Distinct from `with_codebase_registers_caps` so a regression that
+        // silently swaps `_at` for `_at` + `Utc::now()` would fail this test
+        // ("the boundary maths is reproducible across reboots" is the whole
+        // point — see the `with_codebase_at` doc comment).
+        let pin = NaiveDate::from_ymd_opt(2026, 6, 20)
+            .expect("hard-coded test date is valid");
+        let crush_src = "@module { purpose: \"pinned-today test\" }\nfn f() { }";
+        let rt = Runtime::new()
+            .with_codebase_at(&[("pinned", crush_src)], pin)
+            .expect("index build should succeed");
+
+        // Probe by running CASM that calls a codebase cap — same assertion
+        // shape as `with_codebase_registers_caps`.
+        let casm = r#"
+            .func main
+            CAP_CALL "codebase.modules" 0
+            HALT
+        "#;
+        let result = rt.run_casm(casm, &["codebase.modules"], Some("probe"));
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("capability not declared"),
+                    "codebase.modules was not registered (with_codebase_at): {msg}"
                 );
             }
         }

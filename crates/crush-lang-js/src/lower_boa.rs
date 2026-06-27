@@ -15,23 +15,27 @@ use boa_ast::{ModuleItem, Statement, StatementListItem};
 use boa_interner::{Interner, Sym};
 use crush_cast::{CastType, Expression as CastExpr, Function, Program, Statement as CastStmt};
 
+use walker_core::LowerCtx;
+
 use crate::backend::boa::BoaAst;
 
-fn meta() -> HashMap<String, serde_json::Value> {
-    HashMap::new()
-}
-
-pub struct BoaLower {
+pub struct BoaLower<'a> {
     pub functions: HashMap<String, Function>,
     pub interner: Interner,
+    pub ctx: &'a LowerCtx<'a>,
 }
 
-impl BoaLower {
-    pub fn new(interner: Interner) -> Self {
+impl<'a> BoaLower<'a> {
+    pub fn new(interner: Interner, ctx: &'a LowerCtx<'a>) -> Self {
         Self {
             functions: HashMap::new(),
             interner,
+            ctx,
         }
+    }
+
+    fn meta0(&self) -> HashMap<String, serde_json::Value> {
+        self.ctx.meta_at(0)
     }
 
     fn sym_str(&self, sym: Sym) -> String {
@@ -98,7 +102,7 @@ impl BoaLower {
             Statement::Expression(e) => {
                 vec![CastStmt::ExprStmt {
                     expr: self.expr(e),
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::If(i) => {
@@ -109,7 +113,7 @@ impl BoaLower {
                     condition,
                     then_body,
                     else_body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::WhileLoop(w) => {
@@ -118,7 +122,7 @@ impl BoaLower {
                 vec![CastStmt::While {
                     condition,
                     body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::DoWhileLoop(dw) => {
@@ -127,7 +131,7 @@ impl BoaLower {
                 vec![CastStmt::While {
                     condition,
                     body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::ForLoop(fl) => {
@@ -147,7 +151,7 @@ impl BoaLower {
                         ForLoopInitializer::Expression(e) => {
                             init_stmts.push(CastStmt::ExprStmt {
                                 expr: self.expr(e),
-                                meta: meta(),
+                                meta: self.meta0(),
                             });
                         }
                     }
@@ -157,27 +161,27 @@ impl BoaLower {
                     .map(|c| self.expr(c))
                     .unwrap_or(CastExpr::BoolLiteral {
                         value: true,
-                        meta: meta(),
+                        meta: self.meta0(),
                     });
                 let body = self.stmt_wrap(fl.body());
                 let mut while_body = vec![CastStmt::If {
                     condition: CastExpr::UnaryOp {
                         operator: "!".to_string(),
                         operand: Box::new(test),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
-                    then_body: vec![CastStmt::Break { meta: meta() }],
+                    then_body: vec![CastStmt::Break { meta: self.meta0() }],
                     else_body: None,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }];
                 while_body.extend(body);
                 init_stmts.push(CastStmt::While {
                     condition: Box::new(CastExpr::BoolLiteral {
                         value: true,
-                        meta: meta(),
+                        meta: self.meta0(),
                     }),
                     body: while_body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 });
                 init_stmts
             }
@@ -189,7 +193,7 @@ impl BoaLower {
                     variable,
                     iterable,
                     body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::ForOfLoop(fo) => {
@@ -200,7 +204,7 @@ impl BoaLower {
                     variable,
                     iterable,
                     body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::Switch(s) => {
@@ -217,11 +221,11 @@ impl BoaLower {
                                 operator: "===".to_string(),
                                 left: Box::new(val.clone()),
                                 right: Box::new(c),
-                                meta: meta(),
+                                meta: self.meta0(),
                             },
                             then_body,
                             else_body,
-                            meta: meta(),
+                            meta: self.meta0(),
                         }]);
                     } else {
                         // default case: attach as else branch of innermost if
@@ -237,20 +241,20 @@ impl BoaLower {
                 }
                 chain.unwrap_or_default()
             }
-            Statement::Continue(_) => vec![CastStmt::Continue { meta: meta() }],
-            Statement::Break(_) => vec![CastStmt::Break { meta: meta() }],
+            Statement::Continue(_) => vec![CastStmt::Continue { meta: self.meta0() }],
+            Statement::Break(_) => vec![CastStmt::Break { meta: self.meta0() }],
             Statement::Return(r) => {
                 let value = r.target().map(|e| self.expr(e));
                 vec![CastStmt::Return {
                     value,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::Labelled(l) => match l.item() {
                 boa_ast::statement::LabelledItem::Statement(s) => self.stmt(s),
                 boa_ast::statement::LabelledItem::FunctionDeclaration(f) => {
                     let name = self.sym_str(f.name().sym());
-                    let func = self.make_fn(f.name(), f.parameters(), f.body());
+                    let func = self.make_fn(f.name(), f.parameters(), f.body(), false);
                     self.functions.insert(name, func);
                     vec![]
                 }
@@ -259,7 +263,7 @@ impl BoaLower {
                 let value = self.expr(t.target());
                 vec![CastStmt::Throw {
                     value,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::Try(try_stmt) => {
@@ -279,7 +283,7 @@ impl BoaLower {
                     body,
                     error_var,
                     handler,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Statement::With(_) => vec![],
@@ -297,24 +301,24 @@ impl BoaLower {
         match decl {
             Declaration::FunctionDeclaration(f) => {
                 let name = self.sym_str(f.name().sym());
-                let func = self.make_fn(f.name(), f.parameters(), f.body());
+                let func = self.make_fn(f.name(), f.parameters(), f.body(), false);
                 self.functions.insert(name.clone(), func);
                 vec![CastStmt::FunctionDef {
                     name,
                     params: vec![],
                     body: vec![],
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Declaration::AsyncFunctionDeclaration(af) => {
                 let name = self.sym_str(af.name().sym());
-                let func = self.make_fn(af.name(), af.parameters(), af.body());
+                let func = self.make_fn(af.name(), af.parameters(), af.body(), true);
                 self.functions.insert(name.clone(), func);
                 vec![CastStmt::FunctionDef {
                     name,
                     params: vec![],
                     body: vec![],
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Declaration::GeneratorDeclaration(g) => {
@@ -327,13 +331,14 @@ impl BoaLower {
                         params,
                         body,
                         meta: HashMap::new(),
+                        ..Default::default()
                     },
                 );
                 vec![CastStmt::FunctionDef {
                     name,
                     params: vec![],
                     body: vec![],
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Declaration::AsyncGeneratorDeclaration(ag) => {
@@ -346,13 +351,14 @@ impl BoaLower {
                         params,
                         body,
                         meta: HashMap::new(),
+                        ..Default::default()
                     },
                 );
                 vec![CastStmt::FunctionDef {
                     name,
                     params: vec![],
                     body: vec![],
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Declaration::ClassDeclaration(c) => {
@@ -360,7 +366,7 @@ impl BoaLower {
                 vec![CastStmt::StructDef {
                     name,
                     fields: vec![],
-                    meta: meta(),
+                    meta: self.meta0(),
                 }]
             }
             Declaration::Lexical(lex) => {
@@ -382,12 +388,12 @@ impl BoaLower {
         let value = var
             .init()
             .map(|e| self.expr(e))
-            .unwrap_or(CastExpr::NullLiteral { meta: meta() });
+            .unwrap_or(CastExpr::NullLiteral { meta: self.meta0() });
         vec![CastStmt::VarDecl {
             name,
             value,
             type_hint: CastType::Any,
-            meta: meta(),
+            meta: self.meta0(),
         }]
     }
 
@@ -396,6 +402,7 @@ impl BoaLower {
         _name: Identifier,
         params: &FormalParameterList,
         body: &FunctionBody,
+        is_async: bool,
     ) -> Function {
         let body_stmts = self.fn_body(body);
         let params = self.param_list(params);
@@ -403,6 +410,8 @@ impl BoaLower {
             params,
             body: body_stmts,
             meta: HashMap::new(),
+            is_async,
+            ..Default::default()
         }
     }
 
@@ -446,31 +455,31 @@ impl BoaLower {
             Expression::Literal(lit) => match lit.kind() {
                 LiteralKind::String(sym) => CastExpr::StringLiteral {
                     value: self.sym_str(*sym),
-                    meta: meta(),
+                    meta: self.meta0(),
                 },
                 LiteralKind::Num(n) => CastExpr::FloatLiteral {
                     value: *n,
-                    meta: meta(),
+                    meta: self.meta0(),
                 },
                 LiteralKind::Int(n) => CastExpr::IntLiteral {
                     value: *n as i64,
-                    meta: meta(),
+                    meta: self.meta0(),
                 },
                 LiteralKind::Bool(b) => CastExpr::BoolLiteral {
                     value: *b,
-                    meta: meta(),
+                    meta: self.meta0(),
                 },
                 LiteralKind::Null | LiteralKind::Undefined => {
-                    CastExpr::NullLiteral { meta: meta() }
+                    CastExpr::NullLiteral { meta: self.meta0() }
                 }
                 LiteralKind::BigInt(_) => CastExpr::IntLiteral {
                     value: 0,
-                    meta: meta(),
+                    meta: self.meta0(),
                 },
             },
             Expression::Identifier(id) => CastExpr::Var {
                 name: self.sym_str(id.sym()),
-                meta: meta(),
+                meta: self.meta0(),
             },
             Expression::Call(c) => {
                 let name = self.call_name(c.function());
@@ -481,15 +490,15 @@ impl BoaLower {
                         args: vec![CastExpr::CapabilityCall {
                             name: "io.format".to_string(),
                             args,
-                            meta: meta(),
+                            meta: self.meta0(),
                         }],
-                        meta: meta(),
+                        meta: self.meta0(),
                     }
                 } else {
                     CastExpr::Call {
                         function: name,
                         args,
-                        meta: meta(),
+                        meta: self.meta0(),
                     }
                 }
             }
@@ -499,7 +508,7 @@ impl BoaLower {
                 CastExpr::Call {
                     function: format!("new_{}", name),
                     args,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::PropertyAccess(pa) => self.prop_access_expr(pa),
@@ -511,7 +520,7 @@ impl BoaLower {
                     operator,
                     left,
                     right,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::Unary(u) => {
@@ -520,7 +529,7 @@ impl BoaLower {
                 CastExpr::UnaryOp {
                     operator,
                     operand,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::Update(u) => {
@@ -528,14 +537,14 @@ impl BoaLower {
                 let target = match u.target() {
                     UpdateTarget::Identifier(id) => CastExpr::Var {
                         name: self.sym_str(id.sym()),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
                     UpdateTarget::PropertyAccess(pa) => self.prop_access_expr(pa),
                 };
                 CastExpr::UnaryOp {
                     operator,
                     operand: Box::new(target),
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::Assign(a) => {
@@ -543,10 +552,10 @@ impl BoaLower {
                 let lhs_expr = match a.lhs() {
                     AssignTarget::Identifier(id) => CastExpr::Var {
                         name: self.sym_str(id.sym()),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
                     AssignTarget::Access(pa) => self.prop_access_expr(pa),
-                    _ => CastExpr::NullLiteral { meta: meta() },
+                    _ => CastExpr::NullLiteral { meta: self.meta0() },
                 };
                 let operator = if a.op() == AssignOp::Assign {
                     "=".to_string()
@@ -557,7 +566,7 @@ impl BoaLower {
                     operator,
                     left: Box::new(lhs_expr),
                     right: Box::new(rhs),
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::Conditional(c) => {
@@ -567,12 +576,12 @@ impl BoaLower {
                 CastExpr::Call {
                     function: "__crush_ifexpr__".to_string(),
                     args: vec![test, cons, alt],
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::This(_) => CastExpr::Var {
                 name: "this".to_string(),
-                meta: meta(),
+                meta: self.meta0(),
             },
             Expression::ArrayLiteral(arr) => {
                 let elements: Vec<_> = arr
@@ -581,12 +590,12 @@ impl BoaLower {
                     .map(|e| {
                         e.as_ref()
                             .map(|inner| self.expr(inner))
-                            .unwrap_or(CastExpr::NullLiteral { meta: meta() })
+                            .unwrap_or(CastExpr::NullLiteral { meta: self.meta0() })
                     })
                     .collect();
                 CastExpr::ArrayLiteral {
                     elements,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::ObjectLiteral(obj) => {
@@ -603,7 +612,7 @@ impl BoaLower {
                                 k.clone(),
                                 CastExpr::Var {
                                     name: k,
-                                    meta: meta(),
+                                    meta: self.meta0(),
                                 },
                             ));
                         }
@@ -624,7 +633,7 @@ impl BoaLower {
                                 CastExpr::Lambda {
                                     params,
                                     body,
-                                    meta: meta(),
+                                    meta: self.meta0(),
                                 },
                             ));
                         }
@@ -636,7 +645,7 @@ impl BoaLower {
                 }
                 CastExpr::ObjectLiteral {
                     properties,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::TemplateLiteral(t) => {
@@ -646,7 +655,7 @@ impl BoaLower {
                         TemplateElement::String(sym) => {
                             parts.push(CastExpr::StringLiteral {
                                 value: self.sym_str(*sym),
-                                meta: meta(),
+                                meta: self.meta0(),
                             });
                         }
                         TemplateElement::Expr(e) => {
@@ -657,7 +666,7 @@ impl BoaLower {
                 if parts.is_empty() {
                     return CastExpr::StringLiteral {
                         value: String::new(),
-                        meta: meta(),
+                        meta: self.meta0(),
                     };
                 }
                 let mut result = parts.remove(0);
@@ -666,7 +675,7 @@ impl BoaLower {
                         operator: "+".to_string(),
                         left: Box::new(result),
                         right: Box::new(part),
-                        meta: meta(),
+                        meta: self.meta0(),
                     };
                 }
                 result
@@ -677,7 +686,7 @@ impl BoaLower {
                 CastExpr::Call {
                     function: name,
                     args,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::FunctionExpression(fe) => {
@@ -691,17 +700,18 @@ impl BoaLower {
                             params: params.clone(),
                             body: body.clone(),
                             meta: HashMap::new(),
+                            ..Default::default()
                         },
                     );
                     CastExpr::Var {
                         name: n,
-                        meta: meta(),
+                        meta: self.meta0(),
                     }
                 } else {
                     CastExpr::Lambda {
                         params,
                         body,
-                        meta: meta(),
+                        meta: self.meta0(),
                     }
                 }
             }
@@ -711,25 +721,25 @@ impl BoaLower {
                 CastExpr::Lambda {
                     params,
                     body,
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             Expression::ClassExpression(ce) => {
                 let name = ce.name().map(|n| self.sym_str(n.sym())).unwrap_or_default();
                 if name.is_empty() {
-                    CastExpr::NullLiteral { meta: meta() }
+                    CastExpr::NullLiteral { meta: self.meta0() }
                 } else {
-                    CastExpr::Var { name, meta: meta() }
+                    CastExpr::Var { name, meta: self.meta0() }
                 }
             }
             Expression::Await(a) => CastExpr::Await {
                 expression: Box::new(self.expr(a.target())),
-                meta: meta(),
+                meta: self.meta0(),
             },
             Expression::Yield(y) => y
                 .target()
                 .map(|e| self.expr(e))
-                .unwrap_or(CastExpr::NullLiteral { meta: meta() }),
+                .unwrap_or(CastExpr::NullLiteral { meta: self.meta0() }),
             Expression::Spread(spread) => self.expr(spread.target()),
             Expression::Optional(opt) => self.expr(opt.target()),
             Expression::Parenthesized(p) => self.expr(p.expression()),
@@ -744,7 +754,7 @@ impl BoaLower {
             | Expression::AsyncFunctionExpression(_)
             | Expression::AsyncGeneratorExpression(_)
             | Expression::FormalParameterList(_)
-            | Expression::Debugger => CastExpr::NullLiteral { meta: meta() },
+            | Expression::Debugger => CastExpr::NullLiteral { meta: self.meta0() },
         }
     }
 
@@ -756,12 +766,12 @@ impl BoaLower {
                     PropertyAccessField::Const(id) => CastExpr::GetField {
                         target,
                         field: self.sym_str(id.sym()),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
                     PropertyAccessField::Expr(e) => CastExpr::Index {
                         target,
                         index: Box::new(self.expr(e)),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
                 }
             }
@@ -770,24 +780,24 @@ impl BoaLower {
                 CastExpr::GetField {
                     target,
                     field: self.sym_str(r#priv.field().description()),
-                    meta: meta(),
+                    meta: self.meta0(),
                 }
             }
             PropertyAccess::Super(s) => {
                 let target = Box::new(CastExpr::Var {
                     name: "super".to_string(),
-                    meta: meta(),
+                    meta: self.meta0(),
                 });
                 match s.field() {
                     PropertyAccessField::Const(id) => CastExpr::GetField {
                         target,
                         field: self.sym_str(id.sym()),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
                     PropertyAccessField::Expr(e) => CastExpr::Index {
                         target,
                         index: Box::new(self.expr(e)),
-                        meta: meta(),
+                        meta: self.meta0(),
                     },
                 }
             }
@@ -881,15 +891,15 @@ fn assign_op_str(op: &AssignOp) -> &'static str {
     }
 }
 
-pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
+pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
     let (mut lower, body) = match ast {
         BoaAst::Script(script, interner) => {
-            let mut lower = BoaLower::new(interner);
+            let mut lower = BoaLower::new(interner, ctx);
             let body = lower.list(script.statements());
             (lower, body)
         }
         BoaAst::Module(module, interner) => {
-            let mut lower = BoaLower::new(interner);
+            let mut lower = BoaLower::new(interner, ctx);
             let body = lower.module_list(module.items().items());
             (lower, body)
         }
@@ -900,6 +910,7 @@ pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
             params: vec![],
             body,
             meta: HashMap::new(),
+            ..Default::default()
         },
     );
     Ok(Program {
@@ -908,5 +919,6 @@ pub fn lower_boa(ast: BoaAst) -> anyhow::Result<Program> {
         lang: Some("javascript".to_string()),
         functions: lower.functions,
         ai_meta: None,
+        ..Default::default()
     })
 }

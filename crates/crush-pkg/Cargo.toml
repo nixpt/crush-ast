@@ -16,6 +16,7 @@ crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
 crush-lang-sdk.workspace = true
+crush-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml = "0.8"

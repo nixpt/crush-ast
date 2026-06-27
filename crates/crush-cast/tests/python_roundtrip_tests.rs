@@ -165,6 +165,7 @@ print(json_str)
                     ],
                     meta: HashMap::new(),
                     annotations: None,
+                    is_async: false,
                 },
             );
             m

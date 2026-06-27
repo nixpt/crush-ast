@@ -5,6 +5,8 @@ edition = "2021"
 repository.workspace = true
 description = "Zig to CAST walker for CRUSH"
 license.workspace = true
+[lib]
+name = "zig_walker"
 
 [[bin]]
 name = "zig_walker"
@@ -18,3 +20,4 @@ clap.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+walker-core.workspace = true

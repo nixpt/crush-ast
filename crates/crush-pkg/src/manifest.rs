@@ -241,9 +241,17 @@ impl PayloadFormat {
     }
 }
 
-/// Map language string from manifest to CapsuleType
+/// Map language string from manifest to CapsuleType.
+///
+/// CRUSH-SELFHOST-1-AMEND-1 HALF 2: case-insensitive dispatch. Legacy
+/// `capsule_type = "Crush"` manifests reach this function via the
+/// auto-migrate path in `Manifest::from_str` (which HALF 1 lowercases to
+/// `"crush"`), but a future contributor might also instantiate a
+/// `Manifest` directly with mixed-case `language`. Both forms must reach
+/// `CapsuleType::Crush`. To keep the canonical match arms readable we
+/// lowercase once here, then match the lowercase shard.
 pub fn language_to_capsule_type(language: &str) -> CapsuleType {
-    match language {
+    match language.to_ascii_lowercase().as_str() {
         "crush" => CapsuleType::Crush,
         "native" | "rust" | "c" => CapsuleType::Native,
         "container" => CapsuleType::Container,
@@ -336,13 +344,24 @@ impl Manifest {
         }
 
         // Auto-migrate capsule_type → language
+        //
+        // CRUSH-SELFHOST-1-AMEND-1 HALF 1: lowercase the migrated value so
+        // legacy `capsule_type = "Crush"` reaches `language = "crush"`, the
+        // exact shard that `language_to_capsule_type` keys on. Without this
+        // the migration preserved case and the HALF 1 audit-trail test
+        // (`sdk_matrix_cell_2_legacy_capsule_type_auto_migrates_to_language`)
+        // failed at `assert_eq!(language, "crush")`.
         {
             let capsule = table["capsule"]
                 .as_table_mut()
                 .ok_or_else(|| anyhow::anyhow!("[capsule] must be a table"))?;
             if let Some(ct) = capsule.remove("capsule_type") {
                 if !capsule.contains_key("language") {
-                    capsule.insert("language".to_string(), ct);
+                    let normalized = match ct {
+                        toml::Value::String(s) => toml::Value::String(s.to_lowercase()),
+                        other => other,
+                    };
+                    capsule.insert("language".to_string(), normalized);
                 }
             }
         }
@@ -600,5 +619,60 @@ path = "../stdlib"
         let m = Manifest::from_str(toml, Path::new("")).unwrap();
         assert_eq!(m.dependencies.len(), 1);
         assert_eq!(m.dependencies[0].name, "stdlib");
+    }
+
+    /// CRUSH-SELFHOST-1-AMEND-1 HALF 1 unit test.
+    ///
+    /// Paired with the integration lockstep test in
+    /// `crush-pkg/tests/test_selfhost_sdk_matrix.rs::sdk_matrix_cell_2_legacy_capsule_type_auto_migrates_to_language`,
+    /// this asserts the legacy `capsule_type = "Crush"` field is
+    /// auto-migrated to `language = "crush"` (lowercase, the shard the
+    /// `language_to_capsule_type` dispatch arm keys on).
+    ///
+    /// The integration test catches this end-to-end via a tempdir
+    /// fixture; this unit test fires earlier (no filesystem I/O) so a
+    /// regression in `Manifest::from_str`'s auto-migrate block surfaces
+    /// as a single failing unit test instead of a failing integration
+    /// suite, and points the fixer at the exact line in
+    /// `Manifest::from_str` (see the HALF 1 block comment at the top of
+    /// that section).
+    #[test]
+    fn auto_migrate_capsule_type_lowercases_value() {
+        let toml = r#"[capsule]
+name = "legacy-ct"
+capsule_type = "Crush"
+"#;
+        let m = Manifest::from_str(toml, Path::new("")).unwrap();
+        assert_eq!(
+            m.capsule.language, "crush",
+            "HALF 1 (auto-migrate case): legacy `capsule_type = \"Crush\"` \
+             must migrate to `language = \"crush\"` (lowercase, the shard \
+             the dispatcher keys on). If this assertion fails, the \
+             auto-migrate block in `Manifest::from_str` no longer \
+             normalises case -- see the HALF 1 doc-comment at the top \
+             of that block for the lockstep-fix rationale."
+        );
+    }
+
+    /// Companion unit test for `language_to_capsule_type` (HALF 2).
+    /// Asserts the case-insensitive dispatch invariant contractually:
+    /// `"Crush"`, `"CRUSH"`, and `"crush"` all reach `CapsuleType::Crush`.
+    /// Pairs with the integration matrix test's HALF 2 assertion to lock
+    /// the case-insensitivity invariant at both tiers.
+    #[test]
+    fn language_to_capsule_type_is_case_insensitive() {
+        assert_eq!(language_to_capsule_type("crush"), CapsuleType::Crush);
+        assert_eq!(language_to_capsule_type("Crush"), CapsuleType::Crush);
+        assert_eq!(language_to_capsule_type("CRUSH"), CapsuleType::Crush);
+        assert_eq!(language_to_capsule_type("cRuSh"), CapsuleType::Crush);
+        // Sanity: same invariant for other script shards.
+        assert_eq!(
+            language_to_capsule_type("TypeScript"),
+            CapsuleType::Script(ScriptRuntime::Bun)
+        );
+        assert_eq!(
+            language_to_capsule_type("PYTHON"),
+            CapsuleType::Script(ScriptRuntime::Python)
+        );
     }
 }

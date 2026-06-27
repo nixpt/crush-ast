@@ -120,11 +120,12 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
         NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
         | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE
-        | SPAWN | YIELD | AWAIT | HALT
+        | YIELD | AWAIT | HALT
         | TYPEOF
         | ADD | SUB | MUL | DIV | MOD
         | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT
         | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
+        SPAWN => Some(OperandKind::Count),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
         PUSH_STR => Some(OperandKind::Str),

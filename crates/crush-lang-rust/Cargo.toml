@@ -17,3 +17,9 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 syn = { version = "2.0", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+crush-frontend = { path = "../crush-frontend" }
+crush-lang-sdk = { path = "../crush-lang-sdk" }
+crush-vm = { path = "../crush-vm" }
+

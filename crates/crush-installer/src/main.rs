@@ -32,6 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use crush_diagnostics::diag_line_from;
 use serde::{Deserialize, Serialize};
 
 const BINARIES: &[&str] = &[
@@ -52,6 +53,14 @@ const CRUSH_DIR: &str = ".crush";
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    /// Output format for terminal messages (`text` default, `json`
+    /// for editor/CI consumers). Matches the `--message-format=json`
+    /// dispatch wired into `crush`, `crushc`, `crush-run`,
+    /// `crush-compile`, `crush-repl`, `xtask`, `crush-vm`, and
+    /// `crush-pkg`. `global = true` lets editors pass the flag
+    /// before OR after the subcommand.
+    #[arg(long, global = true, value_name = "FORMAT")]
+    message_format: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -147,17 +156,22 @@ impl InstallManifest {
 
 fn main() {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("crush-installer: {e:#}");
+    let json_mode = cli.message_format.as_deref() == Some("json");
+    if let Err(e) = run(cli, json_mode) {
+        if json_mode {
+            emit_diag(CODE_INSTALL, "error", &format!("{e:#}"), None, None);
+        } else {
+            eprintln!("crush-installer: {e:#}");
+        }
         std::process::exit(1);
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli, json_mode: bool) -> Result<()> {
     match cli.command {
         Commands::Install(args) => install(args),
         Commands::Uninstall(args) => uninstall(args),
-        Commands::Status(args) => status(args),
+        Commands::Status(args) => status(args, &mut std::io::stdout(), json_mode),
     }
 }
 
@@ -333,41 +347,116 @@ fn uninstall(args: UninstallArgs) -> Result<()> {
     Ok(())
 }
 
-fn status(args: StatusArgs) -> Result<()> {
+fn status(args: StatusArgs, out: &mut dyn Write, json_mode: bool) -> Result<()> {
     let prefix = args.prefix.unwrap_or_else(default_prefix);
     match InstallManifest::load(&prefix)? {
         Some(manifest) => {
+            if json_mode {
+                // Success path: JSON mode. Emit a headline record
+                // then one record per installed binary. MISSING
+                // binaries surface as `level: "warning"` so editors
+                // can grep the NDJSON stream for install-hygiene
+                // issues; present binaries are `level: "note"`.
+                // The hint slot carries the install prefix so
+                // editor consumers can group status records by
+                // destination (mirrors the failure-path hint that
+                // install/uninstall already produce).
+                use crush_diagnostics::diag_line_from;
+                out.write_all(
+                    diag_line_from(
+                        CODE_INSTALL,
+                        "note",
+                        "Crush installation found",
+                        None,
+                        None,
+                    )
+                    .as_bytes(),
+                )?;
+                let prefix_str = prefix.display().to_string();
+                for binary in &manifest.installed_binaries {
+                    let path = manifest.bin_dir.join(binary);
+                    let (message, level) = if path.exists() {
+                        let version = CommandRunner::version(&path)
+                            .unwrap_or_else(|_| "unknown".to_string());
+                        (format!("{binary}: {version}"), "note")
+                    } else {
+                        (format!("{binary}: MISSING"), "warning")
+                    };
+                    out.write_all(
+                        diag_line_from(
+                            CODE_INSTALL,
+                            level,
+                            &message,
+                            Some(&prefix_str),
+                            None,
+                        )
+                        .as_bytes(),
+                    )?;
+                }
+                return Ok(());
+            }
+            // Text mode (unchanged; routed through `out` so the
+            // signature stays consistent with the json path).
+            // Errors from `out.write_all` are propagated via
+            // anyhow's `From<io::Error>`; this is also a silent-bug
+            // fix vs the prior `println!` shape (which dropped
+            // write errors).
             let date = chrono_datetime(manifest.install_date);
-            println!("Crush installation found");
-            println!("  version:      {}", manifest.version);
-            println!("  installed:    {date}");
-            println!("  prefix:       {}", manifest.prefix.display());
-            println!("  bin dir:      {}", manifest.bin_dir.display());
-            println!("  lib dir:      {}", manifest.lib_dir.display());
-            println!("  binaries:     {}", manifest.installed_binaries.join(", "));
-            println!(
-                "  profiles:     {}",
+            let mut buf = String::new();
+            buf.push_str("Crush installation found\n");
+            buf.push_str(&format!("  version:      {}\n", manifest.version));
+            buf.push_str(&format!("  installed:    {date}\n"));
+            buf.push_str(&format!("  prefix:       {}\n", manifest.prefix.display()));
+            buf.push_str(&format!("  bin dir:      {}\n", manifest.bin_dir.display()));
+            buf.push_str(&format!("  lib dir:      {}\n", manifest.lib_dir.display()));
+            buf.push_str(&format!(
+                "  binaries:     {}\n",
+                manifest.installed_binaries.join(", ")
+            ));
+            buf.push_str(&format!(
+                "  profiles:     {}\n",
                 manifest
                     .modified_profiles
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
+            ));
             for binary in &manifest.installed_binaries {
                 let path = manifest.bin_dir.join(binary);
                 if path.exists() {
-                    let version =
-                        CommandRunner::version(&path).unwrap_or_else(|_| "unknown".to_string());
-                    println!("  {binary}: {version}");
+                    let version = CommandRunner::version(&path)
+                        .unwrap_or_else(|_| "unknown".to_string());
+                    buf.push_str(&format!("  {binary}: {version}\n"));
                 } else {
-                    println!("  {binary}: MISSING");
+                    buf.push_str(&format!("  {binary}: MISSING\n"));
                 }
             }
+            out.write_all(buf.as_bytes())?;
         }
         None => {
-            println!("No Crush installation found at '{}'.", prefix.display());
-            println!("Run `crush-installer install` to install.");
+            if json_mode {
+                use crush_diagnostics::diag_line_from;
+                let msg = format!("No Crush installation found at '{}'", prefix.display());
+                out.write_all(
+                    diag_line_from(
+                        CODE_INSTALL,
+                        "note",
+                        &msg,
+                        Some("run `crush-installer install` to install"),
+                        None,
+                    )
+                    .as_bytes(),
+                )?;
+                return Ok(());
+            }
+            out.write_all(
+                format!(
+                    "No Crush installation found at '{}'.\nRun `crush-installer install` to install.\n",
+                    prefix.display()
+                )
+                .as_bytes(),
+            )?;
         }
     }
     Ok(())
@@ -513,6 +602,48 @@ impl CommandRunner {
     }
 }
 
+// =========================================================================
+// QUARANTINE: per-binary wire-code constant + local emit helper for
+// crush-installer.
+//
+// `DiagRecord` + `diag_line_from` come from the canonical
+// `crush_diagnostics` peer crate (extracted from this file in the
+// 2026-06-20 peer-extract pass); the local `emit_diag` is now a
+// one-line wrapper around `diag_line_from` + `print!` so existing
+// call sites don't churn. Wire-shape lockdown (byte-exact field
+// order, embedded-quote round-trip, canonical-order assertion)
+// lives canonically in
+// `crates/crush-diagnostics/tests/wire_format.rs` and is the
+// single source of truth across `xtask`, `crush-vm`,
+// `crush-installer`, `crush-pkg`.
+//
+// Keep CODE_INSTALL aligned with the inline-literal convention
+// documented in `crush_lang_sdk/src/theme.rs::JsonDiagnostic`.
+// =========================================================================
+
+/// Per-binary wire code — emitted on every `crush-installer`
+/// failure path (missing prefix, manifest-decode failures,
+/// binary-copy errors, profile-update failures). Inline literal
+/// paralleling the `E-AUDIT`/`E-LINT` convention documented in
+/// `crush_lang_sdk/src/theme.rs::JsonDiagnostic`.
+pub const CODE_INSTALL: &str = "E-INSTALL";
+
+/// Thin local wrapper: calls the canonical `diag_line_from` and
+/// writes the resulting NDJSON line to stdout. Future edits to the
+/// wire shape will surface in
+/// `crates/crush-diagnostics/tests/wire_format.rs` simultaneously
+/// — the wrapper centralizes the stream choice without
+/// re-implementing the seven-field shape.
+fn emit_diag(
+    code: &str,
+    level: &str,
+    message: &str,
+    file: Option<&str>,
+    hint: Option<&str>,
+) {
+    print!("{}", diag_line_from(code, level, message, hint, file));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +763,239 @@ mod tests {
     #[test]
     fn test_chrono_datetime_known_epoch() {
         assert_eq!(chrono_datetime(0), "1970-01-01 00:00:00 UTC");
+    }
+
+    // ----------------------------------------------------------------
+    // QUARANTINE: import-smoke for the canonical
+    // `crush_diagnostics` peer crate. Full wire-format lockdown
+    // (byte-exact field order, embedded-quote round-trip,
+    // canonical-order assertion) lives in
+    // `crates/crush-diagnostics/tests/wire_format.rs`. The test
+    // here only confirms the import path resolves so a future
+    // rename of the canonical crate surfaces synchronously.
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn install_smoke_crush_diagnostics_resolves() {
+        use crush_diagnostics::{DiagRecord, diag_line_from};
+        // Construct a DiagRecord so dead-code analysis doesn't
+        // strip the import between rustc runs.
+        let _rec = DiagRecord {
+            code: CODE_INSTALL,
+            level: "error",
+            file: None,
+            line: None,
+            col: None,
+            message: "smoke",
+            hint: None,
+        };
+        let line = diag_line_from(CODE_INSTALL, "error", "smoke", None, None);
+        let expected = concat!(
+            r#"{"code":"E-INSTALL","level":"error","file":null,"line":null,"col":null,"message":"smoke","hint":null}"#,
+            "\n"
+        );
+        assert_eq!(line, expected);
+    }
+
+    // ----------------------------------------------------------------
+    // Status JSON-mode wire-through lockdown
+    // ----------------------------------------------------------------
+    //
+    // The status subcommand used to short-circuit on the success
+    // path (text mode only); after the 2026-06-20 wire-through,
+    // both branches emit ndjson records when `--message-format=json`
+    // is set. These tests pin the byte-exact shape of the records
+    // so a future refactor that breaks the seven-field layout or
+    // drops a per-binary row fails synchronously here AND at the
+    // canonical lockdown in
+    // `crates/crush-diagnostics/tests/wire_format.rs`.
+    //
+    // The text-mode branch is pinned in
+    // `status_text_mode_emits_human_readable_when_json_mode_disabled`.
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn status_emits_ndjson_record_for_absent_installation_in_json_mode() {
+        // No manifest on disk — InstallManifest::load returns
+        // Ok(None) — so the status subcommand flows through the
+        // headlining-only branch.
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path().join("install");
+        let mut out = Vec::<u8>::new();
+        status(
+            StatusArgs {
+                prefix: Some(prefix.clone()),
+            },
+            &mut out,
+            true,
+        )
+        .unwrap();
+        let s = std::str::from_utf8(&out).unwrap();
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(
+            lines.len(),
+            1,
+            "absent status must emit exactly one ndjson record (got {lines:?})"
+        );
+        let v: serde_json::Value = serde_json::from_str(lines[0])
+            .expect("headline ndjson record must round-trip serde");
+        assert_eq!(v["code"], "E-INSTALL");
+        assert_eq!(v["level"], "note");
+        let msg = v["message"].as_str().expect("message is a json string");
+        assert!(
+            msg.contains("No Crush installation found"),
+            "headline message must include 'No Crush installation found' (got: {msg:?})"
+        );
+        assert!(
+            msg.contains(&prefix.display().to_string()),
+            "headline message must include the prefix path (got: {msg:?})"
+        );
+        assert_eq!(
+            v["hint"].as_str(),
+            Some("run `crush-installer install` to install"),
+            "headline hint must suggest `crush-installer install`"
+        );
+    }
+
+    #[test]
+    fn status_emits_ndjson_records_for_present_installation_in_json_mode() {
+        // Install a manifest with 3 binaries; only 2 have actual
+        // on-disk scripts. Exercises both the note-level present
+        // branch AND the warning-level missing branch in one test
+        // so the per-binary probe wiring is fully covered.
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path().join("install");
+        let bin_dir = tmp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let manifest_binaries = vec![
+            "crushc".to_string(),
+            "crush-pkg".to_string(),
+            "crush-run".to_string(),
+        ];
+        for binary in &manifest_binaries[..2] {
+            let p = bin_dir.join(binary);
+            #[cfg(unix)]
+            {
+                fs::write(&p, "#!/bin/sh\necho \"v0.0.0-test\"\n").unwrap();
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(&p).unwrap().permissions();
+                perms.set_mode(0o755);
+                fs::set_permissions(&p, perms).unwrap();
+            }
+            #[cfg(not(unix))]
+            {
+                fs::write(&p, b"@echo v0.0.0-test\n").unwrap();
+            }
+        }
+        let manifest = InstallManifest {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            install_date: 0,
+            prefix: prefix.clone(),
+            bin_dir: bin_dir.clone(),
+            lib_dir: prefix.join("lib"),
+            installed_binaries: manifest_binaries,
+            modified_profiles: vec![],
+        };
+        manifest.save(&prefix).unwrap();
+
+        let mut out = Vec::<u8>::new();
+        status(
+            StatusArgs {
+                prefix: Some(prefix.clone()),
+            },
+            &mut out,
+            true,
+        )
+        .unwrap();
+        let s = std::str::from_utf8(&out).unwrap();
+        let lines: Vec<&str> = s.lines().collect();
+        // 1 headline + 3 per-binary records.
+        assert_eq!(
+            lines.len(),
+            4,
+            "present status must emit 1 headline + N per-binary records (got {lines:?})"
+        );
+        let headline: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(headline["code"], "E-INSTALL");
+        assert_eq!(headline["level"], "note");
+        assert_eq!(headline["message"], "Crush installation found");
+        assert!(
+            headline["hint"].is_null(),
+            "headline hint slot must be null (was: {:?})",
+            headline["hint"]
+        );
+
+        let mut notes = 0;
+        let mut warnings = 0;
+        for line in &lines[1..] {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(v["code"], "E-INSTALL");
+            assert_eq!(
+                v["hint"].as_str(),
+                Some(prefix.display().to_string().as_str()),
+                "per-binary hint must carry the install prefix"
+            );
+            let msg = v["message"].as_str().expect("message is a json string");
+            match v["level"].as_str() {
+                Some("note") => {
+                    assert!(
+                        msg.contains(':'),
+                        "note-level message must be 'binary: version' shape (got: {msg:?})"
+                    );
+                    notes += 1;
+                }
+                Some("warning") => {
+                    assert!(
+                        msg.contains("MISSING"),
+                        "warning-level message must include MISSING (got: {msg:?})"
+                    );
+                    warnings += 1;
+                }
+                other => panic!("unexpected level: {other:?}"),
+            }
+        }
+        assert_eq!(notes, 2, "two present binaries expected 2 note records");
+        assert_eq!(warnings, 1, "one missing binary expected 1 warning record");
+    }
+
+    #[test]
+    fn status_text_mode_emits_human_readable_when_json_mode_disabled() {
+        // Smoke: the `&mut dyn Write` reshape does not perturb
+        // text-mode byte-for-byte. Empty `installed_binaries` so
+        // the test is short and skips the per-binary tail.
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path().join("install");
+        let manifest = InstallManifest {
+            version: "0.1.0-test".to_string(),
+            install_date: 0,
+            prefix: prefix.clone(),
+            bin_dir: prefix.join("bin"),
+            lib_dir: prefix.join("lib"),
+            installed_binaries: vec![],
+            modified_profiles: vec![],
+        };
+        manifest.save(&prefix).unwrap();
+        let mut out = Vec::<u8>::new();
+        status(
+            StatusArgs {
+                prefix: Some(prefix.clone()),
+            },
+            &mut out,
+            false,
+        )
+        .unwrap();
+        let s = std::str::from_utf8(&out).unwrap();
+        assert!(s.starts_with("Crush installation found\n"));
+        assert!(s.contains("  version:      0.1.0-test\n"));
+        assert!(s.contains("  installed:    1970-01-01 00:00:00 UTC\n"));
+        assert!(s.contains("  prefix:       "));
+        // Text-mode must contain ZERO ndjson records; the
+        // json-mode path is gated behind the `json_mode` flag.
+        for line in s.lines() {
+            assert!(
+                !line.starts_with('{'),
+                "text-mode output must not contain ndjson records (got: {line:?})"
+            );
+        }
     }
 }

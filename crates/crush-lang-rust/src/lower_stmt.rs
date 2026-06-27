@@ -1,19 +1,19 @@
 //! syn statement → CAST statement lowering.
 
-use std::collections::HashMap;
+use walker_core::LowerCtx;
 
 use crush_cast::{CastType, Expression, Statement};
 use syn::Stmt;
 
 use crate::lower_expr::{lower_expr, pat_to_ident};
 
-pub fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Statement> {
-    let meta = HashMap::new();
+pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
+    let meta = ctx.meta_at(0);
     match stmt {
         Stmt::Local(local) => {
             let name = pat_to_ident(&local.pat)?;
             let value = match &local.init {
-                Some(init) => lower_expr(&init.expr)?,
+                Some(init) => lower_expr(&init.expr, ctx)?,
                 None => Expression::NullLiteral { meta: meta.clone() },
             };
             Ok(Statement::VarDecl {
@@ -43,7 +43,7 @@ pub fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Statement> {
                     .collect();
                 let mut body = Vec::new();
                 for s in &item_fn.block.stmts {
-                    body.push(lower_stmt(s)?);
+                    body.push(lower_stmt(s, ctx)?);
                 }
                 Ok(Statement::FunctionDef {
                     name,
@@ -54,10 +54,55 @@ pub fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Statement> {
             }
             _ => anyhow::bail!("unsupported item"),
         },
-        Stmt::Expr(expr, _) => {
-            let expr = lower_expr(expr)?;
-            Ok(Statement::ExprStmt { expr, meta })
-        }
+        Stmt::Expr(expr, _) => match expr {
+            syn::Expr::Return(e_ret) => {
+                let value = match &e_ret.expr {
+                    Some(val_expr) => Some(lower_expr(val_expr, ctx)?),
+                    None => None,
+                };
+                Ok(Statement::Return { value, meta })
+            }
+            syn::Expr::If(e_if) => {
+                let condition = lower_expr(&e_if.cond, ctx)?;
+                let mut then_body = Vec::new();
+                for s in &e_if.then_branch.stmts {
+                    then_body.push(lower_stmt(s, ctx)?);
+                }
+                let else_body = match &e_if.else_branch {
+                    Some((_, else_expr)) => match else_expr.as_ref() {
+                        syn::Expr::Block(eb) => {
+                            let mut elses = Vec::new();
+                            for s in &eb.block.stmts {
+                                elses.push(lower_stmt(s, ctx)?);
+                            }
+                            Some(elses)
+                        }
+                        syn::Expr::If(nested_if) => {
+                            let nested = lower_stmt(&syn::Stmt::Expr(
+                                syn::Expr::If(nested_if.clone()),
+                                None,
+                            ), ctx)?;
+                            Some(vec![nested])
+                        }
+                        _ => {
+                            let stmt = lower_stmt(&syn::Stmt::Expr(*else_expr.clone(), None), ctx)?;
+                            Some(vec![stmt])
+                        }
+                    },
+                    None => None,
+                };
+                Ok(Statement::If {
+                    condition,
+                    then_body,
+                    else_body,
+                    meta,
+                })
+            }
+            _ => {
+                let expr = lower_expr(expr, ctx)?;
+                Ok(Statement::ExprStmt { expr, meta })
+            }
+        },
         Stmt::Macro(mac) => {
             let mac_name = mac
                 .mac
@@ -72,7 +117,7 @@ pub fn lower_stmt(stmt: &Stmt) -> anyhow::Result<Statement> {
                         args: vec![],
                         meta,
                     },
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 }),
                 _ => anyhow::bail!("macro invocation not supported: {}", mac_name),
             }

@@ -16,6 +16,11 @@ pub use pack::{CAST_VERSION, Format, PackError};
 pub use types::CastType;
 pub use validate::{ValidationError, validate_json};
 
+/// Helper for `#[serde(skip_serializing_if)]` on bool fields.
+fn is_false(b: &bool) -> bool {
+    !b
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
@@ -53,6 +58,12 @@ pub struct Function {
     pub params: Vec<(String, CastType)>,
     pub body: Vec<Statement>,
     pub meta: HashMap<String, serde_json::Value>,
+    /// Whether this is an async function (marked with `async` keyword).
+    /// Used for tooling and frontend lowering; spawn/await behavior is
+    /// explicit via the `spawn` expression and `AWAIT` opcode.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub is_async: bool,
     /// Semantic annotations (@errors, @reads, @writes, @covers, @relies-on).
     /// Absent when no annotations were written; all sub-fields are optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]

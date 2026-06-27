@@ -61,8 +61,8 @@ pub struct PortableVm {
     try_stack: Vec<usize>,
     /// Next task ID for async spawn.
     next_task_id: u64,
-    /// Scheduled tasks: task_id → function name.
-    scheduled_tasks: std::collections::HashMap<u64, String>,
+    /// Scheduled tasks: task_id → (function name, args).
+    scheduled_tasks: std::collections::HashMap<u64, (String, Vec<Value>)>,
 }
 
 impl PortableVm {
@@ -782,18 +782,20 @@ impl PortableVm {
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
                 let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
                 let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let mut var_names: Vec<String> = Vec::with_capacity(var_count);
                 let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
-                for _ in 0..var_count {
-                    var_values.push(self.pop()?);
+                for i in 0..var_count {
+                    let key = format!("var_{}", i);
+                    if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
+                        var_names.push(name.to_string());
+                        var_values.push(self.pop()?);
+                    }
                 }
                 var_values.reverse();
                 let mut cmd = std::process::Command::new(lang);
                 cmd.arg("-c").arg(code_str);
-                for (i, val) in var_values.iter().enumerate() {
-                    let key = format!("var_{}", i);
-                    if let Some(name) = spec.get(&key).and_then(|v| v.as_str()) {
-                        cmd.env(name, value_to_text(val));
-                    }
+                for (name, val) in var_names.iter().zip(var_values.iter()) {
+                    cmd.env(name, value_to_text(val));
                 }
                 let output = cmd.output()
                     .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
@@ -811,10 +813,18 @@ impl PortableVm {
                 }
             }
             SPAWN => {
+                let argc = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
                 let fn_name = value_to_text(&self.pop()?);
+                let mut args = Vec::with_capacity(argc);
+                for _ in 0..argc {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
                 let task_id = self.next_task_id;
                 self.next_task_id += 1;
-                self.scheduled_tasks.insert(task_id, fn_name);
+                self.scheduled_tasks.insert(task_id, (fn_name, args));
                 self.push(Value::Int(task_id as i64));
             }
             YIELD => {
@@ -823,11 +833,12 @@ impl PortableVm {
             AWAIT => {
                 let handle = self.pop()?;
                 if let Value::Int(task_id) = handle {
-                    if let Some(fn_name) = self.scheduled_tasks.remove(&(task_id as u64)) {
+                    if let Some((fn_name, args)) = self.scheduled_tasks.remove(&(task_id as u64)) {
                         if let Some(&entry) = self.func_entry.get(&fn_name) {
                             if self.call_stack.len() >= self.quotas.max_call_depth {
                                 return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
                             }
+                            self.stack.extend(args);
                             self.call_stack
                                 .push(Frame::new(Some(next_ip)));
                             self.ip = entry;
@@ -1216,6 +1227,26 @@ mod tests {
     }
 
     #[test]
+    fn test_portable_vm_spawn_with_args() {
+        let source = r#"
+            .func main
+            PUSH 99
+            PUSH_STR "double"
+            SPAWN 1
+            AWAIT
+            HALT
+            .func double
+            PUSH 2
+            MUL
+            RET
+        "#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.stack, vec![Value::Int(198)]);
+    }
+
+    #[test]
     fn test_portable_vm_array() {
         let source = r#"
             .func main
@@ -1231,5 +1262,267 @@ mod tests {
         let mut vm = PortableVm::new(program);
         let result = vm.run().unwrap();
         assert_eq!(result.output, "3");
+    }
+
+    // ── parity tests (mirror canonical src/tests.rs for these opcodes) ─────
+    //
+    // The canonical VM in `src/tests.rs` exercises each operand/type via
+    // `run_src(<source>) -> VmResult`. These parity tests do the same shape
+    // against `PortableVm` to lock the implementations in lockstep. Naming
+    // uses a `test_portable_` prefix so they cannot collide with the canonical
+    // `mod tests` once both run in the same `cargo test --workspace` build.
+    //
+    // EXEC_LANG parity is verified by `test_portable_exec_lang_partial_binding`
+    // below — the pop-on-name pattern used here matches the canonical
+    // green-thread scheduler (scheduler.rs EXEC_LANG arm). Both VMs now
+    // produce identical subprocess env-var sets on any EXEC_LANG-shaped
+    // program, including the partial-binding case (var_count > name_count).
+
+    #[test]
+    fn test_portable_push_bool() {
+        // PUSH_BOOL operand is i64 (0/1); map to bool value via `v != 0`.
+        let program = assemble("PUSH_BOOL 1\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Bool(true)]);
+
+        let program = assemble("PUSH_BOOL 0\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Bool(false)]);
+    }
+
+    #[test]
+    fn test_portable_new_obj_creates_empty_map() {
+        let program = assemble("NEW_OBJ\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack.len(), 1);
+        assert!(matches!(r.stack[0], Value::Map(_)));
+    }
+
+    #[test]
+    fn test_portable_set_field_and_get_field() {
+        let source = r#"NEW_OBJ
+DUP
+PUSH_STR "hello"
+SET_FIELD "greeting"
+GET_FIELD "greeting"
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack.len(), 2);
+        assert!(matches!(r.stack[0], Value::Map(_)));
+        assert_eq!(r.stack[1], Value::Str("hello".to_string()));
+    }
+
+    #[test]
+    fn test_portable_get_field_missing_returns_null() {
+        let program = assemble(
+            r#"NEW_OBJ
+GET_FIELD "missing"
+HALT"#,
+            None,
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Null]);
+    }
+
+    #[test]
+    fn test_portable_map_type_name() {
+        // Mirrors canonical `tests.rs::map_type_name` (the `Value::type_name`
+        // method is `pub(crate)` on `crush_vm::vm::Value`, so the test — in the
+        // same crate — can call it directly).
+        let program = assemble("NEW_OBJ\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert!(matches!(r.stack[0], Value::Map(_)));
+        assert_eq!(r.stack[0].type_name(), "map");
+    }
+
+    #[test]
+    fn test_portable_throw_basic() {
+        // Uncaught THROW (no enter_try on the stack) must produce an error.
+        let program = assemble(
+            r#"PUSH_STR "oops"
+THROW
+HALT"#,
+            None,
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run();
+        assert!(result.is_err(), "expected uncaught THROW to error");
+    }
+
+    #[test]
+    fn test_portable_enter_try_and_exit_try_no_error() {
+        // try { push 1 } catch { push 2 }
+        // No throw occurs; EXIT_TRY should pop the handler and fall through
+        // to `done:`. Stack must equal `[1]`.
+        let source = r#"ENTER_TRY handler
+PUSH 1
+EXIT_TRY
+JMP done
+handler:
+PUSH 2
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Int(1)]);
+    }
+
+    #[test]
+    fn test_portable_try_catch_catches_throw() {
+        // try { throw "err" } catch { pop error, push 99 }
+        // After THROW the error value is pushed onto the stack and the ip
+        // jumps to handler:. Catch handler pops the error and pushes 99.
+        let source = r#"ENTER_TRY handler
+PUSH_STR "err"
+THROW
+EXIT_TRY
+JMP done
+handler:
+POP
+PUSH 99
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Int(99)]);
+    }
+
+    #[test]
+    fn test_portable_throw_error_value_on_stack_in_handler() {
+        // try { throw "msg" } catch { the error value is already on stack }
+        // The handler exits with HALT, leaving "msg" on the stack.
+        let source = r#"ENTER_TRY handler
+PUSH_STR "msg"
+THROW
+EXIT_TRY
+JMP done
+handler:
+HALT
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Str("msg".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_arr_push_and_arr_pop() {
+        // Build [1, 2] using ARR_PUSH: each push leaves the array on the
+        // stack (DUP-first). Final array on the stack should hold [1,2].
+        let source = r#"NEW_ARRAY 0
+    DUP
+    PUSH 1
+    ARR_PUSH
+    DUP
+    PUSH 2
+    ARR_PUSH
+    HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        let last = r.stack.last().expect("should have a value");
+        match last {
+            Value::Array(arr) => {
+                let borrowed = arr.borrow();
+                assert_eq!(borrowed.len(), 2);
+                assert_eq!(borrowed[0], Value::Int(1));
+                assert_eq!(borrowed[1], Value::Int(2));
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_portable_arr_pop_removes_last() {
+        // Build [1, 2, 3], pop once (yields 3 + [1,2]), pop once more
+        // (yields 2 + [1]). Stack top is 2; second-to-top is [1].
+        let source = r#"NEW_ARRAY 0
+    DUP
+    PUSH 1
+    ARR_PUSH
+    DUP
+    PUSH 2
+    ARR_PUSH
+    DUP
+    PUSH 3
+    ARR_PUSH
+    ARR_POP
+    POP
+    ARR_POP
+    HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        let len = r.stack.len();
+        assert!(len >= 2, "expected at least 2 values, got {len}");
+        match &r.stack[len - 1] {
+            Value::Int(v) => assert_eq!(*v, 2),
+            other => panic!("expected Int(2), got {other:?}"),
+        }
+        match &r.stack[len - 2] {
+            Value::Array(arr) => {
+                let borrowed = arr.borrow();
+                assert_eq!(borrowed.len(), 1);
+                assert_eq!(borrowed[0], Value::Int(1));
+            }
+            other => panic!("expected Array([1]), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_portable_exec_lang_partial_binding() {
+        // EXEC_LANG with var_count=3 but only var_0 is named.
+        // Pop-on-name should pop 1 value (for var_0); unconditional pop would
+        // pop 3 and crash with StackUnderflow.
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n $FOO",
+            "var_count": 3,
+            "var_0": "FOO",
+        });
+        let src = format!(
+            "PUSH_STR \"hello\"\nEXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let program = assemble(&src, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "hello");
+        assert!(result.halted);
+    }
+
+    #[test]
+    fn test_portable_exec_lang_all_named() {
+        // Common path: var_count == number of named slots (k == N).
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n ${X}${Y}",
+            "var_count": 2,
+            "var_0": "X",
+            "var_1": "Y",
+        });
+        let src = format!(
+            "PUSH_STR \"ab\"\nPUSH_STR \"AB\"\nEXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let program = assemble(&src, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "abAB");
+        assert!(result.halted);
     }
 }

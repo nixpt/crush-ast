@@ -2,11 +2,13 @@
 
 use std::collections::HashMap;
 
+use walker_core::LowerCtx;
+
 use crush_cast::Expression;
 use syn::Expr;
 
-pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
-    let meta = HashMap::new();
+pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+    let meta = ctx.meta_at(0);
     match expr {
         Expr::Lit(e) => lower_lit(&e.lit, meta),
         Expr::Path(e) => {
@@ -18,29 +20,28 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             Ok(Expression::Var { name, meta })
         }
         Expr::Binary(e) => {
-            let left = lower_expr(&e.left)?;
-            let right = lower_expr(&e.right)?;
-            let op_str = format!("{:?}", e.op);
-            let operator = match op_str.as_str() {
-                "Add" => "+",
-                "Sub" => "-",
-                "Mul" => "*",
-                "Div" => "/",
-                "Rem" => "%",
-                "Eq" => "==",
-                "Ne" => "!=",
-                "Lt" => "<",
-                "Le" => "<=",
-                "Gt" => ">",
-                "Ge" => ">=",
-                "And" => "&&",
-                "Or" => "||",
-                "BitAnd" => "&",
-                "BitOr" => "|",
-                "BitXor" => "^",
-                "Shl" => "<<",
-                "Shr" => ">>",
-                _ => anyhow::bail!("unsupported binary operator: {}", op_str),
+            let left = lower_expr(&e.left, ctx)?;
+            let right = lower_expr(&e.right, ctx)?;
+            let operator = match e.op {
+                syn::BinOp::Add(_) => "+",
+                syn::BinOp::Sub(_) => "-",
+                syn::BinOp::Mul(_) => "*",
+                syn::BinOp::Div(_) => "/",
+                syn::BinOp::Rem(_) => "%",
+                syn::BinOp::Eq(_) => "==",
+                syn::BinOp::Ne(_) => "!=",
+                syn::BinOp::Lt(_) => "<",
+                syn::BinOp::Le(_) => "<=",
+                syn::BinOp::Gt(_) => ">",
+                syn::BinOp::Ge(_) => ">=",
+                syn::BinOp::And(_) => "&&",
+                syn::BinOp::Or(_) => "||",
+                syn::BinOp::BitAnd(_) => "&",
+                syn::BinOp::BitOr(_) => "|",
+                syn::BinOp::BitXor(_) => "^",
+                syn::BinOp::Shl(_) => "<<",
+                syn::BinOp::Shr(_) => ">>",
+                _ => anyhow::bail!("unsupported binary operator: {:?}", e.op),
             };
             Ok(Expression::BinaryOp {
                 operator: operator.to_string(),
@@ -50,13 +51,12 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             })
         }
         Expr::Unary(e) => {
-            let operand = lower_expr(&e.expr)?;
-            let op_str = format!("{:?}", e.op);
-            let operator = match op_str.as_str() {
-                "Deref" => "*",
-                "Not" => "!",
-                "Neg" => "-",
-                _ => anyhow::bail!("unsupported unary operator: {}", op_str),
+            let operand = lower_expr(&e.expr, ctx)?;
+            let operator = match e.op {
+                syn::UnOp::Deref(_) => "*",
+                syn::UnOp::Not(_) => "!",
+                syn::UnOp::Neg(_) => "-",
+                _ => anyhow::bail!("unsupported unary operator: {:?}", e.op),
             };
             Ok(Expression::UnaryOp {
                 operator: operator.to_string(),
@@ -68,7 +68,7 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             let lowered_args: Vec<Expression> = e
                 .args
                 .iter()
-                .map(|a| lower_expr(a))
+                .map(|a| lower_expr(a, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             let func_name = match e.func.as_ref() {
                 Expr::Path(p) => p
@@ -97,13 +97,13 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
             }
         }
         Expr::If(e) => {
-            let condition = lower_expr(&e.cond)?;
+            let condition = lower_expr(&e.cond, ctx)?;
             // Lower then_branch (a Block) as expression
-            let then_body = block_to_expr(&e.then_branch)?;
+            let then_body = block_to_expr(&e.then_branch, ctx)?;
             let else_body = match &e.else_branch {
-                Some((_, else_expr)) => lower_expr(else_expr)?,
+                Some((_, else_expr)) => lower_expr(else_expr, ctx)?,
                 None => Expression::NullLiteral {
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
             };
             Ok(Expression::Call {
@@ -115,43 +115,43 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
         Expr::Block(e) => {
             if e.block.stmts.is_empty() {
                 return Ok(Expression::NullLiteral {
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 });
             }
             let first = &e.block.stmts[0];
             match first {
-                syn::Stmt::Expr(expr, _) => lower_expr(expr),
+                syn::Stmt::Expr(expr, _) => lower_expr(expr, ctx),
                 syn::Stmt::Macro(_) => anyhow::bail!("macro in expression not supported"),
                 syn::Stmt::Local(local) => {
                     if let Some(init) = &local.init {
                         let name = pat_to_ident(&local.pat)?;
-                        let value = lower_expr(&init.expr)?;
+                        let value = lower_expr(&init.expr, ctx)?;
                         Ok(Expression::Call {
                             function: "__crush_let__".to_string(),
                             args: vec![
                                 Expression::Var {
                                     name,
-                                    meta: HashMap::new(),
+                                    meta: ctx.meta_at(0),
                                 },
                                 value,
                             ],
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         })
                     } else {
                         Ok(Expression::NullLiteral {
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         })
                     }
                 }
                 syn::Stmt::Item(_) => anyhow::bail!("item in block expression not supported"),
             }
         }
-        Expr::Paren(e) => lower_expr(&e.expr),
+        Expr::Paren(e) => lower_expr(&e.expr, ctx),
         Expr::Return(e) => {
             let value = match &e.expr {
-                Some(expr) => lower_expr(expr)?,
+                Some(expr) => lower_expr(expr, ctx)?,
                 None => Expression::NullLiteral {
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 },
             };
             Ok(Expression::Call {
@@ -164,33 +164,33 @@ pub fn lower_expr(expr: &Expr) -> anyhow::Result<Expression> {
     }
 }
 
-fn block_to_expr(block: &syn::Block) -> anyhow::Result<Expression> {
+fn block_to_expr(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
     if block.stmts.is_empty() {
         return Ok(Expression::NullLiteral {
-            meta: HashMap::new(),
+            meta: ctx.meta_at(0),
         });
     }
     match &block.stmts[0] {
-        syn::Stmt::Expr(expr, _) => lower_expr(expr),
+        syn::Stmt::Expr(expr, _) => lower_expr(expr, ctx),
         syn::Stmt::Macro(_) => anyhow::bail!("macro in block not supported"),
         syn::Stmt::Local(local) => {
             if let Some(init) = &local.init {
                 let name = pat_to_ident(&local.pat)?;
-                let value = lower_expr(&init.expr)?;
+                let value = lower_expr(&init.expr, ctx)?;
                 Ok(Expression::Call {
                     function: "__crush_let__".to_string(),
                     args: vec![
                         Expression::Var {
                             name,
-                            meta: HashMap::new(),
+                            meta: ctx.meta_at(0),
                         },
                         value,
                     ],
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 })
             } else {
                 Ok(Expression::NullLiteral {
-                    meta: HashMap::new(),
+                    meta: ctx.meta_at(0),
                 })
             }
         }

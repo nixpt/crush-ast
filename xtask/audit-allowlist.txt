@@ -1,0 +1,15 @@
+# Audit allowlist for the destructure-bind-and-misuse smoke-test (`cargo xtask audit`).
+# Entries are `path:line` (one per line). Add only after manual review.
+#
+# 2026-06-18 dual-pass (SCALAR + COMPOSITE): empty. All current
+# sites parse as SAFE under the SCALAR auto-deref rubric
+# (Int|Float|Str|Bytes|Handle) and the COMPOSITE Rc<RefCell<...>>
+# rubric (Array|Map) in xtask/src/main.rs. The COMPOSITE pass
+# disambiguates crush-vm Value:: from third-party Value::
+# (serde_json in crush-cast) by file-scope `use`-statement
+# inspection -- see `chunk_uses_serde_json`. If a new RISKY
+# candidate appears in either pass, the smoke-test will fail;
+# either fix the code or add an entry here with a justification.
+# in-script classifier (deref / clone / to_string / format! / equality /
+# property-method-allowed). If a new RISKY candidate appears, the smoke-test
+# will fail; either fix the code or add an entry here with a justification comment.

@@ -10,6 +10,10 @@
 //!
 //! - [`Walker`]: Trait that all language walkers must implement
 //! - [`BaseWalker`]: Utility struct with common tree-sitter operations
+//! - [`Frontend`]: Parser-agnostic frontend trait (parse → analyze → lower)
+//! - [`TreeSitterFrontend`]: Adapter wrapping a [`Walker`] as a [`Frontend`]
+//! - [`LowerCtx`]: Context for populating source position metadata in CAST nodes
+//! - [`source_meta`], [`byte_offset_to_line_col`]: Position helpers for frontends
 //!
 //! ## Implementing a Walker
 //!
@@ -84,6 +88,26 @@ impl FeatureReport {
 ///
 /// Replaces the tree-sitter-bound `Walker` trait for language implementations
 /// that use native Rust parsers (rustpython-parser, syn, boa_parser, etc.).
+///
+/// ## Source position metadata
+///
+/// Frontends should populate CAST node `meta` with source position information
+/// to enable source-mapped error messages. The recommended pattern:
+///
+/// 1. In [`parse()`](Frontend::parse), bundle the source string with the AST:
+///    `Ok(Box::new((source.to_string(), ast)))`
+/// 2. In [`lower()`](Frontend::lower), create a [`LowerCtx`] and pass it through
+///    the lowering functions instead of using empty `HashMap::new()` for meta.
+///
+/// ```rust,ignore
+/// use walker_core::LowerCtx;
+///
+/// fn lower(&self, ast: Box<dyn Any>) -> Result<Program> {
+///     let (source, stmts) = *ast.downcast::<(String, MyAst)>()?;
+///     let ctx = LowerCtx::new(&source, "input.py", "python");
+///     // ... lower with ctx, using ctx.meta_at(offset) for position metadata
+/// }
+/// ```
 pub trait Frontend {
     fn language_name(&self) -> &'static str;
     fn file_extensions(&self) -> &[&'static str];
@@ -123,6 +147,124 @@ pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
         "wasm" => Some("wasm"),
         _ => None,
     }
+}
+
+// ── TreeSitterFrontend adapter ──────────────────────────────────────────────
+
+/// Adapter that wraps a tree-sitter [`Walker`] as a [`Frontend`].
+///
+/// This allows tree-sitter-based walkers (Go, C, Zig) to participate in the
+/// `frontend_pipeline()` and receive `FeatureReport` checks. The walker's
+/// [`Walker::walk()`] method is called directly — no subprocess overhead.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use walker_core::{TreeSitterFrontend, Walker, frontend_pipeline};
+///
+/// struct GoWalker { file_name: String }
+/// impl Walker for GoWalker { /* ... */ }
+///
+/// let frontend = TreeSitterFrontend::new(GoWalker { file_name: "x.go".into() }, "go", &[".go"]);
+/// let (report, program) = frontend_pipeline(&frontend, source)?;
+/// ```
+pub struct TreeSitterFrontend<W: Walker> {
+    walker: W,
+    language_name: &'static str,
+    extensions: &'static [&'static str],
+}
+
+impl<W: Walker> TreeSitterFrontend<W> {
+    /// Create a new `TreeSitterFrontend`.
+    ///
+    /// - `walker`: a `Walker` implementation for the target language
+    /// - `language_name`: the language name (e.g. "go", "c", "zig") — many
+    ///   tree-sitter grammars do not expose a name, so this must be provided
+    /// - `extensions`: file extensions for this language (e.g. `&[".go"]`)
+    pub fn new(walker: W, language_name: &'static str, extensions: &'static [&'static str]) -> Self {
+        Self { walker, language_name, extensions }
+    }
+
+    pub fn extensions(&self) -> &'static [&'static str] {
+        self.extensions
+    }
+
+    pub fn into_inner(self) -> W {
+        self.walker
+    }
+}
+
+impl<W: Walker> Frontend for TreeSitterFrontend<W> {
+    fn language_name(&self) -> &'static str {
+        self.language_name
+    }
+
+    fn file_extensions(&self) -> &[&'static str] {
+        self.extensions
+    }
+
+    fn parse(&self, source: &str) -> Result<Box<dyn std::any::Any>> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&self.walker.language())
+            .map_err(|e| anyhow::anyhow!("Error setting language: {}", e))?;
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
+        Ok(Box::new((tree, source.to_string())))
+    }
+
+    fn analyze(&self, _ast: &Box<dyn std::any::Any>) -> Result<FeatureReport> {
+        Ok(FeatureReport {
+            lang: self.language_name.to_string(),
+            ..Default::default()
+        })
+    }
+
+    fn lower(&self, ast: Box<dyn std::any::Any>) -> Result<Program> {
+        let (tree, source) = *ast
+            .downcast::<(tree_sitter::Tree, String)>()
+            .map_err(|_| anyhow::anyhow!("expected (Tree, String) from TreeSitterFrontend::parse"))?;
+        self.walker.walk(&tree, source.as_bytes())
+    }
+}
+
+/// Run a tree-sitter walker as a subprocess binary.
+///
+/// Reads source from `input_path`, parses with `walker`, and prints CAST JSON
+/// to stdout. This is the standard entry point for all tree-sitter walker
+/// binaries — every walker crate's `main()` should follow this pattern.
+///
+/// # Example (`main.rs` for a hypothetical Java walker)
+///
+/// ```rust,ignore
+/// use clap::Parser;
+/// use walker_core::run_walker_binary;
+///
+/// #[derive(Parser)]
+/// struct Cli { input: String }
+///
+/// fn main() -> anyhow::Result<()> {
+///     let cli = Cli::parse();
+///     run_walker_binary(
+///         java_walker::JavaWalker { file_name: cli.input.clone() },
+///         "java", &[".java"],
+///         &cli.input,
+///     )
+/// }
+/// ```
+pub fn run_walker_binary<W: Walker>(
+    walker: W,
+    language_name: &'static str,
+    extensions: &'static [&'static str],
+    input_path: &str,
+) -> Result<()> {
+    let source = std::fs::read_to_string(input_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", input_path, e))?;
+    let frontend = TreeSitterFrontend::new(walker, language_name, extensions);
+    let (_, program) = frontend_pipeline(&frontend, &source)?;
+    println!("{}", serde_json::to_string_pretty(&program)?);
+    Ok(())
 }
 
 // ── Legacy Walker trait (tree-sitter-based) ─────────────────────────────────
@@ -226,6 +368,80 @@ impl<'a> BaseWalker<'a> {
         meta.insert("file".to_string(), json!(file));
         meta.insert("lang".to_string(), json!(lang));
         meta
+    }
+}
+
+// ── Source position helpers for native-parser frontends ────────────────────
+
+/// Create source position metadata with the same shape as
+/// [`BaseWalker::create_meta`], but taking explicit line/column values
+/// instead of a tree-sitter [`Node`].
+///
+/// Use this in [`Frontend`] implementations to attach source locations
+/// to CAST nodes during lowering.
+///
+/// All values are 1-based.
+pub fn source_meta(
+    file: &str,
+    lang: &str,
+    line: usize,
+    column: usize,
+) -> HashMap<String, serde_json::Value> {
+    let mut meta = HashMap::new();
+    meta.insert("line".to_string(), json!(line));
+    meta.insert("column".to_string(), json!(column));
+    meta.insert("file".to_string(), json!(file));
+    meta.insert("lang".to_string(), json!(lang));
+    meta
+}
+
+/// Convert a byte offset in a source string to 1-based (line, column).
+pub fn byte_offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
+    let mut line: usize = 1;
+    let mut col: usize = 1;
+    for (i, ch) in source.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// Context for lowering source code with position tracking.
+///
+/// Holds the source text, file name, and language name, and provides
+/// [`meta_at()`](Self::meta_at) to build position metadata at any byte offset.
+/// Pass this through your lowering functions instead of creating empty
+/// meta hash maps.
+pub struct LowerCtx<'a> {
+    pub source: &'a str,
+    pub file: &'a str,
+    pub lang: &'a str,
+}
+
+impl<'a> LowerCtx<'a> {
+    pub fn new(source: &'a str, file: &'a str, lang: &'a str) -> Self {
+        Self { source, file, lang }
+    }
+
+    /// Create position metadata at the given byte offset into `self.source`.
+    pub fn meta_at(&self, offset: usize) -> HashMap<String, serde_json::Value> {
+        let (line, col) = byte_offset_to_line_col(self.source, offset);
+        source_meta(self.file, self.lang, line, col)
+    }
+
+    /// Create position metadata from explicit 1-based line and column numbers.
+    ///
+    /// Use this when the parser already provides line/column directly
+    /// (e.g. brush-parser, tree-sitter) — avoids the byte-offset scan.
+    pub fn meta_lc(&self, line: usize, column: usize) -> HashMap<String, serde_json::Value> {
+        source_meta(self.file, self.lang, line, column)
     }
 }
 

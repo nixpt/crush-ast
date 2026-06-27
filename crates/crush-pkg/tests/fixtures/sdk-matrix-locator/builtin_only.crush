@@ -1,0 +1,66 @@
+// =============================================================================
+// tests/fixtures/sdk-matrix-locator/builtin_only.crush  [FIXTURE]
+//
+// Structural-lockstep fixture for
+//   crush-pkg/tests/test_selfhost_sdk_matrix.rs
+// Matrix ticket: TICKETS/CRUSH-SELFHOST-1.md
+//
+// CELL 4 (built-in cap) — **dedicated isolation**.
+//
+// CELL 4 ALSO fires from inside `main.crush` (the multi-cap fixture,
+// via `io.print("builtin-caps-fire-from-source")`), so this dedicated
+// preset uses a UNIQUE sentinel `"cell_4_dedicated_isolation"` so a
+// reviewer running `git grep cell_4_dedicated_isolation` lands AT the
+// dedicated isolation path (not the shared multi-cap one) — sentinel
+// disambiguation by name.
+//
+// Attribution rationale. CELL 4 is fired from inside `main.crush`
+// too — `io.print("builtin-caps-fire-from-source")` is one of the
+// four cap-side cell calls there. But that fires WITHIN a program
+// that ALSO calls user-extended caps (`capsule.cell_1`,
+// `capsule.cell_3`, `repl_runtime.cell_5`). To attribute a CELL 4
+// regression CONCLUSIVELY to the built-in registry (and NOT to the
+// host-table plumbing), the matrix test isolates CELL 4 via this
+// dedicated, built-in-only fixture driven by
+// `run_with_caps(&program, &quotas, None)`:
+//
+//   * The program calls ONLY `io.print(...)` — no user-extended cap.
+//   * `host_caps: None` is passed to `run_with_caps` so a registry
+//     gap on `io.print` surfaces as the VM NOT reaching the output,
+//     regardless of host-table state.
+//   * The expected output sentinel `cell_4_dedicated_isolation` is
+//     UNIQUE to this fixture (not shared with `main.crush`); a
+//     regression in either the built-in registry OR the VM's `PRINT`
+//     opcode path fails the same assert.
+//
+// Cross-link. CELL 4-in-main (the multi-cap flow that fires
+// `io.print("builtin-caps-fire-from-source")` from inside `main.crush`)
+// is **compile-reachable** but coarse-grained:
+//   (a) CELL 7's `assert!(!program_via_compile.code.is_empty())` confirms
+//       `main.crush` parsed + compile emitted SOME bytecode; this does
+//       NOT verify that the io.print statement specifically produced
+//       its own PRINT opcode (a regression that degraded io.print to
+//       a no-op opcode would still pass the `code.is_empty()` check
+//       as long as OTHER statements in fn main() emitted opcodes).
+//   (b) Statement-level reachability in main.crush is implicit: if a
+//       statement in `fn main()` fails, `CrushRunner::run(...)` either
+//       panics on `.expect(...)` OR halts mid-fn, which means the cap
+//       capturer carries fewer than the expected 3 cell-capturer-recorded
+//       calls (`capsule.cell_1`, `capsule.cell_3`, `repl_runtime.cell_5`).
+//       `io.print` itself is invisible to the capturer (built-in caps
+//       dispatch through `crush-vm::caps::capabilities`, not via
+//       `HostCap::call`), so the capturer is a PARTIAL per-statement
+//       signal — fine for CELLS 1, 3, 5; insufficient for CELL 4.
+//
+// The dedicated isolation in this fixture gives CELL 4 the only explicit,
+// fine-grained regression guard — a per-statement sentinel assertion
+// via `run_with_caps(&program, &quotas, None)`.
+//
+// The compact 1-line program body fits `cat`-discoverability for
+// review-by-cell (matrix ticket claim: "a reviewer can `cat` the
+// fixture and read the cell references inline").
+// =============================================================================
+
+fn main() {
+    io.print("cell_4_dedicated_isolation")
+}

@@ -96,3 +96,30 @@ jobs:
           cargo build --target wasm32-unknown-unknown \
             -p crush-errors -p crush-cast -p casm \
             -p crush-vm -p crush-frontend -p crush-lang-sdk
+
+      - name: xtask audit (SCALAR + COMPOSITE destructure-bind smoke)
+        run: |
+          cargo build -p xtask --release || cargo build -p xtask
+          cargo run -p xtask -- audit
+
+
+  lint-dejavue:
+    name: lint dejavue timeline (future-preventive)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: checkout
+      uses: actions/checkout@v3
+    - name: clone exosphere (xtask sibling path-dep)
+      uses: actions/checkout@v3
+      with:
+        repository: nixpt/exosphere
+        path: ../exosphere
+    - name: show rust toolchain
+      run: rustup show
+    - name: rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: lint-dejavue
+    - name: lint dejavue timeline
+      run: cargo run -p xtask --bin lint-dejavue

@@ -8,12 +8,8 @@ rust-version.workspace = true
 description = "Portable, std-only TCP/TLS network stack exposed as CRUSH host capabilities."
 
 [features]
-# Phase 4: opt-in TLS support backed by rustls + webpki-roots.
-# We deliberately do NOT pull rustls-native-certs (which has historically dragged in
-# `time`/`x509-parser` and broken cross-platform builds); webpki-roots embeds the
-# Mozilla root store as compiled-in Rust data and avoids the OS-cert probe.
 tls = ["dep:rustls", "dep:webpki-roots"]
-default = []
+default = ["tls"]
 
 [dependencies]
 crush-lang-sdk.workspace = true
@@ -23,7 +19,7 @@ thiserror = { workspace = true }
 mesh-proto = { path = "../../../exosphere/crates/mesh-proto" }
 
 # TLS deps (only pulled when the `tls` feature is enabled).
-rustls = { version = "0.23", optional = true, default-features = false, features = ["logging", "std", "tls12", "ring"] }
+rustls = { version = "0.23",optional = true, default-features = false, features = ["logging", "std", "tls12", "ring"] }
 webpki-roots = { version = "0.26", optional = true }
 
 [dev-dependencies]
