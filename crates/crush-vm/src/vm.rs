@@ -505,6 +505,23 @@ impl GreenThread {
             out_len: 0,
         }
     }
+
+    /// Create a new green thread with pre-loaded arguments on the stack.
+    pub fn with_args(ip: usize, args: Vec<Value>) -> Self {
+        Self {
+            ip,
+            stack: args,
+            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            try_stack: Vec::new(),
+            steps: 0,
+            done: false,
+            yielded: false,
+            waiting_for: None,
+            return_value: None,
+            out_parts: Vec::new(),
+            out_len: 0,
+        }
+    }
 }
 
 impl Value {

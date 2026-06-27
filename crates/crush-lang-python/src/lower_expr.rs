@@ -125,7 +125,13 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         | py_ast::Expr::GeneratorExp { .. } => {
             anyhow::bail!("comprehensions not yet supported")
         }
-        py_ast::Expr::Await { .. } => anyhow::bail!("async/await not yet supported"),
+        py_ast::Expr::Await(py_ast::ExprAwait { value, .. }) => {
+            let expr = lower_expr(value, ctx)?;
+            Ok(Expression::Await {
+                expression: Box::new(expr),
+                meta,
+            })
+        }
         py_ast::Expr::Yield { .. } | py_ast::Expr::YieldFrom { .. } => {
             anyhow::bail!("generators not yet supported")
         }

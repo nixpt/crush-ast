@@ -23,7 +23,7 @@ pub(crate) enum StepAction {
     /// Control flow changed ip (CALL, JMP, RET, THROW).
     Jump,
     /// Spawn a new green thread for this function name.
-    Spawn(String),
+    Spawn(String, Vec<Value>),
     /// Main thread halted.
     Finish(VmResult),
     /// Thread finished (RET on non-entry frame → pop; on entry → done).
@@ -115,11 +115,11 @@ pub fn run_scheduled(
             StepAction::Jump => {
                 // ip was already set inside execute_one (CALL, JMP, etc.)
             }
-            StepAction::Spawn(fn_name) => {
+            StepAction::Spawn(fn_name, args) => {
                 threads[current].ip = next_ip;
                 let new_id = threads.len() as u64;
                 if let Some(&entry) = func_entry.get(fn_name.as_str()) {
-                    threads.push(GreenThread::new(entry));
+                    threads.push(GreenThread::with_args(entry, args));
                     threads[current].stack.push(Value::Handle(new_id));
                 } else {
                     threads[current].stack.push(Value::Null);
@@ -677,8 +677,14 @@ fn execute_one(
             push!(val);
         }
         SPAWN => {
+            let argc = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let mut args = Vec::with_capacity(argc);
             let fn_name = pop!().as_text();
-            return Ok(StepAction::Spawn(fn_name));
+            for _ in 0..argc {
+                args.push(pop!());
+            }
+            args.reverse();
+            return Ok(StepAction::Spawn(fn_name, args));
         }
         YIELD => {
             thread.yielded = true;

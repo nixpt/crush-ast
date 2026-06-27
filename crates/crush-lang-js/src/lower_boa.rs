@@ -254,7 +254,7 @@ impl<'a> BoaLower<'a> {
                 boa_ast::statement::LabelledItem::Statement(s) => self.stmt(s),
                 boa_ast::statement::LabelledItem::FunctionDeclaration(f) => {
                     let name = self.sym_str(f.name().sym());
-                    let func = self.make_fn(f.name(), f.parameters(), f.body());
+                    let func = self.make_fn(f.name(), f.parameters(), f.body(), false);
                     self.functions.insert(name, func);
                     vec![]
                 }
@@ -301,7 +301,7 @@ impl<'a> BoaLower<'a> {
         match decl {
             Declaration::FunctionDeclaration(f) => {
                 let name = self.sym_str(f.name().sym());
-                let func = self.make_fn(f.name(), f.parameters(), f.body());
+                let func = self.make_fn(f.name(), f.parameters(), f.body(), false);
                 self.functions.insert(name.clone(), func);
                 vec![CastStmt::FunctionDef {
                     name,
@@ -312,7 +312,7 @@ impl<'a> BoaLower<'a> {
             }
             Declaration::AsyncFunctionDeclaration(af) => {
                 let name = self.sym_str(af.name().sym());
-                let func = self.make_fn(af.name(), af.parameters(), af.body());
+                let func = self.make_fn(af.name(), af.parameters(), af.body(), true);
                 self.functions.insert(name.clone(), func);
                 vec![CastStmt::FunctionDef {
                     name,
@@ -402,6 +402,7 @@ impl<'a> BoaLower<'a> {
         _name: Identifier,
         params: &FormalParameterList,
         body: &FunctionBody,
+        is_async: bool,
     ) -> Function {
         let body_stmts = self.fn_body(body);
         let params = self.param_list(params);
@@ -409,6 +410,7 @@ impl<'a> BoaLower<'a> {
             params,
             body: body_stmts,
             meta: HashMap::new(),
+            is_async,
             ..Default::default()
         }
     }

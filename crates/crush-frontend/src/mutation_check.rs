@@ -136,6 +136,7 @@ mod tests {
                 body: caller_body,
                 meta: HashMap::new(),
                 annotations: None,
+                is_async: false,
             },
         );
         functions.insert(
@@ -145,6 +146,7 @@ mod tests {
                 body: vec![],
                 meta: HashMap::new(),
                 annotations: Some(ann),
+                is_async: false,
             },
         );
         Program {

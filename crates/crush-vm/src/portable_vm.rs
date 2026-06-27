@@ -61,8 +61,8 @@ pub struct PortableVm {
     try_stack: Vec<usize>,
     /// Next task ID for async spawn.
     next_task_id: u64,
-    /// Scheduled tasks: task_id → function name.
-    scheduled_tasks: std::collections::HashMap<u64, String>,
+    /// Scheduled tasks: task_id → (function name, args).
+    scheduled_tasks: std::collections::HashMap<u64, (String, Vec<Value>)>,
 }
 
 impl PortableVm {
@@ -813,10 +813,18 @@ impl PortableVm {
                 }
             }
             SPAWN => {
+                let argc = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
                 let fn_name = value_to_text(&self.pop()?);
+                let mut args = Vec::with_capacity(argc);
+                for _ in 0..argc {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
                 let task_id = self.next_task_id;
                 self.next_task_id += 1;
-                self.scheduled_tasks.insert(task_id, fn_name);
+                self.scheduled_tasks.insert(task_id, (fn_name, args));
                 self.push(Value::Int(task_id as i64));
             }
             YIELD => {
@@ -825,11 +833,12 @@ impl PortableVm {
             AWAIT => {
                 let handle = self.pop()?;
                 if let Value::Int(task_id) = handle {
-                    if let Some(fn_name) = self.scheduled_tasks.remove(&(task_id as u64)) {
+                    if let Some((fn_name, args)) = self.scheduled_tasks.remove(&(task_id as u64)) {
                         if let Some(&entry) = self.func_entry.get(&fn_name) {
                             if self.call_stack.len() >= self.quotas.max_call_depth {
                                 return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
                             }
+                            self.stack.extend(args);
                             self.call_stack
                                 .push(Frame::new(Some(next_ip)));
                             self.ip = entry;
@@ -1215,6 +1224,26 @@ mod tests {
                 panic!("VM Error: {:?}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_portable_vm_spawn_with_args() {
+        let source = r#"
+            .func main
+            PUSH 99
+            PUSH_STR "double"
+            SPAWN 1
+            AWAIT
+            HALT
+            .func double
+            PUSH 2
+            MUL
+            RET
+        "#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.stack, vec![Value::Int(198)]);
     }
 
     #[test]

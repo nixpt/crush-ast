@@ -1282,17 +1282,23 @@ impl Compiler {
                 args,
                 meta,
             } => {
-                if !args.is_empty() {
-                    bail!(
-                        "spawn does not currently support arguments. Function must take 0 arguments."
-                    );
+                // Compile args first — they'll be pushed onto the stack
+                // before the function name. The scheduler will pop argc
+                // args + fn_name, then create a new thread with args
+                // pre-loaded on the stack.
+                for arg in args {
+                    self.compile_expr(arg, instrs)?;
                 }
                 instrs.push(self.create_instr(
                     "push_str",
                     serde_json::json!({"value": function}),
                     meta,
                 ));
-                instrs.push(self.create_instr("spawn", serde_json::json!({}), meta));
+                instrs.push(self.create_instr(
+                    "spawn",
+                    serde_json::json!({"argc": args.len()}),
+                    meta,
+                ));
             }
             Expression::ArrayLiteral { elements, meta } => {
                 instrs.push(self.create_instr(

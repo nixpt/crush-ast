@@ -18,7 +18,7 @@ fn spawn_creates_handle() {
     let src = "\
 .func main
     PUSH_STR \"other\"
-    SPAWN
+    SPAWN 0
     HALT
 .func other
     HALT";
@@ -33,7 +33,7 @@ fn spawn_await_roundtrip() {
     let src = "\
 .func main
     PUSH_STR \"worker\"
-    SPAWN
+    SPAWN 0
     AWAIT
     HALT
 .func worker
@@ -47,4 +47,41 @@ fn spawn_await_roundtrip() {
 fn yield_does_not_crash() {
     let r = run_src("PUSH 1\nYIELD\nPUSH 2\nHALT");
     assert_eq!(r.stack, vec![Value::Int(1), Value::Int(2)]);
+}
+
+#[test]
+fn spawn_with_args() {
+    // SPAWN a function with 1 arg, AWAIT it, check result
+    // The arg is on the spawned thread's stack. PUSH 2 * POP = MUL
+    let src = "\
+.func main
+    PUSH 99
+    PUSH_STR \"double\"
+    SPAWN 1
+    AWAIT
+    HALT
+.func double
+    PUSH 2
+    MUL
+    HALT";
+    let r = run_src(src);
+    assert_eq!(r.stack, vec![Value::Int(198)], "expected 99*2=198, got {:?}", r.stack);
+}
+
+#[test]
+fn spawn_with_multiple_args() {
+    // SPAWN a function with 2 args, AWAIT it, check result
+    let src = "\
+.func main
+    PUSH 3
+    PUSH 7
+    PUSH_STR \"add\"
+    SPAWN 2
+    AWAIT
+    HALT
+.func add
+    ADD
+    HALT";
+    let r = run_src(src);
+    assert_eq!(r.stack, vec![Value::Int(10)], "expected 3+7=10, got {:?}", r.stack);
 }

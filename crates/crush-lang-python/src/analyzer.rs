@@ -57,7 +57,6 @@ fn analyze_stmt(stmt: &py_ast::Stmt, dangerous: &mut Vec<String>, unsupported: &
             }
         }
         py_ast::Stmt::ClassDef { .. } => unsupported.push("class definitions".to_string()),
-        py_ast::Stmt::AsyncFunctionDef { .. } => unsupported.push("async functions".to_string()),
         py_ast::Stmt::With { .. } => unsupported.push("with statements".to_string()),
         py_ast::Stmt::Try { .. } | py_ast::Stmt::Raise { .. } => {
             unsupported.push("exception handling".to_string())

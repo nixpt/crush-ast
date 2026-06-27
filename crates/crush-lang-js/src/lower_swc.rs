@@ -21,6 +21,7 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
                 let name = fn_decl.ident.sym.to_string();
+                let is_async = fn_decl.function.is_async;
                 let lowered = lower_fn_decl(fn_decl, ctx)?;
                 if let Statement::FunctionDef { params, body, .. } = lowered {
                     functions.insert(
@@ -29,6 +30,7 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
                             params,
                             body,
                             meta: HashMap::new(),
+                            is_async,
                             ..Default::default()
                         },
                     );

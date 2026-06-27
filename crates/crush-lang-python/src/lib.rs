@@ -91,25 +91,49 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>, source: &str) -> anyhow::Result<Progr
     let mut functions: HashMap<String, Function> = HashMap::new();
 
     for stmt in &stmts {
-        if let py_ast::Stmt::FunctionDef(py_ast::StmtFunctionDef { .. }) = stmt {
-            let lowered = lower_stmt::lower_stmt(stmt, &ctx)?;
-            if let Statement::FunctionDef {
-                name: fn_name,
-                params,
-                body,
-                ..
-            } = lowered
-            {
-                functions.insert(
-                    fn_name,
-                    Function {
-                        params,
-                        body,
-                        meta: HashMap::new(),
-                        ..Default::default()
-                    },
-                );
+        match stmt {
+            py_ast::Stmt::FunctionDef(py_ast::StmtFunctionDef { .. }) => {
+                let lowered = lower_stmt::lower_stmt(stmt, &ctx)?;
+                if let Statement::FunctionDef {
+                    name: fn_name,
+                    params,
+                    body,
+                    ..
+                } = lowered
+                {
+                    functions.insert(
+                        fn_name,
+                        Function {
+                            params,
+                            body,
+                            meta: HashMap::new(),
+                            ..Default::default()
+                        },
+                    );
+                }
             }
+            py_ast::Stmt::AsyncFunctionDef(py_ast::StmtAsyncFunctionDef { .. }) => {
+                let lowered = lower_stmt::lower_stmt(stmt, &ctx)?;
+                if let Statement::FunctionDef {
+                    name: fn_name,
+                    params,
+                    body,
+                    ..
+                } = lowered
+                {
+                    functions.insert(
+                        fn_name,
+                        Function {
+                            params,
+                            body,
+                            meta: HashMap::new(),
+                            is_async: true,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+            _ => {}
         }
     }
 

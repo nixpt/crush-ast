@@ -731,24 +731,22 @@ fn lambda_and_match_compile_successfully() {
 }
 
 #[test]
-fn spawn_with_args_is_rejected() {
+fn spawn_with_args_compiles_successfully() {
     let mut compiler = Compiler::new();
     let result = compiler.compile(create_program(vec![Statement::ExprStmt {
         expr: Expression::Spawn {
             function: "worker".to_string(),
-            args: vec![int(1)],
+            args: vec![int(1), int(2)],
             meta: meta(),
         },
         meta: meta(),
     }]));
 
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("spawn does not currently support arguments")
-    );
+    assert!(result.is_ok(), "spawn with args should compile: {:?}", result.err());
+    let casm = result.unwrap();
+    let main = casm.functions.get("main").unwrap();
+    // Expect: push 1, push 2, push_str "worker", spawn with argc=2
+    assert!(main.body.iter().any(|inst| inst.op == "spawn"), "should contain spawn instruction");
 }
 
 #[test]
@@ -1035,4 +1033,37 @@ fn empty_check_source_invariance_is_silently_skipped() {
         !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
         "no permission registered when check_source is empty"
     );
+}
+
+#[test]
+fn compile_async_fn_parser() {
+    // Parse a program with async fn and verify is_async is set
+    let source = r#"
+async fn fetch_data(url: String) {
+    let result = url
+    return result
+}
+
+fn main() {
+    let task = spawn fetch_data("http://example.com")
+    let data = await task
+}
+"#;
+    let program = crush_frontend::parse_source(source).expect("should parse async fn");
+    let fetch = program.functions.get("fetch_data").expect("should have fetch_data function");
+    assert!(fetch.is_async, "fetch_data should be marked async");
+
+    let main_fn = program.functions.get("main").expect("should have main function");
+    let has_spawn = main_fn.body.iter().any(|stmt| {
+        match stmt {
+            Statement::VarDecl { value, .. } => {
+                matches!(value, Expression::Spawn { .. })
+            }
+            Statement::ExprStmt { expr, .. } => {
+                matches!(expr, Expression::Spawn { .. })
+            }
+            _ => false,
+        }
+    });
+    assert!(has_spawn, "main should contain spawn expression");
 }

@@ -212,7 +212,25 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
         py_ast::Stmt::With { .. } => anyhow::bail!("with statements not yet supported"),
         py_ast::Stmt::Match { .. } => anyhow::bail!("match statements not yet supported"),
         py_ast::Stmt::TypeAlias { .. } => anyhow::bail!("type aliases not yet supported"),
-        py_ast::Stmt::AsyncFunctionDef { .. } => anyhow::bail!("async functions not yet supported"),
+        py_ast::Stmt::AsyncFunctionDef(py_ast::StmtAsyncFunctionDef {
+            name, args, body, ..
+        }) => {
+            let params: Vec<(String, CastType)> = args
+                .args
+                .iter()
+                .map(|a| (a.def.arg.to_string(), CastType::Any))
+                .collect();
+            let mut lowered_body = Vec::new();
+            for s in body {
+                lowered_body.push(lower_stmt(s, ctx)?);
+            }
+            Ok(Statement::FunctionDef {
+                name: name.to_string(),
+                params,
+                body: lowered_body,
+                meta,
+            })
+        }
         py_ast::Stmt::AsyncFor { .. } => anyhow::bail!("async for not yet supported"),
         py_ast::Stmt::AsyncWith { .. } => anyhow::bail!("async with not yet supported"),
         py_ast::Stmt::AnnAssign { .. } => anyhow::bail!("annotated assignment not yet supported"),
