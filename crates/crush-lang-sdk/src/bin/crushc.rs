@@ -214,7 +214,7 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         match cli.message_format {
             MessageFormat::Text => {
                 eprint!(
-                    "{badge} {body}\n",
+                    "{badge} type error: {body}\n",
                     badge = crush_lang_sdk::theme::paint_error_badge("type"),
                     body = body,
                 );

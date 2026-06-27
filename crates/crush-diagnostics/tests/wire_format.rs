@@ -16,7 +16,7 @@
 //! depend on `crush-lang-sdk` (the four quarantined binaries
 //! referenced above). Together they cover the entire CLI surface.
 
-use crush_diagnostics::{diag_line, diag_line_from, strict_downgrade, wants_json, DiagRecord};
+use crush_diagnostics::{DiagRecord, diag_line, diag_line_from, strict_downgrade, wants_json};
 
 // ----------------------------------------------------------------
 // diag_line — byte-exact field order
@@ -216,18 +216,18 @@ fn diag_record_accepts_all_per_binary_wire_codes() {
     // one test means a refactor that adds/renames a code only
     // requires updating THIS list, not every binary's tests.
     let codes = [
-        "E-AUDIT",         // xtask audit
-        "E-LINT",          // xtask lint-dejavue
-        "E-IO",            // xtask lint-dejavue / generic I/O
-        "E-INSTALL",       // crush-installer
-        "E-NEW",           // crush-pkg new
-        "E-MANIFEST",      // crush-pkg pack/unpack/show
-        "E-BUILDER",       // crush-pkg build/check
-        "E-RUN",           // crush-pkg run
-        "E-SIGN",          // crush-pkg sign/verify/keygen
-        "E-SITE",          // crush-pkg site/site-extract
-        "E-ASM",           // crush-vm (kept around for parity)
-        "E-VM-INTERNAL",   // crush-vm (kept around for parity)
+        "E-AUDIT",       // xtask audit
+        "E-LINT",        // xtask lint-dejavue
+        "E-IO",          // xtask lint-dejavue / generic I/O
+        "E-INSTALL",     // crush-installer
+        "E-NEW",         // crush-pkg new
+        "E-MANIFEST",    // crush-pkg pack/unpack/show
+        "E-BUILDER",     // crush-pkg build/check
+        "E-RUN",         // crush-pkg run
+        "E-SIGN",        // crush-pkg sign/verify/keygen
+        "E-SITE",        // crush-pkg site/site-extract
+        "E-ASM",         // crush-vm (kept around for parity)
+        "E-VM-INTERNAL", // crush-vm (kept around for parity)
     ];
     for code in codes {
         // sanity: any code delimiter convention (single dash after

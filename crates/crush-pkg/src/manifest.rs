@@ -168,11 +168,24 @@ pub enum CapsuleType {
     Auto,
     Crush,
     Native,
-    Container,
     Script(ScriptRuntime),
 }
 
-/// Script runtime preference
+/// Script runtime preference.
+///
+/// CRUSHRUN-S2: the 4-variant shape (Bun/Node/Deno/Python) is an
+/// **intent-aware cap** — extending the enum is mechanical (2 places
+/// per new runtime: add the variant here + add a `get_runtime_command`
+/// arm in `runners.rs`) but is NOT done speculatively. When a real
+/// language demand emerges (Ruby/Go-script/Julia/Perl/R/etc.), add the
+/// variant AND its binary mapping. If activation is exploratory, gate
+/// the new runtime behind `--strict` (the same opt-in gate CRUSHFMT-1
+/// introduced for the unknown-format run path — see PR #10). Until a
+/// real signal exists, the cap is acceptable; if you're tempted to add
+/// a 5th variant speculatively, prefer asking first. Closes Gap 2 of
+/// `TICKETS/CRUSHRUNNERS-1.md` (sister branch
+/// `agent/buffy/CRUSHRUNNERS-1`, PR #7 — file not merged into
+/// `2f2b2f5` yet, forward-looking cross-link).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ScriptRuntime {
     #[default]
@@ -192,7 +205,6 @@ pub enum PayloadFormat {
     NativeElf,
     NativeMachO,
     NativePe,
-    Container,
     Unknown,
 }
 
@@ -254,7 +266,9 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
     match language.to_ascii_lowercase().as_str() {
         "crush" => CapsuleType::Crush,
         "native" | "rust" | "c" => CapsuleType::Native,
-        "container" => CapsuleType::Container,
+        // Legacy "container" arm removed (CRUSHCN-1) — see validate_language() below and
+        // TICKETS/CRUSHRUNNERS-1.md Gap 1. Falls through to `CapsuleType::Auto` and is
+        // then rejected at parse time by `Manifest::from_str` via validate_language().
         "javascript" | "js" | "ts" | "typescript" | "bun" => {
             CapsuleType::Script(ScriptRuntime::Bun)
         }
@@ -263,6 +277,32 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
         "python" | "py" => CapsuleType::Script(ScriptRuntime::Python),
         _ => CapsuleType::Auto,
     }
+}
+
+/// Strict validation for the legacy `"container"` language value.
+///
+/// Returns `Err` with a user-friendly migration message when `language =
+/// "container"` is encountered. Passes silently for empty strings (auto-detect)
+/// and all other unknown languages (which fall through to `CapsuleType::Auto`
+/// at the `language_to_capsule_type` match above — unknown extensions still
+/// get an honest crush-syntax error instead of being silently mis-routed).
+///
+/// Rationale (CRUSHCN-1): the `ContainerRunner` stub was deleted because
+/// there is no roadmap signal for any of the three candidate models
+/// (Docker-spawn / OCI hooks / WASI-bundle). The legacy literal `"container"`
+/// now fails loudly at parse time instead of silently routing to a stub-bail
+/// at run time. See `TICKETS/CRUSHRUNNERS-1.md` Gap 1 for the thread history
+/// and re-introduction path.
+pub fn validate_language(language: &str) -> anyhow::Result<()> {
+    if language == "container" {
+        anyhow::bail!(
+            "language = \"container\" is no longer supported in crush-pkg. \
+             The Container runner stub was removed (CRUSHCN-1); pick a real \
+             runtime (crush / native / python / javascript / ...) or remove \
+             the language field and let entry-extension detection fill it in."
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +427,11 @@ impl Manifest {
         if manifest.capsule.language.is_empty() {
             manifest.capsule.language = detect_language_from_entry(&manifest.capsule.entry);
         }
+
+        // CRUSHCN-1: reject the legacy "container" stub value at parse time.
+        // Any other unknown language still falls through to `CapsuleType::Auto`
+        // via `language_to_capsule_type` above (no silent fallback here either).
+        validate_language(&manifest.capsule.language)?;
 
         manifest.validate()?;
         Ok(manifest)
@@ -673,6 +718,37 @@ capsule_type = "Crush"
         assert_eq!(
             language_to_capsule_type("PYTHON"),
             CapsuleType::Script(ScriptRuntime::Python)
+        );
+    }
+
+    #[test]
+    fn language_container_string_rejected_at_parse() {
+        let toml = r#"[capsule]
+name = "legacy-container"
+entry = "Dockerfile"
+language = "container"
+"#;
+        let err = Manifest::from_str(toml, Path::new(""))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no longer supported"),
+            "expected hard-error message containing 'no longer supported', got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn language_unknown_string_still_falls_through_to_auto() {
+        let toml = r#"[capsule]
+name = "future-lang"
+entry = "main.crush"
+language = "rust-script"
+"#;
+        let m = Manifest::from_str(toml, Path::new("")).unwrap();
+        assert_eq!(
+            language_to_capsule_type(&m.capsule.language),
+            CapsuleType::Auto
         );
     }
 }

@@ -120,29 +120,12 @@ impl CapsuleRunner for ScriptRunner {
     }
 }
 
-/// Container runner (stub)
-pub struct ContainerRunner;
-
-impl CapsuleRunner for ContainerRunner {
-    fn run(
-        &self,
-        manifest: &Manifest,
-        _payload_path: &Path,
-        _args: &[String],
-    ) -> anyhow::Result<ExecutionResult> {
-        anyhow::bail!(
-            "Container capsules are not yet supported in crush-pkg (capsule: {})",
-            manifest.capsule.name
-        )
-    }
-}
-
 /// Get runner from manifest capsule type
 pub fn get_runner(capsule_type: &CapsuleType) -> Box<dyn CapsuleRunner> {
     match capsule_type {
         CapsuleType::Auto | CapsuleType::Crush => Box::new(CrushRunner::default()),
         CapsuleType::Native => Box::new(NativeRunner),
-        CapsuleType::Container => Box::new(ContainerRunner),
+        // Container variant deleted (CRUSHCN-1) — see TICKETS/CRUSHRUNNERS-1.md Gap 1.
         CapsuleType::Script(runtime) => Box::new(ScriptRunner::new(runtime.clone())),
     }
 }
@@ -180,7 +163,6 @@ pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<d
         PayloadFormat::NativeElf | PayloadFormat::NativeMachO | PayloadFormat::NativePe => {
             Box::new(NativeRunner)
         }
-        PayloadFormat::Container => Box::new(ContainerRunner),
         PayloadFormat::Unknown => Box::new(CrushRunner::default()),
     }
 }
@@ -251,19 +233,4 @@ mod tests {
         let _runner = get_runner_for_payload(&payload, &m);
     }
 
-    #[test]
-    fn test_get_runner_container_stub() {
-        let runner = get_runner(&CapsuleType::Container);
-        let m = make_manifest("container", "");
-        let dir = tempfile::tempdir().unwrap();
-        let payload = dir.path().join("dummy");
-        let result = runner.run(&m, &payload, &[]);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet supported")
-        );
-    }
 }

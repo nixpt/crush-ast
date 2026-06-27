@@ -1,3 +1,5 @@
+- [2026-06-22] CRUSHPVMDOCS-1 — Doc-only resolution to portable_vm.rs size concern. Prepended a comprehensive module-level doc-comment to `crates/crush-vm/src/portable_vm.rs` describing the 1,235-line structure, the rationale for keeping it cohesive, and a three-step recipe for any future re-attempt of `CRUSHPVMSPLIT-1b`. Skip the extraction entirely; defer `CRUSHPVMSPLIT-1b` re-attempt until the doc-comment recipe is studied. PR #13 (https://github.com/nixpt/crush-ast/pull/13).
+
 # crush-ast — TASKS / Roadmap
 
 Actionable task tracker for the portable-Crush toolchain. Grouped by priority,
@@ -96,6 +98,39 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
   `Value::Map` type-name. `EXEC_LANG` followup captured as
   `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md`. 80 `crush-vm --lib` tests
   green (was 69). Closes `TASKS.md` 🔴 P0 *portable_vm parity*.
+- **2026-06-22** — `agent/buffy/CRUSHPKG-1` registers the `crush-pkg`
+  `capsule.toml`-lint test pins in STATE.md / TASKS.md so future
+  contributors edit against an explicit byte-exact NDJSON contract.
+  The pins themselves shipped in commit `2f2b2f5` (`+2238` / `-113`
+  across `builder.rs` + `main.rs`): byte-exact multi-rule fedpath
+  (`handle_lint_with_byte_exact_three_rule_fedpath`) across all 3
+  current dead-code rule families, end-to-end entry-aware cross-ref
+  pin (`handle_lint_with_referenced_dep_suppresses_finding_end_to_end`),
+  and `scan_entry_file_references` URL-fragment fix so that string-
+  literal `#fragment` survives the reference scan. 78 `crush-pkg
+  --bin` tests green. Registration only — no test surface perturbed.
+
+- **2026-06-22** — `agent/buffy/CRUSHCN-1` removes `crush-pkg`'s
+  `ContainerRunner` stub (`runners.rs:117-129` deleted; 2 dispatch
+  arms replaced with comment-only markers; 1 stub-pin test
+  `test_get_runner_container_stub` removed) and adds parse-time
+  hard-error rejection for the legacy `language = "container"`
+  literal via new `Manifest::validate_language` + hook in
+  `Manifest::from_str` (in `manifest.rs`). 79 `crush-pkg --bin` tests
+  green (78 → 79: `-1` + `+2`). Closes Gap 1 of the runner-subsystem
+  catalogue at `TICKETS/CRUSHRUNNERS-1.md` (CRUSHRUNNERS-1 PR #7,
+  commit `2f2b2f5`). No external deps added; pure deletion path.
+- **2026-06-22** — `agent/buffy/CRUSHRUN-S2` documents the `crush-pkg`
+  `ScriptRuntime` 4-variant cap (`manifest.rs:174`) as an
+  **intent-aware cap** — extending the enum is mechanical (2 places per
+  new runtime) but NOT done speculatively. Inline doc comment added
+  above `pub enum ScriptRuntime`. New runtimes (Ruby / Go-script /
+  Julia / Perl / R / ...) should be added on real demand; if activation
+  is exploratory, gate behind `--strict` (mirror CRUSHFMT-1). 78
+  `crush-pkg --bin` tests unchanged. Closes Gap 2 of
+  `TICKETS/CRUSHRUNNERS-1.md` (sister branch PR #7 — forward-looking
+  cross-link until that ticket merges). Pure docs delta; no Rust
+  behavior change.
 - **s298 (2026-06-16)** — merged `agent/opencode/polyglot` + `agent/opencode/types`
   → main (`edcbe93`); VM type expansion (`Bool`/`Map`/`Error`/`Bytes`) + opcodes
   (ARR_PUSH/POP, NEW_OBJ/SET_FIELD/GET_FIELD, ENTER_TRY/EXIT_TRY/THROW); reconciled

@@ -1,7 +1,62 @@
-//! Portable CVM bytecode interpreter and VM trait abstraction.
+//! | section | role |
+//! |---------|------|
+//! | `Frame` struct | One call-frame's worth of VM state (locals slot table + ip + jump-target cache). |
+//! | `PortableVm` struct | The VM — owns the bytecode module + frames + value stack + declared-capability registry + quotas. |
+//! | `PortableVm::step` | The dispatcher loop. Fetches one opcode, calls `execute_instruction`, applies pc-delta, handles `VmYield`. |
+//! | `PortableVm::execute_instruction` | The large match-on-opcode (~660 lines) that interprets one instruction and mutates VM state. |
+//! | `PortableVm::dispatch_cap` | The capability-dispatch chokepoint (~135 lines) — routes `Capability::Call` to a declared native op (io.print, str.*, math.*, make_range, ...). |
+//! | Helpers | Smaller methods on `PortableVm` + the free fns `value_to_text` and `run`. |
+//! | `VmYield` enum | The boxed-Future yield surface used by `PortableVm::run` to suspend on async capability calls. |
+//! | `#[cfg(test)] mod tests` | A handful of inline tests living alongside the production code. |
 //!
-//! This module provides a portable VM implementation that can run
-//! Crush bytecode without depending on nanovm's advanced features.
+//! ## Existence as a single file (the why)
+//!
+//! When `portable_vm.rs` was first authored it was ~150 lines. Frame, the
+//! PortableVm struct, `step`, `execute_instruction`, and `dispatch_cap`
+//! were all written together as one cohesive module because they share
+//! state through `&mut self` borrows and the boundary between
+//! "VM operation" and "VM dispatch" is fuzzy at the function-call level
+//! (e.g. `execute_instruction` calls `dispatch_cap` for capability
+//! opcodes). The file has grown in place through CRUSHCN-1 (Frame
+//! promotion, +Frame slot table), CRUSHFMT-1 (TOML-quoted byte literals),
+//! CRUSHRUN-S2 (async + spawn), and several other arc landings.
+//!
+//! ## Future split intent (DEFERRED — see history below; do not pick up
+//! without re-reading this comment and the linked analysis)
+//!
+//! The `CRUSHPVMSPLIT` ticket arc was triaged with intent to extract the
+//! dispatch logic into `crates/crush-vm/src/portable_vm/opcodes.rs` — a
+//! private submodule with `pub(super) fn execute_instruction` and
+//! `pub(super) fn dispatch_cap` lifted out, leaving `PortableVm::step`
+//! as the public dispatcher. After **seven** attempts (six on the full
+//! combined extraction `CRUSHPVMSPLIT-1`, one on the smaller-scope
+//! `CRUSHPVMSPLIT-1a` variant that extracted `dispatch_cap` only), the
+//! brittle-transform risk turned out to exceed the maintenance burden of
+//! leaving the dispatch inline. Both PRs (#11 and #12) are open and
+//! unmerged at the time of this writing.
+//!
+//! If a future attempt wants to land CRUSHPVMSPLIT-1b (`execute_instruction`
+//! move only, with `CRUSHPVMSPLIT-1a`'s `dispatch_cap` extraction as
+//! prior art), the path that minimises regression is:
+//!
+//! 1. **Single atomic Python pass** — read `portable_vm.rs` once, walk
+//!    braces depth-aware from the function signature to find the closing
+//!    brace, apply all transforms in one shot
+//!    (`self.foo`→`vm.foo`, `self.dispatch_cap(`→`dispatch_cap(vm, `,
+//!    `Self::`→`super::PortableVm::`, bare `self`→`vm`), write both
+//!    `opcodes.rs` AND the post-extraction `portable_vm.rs` from the
+//!    same in-memory model. Multi-pass bash sed cascades were the cause
+//!    of every prior failure.
+//! 2. **Per-binary `^test crush_vm` diff vs `origin/main`** — must return
+//!    *zero differences*, not just a raw test count match. The
+//!    per-binary name diff catches test-discovery regressions that
+//!    raw counts miss (off-by-one sed ranges can eat test fn names).
+//! 3. **Land as `CRUSHPVMSPLIT-1b`, not a combined re-shot** — one
+//!    function at a time; never combine the two extractions into one
+//!    PR after the `1a` precedent.
+//!
+//! Until then, this file stays as one module.
+
 
 use crate::bytecode::{Program, instruction_size};
 use crate::host::HostCaps;
@@ -1482,7 +1537,6 @@ HALT"#;
             other => panic!("expected Array([1]), got {other:?}"),
         }
     }
-
     #[test]
     fn test_portable_exec_lang_partial_binding() {
         // EXEC_LANG with var_count=3 but only var_0 is named.

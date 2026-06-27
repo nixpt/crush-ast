@@ -208,7 +208,15 @@ mod private_quotes {
     // round-trip cleanly.
     #[test]
     fn quote_escape_round_trip_through_serde() {
-        for s in ["hello", "with \"quote\"", "line\nbreak", "back\\slash", "tab\there", "\u{0001}", "☃"] {
+        for s in [
+            "hello",
+            "with \"quote\"",
+            "line\nbreak",
+            "back\\slash",
+            "tab\there",
+            "\u{0001}",
+            "☃",
+        ] {
             let rec = super::DiagRecord {
                 code: "E-IO",
                 level: "error",

@@ -5,7 +5,10 @@
 //! registry. Phase-3 caps are synchronous (blocking-accept on the listener
 //! side); the async path is wired through `reactor::Source::try_accept`.
 
-use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock}};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
+#[cfg(feature = "tls")]
+use std::sync::OnceLock;
+#[cfg(feature = "tls")]
 use rustls::pki_types::ServerName;
 
 /// Cache of leaked SNI `&'static str`s, indexed by the originating `&str`.
@@ -17,8 +20,10 @@ use rustls::pki_types::ServerName;
 ///
 /// Bad (unparseable) SNIs still leak one allocation per crash lifecycle;
 /// accepted as a bounded misallocation to keep `call`'s API shape unchanged.
+#[cfg(feature = "tls")]
 static SNI_CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
 
+#[cfg(feature = "tls")]
 fn cached_sni(sni: &str) -> &'static str {
     ServerName::try_from(sni).expect("invalid SNI before cache leak");
     let cache = SNI_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
