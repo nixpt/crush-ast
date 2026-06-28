@@ -177,23 +177,87 @@ impl Compiler {
                     }
                 }
             }
-            for stmt in &func.body {
-                if !matches!(stmt, Statement::FunctionDef { .. }) {
-                    self.compile_stmt(stmt, &mut instrs)?;
+            if func.is_async {
+                let inner_name = format!("{}_async_inner", name);
+                let mut inner_instrs = Vec::new();
+
+                for (param_name, _) in &func.params {
+                    inner_instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": param_name}),
+                        &func.meta,
+                    ));
                 }
+
+                for stmt in &func.body {
+                    if !matches!(stmt, Statement::FunctionDef { .. }) {
+                        self.compile_stmt(stmt, &mut inner_instrs)?;
+                    }
+                }
+
+                self.ensure_return(&mut inner_instrs, Some(&func.meta));
+                self.record_debug_info_for_function(&inner_name, &inner_instrs, &mut debug_info, &mut source_files);
+
+                casm_program.functions.insert(
+                    inner_name.clone(),
+                    CasmFunction {
+                        params: func.params.iter().map(|(n, _)| n.clone()).collect(),
+                        locals: vec![],
+                        body: inner_instrs,
+                    },
+                );
+
+                for (param_name, _) in &func.params {
+                    instrs.push(self.create_instr(
+                        "load",
+                        serde_json::json!({"name": param_name}),
+                        &func.meta,
+                    ));
+                }
+
+                instrs.push(self.create_instr(
+                    "push_str",
+                    serde_json::json!({"value": inner_name}),
+                    &func.meta,
+                ));
+
+                instrs.push(self.create_instr(
+                    "spawn",
+                    serde_json::json!({"argc": func.params.len()}),
+                    &func.meta,
+                ));
+
+                instrs.push(self.create_instr("ret", serde_json::json!({}), &func.meta));
+
+                self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
+
+                casm_program.functions.insert(
+                    name.clone(),
+                    CasmFunction {
+                        params: func.params.iter().map(|(n, _)| n.clone()).collect(),
+                        locals: vec![],
+                        body: instrs,
+                    },
+                );
+            } else {
+                for stmt in &func.body {
+                    if !matches!(stmt, Statement::FunctionDef { .. }) {
+                        self.compile_stmt(stmt, &mut instrs)?;
+                    }
+                }
+
+                self.ensure_return(&mut instrs, Some(&func.meta));
+                self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
+
+                casm_program.functions.insert(
+                    name.clone(),
+                    CasmFunction {
+                        params: func.params.iter().map(|(n, _)| n.clone()).collect(),
+                        locals: vec![],
+                        body: instrs,
+                    },
+                );
             }
-
-            self.ensure_return(&mut instrs, Some(&func.meta));
-            self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
-
-            casm_program.functions.insert(
-                name,
-                CasmFunction {
-                    params: func.params.iter().map(|(n, _)| n.clone()).collect(),
-                    locals: vec![],
-                    body: instrs,
-                },
-            );
         }
 
         // Merge lambdas
