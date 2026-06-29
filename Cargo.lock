@@ -914,6 +914,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-lang-sona"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "casm",
+ "crush-cast",
+ "crush-vm",
+ "regex",
+ "serde",
+ "serde_json",
+ "walker-core",
+]
+
+[[package]]
 name = "crush-lang-zsh"
 version = "0.2.0"
 dependencies = [
