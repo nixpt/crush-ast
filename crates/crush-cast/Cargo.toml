@@ -23,6 +23,7 @@ serde_path_to_error = "0.1"
 uuid = { version = "1.0", features = ["v4"] }
 crush-errors.workspace = true
 ts-rs = { version = "12.0", features = ["serde-json-impl"], optional = true }
+indexmap = { version = "2.14.0", features = ["serde"] }
 
 # wasm32 has no OS RNG; uuid v4 needs a randomness source via the `js` backend.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -4,6 +4,7 @@
 //! Uses Pratt parsing for expressions.
 
 mod lexer;
+pub mod cson;
 pub use lexer::{Lexer, ParseError, SourceLocation, Token};
 
 use crush_cast::manifest::{
