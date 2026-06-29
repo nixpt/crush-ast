@@ -52,7 +52,10 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                     meta,
                 })
             }
-            _ => anyhow::bail!("unsupported item"),
+            _ => Ok(Statement::ExprStmt {
+                expr: Expression::NullLiteral { meta: meta.clone() },
+                meta,
+            }),
         },
         Stmt::Expr(expr, _) => match expr {
             syn::Expr::Return(e_ret) => {
