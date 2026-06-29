@@ -59,7 +59,7 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 - [x] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
   (prior attempt hit an API mismatch). The planned `crush-lang-bash` crate is its
   home.
-- [ ] **Go / C / Zig / wasm walkers** — scaffold-level; mature on demand (no pure
+- [x] **Go / C / Zig / wasm walkers** — scaffold-level; mature on demand (no pure
   Rust parser alternative for some → may stay tree-sitter).
 
 ## 🔗 Cross-project
