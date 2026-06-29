@@ -408,3 +408,18 @@ The fedpath work was the centrepiece of a squash-merged branch on `agent/buffy/n
 - The retroactive path is cheaper than forward-only registration and matches the squad's existing documented pattern.
 - The 3 runner gaps exposed by CRUSHRUNNERS-1 are tracked under separate tickets (each sized S) so future registration passes don't bottleneck on a single arc.
 
+
+## 2026-06-29T04:55:00-05:00 — [STRATEGIC] [VERIFIED] Dynamic C/C++ FFI Plugins, CSON Parsing with Versioning, and crush-lang-c Refactor
+
+Reason:
+To support first-class dynamic C interop, structured configuration format support (CSON), codebase-wide metadata semantic indexing, and unified naming conventions across language frontends.
+
+Outcome:
+1. **Dynamic FFI plugins**: Fixed memory/alignment layout mismatches between Rust's `#[repr(u8)]` tag + 7-byte padding and C's default 4-byte enum tags. Wrote an explicit `_pad` layout inside `crush_plugin.h` and tested native execution using `__crush_ffi__` gateway capability in `crush-vm`.
+2. **CSON Versioning**: Added `@cson` annotation parsing to `crush-cson` returning `CsonDocument` with explicit metadata version string (defaulting to "1.0").
+3. **CSON + Dejavue Semantic Search**: Integrated `crush-index` with `crush-cson` and Dejavue timeline (`timeline.jsonl`) parser to extract semantic keys and decisions into a queryable database structure.
+4. **crush-lang-c Refactor**: Renamed `c_walker` crate to `crush-lang-c` conforming to the unified frontend workspace structure. Expanded lowering in `visit_expression` for pointer deref (`*ptr`), address-of (`&val`), unary ops (`-`, `+`, `!`, `~`), subscripts (`arr[idx]`), and ternaries (`a ? b : c`).
+
+All tests green and verification suite checks out successfully.
+
+

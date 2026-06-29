@@ -585,3 +585,26 @@ pub fn run_with_caps(
     crate::scheduler::run_scheduled(program, quotas, host_caps)
 }
 
+/// Run a program using the optimized FastVM architecture.
+pub fn run_fastvm(
+    casm_program: &casm::Program,
+) -> Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
+    use std::sync::Arc;
+    let lowered = crate::fastvm::lower_program(casm_program).map_err(|e| {
+        crate::fastvm::FastError::ExecutionError(e.to_string())
+    })?;
+    
+    // Create dummy HAL and empty capabilities for now (since polyglot/host calls are stubbed)
+    let hal = Arc::new(DummyHal {});
+    let capabilities = vec![];
+
+    let mut vm = crate::fastvm::FastVM::new(lowered, capabilities, hal);
+    
+    // Give it a large budget to run to completion
+    Ok(vm.run(1_000_000))
+}
+
+#[derive(Debug)]
+struct DummyHal;
+impl crate::fastvm::Hal for DummyHal {}
+

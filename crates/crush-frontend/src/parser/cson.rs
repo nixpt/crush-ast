@@ -70,7 +70,7 @@ impl<'a> CsonParser<'a> {
             if in_quotes && c == '"' {
                 self.consume();
                 break;
-            } else if !in_quotes && (c.is_whitespace() || c == ':' || c == '~') {
+            } else if !in_quotes && (c.is_whitespace() || c == ':' || c == '~' || c == ',') {
                 break;
             } else {
                 s.push(c);

@@ -12,6 +12,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 crush-cast.workspace = true
+crush-vm.workspace = true
+casm.workspace = true
+crush-cson = { path = "../crush-cson" }
 serde_json.workspace = true
 pyo3 = { version = "0.23", features = ["abi3", "abi3-py311"] }
 

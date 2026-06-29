@@ -82,7 +82,13 @@ fn cmd_run(args: &[String], json_mode: bool) -> ExitCode {
         }
     };
     let quotas = crush_vm::Quotas::default();
-    match crush_vm::run(&program, &quotas) {
+    
+    // Register host capabilities
+    let mut host_caps = crush_vm::host::HostCaps::new();
+    host_caps.register(Box::new(crush_vm::cargo_cap::CargoCap));
+    host_caps.register(Box::new(crush_vm::plugin::FfiGatewayCap));
+    
+    match crush_vm::run_with_caps(&program, &quotas, Some(&host_caps)) {
         Ok(result) => {
             print!("{}", result.output);
             if !result.halted {

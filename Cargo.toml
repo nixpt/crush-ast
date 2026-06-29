@@ -9,7 +9,7 @@ members = [
     "crates/wasm_walker",
     "crates/cli",
     "crates/go_walker",
-    "crates/c_walker",
+    "crates/crush-lang-c",
     "crates/zig_walker",
     "crates/crush-vm",
     "crates/crush-lang-sdk",
@@ -26,7 +26,7 @@ members = [
     "crates/crush-lang-zsh",
     "crates/crush-net",
     "xtask"
-    ]
+    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson"]
 
 [workspace.package]
 version       = "0.2.0"

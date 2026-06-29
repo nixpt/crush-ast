@@ -1,0 +1,24 @@
+[package]
+license.workspace = true
+description = "C language walker — parses C source code into CAST IR"
+name = "crush-lang-c"
+version = "0.2.0"
+edition = "2024"
+repository.workspace = true
+[lib]
+name = "crush_lang_c"
+
+[[bin]]
+name = "c_walker"
+path = "src/main.rs"
+
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tree-sitter.workspace = true
+tree-sitter-c = "0.23"
+walker-core.workspace = true
+crush-cast.workspace = true
