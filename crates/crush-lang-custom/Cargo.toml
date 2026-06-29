@@ -1,0 +1,19 @@
+[package]
+name = "crush-lang-custom"
+version = "0.2.0"
+edition = "2024"
+description = "Meta-frontend for custom DSLs — parses custom grammar definitions (CSON/JSON) and lowers to CAST"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "crush_lang_custom"
+
+[dependencies]
+crush-cast = { workspace = true }
+walker-core = { workspace = true }
+crush-cson = { path = "../crush-cson" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+regex = "1.10"

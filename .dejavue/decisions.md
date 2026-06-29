@@ -423,3 +423,15 @@ Outcome:
 All tests green and verification suite checks out successfully.
 
 
+## 2026-06-29T05:00:00-05:00 — [STRATEGIC] [VERIFIED] Meta-Frontend for Custom DSLs (crush-lang-custom) and CSON Array Parsing
+
+Reason:
+To enable rapid development of new DSLs and custom language frontends via declarative grammar mappings defined in CSON, avoiding the need to write parsers from scratch.
+
+Outcome:
+1. **crush-lang-custom module**: Created a new meta-frontend crate that parses custom languages dynamically using Regex-based rules mapped to CAST nodes. It implements `walker_core::Frontend` and can be configured fully via CSON declarations.
+2. **CSON array support**: Extended `crush-cson` value parser with native Array (`[...]`) parsing capabilities, enabling multi-valued configuration fields like `extensions` in DSL definitions.
+3. **DSL Lowering and Testing**: Verified the custom DSL parser by defining a mini DSL in CSON (`mini` language with `.mini` extensions) and successfully parsing variable declarations and capability prints to CAST with tests passing cleanly.
+
+
+

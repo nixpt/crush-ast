@@ -241,6 +241,25 @@ impl<'a> CsonParser<'a> {
             }
             self.pos += 1;
             value = CsonValue::Object(map);
+        } else if self.input[self.pos..].starts_with('[') {
+            self.pos += 1;
+            let mut arr = Vec::new();
+            while !self.input[self.pos..].starts_with(']') {
+                self.skip_whitespace_and_comments();
+                if self.input[self.pos..].starts_with(']') { break; }
+                let (val, _) = self.parse_value()?;
+                arr.push(CsonNode {
+                    value: val,
+                    confidence: None,
+                    annotations: vec![],
+                });
+                self.skip_whitespace_and_comments();
+                if self.input[self.pos..].starts_with(',') {
+                    self.pos += 1; // skip comma
+                }
+            }
+            self.pos += 1;
+            value = CsonValue::Array(arr);
         } else {
             // Unquoted string or number
             let end = self.input[self.pos..].find(|c: char| c == '\n' || c == '~').unwrap_or(self.input.len() - self.pos);

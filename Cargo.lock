@@ -821,6 +821,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-lang-custom"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crush-cast",
+ "crush-cson",
+ "regex",
+ "serde",
+ "serde_json",
+ "walker-core",
+]
+
+[[package]]
 name = "crush-lang-js"
 version = "0.2.0"
 dependencies = [
