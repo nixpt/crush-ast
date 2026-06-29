@@ -11,7 +11,17 @@ pub struct CWalker {
 
 impl Walker for CWalker {
     fn language(&self) -> tree_sitter::Language {
-        tree_sitter_c::LANGUAGE.into()
+        let is_cpp = self.file_name.ends_with(".cpp") ||
+                     self.file_name.ends_with(".cc") ||
+                     self.file_name.ends_with(".cxx") ||
+                     self.file_name.ends_with(".c++") ||
+                     self.file_name.ends_with(".hpp");
+        
+        if is_cpp {
+            tree_sitter_cpp::LANGUAGE.into()
+        } else {
+            tree_sitter_c::LANGUAGE.into()
+        }
     }
 
     fn walk(&self, tree: &Tree, source: &[u8]) -> Result<ast::Program> {

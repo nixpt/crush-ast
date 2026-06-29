@@ -282,8 +282,8 @@ impl WalkerRegistry {
         )));
 
         registry.register_walker(Box::new(SubprocessWalker::new(
-            "cpp",
-            &["cpp", "cc", "cxx", "c++", "hpp", "h"],
+            "c_cpp",
+            &["c", "cpp", "cc", "cxx", "c++", "hpp", "h"],
             "c_walker",
             LanguageCapabilities {
                 version: "C++23".to_string(),
