@@ -1,0 +1,67 @@
+@module {
+    purpose: "Demonstrate AI-native capabilities of Crush (Phase 1 & Phase 2a features)"
+    exports: [process_user_intent, summarize_unresolved_tasks]
+}
+
+@wip {
+    intent: "Build an autonomous support agent capable of escalating complex issues"
+    done: ["basic routing", "semantic matching"]
+    todo: ["integrate escalation API", "synthetic data generation tests"]
+    unresolved: ["how to handle non-English intents accurately"]
+}
+
+@temporary {
+    reason: "Using hardcoded API keys for escalation until secret manager lands in stdlib"
+    expires-when: "std::secrets module is available"
+    added: "2026-06-18"
+}
+
+@decision "use-semantic-switch-routing" {
+    chose: "semantic_switch"
+    over: ["regex matching", "LLM zero-shot prompt"]
+    because: "Semantic routing is native to VM and 10x faster than full LLM calls"
+    revisit-if: ["user intents become too highly contextual for basic embeddings"]
+}
+
+@invariant "escalation-requires-auth" {
+    description: "Any operation that escalates an issue must verify the user's session"
+    applies_to: [escalate_issue]
+}
+
+@errors {
+    NetworkTimeout: likely
+    DatabaseConnectionError: rare
+    Unauthorized: possible
+}
+fn process_user_intent(intent_text) {
+    // Phase 1b: Semantic matching & routing
+    semantic_switch intent_text {
+        case "User is asking for a refund or billing help":
+            return ai_synthesize("RefundResponse", constraints=["polite", "explain 5-7 business days"])
+        
+        case "User wants to cancel their account":
+            let retention_offer = ai_synthesize("RetentionOffer", constraints=["10% discount for 3 months"])
+            return retention_offer
+            
+        case "Technical issue or bug report":
+            // Check if it matches a known critical bug
+            let is_critical = ai_semantic_match(intent_text, "Data loss, security vulnerability, or system down", 0.85)
+            
+            if is_critical {
+                escalate_issue(intent_text)
+                return "Your issue has been escalated to engineering immediately."
+            }
+            return "Please provide a log file so we can investigate."
+            
+        fallback:
+            return "I'm not sure how to help. Let me connect you to a human."
+    }
+}
+
+@errors {
+    Unauthorized: possible
+}
+fn escalate_issue(details) {
+    // Example of relying on a manifest invariant conceptually
+    print("Escalating to human agents: ", details)
+}
