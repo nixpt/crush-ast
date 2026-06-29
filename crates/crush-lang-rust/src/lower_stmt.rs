@@ -98,6 +98,35 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                     meta,
                 })
             }
+            syn::Expr::While(e_while) => {
+                let condition = lower_expr(&e_while.cond, ctx)?;
+                let mut body = Vec::new();
+                for s in &e_while.body.stmts {
+                    body.push(lower_stmt(s, ctx)?);
+                }
+                Ok(Statement::While {
+                    condition: Box::new(condition),
+                    body,
+                    meta,
+                })
+            }
+            syn::Expr::ForLoop(e_for) => {
+                let variable = pat_to_ident(&e_for.pat)?;
+                let iterable = lower_expr(&e_for.expr, ctx)?;
+                let mut body = Vec::new();
+                for s in &e_for.body.stmts {
+                    body.push(lower_stmt(s, ctx)?);
+                }
+                Ok(Statement::For {
+                    variable,
+                    iterable: Box::new(iterable),
+                    body,
+                    meta,
+                })
+            }
+            syn::Expr::Break(_) => {
+                Ok(Statement::Break { meta })
+            }
             _ => {
                 let expr = lower_expr(expr, ctx)?;
                 Ok(Statement::ExprStmt { expr, meta })
