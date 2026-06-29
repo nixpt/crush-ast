@@ -2582,6 +2582,111 @@ fn schema() -> Vec<PyDef> {
                 },
             ],
         },
+        // --- CSON (Crush Semantic Object Notation) ---
+        PyDef::TaggedUnion {
+            name: "CsonKey".to_string(),
+            tag_field: "type".to_string(),
+            variants: vec![
+                PyVariant {
+                    name: "Exact".to_string(),
+                    tag: Some("Exact".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "Semantic".to_string(),
+                    tag: Some("Semantic".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+            ],
+        },
+        PyDef::TaggedUnion {
+            name: "CsonValue".to_string(),
+            tag_field: "type".to_string(),
+            variants: vec![
+                PyVariant {
+                    name: "CsonNull".to_string(),
+                    tag: Some("Null".to_string()),
+                    fields: vec![],
+                },
+                PyVariant {
+                    name: "CsonBool".to_string(),
+                    tag: Some("Bool".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Bool, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonInt".to_string(),
+                    tag: Some("Int".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Int, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonFloat".to_string(),
+                    tag: Some("Float".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Float, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonString".to_string(),
+                    tag: Some("String".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonArray".to_string(),
+                    tag: Some("Array".to_string()),
+                    fields: vec![
+                        PyField { name: "elements".to_string(), ty: PyType::List(Box::new(PyType::Named("CsonNode".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonObject".to_string(),
+                    tag: Some("Object".to_string()),
+                    fields: vec![
+                        PyField { name: "properties".to_string(), ty: PyType::Dict { value: Box::new(PyType::Named("CsonNode".to_string())) }, default: Some("field(default_factory=dict)".to_string()) },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonSemanticObject".to_string(),
+                    tag: Some("SemanticObject".to_string()),
+                    fields: vec![
+                        PyField { name: "properties".to_string(), ty: PyType::List(Box::new(PyType::Tuple(vec![PyType::Named("CsonKey".to_string()), PyType::Named("CsonNode".to_string())]))), default: Some("field(default_factory=list)".to_string()) },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonSynthesize".to_string(),
+                    tag: Some("Synthesize".to_string()),
+                    fields: vec![
+                        PyField { name: "prompt".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+            ],
+        },
+        PyDef::Struct {
+            name: "CsonNode".to_string(),
+            fields: vec![
+                PyField { name: "value".to_string(), ty: PyType::Named("CsonValue".to_string()), default: None },
+                PyField { name: "weight".to_string(), ty: PyType::Opt(Box::new(PyType::Float)), default: Some("None".to_string()) },
+                PyField { name: "invariants".to_string(), ty: PyType::List(Box::new(PyType::Named("Invariant".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+            ],
+        },
+        PyDef::Struct {
+            name: "CsonDocument".to_string(),
+            fields: vec![
+                PyField { name: "root".to_string(), ty: PyType::Named("CsonNode".to_string()), default: None },
+                PyField { name: "wip".to_string(), ty: PyType::Opt(Box::new(PyType::Named("WipNode".to_string()))), default: Some("None".to_string()) },
+                PyField { name: "temporaries".to_string(), ty: PyType::List(Box::new(PyType::Named("TemporaryNode".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+                PyField { name: "decisions".to_string(), ty: PyType::List(Box::new(PyType::Named("DecisionNode".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+            ],
+        },
     ]
 }
 

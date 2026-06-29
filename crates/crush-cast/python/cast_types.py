@@ -799,3 +799,74 @@ class ModuleManifest:
     exhaustive_types: List[str] = field(default_factory=list)
     changelog: List[ChangelogEntry] = field(default_factory=list)
 
+@dataclass
+class Exact:
+    value: str
+    type: Literal["Exact"] = "Exact"
+
+@dataclass
+class Semantic:
+    value: str
+    type: Literal["Semantic"] = "Semantic"
+
+CsonKey = Union[Exact, Semantic]
+
+@dataclass
+class CsonNull:
+    type: Literal["Null"] = "Null"
+
+@dataclass
+class CsonBool:
+    value: bool
+    type: Literal["Bool"] = "Bool"
+
+@dataclass
+class CsonInt:
+    value: int
+    type: Literal["Int"] = "Int"
+
+@dataclass
+class CsonFloat:
+    value: float
+    type: Literal["Float"] = "Float"
+
+@dataclass
+class CsonString:
+    value: str
+    type: Literal["String"] = "String"
+
+@dataclass
+class CsonArray:
+    elements: List[CsonNode] = field(default_factory=list)
+    type: Literal["Array"] = "Array"
+
+@dataclass
+class CsonObject:
+    properties: Dict[str, CsonNode] = field(default_factory=dict)
+    type: Literal["Object"] = "Object"
+
+@dataclass
+class CsonSemanticObject:
+    properties: List[Tuple[CsonKey, CsonNode]] = field(default_factory=list)
+    type: Literal["SemanticObject"] = "SemanticObject"
+
+@dataclass
+class CsonSynthesize:
+    prompt: str
+    type: Literal["Synthesize"] = "Synthesize"
+
+CsonValue = Union[CsonNull, CsonBool, CsonInt, CsonFloat, CsonString, CsonArray, CsonObject, CsonSemanticObject, CsonSynthesize]
+
+@dataclass
+class CsonNode:
+    value: CsonValue
+    weight: Optional[float] = None
+    invariants: List[Invariant] = field(default_factory=list)
+
+@dataclass
+class CsonDocument:
+    root: CsonNode
+    wip: Optional[WipNode] = None
+    temporaries: List[TemporaryNode] = field(default_factory=list)
+    decisions: List[DecisionNode] = field(default_factory=list)
+
