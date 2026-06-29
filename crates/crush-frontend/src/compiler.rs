@@ -1090,6 +1090,59 @@ impl Compiler {
                     meta,
                 ));
             }
+            AIStatement::SemanticSwitch {
+                target,
+                cases,
+                fallback,
+            } => {
+                self.compile_expr(target, instrs)?;
+                
+                let switch_idx = instrs.len();
+                instrs.push(self.create_instr(
+                    "ai_semantic_switch",
+                    serde_json::json!({}), // We'll patch this later
+                    meta,
+                ));
+
+                let mut switch_cases = Vec::new();
+                let mut jump_to_end_indices = Vec::new();
+
+                for (concept, block) in cases {
+                    let start_idx = instrs.len();
+                    for s in block {
+                        self.compile_stmt(s, instrs)?;
+                    }
+                    switch_cases.push(serde_json::json!({
+                        "concept": concept,
+                        "target_pc": start_idx
+                    }));
+                    jump_to_end_indices.push(instrs.len());
+                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+                }
+                
+                let fallback_target = if let Some(fb) = fallback {
+                    let start_idx = instrs.len();
+                    for s in fb {
+                        self.compile_stmt(s, instrs)?;
+                    }
+                    Some(start_idx)
+                } else {
+                    None
+                };
+
+                let end_label = instrs.len();
+                
+                // Patch the switch instruction
+                instrs[switch_idx].args = serde_json::json!({
+                    "cases": switch_cases,
+                    "fallback_target": fallback_target.unwrap_or(end_label)
+                });
+
+                // Patch all the jumps
+                for idx in jump_to_end_indices {
+                    instrs[idx].args = serde_json::json!({"target": end_label});
+                }
+            }
         }
         Ok(())
     }
@@ -1762,6 +1815,46 @@ impl Compiler {
                     serde_json::json!({
                         "requires_context": requires_context,
                         "provides_context": provides_context
+                    }),
+                    meta,
+                ));
+            }
+            AIExpression::SemanticMatch {
+                target,
+                concept,
+                confidence_threshold,
+            } => {
+                self.compile_expr(target, instrs)?;
+                instrs.push(self.create_instr(
+                    "ai_semantic_match",
+                    serde_json::json!({
+                        "concept": concept,
+                        "confidence_threshold": confidence_threshold
+                    }),
+                    meta,
+                ));
+            }
+            AIExpression::Synthesize {
+                output_type,
+                constraints,
+                context_refs,
+                examples,
+            } => {
+                // Compile context refs
+                for expr in context_refs {
+                    self.compile_expr(expr, instrs)?;
+                }
+                if let Some(exs) = examples {
+                    for expr in exs {
+                        self.compile_expr(expr, instrs)?;
+                    }
+                }
+                
+                instrs.push(self.create_instr(
+                    "ai_synthesize",
+                    serde_json::json!({
+                        "output_type": format!("{:?}", output_type),
+                        "constraints": constraints
                     }),
                     meta,
                 ));

@@ -515,7 +515,22 @@ class ContextAware:
     provides_context: List[str] = field(default_factory=list)
     ai_type: Literal["ContextAware"] = "ContextAware"
 
-AIExpression = Union[Query, ToolChain, AgentDelegation, LearningLoop, ContextAware]
+@dataclass
+class SemanticMatch:
+    target: Expression
+    concept: str
+    confidence_threshold: float
+    ai_type: Literal["SemanticMatch"] = "SemanticMatch"
+
+@dataclass
+class Synthesize:
+    output_type: CastType
+    constraints: List[str] = field(default_factory=list)
+    context_refs: List[Expression] = field(default_factory=list)
+    examples: Optional[List[Expression]] = None
+    ai_type: Literal["Synthesize"] = "Synthesize"
+
+AIExpression = Union[Query, ToolChain, AgentDelegation, LearningLoop, ContextAware, SemanticMatch, Synthesize]
 
 @dataclass
 class GoalDeclaration:
@@ -556,7 +571,14 @@ class AdaptationRequest:
     parameters: Dict[str, Any] = field(default_factory=dict)
     ai_type: Literal["AdaptationRequest"] = "AdaptationRequest"
 
-AIStatement = Union[GoalDeclaration, ProgressUpdate, KnowledgeSharing, CapabilityDiscovery, AdaptationRequest]
+@dataclass
+class SemanticSwitch:
+    target: Expression
+    cases: List[Tuple[str, List[Statement]]] = field(default_factory=list)
+    fallback: Optional[List[Statement]] = None
+    ai_type: Literal["SemanticSwitch"] = "SemanticSwitch"
+
+AIStatement = Union[GoalDeclaration, ProgressUpdate, KnowledgeSharing, CapabilityDiscovery, AdaptationRequest, SemanticSwitch]
 
 @dataclass
 class AIMetadata:

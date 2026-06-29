@@ -3,9 +3,46 @@
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null;
 
-export type Program = { cast_version: string, entry: string, lang: string | null, functions: { [key in string]: Function }, ai_meta: AIMetadata | null, };
+export type Program = { cast_version: string, entry: string, lang: string | null, functions: { [key in string]: Function }, 
+/**
+ * AI execution metadata (goals, tool-chains, delegation).
+ */
+ai_meta?: AIMetadata | null, 
+/**
+ * Navigation manifest (@module annotation): purpose, exports, invariants,
+ * related modules. Consumed by crush-index to build the queryable index.
+ */
+manifest?: ModuleManifest | null, 
+/**
+ * Exhaustive match sites for tracked sum types (compiler-populated).
+ * Set for each type listed in `manifest.exhaustive_types`.
+ */
+exhaustive_sites?: Array<ExhaustiveMatchSite>, 
+/**
+ * Work-in-progress node, if a `@wip { ... }` block was declared.
+ */
+wip?: WipNode | null, 
+/**
+ * Technical-debt nodes from `@temporary { ... }` blocks.
+ */
+temporaries?: Array<TemporaryNode>, 
+/**
+ * Architectural decision records from `@decision "name" { ... }` blocks.
+ */
+decisions?: Array<DecisionNode>, };
 
-export type Function = { params: Array<[string, CastType]>, body: Array<Statement>, meta: { [key in string]: JsonValue }, };
+export type Function = { params: Array<[string, CastType]>, body: Array<Statement>, meta: { [key in string]: JsonValue }, 
+/**
+ * Whether this is an async function (marked with `async` keyword).
+ * Used for tooling and frontend lowering; spawn/await behavior is
+ * explicit via the `spawn` expression and `AWAIT` opcode.
+ */
+is_async?: boolean, 
+/**
+ * Semantic annotations (@errors, @reads, @writes, @covers, @relies-on).
+ * Absent when no annotations were written; all sub-fields are optional.
+ */
+annotations?: FunctionAnnotations | null, };
 
 /**
  * Language-agnostic type system for CAST
@@ -127,19 +164,59 @@ requires_context: Array<string>,
 /**
  * Context providers
  */
-provides_context: Array<string>, };
+provides_context: Array<string>, } | { "ai_type": "SemanticMatch", 
+/**
+ * The expression to evaluate
+ */
+target: Expression, 
+/**
+ * The natural language concept to match against
+ */
+concept: string, 
+/**
+ * Confidence threshold for the match (e.g., 0.85)
+ */
+confidence_threshold: number, } | { "ai_type": "Synthesize", 
+/**
+ * The target type to generate
+ */
+output_type: CastType, 
+/**
+ * Constraints or instructions for generation
+ */
+constraints: Array<string>, 
+/**
+ * Values or variables to feed into the prompt context
+ */
+context_refs: Array<Expression>, 
+/**
+ * Optional few-shot examples
+ */
+examples: Array<Expression> | null, };
 
 /**
  * AI-Native Statement extensions
  */
-export type AIStatement = { "ai_type": "GoalDeclaration", goal_id: string, description: string, success_criteria: Array<string>, priority: Priority, deadline: string | null, } | { "ai_type": "ProgressUpdate", goal_id: string, progress: number, status_message: string, metrics: { [key in string]: number }, } | { "ai_type": "KnowledgeSharing", knowledge_type: KnowledgeType, content: JsonValue, recipients: Array<string>, retention_policy: RetentionPolicy, } | { "ai_type": "CapabilityDiscovery", domain: string, requirements: Array<string>, discovery_strategy: DiscoveryStrategy, } | { "ai_type": "AdaptationRequest", adaptation_type: AdaptationType, reason: string, parameters: { [key in string]: JsonValue }, };
+export type AIStatement = { "ai_type": "GoalDeclaration", goal_id: string, description: string, success_criteria: Array<string>, priority: Priority, deadline: string | null, } | { "ai_type": "ProgressUpdate", goal_id: string, progress: number, status_message: string, metrics: { [key in string]: number }, } | { "ai_type": "KnowledgeSharing", knowledge_type: KnowledgeType, content: JsonValue, recipients: Array<string>, retention_policy: RetentionPolicy, } | { "ai_type": "CapabilityDiscovery", domain: string, requirements: Array<string>, discovery_strategy: DiscoveryStrategy, } | { "ai_type": "AdaptationRequest", adaptation_type: AdaptationType, reason: string, parameters: { [key in string]: JsonValue }, } | { "ai_type": "SemanticSwitch", 
+/**
+ * The expression to evaluate
+ */
+target: Expression, 
+/**
+ * Cases map a natural language concept to a body of statements
+ */
+cases: Array<[string, Array<Statement>]>, 
+/**
+ * Optional fallback block if no concept matches well enough
+ */
+fallback: Array<Statement> | null, };
 
 export type AIMetadata = { description: string, ai_tags: Array<string>, required_capabilities: Array<string>, execution_context: ExecutionContext, learning_objectives: Array<string>, collaboration_patterns: Array<CollaborationPattern>, inputs: Array<ParameterSchema>, outputs: Array<ParameterSchema>, complexity: number, };
 
 /**
  * Tool call specification
  */
-export type ToolCall = { tool_name: string, parameters: { [key in string]: JsonValue }, result_binding: string | null, condition: string | null, };
+export type ToolCall = { tool_name: string, parameters: { [key in string]: JsonValue }, result_binding: string | null, condition: string | null, required_capability: string | null, };
 
 /**
  * Execution strategies for tool chains

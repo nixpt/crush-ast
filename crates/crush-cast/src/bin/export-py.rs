@@ -1619,6 +1619,53 @@ fn schema() -> Vec<PyDef> {
                         },
                     ],
                 },
+                PyVariant {
+                    name: "SemanticMatch".to_string(),
+                    tag: Some("SemanticMatch".to_string()),
+                    fields: vec![
+                        PyField {
+                            name: "target".to_string(),
+                            ty: expr.clone(),
+                            default: None,
+                        },
+                        PyField {
+                            name: "concept".to_string(),
+                            ty: PyType::Str,
+                            default: None,
+                        },
+                        PyField {
+                            name: "confidence_threshold".to_string(),
+                            ty: PyType::Float,
+                            default: None,
+                        },
+                    ],
+                },
+                PyVariant {
+                    name: "Synthesize".to_string(),
+                    tag: Some("Synthesize".to_string()),
+                    fields: vec![
+                        PyField {
+                            name: "output_type".to_string(),
+                            ty: PyType::Named("CastType".to_string()),
+                            default: None,
+                        },
+                        PyField {
+                            name: "constraints".to_string(),
+                            ty: PyType::List(Box::new(PyType::Str)),
+                            default: Some("field(default_factory=list)".to_string()),
+                        },
+                        PyField {
+                            name: "context_refs".to_string(),
+                            ty: PyType::List(Box::new(expr.clone())),
+                            default: Some("field(default_factory=list)".to_string()),
+                        },
+                        PyField {
+                            name: "examples".to_string(),
+                            ty: PyType::Opt(Box::new(PyType::List(Box::new(expr.clone())))),
+                            default: Some("None".to_string()),
+                        },
+                    ],
+                },
             ],
         },
         // --- AIStatement (tagged with "ai_type") ---
@@ -1750,6 +1797,30 @@ fn schema() -> Vec<PyDef> {
                             name: "parameters".to_string(),
                             ty: any_dict.clone(),
                             default: Some("field(default_factory=dict)".to_string()),
+                        },
+                    ],
+                },
+                PyVariant {
+                    name: "SemanticSwitch".to_string(),
+                    tag: Some("SemanticSwitch".to_string()),
+                    fields: vec![
+                        PyField {
+                            name: "target".to_string(),
+                            ty: expr.clone(),
+                            default: None,
+                        },
+                        PyField {
+                            name: "cases".to_string(),
+                            ty: PyType::List(Box::new(PyType::Tuple(vec![
+                                PyType::Str,
+                                PyType::List(Box::new(PyType::Named("Statement".to_string()))),
+                            ]))),
+                            default: Some("field(default_factory=list)".to_string()),
+                        },
+                        PyField {
+                            name: "fallback".to_string(),
+                            ty: PyType::Opt(Box::new(PyType::List(Box::new(PyType::Named("Statement".to_string()))))),
+                            default: Some("None".to_string()),
                         },
                     ],
                 },
