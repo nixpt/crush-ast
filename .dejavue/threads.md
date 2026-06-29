@@ -156,3 +156,12 @@ error: could not compile `crush-net` (lib) due to 1 previous error
 - **Code-reviewer followups (deferred to future tickets):**
   1. Explicit Rust toolchain pinning via `dtolnay/rust-toolchain@stable` + a workspace `rust-toolchain.toml`. The lint-dejavue job (and check/test/wasm too) all rely on `rustup show` rather than an explicit pin. If rustup's ubuntu-latest default-toolchain drifts, all jobs break at once.
   2. Document in `CONTRIBUTING.md` that any new `RESOLVED`-named event will cause CI to fail loudly. Intended future-preventive behavior but worth telegraphing so PR authors aren't surprised.
+
+## Thread: Walker Maturation - Meta, Sona, C/C++ Plan (2026-06-29)
+
+- **Status:** LANDED (Custom Meta-Frontend & Sona Language); PLANNED (C/C++ implementation).
+- **Motivation:** Broaden frontend strategy beyond tree-sitter. We needed dynamic ways to create grammar -> CASM bridges (crush-lang-custom) and optimized languages utilizing FastVM's highly concurrent features (Sona).
+- **Implementation:**
+  - `crush-lang-custom`: Added a meta-frontend driven by CSON arrays mapping regex syntax directly to CASM tree generation.
+  - `crush-lang-sona`: Added `Sona`, a built-for-speed language designed exclusively for FastVM path targeting micro-tasks and parallel threading primitives (using the `spawn` instruction). Tests pass correctly integrating FastVM with dummy io.print capabilities.
+  - `C/C++ Support Plan`: Produced `crush_c_support_report.md` evaluating FFI vs AST implementations. Decided on a unified approach, documented in `crush_c_support_plan.md` which is pending implementation for the C walker using either `bindgen` logic or robust pre-processor parsing.

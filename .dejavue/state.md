@@ -15,6 +15,8 @@ Updated: 2026-06-22T15:28:21-05:00
 - `cli` (v0.1.0) — walker dispatcher
 - `python_walker` via `crush-lang-python` — rustpython-parser (replaced tree-sitter)
 - `rust_walker` via `crush-lang-rust` — syn (replaced tree-sitter)
+- `crush-lang-custom` — Meta-Frontend using CSON for dynamic grammar mapping
+- `crush-lang-sona` — Built-for-speed native scripting on FastVM with threading primitives
 - Remaining tree-sitter: js, go, c, zig, bash, wasm
 - Old tree-sitter crates: `python_walker/` and `rust_walker/` deleted
 
