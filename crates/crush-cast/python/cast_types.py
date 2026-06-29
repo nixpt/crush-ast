@@ -43,12 +43,18 @@ class Program:
     lang: Optional[str] = None
     functions: Dict[str, Function] = field(default_factory=dict)
     ai_meta: Optional[AIMetadata] = None
+    manifest: Optional[ModuleManifest] = None
+    exhaustive_sites: List[ExhaustiveMatchSite] = field(default_factory=list)
+    wip: Optional[WipNode] = None
+    temporaries: List[TemporaryNode] = field(default_factory=list)
+    decisions: List[DecisionNode] = field(default_factory=list)
 
 @dataclass
 class Function:
     params: List[Tuple[str, CastType]] = field(default_factory=list)
     body: List[Statement] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
+    annotations: Optional[FunctionAnnotations] = None
 
 @dataclass
 class VarDecl:
@@ -723,4 +729,73 @@ class CollaborationPattern:
     communication_style: str
     decision_making: str
     participants: List[str] = field(default_factory=list)
+
+ErrorLikelihood = Literal["likely", "possible", "rare"]
+
+@dataclass
+class WeightedError:
+    variant: str
+    likelihood: ErrorLikelihood
+
+@dataclass
+class FunctionAnnotations:
+    errors: List[str] = field(default_factory=list)
+    errors_weighted: List[WeightedError] = field(default_factory=list)
+    reads: List[str] = field(default_factory=list)
+    writes: List[str] = field(default_factory=list)
+    does_not_write: List[str] = field(default_factory=list)
+    covers: List[str] = field(default_factory=list)
+    relies_on: List[str] = field(default_factory=list)
+    complexity: Optional[int] = None
+
+@dataclass
+class ChangelogEntry:
+    date: str
+    summary: str
+
+@dataclass
+class Invariant:
+    name: str
+    description: str
+    applies_to: List[str] = field(default_factory=list)
+    consequence: Optional[str] = None
+    check_source: Optional[str] = None
+
+@dataclass
+class ExhaustiveMatchSite:
+    file: str
+    line: int
+    match_type: str
+
+@dataclass
+class WipNode:
+    intent: str
+    started_by: Optional[str] = None
+    done: List[str] = field(default_factory=list)
+    todo: List[str] = field(default_factory=list)
+    unresolved: List[str] = field(default_factory=list)
+
+@dataclass
+class TemporaryNode:
+    reason: str
+    expires_when: Optional[str] = None
+    owner: Optional[str] = None
+    added: Optional[str] = None
+
+@dataclass
+class DecisionNode:
+    name: str
+    chose: str
+    because: str
+    over: List[str] = field(default_factory=list)
+    revisit_if: List[str] = field(default_factory=list)
+
+@dataclass
+class ModuleManifest:
+    purpose: str
+    exports: List[str] = field(default_factory=list)
+    invariants: List[Invariant] = field(default_factory=list)
+    related: List[str] = field(default_factory=list)
+    exhaustive_types: List[str] = field(default_factory=list)
+    changelog: List[ChangelogEntry] = field(default_factory=list)
 

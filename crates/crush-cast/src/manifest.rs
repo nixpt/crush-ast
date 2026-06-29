@@ -218,6 +218,7 @@ pub struct FunctionAnnotations {
     #[serde(default)]
     pub errors: Vec<String>,
 
+
     /// State paths this function reads but does not own.
     /// Helps agents reason about what must be valid before calling this function.
     #[serde(default)]

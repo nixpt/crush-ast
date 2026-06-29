@@ -1121,7 +1121,22 @@ impl Renderer {
     // ── annotation rendering ─────────────────────────────────────────────────
 
     fn render_fn_annotations(&mut self, ann: &FunctionAnnotations) {
-        self.render_at_list("errors", &ann.errors);
+        if !ann.errors_weighted.is_empty() {
+            self.push_str("@errors {\n");
+            self.indent += 1;
+            for we in &ann.errors_weighted {
+                self.write_indent();
+                self.push_str(&we.variant);
+                self.push_str(": ");
+                self.push_str(&we.likelihood.to_string());
+                self.push_str("\n");
+            }
+            self.indent -= 1;
+            self.write_indent();
+            self.push_str("}\n");
+        } else {
+            self.render_at_list("errors", &ann.errors);
+        }
         self.render_at_list("reads", &ann.reads);
         self.render_at_list("writes", &ann.writes);
         self.render_at_list("does-not-write", &ann.does_not_write);
