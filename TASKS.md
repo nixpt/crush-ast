@@ -61,7 +61,7 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
   home.
 - [x] **C/C++ walker maturation** — `crush-lang-c` is a fully compliant `walker-core::Frontend` using tree-sitter-c and tree-sitter-cpp, registered in `crush-frontend` and supporting all C/C++ source file extensions.
 - [x] **Wasm walker maturation** — `wasm_walker` is verified with an integration test suite compiling `.wat` sources containing WASI calls and asserting they correctly lower to VM capabilities (`io.print`).
-- [ ] **Go / Zig walkers** — scaffold-level; mature on demand.
+- [x] **Go / Zig walker maturation** — `go_walker` and `zig_walker` are mature, fully tested, and integrated tree-sitter-based walkers.
 
 ## 🔗 Cross-project
 
