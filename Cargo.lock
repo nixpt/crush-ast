@@ -817,6 +817,7 @@ dependencies = [
  "serde_json",
  "tree-sitter",
  "tree-sitter-c",
+ "tree-sitter-cpp",
  "walker-core",
 ]
 
@@ -911,20 +912,6 @@ dependencies = [
  "thiserror 1.0.69",
  "ureq 2.12.1",
  "yansi",
-]
-
-[[package]]
-name = "crush-lang-sona"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "casm",
- "crush-cast",
- "crush-vm",
- "regex",
- "serde",
- "serde_json",
- "walker-core",
 ]
 
 [[package]]
@@ -3792,6 +3779,16 @@ name = "tree-sitter-c"
 version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afd2b1bf1585dc2ef6d69e87d01db8adb059006649dd5f96f31aa789ee6e9c71"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-cpp"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
 dependencies = [
  "cc",
  "tree-sitter-language",

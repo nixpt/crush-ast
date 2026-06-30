@@ -145,6 +145,7 @@ pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
         "c" | "h" => Some("c"),
         "zig" => Some("zig"),
         "wasm" => Some("wasm"),
+        "sn" => Some("sona"),
         _ => None,
     }
 }

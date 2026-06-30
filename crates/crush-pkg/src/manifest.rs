@@ -193,6 +193,7 @@ pub enum ScriptRuntime {
     Node,
     Deno,
     Python,
+    Sona,
 }
 
 /// Auto-detected payload format based on file extension / magic bytes
@@ -205,6 +206,7 @@ pub enum PayloadFormat {
     NativeElf,
     NativeMachO,
     NativePe,
+    Sona,
     Unknown,
 }
 
@@ -212,10 +214,11 @@ impl PayloadFormat {
     pub fn from_path(path: &std::path::Path) -> Self {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
-                "casm" | "casmb" => PayloadFormat::Casm,
+                "casm" | "casmb" | "sno" => PayloadFormat::Casm,
                 "js" | "mjs" | "cjs" => PayloadFormat::JavaScript,
                 "ts" | "mts" | "cts" | "tsx" => PayloadFormat::TypeScript,
                 "py" => PayloadFormat::Python,
+                "sn" => PayloadFormat::Sona,
                 _ => PayloadFormat::Unknown,
             }
         } else {
@@ -248,6 +251,7 @@ impl PayloadFormat {
         match self {
             PayloadFormat::JavaScript | PayloadFormat::TypeScript => Some(ScriptRuntime::Bun),
             PayloadFormat::Python => Some(ScriptRuntime::Python),
+            PayloadFormat::Sona => Some(ScriptRuntime::Sona),
             _ => None,
         }
     }
@@ -275,6 +279,7 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
         "node" | "nodejs" => CapsuleType::Script(ScriptRuntime::Node),
         "deno" => CapsuleType::Script(ScriptRuntime::Deno),
         "python" | "py" => CapsuleType::Script(ScriptRuntime::Python),
+        "sona" | "sn" => CapsuleType::Script(ScriptRuntime::Sona),
         _ => CapsuleType::Auto,
     }
 }
@@ -321,6 +326,7 @@ fn detect_language_from_entry(entry: &str) -> String {
         "py" => "python",
         "rs" => "rust",
         "c" | "cpp" | "cc" => "native",
+        "sn" => "sona",
         _ => "crush",
     }
     .to_string()
