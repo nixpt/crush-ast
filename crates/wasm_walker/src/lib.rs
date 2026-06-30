@@ -164,4 +164,35 @@ mod tests {
         assert_eq!(program.lang.unwrap(), "wasm");
         assert!(program.functions.is_empty());
     }
+
+    #[test]
+    fn test_wasi_print_wasm() {
+        let wat_src = r#"
+(module
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (func (export "_start")
+    (call $fd_write (i32.const 1) (i32.const 2) (i32.const 3) (i32.const 4))
+    drop
+  )
+)
+        "#;
+        let wasm_bytes = wat::parse_str(wat_src).unwrap();
+        let program = walk_wasm(&wasm_bytes, "test.wasm").unwrap();
+        
+        assert_eq!(program.lang.unwrap(), "wasm");
+        assert!(program.functions.contains_key("_start"));
+        assert!(program.functions.contains_key("main"));
+        
+        let start_func = &program.functions["_start"];
+        assert_eq!(start_func.body.len(), 1);
+        if let Statement::ExprStmt { expr, .. } = &start_func.body[0] {
+            if let Expression::CapabilityCall { name, .. } = expr {
+                assert_eq!(name, "io.print");
+            } else {
+                panic!("Expected Expression::CapabilityCall");
+            }
+        } else {
+            panic!("Expected Statement::ExprStmt");
+        }
+    }
 }
