@@ -36,7 +36,7 @@ exosphere comparison: `workspace-meta/FOREMAN_THREADS.md` → "🌳 crush-ast".
 - [x] **Test `crush-python` PyO3 bindings** — 0 tests on the cdylib parse path.
 - [x] **Lambda + Match compilation** — currently parse but bail at compile time.
   Wire through `crush-frontend` → CASM.
-- [ ] **async/await execution** — parsed but not executable; design the
+- [x] **async/await execution** — parsed but not executable; design the
   fiber/coroutine lowering (see `docs/design/crushvm-rustpython.md` §8 — async →
   Crush fibers is an open question).
 - [x] **Publish core crates to crates.io** — `crush-errors`, `crush-cast`,
