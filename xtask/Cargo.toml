@@ -9,3 +9,7 @@ crush-diagnostics.workspace = true
 serde_json.workspace = true
 regex = "1.10"
 
+[[bin]]
+name = "lint-dejavue"
+path = "src/lint_dejavue.rs"
+
