@@ -327,12 +327,17 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
     let mut pending_jumps: Vec<(usize, String)> = Vec::new();
 
     // First pass: collect function entry points and labels
+    // Use sorted function names for deterministic ordering across runs
+    let mut func_names: Vec<&String> = program.functions.keys().collect();
+    func_names.sort();
+
     let mut pc = 0;
-    for (func_name, func) in &program.functions {
+    for func_name in &func_names {
+        let func = &program.functions[*func_name];
         let start_pc = pc;
         symbols
             .functions
-            .insert(func_name.clone(), (start_pc, 0, func.params.len() as u32));
+            .insert((*func_name).clone(), (start_pc, 0, func.params.len() as u32));
 
         for instr in &func.body {
             if instr.op == "label" {
@@ -344,15 +349,21 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
         }
 
         // Update end_pc
-        if let Some(entry) = symbols.functions.get_mut(func_name) {
+        if let Some(entry) = symbols.functions.get_mut(*func_name) {
             entry.1 = pc;
         }
     }
 
-    // Second pass: lower instructions
+    // Second pass: lower instructions (same sorted order)
     pc = 0;
-    for (func_name, func) in &program.functions {
-        // Create local slots for parameters
+    for func_name in &func_names {
+        let func = &program.functions[*func_name];
+        // Reset locals per-function so parameters always start at slot 0.
+        // This matches Call's expectation that args are placed at
+        // locals_base + 0..argc-1 inside the callee frame.
+        symbols.locals.clear();
+
+        // Create local slots for parameters (slot 0..N-1)
         for param in &func.params {
             symbols.get_or_create_local(param);
         }
