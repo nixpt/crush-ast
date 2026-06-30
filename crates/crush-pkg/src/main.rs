@@ -493,7 +493,7 @@ fn dispatch(
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
         Commands::Build => handle_build()
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
-        Commands::Run { args } => handle_run(args)
+        Commands::Run { args } => handle_run(args, strict_mode)
             .map_err(|e| CommandFailure::Run(format!("{e:#}"))),
         Commands::Check => handle_check()
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
@@ -559,12 +559,40 @@ fn handle_build() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_run(args: Vec<String>) -> anyhow::Result<()> {
+fn handle_run(args: Vec<String>, strict_mode: bool) -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
     let payload = root.join(&manifest.capsule.entry);
     if !payload.exists() {
         anyhow::bail!("entry file not found: {}", payload.display());
     }
+
+    let mut format = crush_pkg::manifest::PayloadFormat::from_path(&payload);
+    if format == crush_pkg::manifest::PayloadFormat::Unknown {
+        if let Ok(bytes) = std::fs::read(&payload) {
+            let detected = crush_pkg::manifest::PayloadFormat::from_magic(&bytes);
+            if detected != crush_pkg::manifest::PayloadFormat::Unknown {
+                format = detected;
+            }
+        }
+    }
+
+    if format == crush_pkg::manifest::PayloadFormat::Unknown && strict_mode {
+        let magic_bytes = std::fs::read(&payload).ok().unwrap_or_default();
+        let len = magic_bytes.len().min(4);
+        let magic_hex = if len > 0 {
+            format!("{:02X?}", &magic_bytes[..len])
+        } else {
+            "[]".to_string()
+        };
+        let ext = payload.extension().and_then(|e| e.to_str()).unwrap_or("none");
+        anyhow::bail!(
+            "unknown payload format for entry path: {} (ext: {}, magic: {})",
+            payload.display(),
+            ext,
+            magic_hex
+        );
+    }
+
     let runner = get_runner_for_payload(&payload, &manifest);
     println!(
         "running {} v{} ({})",
@@ -1664,5 +1692,38 @@ name = \"beta-dep\"
              is a wire-format break for downstream consumers. Diff the\n\
              two strings above to localize the change."
         );
+    }
+
+    #[test]
+    fn test_strict_run_bail_on_unknown_format() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let manifest_path = dir.path().join("capsule.toml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+[capsule]
+name = "test-unknown"
+version = "0.1.0"
+entry = "main.unknown"
+"#,
+        )
+        .unwrap();
+
+        let entry_path = dir.path().join("main.unknown");
+        std::fs::write(&entry_path, "some unknown payload format bytes").unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let result_strict = handle_run(vec![], /* strict_mode */ true);
+        
+        std::env::set_current_dir(old_cwd).unwrap();
+
+        assert!(result_strict.is_err());
+        let err_msg = format!("{:#}", result_strict.unwrap_err());
+        assert!(err_msg.contains("unknown payload format for entry path"));
+        assert!(err_msg.contains("ext: unknown"));
+        assert!(err_msg.contains("magic: [73, 6F, 6D, 65]")); // "some" in hex: 73, 6F, 6D, 65
     }
 }
