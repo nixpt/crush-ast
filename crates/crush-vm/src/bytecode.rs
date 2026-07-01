@@ -173,6 +173,11 @@ pub struct Program {
     pub code: Vec<u8>,
     pub consts: Vec<String>,
     pub manifest: Manifest,
+    /// Source line → bytecode offset mapping for debugger use.
+    /// Each entry is `(line_number, bytecode_offset)`.
+    /// Not serialized in the binary blob — only populated by
+    /// `assemble()`.
+    pub source_map: Vec<(usize, usize)>,
 }
 
 impl Program {
@@ -181,6 +186,21 @@ impl Program {
             code,
             consts,
             manifest,
+            source_map: Vec::new(),
+        }
+    }
+
+    pub fn with_source_map(
+        code: Vec<u8>,
+        consts: Vec<String>,
+        manifest: Manifest,
+        source_map: Vec<(usize, usize)>,
+    ) -> Self {
+        Self {
+            code,
+            consts,
+            manifest,
+            source_map,
         }
     }
 
@@ -242,6 +262,7 @@ impl Program {
             code,
             consts,
             manifest,
+            source_map: Vec::new(),
         })
     }
 }

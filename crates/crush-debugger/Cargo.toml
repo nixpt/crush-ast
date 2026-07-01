@@ -1,0 +1,28 @@
+[package]
+name         = "crush-debugger"
+version      = "0.2.0"
+edition      = "2024"
+license      = "Apache-2.0 OR MIT"
+description  = "Interactive runtime debugger for Crush packages. Drives crush-vm with breakpoints/step/inspect and surfaces emit_post_dispatch_lint NDJSON findings live."
+repository   = "https://github.com/nixpt/crush-ast"
+homepage     = "https://github.com/nixpt/crush-ast"
+rust-version = "1.95.0"
+
+[lib]
+name = "crush_debugger"
+path = "src/lib.rs"
+
+[[bin]]
+name = "crush-debugger"
+path = "src/main.rs"
+
+[dependencies]
+anyhow             = { workspace = true }
+clap               = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+crush-vm           = { workspace = true }
+crush-diagnostics  = { workspace = true }
+indexmap          = { workspace = true }
+
+[dev-dependencies]

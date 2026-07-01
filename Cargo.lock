@@ -728,6 +728,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-debugger"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-diagnostics",
+ "crush-vm",
+ "indexmap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crush-diagnostics"
 version = "0.2.0"
 dependencies = [
