@@ -1,8 +1,8 @@
 # State
 
-Updated: 2026-06-30T03:45:00-05:00
+Updated: 2026-07-01T00:38:09-05:00
 
-## v0.2.0 Workspace — 27 crates
+## v0.2.0 Workspace — 27 crates (+1 design doc)
 
 ### Core IR (v0.2.0)
 - `crush-errors`, `crush-cast`, `casm`
@@ -33,22 +33,11 @@ Updated: 2026-06-30T03:45:00-05:00
 - Variable wiring across polyglot blocks via env vars + stdout capture
 - Three-lane Python: CAST transpile / (RustPython planned) / subprocess
 
+### Design Docs (new)
+- `docs/design/crush-jit-backend.md` — Cranelift JIT architecture, 7-phase roadmap, nan-boxing, GC strategy
+
 ### Test Status
 - All workspace-wide unit, integration, and doctests pass cleanly (430+ green), 0 warnings.
-- Wasm walker verified with integration test suite compiling `.wat` sources containing WASI calls.
 
 ## Known External Dependents
 openko/fabric, crush-symbols, mycelium-mobile, arniko, sona — all dependent on crates in this repo.
-
-## Recent registrations (post-hoc, 2026-06-30)
-
-- **Sona & Wasm walker maturation & CRUSHRUNNERS-1 Gap 3** (commit `dd9bca5` & `75b38c6`):
-  - Extracted Sona compiler and runtime to private repository `nixpt/sona`.
-  - Registered `.sn` and `.sno` extensions in `walker-core` and `crush-pkg`.
-  - Modified `CrushRunner` to support in-process execution of compiled `.sno` (JSON-serialized `casm::Program`) payloads, converted to VM programs via `casm_to_vm`.
-  - Added support for `arr_get` opcode in `casm_to_vm`.
-  - Added a test case `test_sno_execution` verifying Sona payload execution.
-  - Implemented strict-mode bail on unknown formats in `crush-pkg` run subcommand.
-  - Matured `wasm_walker` with an integration test suite translating WASI calls into `io.print` capability calls.
-  - Matured and checked off `c_walker`, `go_walker`, and `zig_walker` on the active roadmap.
-

@@ -435,3 +435,30 @@ Outcome:
 
 
 
+
+## 2026-07-01 — [ADOPTED] Crush native codegen (JIT) architecture design
+
+Reason:
+crush-vm has three interpreter tiers (standard CVM1, PortableVM, FastVM) but no native compilation path. For production capsule execution in ExoLight, a Cranelift-based JIT provides 10-100× speedup on arithmetic-heavy workloads and eliminates the interpreter dispatch bottleneck. The architecture was explored during an OpenKO session where the blockchain analogy (language→bytecode→VM→runtime) was mapped to Crush (language→CAST→CASM→CVM1→FastVM/JIT→ExoLight).
+
+Decision:
+Design a Cranelift-based JIT backend for crush-vm that:
+1. **JIT-first, AOT later** — compile `LoweredProgram` to native code at runtime, cache compiled programs
+2. **Cranelift** — pure Rust, already in dep tree via wasmtime, stack maps API for precise GC later
+3. **Hybrid nan-boxing** — int/float/bool in registers, strings/arrays/objects in Arena heap
+4. **Conservative GC (V1)** — treat pointer-shaped values on native stack as roots; precise stack maps deferred
+5. **Shadow-stack frames** — emulate FastVM's `FastFrame` call stack for exact parity; native frames in V2
+6. **Trampoline escape** — host calls (CapCall, CallHost, Gc) return to trampoline which dispatches and re-enters
+
+Rejected alternatives:
+- **LLVM (inkwell)**: adds 300s build time, C++ dependency, not already in dep tree
+- **dynasm / custom codegen**: no register allocator, no GC support, per-arch manual implementation
+- **AOT-first**: requires stable ABI, serialized GC maps, linker — too much unknown for V1
+- **Strict nan-boxing**: 2⁵² heap limit, complex for 64-bit ints beyond 2⁵³
+
+Outcome:
+Full architecture document saved to `docs/design/crush-jit-backend.md` with:
+- 84 `FastOp` → Cranelift IR lowering table
+- 7-phase implementation roadmap (skeleton → locals/calls → data/caps → exceptions → ExoLight → optimization → AOT)
+- Integration seam: ExoLight's `.cvm` dispatch (currently subprocess placeholder) gains a JIT path
+- Risk analysis: Cranelift GC API nascent (mitigated: conservative GC V1), JIT compile latency (mitigated: threshold gating)
