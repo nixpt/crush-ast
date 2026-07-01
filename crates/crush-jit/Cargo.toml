@@ -1,0 +1,18 @@
+[package]
+name = "crush-jit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+crush-vm = { workspace = true }
+cranelift-frontend = "0.133.1"
+cranelift-codegen = { version = "0.133.1", features = ["all-arch"] }
+cranelift-native = "0.133.1"
+cranelift-control = "0.133.1"
+target-lexicon = "0.13"
+anyhow = "1.0"
+region = "3.0"
+
+[lib]
+name = "crush_jit"
