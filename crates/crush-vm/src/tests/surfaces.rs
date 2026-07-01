@@ -43,3 +43,27 @@ fn step_quota_triggers() {
     };
     assert!(run(&prog, &quotas).is_err());
 }
+
+#[test]
+fn test_ffi_gateway_cap() {
+    let mut host_caps = crate::host::HostCaps::new();
+    host_caps.register(Box::new(crate::plugin::FfiGatewayCap));
+
+    // We call __crush_ffi__ with: lib_path, cap_name, args...
+    // /tmp/example_c_plugin.so was compiled earlier.
+    let prog = assemble(
+        r#"PUSH_STR "/tmp/example_c_plugin.so"
+        PUSH_STR "math.add"
+        PUSH 10
+        PUSH 32
+        CAP_CALL "__crush_ffi__" 4
+        HALT"#,
+        Some(&["__crush_ffi__"]),
+        None,
+    )
+    .unwrap();
+
+    let result = crate::vm::run_with_caps(&prog, &Quotas::default(), Some(&host_caps)).unwrap();
+    assert_eq!(result.stack, vec![Value::Int(42)]);
+}
+

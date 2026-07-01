@@ -142,9 +142,10 @@ pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
         "ts" | "tsx" => Some("typescript"),
         "sh" | "bash" => Some("bash"),
         "go" => Some("go"),
-        "c" | "h" => Some("c"),
+        "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" => Some("c"),
         "zig" => Some("zig"),
         "wasm" => Some("wasm"),
+        "sn" => Some("sona"),
         _ => None,
     }
 }

@@ -14,3 +14,7 @@ serde_json.workspace = true
 wasmparser = "0.121"
 walker-core.workspace = true
 crush-cast.workspace = true
+
+[dev-dependencies]
+wat = "1.0"
+

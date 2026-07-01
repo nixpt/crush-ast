@@ -40,8 +40,15 @@ impl CapsuleRunner for CrushRunner {
         payload_path: &Path,
         _args: &[String],
     ) -> anyhow::Result<ExecutionResult> {
-        let source = std::fs::read_to_string(payload_path)?;
-        let program = crush_lang_sdk::compile::compile_crush_source(&source)?;
+        let ext = payload_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let program = if ext == "casm" || ext == "sno" {
+            let content = std::fs::read_to_string(payload_path)?;
+            let casm_program: ::casm::Program = serde_json::from_str(&content)?;
+            crush_lang_sdk::compile::casm_to_vm(&casm_program)?
+        } else {
+            let source = std::fs::read_to_string(payload_path)?;
+            crush_lang_sdk::compile::compile_crush_source(&source)?
+        };
 
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&program, &quotas, self.host_caps.as_ref())?;
@@ -92,6 +99,7 @@ impl ScriptRunner {
             ScriptRuntime::Node => ("node", vec![]),
             ScriptRuntime::Deno => ("deno", vec!["run", "--allow-read", "--allow-write"]),
             ScriptRuntime::Python => ("python3", vec![]),
+            ScriptRuntime::Sona => ("sona", vec!["run"]),
         }
     }
 }
@@ -160,6 +168,7 @@ pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<d
             Box::new(ScriptRunner::new(ScriptRuntime::Bun))
         }
         PayloadFormat::Python => Box::new(ScriptRunner::new(ScriptRuntime::Python)),
+        PayloadFormat::Sona => Box::new(ScriptRunner::new(ScriptRuntime::Sona)),
         PayloadFormat::NativeElf | PayloadFormat::NativeMachO | PayloadFormat::NativePe => {
             Box::new(NativeRunner)
         }

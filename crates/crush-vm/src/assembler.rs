@@ -144,7 +144,9 @@ pub fn assemble(
 
     // Pass 2: emit code.
     let mut code: Vec<u8> = Vec::new();
+    let mut source_map: Vec<(usize, usize)> = Vec::new();
     for p in &parsed {
+        source_map.push((p.line, code.len()));
         code.push(p.opcode);
         let kind = operand_kind(p.opcode).unwrap();
         match kind {
@@ -243,7 +245,7 @@ pub fn assemble(
         manifest.entry = entry_name;
     }
 
-    Ok(Program::new(code, consts, manifest))
+    Ok(Program::with_source_map(code, consts, manifest, source_map))
 }
 
 pub fn disassemble(program: &Program) -> String {

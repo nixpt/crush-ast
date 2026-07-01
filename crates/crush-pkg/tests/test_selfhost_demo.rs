@@ -182,3 +182,74 @@ fn crush_selfhost_demo_runtime_dispatch_is_crush_via_language() {
         "fixture must keep `language = \"crush\"` (the field CrushRunner dispatches on)"
     );
 }
+
+#[test]
+fn test_sno_execution() {
+    use tempfile::tempdir;
+    use casm::{Program, Function, Instruction, Manifest as CasmManifest};
+    use std::collections::HashMap;
+
+    let dir = tempdir().unwrap();
+    let sno_path = dir.path().join("main.sno");
+
+    let program = Program {
+        version: "1.0".to_string(),
+        lang: Some("sona".to_string()),
+        functions: {
+            let mut map = HashMap::new();
+            map.insert("main".to_string(), Function {
+                params: vec![],
+                locals: vec![],
+                body: vec![
+                    Instruction {
+                        op: "push_int".to_string(),
+                        lang: Some("sona".to_string()),
+                        meta: None,
+                        args: serde_json::json!({ "value": 42 }),
+                    },
+                    Instruction {
+                        op: "cap_call".to_string(),
+                        lang: Some("sona".to_string()),
+                        meta: None,
+                        args: serde_json::json!({ "name": "io.print", "argc": 1 }),
+                    },
+                    Instruction {
+                        op: "push_null".to_string(),
+                        lang: Some("sona".to_string()),
+                        meta: None,
+                        args: serde_json::json!({}),
+                    },
+                    Instruction {
+                        op: "ret".to_string(),
+                        lang: Some("sona".to_string()),
+                        meta: None,
+                        args: serde_json::json!({}),
+                    },
+                ],
+            });
+            map
+        },
+        manifest: CasmManifest {
+            permissions: vec!["io.print".to_string()],
+        },
+    };
+
+    let serialized = serde_json::to_string_pretty(&program).unwrap();
+    std::fs::write(&sno_path, serialized).unwrap();
+
+    let manifest_toml = r#"
+[capsule]
+name = "test_sno"
+entry = "main.sno"
+language = "crush"
+"#;
+    let manifest_path = dir.path().join("Capsule.toml");
+    std::fs::write(&manifest_path, manifest_toml).unwrap();
+
+    let manifest = Manifest::from_file(&manifest_path).expect("manifest must parse");
+    let runner = CrushRunner::default();
+    let result = runner.run(&manifest, &sno_path, &[]).expect("run must succeed");
+
+    assert!(matches!(result, ExecutionResult::Vm));
+}
+

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// `--strict-manifest` (planned) will make it a hard compiler error to omit.
 ///
 /// Attached to `Program.manifest`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct ModuleManifest {
@@ -60,7 +60,7 @@ pub struct ModuleManifest {
 /// A named, typed contract that must hold for the module to be correct.
 ///
 /// `@invariant "name" { description: "...", applies_to: [...], consequence: "..." }`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct Invariant {
@@ -88,7 +88,7 @@ pub struct Invariant {
 }
 
 /// A lightweight changelog entry. Date is ISO 8601 string (YYYY-MM-DD).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct ChangelogEntry {
@@ -123,7 +123,7 @@ impl std::fmt::Display for ErrorLikelihood {
 }
 
 /// An error variant annotated with a probabilistic likelihood.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct WeightedError {
@@ -134,7 +134,7 @@ pub struct WeightedError {
 }
 
 /// A `@wip` node declaring in-progress work on a module.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct WipNode {
@@ -155,7 +155,7 @@ pub struct WipNode {
 }
 
 /// A `@temporary` node declaring technical debt with an intended expiry condition.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct TemporaryNode {
@@ -177,7 +177,7 @@ pub struct TemporaryNode {
 /// Agents query `codebase.decisions()` before touching an unusual design to
 /// understand why it was chosen over alternatives — and whether conditions
 /// that should trigger a re-evaluation are now met.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct DecisionNode {
@@ -208,7 +208,7 @@ pub struct DecisionNode {
 ///     @writes  [thread.ip, thread.stack, thread.out_parts]
 ///     @no-write [program]
 /// ```
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct FunctionAnnotations {
@@ -217,6 +217,7 @@ pub struct FunctionAnnotations {
     /// Agents use this to know what error handling is required at call sites.
     #[serde(default)]
     pub errors: Vec<String>,
+
 
     /// State paths this function reads but does not own.
     /// Helps agents reason about what must be valid before calling this function.
@@ -279,7 +280,7 @@ pub struct FunctionAnnotations {
 ///
 /// Agents query `codebase.exhaustive_sites("Value")` before adding a new variant
 /// to know every match site that will need a new arm.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct ExhaustiveMatchSite {
@@ -310,7 +311,7 @@ pub struct ExhaustiveMatchSite {
 }
 
 /// A source location used for diagnostics and index navigation.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct SourceLoc {

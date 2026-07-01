@@ -322,6 +322,31 @@ fn schema() -> Vec<PyDef> {
                     ty: PyType::Opt(Box::new(PyType::Named("AIMetadata".to_string()))),
                     default: Some("None".to_string()),
                 },
+                PyField {
+                    name: "manifest".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Named("ModuleManifest".to_string()))),
+                    default: Some("None".to_string()),
+                },
+                PyField {
+                    name: "exhaustive_sites".to_string(),
+                    ty: PyType::List(Box::new(PyType::Named("ExhaustiveMatchSite".to_string()))),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "wip".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Named("WipNode".to_string()))),
+                    default: Some("None".to_string()),
+                },
+                PyField {
+                    name: "temporaries".to_string(),
+                    ty: PyType::List(Box::new(PyType::Named("TemporaryNode".to_string()))),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "decisions".to_string(),
+                    ty: PyType::List(Box::new(PyType::Named("DecisionNode".to_string()))),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
             ],
         },
         // --- Function ---
@@ -345,6 +370,11 @@ fn schema() -> Vec<PyDef> {
                     name: "meta".to_string(),
                     ty: any_dict.clone(),
                     default: Some("field(default_factory=dict)".to_string()),
+                },
+                PyField {
+                    name: "annotations".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Named("FunctionAnnotations".to_string()))),
+                    default: Some("None".to_string()),
                 },
             ],
         },
@@ -1619,6 +1649,53 @@ fn schema() -> Vec<PyDef> {
                         },
                     ],
                 },
+                PyVariant {
+                    name: "SemanticMatch".to_string(),
+                    tag: Some("SemanticMatch".to_string()),
+                    fields: vec![
+                        PyField {
+                            name: "target".to_string(),
+                            ty: expr.clone(),
+                            default: None,
+                        },
+                        PyField {
+                            name: "concept".to_string(),
+                            ty: PyType::Str,
+                            default: None,
+                        },
+                        PyField {
+                            name: "confidence_threshold".to_string(),
+                            ty: PyType::Float,
+                            default: None,
+                        },
+                    ],
+                },
+                PyVariant {
+                    name: "Synthesize".to_string(),
+                    tag: Some("Synthesize".to_string()),
+                    fields: vec![
+                        PyField {
+                            name: "output_type".to_string(),
+                            ty: PyType::Named("CastType".to_string()),
+                            default: None,
+                        },
+                        PyField {
+                            name: "constraints".to_string(),
+                            ty: PyType::List(Box::new(PyType::Str)),
+                            default: Some("field(default_factory=list)".to_string()),
+                        },
+                        PyField {
+                            name: "context_refs".to_string(),
+                            ty: PyType::List(Box::new(expr.clone())),
+                            default: Some("field(default_factory=list)".to_string()),
+                        },
+                        PyField {
+                            name: "examples".to_string(),
+                            ty: PyType::Opt(Box::new(PyType::List(Box::new(expr.clone())))),
+                            default: Some("None".to_string()),
+                        },
+                    ],
+                },
             ],
         },
         // --- AIStatement (tagged with "ai_type") ---
@@ -1750,6 +1827,30 @@ fn schema() -> Vec<PyDef> {
                             name: "parameters".to_string(),
                             ty: any_dict.clone(),
                             default: Some("field(default_factory=dict)".to_string()),
+                        },
+                    ],
+                },
+                PyVariant {
+                    name: "SemanticSwitch".to_string(),
+                    tag: Some("SemanticSwitch".to_string()),
+                    fields: vec![
+                        PyField {
+                            name: "target".to_string(),
+                            ty: expr.clone(),
+                            default: None,
+                        },
+                        PyField {
+                            name: "cases".to_string(),
+                            ty: PyType::List(Box::new(PyType::Tuple(vec![
+                                PyType::Str,
+                                PyType::List(Box::new(PyType::Named("Statement".to_string()))),
+                            ]))),
+                            default: Some("field(default_factory=list)".to_string()),
+                        },
+                        PyField {
+                            name: "fallback".to_string(),
+                            ty: PyType::Opt(Box::new(PyType::List(Box::new(PyType::Named("Statement".to_string()))))),
+                            default: Some("None".to_string()),
                         },
                     ],
                 },
@@ -2215,6 +2316,375 @@ fn schema() -> Vec<PyDef> {
                     ty: PyType::Str,
                     default: None,
                 },
+            ],
+        },
+
+        // --- ErrorLikelihood ---
+        PyDef::Alias {
+            name: "ErrorLikelihood".to_string(),
+            target: PyType::Literal(vec![
+                "likely".to_string(),
+                "possible".to_string(),
+                "rare".to_string(),
+            ]),
+        },
+        // --- WeightedError ---
+        PyDef::Struct {
+            name: "WeightedError".to_string(),
+            fields: vec![
+                PyField {
+                    name: "variant".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "likelihood".to_string(),
+                    ty: PyType::Named("ErrorLikelihood".to_string()),
+                    default: None,
+                },
+            ],
+        },
+        // --- FunctionAnnotations ---
+        PyDef::Struct {
+            name: "FunctionAnnotations".to_string(),
+            fields: vec![
+                PyField {
+                    name: "errors".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "errors_weighted".to_string(),
+                    ty: PyType::List(Box::new(PyType::Named("WeightedError".to_string()))),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "reads".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "writes".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "does_not_write".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "covers".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "relies_on".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "complexity".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Int)),
+                    default: Some("None".to_string()),
+                },
+            ],
+        },
+        // --- ChangelogEntry ---
+        PyDef::Struct {
+            name: "ChangelogEntry".to_string(),
+            fields: vec![
+                PyField {
+                    name: "date".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "summary".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+            ],
+        },
+        // --- Invariant ---
+        PyDef::Struct {
+            name: "Invariant".to_string(),
+            fields: vec![
+                PyField {
+                    name: "name".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "description".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "applies_to".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "consequence".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Str)),
+                    default: Some("None".to_string()),
+                },
+                PyField {
+                    name: "check_source".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Str)),
+                    default: Some("None".to_string()),
+                },
+            ],
+        },
+        // --- ExhaustiveMatchSite ---
+        PyDef::Struct {
+            name: "ExhaustiveMatchSite".to_string(),
+            fields: vec![
+                PyField {
+                    name: "file".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "line".to_string(),
+                    ty: PyType::Int,
+                    default: None,
+                },
+                PyField {
+                    name: "match_type".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+            ],
+        },
+        // --- WipNode ---
+        PyDef::Struct {
+            name: "WipNode".to_string(),
+            fields: vec![
+                PyField {
+                    name: "intent".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "started_by".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Str)),
+                    default: Some("None".to_string()),
+                },
+                PyField {
+                    name: "done".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "todo".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "unresolved".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+            ],
+        },
+        // --- TemporaryNode ---
+        PyDef::Struct {
+            name: "TemporaryNode".to_string(),
+            fields: vec![
+                PyField {
+                    name: "reason".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "expires_when".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Str)),
+                    default: Some("None".to_string()),
+                },
+                PyField {
+                    name: "owner".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Str)),
+                    default: Some("None".to_string()),
+                },
+                PyField {
+                    name: "added".to_string(),
+                    ty: PyType::Opt(Box::new(PyType::Str)),
+                    default: Some("None".to_string()),
+                },
+            ],
+        },
+        // --- DecisionNode ---
+        PyDef::Struct {
+            name: "DecisionNode".to_string(),
+            fields: vec![
+                PyField {
+                    name: "name".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "chose".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "over".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "because".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "revisit_if".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+            ],
+        },
+        // --- ModuleManifest ---
+        PyDef::Struct {
+            name: "ModuleManifest".to_string(),
+            fields: vec![
+                PyField {
+                    name: "purpose".to_string(),
+                    ty: PyType::Str,
+                    default: None,
+                },
+                PyField {
+                    name: "exports".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "invariants".to_string(),
+                    ty: PyType::List(Box::new(PyType::Named("Invariant".to_string()))),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "related".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "exhaustive_types".to_string(),
+                    ty: PyType::List(Box::new(PyType::Str)),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+                PyField {
+                    name: "changelog".to_string(),
+                    ty: PyType::List(Box::new(PyType::Named("ChangelogEntry".to_string()))),
+                    default: Some("field(default_factory=list)".to_string()),
+                },
+            ],
+        },
+        // --- CSON (Crush Semantic Object Notation) ---
+        PyDef::TaggedUnion {
+            name: "CsonKey".to_string(),
+            tag_field: "type".to_string(),
+            variants: vec![
+                PyVariant {
+                    name: "Exact".to_string(),
+                    tag: Some("Exact".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "Semantic".to_string(),
+                    tag: Some("Semantic".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+            ],
+        },
+        PyDef::TaggedUnion {
+            name: "CsonValue".to_string(),
+            tag_field: "type".to_string(),
+            variants: vec![
+                PyVariant {
+                    name: "CsonNull".to_string(),
+                    tag: Some("Null".to_string()),
+                    fields: vec![],
+                },
+                PyVariant {
+                    name: "CsonBool".to_string(),
+                    tag: Some("Bool".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Bool, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonInt".to_string(),
+                    tag: Some("Int".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Int, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonFloat".to_string(),
+                    tag: Some("Float".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Float, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonString".to_string(),
+                    tag: Some("String".to_string()),
+                    fields: vec![
+                        PyField { name: "value".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonArray".to_string(),
+                    tag: Some("Array".to_string()),
+                    fields: vec![
+                        PyField { name: "elements".to_string(), ty: PyType::List(Box::new(PyType::Named("CsonNode".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonObject".to_string(),
+                    tag: Some("Object".to_string()),
+                    fields: vec![
+                        PyField { name: "properties".to_string(), ty: PyType::Dict { value: Box::new(PyType::Named("CsonNode".to_string())) }, default: Some("field(default_factory=dict)".to_string()) },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonSemanticObject".to_string(),
+                    tag: Some("SemanticObject".to_string()),
+                    fields: vec![
+                        PyField { name: "properties".to_string(), ty: PyType::List(Box::new(PyType::Tuple(vec![PyType::Named("CsonKey".to_string()), PyType::Named("CsonNode".to_string())]))), default: Some("field(default_factory=list)".to_string()) },
+                    ],
+                },
+                PyVariant {
+                    name: "CsonSynthesize".to_string(),
+                    tag: Some("Synthesize".to_string()),
+                    fields: vec![
+                        PyField { name: "prompt".to_string(), ty: PyType::Str, default: None },
+                    ],
+                },
+            ],
+        },
+        PyDef::Struct {
+            name: "CsonNode".to_string(),
+            fields: vec![
+                PyField { name: "value".to_string(), ty: PyType::Named("CsonValue".to_string()), default: None },
+                PyField { name: "weight".to_string(), ty: PyType::Opt(Box::new(PyType::Float)), default: Some("None".to_string()) },
+                PyField { name: "invariants".to_string(), ty: PyType::List(Box::new(PyType::Named("Invariant".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+            ],
+        },
+        PyDef::Struct {
+            name: "CsonDocument".to_string(),
+            fields: vec![
+                PyField { name: "root".to_string(), ty: PyType::Named("CsonNode".to_string()), default: None },
+                PyField { name: "wip".to_string(), ty: PyType::Opt(Box::new(PyType::Named("WipNode".to_string()))), default: Some("None".to_string()) },
+                PyField { name: "temporaries".to_string(), ty: PyType::List(Box::new(PyType::Named("TemporaryNode".to_string()))), default: Some("field(default_factory=list)".to_string()) },
+                PyField { name: "decisions".to_string(), ty: PyType::List(Box::new(PyType::Named("DecisionNode".to_string()))), default: Some("field(default_factory=list)".to_string()) },
             ],
         },
     ]

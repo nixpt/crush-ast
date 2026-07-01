@@ -56,6 +56,26 @@ pub enum AIExpression {
         /// Context providers
         provides_context: Vec<String>,
     },
+
+    SemanticMatch {
+        /// The expression to evaluate
+        target: Box<Expression>,
+        /// The natural language concept to match against
+        concept: String,
+        /// Confidence threshold for the match (e.g., 0.85)
+        confidence_threshold: f64,
+    },
+
+    Synthesize {
+        /// The target type to generate
+        output_type: crate::CastType,
+        /// Constraints or instructions for generation
+        constraints: Vec<String>,
+        /// Values or variables to feed into the prompt context
+        context_refs: Vec<Expression>,
+        /// Optional few-shot examples
+        examples: Option<Vec<Expression>>,
+    },
 }
 
 /// Tool call specification
@@ -219,6 +239,15 @@ pub enum AIStatement {
         reason: String,
         #[serde(default)]
         parameters: HashMap<String, serde_json::Value>,
+    },
+
+    SemanticSwitch {
+        /// The expression to evaluate
+        target: Box<Expression>,
+        /// Cases map a natural language concept to a body of statements
+        cases: Vec<(String, Vec<crate::Statement>)>,
+        /// Optional fallback block if no concept matches well enough
+        fallback: Option<Vec<crate::Statement>>,
     },
 }
 

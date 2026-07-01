@@ -408,3 +408,57 @@ The fedpath work was the centrepiece of a squash-merged branch on `agent/buffy/n
 - The retroactive path is cheaper than forward-only registration and matches the squad's existing documented pattern.
 - The 3 runner gaps exposed by CRUSHRUNNERS-1 are tracked under separate tickets (each sized S) so future registration passes don't bottleneck on a single arc.
 
+
+## 2026-06-29T04:55:00-05:00 — [STRATEGIC] [VERIFIED] Dynamic C/C++ FFI Plugins, CSON Parsing with Versioning, and crush-lang-c Refactor
+
+Reason:
+To support first-class dynamic C interop, structured configuration format support (CSON), codebase-wide metadata semantic indexing, and unified naming conventions across language frontends.
+
+Outcome:
+1. **Dynamic FFI plugins**: Fixed memory/alignment layout mismatches between Rust's `#[repr(u8)]` tag + 7-byte padding and C's default 4-byte enum tags. Wrote an explicit `_pad` layout inside `crush_plugin.h` and tested native execution using `__crush_ffi__` gateway capability in `crush-vm`.
+2. **CSON Versioning**: Added `@cson` annotation parsing to `crush-cson` returning `CsonDocument` with explicit metadata version string (defaulting to "1.0").
+3. **CSON + Dejavue Semantic Search**: Integrated `crush-index` with `crush-cson` and Dejavue timeline (`timeline.jsonl`) parser to extract semantic keys and decisions into a queryable database structure.
+4. **crush-lang-c Refactor**: Renamed `c_walker` crate to `crush-lang-c` conforming to the unified frontend workspace structure. Expanded lowering in `visit_expression` for pointer deref (`*ptr`), address-of (`&val`), unary ops (`-`, `+`, `!`, `~`), subscripts (`arr[idx]`), and ternaries (`a ? b : c`).
+
+All tests green and verification suite checks out successfully.
+
+
+## 2026-06-29T05:00:00-05:00 — [STRATEGIC] [VERIFIED] Meta-Frontend for Custom DSLs (crush-lang-custom) and CSON Array Parsing
+
+Reason:
+To enable rapid development of new DSLs and custom language frontends via declarative grammar mappings defined in CSON, avoiding the need to write parsers from scratch.
+
+Outcome:
+1. **crush-lang-custom module**: Created a new meta-frontend crate that parses custom languages dynamically using Regex-based rules mapped to CAST nodes. It implements `walker_core::Frontend` and can be configured fully via CSON declarations.
+2. **CSON array support**: Extended `crush-cson` value parser with native Array (`[...]`) parsing capabilities, enabling multi-valued configuration fields like `extensions` in DSL definitions.
+3. **DSL Lowering and Testing**: Verified the custom DSL parser by defining a mini DSL in CSON (`mini` language with `.mini` extensions) and successfully parsing variable declarations and capability prints to CAST with tests passing cleanly.
+
+
+
+
+## 2026-07-01 — [ADOPTED] Crush native codegen (JIT) architecture design
+
+Reason:
+crush-vm has three interpreter tiers (standard CVM1, PortableVM, FastVM) but no native compilation path. For production capsule execution in ExoLight, a Cranelift-based JIT provides 10-100× speedup on arithmetic-heavy workloads and eliminates the interpreter dispatch bottleneck. The architecture was explored during an OpenKO session where the blockchain analogy (language→bytecode→VM→runtime) was mapped to Crush (language→CAST→CASM→CVM1→FastVM/JIT→ExoLight).
+
+Decision:
+Design a Cranelift-based JIT backend for crush-vm that:
+1. **JIT-first, AOT later** — compile `LoweredProgram` to native code at runtime, cache compiled programs
+2. **Cranelift** — pure Rust, already in dep tree via wasmtime, stack maps API for precise GC later
+3. **Hybrid nan-boxing** — int/float/bool in registers, strings/arrays/objects in Arena heap
+4. **Conservative GC (V1)** — treat pointer-shaped values on native stack as roots; precise stack maps deferred
+5. **Shadow-stack frames** — emulate FastVM's `FastFrame` call stack for exact parity; native frames in V2
+6. **Trampoline escape** — host calls (CapCall, CallHost, Gc) return to trampoline which dispatches and re-enters
+
+Rejected alternatives:
+- **LLVM (inkwell)**: adds 300s build time, C++ dependency, not already in dep tree
+- **dynasm / custom codegen**: no register allocator, no GC support, per-arch manual implementation
+- **AOT-first**: requires stable ABI, serialized GC maps, linker — too much unknown for V1
+- **Strict nan-boxing**: 2⁵² heap limit, complex for 64-bit ints beyond 2⁵³
+
+Outcome:
+Full architecture document saved to `docs/design/crush-jit-backend.md` with:
+- 84 `FastOp` → Cranelift IR lowering table
+- 7-phase implementation roadmap (skeleton → locals/calls → data/caps → exceptions → ExoLight → optimization → AOT)
+- Integration seam: ExoLight's `.cvm` dispatch (currently subprocess placeholder) gains a JIT path
+- Risk analysis: Cranelift GC API nascent (mitigated: conservative GC V1), JIT compile latency (mitigated: threshold gating)

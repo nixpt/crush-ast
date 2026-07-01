@@ -56,6 +56,13 @@ pub struct CrushIndex {
     temporaries: Vec<(String, crush_cast::manifest::TemporaryNode)>,
     /// (module_path, @decision node) pairs across all programs
     decisions: Vec<(String, crush_cast::manifest::DecisionNode)>,
+    
+    /// CSON configurations indexed by file path
+    pub cson_configs: HashMap<String, crush_cson::CsonDocument>,
+    /// Flattened semantic keys (intent) -> (cson_file_path, Confidence)
+    pub semantic_keys: Vec<(String, String, Option<f64>)>,
+    /// Dejavue project timeline events
+    pub dejavue_timeline: Vec<String>,
 }
 
 impl CrushIndex {
@@ -69,6 +76,9 @@ impl CrushIndex {
             wip: HashMap::new(),
             temporaries: Vec::new(),
             decisions: Vec::new(),
+            cson_configs: HashMap::new(),
+            semantic_keys: Vec::new(),
+            dejavue_timeline: Vec::new(),
         }
     }
 
@@ -252,6 +262,43 @@ impl CrushIndex {
     /// All @decision nodes across all programs.
     pub fn decisions(&self) -> Vec<&crush_cast::manifest::DecisionNode> {
         self.decisions.iter().map(|(_, d)| d).collect()
+    }
+    pub fn add_cson(&mut self, path: &str, doc: crush_cson::CsonDocument) {
+        // Walk the document root to extract semantic keys
+        let mut keys = Vec::new();
+        self.extract_semantic_keys(&doc.root, path, &mut keys);
+        self.semantic_keys.extend(keys);
+        self.cson_configs.insert(path.to_string(), doc);
+    }
+
+    fn extract_semantic_keys(&self, node: &crush_cson::CsonNode, path: &str, keys: &mut Vec<(String, String, Option<f64>)>) {
+        match &node.value {
+            crush_cson::CsonValue::Object(map) => {
+                for (k, v) in map {
+                    if let crush_cson::CsonKey::Semantic(s) = k {
+                        keys.push((s.clone(), path.to_string(), v.confidence));
+                    }
+                    self.extract_semantic_keys(v, path, keys);
+                }
+            }
+            crush_cson::CsonValue::Array(arr) => {
+                for v in arr {
+                    self.extract_semantic_keys(v, path, keys);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Load the timeline from `.dejavue/timeline.jsonl` if it exists.
+    pub fn load_dejavue(&mut self) {
+        if let Ok(content) = std::fs::read_to_string(".dejavue/timeline.jsonl") {
+            for line in content.lines() {
+                if !line.trim().is_empty() {
+                    self.dejavue_timeline.push(line.to_string());
+                }
+            }
+        }
     }
 }
 

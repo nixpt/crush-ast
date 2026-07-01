@@ -41,6 +41,26 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 syn::BinOp::BitXor(_) => "^",
                 syn::BinOp::Shl(_) => "<<",
                 syn::BinOp::Shr(_) => ">>",
+                syn::BinOp::AddAssign(_) | syn::BinOp::SubAssign(_) => {
+                    let operator = match e.op {
+                        syn::BinOp::AddAssign(_) => "+",
+                        syn::BinOp::SubAssign(_) => "-",
+                        _ => unreachable!(),
+                    };
+                    return Ok(Expression::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![
+                            left.clone(),
+                            Expression::BinaryOp {
+                                operator: operator.to_string(),
+                                left: Box::new(left),
+                                right: Box::new(right),
+                                meta: meta.clone(),
+                            },
+                        ],
+                        meta,
+                    });
+                }
                 _ => anyhow::bail!("unsupported binary operator: {:?}", e.op),
             };
             Ok(Expression::BinaryOp {
@@ -73,9 +93,11 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             let func_name = match e.func.as_ref() {
                 Expr::Path(p) => p
                     .path
-                    .get_ident()
-                    .ok_or_else(|| anyhow::anyhow!("complex call path"))?
-                    .to_string(),
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
                 _ => anyhow::bail!("complex function expression not supported"),
             };
             match func_name.as_str() {
@@ -95,6 +117,15 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                     meta,
                 }),
             }
+        }
+        Expr::Assign(e) => {
+            let left = lower_expr(&e.left, ctx)?;
+            let right = lower_expr(&e.right, ctx)?;
+            Ok(Expression::Call {
+                function: "__crush_assign__".to_string(),
+                args: vec![left, right],
+                meta,
+            })
         }
         Expr::If(e) => {
             let condition = lower_expr(&e.cond, ctx)?;
@@ -160,7 +191,53 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 meta,
             })
         }
-        _ => anyhow::bail!("unsupported Rust expression"),
+        Expr::MethodCall(e) => {
+            let receiver = lower_expr(&e.receiver, ctx)?;
+            let mut args = vec![receiver];
+            for arg in &e.args {
+                args.push(lower_expr(arg, ctx)?);
+            }
+            let func_name = e.method.to_string();
+            Ok(Expression::Call {
+                function: func_name,
+                args,
+                meta,
+            })
+        }
+        Expr::Index(e) => {
+            let collection = lower_expr(&e.expr, ctx)?;
+            let index = lower_expr(&e.index, ctx)?;
+            Ok(Expression::Index {
+                target: Box::new(collection),
+                index: Box::new(index),
+                meta,
+            })
+        }
+        Expr::Range(e) => {
+            let start = match &e.start {
+                Some(s) => lower_expr(s, ctx)?,
+                None => Expression::IntLiteral { value: 0, meta: ctx.meta_at(0) },
+            };
+            let end = match &e.end {
+                Some(end) => lower_expr(end, ctx)?,
+                None => Expression::NullLiteral { meta: ctx.meta_at(0) },
+            };
+            Ok(Expression::Range {
+                start: Box::new(start),
+                end: Box::new(end),
+                meta,
+            })
+        }
+        Expr::Cast(e) => {
+            lower_expr(&e.expr, ctx)
+        }
+        Expr::Reference(e) => {
+            lower_expr(&e.expr, ctx)
+        }
+        _ => {
+            eprintln!("unsupported Rust expression: {:#?}", expr);
+            anyhow::bail!("unsupported Rust expression")
+        },
     }
 }
 
@@ -201,6 +278,7 @@ fn block_to_expr(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Expre
 pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
     match pat {
         syn::Pat::Ident(pi) => Ok(pi.ident.to_string()),
+        syn::Pat::Type(pt) => pat_to_ident(&pt.pat),
         _ => anyhow::bail!("expected identifier pattern"),
     }
 }
@@ -230,6 +308,13 @@ fn lower_lit(
             value: c.value().to_string(),
             meta,
         }),
-        _ => anyhow::bail!("unsupported literal"),
+        syn::Lit::Byte(b) => Ok(Expression::IntLiteral {
+            value: b.value() as i64,
+            meta,
+        }),
+        _ => {
+            eprintln!("unsupported literal: {:#?}", lit);
+            anyhow::bail!("unsupported literal")
+        }
     }
 }

@@ -43,12 +43,18 @@ class Program:
     lang: Optional[str] = None
     functions: Dict[str, Function] = field(default_factory=dict)
     ai_meta: Optional[AIMetadata] = None
+    manifest: Optional[ModuleManifest] = None
+    exhaustive_sites: List[ExhaustiveMatchSite] = field(default_factory=list)
+    wip: Optional[WipNode] = None
+    temporaries: List[TemporaryNode] = field(default_factory=list)
+    decisions: List[DecisionNode] = field(default_factory=list)
 
 @dataclass
 class Function:
     params: List[Tuple[str, CastType]] = field(default_factory=list)
     body: List[Statement] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
+    annotations: Optional[FunctionAnnotations] = None
 
 @dataclass
 class VarDecl:
@@ -515,7 +521,22 @@ class ContextAware:
     provides_context: List[str] = field(default_factory=list)
     ai_type: Literal["ContextAware"] = "ContextAware"
 
-AIExpression = Union[Query, ToolChain, AgentDelegation, LearningLoop, ContextAware]
+@dataclass
+class SemanticMatch:
+    target: Expression
+    concept: str
+    confidence_threshold: float
+    ai_type: Literal["SemanticMatch"] = "SemanticMatch"
+
+@dataclass
+class Synthesize:
+    output_type: CastType
+    constraints: List[str] = field(default_factory=list)
+    context_refs: List[Expression] = field(default_factory=list)
+    examples: Optional[List[Expression]] = None
+    ai_type: Literal["Synthesize"] = "Synthesize"
+
+AIExpression = Union[Query, ToolChain, AgentDelegation, LearningLoop, ContextAware, SemanticMatch, Synthesize]
 
 @dataclass
 class GoalDeclaration:
@@ -556,7 +577,14 @@ class AdaptationRequest:
     parameters: Dict[str, Any] = field(default_factory=dict)
     ai_type: Literal["AdaptationRequest"] = "AdaptationRequest"
 
-AIStatement = Union[GoalDeclaration, ProgressUpdate, KnowledgeSharing, CapabilityDiscovery, AdaptationRequest]
+@dataclass
+class SemanticSwitch:
+    target: Expression
+    cases: List[Tuple[str, List[Statement]]] = field(default_factory=list)
+    fallback: Optional[List[Statement]] = None
+    ai_type: Literal["SemanticSwitch"] = "SemanticSwitch"
+
+AIStatement = Union[GoalDeclaration, ProgressUpdate, KnowledgeSharing, CapabilityDiscovery, AdaptationRequest, SemanticSwitch]
 
 @dataclass
 class AIMetadata:
@@ -701,4 +729,144 @@ class CollaborationPattern:
     communication_style: str
     decision_making: str
     participants: List[str] = field(default_factory=list)
+
+ErrorLikelihood = Literal["likely", "possible", "rare"]
+
+@dataclass
+class WeightedError:
+    variant: str
+    likelihood: ErrorLikelihood
+
+@dataclass
+class FunctionAnnotations:
+    errors: List[str] = field(default_factory=list)
+    errors_weighted: List[WeightedError] = field(default_factory=list)
+    reads: List[str] = field(default_factory=list)
+    writes: List[str] = field(default_factory=list)
+    does_not_write: List[str] = field(default_factory=list)
+    covers: List[str] = field(default_factory=list)
+    relies_on: List[str] = field(default_factory=list)
+    complexity: Optional[int] = None
+
+@dataclass
+class ChangelogEntry:
+    date: str
+    summary: str
+
+@dataclass
+class Invariant:
+    name: str
+    description: str
+    applies_to: List[str] = field(default_factory=list)
+    consequence: Optional[str] = None
+    check_source: Optional[str] = None
+
+@dataclass
+class ExhaustiveMatchSite:
+    file: str
+    line: int
+    match_type: str
+
+@dataclass
+class WipNode:
+    intent: str
+    started_by: Optional[str] = None
+    done: List[str] = field(default_factory=list)
+    todo: List[str] = field(default_factory=list)
+    unresolved: List[str] = field(default_factory=list)
+
+@dataclass
+class TemporaryNode:
+    reason: str
+    expires_when: Optional[str] = None
+    owner: Optional[str] = None
+    added: Optional[str] = None
+
+@dataclass
+class DecisionNode:
+    name: str
+    chose: str
+    because: str
+    over: List[str] = field(default_factory=list)
+    revisit_if: List[str] = field(default_factory=list)
+
+@dataclass
+class ModuleManifest:
+    purpose: str
+    exports: List[str] = field(default_factory=list)
+    invariants: List[Invariant] = field(default_factory=list)
+    related: List[str] = field(default_factory=list)
+    exhaustive_types: List[str] = field(default_factory=list)
+    changelog: List[ChangelogEntry] = field(default_factory=list)
+
+@dataclass
+class Exact:
+    value: str
+    type: Literal["Exact"] = "Exact"
+
+@dataclass
+class Semantic:
+    value: str
+    type: Literal["Semantic"] = "Semantic"
+
+CsonKey = Union[Exact, Semantic]
+
+@dataclass
+class CsonNull:
+    type: Literal["Null"] = "Null"
+
+@dataclass
+class CsonBool:
+    value: bool
+    type: Literal["Bool"] = "Bool"
+
+@dataclass
+class CsonInt:
+    value: int
+    type: Literal["Int"] = "Int"
+
+@dataclass
+class CsonFloat:
+    value: float
+    type: Literal["Float"] = "Float"
+
+@dataclass
+class CsonString:
+    value: str
+    type: Literal["String"] = "String"
+
+@dataclass
+class CsonArray:
+    elements: List[CsonNode] = field(default_factory=list)
+    type: Literal["Array"] = "Array"
+
+@dataclass
+class CsonObject:
+    properties: Dict[str, CsonNode] = field(default_factory=dict)
+    type: Literal["Object"] = "Object"
+
+@dataclass
+class CsonSemanticObject:
+    properties: List[Tuple[CsonKey, CsonNode]] = field(default_factory=list)
+    type: Literal["SemanticObject"] = "SemanticObject"
+
+@dataclass
+class CsonSynthesize:
+    prompt: str
+    type: Literal["Synthesize"] = "Synthesize"
+
+CsonValue = Union[CsonNull, CsonBool, CsonInt, CsonFloat, CsonString, CsonArray, CsonObject, CsonSemanticObject, CsonSynthesize]
+
+@dataclass
+class CsonNode:
+    value: CsonValue
+    weight: Optional[float] = None
+    invariants: List[Invariant] = field(default_factory=list)
+
+@dataclass
+class CsonDocument:
+    root: CsonNode
+    wip: Optional[WipNode] = None
+    temporaries: List[TemporaryNode] = field(default_factory=list)
+    decisions: List[DecisionNode] = field(default_factory=list)
 

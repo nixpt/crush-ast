@@ -118,6 +118,18 @@ pub struct PortableVm {
     next_task_id: u64,
     /// Scheduled tasks: task_id → (function name, args).
     scheduled_tasks: std::collections::HashMap<u64, (String, Vec<Value>)>,
+    /// Bytecode-level breakpoints (instruction offsets).
+    breakpoints: Vec<usize>,
+    /// Per-IP counter: how many breakpoint hits have been reported
+    /// for this IP without executing the instruction. When the count
+    /// reaches the total number of breakpoints at that IP, the entry
+    /// is cleared and the instruction executes.
+    breakpoint_hit: std::collections::HashMap<usize, usize>,
+    /// Per-IP total: how many breakpoints are registered at each
+    /// bytecode offset. Precomputed in `set_breakpoints()` so the
+    /// hot path in `step()` is an O(1) lookup instead of O(n)
+    /// `.filter().count()`.
+    breakpoint_count: std::collections::HashMap<usize, usize>,
 }
 
 impl PortableVm {
@@ -168,6 +180,9 @@ impl PortableVm {
             try_stack: Vec::new(),
             next_task_id: 1,
             scheduled_tasks: std::collections::HashMap::new(),
+            breakpoints: Vec::new(),
+            breakpoint_hit: std::collections::HashMap::new(),
+            breakpoint_count: std::collections::HashMap::new(),
         }
     }
 
@@ -191,10 +206,68 @@ impl PortableVm {
         &self.program
     }
 
+    /// Whether the VM has halted (ret from entry frame).
+    pub fn is_halted(&self) -> bool {
+        self.halted
+    }
+
+    /// Register bytecode-level breakpoints. Each entry is an
+    /// instruction offset in the program. When execution reaches
+    /// one of these offsets, `step()` returns `DebugBreak` *before*
+    /// executing the instruction.
+    ///
+    /// Resets per-IP hit counters so existing breakpoints that
+    /// re-register at the same address fire again.
+    pub fn set_breakpoints(&mut self, ips: &[usize]) {
+        self.breakpoints = ips.to_vec();
+        self.breakpoint_hit.clear();
+        self.breakpoint_count.clear();
+        for &ip in ips {
+            *self.breakpoint_count.entry(ip).or_insert(0) += 1;
+        }
+    }
+
+    /// Current instruction pointer (bytecode offset).
+    pub fn current_ip(&self) -> usize {
+        self.ip
+    }
+
     /// Execute a single instruction.
+    ///
+    /// If a breakpoint is set at the current IP, returns
+    /// `Ok(Some(VmYield::DebugBreak { .. }))` *before* executing
+    /// the instruction. The instruction at the breakpoint IP is
+    /// NOT executed — the VM is paused with IP unchanged.
+    ///
+    /// When multiple breakpoints are registered at the same IP,
+    /// `step()` returns `DebugBreak` for each one in sequence
+    /// before executing the instruction. A per-IP hit counter
+    /// tracks how many have fired; the instruction executes only
+    /// when all breakpoints at that IP have been reported.
     pub fn step(&mut self) -> Result<Option<VmYield>, VmError> {
         if self.halted {
             return Ok(None);
+        }
+
+        // Check breakpoints BEFORE execution. When multiple
+        // breakpoints are registered at the same IP, each fires
+        // separately before the instruction advances. The per-IP
+        // counter tracks how many have already fired; the check
+        // happens BEFORE incrementing so the Nth call fires the
+        // Nth breakpoint rather than silently consuming it.
+        if !self.breakpoints.is_empty() && self.breakpoint_count.contains_key(&self.ip) {
+            let hit = self.breakpoint_hit.entry(self.ip).or_insert(0);
+            let total = self.breakpoint_count.get(&self.ip).copied().unwrap_or(0);
+            if *hit >= total {
+                // All breakpoints at this IP have fired — clear and
+                // fall through to execute.
+                self.breakpoint_hit.remove(&self.ip);
+            } else {
+                *hit += 1;
+                return Ok(Some(VmYield::DebugBreak {
+                    reason: format!("breakpoint at ip {}", self.ip),
+                }));
+            }
         }
 
         self.check_step_quota()?;

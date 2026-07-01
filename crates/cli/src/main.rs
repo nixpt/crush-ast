@@ -20,7 +20,7 @@ fn walker_binary(ext: &str) -> Option<&'static str> {
         "py" | "pyw" => Some("python_walker"),
         "js" | "mjs" | "cjs" => Some("js_walker"),
         "ts" | "tsx" | "mts" => Some("js_walker"),
-        "c" | "h" => Some("c_walker"),
+        "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" => Some("c_walker"),
         "go" => Some("go_walker"),
         "zig" => Some("zig_walker"),
         "sh" | "bash" => Some("bash_walker"),

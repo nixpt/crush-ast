@@ -113,3 +113,54 @@ fn replace(s: String, from: String, to: String) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_starts_with() {
+        assert!(starts_with("hello world".to_string(), "hello".to_string()));
+        assert!(!starts_with("hello world".to_string(), "world".to_string()));
+        assert!(starts_with("hi".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn test_trim() {
+        assert_eq!(trim("  hello  ".to_string()), "hello");
+        assert_eq!(trim("\t \n \r".to_string()), "");
+        assert_eq!(trim("no spaces".to_string()), "no spaces");
+    }
+
+    #[test]
+    fn test_contains() {
+        assert!(contains("hello world".to_string(), "world".to_string()));
+        assert!(!contains("hello world".to_string(), "bye".to_string()));
+        assert!(contains("hello".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn test_to_uppercase() {
+        assert_eq!(to_uppercase("hello World 123!".to_string()), "HELLO WORLD 123!");
+    }
+
+    #[test]
+    fn test_to_lowercase() {
+        assert_eq!(to_lowercase("HELLO world 123!".to_string()), "hello world 123!");
+    }
+
+    #[test]
+    fn test_substring() {
+        assert_eq!(substring("hello world".to_string(), 0, 5), "hello");
+        assert_eq!(substring("hello world".to_string(), 6, 11), "world");
+        assert_eq!(substring("hello world".to_string(), 6, 20), "world");
+        assert_eq!(substring("hello world".to_string(), 20, 30), "");
+    }
+
+    #[test]
+    fn test_replace() {
+        assert_eq!(replace("hello world".to_string(), "world".to_string(), "there".to_string()), "hello there");
+        assert_eq!(replace("banana".to_string(), "a".to_string(), "o".to_string()), "bonono");
+        assert_eq!(replace("hello".to_string(), "".to_string(), "x".to_string()), "hello");
+    }
+}

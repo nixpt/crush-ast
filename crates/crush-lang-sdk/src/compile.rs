@@ -179,7 +179,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "array_push" => "ARR_PUSH".to_string(),
                 "array_pop" => "ARR_POP".to_string(),
                 "len" => "ARR_LEN".to_string(),
-                "index" => "ARR_GET".to_string(),
+                "index" | "arr_get" => "ARR_GET".to_string(),
                 "make_range" => "MAKE_RANGE".to_string(),
                 "str_contains" => "STR_CONTAINS".to_string(),
                 "str_split" => "STR_SPLIT".to_string(),

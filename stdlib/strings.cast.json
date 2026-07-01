@@ -1,740 +1,3209 @@
 {
-  "cast_version": "0.1",
-  "entry": "",
-  "lang": "crush",
-  "functions": {
-    "trim": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "VarDecl",
-          "name": "chars",
-          "value": {
-            "type": "Call",
-            "function": "s.as_bytes",
-            "args": [],
-            "meta": {
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 24,
-              "line": 10
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "file": "/tmp/rust_string_ops.rs",
-            "column": 5,
-            "lang": "rust",
-            "line": 10
-          }
+    "cast_version": "0.2",
+    "entry": "main",
+    "lang": "rust",
+    "functions": {
+        "replace": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ],
+                [
+                    "from",
+                    "Any"
+                ],
+                [
+                    "to",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "If",
+                    "condition": {
+                        "type": "Call",
+                        "function": "is_empty",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "from",
+                                "meta": {
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>"
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "column": 1,
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "line": 1
+                        }
+                    },
+                    "then_body": [
+                        {
+                            "type": "Return",
+                            "value": {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "column": 1
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "file": "<crush>",
+                                "lang": "rust",
+                                "column": 1
+                            }
+                        }
+                    ],
+                    "else_body": null,
+                    "meta": {
+                        "lang": "rust",
+                        "line": 1,
+                        "column": 1,
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "result",
+                    "value": {
+                        "type": "Call",
+                        "function": "String::new",
+                        "args": [],
+                        "meta": {
+                            "file": "<crush>",
+                            "column": 1,
+                            "lang": "rust",
+                            "line": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "column": 1,
+                        "file": "<crush>",
+                        "lang": "rust",
+                        "line": 1
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "s_bytes",
+                    "value": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "column": 1,
+                                    "lang": "rust"
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "line": 1,
+                            "lang": "rust",
+                            "file": "<crush>",
+                            "column": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "lang": "rust",
+                        "file": "<crush>",
+                        "column": 1,
+                        "line": 1
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "from_bytes",
+                    "value": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "from",
+                                "meta": {
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "column": 1,
+                                    "line": 1
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "file": "<crush>",
+                            "line": 1,
+                            "column": 1,
+                            "lang": "rust"
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "line": 1,
+                        "column": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "i",
+                    "value": {
+                        "type": "IntLiteral",
+                        "value": 0,
+                        "meta": {
+                            "line": 1,
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "column": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "column": 1,
+                        "line": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "While",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": "<",
+                        "left": {
+                            "type": "Var",
+                            "name": "i",
+                            "meta": {
+                                "file": "<crush>",
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        "right": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "s",
+                                    "meta": {
+                                        "column": 1,
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "file": "<crush>",
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        "meta": {
+                            "column": 1,
+                            "lang": "rust",
+                            "file": "<crush>",
+                            "line": 1
+                        }
+                    },
+                    "body": [
+                        {
+                            "type": "VarDecl",
+                            "name": "matched",
+                            "value": {
+                                "type": "BoolLiteral",
+                                "value": true,
+                                "meta": {
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "column": 1
+                                }
+                            },
+                            "type_hint": "Any",
+                            "meta": {
+                                "column": 1,
+                                "file": "<crush>",
+                                "lang": "rust",
+                                "line": 1
+                            }
+                        },
+                        {
+                            "type": "If",
+                            "condition": {
+                                "type": "BinaryOp",
+                                "operator": "<=",
+                                "left": {
+                                    "type": "BinaryOp",
+                                    "operator": "+",
+                                    "left": {
+                                        "type": "Var",
+                                        "name": "i",
+                                        "meta": {
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust",
+                                            "line": 1
+                                        }
+                                    },
+                                    "right": {
+                                        "type": "Call",
+                                        "function": "len",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "from_bytes",
+                                                "meta": {
+                                                    "line": 1,
+                                                    "lang": "rust",
+                                                    "column": 1,
+                                                    "file": "<crush>"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "line": 1,
+                                            "lang": "rust",
+                                            "column": 1
+                                        }
+                                    },
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "line": 1,
+                                        "column": 1,
+                                        "lang": "rust"
+                                    }
+                                },
+                                "right": {
+                                    "type": "Call",
+                                    "function": "len",
+                                    "args": [
+                                        {
+                                            "type": "Var",
+                                            "name": "s",
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "line": 1,
+                                                "column": 1,
+                                                "lang": "rust"
+                                            }
+                                        }
+                                    ],
+                                    "meta": {
+                                        "line": 1,
+                                        "column": 1,
+                                        "file": "<crush>",
+                                        "lang": "rust"
+                                    }
+                                },
+                                "meta": {
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "line": 1
+                                }
+                            },
+                            "then_body": [
+                                {
+                                    "type": "For",
+                                    "variable": "j",
+                                    "iterable": {
+                                        "type": "Range",
+                                        "start": {
+                                            "type": "IntLiteral",
+                                            "value": 0,
+                                            "meta": {
+                                                "line": 1,
+                                                "lang": "rust",
+                                                "file": "<crush>",
+                                                "column": 1
+                                            }
+                                        },
+                                        "end": {
+                                            "type": "Call",
+                                            "function": "len",
+                                            "args": [
+                                                {
+                                                    "type": "Var",
+                                                    "name": "from_bytes",
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "lang": "rust",
+                                                        "file": "<crush>",
+                                                        "column": 1
+                                                    }
+                                                }
+                                            ],
+                                            "meta": {
+                                                "line": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "column": 1
+                                            }
+                                        },
+                                        "meta": {
+                                            "lang": "rust",
+                                            "column": 1,
+                                            "line": 1,
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "body": [
+                                        {
+                                            "type": "If",
+                                            "condition": {
+                                                "type": "BinaryOp",
+                                                "operator": "!=",
+                                                "left": {
+                                                    "type": "Index",
+                                                    "target": {
+                                                        "type": "Var",
+                                                        "name": "s_bytes",
+                                                        "meta": {
+                                                            "lang": "rust",
+                                                            "line": 1,
+                                                            "file": "<crush>",
+                                                            "column": 1
+                                                        }
+                                                    },
+                                                    "index": {
+                                                        "type": "BinaryOp",
+                                                        "operator": "+",
+                                                        "left": {
+                                                            "type": "Var",
+                                                            "name": "i",
+                                                            "meta": {
+                                                                "line": 1,
+                                                                "lang": "rust",
+                                                                "file": "<crush>",
+                                                                "column": 1
+                                                            }
+                                                        },
+                                                        "right": {
+                                                            "type": "Var",
+                                                            "name": "j",
+                                                            "meta": {
+                                                                "lang": "rust",
+                                                                "line": 1,
+                                                                "file": "<crush>",
+                                                                "column": 1
+                                                            }
+                                                        },
+                                                        "meta": {
+                                                            "column": 1,
+                                                            "file": "<crush>",
+                                                            "lang": "rust",
+                                                            "line": 1
+                                                        }
+                                                    },
+                                                    "meta": {
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "file": "<crush>",
+                                                        "column": 1
+                                                    }
+                                                },
+                                                "right": {
+                                                    "type": "Index",
+                                                    "target": {
+                                                        "type": "Var",
+                                                        "name": "from_bytes",
+                                                        "meta": {
+                                                            "line": 1,
+                                                            "column": 1,
+                                                            "lang": "rust",
+                                                            "file": "<crush>"
+                                                        }
+                                                    },
+                                                    "index": {
+                                                        "type": "Var",
+                                                        "name": "j",
+                                                        "meta": {
+                                                            "line": 1,
+                                                            "file": "<crush>",
+                                                            "column": 1,
+                                                            "lang": "rust"
+                                                        }
+                                                    },
+                                                    "meta": {
+                                                        "column": 1,
+                                                        "file": "<crush>",
+                                                        "lang": "rust",
+                                                        "line": 1
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "line": 1,
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            "then_body": [
+                                                {
+                                                    "type": "ExprStmt",
+                                                    "expr": {
+                                                        "type": "Call",
+                                                        "function": "__crush_assign__",
+                                                        "args": [
+                                                            {
+                                                                "type": "Var",
+                                                                "name": "matched",
+                                                                "meta": {
+                                                                    "column": 1,
+                                                                    "line": 1,
+                                                                    "file": "<crush>",
+                                                                    "lang": "rust"
+                                                                }
+                                                            },
+                                                            {
+                                                                "type": "BoolLiteral",
+                                                                "value": false,
+                                                                "meta": {
+                                                                    "file": "<crush>",
+                                                                    "column": 1,
+                                                                    "line": 1,
+                                                                    "lang": "rust"
+                                                                }
+                                                            }
+                                                        ],
+                                                        "meta": {
+                                                            "file": "<crush>",
+                                                            "column": 1,
+                                                            "line": 1,
+                                                            "lang": "rust"
+                                                        }
+                                                    },
+                                                    "meta": {
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "file": "<crush>",
+                                                        "column": 1
+                                                    }
+                                                },
+                                                {
+                                                    "type": "Break",
+                                                    "meta": {
+                                                        "column": 1,
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "file": "<crush>"
+                                                    }
+                                                }
+                                            ],
+                                            "else_body": null,
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "column": 1,
+                                                "line": 1
+                                            }
+                                        }
+                                    ],
+                                    "meta": {
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "column": 1,
+                                        "lang": "rust"
+                                    }
+                                }
+                            ],
+                            "else_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "__crush_assign__",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "matched",
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "lang": "rust",
+                                                    "line": 1,
+                                                    "column": 1
+                                                }
+                                            },
+                                            {
+                                                "type": "BoolLiteral",
+                                                "value": false,
+                                                "meta": {
+                                                    "line": 1,
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "lang": "rust"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "line": 1,
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "column": 1,
+                                        "lang": "rust",
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "column": 1,
+                                "file": "<crush>",
+                                "lang": "rust",
+                                "line": 1
+                            }
+                        },
+                        {
+                            "type": "If",
+                            "condition": {
+                                "type": "Var",
+                                "name": "matched",
+                                "meta": {
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "lang": "rust"
+                                }
+                            },
+                            "then_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "push_str",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "result",
+                                                "meta": {
+                                                    "column": 1,
+                                                    "lang": "rust",
+                                                    "line": 1,
+                                                    "file": "<crush>"
+                                                }
+                                            },
+                                            {
+                                                "type": "Var",
+                                                "name": "to",
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "column": 1,
+                                                    "lang": "rust"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "lang": "rust",
+                                        "column": 1
+                                    }
+                                },
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "__crush_assign__",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "i",
+                                                "meta": {
+                                                    "line": 1,
+                                                    "column": 1,
+                                                    "lang": "rust",
+                                                    "file": "<crush>"
+                                                }
+                                            },
+                                            {
+                                                "type": "BinaryOp",
+                                                "operator": "+",
+                                                "left": {
+                                                    "type": "Var",
+                                                    "name": "i",
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "column": 1,
+                                                        "lang": "rust",
+                                                        "file": "<crush>"
+                                                    }
+                                                },
+                                                "right": {
+                                                    "type": "Call",
+                                                    "function": "len",
+                                                    "args": [
+                                                        {
+                                                            "type": "Var",
+                                                            "name": "from_bytes",
+                                                            "meta": {
+                                                                "line": 1,
+                                                                "file": "<crush>",
+                                                                "lang": "rust",
+                                                                "column": 1
+                                                            }
+                                                        }
+                                                    ],
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "lang": "rust",
+                                                        "column": 1,
+                                                        "file": "<crush>"
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "column": 1,
+                                                    "lang": "rust",
+                                                    "file": "<crush>",
+                                                    "line": 1
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>",
+                                            "line": 1
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "else_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "push",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "result",
+                                                "meta": {
+                                                    "line": 1,
+                                                    "column": 1,
+                                                    "file": "<crush>",
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            {
+                                                "type": "Index",
+                                                "target": {
+                                                    "type": "Var",
+                                                    "name": "s_bytes",
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "file": "<crush>",
+                                                        "column": 1,
+                                                        "lang": "rust"
+                                                    }
+                                                },
+                                                "index": {
+                                                    "type": "Var",
+                                                    "name": "i",
+                                                    "meta": {
+                                                        "file": "<crush>",
+                                                        "lang": "rust",
+                                                        "column": 1,
+                                                        "line": 1
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "column": 1,
+                                                    "lang": "rust"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust",
+                                            "line": 1
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                },
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "__crush_assign__",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "i",
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "line": 1,
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            {
+                                                "type": "BinaryOp",
+                                                "operator": "+",
+                                                "left": {
+                                                    "type": "Var",
+                                                    "name": "i",
+                                                    "meta": {
+                                                        "file": "<crush>",
+                                                        "column": 1,
+                                                        "line": 1,
+                                                        "lang": "rust"
+                                                    }
+                                                },
+                                                "right": {
+                                                    "type": "IntLiteral",
+                                                    "value": 1,
+                                                    "meta": {
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "file": "<crush>",
+                                                        "column": 1
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "line": 1,
+                                                    "lang": "rust"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "line": 1,
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "column": 1
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "line": 1,
+                                "file": "<crush>",
+                                "lang": "rust",
+                                "column": 1
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "file": "<crush>",
+                        "line": 1,
+                        "lang": "rust",
+                        "column": 1
+                    }
+                },
+                {
+                    "type": "ExprStmt",
+                    "expr": {
+                        "type": "Var",
+                        "name": "result",
+                        "meta": {
+                            "lang": "rust",
+                            "column": 1,
+                            "line": 1,
+                            "file": "<crush>"
+                        }
+                    },
+                    "meta": {
+                        "file": "<crush>",
+                        "line": 1,
+                        "column": 1,
+                        "lang": "rust"
+                    }
+                }
+            ],
+            "meta": {}
         },
-        {
-          "type": "VarDecl",
-          "name": "start",
-          "value": {
-            "type": "IntLiteral",
-            "value": 0,
-            "meta": {
-              "lang": "rust",
-              "column": 21,
-              "line": 11,
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "line": 11,
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
+        "starts_with": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ],
+                [
+                    "prefix",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "If",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": ">=",
+                        "left": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "s",
+                                    "meta": {
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "column": 1,
+                                        "lang": "rust"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "line": 1,
+                                "column": 1,
+                                "file": "<crush>",
+                                "lang": "rust"
+                            }
+                        },
+                        "right": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "prefix",
+                                    "meta": {
+                                        "column": 1,
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "lang": "rust"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "line": 1,
+                                "lang": "rust",
+                                "file": "<crush>",
+                                "column": 1
+                            }
+                        },
+                        "meta": {
+                            "column": 1,
+                            "line": 1,
+                            "file": "<crush>",
+                            "lang": "rust"
+                        }
+                    },
+                    "then_body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "BinaryOp",
+                                "operator": "==",
+                                "left": {
+                                    "type": "Index",
+                                    "target": {
+                                        "type": "Var",
+                                        "name": "s",
+                                        "meta": {
+                                            "line": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust",
+                                            "column": 1
+                                        }
+                                    },
+                                    "index": {
+                                        "type": "Range",
+                                        "start": {
+                                            "type": "IntLiteral",
+                                            "value": 0,
+                                            "meta": {
+                                                "line": 1,
+                                                "column": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust"
+                                            }
+                                        },
+                                        "end": {
+                                            "type": "Call",
+                                            "function": "len",
+                                            "args": [
+                                                {
+                                                    "type": "Var",
+                                                    "name": "prefix",
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "file": "<crush>",
+                                                        "lang": "rust",
+                                                        "column": 1
+                                                    }
+                                                }
+                                            ],
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "line": 1,
+                                                "column": 1
+                                            }
+                                        },
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "line": 1
+                                        }
+                                    },
+                                    "meta": {
+                                        "column": 1,
+                                        "file": "<crush>",
+                                        "line": 1,
+                                        "lang": "rust"
+                                    }
+                                },
+                                "right": {
+                                    "type": "Var",
+                                    "name": "prefix",
+                                    "meta": {
+                                        "lang": "rust",
+                                        "file": "<crush>",
+                                        "line": 1,
+                                        "column": 1
+                                    }
+                                },
+                                "meta": {
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "column": 1,
+                                "line": 1,
+                                "lang": "rust",
+                                "file": "<crush>"
+                            }
+                        }
+                    ],
+                    "else_body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "BoolLiteral",
+                                "value": false,
+                                "meta": {
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "lang": "rust",
+                                "file": "<crush>",
+                                "column": 1
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "line": 1,
+                        "column": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                }
+            ],
+            "meta": {}
         },
-        {
-          "type": "VarDecl",
-          "name": "end",
-          "value": {
-            "type": "Call",
-            "function": "s.len",
-            "args": [],
-            "meta": {
-              "column": 19,
-              "line": 12,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "file": "/tmp/rust_string_ops.rs",
-            "line": 12
-          }
+        "trim": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "VarDecl",
+                    "name": "chars",
+                    "value": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust",
+                                    "line": 1
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "lang": "rust",
+                            "line": 1,
+                            "file": "<crush>",
+                            "column": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "line": 1,
+                        "column": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "start",
+                    "value": {
+                        "type": "IntLiteral",
+                        "value": 0,
+                        "meta": {
+                            "column": 1,
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "line": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "file": "<crush>",
+                        "line": 1,
+                        "column": 1,
+                        "lang": "rust"
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "end",
+                    "value": {
+                        "type": "Call",
+                        "function": "len",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "column": 1,
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "line": 1,
+                            "file": "<crush>",
+                            "column": 1,
+                            "lang": "rust"
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "column": 1,
+                        "line": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "While",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": "&&",
+                        "left": {
+                            "type": "BinaryOp",
+                            "operator": "<",
+                            "left": {
+                                "type": "Var",
+                                "name": "start",
+                                "meta": {
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "column": 1
+                                }
+                            },
+                            "right": {
+                                "type": "Var",
+                                "name": "end",
+                                "meta": {
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "lang": "rust",
+                                "column": 1,
+                                "file": "<crush>",
+                                "line": 1
+                            }
+                        },
+                        "right": {
+                            "type": "BinaryOp",
+                            "operator": "<=",
+                            "left": {
+                                "type": "Index",
+                                "target": {
+                                    "type": "Var",
+                                    "name": "chars",
+                                    "meta": {
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                },
+                                "index": {
+                                    "type": "Var",
+                                    "name": "start",
+                                    "meta": {
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "column": 1
+                                    }
+                                },
+                                "meta": {
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>"
+                                }
+                            },
+                            "right": {
+                                "type": "IntLiteral",
+                                "value": 32,
+                                "meta": {
+                                    "line": 1,
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "file": "<crush>",
+                                "column": 1,
+                                "line": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        "meta": {
+                            "line": 1,
+                            "column": 1,
+                            "file": "<crush>",
+                            "lang": "rust"
+                        }
+                    },
+                    "body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "__crush_assign__",
+                                "args": [
+                                    {
+                                        "type": "Var",
+                                        "name": "start",
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "lang": "rust",
+                                            "line": 1,
+                                            "column": 1
+                                        }
+                                    },
+                                    {
+                                        "type": "BinaryOp",
+                                        "operator": "+",
+                                        "left": {
+                                            "type": "Var",
+                                            "name": "start",
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "line": 1,
+                                                "column": 1
+                                            }
+                                        },
+                                        "right": {
+                                            "type": "IntLiteral",
+                                            "value": 1,
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "line": 1,
+                                                "column": 1
+                                            }
+                                        },
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "lang": "rust",
+                                "column": 1,
+                                "file": "<crush>"
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "column": 1,
+                        "file": "<crush>",
+                        "lang": "rust",
+                        "line": 1
+                    }
+                },
+                {
+                    "type": "While",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": "&&",
+                        "left": {
+                            "type": "BinaryOp",
+                            "operator": ">",
+                            "left": {
+                                "type": "Var",
+                                "name": "end",
+                                "meta": {
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "lang": "rust"
+                                }
+                            },
+                            "right": {
+                                "type": "Var",
+                                "name": "start",
+                                "meta": {
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust",
+                                    "line": 1
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "column": 1,
+                                "file": "<crush>",
+                                "lang": "rust"
+                            }
+                        },
+                        "right": {
+                            "type": "BinaryOp",
+                            "operator": "<=",
+                            "left": {
+                                "type": "Index",
+                                "target": {
+                                    "type": "Var",
+                                    "name": "chars",
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "column": 1
+                                    }
+                                },
+                                "index": {
+                                    "type": "BinaryOp",
+                                    "operator": "-",
+                                    "left": {
+                                        "type": "Var",
+                                        "name": "end",
+                                        "meta": {
+                                            "lang": "rust",
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "line": 1
+                                        }
+                                    },
+                                    "right": {
+                                        "type": "IntLiteral",
+                                        "value": 1,
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "line": 1
+                                        }
+                                    },
+                                    "meta": {
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                },
+                                "meta": {
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "column": 1,
+                                    "lang": "rust"
+                                }
+                            },
+                            "right": {
+                                "type": "IntLiteral",
+                                "value": 32,
+                                "meta": {
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "lang": "rust"
+                                }
+                            },
+                            "meta": {
+                                "column": 1,
+                                "lang": "rust",
+                                "line": 1,
+                                "file": "<crush>"
+                            }
+                        },
+                        "meta": {
+                            "column": 1,
+                            "file": "<crush>",
+                            "line": 1,
+                            "lang": "rust"
+                        }
+                    },
+                    "body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "__crush_assign__",
+                                "args": [
+                                    {
+                                        "type": "Var",
+                                        "name": "end",
+                                        "meta": {
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust",
+                                            "line": 1
+                                        }
+                                    },
+                                    {
+                                        "type": "BinaryOp",
+                                        "operator": "-",
+                                        "left": {
+                                            "type": "Var",
+                                            "name": "end",
+                                            "meta": {
+                                                "column": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "line": 1
+                                            }
+                                        },
+                                        "right": {
+                                            "type": "IntLiteral",
+                                            "value": 1,
+                                            "meta": {
+                                                "column": 1,
+                                                "line": 1,
+                                                "lang": "rust",
+                                                "file": "<crush>"
+                                            }
+                                        },
+                                        "meta": {
+                                            "line": 1,
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "lang": "rust"
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "column": 1,
+                                    "lang": "rust"
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "lang": "rust",
+                                "column": 1,
+                                "file": "<crush>"
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "column": 1,
+                        "file": "<crush>",
+                        "lang": "rust",
+                        "line": 1
+                    }
+                },
+                {
+                    "type": "If",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": ">=",
+                        "left": {
+                            "type": "Var",
+                            "name": "start",
+                            "meta": {
+                                "column": 1,
+                                "lang": "rust",
+                                "file": "<crush>",
+                                "line": 1
+                            }
+                        },
+                        "right": {
+                            "type": "Var",
+                            "name": "end",
+                            "meta": {
+                                "file": "<crush>",
+                                "line": 1,
+                                "lang": "rust",
+                                "column": 1
+                            }
+                        },
+                        "meta": {
+                            "file": "<crush>",
+                            "line": 1,
+                            "column": 1,
+                            "lang": "rust"
+                        }
+                    },
+                    "then_body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "String::new",
+                                "args": [],
+                                "meta": {
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "file": "<crush>",
+                                "lang": "rust",
+                                "column": 1
+                            }
+                        }
+                    ],
+                    "else_body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "to_string",
+                                "args": [
+                                    {
+                                        "type": "Index",
+                                        "target": {
+                                            "type": "Var",
+                                            "name": "s",
+                                            "meta": {
+                                                "line": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "column": 1
+                                            }
+                                        },
+                                        "index": {
+                                            "type": "Range",
+                                            "start": {
+                                                "type": "Var",
+                                                "name": "start",
+                                                "meta": {
+                                                    "line": 1,
+                                                    "lang": "rust",
+                                                    "column": 1,
+                                                    "file": "<crush>"
+                                                }
+                                            },
+                                            "end": {
+                                                "type": "Var",
+                                                "name": "end",
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "column": 1,
+                                                    "file": "<crush>",
+                                                    "line": 1
+                                                }
+                                            },
+                                            "meta": {
+                                                "line": 1,
+                                                "lang": "rust",
+                                                "column": 1,
+                                                "file": "<crush>"
+                                            }
+                                        },
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "lang": "rust",
+                                            "line": 1,
+                                            "column": 1
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "column": 1
+                                }
+                            },
+                            "meta": {
+                                "lang": "rust",
+                                "line": 1,
+                                "file": "<crush>",
+                                "column": 1
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "line": 1,
+                        "lang": "rust",
+                        "column": 1,
+                        "file": "<crush>"
+                    }
+                }
+            ],
+            "meta": {}
         },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "line": 13,
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 5
-            }
-          },
-          "meta": {
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust",
-            "line": 13
-          }
+        "to_lowercase": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "VarDecl",
+                    "name": "result",
+                    "value": {
+                        "type": "Call",
+                        "function": "String::new",
+                        "args": [],
+                        "meta": {
+                            "lang": "rust",
+                            "file": "<crush>",
+                            "column": 1,
+                            "line": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "lang": "rust",
+                        "line": 1,
+                        "column": 1,
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "For",
+                    "variable": "ch",
+                    "iterable": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "column": 1,
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "lang": "rust",
+                            "line": 1,
+                            "column": 1,
+                            "file": "<crush>"
+                        }
+                    },
+                    "body": [
+                        {
+                            "type": "If",
+                            "condition": {
+                                "type": "BinaryOp",
+                                "operator": "&&",
+                                "left": {
+                                    "type": "BinaryOp",
+                                    "operator": ">=",
+                                    "left": {
+                                        "type": "Var",
+                                        "name": "ch",
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "right": {
+                                        "type": "IntLiteral",
+                                        "value": 65,
+                                        "meta": {
+                                            "column": 1,
+                                            "line": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "lang": "rust",
+                                        "column": 1
+                                    }
+                                },
+                                "right": {
+                                    "type": "BinaryOp",
+                                    "operator": "<=",
+                                    "left": {
+                                        "type": "Var",
+                                        "name": "ch",
+                                        "meta": {
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "line": 1,
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "right": {
+                                        "type": "IntLiteral",
+                                        "value": 90,
+                                        "meta": {
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>",
+                                            "line": 1
+                                        }
+                                    },
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "column": 1,
+                                        "line": 1,
+                                        "lang": "rust"
+                                    }
+                                },
+                                "meta": {
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "column": 1
+                                }
+                            },
+                            "then_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "push",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "result",
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "lang": "rust",
+                                                    "column": 1
+                                                }
+                                            },
+                                            {
+                                                "type": "BinaryOp",
+                                                "operator": "+",
+                                                "left": {
+                                                    "type": "Var",
+                                                    "name": "ch",
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "file": "<crush>",
+                                                        "column": 1,
+                                                        "lang": "rust"
+                                                    }
+                                                },
+                                                "right": {
+                                                    "type": "IntLiteral",
+                                                    "value": 32,
+                                                    "meta": {
+                                                        "column": 1,
+                                                        "lang": "rust",
+                                                        "file": "<crush>",
+                                                        "line": 1
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "line": 1,
+                                                    "lang": "rust",
+                                                    "column": 1,
+                                                    "file": "<crush>"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "line": 1,
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "meta": {
+                                        "column": 1,
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "else_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "push",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "result",
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "line": 1,
+                                                    "file": "<crush>",
+                                                    "column": 1
+                                                }
+                                            },
+                                            {
+                                                "type": "UnaryOp",
+                                                "operator": "*",
+                                                "operand": {
+                                                    "type": "Var",
+                                                    "name": "ch",
+                                                    "meta": {
+                                                        "file": "<crush>",
+                                                        "line": 1,
+                                                        "column": 1,
+                                                        "lang": "rust"
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "line": 1,
+                                                    "column": 1,
+                                                    "lang": "rust",
+                                                    "file": "<crush>"
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "lang": "rust",
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "meta": {
+                                        "column": 1,
+                                        "lang": "rust",
+                                        "file": "<crush>",
+                                        "line": 1
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "lang": "rust",
+                                "line": 1,
+                                "file": "<crush>",
+                                "column": 1
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "line": 1,
+                        "file": "<crush>",
+                        "column": 1,
+                        "lang": "rust"
+                    }
+                },
+                {
+                    "type": "ExprStmt",
+                    "expr": {
+                        "type": "Var",
+                        "name": "result",
+                        "meta": {
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "line": 1,
+                            "column": 1
+                        }
+                    },
+                    "meta": {
+                        "file": "<crush>",
+                        "column": 1,
+                        "lang": "rust",
+                        "line": 1
+                    }
+                }
+            ],
+            "meta": {}
         },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "file": "/tmp/rust_string_ops.rs",
-              "line": 16,
-              "column": 5,
-              "lang": "rust"
-            }
-          },
-          "meta": {
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust",
-            "line": 16
-          }
+        "substring": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ],
+                [
+                    "start",
+                    "Any"
+                ],
+                [
+                    "end",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "If",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": "||",
+                        "left": {
+                            "type": "BinaryOp",
+                            "operator": ">=",
+                            "left": {
+                                "type": "Var",
+                                "name": "start",
+                                "meta": {
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "column": 1,
+                                    "file": "<crush>"
+                                }
+                            },
+                            "right": {
+                                "type": "Call",
+                                "function": "len",
+                                "args": [
+                                    {
+                                        "type": "Var",
+                                        "name": "s",
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "line": 1,
+                                            "column": 1,
+                                            "lang": "rust"
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "file": "<crush>",
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "line": 1
+                                }
+                            },
+                            "meta": {
+                                "lang": "rust",
+                                "line": 1,
+                                "column": 1,
+                                "file": "<crush>"
+                            }
+                        },
+                        "right": {
+                            "type": "BinaryOp",
+                            "operator": ">=",
+                            "left": {
+                                "type": "Var",
+                                "name": "start",
+                                "meta": {
+                                    "column": 1,
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            },
+                            "right": {
+                                "type": "Var",
+                                "name": "end",
+                                "meta": {
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "column": 1
+                                }
+                            },
+                            "meta": {
+                                "column": 1,
+                                "line": 1,
+                                "file": "<crush>",
+                                "lang": "rust"
+                            }
+                        },
+                        "meta": {
+                            "file": "<crush>",
+                            "line": 1,
+                            "lang": "rust",
+                            "column": 1
+                        }
+                    },
+                    "then_body": [
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "String::new",
+                                "args": [],
+                                "meta": {
+                                    "file": "<crush>",
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "line": 1
+                                }
+                            },
+                            "meta": {
+                                "lang": "rust",
+                                "column": 1,
+                                "line": 1,
+                                "file": "<crush>"
+                            }
+                        }
+                    ],
+                    "else_body": [
+                        {
+                            "type": "VarDecl",
+                            "name": "e",
+                            "value": {
+                                "type": "Call",
+                                "function": "__crush_ifexpr__",
+                                "args": [
+                                    {
+                                        "type": "BinaryOp",
+                                        "operator": ">",
+                                        "left": {
+                                            "type": "Var",
+                                            "name": "end",
+                                            "meta": {
+                                                "line": 1,
+                                                "column": 1,
+                                                "lang": "rust",
+                                                "file": "<crush>"
+                                            }
+                                        },
+                                        "right": {
+                                            "type": "Call",
+                                            "function": "len",
+                                            "args": [
+                                                {
+                                                    "type": "Var",
+                                                    "name": "s",
+                                                    "meta": {
+                                                        "file": "<crush>",
+                                                        "lang": "rust",
+                                                        "column": 1,
+                                                        "line": 1
+                                                    }
+                                                }
+                                            ],
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "column": 1,
+                                                "line": 1,
+                                                "lang": "rust"
+                                            }
+                                        },
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "line": 1,
+                                            "lang": "rust",
+                                            "column": 1
+                                        }
+                                    },
+                                    {
+                                        "type": "Call",
+                                        "function": "len",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "s",
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "column": 1
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    {
+                                        "type": "Var",
+                                        "name": "end",
+                                        "meta": {
+                                            "line": 1,
+                                            "file": "<crush>",
+                                            "column": 1,
+                                            "lang": "rust"
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "line": 1,
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            },
+                            "type_hint": "Any",
+                            "meta": {
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust",
+                                "file": "<crush>"
+                            }
+                        },
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "to_string",
+                                "args": [
+                                    {
+                                        "type": "Index",
+                                        "target": {
+                                            "type": "Var",
+                                            "name": "s",
+                                            "meta": {
+                                                "line": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "column": 1
+                                            }
+                                        },
+                                        "index": {
+                                            "type": "Range",
+                                            "start": {
+                                                "type": "Var",
+                                                "name": "start",
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "column": 1,
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            "end": {
+                                                "type": "Var",
+                                                "name": "e",
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "line": 1
+                                                }
+                                            },
+                                            "meta": {
+                                                "line": 1,
+                                                "column": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust"
+                                            }
+                                        },
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "line": 1,
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "lang": "rust",
+                                "column": 1,
+                                "file": "<crush>"
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "line": 1,
+                        "column": 1,
+                        "file": "<crush>",
+                        "lang": "rust"
+                    }
+                }
+            ],
+            "meta": {}
         },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "column": 5,
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "line": 19
-            }
-          },
-          "meta": {
-            "lang": "rust",
-            "file": "/tmp/rust_string_ops.rs",
-            "column": 5,
-            "line": 19
-          }
+        "main": {
+            "params": [],
+            "body": [
+                {
+                    "type": "ExprStmt",
+                    "expr": {
+                        "type": "NullLiteral",
+                        "meta": {
+                            "column": 1,
+                            "line": 1,
+                            "file": "<crush>",
+                            "lang": "rust"
+                        }
+                    },
+                    "meta": {
+                        "column": 1,
+                        "line": 1,
+                        "file": "<crush>",
+                        "lang": "rust"
+                    }
+                }
+            ],
+            "meta": {}
+        },
+        "contains": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ],
+                [
+                    "substr",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "If",
+                    "condition": {
+                        "type": "Call",
+                        "function": "is_empty",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "substr",
+                                "meta": {
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "lang": "rust"
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "line": 1,
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "column": 1
+                        }
+                    },
+                    "then_body": [
+                        {
+                            "type": "Return",
+                            "value": {
+                                "type": "BoolLiteral",
+                                "value": true,
+                                "meta": {
+                                    "column": 1,
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "file": "<crush>",
+                                "column": 1,
+                                "lang": "rust",
+                                "line": 1
+                            }
+                        }
+                    ],
+                    "else_body": null,
+                    "meta": {
+                        "lang": "rust",
+                        "column": 1,
+                        "line": 1,
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "s_bytes",
+                    "value": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "column": 1,
+                                    "lang": "rust"
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "file": "<crush>",
+                            "column": 1,
+                            "lang": "rust",
+                            "line": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "file": "<crush>",
+                        "line": 1,
+                        "lang": "rust",
+                        "column": 1
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "sub_bytes",
+                    "value": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "substr",
+                                "meta": {
+                                    "file": "<crush>",
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "column": 1
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "line": 1,
+                            "column": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "lang": "rust",
+                        "file": "<crush>",
+                        "line": 1,
+                        "column": 1
+                    }
+                },
+                {
+                    "type": "If",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": ">",
+                        "left": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "sub_bytes",
+                                    "meta": {
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "line": 1,
+                                "file": "<crush>",
+                                "column": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        "right": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "s_bytes",
+                                    "meta": {
+                                        "column": 1,
+                                        "file": "<crush>",
+                                        "lang": "rust",
+                                        "line": 1
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "file": "<crush>",
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        "meta": {
+                            "column": 1,
+                            "line": 1,
+                            "lang": "rust",
+                            "file": "<crush>"
+                        }
+                    },
+                    "then_body": [
+                        {
+                            "type": "Return",
+                            "value": {
+                                "type": "BoolLiteral",
+                                "value": false,
+                                "meta": {
+                                    "column": 1,
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust"
+                                }
+                            },
+                            "meta": {
+                                "lang": "rust",
+                                "column": 1,
+                                "file": "<crush>",
+                                "line": 1
+                            }
+                        }
+                    ],
+                    "else_body": null,
+                    "meta": {
+                        "column": 1,
+                        "file": "<crush>",
+                        "line": 1,
+                        "lang": "rust"
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "limit",
+                    "value": {
+                        "type": "BinaryOp",
+                        "operator": "-",
+                        "left": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "s_bytes",
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "column": 1
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "lang": "rust",
+                                "file": "<crush>",
+                                "line": 1,
+                                "column": 1
+                            }
+                        },
+                        "right": {
+                            "type": "Call",
+                            "function": "len",
+                            "args": [
+                                {
+                                    "type": "Var",
+                                    "name": "sub_bytes",
+                                    "meta": {
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "column": 1
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "file": "<crush>",
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        "meta": {
+                            "file": "<crush>",
+                            "lang": "rust",
+                            "column": 1,
+                            "line": 1
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "lang": "rust",
+                        "column": 1,
+                        "file": "<crush>",
+                        "line": 1
+                    }
+                },
+                {
+                    "type": "VarDecl",
+                    "name": "i",
+                    "value": {
+                        "type": "IntLiteral",
+                        "value": 0,
+                        "meta": {
+                            "lang": "rust",
+                            "line": 1,
+                            "column": 1,
+                            "file": "<crush>"
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "file": "<crush>",
+                        "lang": "rust",
+                        "line": 1,
+                        "column": 1
+                    }
+                },
+                {
+                    "type": "While",
+                    "condition": {
+                        "type": "BinaryOp",
+                        "operator": "<=",
+                        "left": {
+                            "type": "Var",
+                            "name": "i",
+                            "meta": {
+                                "line": 1,
+                                "column": 1,
+                                "file": "<crush>",
+                                "lang": "rust"
+                            }
+                        },
+                        "right": {
+                            "type": "Var",
+                            "name": "limit",
+                            "meta": {
+                                "lang": "rust",
+                                "column": 1,
+                                "file": "<crush>",
+                                "line": 1
+                            }
+                        },
+                        "meta": {
+                            "lang": "rust",
+                            "file": "<crush>",
+                            "column": 1,
+                            "line": 1
+                        }
+                    },
+                    "body": [
+                        {
+                            "type": "VarDecl",
+                            "name": "matched",
+                            "value": {
+                                "type": "BoolLiteral",
+                                "value": true,
+                                "meta": {
+                                    "line": 1,
+                                    "file": "<crush>",
+                                    "lang": "rust",
+                                    "column": 1
+                                }
+                            },
+                            "type_hint": "Any",
+                            "meta": {
+                                "file": "<crush>",
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust"
+                            }
+                        },
+                        {
+                            "type": "For",
+                            "variable": "j",
+                            "iterable": {
+                                "type": "Range",
+                                "start": {
+                                    "type": "IntLiteral",
+                                    "value": 0,
+                                    "meta": {
+                                        "lang": "rust",
+                                        "column": 1,
+                                        "file": "<crush>",
+                                        "line": 1
+                                    }
+                                },
+                                "end": {
+                                    "type": "Call",
+                                    "function": "len",
+                                    "args": [
+                                        {
+                                            "type": "Var",
+                                            "name": "sub_bytes",
+                                            "meta": {
+                                                "lang": "rust",
+                                                "line": 1,
+                                                "column": 1,
+                                                "file": "<crush>"
+                                            }
+                                        }
+                                    ],
+                                    "meta": {
+                                        "column": 1,
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "file": "<crush>"
+                                    }
+                                },
+                                "meta": {
+                                    "lang": "rust",
+                                    "column": 1,
+                                    "file": "<crush>",
+                                    "line": 1
+                                }
+                            },
+                            "body": [
+                                {
+                                    "type": "If",
+                                    "condition": {
+                                        "type": "BinaryOp",
+                                        "operator": "!=",
+                                        "left": {
+                                            "type": "Index",
+                                            "target": {
+                                                "type": "Var",
+                                                "name": "s_bytes",
+                                                "meta": {
+                                                    "column": 1,
+                                                    "line": 1,
+                                                    "file": "<crush>",
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            "index": {
+                                                "type": "BinaryOp",
+                                                "operator": "+",
+                                                "left": {
+                                                    "type": "Var",
+                                                    "name": "i",
+                                                    "meta": {
+                                                        "file": "<crush>",
+                                                        "column": 1,
+                                                        "lang": "rust",
+                                                        "line": 1
+                                                    }
+                                                },
+                                                "right": {
+                                                    "type": "Var",
+                                                    "name": "j",
+                                                    "meta": {
+                                                        "line": 1,
+                                                        "lang": "rust",
+                                                        "file": "<crush>",
+                                                        "column": 1
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "column": 1,
+                                                    "line": 1,
+                                                    "file": "<crush>",
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            "meta": {
+                                                "line": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "column": 1
+                                            }
+                                        },
+                                        "right": {
+                                            "type": "Index",
+                                            "target": {
+                                                "type": "Var",
+                                                "name": "sub_bytes",
+                                                "meta": {
+                                                    "column": 1,
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            "index": {
+                                                "type": "Var",
+                                                "name": "j",
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "lang": "rust",
+                                                    "column": 1
+                                                }
+                                            },
+                                            "meta": {
+                                                "column": 1,
+                                                "line": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust"
+                                            }
+                                        },
+                                        "meta": {
+                                            "file": "<crush>",
+                                            "line": 1,
+                                            "column": 1,
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "then_body": [
+                                        {
+                                            "type": "ExprStmt",
+                                            "expr": {
+                                                "type": "Call",
+                                                "function": "__crush_assign__",
+                                                "args": [
+                                                    {
+                                                        "type": "Var",
+                                                        "name": "matched",
+                                                        "meta": {
+                                                            "lang": "rust",
+                                                            "file": "<crush>",
+                                                            "line": 1,
+                                                            "column": 1
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "BoolLiteral",
+                                                        "value": false,
+                                                        "meta": {
+                                                            "lang": "rust",
+                                                            "column": 1,
+                                                            "file": "<crush>",
+                                                            "line": 1
+                                                        }
+                                                    }
+                                                ],
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "line": 1
+                                                }
+                                            },
+                                            "meta": {
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "line": 1,
+                                                "column": 1
+                                            }
+                                        },
+                                        {
+                                            "type": "Break",
+                                            "meta": {
+                                                "column": 1,
+                                                "lang": "rust",
+                                                "line": 1,
+                                                "file": "<crush>"
+                                            }
+                                        }
+                                    ],
+                                    "else_body": null,
+                                    "meta": {
+                                        "column": 1,
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "lang": "rust",
+                                "file": "<crush>",
+                                "column": 1,
+                                "line": 1
+                            }
+                        },
+                        {
+                            "type": "If",
+                            "condition": {
+                                "type": "Var",
+                                "name": "matched",
+                                "meta": {
+                                    "file": "<crush>",
+                                    "lang": "rust",
+                                    "line": 1,
+                                    "column": 1
+                                }
+                            },
+                            "then_body": [
+                                {
+                                    "type": "Return",
+                                    "value": {
+                                        "type": "BoolLiteral",
+                                        "value": true,
+                                        "meta": {
+                                            "lang": "rust",
+                                            "column": 1,
+                                            "line": 1,
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "line": 1,
+                                        "column": 1,
+                                        "lang": "rust"
+                                    }
+                                }
+                            ],
+                            "else_body": null,
+                            "meta": {
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust",
+                                "file": "<crush>"
+                            }
+                        },
+                        {
+                            "type": "ExprStmt",
+                            "expr": {
+                                "type": "Call",
+                                "function": "__crush_assign__",
+                                "args": [
+                                    {
+                                        "type": "Var",
+                                        "name": "i",
+                                        "meta": {
+                                            "column": 1,
+                                            "line": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    {
+                                        "type": "BinaryOp",
+                                        "operator": "+",
+                                        "left": {
+                                            "type": "Var",
+                                            "name": "i",
+                                            "meta": {
+                                                "column": 1,
+                                                "line": 1,
+                                                "lang": "rust",
+                                                "file": "<crush>"
+                                            }
+                                        },
+                                        "right": {
+                                            "type": "IntLiteral",
+                                            "value": 1,
+                                            "meta": {
+                                                "column": 1,
+                                                "file": "<crush>",
+                                                "lang": "rust",
+                                                "line": 1
+                                            }
+                                        },
+                                        "meta": {
+                                            "column": 1,
+                                            "line": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>"
+                                        }
+                                    }
+                                ],
+                                "meta": {
+                                    "column": 1,
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>"
+                                }
+                            },
+                            "meta": {
+                                "line": 1,
+                                "column": 1,
+                                "lang": "rust",
+                                "file": "<crush>"
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "file": "<crush>",
+                        "column": 1,
+                        "lang": "rust",
+                        "line": 1
+                    }
+                },
+                {
+                    "type": "ExprStmt",
+                    "expr": {
+                        "type": "BoolLiteral",
+                        "value": false,
+                        "meta": {
+                            "file": "<crush>",
+                            "line": 1,
+                            "column": 1,
+                            "lang": "rust"
+                        }
+                    },
+                    "meta": {
+                        "column": 1,
+                        "line": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                }
+            ],
+            "meta": {}
+        },
+        "to_uppercase": {
+            "params": [
+                [
+                    "s",
+                    "Any"
+                ]
+            ],
+            "body": [
+                {
+                    "type": "VarDecl",
+                    "name": "result",
+                    "value": {
+                        "type": "Call",
+                        "function": "String::new",
+                        "args": [],
+                        "meta": {
+                            "line": 1,
+                            "lang": "rust",
+                            "column": 1,
+                            "file": "<crush>"
+                        }
+                    },
+                    "type_hint": "Any",
+                    "meta": {
+                        "column": 1,
+                        "line": 1,
+                        "file": "<crush>",
+                        "lang": "rust"
+                    }
+                },
+                {
+                    "type": "For",
+                    "variable": "ch",
+                    "iterable": {
+                        "type": "Call",
+                        "function": "as_bytes",
+                        "args": [
+                            {
+                                "type": "Var",
+                                "name": "s",
+                                "meta": {
+                                    "column": 1,
+                                    "lang": "rust",
+                                    "file": "<crush>",
+                                    "line": 1
+                                }
+                            }
+                        ],
+                        "meta": {
+                            "line": 1,
+                            "lang": "rust",
+                            "file": "<crush>",
+                            "column": 1
+                        }
+                    },
+                    "body": [
+                        {
+                            "type": "If",
+                            "condition": {
+                                "type": "BinaryOp",
+                                "operator": "&&",
+                                "left": {
+                                    "type": "BinaryOp",
+                                    "operator": ">=",
+                                    "left": {
+                                        "type": "Var",
+                                        "name": "ch",
+                                        "meta": {
+                                            "column": 1,
+                                            "line": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "right": {
+                                        "type": "IntLiteral",
+                                        "value": 97,
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "file": "<crush>",
+                                        "column": 1,
+                                        "lang": "rust"
+                                    }
+                                },
+                                "right": {
+                                    "type": "BinaryOp",
+                                    "operator": "<=",
+                                    "left": {
+                                        "type": "Var",
+                                        "name": "ch",
+                                        "meta": {
+                                            "line": 1,
+                                            "lang": "rust",
+                                            "file": "<crush>",
+                                            "column": 1
+                                        }
+                                    },
+                                    "right": {
+                                        "type": "IntLiteral",
+                                        "value": 122,
+                                        "meta": {
+                                            "lang": "rust",
+                                            "column": 1,
+                                            "line": 1,
+                                            "file": "<crush>"
+                                        }
+                                    },
+                                    "meta": {
+                                        "file": "<crush>",
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "column": 1
+                                    }
+                                },
+                                "meta": {
+                                    "file": "<crush>",
+                                    "line": 1,
+                                    "lang": "rust",
+                                    "column": 1
+                                }
+                            },
+                            "then_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "push",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "result",
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "file": "<crush>",
+                                                    "column": 1,
+                                                    "line": 1
+                                                }
+                                            },
+                                            {
+                                                "type": "BinaryOp",
+                                                "operator": "-",
+                                                "left": {
+                                                    "type": "Var",
+                                                    "name": "ch",
+                                                    "meta": {
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "column": 1,
+                                                        "file": "<crush>"
+                                                    }
+                                                },
+                                                "right": {
+                                                    "type": "IntLiteral",
+                                                    "value": 32,
+                                                    "meta": {
+                                                        "column": 1,
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "file": "<crush>"
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "file": "<crush>",
+                                                    "lang": "rust",
+                                                    "line": 1,
+                                                    "column": 1
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "line": 1,
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "meta": {
+                                        "lang": "rust",
+                                        "line": 1,
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "else_body": [
+                                {
+                                    "type": "ExprStmt",
+                                    "expr": {
+                                        "type": "Call",
+                                        "function": "push",
+                                        "args": [
+                                            {
+                                                "type": "Var",
+                                                "name": "result",
+                                                "meta": {
+                                                    "column": 1,
+                                                    "line": 1,
+                                                    "file": "<crush>",
+                                                    "lang": "rust"
+                                                }
+                                            },
+                                            {
+                                                "type": "UnaryOp",
+                                                "operator": "*",
+                                                "operand": {
+                                                    "type": "Var",
+                                                    "name": "ch",
+                                                    "meta": {
+                                                        "file": "<crush>",
+                                                        "lang": "rust",
+                                                        "line": 1,
+                                                        "column": 1
+                                                    }
+                                                },
+                                                "meta": {
+                                                    "lang": "rust",
+                                                    "file": "<crush>",
+                                                    "line": 1,
+                                                    "column": 1
+                                                }
+                                            }
+                                        ],
+                                        "meta": {
+                                            "line": 1,
+                                            "column": 1,
+                                            "file": "<crush>",
+                                            "lang": "rust"
+                                        }
+                                    },
+                                    "meta": {
+                                        "line": 1,
+                                        "lang": "rust",
+                                        "column": 1,
+                                        "file": "<crush>"
+                                    }
+                                }
+                            ],
+                            "meta": {
+                                "column": 1,
+                                "file": "<crush>",
+                                "lang": "rust",
+                                "line": 1
+                            }
+                        }
+                    ],
+                    "meta": {
+                        "line": 1,
+                        "column": 1,
+                        "lang": "rust",
+                        "file": "<crush>"
+                    }
+                },
+                {
+                    "type": "ExprStmt",
+                    "expr": {
+                        "type": "Var",
+                        "name": "result",
+                        "meta": {
+                            "line": 1,
+                            "column": 1,
+                            "lang": "rust",
+                            "file": "<crush>"
+                        }
+                    },
+                    "meta": {
+                        "line": 1,
+                        "lang": "rust",
+                        "column": 1,
+                        "file": "<crush>"
+                    }
+                }
+            ],
+            "meta": {}
         }
-      ],
-      "meta": {
-        "file": "/tmp/rust_string_ops.rs",
-        "column": 1,
-        "lang": "rust",
-        "line": 9
-      }
-    },
-    "replace": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ],
-        [
-          "from",
-          "Any"
-        ],
-        [
-          "to",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "lang": "rust",
-              "line": 87,
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 5
-            }
-          },
-          "meta": {
-            "line": 87,
-            "file": "/tmp/rust_string_ops.rs",
-            "column": 5,
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "result",
-          "value": {
-            "type": "Call",
-            "function": "String::new",
-            "args": [],
-            "meta": {
-              "column": 22,
-              "lang": "rust",
-              "line": 90,
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "line": 90,
-            "column": 5,
-            "lang": "rust",
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "s_bytes",
-          "value": {
-            "type": "Call",
-            "function": "s.as_bytes",
-            "args": [],
-            "meta": {
-              "lang": "rust",
-              "line": 91,
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 19
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "line": 91,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "from_bytes",
-          "value": {
-            "type": "Call",
-            "function": "from.as_bytes",
-            "args": [],
-            "meta": {
-              "file": "/tmp/rust_string_ops.rs",
-              "line": 92,
-              "column": 22,
-              "lang": "rust"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "file": "/tmp/rust_string_ops.rs",
-            "line": 92
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "i",
-          "value": {
-            "type": "IntLiteral",
-            "value": 0,
-            "meta": {
-              "column": 17,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust",
-              "line": 93
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "line": 93,
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "lang": "rust",
-              "line": 94,
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 5
-            }
-          },
-          "meta": {
-            "lang": "rust",
-            "line": 94,
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        },
-        {
-          "type": "Return",
-          "value": {
-            "type": "Var",
-            "name": "result",
-            "meta": {
-              "line": 114,
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 5
-            }
-          },
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "line": 114,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        }
-      ],
-      "meta": {
-        "column": 1,
-        "file": "/tmp/rust_string_ops.rs",
-        "lang": "rust",
-        "line": 86
-      }
-    },
-    "to_lowercase": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "VarDecl",
-          "name": "result",
-          "value": {
-            "type": "Call",
-            "function": "String::new",
-            "args": [],
-            "meta": {
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 22,
-              "line": 66,
-              "lang": "rust"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "line": 66,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "column": 5,
-              "lang": "rust",
-              "line": 67,
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "meta": {
-            "line": 67,
-            "lang": "rust",
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        },
-        {
-          "type": "Return",
-          "value": {
-            "type": "Var",
-            "name": "result",
-            "meta": {
-              "column": 5,
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "line": 74
-            }
-          },
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "line": 74,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        }
-      ],
-      "meta": {
-        "line": 65,
-        "column": 1,
-        "lang": "rust",
-        "file": "/tmp/rust_string_ops.rs"
-      }
-    },
-    "substring": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ],
-        [
-          "start",
-          "Any"
-        ],
-        [
-          "end",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "line": 78,
-              "file": "/tmp/rust_string_ops.rs",
-              "column": 5,
-              "lang": "rust"
-            }
-          },
-          "meta": {
-            "file": "/tmp/rust_string_ops.rs",
-            "line": 78,
-            "column": 5,
-            "lang": "rust"
-          }
-        }
-      ],
-      "meta": {
-        "line": 77,
-        "lang": "rust",
-        "column": 1,
-        "file": "/tmp/rust_string_ops.rs"
-      }
-    },
-    "to_uppercase": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "VarDecl",
-          "name": "result",
-          "value": {
-            "type": "Call",
-            "function": "String::new",
-            "args": [],
-            "meta": {
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "line": 54,
-              "column": 22
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "line": 54,
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust",
-              "line": 55,
-              "column": 5
-            }
-          },
-          "meta": {
-            "lang": "rust",
-            "file": "/tmp/rust_string_ops.rs",
-            "line": 55,
-            "column": 5
-          }
-        },
-        {
-          "type": "Return",
-          "value": {
-            "type": "Var",
-            "name": "result",
-            "meta": {
-              "lang": "rust",
-              "column": 5,
-              "line": 62,
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "line": 62,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        }
-      ],
-      "meta": {
-        "line": 53,
-        "column": 1,
-        "file": "/tmp/rust_string_ops.rs",
-        "lang": "rust"
-      }
-    },
-    "starts_with": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ],
-        [
-          "prefix",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "line": 2,
-              "column": 5,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust"
-            }
-          },
-          "meta": {
-            "file": "/tmp/rust_string_ops.rs",
-            "line": 2,
-            "column": 5,
-            "lang": "rust"
-          }
-        }
-      ],
-      "meta": {
-        "column": 1,
-        "lang": "rust",
-        "file": "/tmp/rust_string_ops.rs",
-        "line": 1
-      }
-    },
-    "contains": {
-      "params": [
-        [
-          "s",
-          "Any"
-        ],
-        [
-          "substr",
-          "Any"
-        ]
-      ],
-      "body": [
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "column": 5,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust",
-              "line": 27
-            }
-          },
-          "meta": {
-            "column": 5,
-            "line": 27,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "s_bytes",
-          "value": {
-            "type": "Call",
-            "function": "s.as_bytes",
-            "args": [],
-            "meta": {
-              "lang": "rust",
-              "line": 30,
-              "column": 19,
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "line": 30,
-            "lang": "rust",
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "sub_bytes",
-          "value": {
-            "type": "Call",
-            "function": "substr.as_bytes",
-            "args": [],
-            "meta": {
-              "line": 31,
-              "column": 21,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "line": 31,
-            "file": "/tmp/rust_string_ops.rs",
-            "lang": "rust"
-          }
-        },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "lang": "rust",
-              "line": 32,
-              "column": 5,
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "meta": {
-            "line": 32,
-            "lang": "rust",
-            "column": 5,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "limit",
-          "value": {
-            "type": "BinaryOp",
-            "operator": "-",
-            "left": {
-              "type": "Call",
-              "function": "s_bytes.len",
-              "args": [],
-              "meta": {
-                "column": 17,
-                "file": "/tmp/rust_string_ops.rs",
-                "line": 35,
-                "lang": "rust"
-              }
-            },
-            "right": {
-              "type": "Call",
-              "function": "sub_bytes.len",
-              "args": [],
-              "meta": {
-                "file": "/tmp/rust_string_ops.rs",
-                "column": 33,
-                "lang": "rust",
-                "line": 35
-              }
-            },
-            "meta": {
-              "line": 35,
-              "column": 17,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust"
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "file": "/tmp/rust_string_ops.rs",
-            "line": 35
-          }
-        },
-        {
-          "type": "VarDecl",
-          "name": "i",
-          "value": {
-            "type": "IntLiteral",
-            "value": 0,
-            "meta": {
-              "column": 17,
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs",
-              "line": 36
-            }
-          },
-          "type_hint": "Any",
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "line": 36,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        },
-        {
-          "type": "ExprStmt",
-          "expr": {
-            "type": "NullLiteral",
-            "meta": {
-              "column": 5,
-              "line": 37,
-              "lang": "rust",
-              "file": "/tmp/rust_string_ops.rs"
-            }
-          },
-          "meta": {
-            "lang": "rust",
-            "line": 37,
-            "file": "/tmp/rust_string_ops.rs",
-            "column": 5
-          }
-        },
-        {
-          "type": "Return",
-          "value": {
-            "type": "BoolLiteral",
-            "value": false,
-            "meta": {
-              "line": 50,
-              "column": 5,
-              "file": "/tmp/rust_string_ops.rs",
-              "lang": "rust"
-            }
-          },
-          "meta": {
-            "column": 5,
-            "lang": "rust",
-            "line": 50,
-            "file": "/tmp/rust_string_ops.rs"
-          }
-        }
-      ],
-      "meta": {
-        "line": 26,
-        "lang": "rust",
-        "file": "/tmp/rust_string_ops.rs",
-        "column": 1
-      }
     }
-  },
-  "ai_meta": null
 }

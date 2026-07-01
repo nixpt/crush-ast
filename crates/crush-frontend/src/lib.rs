@@ -1,4 +1,5 @@
 pub mod ai_runtime;
+pub mod cson_desugar;
 pub mod cast_enrich;
 pub mod compiler;
 pub mod diagnostics;

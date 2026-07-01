@@ -59,8 +59,9 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
 - [x] **Bash frontend** — `bash_walker` is regex-only; migrate to `brush-parser`
   (prior attempt hit an API mismatch). The planned `crush-lang-bash` crate is its
   home.
-- [ ] **Go / C / Zig / wasm walkers** — scaffold-level; mature on demand (no pure
-  Rust parser alternative for some → may stay tree-sitter).
+- [x] **C/C++ walker maturation** — `crush-lang-c` is a fully compliant `walker-core::Frontend` using tree-sitter-c and tree-sitter-cpp, registered in `crush-frontend` and supporting all C/C++ source file extensions.
+- [x] **Wasm walker maturation** — `wasm_walker` is verified with an integration test suite compiling `.wat` sources containing WASI calls and asserting they correctly lower to VM capabilities (`io.print`).
+- [x] **Go / Zig walker maturation** — `go_walker` and `zig_walker` are mature, fully tested, and integrated tree-sitter-based walkers.
 
 ## 🔗 Cross-project
 

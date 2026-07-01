@@ -958,6 +958,40 @@ impl Renderer {
                 }
                 self.newline();
             }
+            AIStatement::SemanticSwitch {
+                target,
+                cases,
+                fallback,
+            } => {
+                self.write_indent();
+                self.push_str("semantic_switch ");
+                self.render_expression(target, 0);
+                self.push_str(" {\n");
+                self.indent += 1;
+                for (concept, block) in cases {
+                    self.write_indent();
+                    self.push_str("case \"");
+                    self.push_str(&escape_string(concept));
+                    self.push_str("\":\n");
+                    self.indent += 1;
+                    for s in block {
+                        self.render_statement(s);
+                    }
+                    self.indent -= 1;
+                }
+                if let Some(fb) = fallback {
+                    self.write_indent();
+                    self.push_str("fallback:\n");
+                    self.indent += 1;
+                    for s in fb {
+                        self.render_statement(s);
+                    }
+                    self.indent -= 1;
+                }
+                self.indent -= 1;
+                self.write_indent();
+                self.push_str("}\n");
+            }
         }
     }
 
@@ -1057,13 +1091,52 @@ impl Renderer {
                 self.push_str(&provides_context.join(", "));
                 self.push_str("])");
             }
+            AIExpression::SemanticMatch {
+                target,
+                concept,
+                confidence_threshold,
+            } => {
+                self.push_str("ai_semantic_match(");
+                self.render_expression(target, 0);
+                self.push_str(&format!(", \"{}\", {})", escape_string(concept), confidence_threshold));
+            }
+            AIExpression::Synthesize {
+                output_type,
+                constraints,
+                context_refs,
+                examples: _,
+            } => {
+                self.push_str(&format!("ai_synthesize({:?}, constraints=[", output_type));
+                self.push_str(&constraints.iter().map(|c| format!("\"{}\"", escape_string(c))).collect::<Vec<_>>().join(", "));
+                self.push_str("], ctx=[");
+                for (i, expr) in context_refs.iter().enumerate() {
+                    if i > 0 { self.push_str(", "); }
+                    self.render_expression(expr, 0);
+                }
+                self.push_str("])");
+            }
         }
     }
 
     // ── annotation rendering ─────────────────────────────────────────────────
 
     fn render_fn_annotations(&mut self, ann: &FunctionAnnotations) {
-        self.render_at_list("errors", &ann.errors);
+        if !ann.errors_weighted.is_empty() {
+            self.push_str("@errors {\n");
+            self.indent += 1;
+            for we in &ann.errors_weighted {
+                self.write_indent();
+                self.push_str(&we.variant);
+                self.push_str(": ");
+                self.push_str(&we.likelihood.to_string());
+                self.push_str("\n");
+            }
+            self.indent -= 1;
+            self.write_indent();
+            self.push_str("}\n");
+        } else {
+            self.render_at_list("errors", &ann.errors);
+        }
         self.render_at_list("reads", &ann.reads);
         self.render_at_list("writes", &ann.writes);
         self.render_at_list("does-not-write", &ann.does_not_write);

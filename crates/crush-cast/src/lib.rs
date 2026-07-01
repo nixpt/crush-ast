@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod ai;
+pub mod cson;
 pub mod diff;
 pub mod format;
 pub mod manifest;
