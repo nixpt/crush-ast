@@ -462,3 +462,17 @@ Full architecture document saved to `docs/design/crush-jit-backend.md` with:
 - 7-phase implementation roadmap (skeleton → locals/calls → data/caps → exceptions → ExoLight → optimization → AOT)
 - Integration seam: ExoLight's `.cvm` dispatch (currently subprocess placeholder) gains a JIT path
 - Risk analysis: Cranelift GC API nascent (mitigated: conservative GC V1), JIT compile latency (mitigated: threshold gating)
+
+## 2026-07-01 — [MERGED] CRUSHSDK-1 + debugger-scaffold → feat/p2-walkers-maturation → main
+
+Reason:
+Consolidate all active feature branches into main for a clean merge state. Two branches were unmerged:
+1. `agent/buffy/CRUSHSDK-1` — ticket file only, merged cleanly.
+2. `agent/buffy/debugger-initial-scaffold` — required conflict resolution in Cargo.lock and portable_vm.rs (scheduled_tasks type diverged between branches; breakpoint fields from debugger were combined with feat/p2's (String, Vec<Value>) tuple type).
+
+Outcome:
+- Both branches merged into feat/p2-walkers-maturation (conflicts resolved)
+- feat/p2-walkers-maturation merged into main (clean merge)
+- Both branches pushed to origin
+- Core crates tested (95/96 pass; test_ffi_gateway_cap expects pre-built .so)
+- State.md updated with new crates (crush-debugger, crush-ffi, crush-plugin-example, crush-cson, crush-lint, fastvm modules)
