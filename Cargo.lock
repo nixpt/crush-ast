@@ -346,6 +346,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "buckets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "toml",
+ "ureq 2.12.1",
+ "url",
+ "xz2",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1136,6 +1154,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "buckets",
  "casm",
  "chrono",
  "clap",
@@ -2193,6 +2212,17 @@ name = "lzma-rust2"
 version = "0.15.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e20f57f9918e5bd7bc58c22cdd70a6afc7375d4dd9683af5f2b34bd3d2bba619"
+
+[[package]]
+name = "lzma-sys"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
 
 [[package]]
 name = "mach2"
@@ -4981,6 +5011,15 @@ dependencies = [
  "crush-diagnostics",
  "regex",
  "serde_json",
+]
+
+[[package]]
+name = "xz2"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
+dependencies = [
+ "lzma-sys",
 ]
 
 [[package]]
