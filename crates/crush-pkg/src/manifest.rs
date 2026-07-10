@@ -50,6 +50,15 @@ pub struct CapsuleSection {
     pub entry: String,
     #[serde(default)]
     pub language: String,
+    /// Version constraint for `language`'s runtime, in buckets/pkgx semver
+    /// syntax (e.g. `"3.11"`, `"^20"`, `">=23"`) — passed straight through
+    /// to `buckets::resolve` as `"{language}@{runtime_version}"`. Only
+    /// meaningful for `ScriptRunner` capsules (bun/node/deno/python/sona);
+    /// ignored for `crush`/`native`. Unset means an unpinned "latest" spec
+    /// (buckets' `constraint == VersionReq::STAR` case), same as before
+    /// this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_version: Option<String>,
     // Policy / daemon fields
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_access: Option<String>,
@@ -488,6 +497,7 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
             author: None,
             entry: "src/main.crush".to_string(),
             language: "crush".to_string(),
+            runtime_version: None,
             network_access: None,
             seccomp_profile: None,
             rootless: None,
@@ -593,6 +603,7 @@ network = true
                 version: "1.0.0".into(),
                 entry: "main.crush".into(),
                 language: "crush".into(),
+                runtime_version: None,
                 description: None,
                 author: None,
                 network_access: None,

@@ -122,16 +122,29 @@ impl ScriptRunner {
     /// unsandboxed if `bwrap` isn't on PATH — see `buckets::sandbox`).
     /// `cwd` is bound read-write (the sandbox's fresh mount namespace needs
     /// it to exist, and scripts commonly read/write files beside themselves).
+    /// `runtime_version` is the manifest's `capsule.runtime_version`, if
+    /// set — appended as `"{alias}@{version}"` so the resolved toolchain is
+    /// actually pinned, not just "latest".
     ///
     /// Returns `None` if this runtime has no buckets spec, or if resolution
     /// fails (offline, unknown alias, bottle fetch error, ...) — callers
     /// fall back to a bare host-PATH `Command` in either case, so a
     /// network hiccup degrades a capsule run rather than breaking it.
-    fn buckets_command(&self, runtime_bin: &str, args: &[String], cwd: &Path) -> Option<Command> {
-        let spec = self.buckets_spec()?;
+    fn buckets_command(
+        &self,
+        runtime_bin: &str,
+        args: &[String],
+        cwd: &Path,
+        runtime_version: Option<&str>,
+    ) -> Option<Command> {
+        let alias = self.buckets_spec()?;
+        let spec = match runtime_version {
+            Some(v) => format!("{alias}@{v}"),
+            None => alias.to_string(),
+        };
         let config = buckets::Config::default();
         let index = buckets::Index::builtin();
-        let resolved = match buckets::resolve(spec, &config, &index) {
+        let resolved = match buckets::resolve(&spec, &config, &index) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("crush-pkg: buckets resolution for '{spec}' failed ({e}), falling back to host {runtime_bin}");
@@ -173,7 +186,7 @@ impl CapsuleRunner for ScriptRunner {
             .unwrap_or(std::env::current_dir()?);
 
         let mut cmd = self
-            .buckets_command(runtime_bin, &full_args, &cwd)
+            .buckets_command(runtime_bin, &full_args, &cwd, manifest.capsule.runtime_version.as_deref())
             .unwrap_or_else(|| {
                 let mut c = Command::new(runtime_bin);
                 c.args(&full_args);
@@ -297,7 +310,7 @@ mod tests {
     fn test_buckets_command_returns_none_for_sona() {
         let runner = ScriptRunner::new(ScriptRuntime::Sona);
         let dir = tempfile::tempdir().unwrap();
-        assert!(runner.buckets_command("sona", &[], dir.path()).is_none());
+        assert!(runner.buckets_command("sona", &[], dir.path(), None).is_none());
     }
 
     /// Exercises the real buckets resolve→install→sandbox pipeline against
@@ -319,6 +332,41 @@ mod tests {
             ExecutionResult::Process(mut child) => {
                 let status = child.wait().expect("wait");
                 assert!(status.success());
+            }
+            _ => panic!("expected Process result"),
+        }
+    }
+
+    /// Real pinning, not just "latest": the script asserts its own
+    /// interpreter version and fails (nonzero exit) if buckets resolved the
+    /// wrong one — self-verifying, so this doesn't need stdout capture
+    /// plumbing `ScriptRunner::run` doesn't otherwise have.
+    ///
+    /// Uses `~3.11` (tilde, real minor-pin range ">=3.11.0, <3.12.0"), not
+    /// bare `3.11` — found live while writing this test that
+    /// `PackageReq::parse` (buckets' own spec grammar) turns ANY bare
+    /// numeric version string into a caret range (`^3.11`, satisfied by
+    /// 3.14.x too), regardless of component count. A caller wanting a real
+    /// minor/patch pin needs an explicit `~`/`=` prefix in `runtime_version`.
+    #[test]
+    #[ignore]
+    fn test_script_runner_honors_runtime_version_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload = dir.path().join("check_version.py");
+        std::fs::write(
+            &payload,
+            "import sys\nassert sys.version_info[:2] == (3, 11), sys.version\n",
+        )
+        .unwrap();
+
+        let mut manifest = make_manifest("python", "check_version.py");
+        manifest.capsule.runtime_version = Some("~3.11".to_string());
+        let runner = ScriptRunner::new(ScriptRuntime::Python);
+        let result = runner.run(&manifest, &payload, &[]).expect("run");
+        match result {
+            ExecutionResult::Process(mut child) => {
+                let status = child.wait().expect("wait");
+                assert!(status.success(), "pinned-version script failed: {status:?}");
             }
             _ => panic!("expected Process result"),
         }

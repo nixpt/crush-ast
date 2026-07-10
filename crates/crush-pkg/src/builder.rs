@@ -563,6 +563,7 @@ mod tests {
                 version: "0.1.0".to_string(),
                 entry: entry.to_string(),
                 language: "crush".to_string(),
+                runtime_version: None,
                 description: None,
                 author: None,
                 network_access: None,
