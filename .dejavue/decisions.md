@@ -476,3 +476,12 @@ Outcome:
 - Both branches pushed to origin
 - Core crates tested (95/96 pass; test_ffi_gateway_cap expects pre-built .so)
 - State.md updated with new crates (crush-debugger, crush-ffi, crush-plugin-example, crush-cson, crush-lint, fastvm modules)
+
+## 2026-07-13T03:25:00-05:00 — Full-session audit: state captured, .jagent initialized
+
+Reason:
+A complete audit of the crush-ast workspace was performed (35 crates, 874 tests, 1 known failure). All gaps documented: 16 NOP runtime opcodes (10 AI + 3 DOM + spawn + yield + await), debugger scaffold, JIT Phase 1 only, 18 error paths with zero coverage, MOD sign bug, EXEC_LANG missing from PortableVm. The .jagent/ planning board was initialized following the squadron template used by crush-notebook — STATE.md, ROADMAP.md, TASKS.md with P0-P5 priorities, ticket template, and first CRUSH-1 ticket.
+
+Rejected alternatives:
+- **Keep only dejavue** — dejavue is for architectural memory (decisions, invariants, why); .jagent is for execution planning (milestones, status, what/when). Both are needed.
+- **Use crush-notebook's ticket IDs** — separate repos use separate ID spaces (CRUSH-NNN vs NB-NNN) to avoid confusion during cross-project work.

@@ -1,57 +1,51 @@
-# State
+# State — crush-ast
 
-Updated: 2026-07-01T15:34:00-05:00
+Updated: 2026-07-13T03:25:00-05:00
+Version: v0.2.0
 
-## v0.2.0 Workspace — 30+ crates (+ design docs)
+## Delivery snapshot
 
-### Core IR
-- `crush-errors`, `crush-cast`, `casm`
+| Track | Status | Notes |
+|-------|--------|--------|
+| Core compiler pipeline | **shipped** | Parser(2,881L) → CAST → Semantics → Optimizer(460L) → Compiler(1,884L) → CASM |
+| CVM1 (PortableVm) | **shipped** | 40+ opcodes, debugger-aware, step/breakpoint/continue |
+| FastVM | **shipped** | 84 FastOp instructions, lowered bytecode, hot-path interpreter |
+| crush-jit (Cranelift) | **partial** | Phase 1: stack ops, arithmetic, logic, jumps, locals (21 tests). 7-phase roadmap. |
+| AI-native expressions | **stub** | 7 expression types + 3 statement types. All 10 compile to NOP. |
+| Async/spawn/await | **stub** | Parsed and stored in AST. Compile to NOP. |
+| Annotations | **shipped** | @wip, @temporary, @decision, @invariant, @errors, @covers. W-WIP-001 + W-TMP-001 warnings. |
+| Debugger | **partial** | Breakpoints, step/continue, REPL. Variable inspection returns "not yet implemented" (todo!()). |
+| CLI tools | **shipped** | crushc, crush-run, crush-repl, crush-debugger, crush-pkg, crush-installer, walker |
+| Multi-frontend walkers | **shipped** | Rust, Python, JS/TS, Bash, Zsh, C/C++, Go, Zig, Wasm |
+| CSON | **shipped** | CSON→CAST desugaring. Weights, fuzzy keys, @annotations. |
+| Package ecosystem | **shipped** | crush-pkg (build/lint/site/extract), crush-installer, crush-python, crush-net, crush-index |
+| Cross-project notebook | **shipped** | crush-notebook uses crush-frontend + CVM1 for cell evaluation |
 
-### Grammar
-- `tree-sitter-crush` (v0.1.0)
+## Metrics
 
-### Walkers / Language Frontends
-- `walker-core` (v0.1.0) — Frontend trait, FeatureReport, BaseWalker
-- `cli` (v0.1.0) — walker dispatcher
-- `python_walker` via `crush-lang-python` — rustpython-parser
-- `rust_walker` via `crush-lang-rust` — syn
-- `crush-lang-c` (C/C++ with tree-sitter, renamed from c_walker)
-- `crush-lang-js` (JS/TS via swc + boa)
-- `crush-lang-bash`, `crush-lang-zsh` (tree-sitter shell)
-- `crush-lang-custom` — Meta-Frontend using CSON for dynamic grammar
-- `wasm_walker` (WASM with WASI lowering, lib crate + bin)
-- `go_walker`, `zig_walker` (tree-sitter-based)
+| Metric | Value |
+|--------|--------|
+| Crates | 35 + xtask |
+| Tests | 874 pass, 1 fail (known: FFI plugin needs .so), 6 ignored |
+| Warnings | 0 |
+| NOP-at-runtime opcodes | 16 (10 AI + 3 DOM + spawn + yield + await) |
+| VM backends | 3 (CVM1, FastVM, JIT Phase 1) |
+| Walker frontends | 9 |
+| CLI binaries | 9 |
+| Decisions captured | 21 |
 
-### Runtime & Tools
-- `crush-vm` — CVM1 bytecode + FastVM + PortableVM + scheduler + Arena GC + polyglot executors + FFI + AI optimizer
-- `crush-frontend` — compiler (parser, sema, optimizer, compiler, cson desugar, render)
-- `crush-lang-sdk` — SDK + binaries (crushc, crush-run, crush-compile, crush-repl)
-- `crush-pkg` — package manager with manifest + runners + builder
-- `crush-installer` — toolchain installer
-- `crush-python` — PyO3 bindings for crush-cast
-- `crush-index` — cross-module index
-- `crush-debugger` — interactive runtime debugger with breakpoints, step, inspect
-- `crush-lint` — linting
-- `crush-net` — networking with mesh-proto support
-- `crush-cson` — CSON parser
+## Active arcs
 
-### Polyglot
-- `EXEC_LANG` opcode + polyglot executor registry
-- Three-lane Python: CAST transpile / (RustPython planned) / subprocess
-- C FFI plugin support (`crush-ffi`, `crush-plugin-example`)
+_None._ Full-session audit complete (2026-07-13). State updated.
 
-### Design Docs
-- `docs/design/crush-jit-backend.md` — Cranelift JIT architecture (7-phase roadmap)
-- `docs/design/cson_proposal.md` — CSON specification
+## Blockers
 
-### Test Status
-- Core crates (crush-vm, crush-cast, casm, crush-frontend, crush-lang-sdk, crush-debugger) pass clean.
-- Pre-existing: test_ffi_gateway_cap needs /tmp/example_c_plugin.so built separately.
+_None._ Single test failure is pre-existing and non-blocking (requires compiled C plugin).
 
-### Recent Merge (2026-07-01)
-- `agent/buffy/CRUSHSDK-1` — ticket file only
-- `agent/buffy/debugger-initial-scaffold` — crush-debugger crate + breakpoint support in portable_vm
-- `feat/p2-walkers-maturation` → `main` — all feature branches consolidated
+## Next (suggested)
 
-## Known External Dependents
-openko/fabric, crush-symbols, mycelium-mobile, arniko, sona.
+1. Wire AI-native opcodes (unblocks crush-notebook M2)
+2. Wire spawn/await/yield to VM
+3. Complete debugger variable inspection
+4. Advance JIT to Phase 2
+5. Fill 18 zero-coverage error path tests
