@@ -112,9 +112,54 @@ fn bin_arith(stack: &mut Vec<RuntimeValue>, iop: fn(i64,i64)->i64, fop: fn(f64,f
         (RuntimeValue::Float(x), RuntimeValue::Float(y)) => RuntimeValue::Float(fop(*x, *y)),
         (RuntimeValue::Int(x), RuntimeValue::Float(y)) => RuntimeValue::Float(fop(*x as f64, *y)),
         (RuntimeValue::Float(x), RuntimeValue::Int(y)) => RuntimeValue::Float(fop(*x, *y as f64)),
-        _ => RuntimeValue::Null,
+        // A non-numeric operand used to fall through to `RuntimeValue::Null` — SILENTLY. The
+        // interpreter raises a TypeError on the same source, so an AOT-compiled binary and
+        // `crush-run` returned different answers with no error from either. Crash instead.
+        // (String `+` is handled by bin_add before this is ever reached; anything landing here
+        // is a genuine type error.)
+        _ => {
+            eprintln!("crush(aot): type error: arithmetic on non-numeric operands ({:?}, {:?})", a, b);
+            std::process::exit(1);
+        }
     };
     stack.push(r);
+}
+
+/// `+` — numeric addition, or string concatenation when EITHER side is a string.
+///
+/// MUST match crush-vm's scheduler.rs and portable_vm.rs exactly. These are separate
+/// implementations of the same language, and any divergence is a silent miscompile.
+fn bin_add(stack: &mut Vec<RuntimeValue>) {
+    let is_str = |v: &RuntimeValue| matches!(v, RuntimeValue::Str(_));
+    let n = stack.len();
+    let mixed = n >= 2 && (is_str(&stack[n - 1]) || is_str(&stack[n - 2]));
+    if mixed {
+        let (a, b) = pop2(stack);
+        stack.push(RuntimeValue::Str(format!("{}{}", as_text(&a), as_text(&b))));
+    } else {
+        bin_arith(stack, |a, b| a.wrapping_add(b), |a, b| a + b);
+    }
+}
+
+fn as_text(v: &RuntimeValue) -> String {
+    match v {
+        RuntimeValue::Str(s) => s.clone(),
+        RuntimeValue::Int(i) => i.to_string(),
+        RuntimeValue::Float(f) => f.to_string(),
+        RuntimeValue::Bool(b) => b.to_string(),
+        RuntimeValue::Null => "null".to_string(),
+        other => format!("{:?}", other),
+    }
+}
+
+fn div_zero() -> i64 {
+    eprintln!("crush(aot): division by zero");
+    std::process::exit(1);
+}
+
+fn div_zero_f() -> f64 {
+    eprintln!("crush(aot): division by zero");
+    std::process::exit(1);
 }
 
 fn bin_cmp(stack: &mut Vec<RuntimeValue>, icmp: fn(i64,i64)->bool, fcmp: fn(f64,f64)->bool) {
@@ -290,11 +335,14 @@ fn emit_body(
         }
 
         // ── Arithmetic ──
-        "add"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.wrapping_add(b), |a,b| a+b);\n")); out.push_str(&next_pc_str); }
+        "add"  => { out.push_str(&format!("{ind}bin_add(&mut stack);\n")); out.push_str(&next_pc_str); }
         "sub"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.wrapping_sub(b), |a,b| a-b);\n")); out.push_str(&next_pc_str); }
         "mul"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.wrapping_mul(b), |a,b| a*b);\n")); out.push_str(&next_pc_str); }
-        "div"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a/b }} else {{ 0 }}, |a,b| if b!=0.0 {{ a/b }} else {{ 0.0 }});\n")); out.push_str(&next_pc_str); }
-        "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a%b }} else {{ 0 }}, |a,b| if b!=0.0 {{ a%b }} else {{ 0.0 }});\n")); out.push_str(&next_pc_str); }
+        // Division by zero was SILENTLY yielding 0 here while the interpreter raised
+        // VmError::DivisionByZero on the same source. `1 / 0` printed "0" from an AOT binary
+        // and errored under crush-run. Same program, different answers, no error. Now both die.
+        "div"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a/b }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a/b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
+        "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a%b }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a%b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
         "neg"  => { out.push_str(&format!("{ind}negate(&mut stack);\n")); out.push_str(&next_pc_str); }
 
         // ── Math ops ──
