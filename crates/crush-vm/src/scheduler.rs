@@ -280,6 +280,21 @@ fn execute_one(
             let a = pop!();
             push!(Value::Bool(a != b));
         }
+        // `+` is overloaded: numeric addition, and string concatenation when EITHER side is a
+        // string. `io.print("Python says 5^3 is: " + result)` — mixing a string with a number —
+        // is the single most common thing anyone writes, and it was a hard type error.
+        // (`"a" + "b"` already worked; only the MIXED case failed.)
+        ADD if matches!(stack.last(), Some(Value::Str(_)))
+            || matches!(stack.len().checked_sub(2).and_then(|k| stack.get(k)), Some(Value::Str(_))) =>
+        {
+            let b = pop!();
+            let a = pop!();
+            let joined = format!("{}{}", a.as_text(), b.as_text());
+            if joined.len() > quotas.max_output {
+                return Err(VmError::OutputQuota(quotas.max_output));
+            }
+            push!(Value::Str(joined));
+        }
         ADD | SUB | MUL | DIV | MOD | LT | GT | LE | GE => {
             let b = need_num!(pop!());
             let a = need_num!(pop!());

@@ -397,6 +397,27 @@ impl PortableVm {
                 let v = self.stack.remove(idx);
                 self.push(v);
             }
+            // `+` concatenates when EITHER side is a string. This MUST match scheduler.rs exactly:
+            // the two VMs run the same programs, and a divergence here is a silent miscompile.
+            //
+            // It was already diverging. This arm did not guard its operands, and to_f64_p ends in
+            // `_ => 0.0` — so portable_vm silently evaluated `"a" + "b"` to 0 and `"x: " + 5` to 5,
+            // while scheduler.rs raised a TypeError on the very same source. No error either way.
+            ADD if matches!(self.peek_n(0), Some(Value::Str(_)))
+                || matches!(self.peek_n(1), Some(Value::Str(_))) =>
+            {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.push(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
+            }
+            // Anything else non-numeric is a LOUD error, not a silent 0.
+            ADD | SUB | MUL | DIV | MOD
+                if !matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
+                    || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_))) =>
+            {
+                let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
+                return Err(VmError::TypeError { expected: "numeric", got });
+            }
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
@@ -1277,6 +1298,14 @@ impl PortableVm {
 
     fn peek(&self) -> Result<&Value, VmError> {
         self.stack.last().ok_or(VmError::StackUnderflow)
+    }
+
+    /// Peek `n` values down the stack without popping (0 = top).
+    ///
+    /// The ADD arms must inspect operand TYPES before committing to a numeric or a string
+    /// interpretation, which they cannot do after popping.
+    fn peek_n(&self, n: usize) -> Option<&Value> {
+        self.stack.len().checked_sub(n + 1).and_then(|k| self.stack.get(k))
     }
 
     fn check_step_quota(&self) -> Result<(), VmError> {
