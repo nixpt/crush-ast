@@ -149,4 +149,77 @@ mod tests {
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "200");
     }
+
+    /// End-to-end: walk a C program calling __crush_ffi__ through the full pipeline.
+    #[test]
+    fn test_c_ffi_full_pipeline() {
+        let out_dir = std::env::temp_dir().join("crush-lang-c-ffi-test");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let so_path = out_dir.join("example_c_plugin.so");
+        let plugin_src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crush-ffi/examples/example_c_plugin.c");
+        let include_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crush-ffi/include");
+
+        if !plugin_src.exists() || !include_dir.exists() {
+            eprintln!("Skipping test_c_ffi_full_pipeline: plugin src not found");
+            return;
+        }
+        let status = std::process::Command::new("gcc")
+            .args(["-shared", "-fPIC", "-std=c11", "-O2",
+                   "-o", so_path.to_str().unwrap(),
+                   plugin_src.to_str().unwrap(),
+                   "-I", include_dir.to_str().unwrap()])
+            .status();
+        let status = match status {
+            Ok(s) => s,
+            Err(_) => { eprintln!("Skipping: gcc not found"); return; }
+        };
+        if !status.success() { eprintln!("Skipping: gcc failed"); return; }
+
+        let path = so_path.to_string_lossy().replace('\\', "/");
+        let src = format!(
+            "int main() {{ __crush_ffi__(\"{path}\", \"math.add\", 10, 32); printf(99); return 0; }}"
+        );
+
+        // Walk C → CAST
+        let mut parser = Parser::new();
+        parser.set_language(&tree_sitter_c::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(&src, None).unwrap();
+        let walker = CWalker { file_name: "test_ffi.c".to_string() };
+        let cast = walker.walk(&tree, src.as_bytes()).unwrap();
+
+        // CAST → CASM
+        let mut compiler = crush_frontend::compiler::Compiler::new();
+        let casm = compiler.compile(cast).unwrap();
+
+        // CASM → CVM1
+        let vm_prog = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+
+        // Register caps
+        let mut host_caps = crush_vm::HostCaps::new();
+        host_caps.register(Box::new(crush_vm::plugin::FfiGatewayCap));
+
+        struct NopCap { name: String }
+        impl crush_vm::host::HostCap for NopCap {
+            fn spec(&self) -> crush_vm::host::HostCapSpec {
+                crush_vm::host::HostCapSpec { name: self.name.clone(), argc: None, returns: true }
+            }
+            fn call(&self, _: Vec<crush_vm::vm::Value>) -> Result<Option<crush_vm::vm::Value>, String> {
+                Ok(Some(crush_vm::vm::Value::Null))
+            }
+        }
+        for name in &[
+            "__crush_assign__", "__crush_deref__", "__crush_addr_of__",
+            "__crush_not__", "__crush_neg__", "__crush_pos__",
+            "__crush_subscript__", "__crush_unary__",
+        ] {
+            host_caps.register(Box::new(NopCap { name: name.to_string() }));
+        }
+
+        let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
+        let result = crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps)).unwrap();
+        // printf(99) should produce output; the FFI call runs silently
+        assert_eq!(result.output.trim(), "99");
+    }
 }

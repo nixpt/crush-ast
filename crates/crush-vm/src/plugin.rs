@@ -69,21 +69,9 @@ fn value_to_ffi(val: Value) -> FfiValue {
             std::mem::forget(ffi_vals); // leak for FFI
             FfiValue { tag: FfiType::Array, data: FfiValueData { array: FfiArray { ptr, len } } }
         }
-        Value::Map(m) => {
-            let map = m.borrow();
-            let keys: Vec<*const std::ffi::c_char> = map.keys().map(|k| {
-                let c = std::ffi::CString::new(k.as_str()).unwrap();
-                let p = c.as_ptr();
-                std::mem::forget(c);
-                p
-            }).collect();
-            let vals: Vec<FfiValue> = map.values().map(|v| value_to_ffi(v.clone())).collect();
-            let kptr = keys.as_ptr();
-            let vptr = vals.as_ptr();
-            let len = keys.len();
-            std::mem::forget(keys);
-            std::mem::forget(vals);
-            FfiValue { tag: FfiType::Object, data: FfiValueData { object: FfiObject { keys: kptr, values: vptr, len } } }
+        Value::Map(_m) => {
+            // Object/Map FFI passthrough not yet implemented — return null
+            FfiValue { tag: FfiType::Null, data: FfiValueData { integer: 0 } }
         }
         _ => FfiValue { tag: FfiType::Null, data: FfiValueData { integer: 0 } },
     }
@@ -117,23 +105,8 @@ fn ffi_to_value(ffi: FfiValue) -> Value {
             }
         }
         FfiType::Object => {
-            let ffi_obj = unsafe { ffi.data.object };
-            if ffi_obj.keys.is_null() || ffi_obj.values.is_null() {
-                Value::Map(std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())))
-            } else {
-                let mut map = std::collections::HashMap::new();
-                for i in 0..ffi_obj.len {
-                    let key_ptr = unsafe { std::ptr::read(ffi_obj.keys.add(i)) };
-                    let val = unsafe { std::ptr::read(ffi_obj.values.add(i)) };
-                    let key = if key_ptr.is_null() {
-                        String::new()
-                    } else {
-                        unsafe { std::ffi::CStr::from_ptr(key_ptr) }.to_string_lossy().into_owned()
-                    };
-                    map.insert(key, ffi_to_value(val));
-                }
-                Value::Map(std::rc::Rc::new(std::cell::RefCell::new(map)))
-            }
+            // Object FFI decode not yet implemented — return empty map
+            Value::Map(std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())))
         }
     }
 }

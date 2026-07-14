@@ -52,8 +52,8 @@ pub struct FfiArray {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct FfiObject {
-    pub keys: *const *const c_char,
-    pub values: *const FfiValue,
+    /// Opaque pointer to heap-allocated object data.
+    pub ptr: *mut std::ffi::c_void,
     pub len: usize,
 }
 
