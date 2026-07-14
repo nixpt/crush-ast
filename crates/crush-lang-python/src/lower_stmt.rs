@@ -3,10 +3,44 @@
 use py_ast::Ranged;
 use crush_walker_core::LowerCtx;
 
+use std::collections::HashMap;
+
 use crush_cast::{CastType, Expression, ImportStatement, Statement};
 use rustpython_ast as py_ast;
 
-use crate::lower_expr::lower_expr;
+use crate::lower_expr::{lower_expr, lower_expr_hoist};
+
+/// Wrap statements that a comprehension's expression-position lowering
+/// hoisted (see `lower_expr_hoist`) around the "real" statement they were
+/// hoisted out of. When nothing was hoisted, returns `actual` unchanged —
+/// existing non-comprehension code paths are untouched.
+///
+/// CAST has no block-statement node; `Statement::If(true) { ... }` is an
+/// existing primitive that already compiles and runs (see `Statement::If`
+/// in `crush-frontend/compiler.rs`) and — because crush-vm has no lexical
+/// block scoping — a variable declared inside it is visible afterward just
+/// like any other flat-namespace local, which is exactly what letting the
+/// hoisted temp array's final assignment show through requires.
+fn wrap_hoisted(
+    hoisted: Vec<Statement>,
+    actual: Statement,
+    meta: &HashMap<String, serde_json::Value>,
+) -> Statement {
+    if hoisted.is_empty() {
+        return actual;
+    }
+    let mut then_body = hoisted;
+    then_body.push(actual);
+    Statement::If {
+        condition: Expression::BoolLiteral {
+            value: true,
+            meta: meta.clone(),
+        },
+        then_body,
+        else_body: None,
+        meta: meta.clone(),
+    }
+}
 
 /// Lower a Python AST statement to a CAST statement.
 pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
@@ -32,53 +66,58 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
                 meta,
             })
         }
-        py_ast::Stmt::Return(py_ast::StmtReturn { value, .. }) => {
-            let value = match value {
-                Some(v) => Some(lower_expr(v, ctx)?),
-                None => None,
-            };
-            Ok(Statement::Return { value, meta })
-        }
+        py_ast::Stmt::Return(py_ast::StmtReturn { value, .. }) => match value {
+            Some(v) => {
+                let (hoisted, value) = lower_expr_hoist(v, ctx)?;
+                let actual = Statement::Return {
+                    value: Some(value),
+                    meta: meta.clone(),
+                };
+                Ok(wrap_hoisted(hoisted, actual, &meta))
+            }
+            None => Ok(Statement::Return { value: None, meta }),
+        },
         py_ast::Stmt::Assign(py_ast::StmtAssign { targets, value, .. }) => {
-            let value = lower_expr(value, ctx)?;
+            let (hoisted, value) = lower_expr_hoist(value, ctx)?;
             if targets.len() != 1 {
                 anyhow::bail!("multi-target assignment not yet supported");
             }
             let target = &targets[0];
-            match target {
-                py_ast::Expr::Name(py_ast::ExprName { id, .. }) => Ok(Statement::VarDecl {
+            let actual = match target {
+                py_ast::Expr::Name(py_ast::ExprName { id, .. }) => Statement::VarDecl {
                     name: id.to_string(),
                     value,
                     type_hint: CastType::Any,
-                    meta,
-                }),
+                    meta: meta.clone(),
+                },
                 py_ast::Expr::Attribute(py_ast::ExprAttribute {
                     value: obj, attr, ..
                 }) => {
                     let target = lower_expr(obj, ctx)?;
-                    Ok(Statement::SetField {
+                    Statement::SetField {
                         target,
                         field: attr.to_string(),
                         value,
-                        meta,
-                    })
+                        meta: meta.clone(),
+                    }
                 }
                 py_ast::Expr::Subscript(py_ast::ExprSubscript {
                     value: obj, slice, ..
                 }) => {
                     let target = lower_expr(obj, ctx)?;
                     let index = lower_expr(slice, ctx)?;
-                    Ok(Statement::ExprStmt {
+                    Statement::ExprStmt {
                         expr: Expression::Call {
                             function: "__crush_setindex__".to_string(),
                             args: vec![target, index, value],
                             meta: meta.clone(),
                         },
-                        meta,
-                    })
+                        meta: meta.clone(),
+                    }
                 }
                 _ => anyhow::bail!("unsupported assignment target: {:?}", target),
-            }
+            };
+            Ok(wrap_hoisted(hoisted, actual, &meta))
         }
         py_ast::Stmt::AugAssign(py_ast::StmtAugAssign {
             target, op, value, ..
@@ -111,8 +150,12 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
             })
         }
         py_ast::Stmt::Expr(py_ast::StmtExpr { value, .. }) => {
-            let expr = lower_expr(value, ctx)?;
-            Ok(Statement::ExprStmt { expr, meta })
+            let (hoisted, expr) = lower_expr_hoist(value, ctx)?;
+            let actual = Statement::ExprStmt {
+                expr,
+                meta: meta.clone(),
+            };
+            Ok(wrap_hoisted(hoisted, actual, &meta))
         }
         py_ast::Stmt::If(py_ast::StmtIf {
             test, body, orelse, ..

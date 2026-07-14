@@ -102,4 +102,34 @@ mod tests {
         let r = run_python("arr = [1,2,3]\nprint(2 in arr)");
         assert!(r.is_ok(), "'in' should not crash: {:?}", r);
     }
+
+    // ── CRUSHAST-PYLOWER-1: comprehensions ──────────────────────────────────
+    //
+    // Real end-to-end runs: Python source → CAST → CASM → CVM1, asserting on
+    // actual VM `output`, not just "lowering didn't panic" — per this repo's
+    // own `ee75f1b` precedent (top-level statements that looked lowered but
+    // were silently discarded and never executed).
+
+    #[test]
+    fn test_list_comprehension_assignment_runs_the_loop() {
+        assert_eq!(
+            run_python(concat!(
+                "squares = [i * i for i in range(5)]\n",
+                "total = 0\n",
+                "for s in squares:\n",
+                "    total = total + s\n",
+                "print(total)\n",
+            ))
+            .unwrap(),
+            "30" // 0 + 1 + 4 + 9 + 16
+        );
+    }
+
+    #[test]
+    fn test_list_comprehension_with_filter_as_call_argument() {
+        assert_eq!(
+            run_python("print(len([x for x in range(10) if x % 2 == 0]))").unwrap(),
+            "5" // 0, 2, 4, 6, 8
+        );
+    }
 }

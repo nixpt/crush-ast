@@ -5,9 +5,23 @@ use crush_walker_core::LowerCtx;
 
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crush_cast::Expression;
+use crush_cast::{CastType, Expression, Statement};
 use rustpython_ast as py_ast;
+
+/// Monotonic counter for comprehension temp-array names (`__comp_0`, `__comp_1`, ...).
+/// Crush's VM has no lexical block scoping — variables live in one flat
+/// per-function namespace (see the `__arr_N`/`__i_N` temps the compiler
+/// already generates for desugared `for` loops in `crush-frontend/compiler.rs`)
+/// — so uniqueness only needs to hold within one lowering pass, not
+/// structurally nest.
+static COMP_TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn fresh_comp_temp() -> String {
+    let n = COMP_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("__comp_{n}")
+}
 
 /// Lower a Python AST expression to a CAST expression.
 pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
@@ -119,11 +133,42 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             Ok(Expression::ObjectLiteral { properties, meta })
         }
         py_ast::Expr::Set { .. } => anyhow::bail!("set literals not yet supported"),
-        py_ast::Expr::ListComp { .. }
-        | py_ast::Expr::SetComp { .. }
-        | py_ast::Expr::DictComp { .. }
-        | py_ast::Expr::GeneratorExp { .. } => {
-            anyhow::bail!("comprehensions not yet supported")
+        py_ast::Expr::ListComp { .. } | py_ast::Expr::SetComp { .. } => {
+            // These *are* lowerable (see `lower_expr_hoist` / `lower_list_or_set_comprehension`
+            // below) — but only from a position that can absorb the hoisted
+            // init+loop statements a comprehension needs. `lower_expr` itself
+            // returns a bare `Expression` with nowhere to put those, so a
+            // comprehension reached through plain `lower_expr` means it showed
+            // up nested inside another expression (a binary op, an `if`
+            // condition, another comprehension's `elt`, ...) that `lower_stmt`
+            // doesn't hoist through. Bail loud rather than silently dropping it.
+            anyhow::bail!(
+                "comprehension used in a nested expression position not yet supported \
+                 (only supported directly as an assignment RHS, a `return` value, or a \
+                 call argument)"
+            )
+        }
+        py_ast::Expr::DictComp { .. } => {
+            // Confirmed VM gap, not just a missing lowering: crush-vm's SET_FIELD
+            // opcode bakes the field name in as a compile-time constant
+            // (`crush-vm/src/scheduler.rs` SET_FIELD reads it from `program.consts`
+            // by a compile-time index) — there is no "insert at a runtime-computed
+            // key" primitive for `Value::Map` anywhere in the VM today. A real
+            // `{k: v for ...}` needs one. Filed via `dejavue plan`; not attempted
+            // here per the "don't build new opcodes for this ticket" scope.
+            anyhow::bail!(
+                "dict comprehensions not yet supported — crush-vm has no dynamic-key \
+                 map-insert primitive (SET_FIELD requires a compile-time-constant field \
+                 name); needs a new opcode, out of scope for this ticket"
+            )
+        }
+        py_ast::Expr::GeneratorExp { .. } => {
+            anyhow::bail!(
+                "generator expressions not yet supported — they desugar to a real \
+                 generator function, which needs VM-level suspend/resume machinery \
+                 (tracked separately in docs/design/python-lowering-coverage.md, not \
+                 this ticket)"
+            )
         }
         py_ast::Expr::Await(py_ast::ExprAwait { value, .. }) => {
             let expr = lower_expr(value, ctx)?;
@@ -186,7 +231,13 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             args,
             keywords,
             ..
-        }) => lower_call(func, args, keywords, ctx, meta),
+        }) => {
+            let lowered_args: Vec<Expression> = args
+                .iter()
+                .map(|a| lower_expr(a, ctx))
+                .collect::<Result<Vec<_>, _>>()?;
+            lower_call(func, lowered_args, keywords, meta)
+        }
         py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => lower_constant(value, meta),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
             let target = lower_expr(value, ctx)?;
@@ -293,16 +344,10 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
 
 fn lower_call(
     func: &py_ast::Expr,
-    args: &[py_ast::Expr],
+    lowered_args: Vec<Expression>,
     _keywords: &[py_ast::Keyword],
-    ctx: &LowerCtx<'_>,
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
-    let lowered_args: Vec<Expression> = args
-        .iter()
-        .map(|a| lower_expr(a, ctx))
-        .collect::<Result<Vec<_>, _>>()?;
-
     let func_name = match func {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
@@ -421,5 +466,250 @@ fn name_from_expr(expr: &py_ast::Expr) -> anyhow::Result<String> {
     match expr {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => Ok(id.to_string()),
         _ => anyhow::bail!("expected identifier, got {:?}", expr),
+    }
+}
+
+// ── Comprehensions ──────────────────────────────────────────────────────────
+//
+// `crush-cast` has no comprehension-specific node (and doesn't need one —
+// see docs/design/python-lowering-coverage.md §3b: real Python compiles
+// these to an ordinary `for` loop + append, no comprehension-specific
+// bytecode exists anywhere). So a list/set comprehension desugars, right
+// here in the lowerer, to:
+//
+//     let __comp_N = []
+//     for <target> in <iter> {
+//         if <ifs[0]> { if <ifs[1]> { ... __comp_N.append(<elt>) ... } }
+//     }
+//
+// (nested `for`s for multiple `generators`, nested `if`s for multiple `ifs`
+// on one generator) and the comprehension *expression* evaluates to
+// `Var(__comp_N)`. `.append()` already works end-to-end — it's the exact
+// path `arr.append(x)` compiles through (crush-frontend/compiler.rs's
+// `Expression::Call` "obj.method(args)" split), proven by the existing
+// `test_list_ops` in sdk.rs.
+
+/// Lower `[elt for target in iter if cond ...]` / `{elt for ...}` (set — no
+/// native Set type in this VM, so it desugars identically to a list; callers
+/// lose Python's dedup-on-insert semantics, which is a known, accepted
+/// narrowing rather than a silent one).
+fn lower_list_or_set_comprehension(
+    elt: &py_ast::Expr,
+    generators: &[py_ast::Comprehension],
+    ctx: &LowerCtx<'_>,
+    meta: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<(Vec<Statement>, Expression)> {
+    if generators.is_empty() {
+        anyhow::bail!("comprehension with no `for` clause");
+    }
+    let tmp = fresh_comp_temp();
+    let init = Statement::VarDecl {
+        name: tmp.clone(),
+        value: Expression::ArrayLiteral {
+            elements: vec![],
+            meta: meta.clone(),
+        },
+        type_hint: CastType::Any,
+        meta: meta.clone(),
+    };
+    let elt_lowered = lower_expr(elt, ctx)?;
+    let push_stmt = Statement::ExprStmt {
+        expr: Expression::Call {
+            function: format!("{tmp}.append"),
+            args: vec![elt_lowered],
+            meta: meta.clone(),
+        },
+        meta: meta.clone(),
+    };
+    let loop_stmt = build_comprehension_loop(generators, 0, vec![push_stmt], ctx, &meta)?;
+    Ok((
+        vec![init, loop_stmt],
+        Expression::Var {
+            name: tmp,
+            meta,
+        },
+    ))
+}
+
+/// Recursively build the (possibly nested, for multiple `for` clauses)
+/// `for`/`if` chain that ends in `innermost` (the append statement).
+fn build_comprehension_loop(
+    generators: &[py_ast::Comprehension],
+    idx: usize,
+    innermost: Vec<Statement>,
+    ctx: &LowerCtx<'_>,
+    meta: &HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Statement> {
+    // `gen` is a reserved keyword as of the 2024 edition (reserved for a
+    // future generator-block feature) — this crate is `edition = "2024"`,
+    // so the obvious variable name doesn't compile. Named `generator` instead.
+    let generator = &generators[idx];
+    if generator.is_async {
+        anyhow::bail!("async comprehensions (`async for` inside a comprehension) not yet supported");
+    }
+    let var = match &generator.target {
+        py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
+        _ => anyhow::bail!(
+            "comprehension target must be a simple name — tuple-unpacking targets \
+             (`for k, v in items`) not yet supported"
+        ),
+    };
+    let iterable = lower_expr(&generator.iter, ctx)?;
+    let mut body = if idx + 1 < generators.len() {
+        vec![build_comprehension_loop(generators, idx + 1, innermost, ctx, meta)?]
+    } else {
+        innermost
+    };
+    for cond in generator.ifs.iter().rev() {
+        let c = lower_expr(cond, ctx)?;
+        body = vec![Statement::If {
+            condition: c,
+            then_body: body,
+            else_body: None,
+            meta: meta.clone(),
+        }];
+    }
+    Ok(Statement::For {
+        variable: var,
+        iterable: Box::new(iterable),
+        body,
+        meta: meta.clone(),
+    })
+}
+
+/// Lower an expression that might itself be a comprehension, or contain one
+/// as a call argument. Comprehensions need to run a loop *before* they
+/// produce a value — something a plain `lower_expr(...) -> Expression` has
+/// no way to express, since CAST has no block-expression/IIFE construct
+/// (unlike `NamedExpr`'s `__crush_assign__` trick, a single value swap can't
+/// cover "run N statements, then use a value").
+///
+/// This is the "smuggle statements into expression position" mechanism:
+/// it returns the statements that must run *before* the expression they're
+/// paired with, and callers (`lower_stmt.rs`'s Assign/Expr/Return arms) are
+/// responsible for splicing them back into the statement stream — via a
+/// `Statement::If(true) { hoisted..., actual }` block, since that's an
+/// existing CAST primitive that already compiles and runs (Crush's VM has
+/// no lexical block scoping, so this only groups statements — it doesn't
+/// need to be a *scope*).
+///
+/// Recurses through `Call` arguments so comprehensions nested arbitrarily
+/// deep inside call arguments still hoist (`foo(bar([x for x in y]))`).
+/// Everything else falls back to plain `lower_expr`, so a comprehension
+/// nested inside a binary op, an `if` condition, or another comprehension's
+/// own `elt`/`iter` still bails loud there — deliberately: see the
+/// `ListComp`/`SetComp` bail message in `lower_expr` above.
+pub(crate) fn lower_expr_hoist(
+    expr: &py_ast::Expr,
+    ctx: &LowerCtx<'_>,
+) -> anyhow::Result<(Vec<Statement>, Expression)> {
+    let offset = u32::from(expr.start()) as usize;
+    let meta = ctx.meta_at(offset);
+    match expr {
+        py_ast::Expr::ListComp(py_ast::ExprListComp { elt, generators, .. }) => {
+            lower_list_or_set_comprehension(elt, generators, ctx, meta)
+        }
+        py_ast::Expr::SetComp(py_ast::ExprSetComp { elt, generators, .. }) => {
+            lower_list_or_set_comprehension(elt, generators, ctx, meta)
+        }
+        py_ast::Expr::Call(py_ast::ExprCall {
+            func,
+            args,
+            keywords,
+            ..
+        }) => {
+            let mut hoisted = Vec::new();
+            let mut lowered_args = Vec::new();
+            for a in args {
+                let (h, e) = lower_expr_hoist(a, ctx)?;
+                hoisted.extend(h);
+                lowered_args.push(e);
+            }
+            let call_expr = lower_call(func, lowered_args, keywords, meta)?;
+            Ok((hoisted, call_expr))
+        }
+        _ => Ok((Vec::new(), lower_expr(expr, ctx)?)),
+    }
+}
+
+#[cfg(test)]
+mod comprehension_lowering_tests {
+    use super::*;
+
+    fn ctx() -> LowerCtx<'static> {
+        LowerCtx::new("", "<test>", "python")
+    }
+
+    #[test]
+    fn list_comp_desugars_to_init_plus_for_loop() {
+        let src = "[i * i for i in range(5)]";
+        let expr = crate::parser::parse_expression(src).unwrap();
+        let c = ctx();
+        let (hoisted, result) = lower_expr_hoist(&expr, &c).expect("comprehension should lower");
+
+        assert_eq!(hoisted.len(), 2, "expected [init, for-loop], got {hoisted:?}");
+        match &hoisted[0] {
+            Statement::VarDecl { value: Expression::ArrayLiteral { elements, .. }, .. } => {
+                assert!(elements.is_empty());
+            }
+            other => panic!("expected VarDecl(empty array) init, got {other:?}"),
+        }
+        match &hoisted[1] {
+            Statement::For { variable, body, .. } => {
+                assert_eq!(variable, "i");
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    Statement::ExprStmt { expr: Expression::Call { function, args, .. }, .. } => {
+                        assert!(function.ends_with(".append"));
+                        assert_eq!(args.len(), 1);
+                    }
+                    other => panic!("expected append call, got {other:?}"),
+                }
+            }
+            other => panic!("expected For loop, got {other:?}"),
+        }
+        match result {
+            Expression::Var { name, .. } => assert!(name.starts_with("__comp_")),
+            other => panic!("expected comprehension to evaluate to the temp var, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_comp_with_if_clause_wraps_append_in_if() {
+        let src = "[i for i in range(10) if i % 2 == 0]";
+        let expr = crate::parser::parse_expression(src).unwrap();
+        let c = ctx();
+        let (hoisted, _) = lower_expr_hoist(&expr, &c).expect("comprehension should lower");
+        match &hoisted[1] {
+            Statement::For { body, .. } => match &body[0] {
+                Statement::If { then_body, else_body, .. } => {
+                    assert!(else_body.is_none());
+                    assert_eq!(then_body.len(), 1);
+                }
+                other => panic!("expected `if` wrapping the append, got {other:?}"),
+            },
+            other => panic!("expected For loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dict_comp_bails_loud_with_vm_gap_explanation() {
+        let src = "{k: k for k in range(3)}";
+        let expr = crate::parser::parse_expression(src).unwrap();
+        let c = ctx();
+        let err = lower_expr(&expr, &c).unwrap_err();
+        assert!(
+            err.to_string().contains("dynamic-key"),
+            "expected the dict-comp bail to explain the SET_FIELD gap, got: {err}"
+        );
+    }
+
+    #[test]
+    fn generator_expression_bails_loud() {
+        let src = "(i for i in range(3))";
+        let expr = crate::parser::parse_expression(src).unwrap();
+        let c = ctx();
+        let err = lower_expr(&expr, &c).unwrap_err();
+        assert!(err.to_string().contains("generator"));
     }
 }
