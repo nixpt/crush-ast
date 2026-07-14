@@ -64,6 +64,11 @@ pub enum VmError {
         expected: usize,
         got: usize,
     },
+    /// A capability call (currently: an `EXEC_LANG` polyglot subprocess)
+    /// exceeded `Quotas::max_wall_time_ms` and was killed. Named after the
+    /// cap so a hang is diagnosable, not a silent freeze.
+    #[error("'{cap}' exceeded its {limit_ms}ms wall-clock quota and was killed")]
+    CapTimeout { cap: String, limit_ms: u64 },
 }
 
 /// Stack value — the types the CVM1 supports.
@@ -556,6 +561,23 @@ pub struct Quotas {
     pub max_call_depth: usize,
     /// If set, further restricts the program's declared permissions.
     pub allowed_caps: Option<Vec<String>>,
+    /// Wall-clock bound (milliseconds) for a single `EXEC_LANG` polyglot
+    /// subprocess. `max_steps` bounds *instructions*, not real time — a
+    /// capability that blocks on I/O (a hung `python3 -c`, a slow network
+    /// call in a future capability) never executes another instruction to
+    /// trip that quota, so it was previously unbounded. See
+    /// `scheduler::run_with_wall_clock_limit` for the enforcement.
+    ///
+    /// Only covers `EXEC_LANG` today, not `CAP_CALL`'s generic
+    /// `HostCap::call()` dispatch — `Value`'s `Rc<RefCell<...>>` fields
+    /// aren't `Send`, so an arbitrary `HostCap::call()` can't safely be
+    /// preempted from another thread without a much larger refactor
+    /// (`Value` would need to become `Send`). A `HostCap` implementation
+    /// that does its own I/O (subprocess, network) must self-enforce a
+    /// bound; the VM can't do it on the implementation's behalf. `EXEC_LANG`
+    /// can be bounded because it owns a killable OS process, not an
+    /// opaque trait call.
+    pub max_wall_time_ms: u64,
 }
 
 impl Default for Quotas {
@@ -566,6 +588,7 @@ impl Default for Quotas {
             max_output: 1 << 20,
             max_call_depth: 256,
             allowed_caps: None,
+            max_wall_time_ms: 30_000,
         }
     }
 }

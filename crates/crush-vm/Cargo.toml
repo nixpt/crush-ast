@@ -36,4 +36,13 @@ parking_lot = "0.12.5"
 libloading = "0.9.0"
 crush-ffi = { version = "0.2.0", path = "../crush-ffi" }
 
+# `EXEC_LANG`'s wall-clock timeout must kill a polyglot subprocess's whole
+# process GROUP, not just the single tracked PID: `bash -c "sleep 30"`
+# forks `sleep` as bash's own child, which inherits bash's stdout/stderr
+# pipe fds — killing bash alone leaves `sleep` running and still holding
+# those fds open, so the pipe never sees EOF. `std::process::Command` has
+# no "kill the process group" primitive, only single-PID `Child::kill()`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]

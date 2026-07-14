@@ -566,6 +566,36 @@ mod tests {
         );
     }
 
+    // A hung/slow polyglot subprocess must be killed at
+    // `Quotas::max_wall_time_ms`, not allowed to block the interpreter
+    // indefinitely — `max_steps` never trips for a process blocked on I/O,
+    // since it isn't executing crush instructions while it hangs. The real
+    // proof isn't just the error variant; it's that this test finishes in
+    // well under the process's 30s sleep, showing the subprocess was
+    // actually killed rather than eventually finishing on its own.
+    #[test]
+    fn test_exec_lang_wall_clock_timeout_kills_hung_subprocess() {
+        let source = "fn main() {\n    @bash {\n        sleep 30\n    }\n}\n";
+        let prog = compile_crush_source(source).expect("compile bash polyglot block");
+        let quotas = crush_vm::Quotas {
+            max_wall_time_ms: 200,
+            ..Default::default()
+        };
+        let start = std::time::Instant::now();
+        let err = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect_err("a hung subprocess must be killed, not silently allowed to keep running");
+        let elapsed = start.elapsed();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("wall-clock quota") && msg.contains("killed") && msg.contains("polyglot.bash"),
+            "error should name the capability and say it was killed, got: {msg}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "the 30s sleep must be KILLED at the 200ms quota, not waited out — took {elapsed:?}"
+        );
+    }
+
     // End-to-end: a Crush local flows into a `@python` block (input
     // marshaling) and the block's own bound name flows back out (output
     // marshaling), entirely via the AST free-variable analysis — no

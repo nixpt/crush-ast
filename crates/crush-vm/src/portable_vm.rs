@@ -1079,8 +1079,23 @@ impl PortableVm {
                 for (name, val) in var_names.iter().zip(var_values.iter()) {
                     cmd.env(name, value_to_text(val));
                 }
-                let output = cmd.output()
-                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
+                // Same wall-clock bound as scheduler.rs — see
+                // `run_with_wall_clock_limit`'s doc comment for why this
+                // covers EXEC_LANG specifically and not CAP_CALL generically.
+                let output = match crate::scheduler::run_with_wall_clock_limit(
+                    cmd,
+                    self.quotas.max_wall_time_ms,
+                )
+                .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?
+                {
+                    crate::scheduler::CommandOutcome::Output(output) => output,
+                    crate::scheduler::CommandOutcome::TimedOut => {
+                        return Err(VmError::CapTimeout {
+                            cap: gate,
+                            limit_ms: self.quotas.max_wall_time_ms,
+                        });
+                    }
+                };
                 if output.status.success() {
                     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     self.out_len += s.len();
