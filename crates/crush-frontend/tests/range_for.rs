@@ -83,9 +83,23 @@ fn field_assignment_parses() {
 
 #[test]
 fn nested_field_assignment_parses() {
+    // Parses and compiles. It does NOT run yet: the VM rejects nested field access with
+    // "Cannot access field 'v' on non-struct type any" — a separate, deeper VM gap.
     assert!(compiles(
         "struct I { v } struct O { i } fn main() { let o = new O(); o.i.v = 5; }"
     ));
+}
+
+#[test]
+fn new_struct_instantiation_works() {
+    assert!(compiles("struct P { x } fn main() { let p = new P(); p.x = 1; }"));
+}
+
+#[test]
+fn new_with_constructor_args_fails_loudly() {
+    // Expression::NewStruct carries NO args, so accepting `new P(10)` would SILENTLY DROP the
+    // 10. Reject it instead — the one thing we never do here is swallow an argument.
+    assert!(!compiles("struct P { x } fn main() { let p = new P(10); }"));
 }
 
 #[test]
@@ -97,4 +111,39 @@ fn plain_assignment_still_parses() {
 #[test]
 fn bare_yield_parses() {
     assert!(compiles("fn main() { print(\"a\"); yield; print(\"b\"); }"));
+}
+
+// ── top-level statements must not clobber an explicit `fn main` ──────────────────────────
+//
+// The parser built a synthetic `main` from top-level statements and `insert`ed it — silently
+// overwriting the user's explicit `fn main`. Any top-level statement did it. The program then
+// compiled to nothing and exited 0 with NO output and NO error.
+
+#[test]
+fn struct_decl_does_not_discard_main() {
+    let p = crush_frontend::parse_source("struct P { x }\nfn main() { print(\"hi\"); }").unwrap();
+    let main = p.functions.get("main").expect("main must survive");
+    // 2 = the StructDef (module-init) + the print. If main were clobbered, only the StructDef.
+    assert_eq!(main.body.len(), 2, "explicit main body was discarded");
+}
+
+#[test]
+fn top_level_let_does_not_discard_main() {
+    let p = crush_frontend::parse_source("let z = 1;\nfn main() { print(\"hi\"); }").unwrap();
+    assert_eq!(p.functions.get("main").unwrap().body.len(), 2);
+}
+
+#[test]
+fn top_level_statements_run_before_main() {
+    // Ordering matters: top-level code is module-init and must come first.
+    let p = crush_frontend::parse_source("let z = 1;\nfn main() { print(\"hi\"); }").unwrap();
+    let body = &p.functions.get("main").unwrap().body;
+    assert!(matches!(body[0], crush_cast::Statement::VarDecl { .. }), "top-level must run first");
+}
+
+#[test]
+fn script_style_still_works() {
+    // Regression: no explicit main — top-level statements BECOME main.
+    let p = crush_frontend::parse_source("print(\"hi\");").unwrap();
+    assert!(p.functions.contains_key("main"));
 }

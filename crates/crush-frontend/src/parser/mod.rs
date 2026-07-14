@@ -128,6 +128,7 @@ impl Parser {
             Token::Await(loc) => (loc.line, loc.col),
             Token::Spawn(loc) => (loc.line, loc.col),
             Token::Yield(loc) => (loc.line, loc.col),
+            Token::New(loc) => (loc.line, loc.col),
             Token::Export(loc) => (loc.line, loc.col),
             Token::Lang(loc) => (loc.line, loc.col),
             Token::Import(loc) => (loc.line, loc.col),
@@ -468,15 +469,40 @@ impl Parser {
             }
         }
 
-        // Create main function from top-level statements
+        // Create main function from top-level statements.
+        //
+        // Crush supports BOTH script style (bare top-level statements) and `fn main`. When a
+        // file has both, this used to `insert("main", ...)` unconditionally — which SILENTLY
+        // CLOBBERED the user's explicit `fn main`. The program then compiled to nothing and
+        // exited 0 with no output:
+        //
+        //     struct P { x }
+        //     fn main() { print("hi") }     // exit 0, steps=2, printed NOTHING
+        //
+        // It looked like "structs are broken", but any top-level statement did it — a `let`, a
+        // bare `print`. It is why struct programs have never run.
+        //
+        // Merge instead of clobber: top-level statements run first (they are module-init:
+        // struct decls, constants, setup), then the explicit `main` body. Nothing is discarded.
         if !statements.is_empty() {
-            let main_func = Function {
-                params: Vec::new(),
-                body: statements,
-                meta: HashMap::new(),
-                ..Default::default()
-            };
-            functions.insert("main".to_string(), main_func);
+            match functions.get_mut("main") {
+                Some(existing) => {
+                    let mut merged = statements;
+                    merged.append(&mut existing.body);
+                    existing.body = merged;
+                }
+                None => {
+                    functions.insert(
+                        "main".to_string(),
+                        Function {
+                            params: Vec::new(),
+                            body: statements,
+                            meta: HashMap::new(),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
 
         // Build module manifest from accumulated @module / @invariant / @exhaustive-match-sites
@@ -1302,6 +1328,52 @@ impl Parser {
     /// Parse primary expression
     fn parse_primary(&mut self) -> Result<Expression, ()> {
         match self.peek() {
+            // `new Point()` — struct instantiation. Expression::NewStruct is in the CAST and
+            // compiler.rs emits `new_struct` for it; the lexer did not even have a `new` keyword,
+            // so `new P()` lexed as the identifier "new" and died with "Undefined variable: new".
+            // Structs were unusable: you could declare one and never instantiate it.
+            Token::New(_) => {
+                self.advance();
+                let name = match self.peek() {
+                    Token::Ident(n, _) => {
+                        let n = n.clone();
+                        self.advance();
+                        n
+                    }
+                    _ => {
+                        let (line, col) = self.get_location(self.peek());
+                        self.errors.push(ParseError::Expected {
+                            line,
+                            col,
+                            expected: "struct name after `new`".to_string(),
+                            found: format!("{:?}", self.peek()),
+                        });
+                        return Err(());
+                    }
+                };
+                // `new P()` — the parens are accepted but Expression::NewStruct carries no args,
+                // so a constructor argument would be SILENTLY DROPPED. Reject it loudly instead.
+                if matches!(self.peek(), Token::LParen(_)) {
+                    self.advance();
+                    if !matches!(self.peek(), Token::RParen(_)) {
+                        let (line, col) = self.get_location(self.peek());
+                        self.errors.push(ParseError::UnexpectedToken {
+                            line,
+                            col,
+                            msg: format!(
+                                "`new {name}(...)` does not take constructor arguments; \
+                                 build it with `new {name}()` and assign fields individually"
+                            ),
+                        });
+                        return Err(());
+                    }
+                    self.advance();
+                }
+                Ok(Expression::NewStruct {
+                    name,
+                    meta: HashMap::new(),
+                })
+            }
             // `async` is a CONTEXTUAL keyword. The lexer emits Token::Async for it
             // unconditionally, which made the `async.*` capability namespace unreachable:
             // `await async.sleep(100)` died with "Unexpected token in expression: Async"
