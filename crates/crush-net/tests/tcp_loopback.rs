@@ -17,7 +17,7 @@ use std::{
     time::Duration,
 };
 
-use mesh_proto::MeshRequest;
+use crush_net::mesh_request::MeshRequest;
 use serde_json::json;
 
 #[test]
@@ -41,7 +41,7 @@ fn tcp_loopback_with_mesh_request_tlv() {
             let mut buf = vec![0u8; 8192];
             let n = stream.read(&mut buf).unwrap_or(0);
             buf.truncate(n);
-            let (req, _consumed): (mesh_proto::MeshRequest, usize) =
+            let (req, _consumed): (crush_net::mesh_request::MeshRequest, usize) =
                 crush_net::decode_request(&buf).expect("decode");
             decoded_tx.send(req).ok();
         }

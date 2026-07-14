@@ -1,8 +1,8 @@
-//! Pure codec roundtrip test. Encodes a `mesh_proto::MeshRequest` into a TLV
+//! Pure codec roundtrip test. Encodes a `crush_net::mesh_request::MeshRequest` into a TLV
 //! byte buffer via `crush_net::encode_request`, decodes it back via
 //! `crush_net::decode_request`, and asserts structural equality end-to-end.
 
-use mesh_proto::MeshRequest;
+use crush_net::mesh_request::MeshRequest;
 use serde_json::json;
 
 #[test]

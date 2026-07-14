@@ -23,11 +23,6 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: exosphere
-      - run: mv exosphere ..
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -50,11 +45,6 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: exosphere
-      - run: mv exosphere ..
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -80,11 +70,6 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: exosphere
-      - run: mv exosphere ..
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -116,11 +101,6 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: exosphere
-      - run: mv exosphere ..
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -144,11 +124,6 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: exosphere
-      - run: mv exosphere ..
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -184,11 +159,6 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: exosphere
-      - run: mv exosphere ..
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
