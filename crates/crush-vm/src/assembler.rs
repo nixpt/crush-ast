@@ -528,8 +528,11 @@ fn strip_comment(line: &str) -> &str {
     let mut esc = false;
     for (i, &ch) in chars.iter().enumerate() {
         if in_str {
-            esc = if esc { false } else { ch == '\\' };
-            if !esc && ch == '"' {
+            if esc {
+                esc = false;
+            } else if ch == '\\' {
+                esc = true;
+            } else if ch == '"' {
                 in_str = false;
             }
             continue;

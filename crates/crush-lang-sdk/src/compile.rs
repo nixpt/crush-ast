@@ -357,4 +357,35 @@ mod tests {
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run throw/catch");
         assert_eq!(result.output, "caught");
     }
+
+    // Regression: a `@javascript { ... }` polyglot block used to fail at
+    // CASM assembly time (the source's `;` broke the assembler's comment
+    // stripper — see crush_vm::assembler tests) before ever reaching the
+    // language executor, and even once it parsed, EXEC_LANG ran `node -c`
+    // (syntax-check-only) instead of `node -e` (execute). Requires `node`
+    // on PATH.
+    #[test]
+    fn test_javascript_polyglot_block_executes() {
+        let source = "fn main() {\n    @javascript { const x = 1; }\n    io.print(\"js ok\")\n}\n";
+        let prog = compile_crush_source(source).expect("compile js polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run js polyglot block");
+        assert_eq!(result.output, "js ok");
+    }
+
+    // An `@<lang>` block for a language with no registered executor must
+    // fail loudly and name the language — never silently no-op.
+    #[test]
+    fn test_unregistered_polyglot_language_errors_loudly() {
+        let source = "fn main() {\n    @cobol { DISPLAY \"hi\". }\n}\n";
+        let prog = compile_crush_source(source).expect("compile unregistered-lang block");
+        let quotas = crush_vm::Quotas::default();
+        let err = crush_vm::run_with_caps(&prog, &quotas, None)
+            .expect_err("unregistered language must not silently succeed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no executor registered for language 'cobol'"),
+            "error should name the unregistered language, got: {msg}"
+        );
+    }
 }

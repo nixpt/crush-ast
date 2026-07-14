@@ -16,6 +16,23 @@ use crate::vm::{Frame, GreenThread, Quotas, Value, VmError, VmResult};
 
 const SLICE_SIZE: usize = 50;
 
+/// Map an `@<lang>` polyglot block tag to the interpreter binary and the
+/// flag it uses to execute a code string (this is NOT uniform across
+/// languages — e.g. Node's `-c` means "check syntax only", not "execute";
+/// `-e` is Node's equivalent of Python's `-c`). Returns `None` for
+/// languages with no registered executor — callers must surface that as a
+/// loud error, never a silent no-op (an unknown/misspelled language should
+/// fail the same way whether or not one happens to exist on PATH under its
+/// bare tag name).
+fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static str)> {
+    match lang {
+        "python" | "python3" | "py" => Some(("python3", "-c")),
+        "javascript" | "js" | "es6" | "ecmascript" | "node" => Some(("node", "-e")),
+        "bash" | "sh" => Some(("bash", "-c")),
+        _ => None,
+    }
+}
+
 /// Actions a green thread can request from the scheduler.
 pub(crate) enum StepAction {
     /// Normal execution: ip advanced to next_ip.
@@ -653,8 +670,11 @@ fn execute_one(
                 }
             }
             var_values.reverse();
-            let mut cmd = std::process::Command::new(lang);
-            cmd.arg("-c").arg(code_str);
+            let (binary, exec_flag) = resolve_lang_binary(lang).ok_or_else(|| {
+                VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
+            })?;
+            let mut cmd = std::process::Command::new(binary);
+            cmd.arg(exec_flag).arg(code_str);
             for (name, val) in var_names.iter().zip(var_values.iter()) {
                 cmd.env(name, val.as_text());
             }
