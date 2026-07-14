@@ -49,7 +49,7 @@ impl HostCaps {
     /// Enforcer) funnel through it. Off by default — polyglot is not ambient.
     pub fn grant_polyglot(&mut self, langs: &[&str]) -> &mut Self {
         for &lang in langs {
-            self.register(Box::new(PolyglotGate { lang: lang.to_string() }));
+            self.register(polyglot_gate(lang));
         }
         self
     }
@@ -82,6 +82,14 @@ impl std::fmt::Debug for HostCaps {
             .field("caps", &self.handlers.keys().collect::<Vec<_>>())
             .finish()
     }
+}
+
+/// Construct a single polyglot gate handler for one canonical language ("python"/"javascript"/
+/// "bash"). This is the seam higher layers plug into: exo-light's `Enforcer::derive` turns a
+/// `Named("polyglot.<lang>")` capability from a CapabilitySet into `polyglot_gate("<lang>")` and
+/// pushes it, so a capsule's declared polyglot grant becomes a live gate with no crush-vm change.
+pub fn polyglot_gate(lang: &str) -> Box<dyn HostCap> {
+    Box::new(PolyglotGate { lang: lang.to_string() })
 }
 
 /// Presence-only capability gate for `@<lang>` polyglot blocks. exec_lang checks
