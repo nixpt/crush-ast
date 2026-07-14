@@ -102,6 +102,10 @@ pub const MATH_ROUND: u8 = 0xA3;
 pub const MATH_FLOOR: u8 = 0xA4;
 pub const MATH_CEIL: u8 = 0xA5;
 
+pub const VEC_ADD: u8 = 0xA6;
+pub const VEC_DOT: u8 = 0xA7;
+pub const MAT_MUL: u8 = 0xA8;
+
 pub const STR_STARTS_WITH: u8 = 0xB0;
 pub const STR_ENDS_WITH: u8 = 0xB1;
 pub const STR_TO_UPPER: u8 = 0xB2;
@@ -155,7 +159,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
         EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => Some(OperandKind::Str),
-        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
+        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
         NEW_ARRAY => Some(OperandKind::Count),
         _ => None,

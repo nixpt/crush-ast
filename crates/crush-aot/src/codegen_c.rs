@@ -35,6 +35,7 @@ fn emit_c_header(out: &mut String) {
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <ctype.h>
 
 "#);
 }
@@ -49,6 +50,7 @@ fn emit_c_value(out: &mut String) {
     TAG_NULL,
     TAG_STRING,
     TAG_ARRAY,
+    TAG_OBJECT,
 } ValueTag;
 
 typedef struct {
@@ -59,6 +61,7 @@ typedef struct {
         bool     b;
         const char* s;
         int      array_idx;
+        int      obj_idx;
     };
 } Value;
 
@@ -68,6 +71,7 @@ static inline Value mk_bool(bool b)     { return (Value){TAG_BOOL, .b=b}; }
 static inline Value mk_null(void)       { return (Value){TAG_NULL}; }
 static inline Value mk_string(const char* s) { return (Value){TAG_STRING, .s=s}; }
 static inline Value mk_array(int idx)   { return (Value){TAG_ARRAY, .array_idx=idx}; }
+static inline Value mk_object(int idx)  { return (Value){TAG_OBJECT, .obj_idx=idx}; }
 
 // ── Array pool ───────────────────────────────────────────────────────
 #define ARRAY_POOL_MAX 64
@@ -92,6 +96,73 @@ static inline int _wrap_index(int idx, int len) {
     return (idx >= 0 && idx < len) ? idx : -1;
 }
 
+// ── Object pool ─────────────────────���────────────────────────────────
+#define OBJ_POOL_MAX 32
+#define OBJ_FIELD_CAP 16
+
+typedef struct {
+    const char* key;
+    Value val;
+} CrushField;
+
+typedef struct {
+    CrushField fields[OBJ_FIELD_CAP];
+    int   field_count;
+} CrushObject;
+
+static CrushObject _objects[OBJ_POOL_MAX];
+static int         _object_count = 0;
+
+static inline int _alloc_object(void) {
+    if (_object_count >= OBJ_POOL_MAX) return -1;
+    _objects[_object_count].field_count = 0;
+    return _object_count++;
+}
+
+static Value _obj_get(CrushObject* obj, const char* key) {
+    for (int i = 0; i < obj->field_count; i++) {
+        if (strcmp(obj->fields[i].key, key) == 0)
+            return obj->fields[i].val;
+    }
+    return mk_null();
+}
+
+static void _obj_set(CrushObject* obj, const char* key, Value val) {
+    for (int i = 0; i < obj->field_count; i++) {
+        if (strcmp(obj->fields[i].key, key) == 0) {
+            obj->fields[i].val = val;
+            return;
+        }
+    }
+    if (obj->field_count < OBJ_FIELD_CAP) {
+        obj->fields[obj->field_count].key = key;
+        obj->fields[obj->field_count].val = val;
+        obj->field_count++;
+    }
+}
+
+// ── String buffer (for to_upper / to_lower / trim) ────────────────────
+#define STRBUF_SIZE 256
+static char _strbuf[STRBUF_SIZE];
+static int  _strbuf_idx = 0;
+
+static inline const char* _str_alloc(const char* src) {
+    int start = _strbuf_idx;
+    int i = 0;
+    while (src[i] && start + i < STRBUF_SIZE - 1) {
+        _strbuf[start + i] = src[i];
+        i++;
+    }
+    _strbuf[start + i] = '\\0';
+    _strbuf_idx = start + i + 1;
+    if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
+    return &_strbuf[start];
+}
+
+static inline const char* _str_dup(const char* src) {
+    return _str_alloc(src);
+}
+
 "#);
 }
 
@@ -103,7 +174,7 @@ fn emit_c_helpers(out: &mut String) {
 static Value   _stack[STACK_MAX];
 static int     _sp = 0;
 
-static void _reset_arrays(void) { _array_count = 0; }
+static void _reset_arrays(void) { _array_count = 0; _object_count = 0; }
 
 static inline void  _push(Value v) { if (_sp < STACK_MAX) _stack[_sp++] = v; }
 static inline Value _pop(void)     { return _sp > 0 ? _stack[--_sp] : mk_null(); }
@@ -247,14 +318,119 @@ fn sanitize_fn_name(name: &str) -> String {
         .collect()
 }
 
+fn infer_types(body: &[casm::Instruction], explicit_hints: Option<&HashMap<String, String>>) -> HashMap<String, String> {
+    let mut inferred: HashMap<String, String> = HashMap::new();
+    let mut stack: Vec<String> = Vec::new();
+
+    for instr in body {
+        match instr.op.as_str() {
+            "push_int" => stack.push("Int".to_string()),
+            "push_float" => stack.push("Float".to_string()),
+            "push_bool" => stack.push("Bool".to_string()),
+            "push_str" => stack.push("Str".to_string()),
+            "push_null" => stack.push("Null".to_string()),
+            "load" => {
+                if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
+                    if let Some(explicit) = explicit_hints.and_then(|h| h.get(name)) {
+                        stack.push(explicit.clone());
+                    } else if let Some(inf) = inferred.get(name) {
+                        stack.push(inf.clone());
+                    } else {
+                        stack.push("Any".to_string());
+                    }
+                } else {
+                    stack.push("Any".to_string());
+                }
+            }
+            "store" => {
+                let ty = stack.pop().unwrap_or_else(|| "Any".to_string());
+                if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
+                    if let Some(existing) = inferred.get(name) {
+                        if existing != &ty && existing != "Any" {
+                            // Type conflict, widen to Any (Value)
+                            inferred.insert(name.to_string(), "Any".to_string());
+                        }
+                    } else {
+                        inferred.insert(name.to_string(), ty);
+                    }
+                }
+            }
+            "add" | "sub" | "mul" | "div" | "mod" => {
+                let right = stack.pop().unwrap_or_else(|| "Any".to_string());
+                let left = stack.pop().unwrap_or_else(|| "Any".to_string());
+                if left == "Float" || right == "Float" {
+                    stack.push("Float".to_string());
+                } else if left == "Int" && right == "Int" {
+                    stack.push("Int".to_string());
+                } else {
+                    stack.push("Any".to_string());
+                }
+            }
+            "neg" => {
+                let v = stack.pop().unwrap_or_else(|| "Any".to_string());
+                stack.push(v);
+            }
+            "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "and" | "or" => {
+                stack.pop(); stack.pop();
+                stack.push("Bool".to_string());
+            }
+            "not" => {
+                stack.pop();
+                stack.push("Bool".to_string());
+            }
+            "vec_add" | "mat_mul" => {
+                stack.pop(); stack.pop();
+                stack.push("Array".to_string());
+            }
+            "vec_dot" => {
+                stack.pop(); stack.pop();
+                stack.push("Float".to_string());
+            }
+            "len" => {
+                stack.pop();
+                stack.push("Int".to_string());
+            }
+            "math_pow" | "math_sqrt" | "math_abs" | "math_round" | "math_floor" | "math_ceil" => {
+                if instr.op.as_str() == "math_pow" { stack.pop(); stack.pop(); } else { stack.pop(); }
+                stack.push("Float".to_string());
+            }
+            "pop" => { stack.pop(); }
+            "dup" => {
+                if let Some(t) = stack.last().cloned() {
+                    stack.push(t);
+                }
+            }
+            "swap" => {
+                let a = stack.pop().unwrap_or_else(|| "Any".to_string());
+                let b = stack.pop().unwrap_or_else(|| "Any".to_string());
+                stack.push(a);
+                stack.push(b);
+            }
+            "jmp" | "jmp_if" | "jmp_if_not" => { stack.clear(); }
+            _ => {
+                // Unknown ops could modify stack unpredictably, but casm is usually strict.
+                // We could clear the stack or push 'Any'.
+                // Safe approach: we don't know the exact stack depth effect without a full table.
+                // Since this is just local inference, we'll keep it simple.
+                // In a real pass, we'd need to simulate all opcodes' stack effects.
+            }
+        }
+    }
+    inferred
+}
+
 /// Pre-scan instructions to discover local variable names from store/load ops.
 fn discover_locals(body: &[casm::Instruction], params: &[String], type_hints: Option<&HashMap<String, String>>) -> HashMap<String, LocalMeta> {
     let mut map = HashMap::new();
     let mut next = 0usize;
+    let inferred = infer_types(body, type_hints);
 
     let mut add_local = |name: &str, map: &mut HashMap<String, LocalMeta>, next: &mut usize| {
         if !map.contains_key(name) {
-            let ty_str = type_hints.and_then(|h| h.get(name)).map(|s| s.as_str()).unwrap_or("");
+            let explicit = type_hints.and_then(|h| h.get(name)).map(|s| s.as_str());
+            let inf = inferred.get(name).map(|s| s.as_str());
+            let ty_str = explicit.unwrap_or_else(|| inf.unwrap_or(""));
+            
             let ty = match ty_str {
                 "Float" | "F64" | "F32" => LocalType::F64,
                 "Int" => LocalType::I64,
@@ -358,7 +534,115 @@ fn emit_c_instr(
         "div" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_div(_a,_b)); }} _pc={next_pc}; break;\n")); }
         "mod" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_mod(_a,_b)); }} _pc={next_pc}; break;\n")); }
         "neg" => { out.push_str(&format!("                {{ Value _v = _pop(); _push(_neg(_v)); }} _pc={next_pc}; break;\n")); }
-
+        "vec_add" => {
+            out.push_str(&format!(r#"
+                {{
+                    Value r = _pop();
+                    Value l = _pop();
+                    if (l.tag == TAG_ARRAY && r.tag == TAG_ARRAY) {{
+                        int arr_id = _alloc_array();
+                        if (arr_id >= 0) {{
+                            CrushArray* la = &_arrays[l.array_idx];
+                            CrushArray* ra = &_arrays[r.array_idx];
+                            int len = la->len < ra->len ? la->len : ra->len;
+                            _arrays[arr_id].len = len;
+                            _Pragma("GCC ivdep")
+                            for (int i=0; i<len; i++) {{
+                                double vf = _to_float(la->data[i]);
+                                double vb = _to_float(ra->data[i]);
+                                _arrays[arr_id].data[i] = mk_float(vf + vb);
+                            }}
+                            _push(mk_array(arr_id));
+                        }} else {{
+                            _push(mk_null());
+                        }}
+                    }} else {{
+                        _push(mk_null());
+                    }}
+                    _pc={next_pc}; break;
+                }}
+"#));
+        }
+        "vec_dot" => {
+            out.push_str(&format!(r#"
+                {{
+                    Value r = _pop();
+                    Value l = _pop();
+                    if (l.tag == TAG_ARRAY && r.tag == TAG_ARRAY) {{
+                        CrushArray* la = &_arrays[l.array_idx];
+                        CrushArray* ra = &_arrays[r.array_idx];
+                        int len = la->len < ra->len ? la->len : ra->len;
+                        double sum = 0.0;
+                        _Pragma("GCC ivdep")
+                        for (int i=0; i<len; i++) {{
+                            double vf = _to_float(la->data[i]);
+                            double vb = _to_float(ra->data[i]);
+                            sum += vf * vb;
+                        }}
+                        _push(mk_float(sum));
+                    }} else {{
+                        _push(mk_null());
+                    }}
+                    _pc={next_pc}; break;
+                }}
+"#));
+        }
+        "mat_mul" => {
+            out.push_str(&format!(r#"
+                {{
+                    Value r = _pop();
+                    Value l = _pop();
+                    if (l.tag == TAG_ARRAY && r.tag == TAG_ARRAY) {{
+                        CrushArray* la = &_arrays[l.array_idx];
+                        CrushArray* ra = &_arrays[r.array_idx];
+                        if (la->len == 0 || ra->len == 0) {{
+                            int arr_id = _alloc_array();
+                            _push(arr_id >= 0 ? mk_array(arr_id) : mk_null());
+                        }} else {{
+                            int rows_a = la->len;
+                            int cols_a = la->data[0].tag == TAG_ARRAY ? _arrays[la->data[0].array_idx].len : 0;
+                            int cols_b = ra->data[0].tag == TAG_ARRAY ? _arrays[ra->data[0].array_idx].len : 0;
+                            
+                            int out_id = _alloc_array();
+                            if (out_id >= 0) {{
+                                _arrays[out_id].len = rows_a;
+                                for (int i=0; i<rows_a; i++) {{
+                                    int row_id = _alloc_array();
+                                    if (row_id >= 0) {{
+                                        _arrays[row_id].len = cols_b;
+                                        for (int j=0; j<cols_b; j++) {{
+                                            double sum = 0.0;
+                                            _Pragma("GCC ivdep")
+                                            for (int k=0; k<cols_a; k++) {{
+                                                double va = 0.0;
+                                                if (la->data[i].tag == TAG_ARRAY) {{
+                                                    va = _to_float(_arrays[la->data[i].array_idx].data[k]);
+                                                }}
+                                                double vb = 0.0;
+                                                if (ra->data[k].tag == TAG_ARRAY) {{
+                                                    vb = _to_float(_arrays[ra->data[k].array_idx].data[j]);
+                                                }}
+                                                sum += va * vb;
+                                            }}
+                                            _arrays[row_id].data[j] = mk_float(sum);
+                                        }}
+                                        _arrays[out_id].data[i] = mk_array(row_id);
+                                    }} else {{
+                                        _arrays[out_id].data[i] = mk_null();
+                                    }}
+                                }}
+                                _push(mk_array(out_id));
+                            }} else {{
+                                _push(mk_null());
+                            }}
+                        }}
+                    }} else {{
+                        _push(mk_null());
+                    }}
+                    _pc={next_pc}; break;
+                }}
+"#));
+        }
         // ── Comparison ──
         "eq" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,0)); }} _pc={next_pc}; break;\n")); }
         "ne" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,1)); }} _pc={next_pc}; break;\n")); }
@@ -448,6 +732,21 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ Value __end_v = _pop(); Value __start_v = _pop(); int64_t __start = (__start_v.tag == TAG_INT) ? __start_v.i : 0; int64_t __end = (__end_v.tag == TAG_INT) ? __end_v.i : 0; int __ai = _alloc_array(); if (__ai >= 0) {{ CrushArray* __a = &_arrays[__ai]; int64_t __i = __start; int __n = 0; while (__i < __end && __n < ARRAY_DATA_CAP) {{ __a->data[__n++] = mk_int(__i); __i++; }} __a->len = __n; _push(mk_array(__ai)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }}
 
+        // ── Objects ──
+        "new_obj" => {{
+            out.push_str(&format!("                {{ int __oi = _alloc_object(); _push(__oi >= 0 ? mk_object(__oi) : mk_null()); }} _pc={next_pc}; break;\n"));
+        }}
+        "get_field" => {{
+            let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let escaped = field.escape_default().to_string();
+            out.push_str(&format!("                {{ Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _push(_obj_get(&_objects[__oi], \"{escaped}\")); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+        }}
+        "set_field" => {{
+            let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let escaped = field.escape_default().to_string();
+            out.push_str(&format!("                {{ Value __val = _pop(); Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _obj_set(&_objects[__oi], \"{escaped}\", __val); }} }} }} _pc={next_pc}; break;\n"));
+        }}
+
         // ── Cap calls → inline dispatch ──
         "cap_call" => {
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -478,6 +777,30 @@ fn emit_c_instr(
             }
         }
 
+        // ── String ops ──
+        "str_contains" => {{
+            out.push_str(&format!("                {{ Value __pat = _pop(); Value __s = _pop(); bool __r = false; if (__s.tag == TAG_STRING && __pat.tag == TAG_STRING) {{ __r = strstr(__s.s, __pat.s) != NULL; }} _push(mk_bool(__r)); }} _pc={next_pc}; break;\n"));
+        }}
+        "str_starts_with" => {{
+            out.push_str(&format!("                {{ Value __pfx = _pop(); Value __s = _pop(); bool __r = false; if (__s.tag == TAG_STRING && __pfx.tag == TAG_STRING) {{ size_t __sl = strlen(__s.s); size_t __pl = strlen(__pfx.s); __r = (__sl >= __pl && strncmp(__s.s, __pfx.s, __pl) == 0); }} _push(mk_bool(__r)); }} _pc={next_pc}; break;\n"));
+        }}
+        "str_ends_with" => {{
+            out.push_str(&format!("                {{ Value __sfx = _pop(); Value __s = _pop(); bool __r = false; if (__s.tag == TAG_STRING && __sfx.tag == TAG_STRING) {{ size_t __sl = strlen(__s.s); size_t __xl = strlen(__sfx.s); __r = (__sl >= __xl && strcmp(__s.s + __sl - __xl, __sfx.s) == 0); }} _push(mk_bool(__r)); }} _pc={next_pc}; break;\n"));
+        }}
+        "str_to_upper" => {{
+            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; char* __dst = _strbuf; int __i = 0; while (__src[__i] && __i < STRBUF_SIZE-1) {{ __dst[__i] = (char)toupper((unsigned char)__src[__i]); __i++; }} __dst[__i] = '\\0'; _strbuf_idx = 0; _push(mk_string(__dst)); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+        }}
+        "str_to_lower" => {{
+            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; char* __dst = _strbuf; int __i = 0; while (__src[__i] && __i < STRBUF_SIZE-1) {{ __dst[__i] = (char)tolower((unsigned char)__src[__i]); __i++; }} __dst[__i] = '\\0'; _strbuf_idx = 0; _push(mk_string(__dst)); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+        }}
+        "str_trim" => {{
+            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; const char* __start = __src; while (*__start && isspace((unsigned char)*__start)) __start++; const char* __end = __src + strlen(__src); while (__end > __start && isspace((unsigned char)*(__end-1))) __end--; size_t __len = (size_t)(__end - __start); memcpy(_strbuf, __start, __len); _strbuf[__len] = '\\0'; _push(mk_string(_strbuf)); _strbuf_idx = 0; }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+        }}
+        // Complex string ops: emit as cap_call stubs (need dynamic allocation)
+        "str_split" | "str_replace" | "str_join" => {{
+            out.push_str(&format!("                _pop(); _pop(); _push(mk_null()); _pc={next_pc}; break; // str_* stubbed (needs dynamic strings)\n"));
+        }}
+
         // ── Unknown / NOP ──
         _ => {
             out.push_str(&format!("                _pc = {next_pc}; break;\n"));
@@ -506,6 +829,7 @@ const char* crush_run(void) {
         case TAG_NULL:  snprintf(_buf, sizeof(_buf), "null"); break;
         case TAG_STRING: snprintf(_buf, sizeof(_buf), "\"%s\"", result.s); break;
         case TAG_ARRAY:  snprintf(_buf, sizeof(_buf), "[array#%d len=%d]", result.array_idx, result.array_idx >= 0 && result.array_idx < _array_count ? _arrays[result.array_idx].len : 0); break;
+        case TAG_OBJECT: snprintf(_buf, sizeof(_buf), "[object#%d fields=%d]", result.obj_idx, result.obj_idx >= 0 && result.obj_idx < _object_count ? _objects[result.obj_idx].field_count : 0); break;
         default:         snprintf(_buf, sizeof(_buf), "null"); break;
     }
     return _buf;

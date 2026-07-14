@@ -1518,6 +1518,12 @@ impl Compiler {
                     }
                 }
             }
+            Expression::VectorMath { operator, args, meta } => {
+                for arg in args {
+                    self.compile_expr(arg, instrs)?;
+                }
+                instrs.push(self.create_instr(operator, serde_json::json!({}), meta));
+            }
             Expression::CapabilityCall { name, args, meta } => {
                 if name == "len" {
                     if args.len() != 1 {

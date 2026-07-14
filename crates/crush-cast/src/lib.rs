@@ -294,6 +294,12 @@ pub enum Expression {
         args: Vec<Expression>,
         meta: HashMap<String, serde_json::Value>,
     },
+    VectorMath {
+        operator: String,
+        args: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     Pipeline {
         segments: Vec<Expression>,
         #[serde(default)]

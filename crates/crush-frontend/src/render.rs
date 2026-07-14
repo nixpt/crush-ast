@@ -827,6 +827,9 @@ impl Renderer {
                 self.write_indent();
                 self.render_ai_expression(ai_expr);
             }
+            Expression::VectorMath { .. } => {
+                self.push_str("# VECTOR-MATH: not rendered");
+            }
         }
 
         if needs_parens {
@@ -1284,7 +1287,8 @@ fn expr_precedence(expr: &Expression) -> u8 {
         Expression::Lambda { .. }
         | Expression::Match { .. }
         | Expression::Pipeline { .. }
-        | Expression::AI { .. } => 5,
+        | Expression::AI { .. }
+        | Expression::VectorMath { .. } => 5,
     }
 }
 

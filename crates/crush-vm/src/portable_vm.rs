@@ -496,6 +496,86 @@ impl PortableVm {
                 };
                 self.push(Value::Float(res));
             }
+            VEC_ADD => {
+                let right = self.pop()?;
+                let left = self.pop()?;
+                if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                    let a_ref = a.borrow();
+                    let b_ref = b.borrow();
+                    let len = a_ref.len().min(b_ref.len());
+                    let mut res = Vec::with_capacity(len);
+                    for i in 0..len {
+                        let va = to_f64_p(&a_ref[i]);
+                        let vb = to_f64_p(&b_ref[i]);
+                        res.push(Value::Float(va + vb));
+                    }
+                    self.push(Value::new_array(res));
+                } else {
+                    return Err(VmError::TypeError {
+                        expected: "array",
+                        got: "non-array in VEC_ADD".into(),
+                    });
+                }
+            }
+            VEC_DOT => {
+                let right = self.pop()?;
+                let left = self.pop()?;
+                if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                    let a_ref = a.borrow();
+                    let b_ref = b.borrow();
+                    let len = a_ref.len().min(b_ref.len());
+                    let mut sum = 0.0;
+                    for i in 0..len {
+                        let va = to_f64_p(&a_ref[i]);
+                        let vb = to_f64_p(&b_ref[i]);
+                        sum += va * vb;
+                    }
+                    self.push(Value::Float(sum));
+                } else {
+                    return Err(VmError::TypeError {
+                        expected: "array",
+                        got: "non-array in VEC_DOT".into(),
+                    });
+                }
+            }
+            MAT_MUL => {
+                // Naive Matrix Multiply assuming arrays of arrays (List[List[float]])
+                let right = self.pop()?;
+                let left = self.pop()?;
+                if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                    let a_ref = a.borrow();
+                    let b_ref = b.borrow();
+                    let mut res = Vec::new();
+                    // Just fallback to returning null if shape is bad for now
+                    if a_ref.is_empty() || b_ref.is_empty() {
+                        self.push(Value::new_array(vec![]));
+                    } else {
+                        let rows_a = a_ref.len();
+                        let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
+                        let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
+                        
+                        for i in 0..rows_a {
+                            let mut row_res = Vec::new();
+                            for j in 0..cols_b {
+                                let mut sum = 0.0;
+                                for k in 0..cols_a {
+                                    let val_a = if let Value::Array(r) = &a_ref[i] { to_f64_p(&r.borrow()[k]) } else { 0.0 };
+                                    let val_b = if let Value::Array(r) = &b_ref[k] { to_f64_p(&r.borrow()[j]) } else { 0.0 };
+                                    sum += val_a * val_b;
+                                }
+                                row_res.push(Value::Float(sum));
+                            }
+                            res.push(Value::new_array(row_res));
+                        }
+                        self.push(Value::new_array(res));
+                    }
+                } else {
+                    return Err(VmError::TypeError {
+                        expected: "array",
+                        got: "non-array in MAT_MUL".into(),
+                    });
+                }
+            }
             EQ | NE => {
                 let b = self.pop()?;
                 let a = self.pop()?;

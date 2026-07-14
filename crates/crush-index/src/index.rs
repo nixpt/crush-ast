@@ -478,6 +478,7 @@ fn collect_calls_in_expr(
         | Expression::Var { .. }
         | Expression::Yield { .. }
         | Expression::NewStruct { .. }
-        | Expression::AI(_) => {}
+        | Expression::AI(_)
+        | Expression::VectorMath { .. } => {}
     }
 }

@@ -40,6 +40,7 @@ pub enum RuntimeValue {
     Null,
     String(String),
     Array(std::rc::Rc<std::cell::RefCell<Vec<RuntimeValue>>>),
+    Object(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, RuntimeValue>>>),
 }
 
 impl std::fmt::Display for RuntimeValue {
@@ -59,6 +60,15 @@ impl std::fmt::Display for RuntimeValue {
                 }}
                 write!(f, "]")
             }}
+            RuntimeValue::Object(obj) => {{
+                let o = obj.borrow();
+                write!(f, "{{")?;
+                for (i, (k, v)) in o.iter().enumerate() {{
+                    if i > 0 {{ write!(f, ", ")?; }}
+                    write!(f, "{}: {}", k, v)?;
+                }}
+                write!(f, "}}")
+            }}
         }
     }
 }
@@ -72,6 +82,7 @@ impl PartialEq for RuntimeValue {
             (RuntimeValue::Null, RuntimeValue::Null) => true,
             (RuntimeValue::String(a), RuntimeValue::String(b)) => a == b,
             (RuntimeValue::Array(a), RuntimeValue::Array(b)) => *a.borrow() == *b.borrow(),
+            (RuntimeValue::Object(a), RuntimeValue::Object(b)) => *a.borrow() == *b.borrow(),
             _ => false,
         }
     }
@@ -379,6 +390,22 @@ fn emit_body(
         }}
         "make_range" => {{
             out.push_str(&format!("{ind}{{ let __end = stack.pop().unwrap_or(RuntimeValue::Null); let __start = stack.pop().unwrap_or(RuntimeValue::Null); let __s = if let RuntimeValue::Int(i) = &__start {{ *i }} else {{ 0 }}; let __e = if let RuntimeValue::Int(i) = &__end {{ *i }} else {{ 0 }}; let __r: Vec<RuntimeValue> = (__s..__e).map(RuntimeValue::Int).collect(); stack.push(RuntimeValue::Array(Rc::new(RefCell::new(__r)))); }}\n"));
+            out.push_str(&next_pc_str);
+        }}
+
+        // ── Objects ──
+        "new_obj" => {{
+            out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::Object(Rc::new(RefCell::new(HashMap::new())))); }}\n"));
+            out.push_str(&next_pc_str);
+        }}
+        "get_field" => {{
+            let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            out.push_str(&format!("{ind}{{ let __obj = stack.pop(); let __v = if let Some(RuntimeValue::Object(ref o)) = __obj {{ o.borrow().get(\"{field}\").cloned().unwrap_or(RuntimeValue::Null) }} else {{ RuntimeValue::Null }}; stack.push(__v); }}\n"));
+            out.push_str(&next_pc_str);
+        }}
+        "set_field" => {{
+            let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __obj = stack.pop(); if let Some(RuntimeValue::Object(ref o)) = __obj {{ o.borrow_mut().insert(\"{field}\".to_string(), __val); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
 

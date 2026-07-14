@@ -3,6 +3,8 @@ use crush_cast::{self as ast, CastType, Expression, Statement};
 use serde_json::json;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
+
+pub mod sdk;
 use walker_core::{BaseWalker, Walker};
 
 pub struct CWalker {
@@ -332,37 +334,50 @@ impl<'a> Visitor<'a> {
 
                 // Collect cases from body
                 let mut cases: Vec<(Option<Expression>, Vec<Statement>)> = Vec::new();
-                let mut current_case_expr: Option<Expression> = None;
-                let mut current_stmts: Vec<Statement> = Vec::new();
 
                 for child in body_node.children(&mut body_node.walk()) {
                     match child.kind() {
                         "case_statement" => {
-                            // Flush previous case
-                            if current_case_expr.is_some() || !current_stmts.is_empty() {
-                                cases.push((current_case_expr.take(), std::mem::take(&mut current_stmts)));
+                            let mut case_body = Vec::new();
+                            let val_node = child.child_by_field_name("value");
+                            let case_val = if let Some(vn) = val_node {
+                                Some(self.visit_expression(vn)?)
+                            } else {
+                                None
+                            };
+                            for case_child in child.children(&mut child.walk()) {
+                                if case_child.kind() != "case"
+                                    && case_child.kind() != "value"
+                                    && case_child.kind() != ":"
+                                {
+                                    if let Ok(stmts) = self.visit_statement(case_child) {
+                                        case_body.extend(stmts);
+                                    }
+                                }
                             }
-                            if let Some(val_node) = child.child_by_field_name("value") {
-                                current_case_expr = Some(self.visit_expression(val_node)?);
-                            }
+                            // Filter out break/continue — they belong to the switch, not a loop
+                            case_body.retain(|s| {
+                                !matches!(s, Statement::Break { .. } | Statement::Continue { .. })
+                            });
+                            cases.push((case_val, case_body));
                         }
                         "default_statement" => {
-                            // Flush previous case
-                            if current_case_expr.is_some() || !current_stmts.is_empty() {
-                                cases.push((current_case_expr.take(), std::mem::take(&mut current_stmts)));
+                            let mut case_body = Vec::new();
+                            for case_child in child.children(&mut child.walk()) {
+                                if case_child.kind() != "default" && case_child.kind() != ":" {
+                                    if let Ok(stmts) = self.visit_statement(case_child) {
+                                        case_body.extend(stmts);
+                                    }
+                                }
                             }
-                            current_case_expr = None; // default has no value
+                            case_body.retain(|s| {
+                                !matches!(s, Statement::Break { .. } | Statement::Continue { .. })
+                            });
+                            cases.push((None, case_body));
                         }
                         "{" | "}" => {} // skip braces
-                        _ => {
-                            let stmts = self.visit_statement(child)?;
-                            current_stmts.extend(stmts);
-                        }
+                        _ => {} // ignore other nodes inside switch body
                     }
-                }
-                // Flush last case
-                if current_case_expr.is_some() || !current_stmts.is_empty() {
-                    cases.push((current_case_expr, current_stmts));
                 }
 
                 if cases.is_empty() {

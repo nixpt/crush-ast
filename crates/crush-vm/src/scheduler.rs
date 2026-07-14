@@ -360,6 +360,74 @@ fn execute_one(
             };
             push!(Value::Float(res));
         }
+        VEC_ADD => {
+            let right = pop!();
+            let left = pop!();
+            if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
+                let len = a_ref.len().min(b_ref.len());
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    res.push(Value::Float(va + vb));
+                }
+                push!(Value::new_array(res));
+            } else {
+                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+            }
+        }
+        VEC_DOT => {
+            let right = pop!();
+            let left = pop!();
+            if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
+                let len = a_ref.len().min(b_ref.len());
+                let mut sum = 0.0;
+                for i in 0..len {
+                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    sum += va * vb;
+                }
+                push!(Value::Float(sum));
+            } else {
+                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+            }
+        }
+        MAT_MUL => {
+            let right = pop!();
+            let left = pop!();
+            if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
+                let mut res = Vec::new();
+                if a_ref.is_empty() || b_ref.is_empty() {
+                    push!(Value::new_array(vec![]));
+                } else {
+                    let rows_a = a_ref.len();
+                    let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
+                    let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
+                    for i in 0..rows_a {
+                        let mut row_res = Vec::new();
+                        for j in 0..cols_b {
+                            let mut sum = 0.0;
+                            for k in 0..cols_a {
+                                let va = if let Value::Array(r) = &a_ref[i] { match &r.borrow()[k] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
+                                let vb = if let Value::Array(r) = &b_ref[k] { match &r.borrow()[j] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
+                                sum += va * vb;
+                            }
+                            row_res.push(Value::Float(sum));
+                        }
+                        res.push(Value::new_array(row_res));
+                    }
+                    push!(Value::new_array(res));
+                }
+            } else {
+                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+            }
+        }
         AND | OR => {
             let b = pop!();
             let a = pop!();
