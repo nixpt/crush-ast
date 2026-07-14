@@ -121,3 +121,21 @@ BUT it IS a workspace member that builds and ships two binaries (crush-aotc, cru
 so a user CAN invoke it and get silently different semantics.
 THIS IS THE BUGARIUM FLAGSHIP TARGET: differential replay across all 5 backends over the corpus;
 any divergence = a silent miscompile. Related: crush-jit's catch-all pushing TAG_NULL.  _(unknown, 2026-07-14)_
+- [ ] **issue** — CRITICAL / SECURITY: polyglot blocks TOTALLY BYPASS the capability system — the entire premise of the language.
+Crush is capability-based: code gets exactly the authority granted (--fs, --net, --process) and nothing more.
+But @python/@bash/@javascript blocks spawn full interpreters (python3 -c / bash -c / node -e) via
+scheduler.rs resolve_lang_binary, with the crush-run PROCESS's full ambient authority and NO capability check.
+PROVEN: `@bash { touch /tmp/crush_escape_probe }` run with ZERO grants (no --fs, no --process) WROTE THE FILE.
+`@bash { echo PROOF }` executes shell with zero caps. @python { import os; os.system(...) } is arbitrary code exec.
+The website example.crush I just committed literally advertises "Held: io, str, math. Not fs. Not net.
+There is no ambient authority to escape from." — while a @bash block one screen up can rm -rf anything the
+user can. The demo's central security claim is false the moment any polyglot block runs.
+FOUND BY khukuri MCP (SAST): it flagged scheduler.rs:698 Command::new. resolve_lang_binary IS a fixed
+allowlist so the BINARY is not injectable (that part is fine) — but the allowlist INCLUDES bash, and none of
+the spawns are gated behind a capability grant. khukuri found the site; the capability-bypass is the real bug.
+FIX DIRECTION: @lang execution must require an explicit capability (e.g. a `polyglot` or per-language grant,
+like --fs/--net), and ideally run the child under the same sandbox the caps model implies. Until then, the
+polyglot feature and the capability pitch are mutually contradictory. This gates any honest crushlang.org launch
+that sells capabilities as the headline. Related: the whole point of cece's CRUSHAST-POLYGLOT-1 work now needs a
+security story before it ships.  _(unknown, 2026-07-14)_
+- [ ] **opportunity** — khukuri replay machine CORRECTION (captain's tip: 'ported out of exosphere, mostly a replay machine' — TRUE, with nuance). (1) The replay engine SURVIVED extraction: standalone khukuri still has src/core/{replay,hash,engine}.rs, exposed via the MCP 'verify' verb. My earlier 'the MCP isn't the replay machine' was WRONG — I only used the analyze/SAST verb. (2) BUT it is AUDIT-LOG replay, not execution replay: replay.rs (10 lines) folds canonical_hash(prev,event,seed) over a stream of actor/action/resource/payload Events for tamper-detection/provenance. verify_transition predicts the next hash. It does NOT re-execute a program and diff VM state. Zero divergence detection in core. (3) WHAT WAS DROPPED: adapters/crush.rs — 15KB in exosphere-1.0.zip, a real TargetAdapter (spawn/request_snapshot/eval/control a crush program). GONE from standalone (only in_process + benchmark stub remain). Same extraction-loss pattern as crush polyglot/@io.print. (4) THIS SHRINKS the differential-replay work: the archived CrushAdapter's request_snapshot already captures {stdout,stderr,exit_code,compiled,return_value} — enough to catch every divergence found this session (1/0=diff exit; a+b=diff stdout). canonical_hash already exists. Harness = restore adapters/crush.rs from the archive + add a backend selector + run corpus x5 backends + hash-compare. Result-level catches the known divergences + struct-clobber. Per-instruction is a later refinement.  _(unknown, 2026-07-14)_
