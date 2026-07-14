@@ -1,0 +1,67 @@
+// q6k_dequant_kernel.crush — CPU kernel for Q6_K dequantization
+//
+// Companion to examples/gpu/q6k_gemv.crush.
+// This version runs on the CPU and exercises the crush-aotc fast paths:
+//
+//   Pathway 1  —  typed `double` scalar loop, no boxing
+//   Pathway 2  —  type inference: `scale`, `d`, `q_float` are all double
+//   Pathway 3  —  when compiled with aotc --simd, the kernel emitter
+//                 emits an AVX2 `_mm256_fmadd_pd` loop for the scale step.
+//
+// The dequantization formula for a single Q6_K element is:
+//
+//     float16 scale_f16   = scales[block]
+//     uint8   q6          = (ql[i] | (qh[i] << 4)) & 0x3F  // 6-bit quant
+//     int8    q_centered  = q6 - 32                         // center
+//     float   out         = scale_f16 * d * q_centered
+//
+// For this CPU kernel we abstract away the bit-unpack (which needs pointer
+// arithmetic) and just model the *scalar multiply-accumulate* hot inner loop:
+//
+//     fn q6k_scale_element(q_float, scale, d) {
+//         return q_float * scale * d
+//     }
+//
+// This is the "element kernel" that crush-aotc can vectorise with AVX2.
+
+@module {
+    @description "Q6_K dequantization kernel — CPU AOT path"
+    @kernel
+}
+
+// Element kernel: one Q6_K element → one fp64 activation value.
+// crush-aotc detects the pattern (load * const * const) and emits AVX2 fmadd.
+fn q6k_scale(q_float) {
+    let scale = 0.125     // example block scale (f16 expanded to f64)
+    let d     = 1.0       // super-block delta
+    return q_float * scale * d
+}
+
+// Dot-product accumulator over a block of 16 elements.
+// crush-aotc emits this as a plain scalar loop with int64_t `i` and `j`
+// (Pathway 1: inference sees push_int → store i, so `i` becomes int64_t).
+fn q6k_block_dot(block_sum) {
+    let acc = 0.0
+    let i   = 0
+    while i < 16 {
+        // In a real kernel `q_float` comes from a pointer argument;
+        // here we synthesise a constant pattern to exercise the loop path.
+        let q   = 1.0          // placeholder — real code loads from buffer
+        let acc = acc + q6k_scale(q)
+        let i   = i + 1
+    }
+    return acc
+}
+
+// Top-level entry point — runs a mini benchmark of 1024 elements.
+fn main() {
+    let n   = 1024
+    let sum = 0.0
+    let i   = 0
+    while i < n {
+        let sum = sum + q6k_scale(1.0)
+        let i   = i + 1
+    }
+    io.print("q6k_dequant sum:")
+    io.print(sum)
+}

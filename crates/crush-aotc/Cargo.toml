@@ -1,0 +1,19 @@
+[package]
+name = "crush-aotc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Crush AOT compiler: CASM → C source → shared library (.so)"
+
+[dependencies]
+casm = { path = "../casm" }
+crush-frontend = { path = "../crush-frontend" }
+anyhow = "1.0"
+tempfile = "3"
+
+[dev-dependencies]
+crush-frontend = { path = "../crush-frontend" }
+serde_json = "1.0"
