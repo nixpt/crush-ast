@@ -940,37 +940,59 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         Expr::Assign(AssignExpr {
             op, left, right, ..
         }) => {
-            let name = assign_target_to_name(left);
             let right = lower_expr(right, ctx)?;
             let value = match op {
                 AssignOp::Assign => right,
-                _ => Expression::BinaryOp {
-                    operator: match op {
-                        AssignOp::AddAssign => "+",
-                        AssignOp::SubAssign => "-",
-                        AssignOp::MulAssign => "*",
-                        AssignOp::DivAssign => "/",
-                        AssignOp::ModAssign => "%",
-                        AssignOp::LShiftAssign => "<<",
-                        AssignOp::RShiftAssign => ">>",
-                        AssignOp::BitOrAssign => "|",
-                        AssignOp::BitXorAssign => "^",
-                        AssignOp::BitAndAssign => "&",
-                        AssignOp::ExpAssign => "**",
-                        AssignOp::AndAssign => "&&",
-                        AssignOp::OrAssign => "||",
-                        AssignOp::NullishAssign => "??",
-                        _ => "=",
-                    }
-                    .to_string(),
-                    left: Box::new(Expression::Var {
-                        name: name.clone(),
+                _ => {
+                    // Compound assignment on subscript target:
+                    // arr[i] += val → arr[i] = arr[i] + val
+                    let name = assign_target_to_name(left);
+                    Expression::BinaryOp {
+                        operator: match op {
+                            AssignOp::AddAssign => "+",
+                            AssignOp::SubAssign => "-",
+                            AssignOp::MulAssign => "*",
+                            AssignOp::DivAssign => "/",
+                            AssignOp::ModAssign => "%",
+                            AssignOp::LShiftAssign => "<<",
+                            AssignOp::RShiftAssign => ">>",
+                            AssignOp::BitOrAssign => "|",
+                            AssignOp::BitXorAssign => "^",
+                            AssignOp::BitAndAssign => "&",
+                            AssignOp::ExpAssign => "**",
+                            AssignOp::AndAssign => "&&",
+                            AssignOp::OrAssign => "||",
+                            AssignOp::NullishAssign => "??",
+                            _ => "=",
+                        }
+                        .to_string(),
+                        left: Box::new(Expression::Var {
+                            name: name.clone(),
+                            meta: m.clone(),
+                        }),
+                        right: Box::new(right),
                         meta: m.clone(),
-                    }),
-                    right: Box::new(right),
-                    meta: m.clone(),
-                },
+                    }
+                }
             };
+
+            // Detect subscript assignment: arr[i] = val
+            let is_subscript = matches!(&**left, AssignTarget::Simple(SimpleAssignTarget::Member(m)) if matches!(m.prop, MemberProp::Computed(_)));
+            if is_subscript {
+                if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &**left {
+                    if let MemberProp::Computed(computed) = &member.prop {
+                        let obj = lower_expr(&member.obj, ctx)?;
+                        let idx = lower_expr(&computed.expr, ctx)?;
+                        return Ok(Expression::Call {
+                            function: "__crush_setindex__".to_string(),
+                            args: vec![obj, idx, value],
+                            meta: m,
+                        });
+                    }
+                }
+            }
+
+            let name = assign_target_to_name(left);
             Ok(Expression::Call {
                 function: "__crush_assign__".to_string(),
                 args: vec![
