@@ -1,6 +1,6 @@
 [package]
 name         = "crush-debugger"
-version      = "0.2.0"
+version.workspace = true
 edition      = "2024"
 license      = "Apache-2.0 OR MIT"
 description  = "Interactive runtime debugger for Crush packages. Drives crush-vm with breakpoints/step/inspect and surfaces emit_post_dispatch_lint NDJSON findings live."

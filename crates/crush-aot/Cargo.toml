@@ -1,6 +1,6 @@
 [package]
 name = "crush-aot"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Ahead-of-Time compiler for Crush — transpiles CASM to native .so via rustc"
 license.workspace = true

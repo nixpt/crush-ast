@@ -1,6 +1,6 @@
 [package]
 name = "crush-macros"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Proc macros for embedding Crush code at compile time in Rust"
 license.workspace = true

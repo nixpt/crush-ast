@@ -2,7 +2,7 @@
 license.workspace = true
 description = "Dart walker — parses Dart source into CAST IR via tree-sitter-dart"
 name = "dart_walker"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 

@@ -1,6 +1,6 @@
 [package]
 name = "crush-python"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Python bindings for crush-cast — parse and validate CAST IR from Python"
 license.workspace = true

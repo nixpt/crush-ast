@@ -2,7 +2,7 @@
 license.workspace = true
 description = "C language walker — parses C source code into CAST IR"
 name = "crush-lang-c"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 [lib]

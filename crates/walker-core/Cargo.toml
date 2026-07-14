@@ -2,7 +2,7 @@
 license.workspace = true
 description = "Walker core — Walker trait, BaseWalker, and capability mappings"
 name = "walker-core"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 repository.workspace = true
 

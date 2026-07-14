@@ -1,6 +1,6 @@
 [package]
 name = "crush-installer"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Installer and uninstaller for the Crush language toolchain"
 license.workspace = true

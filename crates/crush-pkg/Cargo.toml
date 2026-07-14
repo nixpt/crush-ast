@@ -1,6 +1,6 @@
 [package]
 name = "crush-pkg"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 description = "Crush language package manager — cargo-like build tool for Crush programs"

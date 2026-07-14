@@ -1,6 +1,6 @@
 [package]
 name = "crush-lang-bash"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Bash/POSIX shell language support for Crush — native AST parser backed by brush-parser"
 license.workspace = true

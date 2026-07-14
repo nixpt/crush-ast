@@ -1,6 +1,6 @@
 [package]
 name = "crush-lang-rust"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Rust language support for Crush — parser + CAST lowering backed by syn"
 license.workspace = true

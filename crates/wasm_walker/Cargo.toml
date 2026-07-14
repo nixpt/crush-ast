@@ -2,7 +2,7 @@
 license.workspace = true
 description = "WebAssembly walker — parses Wasm modules into CAST IR"
 name = "wasm_walker"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 

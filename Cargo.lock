@@ -1355,6 +1355,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-walker"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "walker-core",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1462,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "dart_walker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1873,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "go_walker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4713,19 +4724,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "walker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "serde",
- "serde_json",
- "walker-core",
-]
-
-[[package]]
 name = "walker-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crush-cast",
@@ -4837,7 +4837,7 @@ dependencies = [
 
 [[package]]
 name = "wasm_walker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5462,7 +5462,7 @@ dependencies = [
 
 [[package]]
 name = "zig_walker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",

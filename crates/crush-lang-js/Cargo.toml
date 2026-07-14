@@ -1,6 +1,6 @@
 [package]
 name = "crush-lang-js"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "JavaScript/TypeScript language support for Crush — dual-backend JS/TS frontend (swc primary + boa optional)"
 license.workspace = true

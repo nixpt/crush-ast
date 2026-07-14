@@ -1,6 +1,6 @@
 [package]
 name = "crush-lang-nepali"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Nepali language support for Crush"
 license.workspace = true
