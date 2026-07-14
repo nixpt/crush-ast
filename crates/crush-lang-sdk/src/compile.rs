@@ -27,8 +27,90 @@ fn cap_returns_value(name: &str) -> bool {
 }
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
-    let casm_program = crush_frontend::compile_crush_source(source)?;
+    let mut program = crush_frontend::parse_source(source)?;
+    prepare_polyglot_blocks(&mut program);
+    let casm_program = crush_frontend::compile_cast(&program)?;
     casm_to_vm(&casm_program)
+}
+
+/// Fill in `Statement::LangBlock.variables` (inputs) and
+/// `meta["polyglot_output"]` (the single output var, per the current
+/// exec_lang protocol) for every `@python { ... }` block, via real
+/// free-variable analysis over the block's own AST — never a regex, never
+/// a blind "inject everything in scope". See
+/// `crush_lang_python::analyzer::free_variables`.
+///
+/// Other languages (no parser wired yet) are left alone: their blocks
+/// compile with no marshaling, the same behavior as before this pass
+/// existed — not a regression, just not-yet-implemented. A malformed
+/// Python block is left unmarshaled too rather than failing Crush
+/// compilation outright; the actual `python3` subprocess will raise its
+/// own loud syntax error at run time, which is still honest, just later.
+fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
+    for func in program.functions.values_mut() {
+        let mut known_locals: HashSet<String> =
+            func.params.iter().map(|(name, _)| name.clone()).collect();
+        prepare_stmts(&mut func.body, &mut known_locals);
+    }
+}
+
+fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet<String>) {
+    use crush_cast::Statement;
+    for stmt in stmts.iter_mut() {
+        match stmt {
+            Statement::VarDecl { name, .. }
+            | Statement::Assign { target: name, .. }
+            | Statement::Export { name, .. } => {
+                known_locals.insert(name.clone());
+            }
+            Statement::LangBlock {
+                lang,
+                code,
+                variables,
+                meta,
+                ..
+            } if lang == "python" => {
+                // The lexer captures the `{ ... }` body verbatim, including
+                // the leading/trailing whitespace around the braces. `python3`
+                // itself doesn't care, but rustpython-parser's `Suite::parse`
+                // treats a leading space on line 1 as an indentation error —
+                // trim only for analysis, the real `code` sent to the
+                // subprocess is untouched.
+                if let Ok(free_vars) = crush_lang_python::analyzer::free_variables(code.trim()) {
+                    *variables = free_vars
+                        .reads
+                        .into_iter()
+                        .filter(|name| known_locals.contains(name))
+                        .collect();
+                    if let Some(output_var) = free_vars.top_level_bound.last() {
+                        meta.insert(
+                            "polyglot_output".to_string(),
+                            serde_json::json!(output_var),
+                        );
+                        known_locals.insert(output_var.clone());
+                    }
+                }
+            }
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                prepare_stmts(then_body, known_locals);
+                if let Some(else_body) = else_body {
+                    prepare_stmts(else_body, known_locals);
+                }
+            }
+            Statement::While { body, .. } => prepare_stmts(body, known_locals),
+            Statement::For {
+                variable, body, ..
+            } => {
+                known_locals.insert(variable.clone());
+                prepare_stmts(body, known_locals);
+            }
+            _ => {}
+        }
+    }
 }
 
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
