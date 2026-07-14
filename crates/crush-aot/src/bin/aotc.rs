@@ -172,6 +172,23 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
     }
 }
 
+/// Load a CASM program from a source file, dispatching on extension.
+/// Supports: `.crush` (native), `.py`/.`pyw` (Python walker).
+fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<casm::Program> {
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("crush");
+    match ext {
+        "py" | "pyw" => {
+            let cast = crush_lang_python::python_to_cast(source)
+                .map_err(|e| anyhow::anyhow!("Python→CAST: {e}"))?;
+            let mut compiler = crush_frontend::compiler::Compiler::new();
+            compiler.compile(cast)
+                .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
+        }
+        _ => crush_frontend::compile_crush_source(source)
+            .map_err(|e| anyhow::anyhow!("Crush→CASM: {e}")),
+    }
+}
+
 // ── compile ─────────────────────────────────────────────────────────────────
 
 fn cmd_compile(args: &CompileArgs) -> anyhow::Result<()> {
@@ -185,10 +202,7 @@ fn cmd_compile(args: &CompileArgs) -> anyhow::Result<()> {
         eprintln!("crush-aotc: reading '{}' ({} bytes)", args.input.display(), source.len());
     }
 
-    let program = match crush_frontend::compile_crush_source(&source) {
-        Ok(p) => p,
-        Err(e) => { eprintln!("crush-aotc: compilation error: {e}"); return Err(e.into()); }
-    };
+    let program = load_casm_program(&source, &args.input)?;
 
     if args.verbose {
         eprintln!("crush-aotc: parsed OK ({} functions)", program.functions.len());
@@ -251,7 +265,7 @@ fn cmd_run(args: &RunArgs) -> anyhow::Result<()> {
         eprintln!("crush-aotc: compiling and running '{}'...", args.input.display());
     }
 
-    let program = crush_frontend::compile_crush_source(&source)?;
+    let program = load_casm_program(&source, &args.input)?;
     let compiler = crush_aot::AotCompiler::new().with_optimize(args.optimize);
 
     let so_path = match args.backend.as_str() {
@@ -301,7 +315,7 @@ fn cmd_bench(args: &BenchArgs) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", args.input.display()))?;
     let module_name = args.input.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
 
-    let program = crush_frontend::compile_crush_source(&source)?;
+    let program = load_casm_program(&source, &args.input)?;
     let compiler = crush_aot::AotCompiler::new().with_optimize(true);
 
     // ── Pre-compile AOT modules ──────────────────────────────────────

@@ -16,6 +16,13 @@ pub fn gen_c_source(program: &casm::Program) -> String {
     emit_c_value(&mut out);
     emit_c_helpers(&mut out);
 
+    // Forward declarations (needed because CASM functions may call each other)
+    for (name, _func) in &program.functions {
+        let fn_name = sanitize_fn_name(name);
+        out.push_str(&format!("static Value fn_{fn_name}(void);\n"));
+    }
+    out.push_str("\n");
+
     for (name, func) in &program.functions {
         emit_c_function(&mut out, name, func, program);
     }
@@ -153,7 +160,7 @@ static inline const char* _str_alloc(const char* src) {
         _strbuf[start + i] = src[i];
         i++;
     }
-    _strbuf[start + i] = '\\0';
+    _strbuf[start + i] = '\0';
     _strbuf_idx = start + i + 1;
     if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
     return &_strbuf[start];
@@ -432,8 +439,10 @@ fn discover_locals(body: &[casm::Instruction], params: &[String], type_hints: Op
             let ty_str = explicit.unwrap_or_else(|| inf.unwrap_or(""));
             
             let ty = match ty_str {
-                "Float" | "F64" | "F32" => LocalType::F64,
-                "Int" => LocalType::I64,
+                // TODO: type inference currently produces wrong results for array/varargs ops.
+                // Force Value type until inference handles all opcodes correctly.
+                // "Float" | "F64" | "F32" => LocalType::F64,
+                // "Int" => LocalType::I64,
                 _ => LocalType::Value,
             };
             let prefix = match ty {

@@ -80,6 +80,7 @@ fn main() -> anyhow::Result<()> {
         "str.concat",
         // C walker __crush_* capability calls
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
+        "__crush_slice__", "__crush_contains__", "__crush_is__", "__crush_ifexpr__",
     ] {
         host_caps.register(Box::new(WalkNop { name: name.to_string() }));
     }

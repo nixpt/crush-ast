@@ -144,26 +144,42 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             let left = lower_expr(left, ctx)?;
             let op = &ops[0];
             let right = lower_expr(&comparators[0], ctx)?;
-            let operator = match op {
-                py_ast::CmpOp::Eq => "==",
-                py_ast::CmpOp::NotEq => "!=",
-                py_ast::CmpOp::Lt => "<",
-                py_ast::CmpOp::LtE => "<=",
-                py_ast::CmpOp::Gt => ">",
-                py_ast::CmpOp::GtE => ">=",
-                py_ast::CmpOp::In | py_ast::CmpOp::NotIn => {
-                    anyhow::bail!("'in' operator not yet supported")
-                }
-                py_ast::CmpOp::Is | py_ast::CmpOp::IsNot => {
-                    anyhow::bail!("'is' operator not yet supported")
-                }
-            };
-            Ok(Expression::BinaryOp {
-                operator: operator.to_string(),
-                left: Box::new(left),
-                right: Box::new(right),
-                meta,
-            })
+            match op {
+                py_ast::CmpOp::Eq => Ok(Expression::BinaryOp { operator: "==".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::NotEq => Ok(Expression::BinaryOp { operator: "!=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::Lt => Ok(Expression::BinaryOp { operator: "<".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::LtE => Ok(Expression::BinaryOp { operator: "<=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::Gt => Ok(Expression::BinaryOp { operator: ">".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::GtE => Ok(Expression::BinaryOp { operator: ">=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::In => Ok(Expression::Call {
+                    function: "__crush_contains__".to_string(),
+                    args: vec![right, left],
+                    meta,
+                }),
+                py_ast::CmpOp::NotIn => Ok(Expression::UnaryOp {
+                    operator: "not".to_string(),
+                    operand: Box::new(Expression::Call {
+                        function: "__crush_contains__".to_string(),
+                        args: vec![right, left],
+                        meta: meta.clone(),
+                    }),
+                    meta,
+                }),
+                py_ast::CmpOp::Is => Ok(Expression::Call {
+                    function: "__crush_is__".to_string(),
+                    args: vec![left, right],
+                    meta,
+                }),
+                py_ast::CmpOp::IsNot => Ok(Expression::UnaryOp {
+                    operator: "not".to_string(),
+                    operand: Box::new(Expression::Call {
+                        function: "__crush_is__".to_string(),
+                        args: vec![left, right],
+                        meta: meta.clone(),
+                    }),
+                    meta,
+                }),
+            }
         }
         py_ast::Expr::Call(py_ast::ExprCall {
             func,
@@ -182,12 +198,33 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         }
         py_ast::Expr::Subscript(py_ast::ExprSubscript { value, slice, .. }) => {
             let target = lower_expr(value, ctx)?;
-            let index = lower_expr(slice, ctx)?;
-            Ok(Expression::Index {
-                target: Box::new(target),
-                index: Box::new(index),
-                meta,
-            })
+            // If the subscript is a slice (arr[0:2]), emit __crush_slice__
+            if let py_ast::Expr::Slice(py_ast::ExprSlice { lower, upper, step, .. }) = slice.as_ref() {
+                let start = match lower {
+                    Some(e) => lower_expr(e, ctx)?,
+                    None => Expression::NullLiteral { meta: meta.clone() },
+                };
+                let end = match upper {
+                    Some(e) => lower_expr(e, ctx)?,
+                    None => Expression::NullLiteral { meta: meta.clone() },
+                };
+                let st = match step {
+                    Some(e) => lower_expr(e, ctx)?,
+                    None => Expression::NullLiteral { meta: meta.clone() },
+                };
+                Ok(Expression::Call {
+                    function: "__crush_slice__".to_string(),
+                    args: vec![target, start, end, st],
+                    meta,
+                })
+            } else {
+                let index = lower_expr(slice, ctx)?;
+                Ok(Expression::Index {
+                    target: Box::new(target),
+                    index: Box::new(index),
+                    meta,
+                })
+            }
         }
         py_ast::Expr::Starred { .. } => anyhow::bail!("starred expressions not yet supported"),
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => Ok(Expression::Var {
@@ -208,7 +245,25 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
-        py_ast::Expr::Slice { .. } => anyhow::bail!("slice expressions not yet supported"),
+        py_ast::Expr::Slice(py_ast::ExprSlice { lower, upper, step, .. }) => {
+            let start = match lower {
+                Some(e) => lower_expr(e, ctx)?,
+                None => Expression::NullLiteral { meta: meta.clone() },
+            };
+            let end = match upper {
+                Some(e) => lower_expr(e, ctx)?,
+                None => Expression::NullLiteral { meta: meta.clone() },
+            };
+            let step = match step {
+                Some(e) => lower_expr(e, ctx)?,
+                None => Expression::NullLiteral { meta: meta.clone() },
+            };
+            Ok(Expression::Call {
+                function: "__crush_slice__".to_string(),
+                args: vec![start, end, step],
+                meta,
+            })
+        }
         py_ast::Expr::JoinedStr(py_ast::ExprJoinedStr { values, .. }) => {
             let mut parts: Vec<String> = Vec::new();
             for val in values {
