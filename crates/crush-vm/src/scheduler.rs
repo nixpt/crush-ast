@@ -31,7 +31,10 @@ pub const CRUSH_RESULT_SENTINEL: &str = "\u{0}CRUSH_RESULT\u{0}";
 /// loud error, never a silent no-op (an unknown/misspelled language should
 /// fail the same way whether or not one happens to exist on PATH under its
 /// bare tag name).
-fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static str)> {
+/// The @lang → (binary, exec-flag) allowlist. SHARED with portable_vm so the two backends can
+/// never drift on which languages run or how (found drifting by crush-diff: portable used the raw
+/// tag `javascript` with `-c`, scheduler mapped it to `node -e`).
+pub(crate) fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static str)> {
     match lang {
         "python" | "python3" | "py" => Some(("python3", "-c")),
         "javascript" | "js" | "es6" | "ecmascript" | "node" => Some(("node", "-e")),

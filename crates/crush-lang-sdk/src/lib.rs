@@ -31,6 +31,7 @@ pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
+pub mod differential;
 #[cfg(feature = "db")]
 pub mod db;
 #[cfg(any(feature = "db", feature = "stdlib"))]

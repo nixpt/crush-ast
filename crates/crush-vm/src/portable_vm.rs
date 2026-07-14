@@ -1058,8 +1058,14 @@ impl PortableVm {
                     }
                 }
                 var_values.reverse();
-                let mut cmd = std::process::Command::new(lang);
-                cmd.arg("-c").arg(code_str);
+                // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
+                // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
+                // named "javascript" with `-c`. An unknown language is a loud error, never a
+                // silent spawn attempt.
+                let (binary, exec_flag) = crate::scheduler::resolve_lang_binary(lang)
+                    .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
+                let mut cmd = std::process::Command::new(binary);
+                cmd.arg(exec_flag).arg(code_str);
                 for (name, val) in var_names.iter().zip(var_values.iter()) {
                     cmd.env(name, value_to_text(val));
                 }
