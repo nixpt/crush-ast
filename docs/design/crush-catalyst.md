@@ -17,31 +17,35 @@ grammar, lowers their code to a universal representation (CAST), and compiles
 it through the fastest backend available.
 
 ```
-        THE CRUSH PROMISE
+        THE CRUSH PROMISE: Write in your language. Run at C speed.
 
-┌──────────┐   ┌───────��──┐   ┌──────────┐   ┌──────────┐
+��──────────┐   ┌��─────────┐   ┌──────────┐   ┌──────────┐
 │  C dev   │   │ Python   │   │  JS dev  │   │  Go dev  │
 │  writes  │   │  dev     │   │  writes  │   │  writes  │
 │    C     │   │  writes  │   │    JS    │   │    Go    │
 │  syntax  │   │  Python  │   │  syntax  │   │  syntax  │
-└────┬────��┘   └────┬─────┘   └────┬─────┘   └────┬─────┘
+└─���──┬─────┘   └────┬─────┘   └────┬─────┘   └────┬───��─┘
      │               │               │               │
      ▼               ▼               ▼               ▼
 ┌─────────────────────────────────────────────────────────┐
 │                  CRUSH WALKERS                          │
 │  C Walker │ Python Walker │ JS Walker │ Go Walker │ ... │
 │                                                         │
-│  Each walker: same input language → same CAST IR        │
+│  Each walker: same input language -> same CAST IR       │
 └────────────────────────┬────────────────────────────────┘
                          │  CAST IR (universal)
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │                  CRUSH BACKENDS                          │
 │                                                         │
-│  CVM1 (dev loop) │ FastVM (prod) │ AOT C (gcc -flto)    │
+│  CVM1 (dev loop) | FastVM (prod) | AOT C (gcc -flto)    │
 │  ──────────────────────────────────────────────────     │
 │  ONE pipeline. Choose backend per deployment target.    │
-└─────────────────────────────────────────────────────────┘
+└───��─────────────────────────────────────────────────────┘
+
+       AND: programs in different languages merge into ONE binary.
+       No IPC. No serialization. fn_update() calling fn_predict()
+       is just a stack push and a PC jump.
 ```
 
 **The same loop, in four surface syntaxes:**
@@ -61,12 +65,7 @@ for i in range(N): sum += i
 for (let i = 0; i < N; i++) { sum += i; }
 ```
 
-```crush
-// The "native" crush syntax — optional, if you want it
-for i in 0..N { sum += i }
-```
-
-All four produce the identical CAST IR. All four get the same backends.
+All three produce the identical CAST IR. All three get the same backends.
 Alice keeps her semicolons. Max keeps his colons. Mallika keeps her braces.
 
 ---
@@ -113,7 +112,7 @@ $ gcc -o myapp myapp.c -L. -lkernel                        # link as usual
 ```bash
 $ crush-walk-run analytics.py            # dev: 24ms
 $ crush-aotc compile analytics.py --emit c -o libanalytics.so
-$ python3 -c "import ctypes; lib=ctypes.CDLL('libanalytics.so'); ..."  # prod: ~2ms
+$ python3 -c "import ctypes; lib=ctypes.CDLL('libanalytics.so'); ..."
 ```
 
 ### Nick — the Go & Shell Scripter
@@ -137,30 +136,81 @@ $ ./deploy                                # prod: native binary
 
 ### Mallika — the Game Engine Developer
 
-> "My Node.js physics engine hits 18ms per frame. I need 6ms. Rewriting in
-> C++ would take months and I'd lose the iteration speed of JS."
+> "My Node.js physics engine hits 18ms per frame. I need 6ms. But here's the
+> bigger problem: I also need to run a PyTorch model for NPC behavior
+> prediction. Right now I'm spawning a Python subprocess from Node — the IPC
+> overhead alone is 3ms per frame."
 
 **What Mallika already knows:** `function`, `var`/`let`, `for`, `if`,
-arrays, objects.
+arrays, objects — plus enough Python to write ML inference.
 
-**What Crush gives her:**
-- Hot paths stay in JS. The inner collision loop walks to CAST, compiles to
-  C via AOT.
-- NAPI wrapper exposes the `.so` to Node — same API, 3× faster.
-- GPU path (PTX backend, in design) maps the same JS loops to CUDA kernels
-  without changing her source.
+**What Crush gives her — speed + composition:**
+
+**1. Speed:** Hot paths stay in JS. The inner collision loop walks to CAST,
+compiles to C via AOT. 18ms -> 6ms.
+
+**2. Composition — the killer feature:** She writes the ML inference in
+Python syntax (`softmax`, `matmul`, the works). The Python walker produces
+CAST. The JS walker produces CAST. Crush merges both into ONE CASM program.
+
+```
+physics.js  --> JS walker --> CAST {fn update, fn collide}
+                                               |
+                                 Program::merge(functions)
+                                               |
+inference.py --> Py walker --> CAST {fn predict, fn softmax}
+                                               |
+                                               v
+                            crush-frontend::Compiler::compile()
+                                               |
+                                               v
+                                 CASM (single program)
+                                               |
+                                         AOT C backend
+                                               |
+                                               v
+                                  libgame.so (ONE .so)
+```
+
+```javascript
+// physics.js — Mallika's game loop, unchanged
+function frameUpdate(bodies, dt) {
+    for (var i = 0; i < bodies.length; i++) {
+        var b = bodies[i];
+        b.x = b.x + b.vx * dt;
+        b.y = b.y + b.vy * dt;
+    }
+    return bodies;
+}
+```
+
+```python
+# inference.py — ML helpers, in Python syntax she's comfortable with
+def predict_action(observation):
+    logits = softmax(matmul(observation, model_weights))
+    return argmax(logits)
+```
 
 ```bash
-$ crush-aotc compile physics.js --emit c -o libphysics.so
-$ node -e "const lib = require('./physics_binding'); lib.update(bodies, dt)"
-# 6ms per frame. No C++ rewrite.
+# Compile BOTH into one native binary. No IPC. No marshaling.
+$ crush-aotc compile physics.js inference.py --emit c -o libgame.so
+$ node -e "const lib = require('./game_binding'); lib.frameUpdate(bodies, dt)"
+# 6ms total: 3ms physics + 3ms inference. Old subprocess approach: 21ms.
 ```
+
+**Why this works:** The `call` instruction in CASM doesn't care which
+language the callee was written in. `fn_update` calling `fn_predict` is just
+a stack push and a program-counter jump. Same process, same heap, zero
+serialization overhead.
+
+**The sell:** "Keep your game logic in JS. Write ML in Python syntax. Crush
+merges them into one native binary. No subprocess. No serialization. No IPC."
 
 ---
 
 ## The Architecture That Makes This Possible
 
-### 1. Walkers: Language → CAST
+### 1. Walkers: Language -> CAST
 
 Each walker is a parser + lowerer pair. Given source in a language, it
 produces CAST (Crush AST), a universal representation of computation:
@@ -185,7 +235,6 @@ All walkers produce the same CAST. A `for` loop is a `for` loop, whether it
 came from C or Python:
 
 ```json
-// The same IR, regardless of source language
 {
   "Statement::While": {
     "condition": { "Expression::BinaryOp": { "operator": "<", ... } },
@@ -194,7 +243,19 @@ came from C or Python:
 }
 ```
 
-### 3. Backends: CAST → Executable
+**Multi-file composition:** `crush_cast::Program` contains `functions:
+HashMap<String, Function>`. Merging two programs is:
+
+```rust
+let mut merged = js_program;
+merged.functions.extend(py_program.functions);  // union, detect collisions
+compiler.compile(merged)
+```
+
+The compiler sees one program with `fn_update`, `fn_collide`, `fn_predict`,
+`fn_softmax`. Cross-calls are just CASM `call` instructions.
+
+### 3. Backends: CAST -> Executable
 
 | Backend | How | When to use |
 |---------|-----|------------|
@@ -212,12 +273,12 @@ Measured on an Intel i7-13700K, single-core:
 
 | Benchmark | CPython 3.14 | Crush CVM1 (release+LTO) | Speedup |
 |-----------|-------------|-------------------------|---------|
-| Sieve n=10K | 166ms | 24ms | **6.9×** |
-| Merge sort n=5K | 30ms | 10ms | **3.0×** |
-| Fibonacci n=20 | ~1ms | 10ms | — (dominated by VM overhead) |
+| Sieve n=10K | 166ms | 24ms | **6.9x** |
+| Merge sort n=5K | 30ms | 10ms | **3.0x** |
+| Fibonacci n=20 | ~1ms | 10ms | VM overhead dominates |
 
 The CVM1 interpreter alone beats CPython on numeric workloads. AOT C with
-`-O3 -flto` will close the remaining gap to hand-written C.
+`-O3 -flto` closes the remaining gap to hand-written C.
 
 ---
 
@@ -265,6 +326,7 @@ One pipeline. Every language. Any backend.
 - **Not a polyglot VM in the GraalVM sense** — Crush doesn't run multiple
   VMs side-by-side. It lowers all languages to ONE IR, then compiles that IR
   through ONE backend. No marshaling, no FFI overhead between languages.
+  Cross-language calls are just `call` instructions in the same CASM program.
 
 ---
 
@@ -272,14 +334,15 @@ One pipeline. Every language. Any backend.
 
 | Capability | Status |
 |------------|--------|
-| C → CVM1, AOT C, AOT Rust | ✅ Complete |
-| Python → CVM1, AOT C, AOT Rust | ✅ Complete |
-| JS → CVM1 | ✅ Complete |
-| Bash → CVM1 | ✅ Complete |
-| Rust/Go/Zig → CVM1 | ✅ Walker exists, needs AOT path |
-| C↔Crush FFI (`__crush_ffi__`) | ✅ Plugin auto-build |
-| Python↔Crush FFI | ✅ Slice/in/is lowering |
-| `libcrush_vm.so` embedding | ✅ 19MB cdylib |
-| `crush-aotc benchmark` across all walkers | ⬜ Needs walker→CASM path for each |
-| GPU backend (PTX) | 🚧 Design complete |
-| Inline polyglot blocks (`lang python { ... }`) | ⬜ Design needed |
+| C -> CVM1, AOT C, AOT Rust | Complete |
+| Python -> CVM1, AOT C, AOT Rust | Complete |
+| JS -> CVM1 | Complete |
+| Bash -> CVM1 | Complete |
+| Rust/Go/Zig -> CVM1 | Walker exists, needs AOT path |
+| C<->Crush FFI (`__crush_ffi__`) | Plugin auto-build |
+| Python<->Crush FFI | Slice/in/is lowering |
+| `libcrush_vm.so` embedding | 19MB cdylib |
+| Multi-file polyglot compilation | Program::merge exists, needs CLI integration |
+| `crush-aotc benchmark` across all walkers | Needs walker->CASM path for each |
+| GPU backend (PTX) | Design complete |
+| Inline polyglot blocks (`lang python { ... }`) | Design needed |
