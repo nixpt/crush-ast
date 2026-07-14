@@ -45,3 +45,26 @@ fn array_for_loops_still_work() {
     // below it must be untouched.
     assert!(compiles("fn main() { for x in [1,2,3] { print(x); } }"));
 }
+
+// ── `async` as a contextual keyword ──────────────────────────────────────────────────────
+//
+// The lexer emits Token::Async for `async` unconditionally, which made the `async.*`
+// CAPABILITY NAMESPACE unreachable. exosphere's async_test.crush calls `await async.sleep(100)`
+// — `async` there is a namespace, not a keyword — and it died at parse with
+// "Unexpected token in expression: Async". `await` itself was never broken.
+
+#[test]
+fn async_namespace_is_reachable() {
+    assert!(compiles("fn main() { await async.sleep(1); }"));
+}
+
+#[test]
+fn async_namespace_without_await() {
+    assert!(compiles("fn main() { async.sleep(1); }"));
+}
+
+#[test]
+fn await_on_a_normal_call_still_parses() {
+    // Regression: `await` was fine before this change and must stay fine.
+    assert!(compiles("fn main() { await foo.bar(1); }"));
+}

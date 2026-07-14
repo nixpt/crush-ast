@@ -85,6 +85,13 @@ impl Parser {
             .unwrap_or(&Token::EOF(SourceLocation { line: 0, col: 0 }))
     }
 
+    /// Look `n` tokens past the current one without consuming anything.
+    fn peek_ahead(&self, n: usize) -> &Token {
+        self.tokens
+            .get(self.pos + n)
+            .unwrap_or(&Token::EOF(SourceLocation { line: 0, col: 0 }))
+    }
+
     fn advance(&mut self) -> &Token {
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
@@ -1261,6 +1268,18 @@ impl Parser {
     /// Parse primary expression
     fn parse_primary(&mut self) -> Result<Expression, ()> {
         match self.peek() {
+            // `async` is a CONTEXTUAL keyword. The lexer emits Token::Async for it
+            // unconditionally, which made the `async.*` capability namespace unreachable:
+            // `await async.sleep(100)` died with "Unexpected token in expression: Async"
+            // before the parser ever saw the `.`. Treat `async` followed by `.` as the plain
+            // identifier it is. (`await` was never the problem — it parses fine.)
+            Token::Async(_) if matches!(self.peek_ahead(1), Token::Dot(_)) => {
+                self.advance();
+                Ok(Expression::Var {
+                    name: "async".to_string(),
+                    meta: HashMap::new(),
+                })
+            }
             Token::Int(n, _) => {
                 let value = *n;
                 self.advance();
