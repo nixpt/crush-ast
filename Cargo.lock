@@ -946,6 +946,7 @@ dependencies = [
  "crush-lang-sdk",
  "crush-lang-zsh",
  "crush-vm",
+ "dart_walker",
  "go_walker",
  "hex",
  "libloading 0.8.9",

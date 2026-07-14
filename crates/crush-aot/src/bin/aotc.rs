@@ -1,3 +1,4 @@
+
 //! `crush-aotc` — Ahead-of-Time compiler for Crush.
 //!
 //! Compiles `.crush` source files to native shared libraries (`.so`/`.dylib`/`.dll`)
@@ -204,8 +205,8 @@ fn registry() -> walker_core::AdapterRegistry {
      .register(Box::new(wasm_walker::WasmAdapter))
      .register(Box::new(crush_lang_bash::BashAdapter))
      .register(Box::new(crush_lang_zsh::ZshAdapter))
-     .register(Box::new(crush_lang_nepali::NepcodeAdapter));
-     .register(Box::new(dart_walker::DartAdapter))
+     .register(Box::new(crush_lang_nepali::NepcodeAdapter))
+     .register(Box::new(dart_walker::DartAdapter));
     r
 }
 
