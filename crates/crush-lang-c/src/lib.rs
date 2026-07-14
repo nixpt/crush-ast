@@ -848,3 +848,29 @@ mod tests {
         } else { panic!("Expected __crush_ternary__"); }
     }
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::LanguageAdapter;
+
+pub struct CAdapter;
+impl LanguageAdapter for CAdapter {
+    fn language_name(&self) -> &'static str { "c" }
+    fn file_extensions(&self) -> &[&'static str] { &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"] }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
+        let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("c");
+        let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
+        let mut parser = tree_sitter::Parser::new();
+        if is_cpp {
+            parser.set_language(&tree_sitter_cpp::LANGUAGE.into())
+                .map_err(|e| anyhow::anyhow!("tree-sitter-cpp init: {e}"))?;
+        } else {
+            parser.set_language(&tree_sitter_c::LANGUAGE.into())
+                .map_err(|e| anyhow::anyhow!("tree-sitter-c init: {e}"))?;
+        }
+        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
+        let walker = crate::CWalker { file_name: filename.to_string() };
+        let program = walker.walk(&tree, source.as_bytes())?;
+        Ok((walker_core::FeatureReport { lang: "c".to_string(), ..Default::default() }, program))
+    }
+}

@@ -41,3 +41,14 @@ pub fn zsh_to_cast(source: &str) -> anyhow::Result<Program> {
     let (_, program) = walker_core::frontend_pipeline(&ZshFrontend, source)?;
     Ok(program)
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::impl_adapter_from_frontend;
+
+impl_adapter_from_frontend!(
+    ZshAdapter,
+    "zsh",
+    &["zsh"],
+    crate::zsh_to_cast
+);

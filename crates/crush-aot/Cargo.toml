@@ -9,6 +9,7 @@ homepage.workspace = true
 readme = "README.md"
 keywords = ["crush", "aot", "compiler", "native"]
 categories = ["development-tools", "compilers"]
+autobins = false
 
 [dependencies]
 casm.workspace = true
@@ -19,6 +20,13 @@ crush-lang-python = { path = "../crush-lang-python" }
 crush-lang-js = { path = "../crush-lang-js" }
 crush-lang-rust = { path = "../crush-lang-rust" }
 crush-lang-c = { path = "../crush-lang-c" }
+go_walker = { path = "../go_walker" }
+zig_walker = { path = "../zig_walker" }
+wasm_walker = { path = "../wasm_walker" }
+crush-lang-bash = { path = "../crush-lang-bash" }
+crush-lang-zsh = { path = "../crush-lang-zsh" }
+crush-lang-nepali = { path = "../crush-lang-nepali" }
+crush-lang-custom = { path = "../crush-lang-custom" }
 walker-core.workspace = true
 crush-cast.workspace = true
 serde.workspace = true

@@ -168,3 +168,14 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>, source: &str) -> anyhow::Result<Progr
         ..Default::default()
     })
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::impl_adapter_from_frontend;
+
+impl_adapter_from_frontend!(
+    PythonAdapter,
+    "python",
+    &["py", "pyw"],
+    crate::python_to_cast
+);

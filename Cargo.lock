@@ -936,12 +936,17 @@ dependencies = [
  "clap",
  "crush-cast",
  "crush-frontend",
+ "crush-lang-bash",
  "crush-lang-c",
+ "crush-lang-custom",
  "crush-lang-js",
+ "crush-lang-nepali",
  "crush-lang-python",
  "crush-lang-rust",
  "crush-lang-sdk",
+ "crush-lang-zsh",
  "crush-vm",
+ "go_walker",
  "hex",
  "libloading 0.8.9",
  "serde",
@@ -954,6 +959,8 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "walker-core",
+ "wasm_walker",
+ "zig_walker",
 ]
 
 [[package]]

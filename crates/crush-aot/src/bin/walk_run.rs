@@ -1,7 +1,7 @@
 //! `crush-walk-run` — Walk → CAST → CASM → CVM1 execution.
 use std::path::PathBuf; use std::time::Instant;
 use clap::Parser;
-use walker_core::Walker;
+use walker_core::AdapterRegistry;
 
 #[derive(Parser)]
 #[command(name = "crush-walk-run")]
@@ -13,37 +13,29 @@ struct Cli {
     #[arg(short = 't', long)] timing: bool,
 }
 
+/// Global adapter registry for all language walkers.
+fn registry() -> AdapterRegistry {
+    let mut r = AdapterRegistry::new();
+    r.register(Box::new(crush_lang_python::PythonAdapter))
+     .register(Box::new(crush_lang_js::JsAdapter))
+     .register(Box::new(crush_lang_rust::RustAdapter))
+     .register(Box::new(crush_lang_c::CAdapter))
+     .register(Box::new(go_walker::GoAdapter))
+     .register(Box::new(zig_walker::ZigAdapter))
+     .register(Box::new(wasm_walker::WasmAdapter))
+     .register(Box::new(crush_lang_bash::BashAdapter))
+     .register(Box::new(crush_lang_zsh::ZshAdapter))
+     .register(Box::new(crush_lang_nepali::NepcodeAdapter));
+    r
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let ext = cli.file.extension().and_then(|s| s.to_str()).unwrap_or("");
     let source = std::fs::read_to_string(&cli.file)?;
+    let filename = cli.file.to_string_lossy();
 
     let t0 = Instant::now();
-    let cast_program: crush_cast::Program = match ext {
-        "py"|"pyw" => crush_lang_python::python_to_cast(&source)?,
-        "js"|"mjs"|"cjs"|"ts"|"tsx"|"mts" => crush_lang_js::js_to_cast(&source, ext)?,
-        "rs" => crush_lang_rust::rust_to_cast(&source)?,
-        "c"|"h" => {
-            let is_cpp = false;
-            let mut parser = tree_sitter::Parser::new();
-            parser.set_language(&tree_sitter_c::LANGUAGE.into())
-                .map_err(|e| anyhow::anyhow!("tree-sitter-c language init: {e}"))?;
-            let tree = parser.parse(&source, None)
-                .ok_or_else(|| anyhow::anyhow!("C parse failed"))?;
-            let walker = crush_lang_c::CWalker { file_name: cli.file.to_string_lossy().to_string() };
-            walker.walk(&tree, source.as_bytes())?
-        }
-        "cpp"|"cc"|"cxx"|"hpp" => {
-            let mut parser = tree_sitter::Parser::new();
-            parser.set_language(&tree_sitter_cpp::LANGUAGE.into())
-                .map_err(|e| anyhow::anyhow!("tree-sitter-cpp language init: {e}"))?;
-            let tree = parser.parse(&source, None)
-                .ok_or_else(|| anyhow::anyhow!("C++ parse failed"))?;
-            let walker = crush_lang_c::CWalker { file_name: cli.file.to_string_lossy().to_string() };
-            walker.walk(&tree, source.as_bytes())?
-        }
-        _ => anyhow::bail!("Unsupported: .{ext}"),
-    };
+    let (_, cast_program) = registry().walk(&source, &filename)?;
     let walk_time = t0.elapsed();
     if cli.dump_cast { println!("{}", serde_json::to_string_pretty(&cast_program)?); return Ok(()); }
 
@@ -76,11 +68,10 @@ fn main() -> anyhow::Result<()> {
     }
     host_caps.register(Box::new(WalkIoPrint));
     for name in &[
-        "append", "push", "make_range", "arr_set", "arr_get",
-        "str.concat",
-        // C walker __crush_* capability calls
+        "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
         "__crush_slice__", "__crush_contains__", "__crush_is__", "__crush_ifexpr__",
+        "__crush_setindex__",
     ] {
         host_caps.register(Box::new(WalkNop { name: name.to_string() }));
     }
@@ -107,10 +98,10 @@ fn main() -> anyhow::Result<()> {
         let c = compile_time.as_micros() as f64;
         let e = if exec_times.is_empty() { 0.0 } else { exec_times.iter().map(|d| d.as_micros() as f64).sum::<f64>() / exec_times.len() as f64 };
         eprintln!("=== crush-walk-run ({} runs) ===", cli.runs);
-        eprintln!("  Walk    {:>10.1} µs", w);
-        eprintln!("  Compile {:>10.1} µs", c);
-        eprintln!("  Execute {:>10.1} µs", e);
-        eprintln!("  Total   {:>10.1} µs", w + c + e);
+        eprintln!("  Walk    {:>10.1} s", w);
+        eprintln!("  Compile {:>10.1} s", c);
+        eprintln!("  Execute {:>10.1} s", e);
+        eprintln!("  Total   {:>10.1} s", w + c + e);
     }
     Ok(())
 }

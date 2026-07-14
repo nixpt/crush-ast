@@ -177,30 +177,35 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
 fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<casm::Program> {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("crush");
     match ext {
-        "py" | "pyw" => {
-            let cast = crush_lang_python::python_to_cast(source)
-                .map_err(|e| anyhow::anyhow!("Python→CAST: {e}"))?;
+        // All walker-based languages: walk -> CAST -> CASM
+        "py" | "pyw" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "mts" |
+        "rs" | "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" |
+        "go" | "zig" | "sh" | "bash" | "zsh" | "wasm" | "np" | "nepali" => {
+            let (_, program) = registry().walk(source, path.to_str().unwrap_or("input"))?;
             let mut compiler = crush_frontend::compiler::Compiler::new();
-            compiler.compile(cast)
-                .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
-        }
-        "js" | "mjs" | "cjs" | "ts" | "tsx" | "mts" => {
-            let cast = crush_lang_js::js_to_cast(source, ext)
-                .map_err(|e| anyhow::anyhow!("JS→CAST: {e}"))?;
-            let mut compiler = crush_frontend::compiler::Compiler::new();
-            compiler.compile(cast)
-                .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
-        }
-        "rs" => {
-            let cast = crush_lang_rust::rust_to_cast(source)
-                .map_err(|e| anyhow::anyhow!("Rust→CAST: {e}"))?;
-            let mut compiler = crush_frontend::compiler::Compiler::new();
-            compiler.compile(cast)
+            compiler.compile(program)
                 .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
         }
         _ => crush_frontend::compile_crush_source(source)
             .map_err(|e| anyhow::anyhow!("Crush→CASM: {e}")),
     }
+}
+
+/// Global adapter registry for all language walkers.
+fn registry() -> walker_core::AdapterRegistry {
+    use walker_core::AdapterRegistry;
+    let mut r = AdapterRegistry::new();
+    r.register(Box::new(crush_lang_python::PythonAdapter))
+     .register(Box::new(crush_lang_js::JsAdapter))
+     .register(Box::new(crush_lang_rust::RustAdapter))
+     .register(Box::new(crush_lang_c::CAdapter))
+     .register(Box::new(go_walker::GoAdapter))
+     .register(Box::new(zig_walker::ZigAdapter))
+     .register(Box::new(wasm_walker::WasmAdapter))
+     .register(Box::new(crush_lang_bash::BashAdapter))
+     .register(Box::new(crush_lang_zsh::ZshAdapter))
+     .register(Box::new(crush_lang_nepali::NepcodeAdapter));
+    r
 }
 
 // ── compile ─────────────────────────────────────────────────────────────────

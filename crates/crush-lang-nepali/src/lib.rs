@@ -40,3 +40,20 @@ impl Frontend for NepaliFrontend {
         Ok(program)
     }
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::impl_adapter_from_frontend;
+
+pub fn nepali_to_cast(source: &str) -> anyhow::Result<crush_cast::Program> {
+    let frontend = crate::NepaliFrontend;
+    let (_, program) = walker_core::frontend_pipeline(&frontend, source)?;
+    Ok(program)
+}
+
+impl_adapter_from_frontend!(
+    NepcodeAdapter,
+    "nepcode",
+    &["np", "nepali"],
+    crate::nepali_to_cast
+);

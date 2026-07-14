@@ -220,3 +220,14 @@ mod tests {
         );
     }
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::impl_adapter_from_frontend;
+
+impl_adapter_from_frontend!(
+    RustAdapter,
+    "rust",
+    &["rs"],
+    crate::rust_to_cast
+);

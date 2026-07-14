@@ -196,3 +196,18 @@ mod tests {
         }
     }
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::LanguageAdapter;
+
+pub struct WasmAdapter;
+impl LanguageAdapter for WasmAdapter {
+    fn language_name(&self) -> &'static str { "wasm" }
+    fn file_extensions(&self) -> &[&'static str] { &["wasm"] }
+    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
+        let program = crate::walk_wasm(source.as_bytes(), "input.wasm")
+            .map_err(|e| anyhow::anyhow!("wasm@walk: {e:?}"))?;
+        Ok((walker_core::FeatureReport { lang: "wasm".to_string(), ..Default::default() }, program))
+    }
+}

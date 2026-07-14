@@ -305,3 +305,22 @@ func main() {
         assert_eq!(program.lang.unwrap(), "go");
     }
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::LanguageAdapter;
+
+pub struct GoAdapter;
+impl LanguageAdapter for GoAdapter {
+    fn language_name(&self) -> &'static str { "go" }
+    fn file_extensions(&self) -> &[&'static str] { &["go"] }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_go::LANGUAGE.into())
+            .map_err(|e| anyhow::anyhow!("tree-sitter-go init: {e}"))?;
+        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("Go parse failed"))?;
+        let walker = crate::GoWalker { file_name: filename.to_string() };
+        let program = walker.walk(&tree, source.as_bytes())?;
+        Ok((walker_core::FeatureReport { lang: "go".to_string(), ..Default::default() }, program))
+    }
+}

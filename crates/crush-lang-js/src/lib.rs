@@ -116,3 +116,23 @@ pub fn js_to_cast(source: &str, ext: &str) -> anyhow::Result<Program> {
     let (_, program) = walker_core::frontend_pipeline(&frontend, source)?;
     Ok(program)
 }
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use walker_core::LanguageAdapter;
+
+
+/// JS/TS adapter — handles .js/.mjs/.cjs/.ts/.tsx/.mts
+pub struct JsAdapter;
+
+impl LanguageAdapter for JsAdapter {
+    fn language_name(&self) -> &'static str { "javascript" }
+    fn file_extensions(&self) -> &[&'static str] { &["js", "mjs", "cjs", "ts", "tsx", "mts"] }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        let ext = std::path::Path::new(filename).extension()
+            .and_then(|e| e.to_str()).unwrap_or("js");
+        let program = crate::js_to_cast(source, ext)
+            .map_err(|e| anyhow::anyhow!("javascript@CAST: {e}"))?;
+        Ok((FeatureReport { lang: "javascript".to_string(), ..Default::default() }, program))
+    }
+}
