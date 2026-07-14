@@ -32,6 +32,27 @@ fn disassemble_roundtrip() {
     assert_eq!(prog.code, prog2.code);
 }
 
+// Regression: `strip_comment` used to reset its `esc` flag before checking
+// it, so an escaped quote (`\"`) inside a string literal was misread as
+// the string's closing quote. Anything after that point — including a
+// `;` still logically inside the string — was then treated as outside any
+// string and truncated as a line comment. This is exactly the shape of
+// the CASM an EXEC_LANG polyglot block emits (its JSON args embed quotes
+// and the source code verbatim, which routinely contains `;`).
+#[test]
+fn quoted_string_survives_escaped_quote_before_semicolon() {
+    let value = "a\"b; c\\d\ne".to_string(); // a"b; c\d<newline>e
+    let src = format!("PUSH_STR {value:?}\nHALT");
+    let prog = assemble(&src, None, None).unwrap();
+    assert_eq!(prog.consts, vec![value.clone()]);
+
+    // Round-trips through the disassembler too.
+    let text = disassemble(&prog);
+    let prog2 = assemble(&text, None, None).unwrap();
+    assert_eq!(prog.code, prog2.code);
+    assert_eq!(prog.consts, prog2.consts);
+}
+
 // ── step quota ───────────────────────────────────────────────────────────────
 
 #[test]

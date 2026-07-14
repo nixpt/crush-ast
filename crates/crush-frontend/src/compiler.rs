@@ -795,13 +795,23 @@ impl Compiler {
 
                 instrs.push(self.create_instr("exec_lang", var_args, meta));
 
-                // Store output back to the first variable (if any)
-                if let Some(first_var) = variables.first() {
-                    instrs.push(self.create_instr(
-                        "store",
-                        serde_json::json!({"name": first_var}),
-                        meta,
-                    ));
+                // exec_lang always pushes a return value; it must always be
+                // consumed — either stored into the block's designated
+                // output variable (`meta["polyglot_output"]`, set by a
+                // language-specific free-variable analysis pass before
+                // compilation — see crush-lang-sdk::compile for Python) or
+                // explicitly popped, never left to leak on the stack.
+                match meta.get("polyglot_output").and_then(|v| v.as_str()) {
+                    Some(output_var) => {
+                        instrs.push(self.create_instr(
+                            "store",
+                            serde_json::json!({"name": output_var}),
+                            meta,
+                        ));
+                    }
+                    None => {
+                        instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                    }
                 }
             }
             Statement::Break { meta } => {
