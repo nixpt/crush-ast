@@ -7,7 +7,7 @@ pub struct NepaliFrontend;
 
 impl Frontend for NepaliFrontend {
     fn language_name(&self) -> &'static str {
-        "nepali"
+        "nepcode"
     }
 
     fn file_extensions(&self) -> &[&'static str] {
@@ -17,7 +17,7 @@ impl Frontend for NepaliFrontend {
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
         // Our updated lexer natively parses Nepali keywords into standard AST.
         let mut program = parse_source(source)?;
-        program.lang = Some("nepali".to_string());
+        program.lang = Some("nepcode".to_string());
         Ok(Box::new(program))
     }
 
@@ -27,7 +27,7 @@ impl Frontend for NepaliFrontend {
             .ok_or_else(|| anyhow::anyhow!("expected Program"))?;
         
         let mut report = FeatureReport::default();
-        report.lang = "nepali".to_string();
+        report.lang = "nepcode".to_string();
         report.uses_functions = !program.functions.is_empty();
         report.estimated_complexity = program.functions.len();
         Ok(report)

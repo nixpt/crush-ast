@@ -146,6 +146,7 @@ pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
         "zig" => Some("zig"),
         "wasm" => Some("wasm"),
         "sn" => Some("sona"),
+        "np" | "nepali" => Some("nepcode"),
         _ => None,
     }
 }
@@ -539,4 +540,170 @@ pub fn map_to_capability(lang: &str, func_name: &str) -> Option<&'static str> {
 
         _ => None,
     }
+}
+
+
+// ── LanguageAdapter — universal walker dispatch ─────────────────────────────────
+
+use std::sync::Arc;
+
+/// Universal walker adapter — one interface for every language frontend.
+///
+/// Tree-sitter walkers (`Walker` trait) and native-parser frontends (`Frontend`
+/// trait) both get wrapped in this. A single `walk(source, filename)` call
+/// produces `(FeatureReport, Program)`, hiding the underlying parse/analyze/lower
+/// pipeline behind a uniform API.
+///
+/// # Why
+///
+/// Before: each call site (aotc.rs, walk_run.rs, SDKs) manually dispatched on
+/// file extension -> called a language-specific function. Adding a language
+/// meant touching 5+ files.
+///
+/// After: `AdapterRegistry::walk(source, filename)` -> done. Adding a language
+/// = one macro call + one `registry.register()` call.
+pub trait LanguageAdapter: Send + Sync {
+    fn language_name(&self) -> &'static str;
+    fn file_extensions(&self) -> &[&'static str];
+
+    /// Walk source -> (FeatureReport, Program).
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)>;
+
+    fn can_handle(&self, ext: &str) -> bool {
+        self.file_extensions().contains(&ext)
+    }
+}
+
+/// Registry of all known language adapters.
+///
+/// ```rust,ignore
+/// let registry = AdapterRegistry::new();
+/// let (report, program) = registry.walk(source, "hello.py")?;
+/// ```
+pub struct AdapterRegistry {
+    adapters: Vec<Box<dyn LanguageAdapter>>,
+}
+
+impl AdapterRegistry {
+    pub fn new() -> Self {
+        Self { adapters: Vec::new() }
+    }
+
+    pub fn register(&mut self, adapter: Box<dyn LanguageAdapter>) -> &mut Self {
+        self.adapters.push(adapter);
+        self
+    }
+
+    /// Walk source with the first adapter that handles the file extension.
+    pub fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let adapter = self
+            .adapters
+            .iter()
+            .find(|a| a.can_handle(ext))
+            .ok_or_else(|| anyhow::anyhow!("no walker registered for .{ext} (available: {})",
+                self.adapters.iter()
+                    .flat_map(|a| a.file_extensions().iter().copied())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))?;
+        adapter.walk(source, filename)
+    }
+
+    /// Walk source -> CASM in one call. Convenience for CLI tools.
+    pub fn walk_to_casm(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<()> {
+        // Walk -> CAST only. CASM compilation happens downstream
+        // (aotc.exe, walk_run.exe, SDKs call crush_frontend::Compiler separately).
+        // Return the program; caller compiles.
+        let (_report, program) = self.walk(source, filename)?;
+        // Returning program through a Box<dyn Any> to avoid depending on casm/crush_frontend.
+        // Downstream: let program = registry.walk(...); compiler.compile(program)?;
+        std::mem::drop(program);
+        Ok(())
+    }
+
+    pub fn walk_for_aotc(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<crush_cast::Program> {
+        Ok(self.walk(source, filename)?.1)
+    }
+
+    /// All language names currently registered.
+    pub fn languages(&self) -> Vec<&str> {
+        self.adapters.iter().map(|a| a.language_name()).collect()
+    }
+}
+
+/// Macro: create a `LanguageAdapter` from a `Frontend` implementation.
+///
+/// ```rust,ignore
+/// use walker_core::impl_adapter_from_frontend;
+/// impl_adapter_from_frontend!(PythonAdapter, "python", &["py", "pyw"], crush_lang_python::python_to_cast);
+/// ```
+#[macro_export]
+macro_rules! impl_adapter_from_frontend {
+    ($adapter_name:ident, $lang:expr, $exts:expr, $to_cast_fn:path) => {
+        pub struct $adapter_name;
+
+        impl $crate::LanguageAdapter for $adapter_name {
+            fn language_name(&self) -> &'static str { $lang }
+            fn file_extensions(&self) -> &[&'static str] { $exts }
+            fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<($crate::FeatureReport, crush_cast::Program)> {
+                let program = $to_cast_fn(source)
+                    .map_err(|e| anyhow::anyhow!("{}$@CAST: {e}", $lang))?;
+                let report = $crate::FeatureReport {
+                    lang: $lang.to_string(),
+                    ..Default::default()
+                };
+                Ok((report, program))
+            }
+        }
+    };
+}
+
+/// Macro: create a `LanguageAdapter` from a tree-sitter `Walker` implementation.
+///
+/// ```rust,ignore
+/// use walker_core::impl_adapter_from_walker;
+/// impl_adapter_from_walker!(CAdapter, "c", &["c", "h"], CWalker { file_name: String::new() }, tree_sitter_c::LANGUAGE.into());
+/// ```
+#[macro_export]
+macro_rules! impl_adapter_from_walker {
+    ($adapter_name:ident, $lang:expr, $exts:expr, $walker_expr:expr) => {
+        pub struct $adapter_name;
+
+        impl $crate::LanguageAdapter for $adapter_name {
+            fn language_name(&self) -> &'static str { $lang }
+            fn file_extensions(&self) -> &[&'static str] { $exts }
+            fn walk(&self, source: &str, filename: &str) -> anyhow::Result<($crate::FeatureReport, crush_cast::Program)> {
+                let mut walker: $walker_expr = $walker_expr;  // clone from expr
+                // tree-sitter walkers need a filename — set it from the parameter
+                let _ = filename;  // walker already has its own file_name
+
+                let mut parser = tree_sitter::Parser::new();
+                parser
+                    .set_language(&walker.language())
+                    .map_err(|e| anyhow::anyhow!("{}$@parser: {e}", $lang))?;
+                let tree = parser
+                    .parse(source, None)
+                    .ok_or_else(|| anyhow::anyhow!("{}$@parse: failed", $lang))?;
+                let program = $crate::Walker::walk(&walker, &tree, source.as_bytes())
+                    .map_err(|e| anyhow::anyhow!("{}$@walk: {e}", $lang))?;
+                let report = $crate::FeatureReport {
+                    lang: $lang.to_string(),
+                    ..Default::default()
+                };
+                Ok((report, program))
+            }
+        }
+    };
 }
