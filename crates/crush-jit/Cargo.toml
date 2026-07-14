@@ -1,5 +1,6 @@
 [package]
 name = "crush-jit"
+description = "Cranelift-based JIT execution engine for the Crush VM — compiles a lowered FastVM program to native code and executes it, producing the same result the FastVM interpreter would."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true

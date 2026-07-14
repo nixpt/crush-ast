@@ -1,5 +1,6 @@
 [package]
 name = "crush-tui"
+description = "Terminal UI front-end for Crush, built on ratatui and crossterm."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true

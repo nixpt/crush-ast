@@ -1,5 +1,6 @@
 [package]
 name = "crush-lint"
+description = "AI-augmented linter for Crush — an ONNX-backed engine that supplements standard compiler diagnostics."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true

@@ -1,5 +1,6 @@
 [package]
 name = "crush-plugin-example"
+description = "Example native plugin demonstrating the crush-ffi plugin interface."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true

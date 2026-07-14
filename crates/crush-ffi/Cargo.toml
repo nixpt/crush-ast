@@ -1,5 +1,6 @@
 [package]
 name = "crush-ffi"
+description = "C-ABI plugin interface for Crush — FFI value types and the plugin export contract native plugins implement."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
