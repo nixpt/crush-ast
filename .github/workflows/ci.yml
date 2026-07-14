@@ -18,13 +18,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo check --workspace \
-            --exclude crush-pkg \
             --exclude crush-python \
             --exclude crush-lang-custom \
             2>&1
@@ -36,13 +39,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo test \
-            -p walker-core \
+            -p crush-walker-core \
             -p crush-vm \
             -p crush-cast \
             -p casm \
@@ -56,6 +63,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -69,9 +80,9 @@ jobs:
             -p crush-lang-bash \
             -p crush-lang-zsh \
             -p crush-lang-nepali \
-            -p go_walker \
-            -p zig_walker \
-            -p dart_walker \
+            -p crush-lang-go \
+            -p crush-lang-zig \
+            -p crush-lang-dart \
             --lib 2>&1
 
   # ── Linting (non-blocking) ────────────────────────────────────────────────
@@ -82,6 +93,10 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -89,7 +104,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo clippy --workspace \
-            --exclude crush-pkg \
             --exclude crush-python \
             --exclude crush-lang-custom \
             -- -D warnings 2>&1 || true
@@ -101,6 +115,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
@@ -115,9 +133,9 @@ jobs:
             -p crush-lang-rust \
             -p crush-lang-c \
             -p crush-lang-bash \
-            -p go_walker \
-            -p zig_walker \
-            -p dart_walker \
+            -p crush-lang-go \
+            -p crush-lang-zig \
+            -p crush-lang-dart \
             2>&1
 
   # ── Feature-gate smoke tests ──────────────────────────────────────────────
@@ -131,13 +149,16 @@ jobs:
         args: ["--no-default-features", "--all-features"]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo check --workspace \
-            --exclude crush-pkg \
             --exclude crush-python \
             --exclude crush-lang-custom \
             ${{ matrix.args }} 2>&1 || true

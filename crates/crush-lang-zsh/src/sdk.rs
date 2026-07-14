@@ -1,7 +1,7 @@
 //! Zsh SDK — full pipeline from zsh source to CVM1 execution.
 #![cfg(test)]
 
-use crush_walker_core::AdapterRegistry;
+use crush_walker_core::{AdapterRegistry, LanguageAdapter};
 
 pub fn run_zsh(source: &str) -> anyhow::Result<String> {
     let adapter = crate::ZshAdapter;

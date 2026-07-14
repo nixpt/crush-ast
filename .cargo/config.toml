@@ -1,17 +1,14 @@
 # Cargo build configuration for crush-ast workspace.
 #
-# Layer 3: LLVM/C toolchain backends (tree-sitter C deps).
-# These env vars are respected by the `cc` crate, which tree-sitter-c,
-# tree-sitter-cpp, and tree-sitter-crush use for native compilation.
-#
-# Combined with [profile.release] in Cargo.toml:
-#   Layer 1: Rust fat LTO across all workspace crates
-#   Layer 2: gcc/clang -O3 -flto for AOT-generated C (in crush-aot/src/compiler.rs)
-
-[env]
-# Fat LTO for native C dependencies (tree-sitter grammars, libloading, etc.)
-CFLAGS  = { value = "-O3 -flto", force = false, relative = false }
-LDFLAGS = { value = "-flto", force = false, relative = false }
-
-# Uncomment to use a specific linker (lld is often faster and supports LTO well).
-# RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=lld"
+# The CFLAGS/LDFLAGS=-flto experiment (Layer 3) that used to live here is
+# REMOVED (s387): it broke the build outright, not just the AOT pipeline it
+# was meant for. `cc`-crate-driven native compilation (tree-sitter-c,
+# tree-sitter-cpp, tree-sitter-crush, and the bundled tree-sitter runtime
+# itself) picked up -flto and emitted LLVM-bitcode-only object files, which
+# rust-lld cannot resolve into real symbols without a matching LTO link
+# pass — every crate depending on a native tree-sitter grammar
+# (crush-lang-c, crush-lang-dart, crush-lang-zig) failed with "undefined
+# symbol: ts_parser_new" and friends. crush-aot (the actual intended target
+# for -O3 -flto) never read these env vars in the first place — it passes
+# the flags explicitly as subprocess args in its own compiler.rs, so this
+# block bought it nothing while silently breaking three other crates.

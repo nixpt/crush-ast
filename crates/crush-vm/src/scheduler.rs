@@ -76,6 +76,19 @@ pub fn run_scheduled(
 ) -> Result<VmResult, VmError> {
     let code = &program.code;
     let n = code.len();
+    if n == 0 {
+        // A genuinely empty program (e.g. a source file that lowers to no CAST
+        // statements at all) is a degenerate but valid input, not an error —
+        // there's nothing to run. Every other exit path in this scheduler
+        // indexes into `code`/`threads` assuming at least one instruction
+        // exists; short-circuit here instead of panicking on `code[0]`.
+        return Ok(VmResult {
+            output: String::new(),
+            steps: 0,
+            halted: true,
+            stack: Vec::new(),
+        });
+    }
     let declared: std::collections::HashSet<&str> = program
         .manifest
         .permissions

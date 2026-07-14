@@ -1,7 +1,7 @@
 //! Zig SDK — full pipeline from Zig source to CVM1 execution.
 #![cfg(test)]
 
-use crush_walker_core::AdapterRegistry;
+use crush_walker_core::{AdapterRegistry, LanguageAdapter};
 
 pub fn run_zig(source: &str) -> anyhow::Result<String> {
     let adapter = crate::ZigAdapter;

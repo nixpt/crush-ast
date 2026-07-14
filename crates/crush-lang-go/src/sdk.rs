@@ -1,7 +1,7 @@
 //! Go SDK �� full pipeline from Go source to CVM1 execution.
 #![cfg(test)]
 
-use crush_walker_core::AdapterRegistry;
+use crush_walker_core::{AdapterRegistry, LanguageAdapter};
 
 pub fn run_go(source: &str) -> anyhow::Result<String> {
     let adapter = crate::GoAdapter;

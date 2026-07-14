@@ -1,7 +1,7 @@
 //! Bash SDK — full pipeline from bash source to CVM1 execution.
 #![cfg(test)]
 
-use crush_walker_core::AdapterRegistry;
+use crush_walker_core::{AdapterRegistry, LanguageAdapter};
 
 pub fn run_bash(source: &str) -> anyhow::Result<String> {
     let adapter = crate::BashAdapter;
