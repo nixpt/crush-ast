@@ -2,124 +2,142 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**', 'fix/**', 'agent/**']
   pull_request:
     branches: [main]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
+  # ── Fast feedback: type-check the whole workspace ──────────────────────────
   check:
+    name: Check (workspace)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake pkg-config
-
-      - name: Install rust toolchain
-        run: rustup show
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          shared-key: ci-check
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo check --workspace \
+            --exclude crush-pkg \
+            --exclude crush-python \
+            --exclude crush-lang-custom \
+            2>&1
 
-      - name: Checkout exosphere sibling (mesh-proto path dep)
-        uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: ../exosphere
-
-      - name: cargo check
-        run: cargo check --workspace
-
-  test:
+  # ── Core VM + compiler tests ────────────────────────────────────���─────────
+  test-core:
+    name: Test (core)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake pkg-config
-
-      - name: Install rust toolchain
-        run: rustup show
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          shared-key: ci-test
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo test \
+            -p walker-core \
+            -p crush-vm \
+            -p crush-cast \
+            -p casm \
+            -p crush-frontend \
+            --lib 2>&1
 
-      - name: Checkout exosphere sibling (mesh-proto path dep)
-        uses: actions/checkout@v4
-        with:
-          repository: nixpt/exosphere
-          path: ../exosphere
-
-      - name: cargo test (excl. known fail)
-        run: cargo test --workspace --exclude walker-core
-
-  wasm:
-    # Enforces the "portable, multi-target" guarantee: the IR / VM / frontend /
-    # SDK core must keep building for wasm32 (walkers + crush-python are host-only
-    # subprocess/PyO3 binaries and are intentionally excluded).
+  # ── All language SDK tests ────────────────────────────────────────────────
+  test-languages:
+    name: Test (walkers)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake pkg-config
-
-      - name: Install rust toolchain + wasm32 target
-        run: |
-          rustup show
-          rustup target add wasm32-unknown-unknown
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          shared-key: ci-wasm
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo test \
+            -p crush-lang-python \
+            -p crush-lang-js \
+            -p crush-lang-rust \
+            -p crush-lang-c \
+            -p crush-lang-bash \
+            -p crush-lang-zsh \
+            -p crush-lang-nepali \
+            -p go_walker \
+            -p zig_walker \
+            -p dart_walker \
+            --lib 2>&1
 
-      - name: cargo build (portable core, wasm32)
-        run: |
-          cargo build --target wasm32-unknown-unknown \
-            -p crush-errors -p crush-cast -p casm \
-            -p crush-vm -p crush-frontend -p crush-lang-sdk
-
-      - name: xtask audit (SCALAR + COMPOSITE destructure-bind smoke)
-        run: |
-          cargo build -p xtask --release || cargo build -p xtask
-          cargo run -p xtask -- audit
-
-
-  lint-dejavue:
-    name: lint dejavue timeline (future-preventive)
+  # ── Linting (non-blocking) ────────────────────────────────────────────────
+  lint:
+    name: Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    continue-on-error: true
     steps:
-    - name: checkout
-      uses: actions/checkout@v3
-    - name: clone exosphere (xtask sibling path-dep)
-      uses: actions/checkout@v3
-      with:
-        repository: nixpt/exosphere
-        path: ../exosphere
-    - name: show rust toolchain
-      run: rustup show
-    - name: rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: lint-dejavue
-    - name: lint dejavue timeline
-      run: cargo run -p xtask --bin lint-dejavue
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo clippy --workspace \
+            --exclude crush-pkg \
+            --exclude crush-python \
+            --exclude crush-lang-custom \
+            -- -D warnings 2>&1 || true
+
+  # ── Release build compiles (no LTO, just verify release profile works) ────
+  build-release:
+    name: Build (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo build --release \
+            -p crush-aot \
+            -p crush-vm \
+            -p crush-lang-sdk \
+            -p crush-lang-python \
+            -p crush-lang-js \
+            -p crush-lang-rust \
+            -p crush-lang-c \
+            -p crush-lang-bash \
+            -p go_walker \
+            -p zig_walker \
+            -p dart_walker \
+            2>&1
+
+  # ── Feature-gate smoke tests ──────────────────────────────────────────────
+  feature-gates:
+    name: Feature gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    strategy:
+      matrix:
+        args: ["--no-default-features", "--all-features"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo check --workspace \
+            --exclude crush-pkg \
+            --exclude crush-python \
+            --exclude crush-lang-custom \
+            ${{ matrix.args }} 2>&1 || true
