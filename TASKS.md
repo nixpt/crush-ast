@@ -141,3 +141,4 @@ remaining tree-sitter/regex walkers are scaffolds (0 tests).
   shipped, replacing the old tree-sitter python/rust walkers.
 - **s277 (2026-06-12)** — extracted from the exosphere monorepo as a standalone
   workspace.
+- [ ] **gap** — ptxas is not available via buckets, verification must be done downstream  _(unknown, 2026-07-14)_

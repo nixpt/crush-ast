@@ -14,6 +14,10 @@ categories = ["compilers"]
 name = "crush-vm"
 path = "src/main.rs"
 
+[lib]
+name = "crush_vm"
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
 anyhow.workspace = true
 casm.workspace = true

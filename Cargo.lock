@@ -1004,8 +1004,12 @@ name = "crush-lang-c"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "casm",
  "clap",
  "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
  "serde",
  "serde_json",
  "tree-sitter",
@@ -1183,6 +1187,16 @@ name = "crush-plugin-example"
 version = "0.2.0"
 dependencies = [
  "crush-ffi",
+]
+
+[[package]]
+name = "crush-ptx"
+version = "0.1.0"
+dependencies = [
+ "casm",
+ "crush-errors",
+ "crush-frontend",
+ "serde_json",
 ]
 
 [[package]]

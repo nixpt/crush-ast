@@ -28,7 +28,7 @@ members = [
     "crates/crush-debugger",
     "crates/crush-jit",
     "xtask"
-    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom"]
+    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-ptx"]
 
 [workspace.package]
 version       = "0.2.0"
