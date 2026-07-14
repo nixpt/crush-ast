@@ -191,6 +191,13 @@ fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<cas
             compiler.compile(cast)
                 .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
         }
+        "rs" => {
+            let cast = crush_lang_rust::rust_to_cast(source)
+                .map_err(|e| anyhow::anyhow!("Rust→CAST: {e}"))?;
+            let mut compiler = crush_frontend::compiler::Compiler::new();
+            compiler.compile(cast)
+                .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
+        }
         _ => crush_frontend::compile_crush_source(source)
             .map_err(|e| anyhow::anyhow!("Crush→CASM: {e}")),
     }

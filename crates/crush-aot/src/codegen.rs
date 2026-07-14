@@ -297,6 +297,32 @@ fn emit_body(
         "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a%b }} else {{ 0 }}, |a,b| if b!=0.0 {{ a%b }} else {{ 0.0 }});\n")); out.push_str(&next_pc_str); }
         "neg"  => { out.push_str(&format!("{ind}negate(&mut stack);\n")); out.push_str(&next_pc_str); }
 
+        // ── Math ops ──
+        "math_pow" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Float(x),RuntimeValue::Float(y))=>RuntimeValue::Float(x.powf(*y)), (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Float((*x as f64).powf(*y as f64)), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "math_sqrt" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Float(x)=>RuntimeValue::Float(x.sqrt()), RuntimeValue::Int(x)=>RuntimeValue::Float((*x as f64).sqrt()), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "math_abs" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Int(x)=>RuntimeValue::Int(x.abs()), RuntimeValue::Float(x)=>RuntimeValue::Float(x.abs()), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "math_round" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Float(x)=>RuntimeValue::Float(x.round()), RuntimeValue::Int(x)=>RuntimeValue::Int(*x), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "math_floor" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Float(x)=>RuntimeValue::Float(x.floor()), RuntimeValue::Int(x)=>RuntimeValue::Int(*x), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "math_ceil" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Float(x)=>RuntimeValue::Float(x.ceil()), RuntimeValue::Int(x)=>RuntimeValue::Int(*x), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+
         // ── Comparison ──
         "eq" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a==b, |a,b| a==b);\n")); out.push_str(&next_pc_str); }
         "ne" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a!=b, |a,b| a!=b);\n")); out.push_str(&next_pc_str); }
@@ -309,6 +335,62 @@ fn emit_body(
         "and"   => { out.push_str(&format!("{ind}logic_op(&mut stack, true);\n")); out.push_str(&next_pc_str); }
         "or"    => { out.push_str(&format!("{ind}logic_op(&mut stack, false);\n")); out.push_str(&next_pc_str); }
         "not"   => { out.push_str(&format!("{ind}do_not(&mut stack);\n")); out.push_str(&next_pc_str); }
+
+        // ── String ops ──
+        "str_contains" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::String(h),RuntimeValue::String(n))=>RuntimeValue::Bool(h.contains(n.as_str())), _=>RuntimeValue::Bool(false) }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_starts_with" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::String(s),RuntimeValue::String(p))=>RuntimeValue::Bool(s.starts_with(p.as_str())), _=>RuntimeValue::Bool(false) }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_ends_with" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::String(s),RuntimeValue::String(p))=>RuntimeValue::Bool(s.ends_with(p.as_str())), _=>RuntimeValue::Bool(false) }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_to_upper" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match v {{ RuntimeValue::String(s)=>RuntimeValue::String(s.to_uppercase()), other=>other }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_to_lower" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match v {{ RuntimeValue::String(s)=>RuntimeValue::String(s.to_lowercase()), other=>other }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_trim" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match v {{ RuntimeValue::String(s)=>RuntimeValue::String(s.trim().to_string()), other=>other }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_split" | "str_replace" | "str_join" => {
+            out.push_str(&format!("{ind}stack.pop(); stack.pop(); stack.push(RuntimeValue::Null);\n"));
+            out.push_str(&next_pc_str);
+        }
+
+        // ── Bitwise ops ──
+        "bit_and" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x & y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "bit_or" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x | y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "bit_xor" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x ^ y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "bit_not" => {
+            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Int(x)=>RuntimeValue::Int(!x), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "shl" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x << y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "shr" => {
+            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x >> y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
 
         // ── Control flow ──
         "jmp" => {

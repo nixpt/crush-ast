@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use walker_core::LowerCtx;
 
-use crush_cast::Expression;
+use crush_cast::{CastType, Expression, Statement};
 use syn::Expr;
 
 pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
@@ -231,6 +231,41 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
         Expr::Cast(e) => {
             lower_expr(&e.expr, ctx)
         }
+        Expr::Field(e) => {
+            let target = lower_expr(&e.base, ctx)?;
+            let field = match &e.member {
+                syn::Member::Named(ident) => ident.to_string(),
+                syn::Member::Unnamed(index) => index.index.to_string(),
+            };
+            Ok(Expression::GetField {
+                target: Box::new(target),
+                field,
+                meta,
+            })
+        }
+        Expr::Array(e) => {
+            let elements: Vec<Expression> = e.elems.iter()
+                .map(|elem| lower_expr(elem, ctx))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Expression::ArrayLiteral { elements, meta })
+        }
+        Expr::Closure(e) => {
+            let params: Vec<(String, CastType)> = e.inputs.iter()
+                .map(|p| {
+                    let name = match p {
+                        syn::Pat::Ident(pi) => pi.ident.to_string(),
+                        _ => "_param".to_string(),
+                    };
+                    (name, CastType::Any)
+                })
+                .collect();
+            let body_expr = lower_expr(&e.body, ctx)?;
+            Ok(Expression::Lambda {
+                params,
+                body: vec![Statement::Return { value: Some(body_expr), meta: meta.clone() }],
+                meta,
+            })
+        }
         Expr::Reference(e) => {
             lower_expr(&e.expr, ctx)
         }
@@ -281,6 +316,30 @@ pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
         syn::Pat::Type(pt) => pat_to_ident(&pt.pat),
         _ => anyhow::bail!("expected identifier pattern"),
     }
+}
+
+fn lower_block_to_stmts(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+    use crate::lower_stmt::lower_stmt;
+    let mut stmts = Vec::new();
+    for stmt in &block.stmts {
+        match stmt {
+            syn::Stmt::Expr(expr, _) => {
+                let meta = ctx.meta_at(0);
+                let expr = lower_expr(expr, ctx)?;
+                stmts.push(Statement::ExprStmt { expr, meta });
+            }
+            syn::Stmt::Local(local) => {
+                stmts.push(lower_stmt(&syn::Stmt::Local(local.clone()), ctx)?);
+            }
+            syn::Stmt::Item(item) => {
+                stmts.push(lower_stmt(&syn::Stmt::Item(item.clone()), ctx)?);
+            }
+            syn::Stmt::Macro(m) => {
+                stmts.push(lower_stmt(&syn::Stmt::Macro(m.clone()), ctx)?);
+            }
+        }
+    }
+    Ok(stmts)
 }
 
 fn lower_lit(

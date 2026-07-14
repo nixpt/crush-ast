@@ -673,6 +673,14 @@ fn emit_c_instr(
         }
         "not" => { out.push_str(&format!("                {{ Value _v = _pop(); _push(_not(_v)); }} _pc={next_pc}; break;\n")); }
 
+        // ── Bitwise ops ──
+        "bit_and" => {{ out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i & _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n")); }}
+        "bit_or"  => {{ out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i | _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n")); }}
+        "bit_xor" => {{ out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i ^ _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n")); }}
+        "bit_not" => {{ out.push_str(&format!("                {{ Value _v = _pop(); if (_v.tag == TAG_INT) {{ _push(mk_int(~_v.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n")); }}
+        "shl"     => {{ out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i << _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n")); }}
+        "shr"     => {{ out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i >> _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n")); }}
+
         // ── Control flow ──
         "jmp" => {
             if let Some(target) = args["target"].as_u64() {
