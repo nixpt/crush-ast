@@ -67,10 +67,11 @@ impl AotcCompiler {
         out.push_str(RT_HEADER);
         writeln!(out)?;
 
-        // Forward-declare all functions
-        for name in program.functions.keys() {
+        // Forward-declare all functions (with param signatures)
+        for (name, func) in &program.functions {
             let c_name = mangle(name);
-            writeln!(out, "static CrushValue {}(void);", c_name)?;
+            let param_sig = func_param_sig(func);
+            writeln!(out, "static CrushValue {}({});", c_name, param_sig)?;
         }
         writeln!(out)?;
 
@@ -97,10 +98,14 @@ impl AotcCompiler {
         let c_name = mangle(name);
         let tm = TypeMap::infer(&func.body);
 
-        writeln!(out, "static CrushValue {}(void) {{", c_name)?;
+        // Emit function signature with params
+        let param_sig = func_param_sig(func);
+        writeln!(out, "static CrushValue {}({}) {{", c_name, param_sig)?;
 
-        // Declare locals with inferred types
+        // Declare locals with inferred types (skip params — they are arguments)
+        let param_set: std::collections::HashSet<&str> = func.params.iter().map(|s| s.as_str()).collect();
         for (local, inferred) in &tm.locals {
+            if param_set.contains(local.as_str()) { continue; } // param, already declared
             let cty = match inferred {
                 InferredType::Int   => "int64_t",
                 InferredType::Float => "double",
@@ -108,10 +113,10 @@ impl AotcCompiler {
             };
             writeln!(out, "    {} {} = 0;", cty, mangle_local(local))?;
         }
-        // Also declare any params
+        // Declare any params that type inference didn't see (used only as pass-through)
         for param in &func.params {
             if !tm.locals.contains_key(param) {
-                writeln!(out, "    CrushValue {} = CV_NULL;", mangle_local(param))?;
+                // param already in signature; it IS declared — nothing to do
             }
         }
 
@@ -204,11 +209,11 @@ impl AotcCompiler {
                             writeln!(out, "    {} = cv_as_float({});", lname, src.0)?;
                         }
                         _ => {
-                            // Dynamic local; coerce src if it's a scalar
+                            // Dynamic local: only box scalar temporaries; CrushValue is already boxed
                             let rhs = match src.1 {
                                 InferredType::Int   => format!("cv_int({})", src.0),
                                 InferredType::Float => format!("cv_float({})", src.0),
-                                _ => src.0,
+                                InferredType::Dynamic => src.0, // already CrushValue
                             };
                             writeln!(out, "    {} = {};", lname, rhs)?;
                         }
@@ -217,7 +222,9 @@ impl AotcCompiler {
                 "load" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
                     let lname = mangle_local(name);
-                    let inferred = tm.locals.get(name).cloned().unwrap_or(InferredType::Dynamic);
+                    // Params may not appear in tm.locals if they're only read, not stored to
+                    let inferred = tm.locals.get(name).cloned()
+                        .unwrap_or(if func.params.contains(&name.to_string()) { InferredType::Dynamic } else { InferredType::Dynamic });
                     stack.push((lname, inferred));
                 }
 
@@ -333,12 +340,17 @@ impl AotcCompiler {
                 "call" => {
                     let func_name = instr.args.get("function").and_then(|v| v.as_str()).unwrap_or("");
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    // pop args (last pushed = first arg)
+                    // pop args (last pushed = first arg); box scalars to CrushValue for call
                     let mut args: Vec<_> = (0..argc).filter_map(|_| stack.pop()).collect();
                     args.reverse();
+                    let boxed_call_args: Vec<String> = args.iter().map(|(a, ty)| match ty {
+                        InferredType::Int   => format!("cv_int({})", a),
+                        InferredType::Float => format!("cv_float({})", a),
+                        _                   => a.clone(),
+                    }).collect();
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                     writeln!(out, "    CrushValue {} = {}({});", t, mangle(func_name),
-                        args.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>().join(", "))?;
+                        boxed_call_args.join(", "))?;
                     stack.push((t, ty));
                 }
 
@@ -370,7 +382,7 @@ impl AotcCompiler {
                         "math.round" => emit_math_cap(out, "cap_math_round", &boxed_args, &mut stack, &mut tmp_count)?,
                         "math.min"   => emit_math_cap(out, "cap_math_min",   &boxed_args, &mut stack, &mut tmp_count)?,
                         "math.max"   => emit_math_cap(out, "cap_math_max",   &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.pi"    => emit_math_cap(out, "cap_math_pi",    &boxed_args, &mut stack, &mut tmp_count)?,
+                        "math.pi"    => emit_math_cap(out, "cap_math_pi",    &[], &mut stack, &mut tmp_count)?,
                         _ => {
                             // Unknown capability — emit comment + NULL result
                             writeln!(out, "    /* unimplemented cap: {} */", cap_name)?;
@@ -410,11 +422,39 @@ impl AotcCompiler {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// C reserved words that must not appear as function names.
+const C_RESERVED: &[&str] = &[
+    "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "inline", "int", "long", "register", "restrict", "return", "short",
+    "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+    "unsigned", "void", "volatile", "while",
+    // C11+
+    "_Alignas", "_Alignof", "_Atomic", "_Bool", "_Complex",
+    "_Generic", "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
+];
+
 fn mangle(name: &str) -> String {
     if name == "main" {
-        "crush_main".to_string()
+        return "crush_main".to_string();
+    }
+    let s = name.replace('.', "__").replace('-', "_");
+    if C_RESERVED.contains(&s.as_str()) {
+        format!("crush_{}", s)
     } else {
-        name.replace('.', "__").replace('-', "_")
+        s
+    }
+}
+
+/// Build a C parameter signature string for a function, e.g. "CrushValue _arg0, CrushValue _arg1".
+fn func_param_sig(func: &casm::Function) -> String {
+    if func.params.is_empty() {
+        "void".to_string()
+    } else {
+        func.params.iter()
+            .map(|p| format!("CrushValue {}", mangle_local(p)))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -480,7 +520,9 @@ fn emit_math_cap(
     *count += 1;
     let args_str = args.join(", ");
     writeln!(out, "    CrushValue {} = {}({});", t, func, args_str)?;
-    stack.push((t, InferredType::Float));
+    // Cap returns are always CrushValue (NaN-boxed float); mark as Dynamic so
+    // store doesn't try to double-wrap with cv_float()
+    stack.push((t, InferredType::Dynamic));
     Ok(())
 }
 

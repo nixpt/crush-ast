@@ -16,4 +16,7 @@ tempfile = "3"
 
 [dev-dependencies]
 crush-frontend = { path = "../crush-frontend" }
+casm = { path = "../casm" }
 serde_json = "1.0"
+tempfile = "3"
+anyhow = "1.0"
