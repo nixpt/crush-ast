@@ -15,6 +15,7 @@ use crush_vm::{HostCap, HostCapSpec, HostCaps};
 #[derive(Default)]
 pub struct HostCapsBuilder {
     fs: bool,
+    polyglot: Vec<&'static str>,
     env: bool,
     time: bool,
     bus: bool,
@@ -45,6 +46,14 @@ impl HostCapsBuilder {
     }
 
     /// Enable filesystem capabilities (`fs.read`, `fs.write`, `fs.exists`, `fs.list`).
+    /// Grant polyglot execution for the given languages (canonical: "python", "javascript",
+    /// "bash"). Each becomes a `polyglot.<lang>` gate in the registry. Without this, @lang blocks
+    /// refuse to spawn — polyglot is NOT ambient.
+    pub fn polyglot(mut self, langs: &[&'static str]) -> Self {
+        self.polyglot = langs.to_vec();
+        self
+    }
+
     pub fn fs(mut self, enable: bool) -> Self {
         self.fs = enable;
         self
@@ -153,6 +162,9 @@ impl HostCapsBuilder {
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
         caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
+        for lang in &self.polyglot {
+            caps.register(Box::new(PolyglotGate { lang }));
+        }
         if self.fs {
             let root = self.fs_root.unwrap_or_else(|| ".".to_string());
             caps.register(Box::new(FsReadCap::new(&root)));
@@ -599,3 +611,31 @@ mod tests {
         );
     }
 }
+
+/// A capability GATE for polyglot execution. It performs no work — its mere PRESENCE in the
+/// registry is what authorizes `@python`/`@javascript`/`@bash` to spawn. crush-vm's exec_lang
+/// checks `host_caps.get("polyglot.<lang>")` before spawning; this is what makes that check pass.
+///
+/// Modeled as a host cap (not a special case) so that EVERY enforcement point — crush-run's
+/// --polyglot flag, exo-light's CapabilitySet→HostCaps Enforcer, openko's per-capsule grants —
+/// gates polyglot through the same registry it already uses for fs/net.
+struct PolyglotGate {
+    lang: &'static str,
+}
+
+impl HostCap for PolyglotGate {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            // e.g. "polyglot.python"
+            name: format!("polyglot.{}", self.lang),
+            argc: None,
+            returns: false,
+        }
+    }
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        // Never invoked as a normal capability — exec_lang does the spawn and only consults
+        // presence. If it IS somehow called, do nothing rather than surprise.
+        Ok(None)
+    }
+}
+

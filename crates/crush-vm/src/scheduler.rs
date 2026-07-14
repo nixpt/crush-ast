@@ -31,6 +31,17 @@ pub const CRUSH_RESULT_SENTINEL: &str = "\u{0}CRUSH_RESULT\u{0}";
 /// loud error, never a silent no-op (an unknown/misspelled language should
 /// fail the same way whether or not one happens to exist on PATH under its
 /// bare tag name).
+/// Canonical capability-name suffix for a @lang tag: `python`/`py`/`python3` all map to the
+/// single grant `polyglot.python`. This is what a host must grant to allow that language.
+pub(crate) fn canonical_lang(lang: &str) -> Option<&'static str> {
+    match lang {
+        "python" | "python3" | "py" => Some("python"),
+        "javascript" | "js" | "es6" | "ecmascript" | "node" => Some("javascript"),
+        "bash" | "sh" => Some("bash"),
+        _ => None,
+    }
+}
+
 /// The @lang → (binary, exec-flag) allowlist. SHARED with portable_vm so the two backends can
 /// never drift on which languages run or how (found drifting by crush-diff: portable used the raw
 /// tag `javascript` with `-c`, scheduler mapped it to `node -e`).
@@ -698,6 +709,19 @@ fn execute_one(
             let (binary, exec_flag) = resolve_lang_binary(lang).ok_or_else(|| {
                 VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
             })?;
+            // CAPABILITY GATE. A polyglot block spawns a real interpreter with the host process's
+            // full authority — `@python { import os; os.system(...) }` is arbitrary code exec. In a
+            // capability-based language that MUST be granted, exactly like fs.read or net.get.
+            // The grant is `polyglot.<lang>` in the host-caps registry (crush-run: --polyglot;
+            // exo-light: derived from the CapabilitySet). No grant → refuse, loudly.
+            let gate = canonical_lang(lang)
+                .map(|c| format!("polyglot.{c}"))
+                .unwrap_or_else(|| format!("polyglot.{lang}"));
+            if host_caps.map(|h| h.get(&gate).is_none()).unwrap_or(true) {
+                return Err(VmError::UnknownCap(format!(
+                    "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
+                )));
+            }
             let mut cmd = std::process::Command::new(binary);
             cmd.arg(exec_flag).arg(code_str);
             for (name, val) in var_names.iter().zip(var_values.iter()) {

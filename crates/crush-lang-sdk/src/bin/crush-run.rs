@@ -55,6 +55,11 @@ struct RunArgs {
     #[arg(long)]
     fs: bool,
 
+    /// Enable polyglot execution (@python / @javascript / @bash blocks spawn interpreters with
+    /// the host process's authority). OFF by default — polyglot is NOT ambient.
+    #[arg(long)]
+    polyglot: bool,
+
     /// Sandbox filesystem access under this directory.
     #[arg(long, value_name = "DIR", default_value = ".")]
     fs_root: PathBuf,
@@ -279,6 +284,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
 
     #[allow(unused_mut)]
     let mut builder = HostCapsBuilder::new()
+        .polyglot(if args.polyglot { &["python", "javascript", "bash"] } else { &[] })
         .fs(args.fs)
         .fs_root(args.fs_root.to_string_lossy())
         .env(args.env)

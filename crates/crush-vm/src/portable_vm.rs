@@ -1064,6 +1064,16 @@ impl PortableVm {
                 // silent spawn attempt.
                 let (binary, exec_flag) = crate::scheduler::resolve_lang_binary(lang)
                     .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
+                // CAPABILITY GATE — must match scheduler.rs exactly (crush-diff would catch drift).
+                // A @lang block spawns an interpreter with full host authority; require polyglot.<lang>.
+                let gate = crate::scheduler::canonical_lang(lang)
+                    .map(|c| format!("polyglot.{c}"))
+                    .unwrap_or_else(|| format!("polyglot.{lang}"));
+                if self.host_caps.as_ref().map(|h| h.get(&gate).is_none()).unwrap_or(true) {
+                    return Err(VmError::UnknownCap(format!(
+                        "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
+                    )));
+                }
                 let mut cmd = std::process::Command::new(binary);
                 cmd.arg(exec_flag).arg(code_str);
                 for (name, val) in var_names.iter().zip(var_values.iter()) {
