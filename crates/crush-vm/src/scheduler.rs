@@ -16,6 +16,13 @@ use crate::vm::{Frame, GreenThread, Quotas, Value, VmError, VmResult};
 
 const SLICE_SIZE: usize = 50;
 
+/// Marks the line in a polyglot block's stdout that carries its marshaled
+/// return value, as JSON, so it can be told apart from the block's own
+/// ordinary prints (which must still flow through untouched — stdout is a
+/// shared channel, and the two must never be conflated). NUL bytes can't
+/// appear in ordinary program output, so this cannot collide by accident.
+pub const CRUSH_RESULT_SENTINEL: &str = "\u{0}CRUSH_RESULT\u{0}";
+
 /// Map an `@<lang>` polyglot block tag to the interpreter binary and the
 /// flag it uses to execute a code string (this is NOT uniform across
 /// languages — e.g. Node's `-c` means "check syntax only", not "execute";
@@ -682,13 +689,30 @@ fn execute_one(
                 .output()
                 .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
             if output.status.success() {
-                let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                *out_len += s.len();
+                let raw = String::from_utf8_lossy(&output.stdout);
+                let mut visible_lines: Vec<&str> = Vec::new();
+                let mut result_payload: Option<&str> = None;
+                for line in raw.lines() {
+                    match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
+                        // Last one wins, matching "the block's final bound
+                        // output" if it somehow printed the sentinel more
+                        // than once.
+                        Some(payload) => result_payload = Some(payload),
+                        None => visible_lines.push(line),
+                    }
+                }
+                let visible = visible_lines.join("\n").trim().to_string();
+                *out_len += visible.len();
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(s.clone());
-                push!(Value::Str(s));
+                out_parts.push(visible.clone());
+                let result_value = match result_payload {
+                    Some(payload) => serde_json::from_str::<Value>(payload)
+                        .unwrap_or_else(|_| Value::Str(payload.to_string())),
+                    None => Value::Str(visible),
+                };
+                push!(result_value);
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
