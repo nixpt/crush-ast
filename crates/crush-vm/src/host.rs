@@ -43,6 +43,17 @@ impl HostCaps {
     }
 
     /// Register a capability handler.
+    /// Grant polyglot execution for the given canonical languages ("python"/"javascript"/"bash").
+    /// Registers a `polyglot.<lang>` gate whose PRESENCE authorizes exec_lang to spawn that
+    /// interpreter. This is the crush-vm-native grant; higher layers (the sdk builder, exo-light's
+    /// Enforcer) funnel through it. Off by default — polyglot is not ambient.
+    pub fn grant_polyglot(&mut self, langs: &[&str]) -> &mut Self {
+        for &lang in langs {
+            self.register(Box::new(PolyglotGate { lang: lang.to_string() }));
+        }
+        self
+    }
+
     pub fn register(&mut self, handler: Box<dyn HostCap>) -> &mut Self {
         let name = handler.spec().name.clone();
         self.handlers.insert(name, handler);
@@ -70,5 +81,21 @@ impl std::fmt::Debug for HostCaps {
         f.debug_struct("HostCaps")
             .field("caps", &self.handlers.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+/// Presence-only capability gate for `@<lang>` polyglot blocks. exec_lang checks
+/// `host_caps.get("polyglot.<lang>")` before spawning; this handler's mere registration is the
+/// authorization. `call()` is never reached through normal execution.
+struct PolyglotGate {
+    lang: String,
+}
+
+impl HostCap for PolyglotGate {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec { name: format!("polyglot.{}", self.lang), argc: None, returns: false }
+    }
+    fn call(&self, _args: Vec<crate::vm::Value>) -> Result<Option<crate::vm::Value>, String> {
+        Ok(None)
     }
 }

@@ -458,6 +458,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
 #[cfg(test)]
 mod tests {
+    fn _poly_caps() -> crush_vm::HostCaps {
+        let mut c = crush_vm::HostCaps::new();
+        c.grant_polyglot(&["python", "javascript", "bash"]);
+        c
+    }
     use super::*;
 
     #[test]
@@ -541,7 +546,7 @@ mod tests {
         let source = "fn main() {\n    @javascript { const x = 1; }\n    io.print(\"js ok\")\n}\n";
         let prog = compile_crush_source(source).expect("compile js polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run js polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run js polyglot block");
         assert_eq!(result.output, "js ok");
     }
 
@@ -572,7 +577,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
         let result =
-            crush_vm::run_with_caps(&prog, &quotas, None).expect("run python polyglot block");
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
         assert_eq!(result.output, "10");
     }
 
@@ -584,7 +589,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
         let result =
-            crush_vm::run_with_caps(&prog, &quotas, None).expect("run python polyglot block");
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
         // JSON round-trip preserves float-ness (Python's json.dumps(125.0)
         // stays "125.0"), not just the numeric value.
         assert_eq!(result.output, "125.0");
@@ -599,7 +604,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
         let result =
-            crush_vm::run_with_caps(&prog, &quotas, None).expect("run python polyglot block");
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
         assert!(
             result.output.contains("debug"),
             "block's own print output should still appear, got: {}",
