@@ -429,6 +429,58 @@ impl Compiler {
     }
 
     fn compile_stmt(&mut self, stmt: &Statement, instrs: &mut Vec<Instruction>) -> Result<()> {
+        // `for i in a..b` — a numeric range.
+        //
+        // Lowered directly rather than through the array path below: the loop variable IS the
+        // counter, so no array/index temporaries are needed. Critically, a range must NEVER be
+        // materialised as an array — `for i in 0..1_000_000` would allocate a million elements
+        // to iterate integers.
+        //
+        //     i = start
+        //     while __end > i { body; i = i + 1 }
+        if let Statement::For { variable, iterable, body, meta } = stmt {
+            if let Expression::Range { start, end, .. } = iterable.as_ref() {
+                let end_var = format!("__end_{}", self.temp_counter);
+                self.temp_counter += 1;
+
+                self.compile_expr(start, instrs)?;
+                instrs.push(self.create_instr("store", serde_json::json!({"name": variable}), meta));
+                self.compile_expr(end, instrs)?;
+                instrs.push(self.create_instr("store", serde_json::json!({"name": &end_var}), meta));
+
+                self.loop_stack.push(LoopInfo { continue_target: 0, break_indices: Vec::new() });
+
+                let loop_start = instrs.len();
+                instrs.push(self.create_instr("load", serde_json::json!({"name": &end_var}), meta));
+                instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
+                instrs.push(self.create_instr("gt", serde_json::json!({}), meta));
+                let jmp_if_not_idx = instrs.len();
+                instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+
+                for st in body {
+                    self.compile_stmt(st, instrs)?;
+                }
+
+                let continue_idx = instrs.len();
+                self.loop_stack.last_mut().unwrap().continue_target = continue_idx;
+
+                instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
+                instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), meta));
+                instrs.push(self.create_instr("add", serde_json::json!({}), meta));
+                instrs.push(self.create_instr("store", serde_json::json!({"name": variable}), meta));
+
+                instrs.push(self.create_instr("jmp", serde_json::json!({"target": loop_start}), meta));
+
+                let loop_end = instrs.len();
+                instrs[jmp_if_not_idx].args = serde_json::json!({"target": loop_end});
+                let loop_info = self.loop_stack.pop().unwrap();
+                for idx in loop_info.break_indices {
+                    instrs[idx].args = serde_json::json!({"target": loop_end});
+                }
+                return Ok(());
+            }
+        }
+
         match stmt {
             Statement::VarDecl {
                 name, value, meta, ..

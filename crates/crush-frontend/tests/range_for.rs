@@ -1,0 +1,47 @@
+//! Range expressions (`a..b`) and `for i in a..b`.
+//!
+//! Ranges were lexed (`Token::DotDot`) and had an AST node (`Expression::Range`) and a
+//! renderer arm — but NO parser, in crush-ast OR in exosphere's in-tree crush-lang, ever
+//! constructed one. `for i in 0..3` had therefore never parsed anywhere.
+//! exosphere's `tests/language/for_loop_test.crush` asserts it works and was never wired
+//! into a test runner, so nothing caught it.
+
+use crush_frontend::compile_crush_source;
+
+fn compiles(src: &str) -> bool {
+    compile_crush_source(src).is_ok()
+}
+
+#[test]
+fn range_for_loop_parses() {
+    assert!(compiles("fn main() { for i in 0..3 { print(i); } }"));
+}
+
+#[test]
+fn range_bounds_may_be_expressions() {
+    // Precedence check: `..` must bind LOOSER than `+`, so this is `0..(n+1)`, not `(0..n)+1`.
+    assert!(compiles("fn main() { let n = 2; for i in 0..n+1 { print(i); } }"));
+}
+
+#[test]
+fn empty_range_is_legal() {
+    assert!(compiles("fn main() { for i in 0..0 { print(i); } }"));
+}
+
+#[test]
+fn break_and_continue_work_inside_a_range_loop() {
+    assert!(compiles("fn main() { for i in 0..9 { if i > 1 { break; } print(i); } }"));
+}
+
+#[test]
+fn nested_ranges_do_not_collide() {
+    // Each loop allocates its own __end_N temp; a shared one would break the outer loop.
+    assert!(compiles("fn main() { for i in 0..2 { for j in 0..2 { print(j); } } }"));
+}
+
+#[test]
+fn array_for_loops_still_work() {
+    // Regression: the range path is a new early-return in compile_stmt. The array path
+    // below it must be untouched.
+    assert!(compiles("fn main() { for x in [1,2,3] { print(x); } }"));
+}

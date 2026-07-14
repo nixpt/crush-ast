@@ -1102,6 +1102,9 @@ impl Parser {
         loop {
             let (op, prec, right_assoc) = match self.peek() {
                 Token::Pipe(_) => ("|>", 10, false),
+                // Range binds looser than every arithmetic/comparison op, so `0..n+1`
+                // is `0..(n+1)` — the same choice Rust makes.
+                Token::DotDot(_) => ("..", 15, false),
                 Token::Or(_) => ("||", 20, false),
                 Token::And(_) => ("&&", 30, false),
                 Token::Eq(_) => ("==", 40, false),
@@ -1129,7 +1132,14 @@ impl Parser {
 
             let next_min_prec = if right_assoc { prec } else { prec + 1 };
 
-            left = if op == "|>" {
+            left = if op == ".." {
+                let end = self.parse_expression_with_precedence(next_min_prec)?;
+                Expression::Range {
+                    start: Box::new(left),
+                    end: Box::new(end),
+                    meta: HashMap::new(),
+                }
+            } else if op == "|>" {
                 // Pipeline: left |> right becomes right(left)
                 let right = self.parse_expression_with_precedence(next_min_prec)?;
                 match right {
