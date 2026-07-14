@@ -103,12 +103,78 @@ mod tests {
         assert!(r.is_ok(), "'in' should not crash: {:?}", r);
     }
 
-    // ── CRUSHAST-PYLOWER-1: comprehensions ──────────────────────────────────
+    // ── CRUSHAST-PYLOWER-1: try/except, comprehensions ──────────────────────
     //
     // Real end-to-end runs: Python source → CAST → CASM → CVM1, asserting on
     // actual VM `output`, not just "lowering didn't panic" — per this repo's
     // own `ee75f1b` precedent (top-level statements that looked lowered but
     // were silently discarded and never executed).
+
+    #[test]
+    fn test_try_except_catches_and_reads_exception_field() {
+        assert_eq!(
+            run_python(
+                "try:\n    raise ValueError(\"bad thing\")\nexcept ValueError as e:\n    print(e.message)\n"
+            )
+            .unwrap(),
+            "bad thing"
+        );
+    }
+
+    #[test]
+    fn test_try_except_finally_always_runs() {
+        assert_eq!(
+            run_python(concat!(
+                "x = 0\n",
+                "try:\n",
+                "    x = 1\n",
+                "    raise ValueError(\"boom\")\n",
+                "except ValueError:\n",
+                "    x = 2\n",
+                "finally:\n",
+                "    x = x + 100\n",
+                "print(x)\n",
+            ))
+            .unwrap(),
+            "102"
+        );
+    }
+
+    #[test]
+    fn test_try_except_multi_handler_dispatches_by_type() {
+        assert_eq!(
+            run_python(concat!(
+                "n = 5\n",
+                "try:\n",
+                "    if n < 0:\n",
+                "        raise ValueError(\"negative\")\n",
+                "    else:\n",
+                "        raise TypeError(\"not a value error\")\n",
+                "except ValueError:\n",
+                "    print(1)\n",
+                "except TypeError:\n",
+                "    print(2)\n",
+            ))
+            .unwrap(),
+            "2"
+        );
+    }
+
+    #[test]
+    fn test_try_no_exception_skips_handler() {
+        assert_eq!(
+            run_python(concat!(
+                "x = 0\n",
+                "try:\n",
+                "    x = 1\n",
+                "except ValueError:\n",
+                "    x = 999\n",
+                "print(x)\n",
+            ))
+            .unwrap(),
+            "1"
+        );
+    }
 
     #[test]
     fn test_list_comprehension_assignment_runs_the_loop() {
