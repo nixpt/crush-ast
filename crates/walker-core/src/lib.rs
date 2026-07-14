@@ -52,6 +52,8 @@
 //! }
 //! ```
 
+pub mod adapter;
+
 use anyhow::{Context, Result};
 use crush_cast::{self as ast, Program};
 use serde_json::json;

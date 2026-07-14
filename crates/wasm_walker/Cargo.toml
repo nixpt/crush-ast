@@ -17,4 +17,6 @@ crush-cast.workspace = true
 
 [dev-dependencies]
 wat = "1.0"
-
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

@@ -502,3 +502,4 @@ impl LanguageAdapter for ZigAdapter {
         Ok((walker_core::FeatureReport { lang: "zig".to_string(), ..Default::default() }, program))
     }
 }
+pub mod sdk;

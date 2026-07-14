@@ -22,3 +22,8 @@ tree-sitter.workspace = true
 tree-sitter-go = "0.23"
 walker-core.workspace = true
 crush-cast.workspace = true
+
+[dev-dependencies]
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

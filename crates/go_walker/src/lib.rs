@@ -324,3 +324,4 @@ impl LanguageAdapter for GoAdapter {
         Ok((walker_core::FeatureReport { lang: "go".to_string(), ..Default::default() }, program))
     }
 }
+pub mod sdk;

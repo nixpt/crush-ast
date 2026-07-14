@@ -11,3 +11,8 @@ crush-cast = { workspace = true }
 walker-core = { workspace = true }
 crush-frontend = { path = "../crush-frontend" }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

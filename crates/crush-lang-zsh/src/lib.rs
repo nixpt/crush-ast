@@ -52,3 +52,4 @@ impl_adapter_from_frontend!(
     &["zsh"],
     crate::zsh_to_cast
 );
+pub mod sdk;
