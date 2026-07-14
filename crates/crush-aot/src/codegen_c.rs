@@ -82,7 +82,7 @@ static inline Value mk_object(int idx)  { return (Value){TAG_OBJECT, .obj_idx=id
 
 // ── Array pool ───────────────────────────────────────────────────────
 #define ARRAY_POOL_MAX 64
-#define ARRAY_DATA_CAP 1024
+#define ARRAY_DATA_CAP 65536
 
 typedef struct {
     Value data[ARRAY_DATA_CAP];

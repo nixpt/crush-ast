@@ -184,6 +184,13 @@ fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<cas
             compiler.compile(cast)
                 .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
         }
+        "js" | "mjs" | "cjs" | "ts" | "tsx" | "mts" => {
+            let cast = crush_lang_js::js_to_cast(source, ext)
+                .map_err(|e| anyhow::anyhow!("JS→CAST: {e}"))?;
+            let mut compiler = crush_frontend::compiler::Compiler::new();
+            compiler.compile(cast)
+                .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
+        }
         _ => crush_frontend::compile_crush_source(source)
             .map_err(|e| anyhow::anyhow!("Crush→CASM: {e}")),
     }
