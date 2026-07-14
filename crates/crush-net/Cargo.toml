@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Portable, std-only TCP/TLS network stack exposed as CRUSH host capabilities."
+readme = "../../README.md"
 
 [features]
 tls = ["dep:rustls", "dep:webpki-roots"]
@@ -16,7 +17,7 @@ crush-lang-sdk.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-mesh-proto = { path = "../../../exosphere/crates/mesh-proto" }
+mesh-proto = { path = "../../../exosphere/crates/mesh-proto", version = "0.1.0" }
 
 # TLS deps (only pulled when the `tls` feature is enabled).
 rustls = { version = "0.23",optional = true, default-features = false, features = ["logging", "std", "tls12", "ring"] }
@@ -27,5 +28,5 @@ webpki-roots = { version = "0.26", optional = true }
 # Gated on the same `tls` feature so a no-tls build doesn't pull it.
 # Strip optional flag — dev-dependencies may not be optional
 rcgen = "0.13"
-mesh-proto = { path = "../../../exosphere/crates/mesh-proto" }
+mesh-proto = { path = "../../../exosphere/crates/mesh-proto", version = "0.1.0" }
 

@@ -1,5 +1,6 @@
 [package]
 name = "crush-plugin-example"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-crush-ffi = { path = "../crush-ffi" }
+crush-ffi = { path = "../crush-ffi", version = "0.3.0" }
 
 [lib]
 crate-type = ["cdylib"]

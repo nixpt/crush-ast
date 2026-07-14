@@ -3,6 +3,7 @@ name = "crush-installer"
 version.workspace = true
 edition = "2024"
 description = "Installer and uninstaller for the Crush language toolchain"
+readme = "../../README.md"
 license.workspace = true
 repository = "https://github.com/nixpt/crush-ast"
 

@@ -3,6 +3,7 @@ name = "crush-lang-custom"
 version.workspace = true
 edition = "2024"
 description = "Meta-frontend for custom DSLs — parses custom grammar definitions (CSON/JSON) and lowers to CAST"
+readme = "../../README.md"
 license.workspace = true
 repository.workspace = true
 
@@ -12,7 +13,7 @@ name = "crush_lang_custom"
 [dependencies]
 crush-cast = { workspace = true }
 crush-walker-core = { workspace = true }
-crush-cson = { path = "../crush-cson" }
+crush-cson = { path = "../crush-cson", version = "0.3.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

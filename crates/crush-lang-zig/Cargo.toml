@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2021"
 repository.workspace = true
 description = "Zig to CAST walker for CRUSH"
+readme = "../../README.md"
 license.workspace = true
 [lib]
 name = "crush_lang_zig"

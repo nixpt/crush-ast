@@ -1,6 +1,7 @@
 [package]
 license.workspace = true
 description = "Dart walker — parses Dart source into CAST IR via tree-sitter-dart"
+readme = "../../README.md"
 name = "crush-lang-dart"
 version.workspace = true
 edition = "2024"

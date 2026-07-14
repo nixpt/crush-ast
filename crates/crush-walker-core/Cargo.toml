@@ -1,6 +1,7 @@
 [package]
 license.workspace = true
 description = "Walker core — Walker trait, BaseWalker, and capability mappings"
+readme = "../../README.md"
 name = "crush-walker-core"
 version.workspace = true
 edition = "2021"

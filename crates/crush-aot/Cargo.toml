@@ -6,7 +6,7 @@ description = "Ahead-of-Time compiler for Crush — transpiles CASM to native .s
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme = "README.md"
+readme = "../../README.md"
 keywords = ["crush", "aot", "compiler", "native"]
 categories = ["development-tools", "compilers"]
 autobins = false
@@ -16,18 +16,18 @@ casm.workspace = true
 crush-frontend.workspace = true
 crush-vm.workspace = true
 crush-lang-sdk.workspace = true
-crush-lang-python = { path = "../crush-lang-python" }
-crush-lang-js = { path = "../crush-lang-js" }
-crush-lang-rust = { path = "../crush-lang-rust" }
-crush-lang-c = { path = "../crush-lang-c" }
-crush-lang-go = { path = "../crush-lang-go" }
-crush-lang-zig = { path = "../crush-lang-zig" }
-crush-lang-wasm = { path = "../crush-lang-wasm" }
-crush-lang-bash = { path = "../crush-lang-bash" }
-crush-lang-zsh = { path = "../crush-lang-zsh" }
-crush-lang-nepali = { path = "../crush-lang-nepali" }
-crush-lang-custom = { path = "../crush-lang-custom" }
-crush-lang-dart = { path = "../crush-lang-dart" }
+crush-lang-python = { path = "../crush-lang-python", version = "0.3.0" }
+crush-lang-js = { path = "../crush-lang-js", version = "0.3.0" }
+crush-lang-rust = { path = "../crush-lang-rust", version = "0.3.0" }
+crush-lang-c = { path = "../crush-lang-c", version = "0.3.0" }
+crush-lang-go = { path = "../crush-lang-go", version = "0.3.0" }
+crush-lang-zig = { path = "../crush-lang-zig", version = "0.3.0" }
+crush-lang-wasm = { path = "../crush-lang-wasm", version = "0.3.0" }
+crush-lang-bash = { path = "../crush-lang-bash", version = "0.3.0" }
+crush-lang-zsh = { path = "../crush-lang-zsh", version = "0.3.0" }
+crush-lang-nepali = { path = "../crush-lang-nepali", version = "0.3.0" }
+crush-lang-custom = { path = "../crush-lang-custom", version = "0.3.0" }
+crush-lang-dart = { path = "../crush-lang-dart", version = "0.3.0" }
 crush-walker-core.workspace = true
 crush-cast.workspace = true
 serde.workspace = true

@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Canonical NDJSON diagnostic helper trio for the Crush CLI surface — shared shape (code, level, file, line, col, message, hint) extracted from the inlined xtask/crush-vm/crush-installer/crush-pkg copies."
+readme = "../../README.md"
 
 [dependencies]
 serde.workspace = true

@@ -34,6 +34,6 @@ crush-diagnostics.workspace = true
 ort = "2.0.0-rc.12"
 parking_lot = "0.12.5"
 libloading = "0.9.0"
-crush-ffi = { version = "0.2.0", path = "../crush-ffi" }
+crush-ffi = { version = "0.3.0", path = "../crush-ffi" }
 
 [dev-dependencies]

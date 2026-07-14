@@ -6,7 +6,7 @@ description = "Proc macros for embedding Crush code at compile time in Rust"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme = "README.md"
+readme = "../../README.md"
 keywords = ["crush", "macro", "proc-macro", "embedding"]
 categories = ["development-tools", "compilers"]
 

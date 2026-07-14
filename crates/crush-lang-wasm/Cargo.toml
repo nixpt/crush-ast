@@ -1,6 +1,7 @@
 [package]
 license.workspace = true
 description = "WebAssembly walker — parses Wasm modules into CAST IR"
+readme = "../../README.md"
 name = "crush-lang-wasm"
 version.workspace = true
 edition = "2024"

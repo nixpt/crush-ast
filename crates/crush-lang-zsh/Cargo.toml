@@ -3,6 +3,7 @@ name = "crush-lang-zsh"
 version.workspace = true
 edition = "2024"
 description = "Zsh language support for Crush — parser backed by zshrs-parse (direct port of zsh's lex.c+parse.c)"
+readme = "../../README.md"
 license.workspace = true
 repository.workspace = true
 
@@ -19,6 +20,6 @@ serde_json.workspace = true
 zshrs-parse = "0.10"
 
 [dev-dependencies]
-crush-frontend = { path = "../crush-frontend" }
-crush-lang-sdk = { path = "../crush-lang-sdk" }
-crush-vm = { path = "../crush-vm" }
+crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
+crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.0" }
+crush-vm = { path = "../crush-vm", version = "0.3.0" }

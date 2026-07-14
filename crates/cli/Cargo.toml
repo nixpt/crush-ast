@@ -1,6 +1,7 @@
 [package]
 license.workspace = true
 description = "Walker CLI — auto-detects source language and dispatches to the correct walker"
+readme = "../../README.md"
 name = "crush-walker"
 version.workspace = true
 edition = "2021"
