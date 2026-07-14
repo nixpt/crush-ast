@@ -506,7 +506,12 @@ impl Compiler {
             }
             Statement::ExprStmt { expr, meta } => {
                 self.compile_expr(expr, instrs)?;
-                instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                // `yield` is modelled as an Expression in the CAST but produces NO value —
+                // its instruction pushes nothing. Popping after it underflows the stack.
+                // Every other expression leaves exactly one value behind.
+                if !matches!(expr, Expression::Yield { .. }) {
+                    instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                }
             }
             Statement::Return { value, meta } => {
                 if let Some(val) = value {

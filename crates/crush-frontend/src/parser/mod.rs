@@ -720,6 +720,19 @@ impl Parser {
             Token::If(_) => self.parse_if_statement(),
             Token::While(_) => self.parse_while_statement(),
             Token::For(_) => self.parse_for_statement(),
+            // bare `yield;` — Yield is an *Expression* in the CAST, and the compiler already
+            // lowers it. The parser just never dispatched on Token::Yield, so `yield;` died
+            // with "Unexpected token in expression: Yield".
+            Token::Yield(_) => {
+                self.advance();
+                self.maybe_semicolon();
+                Ok(Statement::ExprStmt {
+                    expr: Expression::Yield {
+                        meta: HashMap::new(),
+                    },
+                    meta: HashMap::new(),
+                })
+            }
             Token::Return(_) => self.parse_return_statement(),
             Token::Break(_) => {
                 self.advance();
@@ -1054,18 +1067,39 @@ impl Parser {
 
     /// Parse expression statement
     fn parse_expression_statement(&mut self) -> Result<Statement, ()> {
-        let expr = self.parse_expression()?;
+        #[allow(unused_assignments)]
+        let mut expr = self.parse_expression()?;
 
         if matches!(self.peek(), Token::Assign(_)) {
-            if let Expression::Var { name, .. } = expr {
-                self.advance();
-                let value = self.parse_expression()?;
-                self.maybe_semicolon();
-                return Ok(Statement::Assign {
-                    target: name,
-                    value,
-                    meta: HashMap::new(),
-                });
+            match expr {
+                Expression::Var { name, .. } => {
+                    self.advance();
+                    let value = self.parse_expression()?;
+                    self.maybe_semicolon();
+                    return Ok(Statement::Assign {
+                        target: name,
+                        value,
+                        meta: HashMap::new(),
+                    });
+                }
+                // `p.x = 10` — field assignment. Statement::SetField already exists in the CAST
+                // and the compiler already lowers it; the parser simply never built one, so any
+                // field assignment died with "Unexpected token in expression: Assign".
+                Expression::GetField { target, field, .. } => {
+                    self.advance();
+                    let value = self.parse_expression()?;
+                    self.maybe_semicolon();
+                    return Ok(Statement::SetField {
+                        target: *target,
+                        field,
+                        value,
+                        meta: HashMap::new(),
+                    });
+                }
+                other => {
+                    // Put it back so the ExprStmt fallthrough below still sees it.
+                    expr = other;
+                }
             }
         }
 

@@ -68,3 +68,33 @@ fn await_on_a_normal_call_still_parses() {
     // Regression: `await` was fine before this change and must stay fine.
     assert!(compiles("fn main() { await foo.bar(1); }"));
 }
+
+// ── field assignment + yield ─────────────────────────────────────────────────────────────
+//
+// Same shape as ranges, twice more: the CAST node existed AND the compiler already lowered it,
+// and only the parser never built one.
+//   `p.x = 10`  -> Statement::SetField   (died: "Unexpected token in expression: Assign")
+//   `yield;`    -> Expression::Yield     (died: "Unexpected token in expression: Yield")
+
+#[test]
+fn field_assignment_parses() {
+    assert!(compiles("struct P { x } fn main() { let p = new P(); p.x = 10; }"));
+}
+
+#[test]
+fn nested_field_assignment_parses() {
+    assert!(compiles(
+        "struct I { v } struct O { i } fn main() { let o = new O(); o.i.v = 5; }"
+    ));
+}
+
+#[test]
+fn plain_assignment_still_parses() {
+    // Regression: the SetField arm restructured the Assign branch.
+    assert!(compiles("fn main() { let x = 0; x = 1; }"));
+}
+
+#[test]
+fn bare_yield_parses() {
+    assert!(compiles("fn main() { print(\"a\"); yield; print(\"b\"); }"));
+}
