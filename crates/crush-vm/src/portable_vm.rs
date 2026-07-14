@@ -1074,24 +1074,34 @@ impl PortableVm {
                         "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
                     )));
                 }
-                let mut cmd = std::process::Command::new(binary);
-                cmd.arg(exec_flag).arg(code_str);
-                for (name, val) in var_names.iter().zip(var_values.iter()) {
-                    cmd.env(name, value_to_text(val));
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (binary, exec_flag, code_str, &var_names, &var_values);
+                    return Err(VmError::UnknownCap(format!(
+                        "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
+                    )));
                 }
-                let output = cmd.output()
-                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
-                if output.status.success() {
-                    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    self.out_len += s.len();
-                    if self.out_len > self.quotas.max_output {
-                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut cmd = std::process::Command::new(binary);
+                    cmd.arg(exec_flag).arg(code_str);
+                    for (name, val) in var_names.iter().zip(var_values.iter()) {
+                        cmd.env(name, value_to_text(val));
                     }
-                    self.out_parts.push(s.clone());
-                    self.push(Value::Str(s));
-                } else {
-                    let err = String::from_utf8_lossy(&output.stderr);
-                    return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
+                    let output = cmd.output()
+                        .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
+                    if output.status.success() {
+                        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        self.out_len += s.len();
+                        if self.out_len > self.quotas.max_output {
+                            return Err(VmError::OutputQuota(self.quotas.max_output));
+                        }
+                        self.out_parts.push(s.clone());
+                        self.push(Value::Str(s));
+                    } else {
+                        let err = String::from_utf8_lossy(&output.stderr);
+                        return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
+                    }
                 }
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
@@ -1114,6 +1124,9 @@ impl PortableVm {
                 self.push(Value::Int(task_id as i64));
             }
             YIELD => {
+                // No OS threads on wasm32 — cooperative single-threaded execution
+                // already yields nothing to yield to, so this is a no-op there.
+                #[cfg(not(target_arch = "wasm32"))]
                 std::thread::yield_now();
             }
             AWAIT => {

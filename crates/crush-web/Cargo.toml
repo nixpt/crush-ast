@@ -1,0 +1,47 @@
+# Deliberately excluded from the crush-ast workspace (see root Cargo.toml's
+# `exclude`) — this is its own independent resolution root so its wasm32
+# build doesn't inherit feature requests from native-only siblings. An empty
+# [workspace] table (not just the `exclude` on the crush-ast side) is needed
+# to stop Cargo's ancestor search here — otherwise it walks further up past
+# an excluded package looking for the next workspace root.
+[workspace]
+
+[package]
+name = "crush-web"
+description = "Browser WebAssembly runtime for Crush — compiles and runs CAST source via crush-frontend + crush-vm's portable interpreter"
+version = "0.3.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/nixpt/crush-ast"
+repository = "https://github.com/nixpt/crush-ast"
+rust-version = "1.95.0"
+readme = "README.md"
+keywords = ["crush", "wasm", "browser", "webassembly"]
+categories = ["wasm"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# compile_crush_source() here does parse + polyglot-marshaling-prep + CASM
+# lowering + casm-to-VM-program assembly in one call — the same pipeline
+# crush-run/crushc use natively, not a separate reimplementation.
+crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.0", default-features = false }
+# Core interpreter only — native-only backends (ONNX optimizer, dynamic
+# plugin loading, subprocess capabilities) can't cross the wasm32 boundary;
+# see crush-vm/Cargo.toml's `native-plugins` feature.
+crush-vm = { path = "../crush-vm", version = "0.3.0", default-features = false }
+
+wasm-bindgen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["panic-hook"]
+panic-hook = ["dep:console_error_panic_hook"]
+
+[package.metadata.wasm-pack.profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1

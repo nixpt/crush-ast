@@ -735,42 +735,52 @@ fn execute_one(
                     "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
                 )));
             }
-            let mut cmd = std::process::Command::new(binary);
-            cmd.arg(exec_flag).arg(code_str);
-            for (name, val) in var_names.iter().zip(var_values.iter()) {
-                cmd.env(name, val.as_text());
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = (binary, exec_flag, code_str, &var_names, &var_values);
+                return Err(VmError::UnknownCap(format!(
+                    "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
+                )));
             }
-            let output = cmd
-                .output()
-                .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                let mut visible_lines: Vec<&str> = Vec::new();
-                let mut result_payload: Option<&str> = None;
-                for line in raw.lines() {
-                    match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
-                        // Last one wins, matching "the block's final bound
-                        // output" if it somehow printed the sentinel more
-                        // than once.
-                        Some(payload) => result_payload = Some(payload),
-                        None => visible_lines.push(line),
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut cmd = std::process::Command::new(binary);
+                cmd.arg(exec_flag).arg(code_str);
+                for (name, val) in var_names.iter().zip(var_values.iter()) {
+                    cmd.env(name, val.as_text());
+                }
+                let output = cmd
+                    .output()
+                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
+                if output.status.success() {
+                    let raw = String::from_utf8_lossy(&output.stdout);
+                    let mut visible_lines: Vec<&str> = Vec::new();
+                    let mut result_payload: Option<&str> = None;
+                    for line in raw.lines() {
+                        match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
+                            // Last one wins, matching "the block's final bound
+                            // output" if it somehow printed the sentinel more
+                            // than once.
+                            Some(payload) => result_payload = Some(payload),
+                            None => visible_lines.push(line),
+                        }
                     }
+                    let visible = visible_lines.join("\n").trim().to_string();
+                    *out_len += visible.len();
+                    if *out_len > quotas.max_output {
+                        return Err(VmError::OutputQuota(quotas.max_output));
+                    }
+                    out_parts.push(visible.clone());
+                    let result_value = match result_payload {
+                        Some(payload) => serde_json::from_str::<Value>(payload)
+                            .unwrap_or_else(|_| Value::Str(payload.to_string())),
+                        None => Value::Str(visible),
+                    };
+                    push!(result_value);
+                } else {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
-                let visible = visible_lines.join("\n").trim().to_string();
-                *out_len += visible.len();
-                if *out_len > quotas.max_output {
-                    return Err(VmError::OutputQuota(quotas.max_output));
-                }
-                out_parts.push(visible.clone());
-                let result_value = match result_payload {
-                    Some(payload) => serde_json::from_str::<Value>(payload)
-                        .unwrap_or_else(|_| Value::Str(payload.to_string())),
-                    None => Value::Str(visible),
-                };
-                push!(result_value);
-            } else {
-                let err = String::from_utf8_lossy(&output.stderr);
-                return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
             }
         }
         AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
