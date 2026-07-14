@@ -485,3 +485,23 @@ A complete audit of the crush-ast workspace was performed (35 crates, 874 tests,
 Rejected alternatives:
 - **Keep only dejavue** — dejavue is for architectural memory (decisions, invariants, why); .jagent is for execution planning (milestones, status, what/when). Both are needed.
 - **Use crush-notebook's ticket IDs** — separate repos use separate ID spaces (CRUSH-NNN vs NB-NNN) to avoid confusion during cross-project work.
+
+## 2026-07-14T14:59:36-05:00 — [STRATEGIC] [VERIFIED] [ARCHITECTURAL] EXEC_LANG wall-clock timeout: process-group kill, not single-PID kill
+
+Reason:
+CAP_CALL/EXEC_LANG had no wall-clock bound — only step/depth/output quotas, none of which trip for a process blocked on I/O since it executes zero crush instructions while hanging. A cold bucket provision or any future slow capability could hang the whole interpreter indefinitely with nothing to stop it (found while reasoning through the buckets capability-derivation design question).
+
+Artifacts: crates/crush-vm/src/scheduler.rs, crates/crush-vm/src/portable_vm.rs, crates/crush-vm/src/vm.rs, crates/crush-vm/Cargo.toml
+
+Tensions: security, performance
+
+Domain owner: crush-vm
+
+Rejected alternatives:
+- **kill single tracked PID**: bash -c 'sleep 30' forks sleep as bash's own child, which inherits bash's stdout/stderr pipe write-ends; killing bash alone leaves sleep running and the pipe never sees EOF until sleep's own 30s elapses — every individual step (kill Ok, wait shows SIGKILL) looks correct in isolation, only an end-to-end test catches the full 30s hang
+- **spawn+poll+read-stdout-after-exit**: deadlocks if the child writes enough output to fill the OS pipe buffer (~64KiB) before exiting, since nobody drains the pipe while polling — child blocks on its own write()
+- **generic CAP_CALL/HostCap::call() preemption via thread + channel**: Value's Rc<RefCell<...>> fields aren't Send, so an arbitrary HostCap trait call can't safely cross a thread boundary without making Value Send first — a much larger refactor, out of scope. EXEC_LANG is the only capability the VM can bound today because it owns a killable OS process, not an opaque trait call.
+
+Outcome:
+Quotas.max_wall_time_ms (default 30s) enforced via scheduler::run_with_wall_clock_limit, shared by both scheduler.rs and portable_vm.rs's EXEC_LANG handlers (crush-diff confirms no divergence). Spawns the child into its own process group (Command::process_group(0)) and kills the WHOLE GROUP on timeout (libc::kill(-pgid, SIGKILL)), not just the tracked child PID — std has no process-group-kill primitive of its own. Stdout/stderr are drained on dedicated reader threads from the moment of spawn, before any polling begins.
+
