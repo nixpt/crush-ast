@@ -1,0 +1,137 @@
+// Q6_K dequant → GEMV, authored in crush.  Illustrative surface for the
+// crush→PTX backend (docs/design/crush-ptx-backend.md).  NOT yet compilable.
+//
+// Reconciled with the shipped language (jokersquad crush-language skill +
+// crush-ast crush-cast). Legend:
+//   [SHIPPED]   valid crush-ast today
+//   [EXT]       new GPU extension we'd add
+//
+// `@` in crush = CAPABILITY CALL (a permission-gated VM-boundary crossing).
+// The GPU is a capability: host-side `@gpu.launch(...)` is exact. Device-side
+// intrinsics are builtins in the `dom.*`-style namespace (thread./block./warp.),
+// NOT `@`. The AI-native annotations (@invariant/@decision/@synthesize) are the
+// separate manifest layer — [SHIPPED] in crush-ast.
+
+// ── GPU numeric types [EXT] ──────────────────────────────────────────────────
+// crush core is Int(i64)/Float(f64) only. GPU needs u8/i8/f16/f32/u32 — a new
+// dtype set the PTX backend introduces (drives ld/st width + cvt + arith mods).
+
+// ── Q6_K super-block: 256 weights in 210 bytes (ggml block_q6_K) ─────────────
+struct BlockQ6K {           // [SHIPPED] struct w/ typed fields
+    ql:     Ptr,            // + 0    128 × u8   lower-4-bits
+    qh:     Ptr,            // + 128   64 × u8   upper-2-bits
+    scales: Ptr,            // + 192   16 × i8   sub-block scales
+    d:      f16,            // + 208    2 B      super-block scale
+}
+
+// ── Reduction primitive is arch-dependent → SemanticSwitch [SHIPPED node] ────
+// One *meaning* ("sum 32 lanes"); compiler picks the mechanism per @target.
+// pyptx's arch="auto" as a first-class language node.
+@semantic_switch "warp-sum-32"
+fn warp_reduce_sum(v: f32) -> f32 {
+    on target {
+        sm_120 | sm_89 | sm_80 => warp.shfl_bfly(v, op: add, width: 32),  // [EXT]
+        sm_90                  => warp.redux_add(v),                       // Hopper
+        _                      => warp.shfl_bfly(v, op: add, width: 32),
+    }
+}
+
+// ── Dequant one 256-weight block and dot it with `act` ───────────────────────
+// @invariant [SHIPPED]: with `check:` the compiler emits a debug-mode assert;
+// the oracle test (@covers on the kernel) enforces it byte-exact.
+@invariant "q6k-bias-32" {
+    description: "Q6_K stores 6-bit quants biased by +32; dequant subtracts 32"
+    check: |q| => q >= -32 and q <= 31
+}
+fn dequant_dot_block(b: BlockQ6K, act: Ptr) -> f32 {
+    let mut acc: f32 = 0.0;
+
+    // Two 128-weight halves; ql += 64, qh += 32, sc += 8 between them.
+    for half in 0..2 {                              // [SHIPPED] range operator
+        let ql = b.ql     + half * 64;
+        let qh = b.qh     + half * 32;
+        let sc = b.scales + half * 8;
+        let base = half * 128;
+
+        for l in 0..32 {
+            let is  = l / 16;
+            let lo  = gpu.load_u8(ql, l);           // [EXT] ld.global.u8
+            let lo2 = gpu.load_u8(ql, l + 32);
+            let hi  = gpu.load_u8(qh, l);
+
+            // unpack: (lo & 0xF) | ((hi>>k & 3)<<4) − 32   ×4
+            let q1 = i8((lo  & 0xF) | (((hi >> 0) & 3) << 4)) - 32;
+            let q2 = i8((lo2 & 0xF) | (((hi >> 2) & 3) << 4)) - 32;
+            let q3 = i8((lo  >> 4)  | (((hi >> 4) & 3) << 4)) - 32;
+            let q4 = i8((lo2 >> 4)  | (((hi >> 6) & 3) << 4)) - 32;
+
+            let d = f32(b.d);
+            // value = d · scale · q, folded straight into the dot (fma.rn.f32)
+            acc = gpu.fma(d * f32(gpu.load_i8(sc, is + 0)) * f32(q1), f32(gpu.load_f16(act, base + l +  0)), acc);
+            acc = gpu.fma(d * f32(gpu.load_i8(sc, is + 2)) * f32(q2), f32(gpu.load_f16(act, base + l + 32)), acc);
+            acc = gpu.fma(d * f32(gpu.load_i8(sc, is + 4)) * f32(q3), f32(gpu.load_f16(act, base + l + 64)), acc);
+            acc = gpu.fma(d * f32(gpu.load_i8(sc, is + 6)) * f32(q4), f32(gpu.load_f16(act, base + l + 96)), acc);
+        }
+    }
+    return acc;
+}
+
+// ── The kernel ───────────────────────────────────────────────────────────────
+// @kernel/@target [EXT]: GPU entry (.visible .entry) + arch. The AI-native
+// @writes/@covers/@decision [SHIPPED] carry the contract/collaboration layer.
+@kernel                                  // [EXT]
+@target sm_120                           // [EXT]
+@writes [out]                            // [SHIPPED] mutation surface
+@covers "q6k_vecdot_oracle"              // [SHIPPED] byte-exact vs zorro vecdot
+@decision "warp-per-row-no-manual-ra" {  // [SHIPPED]
+    chose: "warp-per-row + fresh-SSA regs, let ptxas allocate"
+    over: ["block-per-row + shared staging", "manual register coloring"]
+    because: "ptxas is the optimizer (pyptx proof: 78% cuBLAS, zero manual RA)"
+    revisit-if: ["tensor-core path lands (Tier 5)", "K-per-row << warp size"]
+}
+@invariant "K-multiple-of-256" {
+    description: "Q6_K super-block = 256 weights; row length must tile evenly"
+    check: |K| => K % 256 == 0
+}
+fn q6k_gemv(weights: Ptr, act: Ptr, out: Ptr, rows: u32, K: u32) {
+    let row  = block.idx.x;              // [EXT] %ctaid.x — one row per block
+    let lane = thread.idx.x;             // [EXT] %tid.x   — 0..31 in the warp
+    if row >= rows { return; }
+
+    let blocks_per_row = K / 256;
+    let row_base = weights + row * blocks_per_row * 210;   // 210 B / block
+
+    // Lane l strides the row's super-blocks (no step in `..`, so while-loop).
+    let mut partial: f32 = 0.0;
+    let mut sb = lane;
+    while sb < blocks_per_row {
+        let off = sb * 210;
+        let b = BlockQ6K {
+            ql:     row_base + off,
+            qh:     row_base + off + 128,
+            scales: row_base + off + 192,
+            d:      gpu.load_f16(row_base + off + 208, 0),
+        };
+        partial = partial + dequant_dot_block(b, act + sb * 256);
+        sb = sb + 32;                    // stride by warp width
+    }
+
+    // 32 lane partials → row sum (arch-dispatched primitive above).
+    let dot = warp_reduce_sum(partial);
+    if lane == 0 { gpu.store_f32(out, row, dot); }         // [EXT] st.global.f32
+}
+
+// ── Host launch: the GPU capability call [SHIPPED @-semantics] ────────────────
+// This is where `@` is *exactly* right — launch is a permission-gated boundary.
+fn run_q6k_gemv(w: Ptr, act: Ptr, out: Ptr, rows: u32, K: u32) {
+    @gpu.launch(q6k_gemv, grid: rows, block: 32, args: [w, act, out, rows, K]);
+}
+
+// ── K-tail (K % 256 != 0) — deferred, agent-synthesizable [SHIPPED node] ─────
+// @synthesize marks a mechanical region for later completion, with the spec the
+// synthesizer must satisfy. Keeps the hot path clean now.
+@synthesize "q6k-gemv-k-tail" {
+    intent: "handle a final partial super-block when K % 256 != 0"
+    given:  [q6k_gemv, dequant_dot_block]
+    satisfy: "@covers q6k_vecdot_oracle passes for K in {200, 300, 700}"
+}
