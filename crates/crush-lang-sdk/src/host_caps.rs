@@ -152,6 +152,7 @@ impl HostCapsBuilder {
     /// Build the [`HostCaps`] registry.
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
+        caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
         if self.fs {
             let root = self.fs_root.unwrap_or_else(|| ".".to_string());
             caps.register(Box::new(FsReadCap::new(&root)));

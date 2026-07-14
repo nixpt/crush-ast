@@ -84,6 +84,8 @@ pub enum Value {
     Bytes(Vec<u8>),
     /// Green thread handle — returned by spawn, consumed by await.
     Handle(u64),
+    /// Foreign object handle — opaque reference to an external environment object.
+    Foreign(u64),
 }
 
 impl PartialEq for Value {
@@ -99,6 +101,7 @@ impl PartialEq for Value {
             (Value::Error(a), Value::Error(b)) => a == b,
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
             (Value::Handle(a), Value::Handle(b)) => a == b,
+            (Value::Foreign(a), Value::Foreign(b)) => a == b,
             _ => false,
         }
     }
@@ -117,6 +120,7 @@ impl Value {
             Value::Error(_) => "error",
             Value::Bytes(_) => "bytes",
             Value::Handle(_) => "handle",
+            Value::Foreign(_) => "foreign",
         }
     }
 
@@ -132,6 +136,7 @@ impl Value {
             Value::Error(_) => true,
             Value::Bytes(b) => !b.is_empty(),
             Value::Handle(_) => true,
+            Value::Foreign(_) => true,
         }
     }
 
@@ -206,6 +211,7 @@ impl std::fmt::Display for Value {
             Value::Error(e) => write!(f, "error({e})"),
             Value::Bytes(b) => write!(f, "<{} bytes>", b.len()),
             Value::Handle(id) => write!(f, "<handle {id}>"),
+            Value::Foreign(id) => write!(f, "<foreign {id}>"),
         }
     }
 }
@@ -286,6 +292,9 @@ impl serde::Serialize for Value {
             Value::Handle(id) => {
                 serializer.serialize_str(&format!("<handle {id}>"))
             }
+            Value::Foreign(id) => {
+                serializer.serialize_str(&format!("<foreign {id}>"))
+            }
         }
     }
 }
@@ -333,7 +342,7 @@ impl serde::Serialize for Value {
 ///   Object to `Value::Null` — the canonical Deserialize impl routes
 ///   objects to `Value::Map` correctly.
 ///
-/// - **Floats receive `visit_f64`**; serde-json rejects non-finite
+/// - **Floats receive `visit_f64``; serde-json rejects non-finite
 ///   (NaN/Inf) at parse time, so the inverse of the Serialize lossy
 ///   `NaN/Inf → 0` map is unreachable from a valid input.
 ///   Serialize-side emits finite floats; Deserialize-side accepts
@@ -422,6 +431,10 @@ impl<'de> serde::Deserialize<'de> for Value {
                 if v.starts_with("<handle ") && v.ends_with('>') {
                     if let Ok(id) = v[8..v.len() - 1].parse::<u64>() {
                         return Ok(Value::Handle(id));
+                    }
+                } else if v.starts_with("<foreign ") && v.ends_with('>') {
+                    if let Ok(id) = v[9..v.len() - 1].parse::<u64>() {
+                        return Ok(Value::Foreign(id));
                     }
                 } else if v.starts_with('<') && v.ends_with(" bytes>") {
                     if let Ok(n) = v[1..v.len() - 7].parse::<usize>() {

@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/banner.jpg" alt="Crush AST Banner" width="100%" />
+  <img src="assets/hero.png" alt="Crush AST Banner" width="100%" />
 </p>
 
 <h1 align="center">
-  <img src="docs/assets/logo.jpg" alt="Crush Logo" width="40" height="40" style="vertical-align: middle;" />
+  <img src="assets/logo.png" alt="Crush Logo" width="40" height="40" style="vertical-align: middle;" />
   Crush AST
 </h1>
 

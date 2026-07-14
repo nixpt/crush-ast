@@ -1,0 +1,44 @@
+[package]
+name = "crush-aot"
+version = "0.2.0"
+edition = "2024"
+description = "Ahead-of-Time compiler for Crush — transpiles CASM to native .so via rustc"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["crush", "aot", "compiler", "native"]
+categories = ["development-tools", "compilers"]
+
+[dependencies]
+casm.workspace = true
+crush-frontend.workspace = true
+crush-vm.workspace = true
+crush-lang-sdk.workspace = true
+crush-lang-python = { path = "../crush-lang-python" }
+crush-lang-js = { path = "../crush-lang-js" }
+crush-lang-rust = { path = "../crush-lang-rust" }
+crush-lang-c = { path = "../crush-lang-c" }
+walker-core.workspace = true
+crush-cast.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+sha2 = "0.10"
+libloading = "0.8"
+tempfile = "3"
+hex = "0.4"
+clap.workspace = true
+shlex = "1"
+tree-sitter.workspace = true
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+
+[[bin]]
+name = "crush-aotc"
+path = "src/bin/aotc.rs"
+
+[[bin]]
+name = "crush-walk-run"
+path = "src/bin/walk_run.rs"

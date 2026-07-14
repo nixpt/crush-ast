@@ -10,6 +10,14 @@ pub enum CastType {
     Int,
     /// 64-bit floating point
     Float,
+    /// 32-bit floating point
+    F32,
+    /// Arbitrary-precision integer
+    BigInt,
+    /// Complex number (f64 real, f64 imag)
+    Complex,
+    /// N-dimensional tensor/matrix
+    Tensor(Box<CastType>),
     /// UTF-8 string
     String,
     /// Boolean
@@ -39,6 +47,10 @@ impl std::fmt::Display for CastType {
         match self {
             Self::Int => write!(f, "Int"),
             Self::Float => write!(f, "Float"),
+            Self::F32 => write!(f, "F32"),
+            Self::BigInt => write!(f, "BigInt"),
+            Self::Complex => write!(f, "Complex"),
+            Self::Tensor(t) => write!(f, "Tensor<{}>", t),
             Self::String => write!(f, "String"),
             Self::Bool => write!(f, "Bool"),
             Self::Null => write!(f, "Null"),

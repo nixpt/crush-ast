@@ -1,0 +1,11 @@
+my $a = 100;
+my $b = $a + 50;
+my $c = $b * 3;
+my $d = $c - 200;
+my $e = int($d / 5);
+my $f = $e + 77;
+my $g = $f * 2;
+my $h = $g - 100;
+my $i = $h + 1;
+my $j = $i * 3;
+print $j;

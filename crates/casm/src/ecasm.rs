@@ -624,6 +624,7 @@ mod tests {
             crate::Function {
                 params: vec![],
                 locals: vec![],
+                type_hints: None,
                 body: vec![
                     crate::Instruction {
                         op: "push_str".to_string(),

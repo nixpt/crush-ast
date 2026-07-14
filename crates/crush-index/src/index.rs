@@ -275,8 +275,9 @@ impl CrushIndex {
         match &node.value {
             crush_cson::CsonValue::Object(map) => {
                 for (k, v) in map {
-                    if let crush_cson::CsonKey::Semantic(s) = k {
-                        keys.push((s.clone(), path.to_string(), v.confidence));
+                    // Object keys are now plain Strings; semantic keys are serialized with "~" prefix
+                    if let Some(s) = k.strip_prefix('~') {
+                        keys.push((s.to_string(), path.to_string(), v.confidence));
                     }
                     self.extract_semantic_keys(v, path, keys);
                 }

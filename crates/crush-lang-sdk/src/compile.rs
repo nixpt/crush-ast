@@ -174,7 +174,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 }
                 "new_array" => {
                     let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    format!("NEW_ARRAY {size}")
+                    "NEW_ARRAY 0".to_string()
                 }
                 "array_push" => "ARR_PUSH".to_string(),
                 "array_pop" => "ARR_POP".to_string(),

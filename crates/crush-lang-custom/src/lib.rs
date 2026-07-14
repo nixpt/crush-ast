@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use regex::Regex;
 use anyhow::{Result, anyhow};
 use crush_cast::{Program, Statement, Expression, Function, CastType};
-use crush_cson::{CsonValue, CsonKey, CsonParser};
+use crush_cson::CsonValue;
+use crush_cson::parser::CsonParser;
 use walker_core::{Frontend, FeatureReport};
 
 /// Rule matching structure mapping a regex to a CAST node type.
@@ -37,18 +38,17 @@ impl CustomFrontend {
         };
 
         // Parse grammar config
-        let grammar_key = CsonKey::Exact("grammar".to_string());
         let mut lang_name = "custom".to_string();
         let mut extensions = vec![".custom".to_string()];
 
-        if let Some(grammar_node) = root_map.get(&grammar_key) {
+        if let Some(grammar_node) = root_map.get("grammar") {
             if let CsonValue::Object(grammar_map) = &grammar_node.value {
-                if let Some(node) = grammar_map.get(&CsonKey::Exact("language".to_string())) {
+                if let Some(node) = grammar_map.get("language") {
                     if let CsonValue::String(s) = &node.value {
                         lang_name = s.clone();
                     }
                 }
-                if let Some(node) = grammar_map.get(&CsonKey::Exact("extensions".to_string())) {
+                if let Some(node) = grammar_map.get("extensions") {
                     if let CsonValue::Array(arr) = &node.value {
                         extensions = arr.iter().filter_map(|v| {
                             if let CsonValue::String(s) = &v.value { Some(s.clone()) } else { None }
@@ -60,30 +60,26 @@ impl CustomFrontend {
 
         // Parse rules
         let mut rules = Vec::new();
-        let rules_key = CsonKey::Exact("rules".to_string());
-        if let Some(rules_node) = root_map.get(&rules_key) {
+        if let Some(rules_node) = root_map.get("rules") {
             if let CsonValue::Object(rules_map) = &rules_node.value {
                 for (key, val_node) in rules_map {
-                    let rule_name = match key {
-                        CsonKey::Exact(s) => s.clone(),
-                        CsonKey::Semantic(s) => s.clone(),
-                    };
+                    let rule_name = key.clone();
                     if let CsonValue::Object(rule_obj) = &val_node.value {
-                        let pattern_str = match rule_obj.get(&CsonKey::Exact("pattern".to_string())) {
+                        let pattern_str = match rule_obj.get("pattern") {
                             Some(n) => match &n.value {
                                 CsonValue::String(s) => s.clone(),
                                 _ => continue,
                             },
                             None => continue,
                         };
-                        let node_type = match rule_obj.get(&CsonKey::Exact("node".to_string())) {
+                        let node_type = match rule_obj.get("node") {
                             Some(n) => match &n.value {
                                 CsonValue::String(s) => s.clone(),
                                 _ => "ExprStmt".to_string(),
                             },
                             None => "ExprStmt".to_string(),
                         };
-                        let capability = match rule_obj.get(&CsonKey::Exact("capability".to_string())) {
+                        let capability = match rule_obj.get("capability") {
                             Some(n) => match &n.value {
                                 CsonValue::String(s) => Some(s.clone()),
                                 _ => None,
@@ -92,12 +88,11 @@ impl CustomFrontend {
                         };
 
                         let mut mappings = HashMap::new();
-                        if let Some(m_node) = rule_obj.get(&CsonKey::Exact("mappings".to_string())) {
+                        if let Some(m_node) = rule_obj.get("mappings") {
                             if let CsonValue::Object(m_map) = &m_node.value {
                                 for (k, v) in m_map {
-                                    let key_str = match k { CsonKey::Exact(s) => s.clone(), CsonKey::Semantic(s) => s.clone() };
                                     if let CsonValue::String(val_str) = &v.value {
-                                        mappings.insert(key_str, val_str.clone());
+                                        mappings.insert(k.clone(), val_str.clone());
                                     }
                                 }
                             }
@@ -272,7 +267,7 @@ mod tests {
 
         [rules]
         var_decl: {
-            pattern: "^let (?P<name>\w+) = (?P<value>\d+)$"
+            pattern: "^let (?P<name>\\w+) = (?P<value>\\d+)$"
             node: "VarDecl"
             mappings: {
                 name: "name"

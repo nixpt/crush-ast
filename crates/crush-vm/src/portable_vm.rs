@@ -466,8 +466,8 @@ impl PortableVm {
             NEG => {
                 let a = self.pop()?;
                 match a {
-                    Value::Int(i) => self.push(Value::Int(-i)),
-                    Value::Float(f) => self.push(Value::Float(-f)),
+                    Value::Int(x) => self.push(Value::Int(-x)),
+                    Value::Float(x) => self.push(Value::Float(-x)),
                     other => {
                         return Err(VmError::TypeError {
                             expected: "numeric",
@@ -475,6 +475,26 @@ impl PortableVm {
                         });
                     }
                 }
+            }
+            MATH_POW => {
+                let exp = self.pop()?;
+                let base = self.pop()?;
+                let base_f = to_f64_p(&base);
+                let exp_f = to_f64_p(&exp);
+                self.push(Value::Float(base_f.powf(exp_f)));
+            }
+            MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL => {
+                let a = self.pop()?;
+                let af = to_f64_p(&a);
+                let res = match opcode {
+                    MATH_SQRT => af.sqrt(),
+                    MATH_ABS => af.abs(),
+                    MATH_ROUND => af.round(),
+                    MATH_FLOOR => af.floor(),
+                    MATH_CEIL => af.ceil(),
+                    _ => unreachable!(),
+                };
+                self.push(Value::Float(res));
             }
             EQ | NE => {
                 let b = self.pop()?;
@@ -826,12 +846,29 @@ impl PortableVm {
                     value_to_text(&err_val)
                 )));
             }
-            STR_CONTAINS => {
+            STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
                 let needle = self.pop()?;
                 let haystack = self.pop()?;
-                self.push(Value::Bool(
-                    value_to_text(&haystack).contains(&value_to_text(&needle)),
-                ));
+                let haystack_str = value_to_text(&haystack);
+                let pattern_str = value_to_text(&needle);
+                let res = match opcode {
+                    STR_CONTAINS => haystack_str.contains(&pattern_str),
+                    STR_STARTS_WITH => haystack_str.starts_with(&pattern_str),
+                    STR_ENDS_WITH => haystack_str.ends_with(&pattern_str),
+                    _ => unreachable!(),
+                };
+                self.push(Value::Bool(res));
+            }
+            STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => {
+                let s = self.pop()?;
+                let text = value_to_text(&s);
+                let res = match opcode {
+                    STR_TO_UPPER => text.to_uppercase(),
+                    STR_TO_LOWER => text.to_lowercase(),
+                    STR_TRIM => text.trim().to_string(),
+                    _ => unreachable!(),
+                };
+                self.push(Value::Str(res));
             }
             STR_SPLIT => {
                 let delim = self.pop()?;
@@ -939,6 +976,10 @@ impl PortableVm {
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
+            }
+            AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
+                // Portable VM does not support async AI opcodes. Stub to Null.
+                self.push(Value::Null);
             }
             SPAWN => {
                 let argc = u16::from_be_bytes(
@@ -1060,32 +1101,51 @@ impl PortableVm {
                         }),
                     }
                 }
-                "make_range" => {
-                    let start = match &args[0] {
-                        Value::Int(i) => *i,
-                        other => {
-                            return Err(VmError::TypeError {
-                                expected: "int",
-                                got: value_type_name(other),
-                            });
+                                "make_range" => {
+                    let (start, end) = match args.len() {
+                        0 => (0i64, 100i64),
+                        1 => {
+                            let end = match &args[0] { Value::Int(i) => *i, _ => 100 };
+                            (0, end.max(0))
                         }
-                    };
-                    let end = match &args[1] {
-                        Value::Int(i) => *i,
-                        other => {
-                            return Err(VmError::TypeError {
-                                expected: "int",
-                                got: value_type_name(other),
-                            });
+                        _ => {
+                            let s = match &args[0] { Value::Int(i) => *i, _ => 0 };
+                            let e = match &args[1] { Value::Int(i) => *i, _ => 0 };
+                            (s, e)
                         }
                     };
                     let mut elems = Vec::new();
-                    if start < end {
-                        for i in start..end {
-                            elems.push(Value::Int(i));
-                        }
-                    }
+                    if start < end { for i in start..end { elems.push(Value::Int(i)); } }
                     Ok(Some(Value::new_array(elems)))
+                }
+                "append" | "push" => {
+                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                    match &args[0] {
+                        Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(None) }
+                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    }
+                }
+                "arr_set" => {
+                    if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                    match &args[0] {
+                        Value::Array(elems) => {
+                            let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                            let mut arr = elems.borrow_mut();
+                            if idx < arr.len() { arr[idx] = args[2].clone(); }
+                            Ok(None)
+                        }
+                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    }
+                }
+                "arr_get" => {
+                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                    match &args[0] {
+                        Value::Array(elems) => {
+                            let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                            Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                        }
+                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    }
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
@@ -1240,6 +1300,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
         Value::Handle(_) => "handle",
+        Value::Foreign(_) => "foreign",
     }
 }
 
@@ -1272,6 +1333,7 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Error(e) => format!("error({})", e),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         Value::Handle(id) => format!("<handle {}>", id),
+        Value::Foreign(id) => format!("<foreign {}>", id),
     }
 }
 
@@ -1288,6 +1350,7 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Error(_) => true,
         Value::Bytes(b) => !b.is_empty(),
         Value::Handle(_) => true,
+        Value::Foreign(_) => true,
     }
 }
 

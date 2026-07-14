@@ -159,6 +159,10 @@ impl SemanticAnalyzer {
                 let ret = self.parse_cast_type(returns)?;
                 Ok(Type::Function(param_types, Box::new(ret)))
             }
+            CastType::F32 => Ok(Type::Float),
+            CastType::BigInt => Ok(Type::Int),
+            CastType::Complex => Ok(Type::Float),
+            CastType::Tensor(inner) => Ok(Type::Array(Box::new(self.parse_cast_type(inner)?))),
             CastType::Any => Ok(Type::Any),
             CastType::TypeRef(name) | CastType::Struct(name) => {
                 if self.structs.contains_key(name) {

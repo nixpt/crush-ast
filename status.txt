@@ -1,0 +1,27 @@
+ M Cargo.lock
+ M Cargo.toml
+ M README.md
+ M crates/crush-cast/src/lib.rs
+ M crates/crush-frontend/src/cast_enrich.rs
+ M crates/crush-frontend/src/compiler.rs
+ M crates/crush-frontend/src/mutation_check.rs
+ M crates/crush-frontend/src/parser/lexer.rs
+ M crates/crush-frontend/src/parser/mod.rs
+ M crates/crush-frontend/src/render.rs
+ M crates/crush-frontend/src/semantics.rs
+ M crates/crush-index/src/index.rs
+ M crates/crush-lang-sdk/src/repl.rs
+ M crates/crush-vm/src/fastvm/execution.rs
+ M crates/crush-vm/src/lib.rs
+ M crates/crush-vm/src/vm.rs
+?? CRUSH-AI-ANNOTATIONS.md
+?? CRUSH-NOTEBOOK.md
+?? assets/
+?? crates/crush-aot/
+?? crates/crush-lang-nepali/
+?? crates/crush-macros/
+?? crates/crush-tui/
+?? docs/benchmarks/
+?? harness.py
+?? patch_assign.py
+?? status.txt

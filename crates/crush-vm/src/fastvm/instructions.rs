@@ -84,6 +84,15 @@ pub enum FastOp {
     ExecLang,
     CrossLangCall,
     Await,
+    
+    // AI opcodes
+    AiQuery,
+    AiToolchain,
+    AiAgentDelegation,
+    AiLearningLoop,
+    AiContextAware,
+    AiSemanticMatch,
+    AiSynthesize,
 
     // Object/Struct
     NewObj,
@@ -91,6 +100,7 @@ pub enum FastOp {
     GetField,
     SetField,
     NewArray,
+    ArrSet,    // indexed array write (arr, idx, val on stack)
     ArrayPush,
     ArrayPop,
     Len,
@@ -124,6 +134,18 @@ pub enum FastOp {
     StrReplace,
     StrJoin,
     StrSim, // arg = unused (two strings on stack), results in similarity float on stack
+    StrStartsWith,
+    StrEndsWith,
+    StrToUpper,
+    StrToLower,
+    StrTrim,
+
+    MathPow,
+    MathSqrt,
+    MathAbs,
+    MathRound,
+    MathFloor,
+    MathCeil,
 }
 
 /// Compact instruction - 16 bytes total
@@ -638,6 +660,42 @@ fn lower_instruction(
             Ok(FastInstr::new(FastOp::ExecLang, idx as u64, 0))
         }
 
+        "ai_query" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiQuery, idx as u64, 0))
+        }
+        "ai_toolchain" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiToolchain, idx as u64, 0))
+        }
+        "ai_agent_delegation" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiAgentDelegation, idx as u64, 0))
+        }
+        "ai_learning_loop" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiLearningLoop, idx as u64, 0))
+        }
+        "ai_context_aware" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiContextAware, idx as u64, 0))
+        }
+        "ai_semantic_match" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiSemanticMatch, idx as u64, 0))
+        }
+        "ai_synthesize" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiSynthesize, idx as u64, 0))
+        }
+
         "cross_lang_call" => {
             let target_lang = instr
                 .args
@@ -706,6 +764,11 @@ fn lower_instruction(
 
         // Array aliases (map to existing ops)
         "arr_get" => Ok(FastInstr::simple(FastOp::Index)),
+        "arr_set" => {
+            // arr_set takes 3 args on the stack (array, index, value)
+            // The VM handles it via ArrSet
+            Ok(FastInstr::simple(FastOp::ArrSet))
+        },
         "arr_set" => {
             // ArrSet: array, index, value -> array (handled as special in VM)
             // For now, we don't have a dedicated SetIndex; this needs VM support
@@ -844,6 +907,17 @@ fn lower_instruction(
 
         // String
         "str_contains" => Ok(FastInstr::simple(FastOp::StrContains)),
+        "str_starts_with" => Ok(FastInstr::simple(FastOp::StrStartsWith)),
+        "str_ends_with" => Ok(FastInstr::simple(FastOp::StrEndsWith)),
+        "str_to_upper" => Ok(FastInstr::simple(FastOp::StrToUpper)),
+        "str_to_lower" => Ok(FastInstr::simple(FastOp::StrToLower)),
+        "str_trim" => Ok(FastInstr::simple(FastOp::StrTrim)),
+        "math_pow" => Ok(FastInstr::simple(FastOp::MathPow)),
+        "math_sqrt" => Ok(FastInstr::simple(FastOp::MathSqrt)),
+        "math_abs" => Ok(FastInstr::simple(FastOp::MathAbs)),
+        "math_round" => Ok(FastInstr::simple(FastOp::MathRound)),
+        "math_floor" => Ok(FastInstr::simple(FastOp::MathFloor)),
+        "math_ceil" => Ok(FastInstr::simple(FastOp::MathCeil)),
         "str_split" => Ok(FastInstr::simple(FastOp::StrSplit)),
         "str_replace" => Ok(FastInstr::simple(FastOp::StrReplace)),
         "str_join" => Ok(FastInstr::simple(FastOp::StrJoin)),

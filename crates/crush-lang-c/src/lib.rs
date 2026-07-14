@@ -107,12 +107,30 @@ impl<'a> Visitor<'a> {
                 for child in node.children(&mut node.walk()) {
                     if child.kind() == "init_declarator" {
                         let name_node = child.child_by_field_name("declarator").unwrap();
-                        let name = self.base.text(name_node)?.to_string();
-                        let value_node = child.child_by_field_name("value").unwrap();
-                        let value = self.visit_expression(value_node)?;
+                        let name = self.extract_name_from_declarator(name_node)?.to_string();
+                        if let Some(value_node) = child.child_by_field_name("value") {
+                            let value = self.visit_expression(value_node)?;
+                            decls.push(Statement::VarDecl {
+                                name,
+                                value,
+                                type_hint: CastType::Any,
+                                meta: meta.clone(),
+                            });
+                        } else {
+                            // Bare declarator with no value (e.g., `int x;` inside init_declarator)
+                            decls.push(Statement::VarDecl {
+                                name,
+                                value: Expression::NullLiteral { meta: meta.clone() },
+                                type_hint: CastType::Any,
+                                meta: meta.clone(),
+                            });
+                        }
+                    } else if child.kind() == "declarator" || child.kind() == "array_declarator" {
+                        // Multi-variable declarations: `int i, j;` or `int arr[10];`
+                        let name = self.extract_name_from_declarator(child)?.to_string();
                         decls.push(Statement::VarDecl {
                             name,
-                            value,
+                            value: Expression::NullLiteral { meta: meta.clone() },
                             type_hint: CastType::Any,
                             meta: meta.clone(),
                         });
@@ -275,6 +293,154 @@ impl<'a> Visitor<'a> {
                 });
                 
                 Ok(for_statements)
+            }
+            "break_statement" => {
+                Ok(vec![Statement::Break { meta }])
+            }
+            "continue_statement" => {
+                Ok(vec![Statement::Continue { meta }])
+            }
+            "do_statement" => {
+                // do { body } while (condition);
+                let body_node = node.child_by_field_name("body").unwrap();
+                let body = self.visit_block_or_statement(body_node)?;
+                let cond_node = node
+                    .child_by_field_name("condition")
+                    .unwrap()
+                    .child(1)
+                    .unwrap(); // inside parens
+                let condition = self.visit_expression(cond_node)?;
+                // Desugar: body + while(condition) { body }
+                let mut stmts = body.clone();
+                stmts.push(Statement::While {
+                    condition: Box::new(condition),
+                    body,
+                    meta: meta.clone(),
+                });
+                Ok(stmts)
+            }
+            "switch_statement" => {
+                // switch (expr) { case val1: ... case val2: ... default: ... }
+                // Desugar to if-else chain (no fallthrough support)
+                let cond_node = node
+                    .child_by_field_name("condition")
+                    .unwrap()
+                    .child(1)
+                    .unwrap(); // inside parens
+                let switch_cond = self.visit_expression(cond_node)?;
+                let body_node = node.child_by_field_name("body").unwrap();
+
+                // Collect cases from body
+                let mut cases: Vec<(Option<Expression>, Vec<Statement>)> = Vec::new();
+                let mut current_case_expr: Option<Expression> = None;
+                let mut current_stmts: Vec<Statement> = Vec::new();
+
+                for child in body_node.children(&mut body_node.walk()) {
+                    match child.kind() {
+                        "case_statement" => {
+                            // Flush previous case
+                            if current_case_expr.is_some() || !current_stmts.is_empty() {
+                                cases.push((current_case_expr.take(), std::mem::take(&mut current_stmts)));
+                            }
+                            if let Some(val_node) = child.child_by_field_name("value") {
+                                current_case_expr = Some(self.visit_expression(val_node)?);
+                            }
+                        }
+                        "default_statement" => {
+                            // Flush previous case
+                            if current_case_expr.is_some() || !current_stmts.is_empty() {
+                                cases.push((current_case_expr.take(), std::mem::take(&mut current_stmts)));
+                            }
+                            current_case_expr = None; // default has no value
+                        }
+                        "{" | "}" => {} // skip braces
+                        _ => {
+                            let stmts = self.visit_statement(child)?;
+                            current_stmts.extend(stmts);
+                        }
+                    }
+                }
+                // Flush last case
+                if current_case_expr.is_some() || !current_stmts.is_empty() {
+                    cases.push((current_case_expr, current_stmts));
+                }
+
+                if cases.is_empty() {
+                    return Ok(vec![]);
+                }
+
+                // Build if-else chain from the cases
+                // For each case with a value: if (switch_cond == val) { stmts }
+                // For the default case (value = None): else { stmts }
+                let first = &cases[0];
+                let mut result_stmts: Vec<Statement> = Vec::new();
+
+                if first.0.is_some() {
+                    // First case: if (switch_cond == val1) { body1 }
+                    let mut else_chain: Option<Vec<Statement>> = None;
+                    // Build from the end
+                    for (i, (case_val, case_body)) in cases.iter().enumerate().rev() {
+                        if let Some(val) = case_val {
+                            let condition = Expression::BinaryOp {
+                                operator: "==".to_string(),
+                                left: Box::new(switch_cond.clone()),
+                                right: Box::new(val.clone()),
+                                meta: meta.clone(),
+                            };
+                            let if_stmt = Statement::If {
+                                condition,
+                                then_body: case_body.clone(),
+                                else_body: else_chain.take(),
+                                meta: meta.clone(),
+                            };
+                            if i == 0 {
+                                result_stmts.push(if_stmt);
+                            } else {
+                                else_chain = Some(vec![if_stmt]);
+                            }
+                        } else {
+                            // Default case — becomes the innermost else_body
+                            else_chain = Some(case_body.clone());
+                        }
+                    }
+                    // If there's a leftover else_chain from default not consumed by if-building
+                    if let Some(default_body) = else_chain {
+                        // It becomes a standalone block after the last if
+                        result_stmts.extend(default_body);
+                    }
+                } else {
+                    // First case is default — just emit it
+                    result_stmts.extend(first.1.clone());
+                    // Then handle remaining cases as if-else
+                    let remaining = &cases[1..];
+                    if !remaining.is_empty() {
+                        let mut else_chain: Option<Vec<Statement>> = None;
+                        for (i, (case_val, case_body)) in remaining.iter().enumerate().rev() {
+                            if let Some(val) = case_val {
+                                let condition = Expression::BinaryOp {
+                                    operator: "==".to_string(),
+                                    left: Box::new(switch_cond.clone()),
+                                    right: Box::new(val.clone()),
+                                    meta: meta.clone(),
+                                };
+                                let if_stmt = Statement::If {
+                                    condition,
+                                    then_body: case_body.clone(),
+                                    else_body: else_chain.take(),
+                                    meta: meta.clone(),
+                                };
+                                if i == 0 {
+                                    result_stmts.push(if_stmt);
+                                } else {
+                                    else_chain = Some(vec![if_stmt]);
+                                }
+                            } else {
+                                else_chain = Some(case_body.clone());
+                            }
+                        }
+                    }
+                }
+                Ok(result_stmts)
             }
             "compound_statement" => {
                 self.visit_block(node)

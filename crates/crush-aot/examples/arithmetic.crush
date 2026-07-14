@@ -1,0 +1,6 @@
+fn main() {
+    let x = 2;
+    let y = x * x;
+    let z = y + 40;
+    return z;
+}

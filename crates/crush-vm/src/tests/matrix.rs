@@ -89,6 +89,7 @@ fn all_traits_round_trip_for_every_variant() {
             Value::Bytes(vec![0, 0, 0]),
         ),
         ("Handle 42 (tagged-form lockstep)", Value::Handle(42)),
+        ("Foreign 42 (tagged-form lockstep)", Value::Foreign(42)),
         ("Error oops (tagged-form lockstep)", Value::Error("oops".to_string())),
         (
             "Array [1, 2] (single-level)",
@@ -179,6 +180,18 @@ fn all_traits_round_trip_for_every_variant() {
             }
             Value::Handle(id) => {
                 let expected_inner = format!("<handle {id}>");
+                assert_eq!(
+                    display_str, expected_inner,
+                    "{label}: Display text should be {expected_inner:?}, got {display_str:?}"
+                );
+                let expected_json = format!("\"{expected_inner}\"");
+                assert_eq!(
+                    json_str, expected_json,
+                    "{label}: Serialize JSON should be {expected_json:?}, got {json_str:?}"
+                );
+            }
+            Value::Foreign(id) => {
+                let expected_inner = format!("<foreign {id}>");
                 assert_eq!(
                     display_str, expected_inner,
                     "{label}: Display text should be {expected_inner:?}, got {display_str:?}"
@@ -311,6 +324,7 @@ fn all_traits_round_trip_for_every_variant() {
             // Boundary 1: `<handle N>` tagged form. Both paths
             // extract the integer `N` from inside the brackets.
             ("<handle 42>", Value::Handle(42)),
+            ("<foreign 42>", Value::Foreign(42)),
             // Boundary 2: `<N bytes>` length-tag. Both paths
             // reconstruct a zero-filled `Vec<u8>` of length N
             // (documented length-only caveat — actual byte payload

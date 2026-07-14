@@ -1,9 +1,10 @@
-use crush_cast::cson::{CsonDocument, CsonKey, CsonNode, CsonValue};
-// use crush_cast::manifest::{Invariant, TemporaryNode, WipNode, DecisionNode};
-use indexmap::IndexMap;
+//! CSON parser for the crush-frontend crate.
+//!
+//! Parses CSON text into the canonical `crush_cson` types.
+//! Uses the unified type definitions from `crush-cson`.
 
-// Basic CSON Parser Scaffold (Phase 2b Proof of Concept)
-// Supports key-value pairs, string values, nested objects, probabilities, and semantic keys.
+use crush_cast::cson::{CsonDocument, CsonKey, CsonNode, CsonValue};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub enum CsonParseError {
@@ -26,7 +27,6 @@ impl<'a> CsonParser<'a> {
             if c.is_whitespace() {
                 self.pos += c.len_utf8();
             } else if self.input[self.pos..].starts_with('#') {
-                // Skip comment
                 while self.pos < self.input.len() && !self.input[self.pos..].starts_with('\n') {
                     self.pos += 1;
                 }
@@ -70,7 +70,7 @@ impl<'a> CsonParser<'a> {
             if in_quotes && c == '"' {
                 self.consume();
                 break;
-            } else if !in_quotes && (c.is_whitespace() || c == ':' || c == '~' || c == ',') {
+            } else if !in_quotes && (c.is_whitespace() || c == ':' || c == '~' || c == ',' || c == '}') {
                 break;
             } else {
                 s.push(c);
@@ -85,7 +85,7 @@ impl<'a> CsonParser<'a> {
         if self.match_char('~') {
             let mut num_str = String::new();
             while let Some(c) = self.peek() {
-                if c.is_digit(10) || c == '.' {
+                if c.is_ascii_digit() || c == '.' {
                     num_str.push(c);
                     self.consume();
                 } else {
@@ -95,7 +95,7 @@ impl<'a> CsonParser<'a> {
             if let Ok(w) = num_str.parse::<f64>() {
                 return Ok(Some(w));
             } else {
-                return Err(CsonParseError::Unexpected(format!("Invalid weight: ~{}", num_str)));
+                return Err(CsonParseError::Unexpected(format!("Invalid weight: ~{num_str}")));
             }
         }
         Ok(None)
@@ -104,9 +104,8 @@ impl<'a> CsonParser<'a> {
     pub fn parse_value(&mut self) -> Result<CsonNode, CsonParseError> {
         self.skip_whitespace();
         if self.match_char('{') {
-            let mut properties = IndexMap::new();
-            let mut semantic_properties = Vec::new();
-            let mut has_semantic = false;
+            let mut properties = HashMap::new();
+            let mut annotations = Vec::new();
 
             loop {
                 self.skip_whitespace();
@@ -114,99 +113,80 @@ impl<'a> CsonParser<'a> {
                     break;
                 }
 
-                // Parse key
+                // Parse key — semantic keys start with `~`
                 let mut is_semantic = false;
                 if self.match_char('~') {
                     is_semantic = true;
                 }
-                let key_str = self.parse_string()?;
+                let raw_key = self.parse_string()?;
+                let full_key = if is_semantic {
+                    format!("~{raw_key}")
+                } else {
+                    raw_key
+                };
+
                 self.skip_whitespace();
                 if !self.match_char(':') {
                     return Err(CsonParseError::Unexpected("Expected ':' after key".to_string()));
                 }
 
-                // Parse value
                 let val = self.parse_value()?;
-
-                if is_semantic {
-                    has_semantic = true;
-                    semantic_properties.push((CsonKey::Semantic { value: key_str }, val));
-                } else {
-                    properties.insert(key_str.clone(), val.clone());
-                    semantic_properties.push((CsonKey::Exact { value: key_str }, val));
-                }
+                properties.insert(full_key, val);
 
                 self.skip_whitespace();
-                self.match_char(','); // optional comma
+                self.match_char(',');
             }
-            
-            // For now, no weight on object blocks
-            if has_semantic {
-                Ok(CsonNode {
-                    value: CsonValue::SemanticObject { properties: semantic_properties },
-                    weight: None,
-                    invariants: vec![],
-                })
-            } else {
-                Ok(CsonNode {
-                    value: CsonValue::Object { properties },
-                    weight: None,
-                    invariants: vec![],
-                })
+
+            Ok(CsonNode {
+                value: CsonValue::Object(properties),
+                confidence: None,
+                annotations,
+            })
+        } else if self.match_char('[') {
+            let mut arr = Vec::new();
+            loop {
+                self.skip_whitespace();
+                if self.match_char(']') { break; }
+                arr.push(self.parse_value()?);
+                self.skip_whitespace();
+                self.match_char(',');
             }
+            Ok(CsonNode {
+                value: CsonValue::Array(arr),
+                confidence: None,
+                annotations: vec![],
+            })
         } else {
-            // String or number value
             let val_str = self.parse_string()?;
             let weight = self.parse_weight()?;
-            
-            // Try parse int/float
-            if let Ok(i) = val_str.parse::<i64>() {
-                Ok(CsonNode {
-                    value: CsonValue::Int { value: i },
-                    weight,
-                    invariants: vec![],
-                })
-            } else if let Ok(f) = val_str.parse::<f64>() {
-                Ok(CsonNode {
-                    value: CsonValue::Float { value: f },
-                    weight,
-                    invariants: vec![],
-                })
-            } else if val_str == "null" {
-                Ok(CsonNode {
-                    value: CsonValue::Null,
-                    weight,
-                    invariants: vec![],
-                })
+
+            let value = if val_str == "null" {
+                CsonValue::Null
             } else if val_str == "true" {
-                Ok(CsonNode {
-                    value: CsonValue::Bool { value: true },
-                    weight,
-                    invariants: vec![],
-                })
+                CsonValue::Boolean(true)
             } else if val_str == "false" {
-                Ok(CsonNode {
-                    value: CsonValue::Bool { value: false },
-                    weight,
-                    invariants: vec![],
-                })
+                CsonValue::Boolean(false)
+            } else if let Ok(i) = val_str.parse::<i64>() {
+                CsonValue::Number(i as f64)
+            } else if let Ok(f) = val_str.parse::<f64>() {
+                CsonValue::Number(f)
             } else {
-                Ok(CsonNode {
-                    value: CsonValue::String { value: val_str },
-                    weight,
-                    invariants: vec![],
-                })
-            }
+                CsonValue::String(val_str)
+            };
+
+            Ok(CsonNode {
+                value,
+                confidence: weight,
+                annotations: vec![],
+            })
         }
     }
 
     pub fn parse_document(&mut self) -> Result<CsonDocument, CsonParseError> {
         let root_node = self.parse_value()?;
         Ok(CsonDocument {
+            version: "1.0".into(),
             root: root_node,
-            wip: None,
-            temporaries: vec![],
-            decisions: vec![],
         })
     }
 }

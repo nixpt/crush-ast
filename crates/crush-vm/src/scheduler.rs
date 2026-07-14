@@ -328,6 +328,38 @@ fn execute_one(
                 _ => unreachable!(),
             });
         }
+        MATH_POW => {
+            let exp = need_num!(pop!());
+            let base = need_num!(pop!());
+            let base_f = match base {
+                Value::Int(x) => x as f64,
+                Value::Float(x) => x,
+                _ => unreachable!(),
+            };
+            let exp_f = match exp {
+                Value::Int(x) => x as f64,
+                Value::Float(x) => x,
+                _ => unreachable!(),
+            };
+            push!(Value::Float(base_f.powf(exp_f)));
+        }
+        MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL => {
+            let a = need_num!(pop!());
+            let af = match a {
+                Value::Int(x) => x as f64,
+                Value::Float(x) => x,
+                _ => unreachable!(),
+            };
+            let res = match opcode {
+                MATH_SQRT => af.sqrt(),
+                MATH_ABS => af.abs(),
+                MATH_ROUND => af.round(),
+                MATH_FLOOR => af.floor(),
+                MATH_CEIL => af.ceil(),
+                _ => unreachable!(),
+            };
+            push!(Value::Float(res));
+        }
         AND | OR => {
             let b = pop!();
             let a = pop!();
@@ -574,6 +606,10 @@ fn execute_one(
                 return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
             }
         }
+        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
+            // Scheduler VM does not support async AI opcodes natively yet. Stub to Null.
+            push!(Value::Null);
+        }
         ENTER_TRY => {
             let target = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap()) as usize;
             if target > n {
@@ -593,10 +629,29 @@ fn execute_one(
             }
             return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
         }
-        STR_CONTAINS => {
+        STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
             let needle = pop!();
             let haystack = pop!();
-            push!(Value::Bool(haystack.as_text().contains(&needle.as_text())));
+            let haystack_str = haystack.as_text();
+            let pattern_str = needle.as_text();
+            let res = match opcode {
+                STR_CONTAINS => haystack_str.contains(&pattern_str),
+                STR_STARTS_WITH => haystack_str.starts_with(&pattern_str),
+                STR_ENDS_WITH => haystack_str.ends_with(&pattern_str),
+                _ => unreachable!(),
+            };
+            push!(Value::Bool(res));
+        }
+        STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => {
+            let s = pop!();
+            let text = s.as_text();
+            let res = match opcode {
+                STR_TO_UPPER => text.to_uppercase(),
+                STR_TO_LOWER => text.to_lowercase(),
+                STR_TRIM => text.trim().to_string(),
+                _ => unreachable!(),
+            };
+            push!(Value::Str(res));
         }
         STR_SPLIT => {
             let delim = pop!();
@@ -835,11 +890,50 @@ fn dispatch_cap(
                 }
             }
             "make_range" => {
-                let start = match &args[0] { Value::Int(i) => *i, other => { return Err(VmError::TypeError { expected: "int", got: other.type_name() }); } };
-                let end = match &args[1] { Value::Int(i) => *i, other => { return Err(VmError::TypeError { expected: "int", got: other.type_name() }); } };
+                let (start, end) = match args.len() {
+                    0 => (0i64, 100i64),  // large default, for-loop break handles exit
+                    1 => {
+                        let end = match &args[0] { Value::Int(i) => *i, _ => 100 };
+                        (0, end.max(0))
+                    }
+                    _ => {
+                        let s = match &args[0] { Value::Int(i) => *i, _ => 0 };
+                        let e = match &args[1] { Value::Int(i) => *i, _ => 0 };
+                        (s, e)
+                    }
+                };
                 let mut elems = Vec::new();
                 if start < end { for i in start..end { elems.push(Value::Int(i)); } }
                 Ok(Some(Value::new_array(elems)))
+            }
+            "append" | "push" => {
+                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(None) }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
+            }
+            "arr_set" => {
+                if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                        let mut arr = elems.borrow_mut();
+                        if idx < arr.len() { arr[idx] = args[2].clone(); }
+                        Ok(None)
+                    }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
+            }
+            "arr_get" => {
+                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                        Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                    }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
             }
             _ => Err(VmError::UnknownCap(cap.to_string())),
         };
