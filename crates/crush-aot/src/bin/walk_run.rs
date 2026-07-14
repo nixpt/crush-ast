@@ -26,6 +26,7 @@ fn registry() -> AdapterRegistry {
      .register(Box::new(crush_lang_bash::BashAdapter))
      .register(Box::new(crush_lang_zsh::ZshAdapter))
      .register(Box::new(crush_lang_nepali::NepcodeAdapter));
+     .register(Box::new(dart_walker::DartAdapter))
     r
 }
 
@@ -104,4 +105,13 @@ fn main() -> anyhow::Result<()> {
         eprintln!("  Total   {:>10.1} s", w + c + e);
     }
     Ok(())
+}
+
+/// Smoke test: Dart walker adapter integrates with registry.
+#[test]
+fn test_dart_in_registry() {
+    let mut r = walker_core::AdapterRegistry::new();
+    r.register(Box::new(dart_walker::DartAdapter));
+    let result = r.walk("void main() { var x = 42; }", "test.dart");
+    assert!(result.is_ok(), "dart adapter should work via registry: {result:?}");
 }

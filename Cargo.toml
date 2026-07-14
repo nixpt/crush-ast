@@ -7,6 +7,7 @@ members = [
     "crates/tree-sitter-crush",
     "crates/walker-core",
     "crates/wasm_walker",
+    "crates/dart_walker",
     "crates/cli",
     "crates/go_walker",
     "crates/crush-lang-c",

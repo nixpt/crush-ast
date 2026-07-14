@@ -50,3 +50,4 @@ path = "src/bin/aotc.rs"
 [[bin]]
 name = "crush-walk-run"
 path = "src/bin/walk_run.rs"
+dart_walker = { path = "../dart_walker" }

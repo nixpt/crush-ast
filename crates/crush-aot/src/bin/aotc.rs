@@ -205,6 +205,7 @@ fn registry() -> walker_core::AdapterRegistry {
      .register(Box::new(crush_lang_bash::BashAdapter))
      .register(Box::new(crush_lang_zsh::ZshAdapter))
      .register(Box::new(crush_lang_nepali::NepcodeAdapter));
+     .register(Box::new(dart_walker::DartAdapter))
     r
 }
 

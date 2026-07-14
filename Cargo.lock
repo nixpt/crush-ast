@@ -1460,6 +1460,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dart_walker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "serde",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-dart",
+ "walker-core",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4359,6 +4376,16 @@ version = "0.2.0"
 dependencies = [
  "cc",
  "tree-sitter",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-dart"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "325dd1e24ee9ee21111e9c43680ae7d6010aaa9f282b048a99b9c7163c1cf553"
+dependencies = [
+ "cc",
  "tree-sitter-language",
 ]
 
