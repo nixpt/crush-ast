@@ -139,7 +139,22 @@ impl PtxCompiler {
                     instrs.push(format!("\tmov{} {}, {};", r.ty.to_str(), r.name(), val.name()));
                     self.locals.insert(name.to_string(), r);
                 }
-                "add" | "sub" | "mul" | "div" => {
+                "ptx_block_idx_x" => {
+                    let r = self.next_reg(PtxType::U32);
+                    instrs.push(format!("\tmov.u32 {}, %ctaid.x;", r.name()));
+                    self.stack.push(r);
+                }
+                "ptx_block_dim_x" => {
+                    let r = self.next_reg(PtxType::U32);
+                    instrs.push(format!("\tmov.u32 {}, %ntid.x;", r.name()));
+                    self.stack.push(r);
+                }
+                "ptx_lane_id" => {
+                    let r = self.next_reg(PtxType::U32);
+                    instrs.push(format!("\tmov.u32 {}, %laneid;", r.name()));
+                    self.stack.push(r);
+                }
+                "add" | "sub" | "mul" | "div" | "and" | "or" | "xor" | "shl" | "shr" => {
                     let b = self.stack.pop().ok_or("Stack underflow on arith")?;
                     let a = self.stack.pop().ok_or("Stack underflow on arith")?;
                     if a.ty != b.ty {
@@ -148,6 +163,56 @@ impl PtxCompiler {
                     let r = self.next_reg(a.ty.clone());
                     let op_str = instr.op.as_str();
                     instrs.push(format!("\t{}{} {}, {}, {};", op_str, r.ty.to_str(), r.name(), a.name(), b.name()));
+                    self.stack.push(r);
+                }
+                "fma" => {
+                    let c = self.stack.pop().ok_or("Stack underflow on fma c")?;
+                    let b = self.stack.pop().ok_or("Stack underflow on fma b")?;
+                    let a = self.stack.pop().ok_or("Stack underflow on fma a")?;
+                    if a.ty != b.ty || b.ty != c.ty {
+                        return Err(format!("Type mismatch in fma: {:?}, {:?}, {:?}", a.ty, b.ty, c.ty));
+                    }
+                    let r = self.next_reg(a.ty.clone());
+                    // default to round-to-nearest-even (.rn) if it's float
+                    let rnd = if matches!(a.ty, PtxType::F32 | PtxType::F64) { ".rn" } else { "" };
+                    instrs.push(format!("\tfma{}{} {}, {}, {}, {};", rnd, r.ty.to_str(), r.name(), a.name(), b.name(), c.name()));
+                    self.stack.push(r);
+                }
+                "cvt" => {
+                    let a = self.stack.pop().ok_or("Stack underflow on cvt")?;
+                    let to_ty_str = instr.args.get("type").and_then(|v| v.as_str()).unwrap_or("f32");
+                    let to_ty = match to_ty_str {
+                        "f32" => PtxType::F32,
+                        "f64" => PtxType::F64,
+                        "u32" => PtxType::U32,
+                        "s64" => PtxType::S64,
+                        "s32" => PtxType::S32,
+                        "s8" => PtxType::S8,
+                        "u8" => PtxType::U8,
+                        "f16" => PtxType::F16,
+                        _ => return Err(format!("Unsupported cvt dest type: {}", to_ty_str)),
+                    };
+                    let r = self.next_reg(to_ty.clone());
+                    // basic cvt
+                    instrs.push(format!("\tcvt{}{} {}, {};", r.ty.to_str(), a.ty.to_str(), r.name(), a.name()));
+                    self.stack.push(r);
+                }
+                "ptx_shfl_sync_bfly" => {
+                    let mask = self.stack.pop().ok_or("Stack underflow on shfl mask")?;
+                    let idx = self.stack.pop().ok_or("Stack underflow on shfl idx")?;
+                    let var = self.stack.pop().ok_or("Stack underflow on shfl var")?;
+                    let membermask = instr.args.get("membermask").and_then(|v| v.as_u64()).unwrap_or(0xffffffff);
+                    let r = self.next_reg(var.ty.clone());
+                    // shfl.sync.bfly.b32 d, a, b, c
+                    // var is 'a', idx is 'b', mask is 'c' (usually 0x1f for warp). Wait, membermask is the first arg in asm.
+                    // shfl.sync.bfly.b32 %r, %var, %idx, %mask, membermask
+                    // We'll map to b32 for f32/u32
+                    let b_ty = match var.ty {
+                        PtxType::F32 | PtxType::U32 | PtxType::S32 => ".b32",
+                        PtxType::F64 | PtxType::U64 | PtxType::S64 => return Err("shfl on 64-bit not supported yet".into()),
+                        _ => ".b32"
+                    };
+                    instrs.push(format!("\tshfl.sync.bfly{} {}, {}, {}, {}, {:#x};", b_ty, r.name(), var.name(), idx.name(), mask.name(), membermask));
                     self.stack.push(r);
                 }
                 "lt" | "le" | "gt" | "ge" | "eq" | "ne" => {
@@ -203,11 +268,7 @@ impl PtxCompiler {
                     instrs.push(format!("\tmov.u32 {}, %tid.x;", r.name()));
                     self.stack.push(r);
                 }
-                "ptx_block_idx_x" => {
-                    let r = self.next_reg(PtxType::U32);
-                    instrs.push(format!("\tmov.u32 {}, %ctaid.x;", r.name()));
-                    self.stack.push(r);
-                }
+
                 // Capability call (stubbed)
                 "cap_call" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("");

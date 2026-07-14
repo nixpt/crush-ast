@@ -99,3 +99,40 @@ fn test_crush_source_to_ptx() {
     assert!(ptx.contains(".visible .entry add_kernel"));
     assert!(ptx.contains("add.s64")); // Since crush default types map to s64 without specific annotations or traces
 }
+
+#[test]
+fn test_q6_ops() {
+    let mut func = Function {
+        params: vec![],
+        locals: vec![],
+        body: vec![],
+    };
+
+    // 1. push_float 1.0 (a)
+    func.body.push(Instruction { op: "push_float".into(), lang: None, meta: None, args: serde_json::json!({"value": 1.0}) });
+    // 2. push_float 2.0 (b)
+    func.body.push(Instruction { op: "push_float".into(), lang: None, meta: None, args: serde_json::json!({"value": 2.0}) });
+    // 3. push_float 3.0 (c)
+    func.body.push(Instruction { op: "push_float".into(), lang: None, meta: None, args: serde_json::json!({"value": 3.0}) });
+    // 4. fma (a*b + c)
+    func.body.push(Instruction { op: "fma".into(), lang: None, meta: None, args: serde_json::json!({}) });
+    
+    // 5. cvt to s32
+    func.body.push(Instruction { op: "cvt".into(), lang: None, meta: None, args: serde_json::json!({"type": "s32"}) });
+    
+    // 6. ptx_lane_id
+    func.body.push(Instruction { op: "ptx_lane_id".into(), lang: None, meta: None, args: serde_json::json!({}) });
+    
+    // 7. ptx_shfl_sync_bfly
+    // push mask
+    func.body.push(Instruction { op: "push_float".into(), lang: None, meta: None, args: serde_json::json!({"value": 31.0}) }); // actually needs to be u32 but we'll cast or just use what we have, let's use a custom u32 load
+    
+    let mut program = Program::default();
+    program.functions.insert("test_kernel".to_string(), func);
+
+    // we won't test shfl thoroughly if we don't have push_int, but fma and cvt should be in the output
+    let ptx = compile_program(&program).expect("Failed to compile");
+    assert!(ptx.contains("fma.rn.f64"));
+    assert!(ptx.contains("cvt.s32.f64"));
+    assert!(ptx.contains("%laneid"));
+}

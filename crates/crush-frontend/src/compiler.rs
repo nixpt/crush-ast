@@ -1296,6 +1296,27 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("array_pop", serde_json::json!({}), meta));
+                } else if function == "__crush_assign__" {
+                    // Intrinsic: assignment from C/JS walkers (e.g., `x = 42`)
+                    if args.len() != 2 { bail!("__crush_assign__ expects exactly 2 arguments"); }
+                    self.compile_expr(&args[1], instrs)?;
+                    if let Expression::Var { name, meta: _ } = &args[0] {
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name}), &meta));
+                        instrs.push(self.create_instr("push_null", serde_json::json!({}), &meta));
+                    } else { bail!("__crush_assign__ target must be a variable"); }
+                } else if function == "__crush_ternary__" {
+                    if args.len() != 3 { bail!("__crush_ternary__ expects exactly 3 arguments"); }
+                    self.compile_expr(&args[0], instrs)?;
+                    let jmp_if_not_idx = instrs.len();
+                    instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), &meta));
+                    self.compile_expr(&args[1], instrs)?;
+                    let jmp_end_idx = instrs.len();
+                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), &meta));
+                    let else_start = instrs.len();
+                    instrs[jmp_if_not_idx].args = serde_json::json!({"target": else_start});
+                    self.compile_expr(&args[2], instrs)?;
+                    let end_label = instrs.len();
+                    instrs[jmp_end_idx].args = serde_json::json!({"target": end_label});
                 } else {
                     for arg in args {
                         self.compile_expr(arg, instrs)?;
