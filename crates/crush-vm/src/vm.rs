@@ -615,3 +615,77 @@ pub fn run_fastvm_with_caps(
 struct DummyHal;
 impl crate::fastvm::Hal for DummyHal {}
 
+/// Deserialize CASM JSON bytes and execute via FastVM.
+///
+/// This is the entry point used by the `crush!` and `crush_file!` proc macros
+/// from `crush-macros`. It takes pre-compiled CASM JSON bytes (embedded at
+/// Rust compile time) and runs them through the FastVM hot path.
+pub fn run_casm_json(
+    json_bytes: &[u8],
+) -> Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
+    let casm_program: casm::Program = serde_json::from_slice(json_bytes)
+        .map_err(|e| crate::fastvm::FastError::ExecutionError(e.to_string()))?;
+    run_fastvm(&casm_program)
+}
+
+// ── Convenience extractors for FastYield results ───────────────────────────
+
+/// Extension trait providing ergonomic unwrap methods for Crush execution results.
+///
+/// Import this trait to call `.crush_unwrap_int()`, `.crush_unwrap_float()`, etc.
+/// on `Result<FastYield, FastError>`:
+///
+/// ```ignore
+/// use crush_vm::CrushResultExt;
+/// let val: i64 = result.crush_unwrap_int();
+/// ```
+pub trait CrushResultExt {
+    fn crush_unwrap_int(self) -> i64;
+    fn crush_unwrap_float(self) -> f64;
+    fn crush_unwrap_bool(self) -> bool;
+    fn crush_unwrap_string(self) -> String;
+    fn crush_is_null(&self) -> bool;
+}
+
+impl CrushResultExt for Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
+    fn crush_unwrap_int(self) -> i64 {
+        match self.expect("Crush execution failed") {
+            crate::fastvm::FastYield::Finished(Some(crate::RuntimeValue::Int(v))) => v,
+            crate::fastvm::FastYield::Value(crate::RuntimeValue::Int(v)) => v,
+            other => panic!("Expected Crush int, got {:?}", other),
+        }
+    }
+
+    fn crush_unwrap_float(self) -> f64 {
+        match self.expect("Crush execution failed") {
+            crate::fastvm::FastYield::Finished(Some(crate::RuntimeValue::Float(v))) => v,
+            crate::fastvm::FastYield::Value(crate::RuntimeValue::Float(v)) => v,
+            other => panic!("Expected Crush float, got {:?}", other),
+        }
+    }
+
+    fn crush_unwrap_bool(self) -> bool {
+        match self.expect("Crush execution failed") {
+            crate::fastvm::FastYield::Finished(Some(crate::RuntimeValue::Bool(v))) => v,
+            crate::fastvm::FastYield::Value(crate::RuntimeValue::Bool(v)) => v,
+            other => panic!("Expected Crush bool, got {:?}", other),
+        }
+    }
+
+    fn crush_unwrap_string(self) -> String {
+        match self.expect("Crush execution failed") {
+            crate::fastvm::FastYield::Finished(Some(crate::RuntimeValue::String(v))) => v,
+            crate::fastvm::FastYield::Value(crate::RuntimeValue::String(v)) => v,
+            other => panic!("Expected Crush string, got {:?}", other),
+        }
+    }
+
+    fn crush_is_null(&self) -> bool {
+        match self {
+            Ok(crate::fastvm::FastYield::Finished(None))
+            | Ok(crate::fastvm::FastYield::Finished(Some(crate::RuntimeValue::Null))) => true,
+            _ => false,
+        }
+    }
+}
+

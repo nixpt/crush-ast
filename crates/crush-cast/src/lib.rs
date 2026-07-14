@@ -84,6 +84,12 @@ pub enum Statement {
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
+    Assign {
+        target: String,
+        value: Expression,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     Export {
         name: String,
         value: Expression,

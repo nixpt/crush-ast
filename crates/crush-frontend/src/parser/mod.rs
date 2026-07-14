@@ -1049,6 +1049,19 @@ impl Parser {
     fn parse_expression_statement(&mut self) -> Result<Statement, ()> {
         let expr = self.parse_expression()?;
 
+        if matches!(self.peek(), Token::Assign(_)) {
+            if let Expression::Var { name, .. } = expr {
+                self.advance();
+                let value = self.parse_expression()?;
+                self.maybe_semicolon();
+                return Ok(Statement::Assign {
+                    target: name,
+                    value,
+                    meta: HashMap::new(),
+                });
+            }
+        }
+
         self.maybe_semicolon();
 
         Ok(Statement::ExprStmt {

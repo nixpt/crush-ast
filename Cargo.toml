@@ -20,6 +20,7 @@ members = [
     "crates/crush-diagnostics",
     "crates/crush-python",
     "crates/crush-lang-python",
+    "crates/crush-lang-nepali",
     "crates/crush-lang-rust",
     "crates/crush-lang-js",
     "crates/crush-lang-bash",
@@ -27,8 +28,10 @@ members = [
     "crates/crush-net",
     "crates/crush-debugger",
     "crates/crush-jit",
+    "crates/crush-macros",
+    "crates/crush-aot",
     "xtask"
-    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom"]
+    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-tui"]
 
 [workspace.package]
 version       = "0.2.0"
@@ -48,6 +51,8 @@ crush-index       = { path = "crates/crush-index",       version = "0.2.0" }
 crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.2.0" }
 crush-debugger            = { path = "crates/crush-debugger",            version = "0.2.0" }
 crush-jit         = { path = "crates/crush-jit",         version = "0.2.0" }
+crush-macros      = { path = "crates/crush-macros",      version = "0.2.0" }
+crush-aot         = { path = "crates/crush-aot",         version = "0.2.0" }
 yansi            = { version = "1.0", default-features = false }
 crush-diagnostics = { path = "crates/crush-diagnostics", version = "0.2.0" }
 tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.2.0" }

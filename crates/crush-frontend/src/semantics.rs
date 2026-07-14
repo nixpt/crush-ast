@@ -555,6 +555,10 @@ impl SemanticAnalyzer {
                     let ty = self.check_expr(value)?;
                     self.define_var(name, ty);
                 }
+                Statement::Assign { target, value, .. } => {
+                    let ty = self.check_expr(value)?;
+                    // In a stricter lang we'd check if target is defined and matches ty.
+                }
                 Statement::ExprStmt { expr, .. } => {
                     self.check_expr(expr)?;
                 }

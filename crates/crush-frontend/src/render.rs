@@ -135,6 +135,20 @@ impl Renderer {
                 self.render_expression(value, 0);
                 self.newline();
             }
+            Statement::Assign { target, value, .. } => {
+                self.write_indent();
+                self.push_str(target);
+                self.push_str(" = ");
+                self.render_expression(value, 0);
+                self.newline();
+            }
+            Statement::Assign { target, value, .. } => {
+                self.write_indent();
+                self.push_str(target);
+                self.push_str(" = ");
+                self.render_expression(value, 0);
+                self.newline();
+            }
             Statement::Export { name, value, .. } => {
                 self.write_indent();
                 self.push_str("export ");

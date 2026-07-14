@@ -69,6 +69,9 @@ impl Compiler {
                     Statement::VarDecl { name, .. } => {
                         declared.push(name.clone());
                     }
+                    Statement::Assign { target, .. } => {
+                        declared.push(target.clone());
+                    }
                     Statement::FunctionDef { name, .. } => {
                         self.local_functions.insert(name.clone());
                     }
@@ -414,6 +417,12 @@ impl Compiler {
             } => {
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
                 instrs.push(self.create_instr("store", serde_json::json!({"name": name}), meta));
+            }
+            Statement::Assign {
+                target, value, meta
+            } => {
+                self.compile_expr_with_name_hint(value, instrs, Some(target))?;
+                instrs.push(self.create_instr("store", serde_json::json!({"name": target}), meta));
             }
             Statement::Export { name, value, meta } => {
                 self.compile_expr(value, instrs)?;
@@ -1206,6 +1215,9 @@ impl Compiler {
                     "*" => "mul",
                     "/" => "div",
                     "%" => "mod",
+                    "//" => "div",   // floor division: same as div for positive ints
+                    "===" => "eq",    // JS strict equality
+                    "!==" => "ne",    // JS strict inequality
                     "==" => "eq",
                     "!=" => "ne",
                     "<" => "lt",
@@ -1229,6 +1241,7 @@ impl Compiler {
                 let op_code = match operator.as_str() {
                     "-" => "neg",
                     "not" => "not",
+                    "!" => "not",    // JS logical not
                     _ => bail!("Unsupported op: {}", operator),
                 };
                 instrs.push(self.create_instr(op_code, serde_json::json!({}), meta));
@@ -1283,6 +1296,26 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("str_join", serde_json::json!({}), meta));
+                } else if function == "make_range" {
+                    // make_range handles 0..2 args at capability runtime
+                    let argc = args.len();
+                    for arg in args { self.compile_expr(arg, instrs)?; }
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
+                } else if function == "arr_set" {
+                    if args.len() != 3 {
+                        bail!("arr_set() expects exactly 3 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    self.compile_expr(&args[2], instrs)?;
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), meta));
+                } else if function == "arr_get" {
+                    if args.len() != 2 {
+                        bail!("arr_get() expects exactly 2 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_get", "argc": 2}), meta));
                 } else if function == "array.push" {
                     if args.len() != 2 {
                         bail!("array.push() expects exactly 2 arguments");
@@ -1290,21 +1323,65 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("array_push", serde_json::json!({}), meta));
+                } else if function == "range" || function == "make_range" {
+                    let argc = args.len();
+                    for arg in args { self.compile_expr(arg, instrs)?; }
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
                 } else if function == "array.pop" {
                     if args.len() != 1 {
                         bail!("array.pop() expects exactly 1 argument");
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("array_pop", serde_json::json!({}), meta));
-                } else {
-                    for arg in args {
-                        self.compile_expr(arg, instrs)?;
+                } else if function == "__crush_setindex__" {
+                    // Intrinsic: indexed assignment lowered from walker (e.g., `arr[i] = val`)
+                    // args[0] = target, args[1] = index, args[2] = value
+                    if args.len() != 3 {
+                        bail!("__crush_setindex__ expects exactly 3 arguments");
                     }
-                    instrs.push(self.create_instr(
-                        "call",
-                        serde_json::json!({"function": function, "argc": args.len()}),
-                        meta,
-                    ));
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    self.compile_expr(&args[2], instrs)?;
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_assign__" {
+                    // Intrinsic: assignment lowered from walker (e.g., `x = 42` in JS)
+                    // args[0] = target Var, args[1] = value expression
+                    if args.len() != 2 {
+                        bail!("__crush_assign__ expects exactly 2 arguments");
+                    }
+                    self.compile_expr(&args[1], instrs)?;
+                    if let Expression::Var { name, meta: _ } = &args[0] {
+                        instrs.push(self.create_instr(
+                            "store",
+                            serde_json::json!({"name": name}),
+                            &meta,
+                        ));
+                        // store pops the value; push null so the enclosing ExprStmt pop doesn't underflow
+                        instrs.push(self.create_instr(
+                            "push_null",
+                            serde_json::json!({}),
+                            &meta,
+                        ));
+                    } else {
+                        bail!("__crush_assign__ target must be a variable");
+                    }
+                } else {
+                    // Check for method-call syntax: obj.method(args)
+                    // Lowered by walkers as Call("obj.method", args)
+                    if let Some(dot_pos) = function.find('.') {
+                        let obj_name = &function[..dot_pos];
+                        let method = &function[dot_pos + 1..];
+                        instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
+                        for arg in args {
+                            self.compile_expr(arg, instrs)?;
+                        }
+                        instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
+                    } else {
+                        for arg in args {
+                            self.compile_expr(arg, instrs)?;
+                        }
+                        instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), &meta));
+                    }
                 }
             }
             Expression::CapabilityCall { name, args, meta } => {

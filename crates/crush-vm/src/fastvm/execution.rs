@@ -106,16 +106,20 @@ pub fn execute_one(
             let argc = instr.arg2 as usize;
             let locals_base = locals.len();
 
-            // Move args from stack to new frame's locals
-            for i in 0..argc {
-                let arg = stack.pop().ok_or(FastError::StackUnderflow)?;
-                // Args are pushed in reverse order, so we need to reverse
-                while locals.len() <= locals_base + (argc - 1 - i) {
-                    locals.push(RuntimeValue::Null);
-                }
-                locals[locals_base + (argc - 1 - i)] = arg;
+            // Pop args from stack (top = last pushed = last arg)
+            if stack.len() < argc {
+                return Err(FastError::StackUnderflow);
+            }
+            let split_at = stack.len() - argc;
+            let call_args: Vec<RuntimeValue> = stack.drain(split_at..).collect();
+            // call_args is [first_arg, ..., last_arg]
+            // Callee's 'store param1' pops from top, so first_arg must be on top.
+            // Push last_arg first, ..., first_arg last:
+            for arg in call_args.iter().rev() {
+                stack.push(arg.clone());
             }
 
+            // Push call frame
             call_stack.push(FastFrame {
                 return_pc: *pc,
                 locals_base,

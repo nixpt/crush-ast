@@ -92,7 +92,7 @@ pub fn check_mutation_ordering(program: &Program) -> Vec<CompilerDiagnostic> {
 fn call_name_in_stmt(stmt: &crush_cast::Statement) -> Option<&str> {
     match stmt {
         crush_cast::Statement::ExprStmt { expr, .. } => call_name_in_expr(expr),
-        crush_cast::Statement::VarDecl { value, .. } => call_name_in_expr(value),
+        crush_cast::Statement::VarDecl { value, .. } | crush_cast::Statement::Assign { value, .. } => call_name_in_expr(value),
         crush_cast::Statement::Return { value: Some(e), .. } => call_name_in_expr(e),
         _ => None,
     }

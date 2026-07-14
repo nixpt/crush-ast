@@ -329,7 +329,7 @@ fn collect_calls_in_stmt(
 ) {
     match stmt {
         Statement::ExprStmt { expr, .. } => collect_calls_in_expr(expr, module, caller_fn, out),
-        Statement::VarDecl { value, .. } | Statement::Export { value, .. } => {
+        Statement::VarDecl { value, .. } | Statement::Assign { value, .. } | Statement::Export { value, .. } => {
             collect_calls_in_expr(value, module, caller_fn, out)
         }
         Statement::Return { value, .. } => {
