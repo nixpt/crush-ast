@@ -1,0 +1,17 @@
+# Cargo build configuration for crush-ast workspace.
+#
+# Layer 3: LLVM/C toolchain backends (tree-sitter C deps).
+# These env vars are respected by the `cc` crate, which tree-sitter-c,
+# tree-sitter-cpp, and tree-sitter-crush use for native compilation.
+#
+# Combined with [profile.release] in Cargo.toml:
+#   Layer 1: Rust fat LTO across all workspace crates
+#   Layer 2: gcc/clang -O3 -flto for AOT-generated C (in crush-aot/src/compiler.rs)
+
+[env]
+# Fat LTO for native C dependencies (tree-sitter grammars, libloading, etc.)
+CFLAGS  = { value = "-O3 -flto", force = false, relative = false }
+LDFLAGS = { value = "-flto", force = false, relative = false }
+
+# Uncomment to use a specific linker (lld is often faster and supports LTO well).
+# RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=lld"

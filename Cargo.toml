@@ -66,3 +66,13 @@ tree-sitter = "0.25"
 clap        = { version = "4.0", features = ["derive"] }
 chrono      = { version = "0.4", default-features = false, features = ["clock", "std"] }
 indexmap    = "2.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+
+# The AOT C codegen already passes -O3 -flto to gcc/clang.
+# This profile only governs Rust crates; C dependencies inherit
+# their own CFLAGS/LDFLAGS from the build environment.
