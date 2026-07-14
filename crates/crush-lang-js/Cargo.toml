@@ -33,3 +33,4 @@ boa_interner = { version = "0.21", optional = true }
 crush-frontend = { path = "../crush-frontend" }
 crush-lang-sdk = { path = "../crush-lang-sdk" }
 crush-vm = { path = "../crush-vm" }
+crush-lang-python = { path = "../crush-lang-python" }

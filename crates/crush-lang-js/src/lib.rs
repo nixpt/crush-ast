@@ -1,6 +1,7 @@
 pub mod analyzer;
 pub mod backend;
 pub mod lower_swc;
+pub mod sdk;
 
 #[cfg(feature = "boa-backend")]
 pub mod analyzer_boa;
