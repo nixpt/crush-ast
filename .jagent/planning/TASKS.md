@@ -105,3 +105,19 @@
 - [ ] **issue** — REAL extraction regression (NOT @io.print/EXO-47 — those were false leads). Ran exosphere's OWN tests/language/*.crush corpus against crush-ast crush-run: 4/7 parse, 3 FAIL. (a) for_loop_test.crush: 'for i in 0..3 { }' range-based for loops DO NOT PARSE (Expected LBrace). (b) async_test.crush: 'Unexpected token in expression: Async'. (c) concurrency_structs.crush: assign-in-expression line 6. These PASS in exosphere/crates/core/crush-lang. crush-ast lost real language features in the extraction. exosphere's corpus IS the acceptance test for the fix. ALSO: crush-capsules is NOT an example source — tools/core + standalone/app-runtime + examples have ZERO .crush files (all Rust host-side capsule demos); only 2 .crush exist repo-wide: squad-bridge-peek/main.crush (7 LOC, parses) and games/snake/game.crush (559 LOC, 226 parse errors — written in a far richer Rust-like dialect with mut/generics/::/match =>/type annotations/-> returns). Snake is a ROADMAP SPEC for where the language was headed, not a borrowable example.  _(kai, 2026-07-14)_
 - [ ] **issue** — Crush's + operator does not support string + number concatenation at all — 'io.print("x: " + 5)' fails with 'type error: expected numeric, got str'. This breaks crush-website/example.crush's own 'Python says 5^3 is: ' + result pattern once @io.print and @python marshaling are both fixed (found while verifying CRUSHAST-POLYGLOT-1 end-to-end against the real file). Out of scope for CRUSHAST-POLYGLOT-1 — logged for whoever owns operator semantics next.  _(unknown, 2026-07-14)_
 - [ ] **issue** — SEVERE PRE-EXISTING: ANY struct declaration silently kills main. 'struct P { x } fn main() { print("hi") }' exits 0, steps=2, prints NOTHING. No error, no warning, zero exit code. Verified against the parent commit — not caused by the s385 parser work. main is never called. Struct programs have NEVER worked. concurrency_structs.crush now PARSES (7/7 corpus) but still cannot RUN because of this. This is the purest silent failure in the codebase and the flagship target for the khukuri-bugarium parking lot (workspace-meta/plans/2026-07-14-PARKING-LOT-bugarium-vs-crush.md) — the 'steps=' counter is a free oracle: assert main's body executed >=1 instruction.  _(unknown, 2026-07-14)_
+- [ ] **issue** — io.print does NOT emit a trailing newline — example.crush's output runs together on one line ('🚀 Crush...Python: 5^3 = 125.0Back in Crush...'). The archived stdlib had io.print AND io.echo as distinct caps, suggesting one was line-oriented. Need either a newline on io.print or a println/io.echo cap. Cosmetic but it makes any multi-line demo look broken, and the website demo is the first thing anyone will run.  _(unknown, 2026-07-14)_
+- [ ] **issue** — FIVE independent 'add' implementations exist and they DISAGREE.
+(1) crush-vm/scheduler.rs [interpreter - what crush-run uses]
+(2) crush-vm/portable_vm.rs
+(3) crush-vm/fastvm/execution.rs [FastOp::Add via binary_op - NUMERIC ONLY; crush-python calls run_fastvm]
+(4) crush-aot/codegen.rs [emits Rust via bin_arith - NUMERIC ONLY]
+(5) crush-aot/codegen_c.rs [emits C via _add()]
+s385 fixed string-concat + loud TypeError in (1) and (2) ONLY, so the gap is now WIDER.
+PROVEN DIVERGENCE, independent of that fix: '1 / 0' -> scheduler raises DivisionByZero LOUDLY;
+crush-aot/codegen.rs emits 'if b != 0 then a/b else 0' and SILENTLY RETURNS 0. Same for mod.
+Same program, different answers, no error from either.
+crush-aot is NOT in the runtime dep graph (zero reverse deps; no source file imports crush_aot)
+BUT it IS a workspace member that builds and ships two binaries (crush-aotc, crush-walk-run),
+so a user CAN invoke it and get silently different semantics.
+THIS IS THE BUGARIUM FLAGSHIP TARGET: differential replay across all 5 backends over the corpus;
+any divergence = a silent miscompile. Related: crush-jit's catch-all pushing TAG_NULL.  _(unknown, 2026-07-14)_
