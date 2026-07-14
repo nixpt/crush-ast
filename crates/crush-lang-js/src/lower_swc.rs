@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
 use swc_ecma_ast::*;
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 
 fn meta(span: &swc_common::Span, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
     let offset = span.lo.0 as usize;

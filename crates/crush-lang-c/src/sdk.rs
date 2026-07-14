@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 use tree_sitter::Parser;
-use walker_core::Walker;
+use crush_walker_core::Walker;
 
 use crate::CWalker;
 

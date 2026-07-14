@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
 use rustpython_ast as py_ast;
-use walker_core::{FeatureReport, Frontend, LowerCtx};
+use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
 
 /// Python language frontend implementing the `Frontend` trait.
 pub struct PythonFrontend;
@@ -82,7 +82,7 @@ impl Frontend for PythonFrontend {
 
 /// Parse Python source and lower to CAST (convenience wrapper).
 pub fn python_to_cast(source: &str) -> anyhow::Result<Program> {
-    let (_, program) = walker_core::frontend_pipeline(&PythonFrontend, source)?;
+    let (_, program) = crush_walker_core::frontend_pipeline(&PythonFrontend, source)?;
     Ok(program)
 }
 
@@ -171,7 +171,7 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>, source: &str) -> anyhow::Result<Progr
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::impl_adapter_from_frontend;
+use crush_walker_core::impl_adapter_from_frontend;
 
 impl_adapter_from_frontend!(
     PythonAdapter,

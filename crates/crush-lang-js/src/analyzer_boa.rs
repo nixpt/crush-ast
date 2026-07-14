@@ -7,7 +7,7 @@ use boa_ast::expression::operator::assign::AssignTarget;
 use boa_ast::expression::operator::update::UpdateTarget;
 use boa_ast::{ModuleItem, Statement, StatementListItem};
 use boa_interner::{Interner, Sym};
-use walker_core::FeatureReport;
+use crush_walker_core::FeatureReport;
 
 use crate::backend::boa::BoaAst;
 

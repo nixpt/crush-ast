@@ -1,7 +1,7 @@
 //! Python AST statement → CAST statement lowering.
 
 use py_ast::Ranged;
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 
 use crush_cast::{CastType, Expression, ImportStatement, Statement};
 use rustpython_ast as py_ast;

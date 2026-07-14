@@ -6,7 +6,7 @@
 use anyhow::Result;
 use crush_cast::{self as ast, Program};
 use std::collections::HashMap;
-use walker_core::{BaseWalker, Walker};
+use crush_walker_core::{BaseWalker, Walker};
 
 pub struct DartWalker {
     pub file_name: String,
@@ -50,14 +50,14 @@ impl Walker for DartWalker {
 
 // ���─ Adapter ───────────────────────────────────────────────────────────────────
 
-use walker_core::LanguageAdapter;
+use crush_walker_core::LanguageAdapter;
 
 pub struct DartAdapter;
 
 impl LanguageAdapter for DartAdapter {
     fn language_name(&self) -> &'static str { "dart" }
     fn file_extensions(&self) -> &[&'static str] { &["dart"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&tree_sitter_dart::LANGUAGE.into())
             .map_err(|e| anyhow::anyhow!("tree-sitter-dart init: {e}"))?;
@@ -65,7 +65,7 @@ impl LanguageAdapter for DartAdapter {
             .ok_or_else(|| anyhow::anyhow!("Dart parse failed"))?;
         let walker = DartWalker { file_name: filename.to_string() };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((walker_core::FeatureReport { lang: "dart".to_string(), ..Default::default() }, program))
+        Ok((crush_walker_core::FeatureReport { lang: "dart".to_string(), ..Default::default() }, program))
     }
 }
 
@@ -82,7 +82,7 @@ pub fn dart_to_cast(source: &str, filename: &str) -> anyhow::Result<Program> {
 #[cfg(test)]
 mod sdk {
     use super::*;
-    use walker_core::AdapterRegistry;
+    use crush_walker_core::AdapterRegistry;
 
     pub fn run_dart(source: &str) -> anyhow::Result<String> {
         let adapter = DartAdapter;

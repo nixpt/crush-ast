@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::fs;
 use std::path::PathBuf;
-use wasm_walker::walk_wasm;
+use crush_lang_wasm::walk_wasm;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

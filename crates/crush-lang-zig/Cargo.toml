@@ -1,15 +1,15 @@
 [package]
-name = "zig_walker"
+name = "crush-lang-zig"
 version.workspace = true
 edition = "2021"
 repository.workspace = true
 description = "Zig to CAST walker for CRUSH"
 license.workspace = true
 [lib]
-name = "zig_walker"
+name = "crush_lang_zig"
 
 [[bin]]
-name = "zig_walker"
+name = "crush-lang-zig"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,7 +20,7 @@ clap.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-walker-core.workspace = true
+crush-walker-core.workspace = true
 
 [dev-dependencies]
 crush-frontend.workspace = true

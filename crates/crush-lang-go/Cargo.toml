@@ -1,20 +1,27 @@
 [package]
 license.workspace = true
-description = "Dart walker — parses Dart source into CAST IR via tree-sitter-dart"
-name = "dart_walker"
+description = "Go language walker — parses Go source code into CAST IR"
+name = "crush-lang-go"
 version.workspace = true
-edition = "2024"
+edition = "2021"
 repository.workspace = true
+[lib]
+name = "crush_lang_go"
+
+[[bin]]
+name = "crush-lang-go"
+path = "src/main.rs"
+
 
 [dependencies]
-anyhow.workspace = true
-crush-cast.workspace = true
-walker-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+anyhow.workspace = true
 tree-sitter.workspace = true
-tree-sitter-dart = "0.2"
+tree-sitter-go = "0.23"
+crush-walker-core.workspace = true
+crush-cast.workspace = true
 
 [dev-dependencies]
 crush-frontend.workspace = true

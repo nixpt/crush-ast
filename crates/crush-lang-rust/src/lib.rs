@@ -11,7 +11,7 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
-use walker_core::{FeatureReport, Frontend, LowerCtx};
+use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
 
 pub struct RustFrontend;
 
@@ -61,7 +61,7 @@ impl Frontend for RustFrontend {
 
 /// Parse Rust source and lower to CAST (convenience wrapper).
 pub fn rust_to_cast(source: &str) -> anyhow::Result<Program> {
-    let (_, program) = walker_core::frontend_pipeline(&RustFrontend, source)?;
+    let (_, program) = crush_walker_core::frontend_pipeline(&RustFrontend, source)?;
     Ok(program)
 }
 
@@ -137,11 +137,11 @@ mod tests {
     //! is out of scope for this test suite.
 
     use super::{rust_to_cast, RustFrontend};
-    use walker_core::Frontend;
+    use crush_walker_core::Frontend;
 
     /// Mirror of python's `test_analyze` helper: frontend.parse ->
     /// frontend.analyze on raw rust source.
-    fn test_analyze(source: &str) -> walker_core::FeatureReport {
+    fn test_analyze(source: &str) -> crush_walker_core::FeatureReport {
         let frontend = RustFrontend;
         let ast = frontend.parse(source).unwrap();
         frontend.analyze(&ast).unwrap()
@@ -223,7 +223,7 @@ mod tests {
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::impl_adapter_from_frontend;
+use crush_walker_core::impl_adapter_from_frontend;
 
 impl_adapter_from_frontend!(
     RustAdapter,

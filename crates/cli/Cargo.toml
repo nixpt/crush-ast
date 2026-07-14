@@ -11,7 +11,7 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-walker-core.workspace = true
+crush-walker-core.workspace = true
 
 [[bin]]
 # PACKAGE is `crush-walker` because the name `walker` is TAKEN on crates.io by an

@@ -1,6 +1,6 @@
 use crush_cast::Program;
 use std::any::Any;
-use walker_core::{FeatureReport, Frontend};
+use crush_walker_core::{FeatureReport, Frontend};
 use crush_frontend::parse_source;
 
 pub struct NepaliFrontend;
@@ -43,11 +43,11 @@ impl Frontend for NepaliFrontend {
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::impl_adapter_from_frontend;
+use crush_walker_core::impl_adapter_from_frontend;
 
 pub fn nepali_to_cast(source: &str) -> anyhow::Result<crush_cast::Program> {
     let frontend = crate::NepaliFrontend;
-    let (_, program) = walker_core::frontend_pipeline(&frontend, source)?;
+    let (_, program) = crush_walker_core::frontend_pipeline(&frontend, source)?;
     Ok(program)
 }
 

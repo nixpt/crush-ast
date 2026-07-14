@@ -1,11 +1,11 @@
-//! Zig SDK — full pipeline from Zig source to CVM1 execution.
+//! Go SDK �� full pipeline from Go source to CVM1 execution.
 #![cfg(test)]
 
-use walker_core::AdapterRegistry;
+use crush_walker_core::AdapterRegistry;
 
-pub fn run_zig(source: &str) -> anyhow::Result<String> {
-    let adapter = crate::ZigAdapter;
-    let (_, cast) = adapter.walk(source, "test.zig").map_err(|e| anyhow::anyhow!("zig->CAST: {e}"))?;
+pub fn run_go(source: &str) -> anyhow::Result<String> {
+    let adapter = crate::GoAdapter;
+    let (_, cast) = adapter.walk(source, "test.go").map_err(|e| anyhow::anyhow!("go->CAST: {e}"))?;
     let mut compiler = crush_frontend::compiler::Compiler::new();
     let casm = compiler.compile(cast).map_err(|e| anyhow::anyhow!("CAST->CASM: {e}"))?;
     let vm_prog = crush_lang_sdk::compile::casm_to_vm(&casm).map_err(|e| anyhow::anyhow!("CASM->CVM1: {e}"))?;
@@ -25,10 +25,10 @@ pub fn run_zig(source: &str) -> anyhow::Result<String> {
 mod tests {
     use super::*;
 
-    #[test] fn test_zig_compile() { assert!(run_zig("pub fn main() void { _ = 42; }").is_ok()); }
-    #[test] fn test_zig_registry() {
+    #[test] fn test_go_compile() { assert!(run_go("package main\nfunc main() { var x int = 42; }").is_ok()); }
+    #[test] fn test_go_registry() {
         let mut r = AdapterRegistry::new();
-        r.register(Box::new(crate::ZigAdapter));
-        assert!(r.walk("pub fn main() void {}", "test.zig").is_ok());
+        r.register(Box::new(crate::GoAdapter));
+        assert!(r.walk("package main\nfunc main() {}", "test.go").is_ok());
     }
 }

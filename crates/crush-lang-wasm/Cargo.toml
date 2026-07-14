@@ -1,7 +1,7 @@
 [package]
 license.workspace = true
 description = "WebAssembly walker — parses Wasm modules into CAST IR"
-name = "wasm_walker"
+name = "crush-lang-wasm"
 version.workspace = true
 edition = "2024"
 repository.workspace = true
@@ -12,7 +12,7 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 wasmparser = "0.121"
-walker-core.workspace = true
+crush-walker-core.workspace = true
 crush-cast.workspace = true
 
 [dev-dependencies]

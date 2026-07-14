@@ -939,15 +939,18 @@ dependencies = [
  "crush-lang-bash",
  "crush-lang-c",
  "crush-lang-custom",
+ "crush-lang-dart",
+ "crush-lang-go",
  "crush-lang-js",
  "crush-lang-nepali",
  "crush-lang-python",
  "crush-lang-rust",
  "crush-lang-sdk",
+ "crush-lang-wasm",
+ "crush-lang-zig",
  "crush-lang-zsh",
  "crush-vm",
- "dart_walker",
- "go_walker",
+ "crush-walker-core",
  "hex",
  "libloading 0.8.9",
  "serde",
@@ -959,9 +962,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
- "walker-core",
- "wasm_walker",
- "zig_walker",
 ]
 
 [[package]]
@@ -1089,9 +1089,9 @@ dependencies = [
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
+ "crush-walker-core",
  "serde",
  "serde_json",
- "walker-core",
 ]
 
 [[package]]
@@ -1105,12 +1105,12 @@ dependencies = [
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
+ "crush-walker-core",
  "serde",
  "serde_json",
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
- "walker-core",
 ]
 
 [[package]]
@@ -1120,10 +1120,44 @@ dependencies = [
  "anyhow",
  "crush-cast",
  "crush-cson",
+ "crush-walker-core",
  "regex",
  "serde",
  "serde_json",
- "walker-core",
+]
+
+[[package]]
+name = "crush-lang-dart"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "crush-walker-core",
+ "serde",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-dart",
+]
+
+[[package]]
+name = "crush-lang-go"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "crush-walker-core",
+ "serde",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-go",
 ]
 
 [[package]]
@@ -1139,13 +1173,13 @@ dependencies = [
  "crush-lang-python",
  "crush-lang-sdk",
  "crush-vm",
+ "crush-walker-core",
  "serde",
  "serde_json",
  "swc_atoms",
  "swc_common",
  "swc_ecma_ast",
  "swc_ecma_parser",
- "walker-core",
 ]
 
 [[package]]
@@ -1157,7 +1191,7 @@ dependencies = [
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
- "walker-core",
+ "crush-walker-core",
 ]
 
 [[package]]
@@ -1169,11 +1203,11 @@ dependencies = [
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
+ "crush-walker-core",
  "rustpython-ast",
  "rustpython-parser",
  "serde",
  "serde_json",
- "walker-core",
 ]
 
 [[package]]
@@ -1185,10 +1219,10 @@ dependencies = [
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
+ "crush-walker-core",
  "serde",
  "serde_json",
  "syn",
- "walker-core",
 ]
 
 [[package]]
@@ -1221,6 +1255,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-lang-wasm"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "crush-walker-core",
+ "serde",
+ "serde_json",
+ "wasmparser 0.121.2",
+ "wat",
+]
+
+[[package]]
+name = "crush-lang-zig"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "crush-walker-core",
+ "serde",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-zig",
+]
+
+[[package]]
 name = "crush-lang-zsh"
 version = "0.2.0"
 dependencies = [
@@ -1229,9 +1297,9 @@ dependencies = [
  "crush-frontend",
  "crush-lang-sdk",
  "crush-vm",
+ "crush-walker-core",
  "serde",
  "serde_json",
- "walker-core",
  "zshrs-parse",
 ]
 
@@ -1360,9 +1428,20 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crush-walker-core",
  "serde",
  "serde_json",
- "walker-core",
+]
+
+[[package]]
+name = "crush-walker-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crush-cast",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -1469,23 +1548,6 @@ dependencies = [
  "darling_core 0.23.0",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "dart_walker"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "crush-cast",
- "crush-frontend",
- "crush-lang-sdk",
- "crush-vm",
- "serde",
- "serde_json",
- "tree-sitter",
- "tree-sitter-dart",
- "walker-core",
 ]
 
 [[package]]
@@ -1880,23 +1942,6 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "stable_deref_trait",
-]
-
-[[package]]
-name = "go_walker"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "crush-cast",
- "crush-frontend",
- "crush-lang-sdk",
- "crush-vm",
- "serde",
- "serde_json",
- "tree-sitter",
- "tree-sitter-go",
- "walker-core",
 ]
 
 [[package]]
@@ -4724,17 +4769,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "walker-core"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "crush-cast",
- "serde_json",
- "thiserror 1.0.69",
- "tree-sitter",
-]
-
-[[package]]
 name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4833,23 +4867,6 @@ dependencies = [
  "indexmap",
  "wasm-encoder 0.244.0",
  "wasmparser 0.244.0",
-]
-
-[[package]]
-name = "wasm_walker"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "crush-cast",
- "crush-frontend",
- "crush-lang-sdk",
- "crush-vm",
- "serde",
- "serde_json",
- "walker-core",
- "wasmparser 0.121.2",
- "wat",
 ]
 
 [[package]]
@@ -5458,23 +5475,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "zig_walker"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "crush-cast",
- "crush-frontend",
- "crush-lang-sdk",
- "crush-vm",
- "serde",
- "serde_json",
- "tree-sitter",
- "tree-sitter-zig",
- "walker-core",
 ]
 
 [[package]]

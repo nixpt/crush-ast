@@ -3,7 +3,7 @@ use crush_cast::{self as ast, CastType, Expression, Statement};
 use serde_json::json;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
-use walker_core::{BaseWalker, Walker};
+use crush_walker_core::{BaseWalker, Walker};
 
 pub struct GoWalker {
     pub file_name: String,
@@ -223,7 +223,7 @@ impl<'a> Visitor<'a> {
                 let func_name = self.base.text(func_node)?;
 
                 // Use centralized capability mapping
-                if let Some(cap_name) = walker_core::map_to_capability("go", func_name) {
+                if let Some(cap_name) = crush_walker_core::map_to_capability("go", func_name) {
                     return Ok(Expression::CapabilityCall {
                         name: cap_name.to_string(),
                         args,
@@ -269,7 +269,7 @@ impl<'a> Visitor<'a> {
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use walker_core::{TreeSitterFrontend, frontend_pipeline};
+    use crush_walker_core::{TreeSitterFrontend, frontend_pipeline};
 
     #[test]
     fn test_treesitter_frontend_adapter() {
@@ -308,20 +308,20 @@ func main() {
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::LanguageAdapter;
+use crush_walker_core::LanguageAdapter;
 
 pub struct GoAdapter;
 impl LanguageAdapter for GoAdapter {
     fn language_name(&self) -> &'static str { "go" }
     fn file_extensions(&self) -> &[&'static str] { &["go"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&tree_sitter_go::LANGUAGE.into())
             .map_err(|e| anyhow::anyhow!("tree-sitter-go init: {e}"))?;
         let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("Go parse failed"))?;
         let walker = crate::GoWalker { file_name: filename.to_string() };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((walker_core::FeatureReport { lang: "go".to_string(), ..Default::default() }, program))
+        Ok((crush_walker_core::FeatureReport { lang: "go".to_string(), ..Default::default() }, program))
     }
 }
 pub mod sdk;

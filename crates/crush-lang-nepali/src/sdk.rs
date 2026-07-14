@@ -1,7 +1,7 @@
 //! Nepcode SDK — full pipeline from Nepali-source to CVM1 execution.
 #![cfg(test)]
 
-use walker_core::AdapterRegistry;
+use crush_walker_core::AdapterRegistry;
 
 pub fn run_nepcode(source: &str) -> anyhow::Result<String> {
     let adapter = crate::NepcodeAdapter;

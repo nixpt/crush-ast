@@ -11,7 +11,7 @@ name = "crush_lang_custom"
 
 [dependencies]
 crush-cast = { workspace = true }
-walker-core = { workspace = true }
+crush-walker-core = { workspace = true }
 crush-cson = { path = "../crush-cson" }
 serde = { workspace = true }
 serde_json = { workspace = true }

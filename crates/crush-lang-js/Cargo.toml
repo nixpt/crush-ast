@@ -17,7 +17,7 @@ boa-backend = ["boa_ast", "boa_parser", "boa_interner"]
 
 [dependencies]
 crush-cast.workspace = true
-walker-core.workspace = true
+crush-walker-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

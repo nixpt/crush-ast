@@ -21,7 +21,7 @@
 //! // The example below requires a real tree-sitter grammar crate.
 //! // Substitute `tree_sitter_yourlang` and `tree_sitter::Language` for
 //! // your target language.
-//! use walker_core::{Walker, BaseWalker};
+//! use crush_walker_core::{Walker, BaseWalker};
 //! use crush_cast;
 //! use anyhow::Result;
 //!
@@ -102,7 +102,7 @@ impl FeatureReport {
 ///    the lowering functions instead of using empty `HashMap::new()` for meta.
 ///
 /// ```rust,ignore
-/// use walker_core::LowerCtx;
+/// use crush_walker_core::LowerCtx;
 ///
 /// fn lower(&self, ast: Box<dyn Any>) -> Result<Program> {
 ///     let (source, stmts) = *ast.downcast::<(String, MyAst)>()?;
@@ -164,7 +164,7 @@ pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use walker_core::{TreeSitterFrontend, Walker, frontend_pipeline};
+/// use crush_walker_core::{TreeSitterFrontend, Walker, frontend_pipeline};
 ///
 /// struct GoWalker { file_name: String }
 /// impl Walker for GoWalker { /* ... */ }
@@ -243,7 +243,7 @@ impl<W: Walker> Frontend for TreeSitterFrontend<W> {
 ///
 /// ```rust,ignore
 /// use clap::Parser;
-/// use walker_core::run_walker_binary;
+/// use crush_walker_core::run_walker_binary;
 ///
 /// #[derive(Parser)]
 /// struct Cli { input: String }
@@ -487,7 +487,7 @@ pub mod capabilities {
 ///
 /// # Example
 /// ```
-/// use walker_core::map_to_capability;
+/// use crush_walker_core::map_to_capability;
 /// assert_eq!(map_to_capability("python", "print"), Some("io.print"));
 /// assert_eq!(map_to_capability("go", "fmt.Println"), Some("io.print"));
 /// ```
@@ -648,7 +648,7 @@ impl AdapterRegistry {
 /// Macro: create a `LanguageAdapter` from a `Frontend` implementation.
 ///
 /// ```rust,ignore
-/// use walker_core::impl_adapter_from_frontend;
+/// use crush_walker_core::impl_adapter_from_frontend;
 /// impl_adapter_from_frontend!(PythonAdapter, "python", &["py", "pyw"], crush_lang_python::python_to_cast);
 /// ```
 #[macro_export]
@@ -675,7 +675,7 @@ macro_rules! impl_adapter_from_frontend {
 /// Macro: create a `LanguageAdapter` from a tree-sitter `Walker` implementation.
 ///
 /// ```rust,ignore
-/// use walker_core::impl_adapter_from_walker;
+/// use crush_walker_core::impl_adapter_from_walker;
 /// impl_adapter_from_walker!(CAdapter, "c", &["c", "h"], CWalker { file_name: String::new() }, tree_sitter_c::LANGUAGE.into());
 /// ```
 #[macro_export]

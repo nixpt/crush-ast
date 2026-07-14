@@ -4,7 +4,7 @@ pub mod parser;
 
 use crush_cast::Program;
 use std::any::Any;
-use walker_core::{FeatureReport, Frontend, LowerCtx};
+use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
 
 pub struct BashFrontend;
 
@@ -39,13 +39,13 @@ impl Frontend for BashFrontend {
 
 /// Parse bash source and lower to CAST (convenience wrapper).
 pub fn bash_to_cast(source: &str) -> anyhow::Result<Program> {
-    let (_, program) = walker_core::frontend_pipeline(&BashFrontend, source)?;
+    let (_, program) = crush_walker_core::frontend_pipeline(&BashFrontend, source)?;
     Ok(program)
 }
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::impl_adapter_from_frontend;
+use crush_walker_core::impl_adapter_from_frontend;
 
 impl_adapter_from_frontend!(
     BashAdapter,

@@ -11,7 +11,7 @@ pub mod lower_boa;
 use std::any::Any;
 
 use crush_cast::Program;
-use walker_core::{FeatureReport, Frontend, LowerCtx};
+use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
 
 /// Wrapper for Boa-parsed AST + interner, transported via `Box<dyn Any>`.
 #[cfg(feature = "boa-backend")]
@@ -113,13 +113,13 @@ impl Frontend for JsFrontend {
 /// the parser backend and syntax mode.
 pub fn js_to_cast(source: &str, ext: &str) -> anyhow::Result<Program> {
     let frontend = JsFrontend::new(ext);
-    let (_, program) = walker_core::frontend_pipeline(&frontend, source)?;
+    let (_, program) = crush_walker_core::frontend_pipeline(&frontend, source)?;
     Ok(program)
 }
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::LanguageAdapter;
+use crush_walker_core::LanguageAdapter;
 
 
 /// JS/TS adapter — handles .js/.mjs/.cjs/.ts/.tsx/.mts

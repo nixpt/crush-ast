@@ -20,15 +20,15 @@ crush-lang-python = { path = "../crush-lang-python" }
 crush-lang-js = { path = "../crush-lang-js" }
 crush-lang-rust = { path = "../crush-lang-rust" }
 crush-lang-c = { path = "../crush-lang-c" }
-go_walker = { path = "../go_walker" }
-zig_walker = { path = "../zig_walker" }
-wasm_walker = { path = "../wasm_walker" }
+crush-lang-go = { path = "../crush-lang-go" }
+crush-lang-zig = { path = "../crush-lang-zig" }
+crush-lang-wasm = { path = "../crush-lang-wasm" }
 crush-lang-bash = { path = "../crush-lang-bash" }
 crush-lang-zsh = { path = "../crush-lang-zsh" }
 crush-lang-nepali = { path = "../crush-lang-nepali" }
 crush-lang-custom = { path = "../crush-lang-custom" }
-dart_walker = { path = "../dart_walker" }
-walker-core.workspace = true
+crush-lang-dart = { path = "../crush-lang-dart" }
+crush-walker-core.workspace = true
 crush-cast.workspace = true
 serde.workspace = true
 serde_json.workspace = true

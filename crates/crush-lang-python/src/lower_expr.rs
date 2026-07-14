@@ -1,7 +1,7 @@
 //! Python AST expression → CAST expression lowering.
 
 use py_ast::Ranged;
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 
 use std::collections::HashMap;
 use std::convert::TryInto;

@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use crush_cast::{Program, Statement, Expression, Function, CastType};
 use crush_cson::CsonValue;
 use crush_cson::parser::CsonParser;
-use walker_core::{Frontend, FeatureReport};
+use crush_walker_core::{Frontend, FeatureReport};
 
 /// Rule matching structure mapping a regex to a CAST node type.
 #[derive(Debug, Clone)]
@@ -326,11 +326,11 @@ mod tests {
 /// Users define their grammar via CSON, and the adapter automates the pipeline.
 pub struct CustomAdapter(pub CustomFrontend);
 
-impl walker_core::LanguageAdapter for CustomAdapter {
+impl crush_walker_core::LanguageAdapter for CustomAdapter {
     fn language_name(&self) -> &'static str { "custom" }
     fn file_extensions(&self) -> &[&'static str] { &[] }
-    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
-        let (report, program) = walker_core::frontend_pipeline(&self.0, source)?;
+    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let (report, program) = crush_walker_core::frontend_pipeline(&self.0, source)?;
         Ok((report, program))
     }
 }

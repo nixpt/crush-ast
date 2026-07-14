@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
 pub mod sdk;
-use walker_core::{BaseWalker, Walker};
+use crush_walker_core::{BaseWalker, Walker};
 
 pub struct CWalker {
     pub file_name: String,
@@ -596,7 +596,7 @@ impl<'a> Visitor<'a> {
                 let func_name = self.base.text(func_node)?;
 
                 // Use centralized capability mapping
-                if let Some(cap_name) = walker_core::map_to_capability("c", func_name) {
+                if let Some(cap_name) = crush_walker_core::map_to_capability("c", func_name) {
                     return Ok(Expression::CapabilityCall {
                         name: cap_name.to_string(),
                         args,
@@ -851,13 +851,13 @@ mod tests {
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use walker_core::LanguageAdapter;
+use crush_walker_core::LanguageAdapter;
 
 pub struct CAdapter;
 impl LanguageAdapter for CAdapter {
     fn language_name(&self) -> &'static str { "c" }
     fn file_extensions(&self) -> &[&'static str] { &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(walker_core::FeatureReport, crush_cast::Program)> {
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("c");
         let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
         let mut parser = tree_sitter::Parser::new();
@@ -871,6 +871,6 @@ impl LanguageAdapter for CAdapter {
         let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
         let walker = crate::CWalker { file_name: filename.to_string() };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((walker_core::FeatureReport { lang: "c".to_string(), ..Default::default() }, program))
+        Ok((crush_walker_core::FeatureReport { lang: "c".to_string(), ..Default::default() }, program))
     }
 }

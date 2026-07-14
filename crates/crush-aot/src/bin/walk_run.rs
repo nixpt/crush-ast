@@ -1,7 +1,7 @@
 //! `crush-walk-run` — Walk → CAST → CASM → CVM1 execution.
 use std::path::PathBuf; use std::time::Instant;
 use clap::Parser;
-use walker_core::AdapterRegistry;
+use crush_walker_core::AdapterRegistry;
 
 #[derive(Parser)]
 #[command(name = "crush-walk-run")]
@@ -20,13 +20,13 @@ fn registry() -> AdapterRegistry {
      .register(Box::new(crush_lang_js::JsAdapter))
      .register(Box::new(crush_lang_rust::RustAdapter))
      .register(Box::new(crush_lang_c::CAdapter))
-     .register(Box::new(go_walker::GoAdapter))
-     .register(Box::new(zig_walker::ZigAdapter))
-     .register(Box::new(wasm_walker::WasmAdapter))
+     .register(Box::new(crush_lang_go::GoAdapter))
+     .register(Box::new(crush_lang_zig::ZigAdapter))
+     .register(Box::new(crush_lang_wasm::WasmAdapter))
      .register(Box::new(crush_lang_bash::BashAdapter))
      .register(Box::new(crush_lang_zsh::ZshAdapter))
      .register(Box::new(crush_lang_nepali::NepcodeAdapter))
-     .register(Box::new(dart_walker::DartAdapter));
+     .register(Box::new(crush_lang_dart::DartAdapter));
     r
 }
 

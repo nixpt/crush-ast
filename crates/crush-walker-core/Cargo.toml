@@ -1,7 +1,7 @@
 [package]
 license.workspace = true
 description = "Walker core — Walker trait, BaseWalker, and capability mappings"
-name = "walker-core"
+name = "crush-walker-core"
 version.workspace = true
 edition = "2021"
 repository.workspace = true

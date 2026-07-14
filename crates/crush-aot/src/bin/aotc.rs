@@ -193,20 +193,20 @@ fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<cas
 }
 
 /// Global adapter registry for all language walkers.
-fn registry() -> walker_core::AdapterRegistry {
-    use walker_core::AdapterRegistry;
+fn registry() -> crush_walker_core::AdapterRegistry {
+    use crush_walker_core::AdapterRegistry;
     let mut r = AdapterRegistry::new();
     r.register(Box::new(crush_lang_python::PythonAdapter))
      .register(Box::new(crush_lang_js::JsAdapter))
      .register(Box::new(crush_lang_rust::RustAdapter))
      .register(Box::new(crush_lang_c::CAdapter))
-     .register(Box::new(go_walker::GoAdapter))
-     .register(Box::new(zig_walker::ZigAdapter))
-     .register(Box::new(wasm_walker::WasmAdapter))
+     .register(Box::new(crush_lang_go::GoAdapter))
+     .register(Box::new(crush_lang_zig::ZigAdapter))
+     .register(Box::new(crush_lang_wasm::WasmAdapter))
      .register(Box::new(crush_lang_bash::BashAdapter))
      .register(Box::new(crush_lang_zsh::ZshAdapter))
      .register(Box::new(crush_lang_nepali::NepcodeAdapter))
-     .register(Box::new(dart_walker::DartAdapter));
+     .register(Box::new(crush_lang_dart::DartAdapter));
     r
 }
 

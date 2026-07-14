@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::Parser as ClapParser;
-use walker_core::run_walker_binary;
+use crush_walker_core::run_walker_binary;
 
 #[derive(ClapParser)]
-#[command(name = "zig_walker")]
+#[command(name = "crush_lang_zig")]
 struct Cli {
     input: String,
 }
@@ -11,7 +11,7 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     run_walker_binary(
-        zig_walker::ZigWalker { file_name: cli.input.clone() },
+        crush_lang_zig::ZigWalker { file_name: cli.input.clone() },
         "zig",
         &[".zig"],
         &cli.input,
