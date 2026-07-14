@@ -389,7 +389,9 @@ fn lower_call(
     }
 }
 
-fn lower_constant(
+/// `pub(crate)`: also used by `lower_stmt.rs`'s `match`-statement pattern
+/// lowering to turn a Python `MatchValue` literal into a CAST `Pattern::Literal`.
+pub(crate) fn lower_constant(
     value: &py_ast::Constant,
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {

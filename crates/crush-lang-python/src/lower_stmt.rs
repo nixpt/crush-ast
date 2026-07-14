@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crush_cast::{CastType, Expression, ImportStatement, Statement};
 use rustpython_ast as py_ast;
 
-use crate::lower_expr::{lower_expr, lower_expr_hoist};
+use crate::lower_expr::{lower_constant, lower_expr, lower_expr_hoist};
 
 /// Monotonic counter for `try`/`except` synthetic exception-variable names
 /// (`__exc_0`, `__exc_1`, ...). Independent of `lower_expr.rs`'s comprehension
@@ -285,7 +285,9 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
         py_ast::Stmt::Assert { .. } => anyhow::bail!("assert not yet supported"),
         py_ast::Stmt::ClassDef { .. } => anyhow::bail!("class definitions not yet supported"),
         py_ast::Stmt::With { .. } => anyhow::bail!("with statements not yet supported"),
-        py_ast::Stmt::Match { .. } => anyhow::bail!("match statements not yet supported"),
+        py_ast::Stmt::Match(py_ast::StmtMatch { subject, cases, .. }) => {
+            lower_match(subject, cases, ctx, meta)
+        }
         py_ast::Stmt::TypeAlias { .. } => anyhow::bail!("type aliases not yet supported"),
         py_ast::Stmt::AsyncFunctionDef(py_ast::StmtAsyncFunctionDef {
             name, args, body, ..
@@ -702,5 +704,312 @@ mod try_lowering_tests {
         let c = ctx();
         let err = lower_stmt(&stmts[0], &c).unwrap_err();
         assert!(err.to_string().contains("bare"));
+    }
+}
+
+// ── match ────────────────────────────────────────────────────────────────
+//
+// Python's `match` is a *statement*; Crush's `crush_cast::Expression::Match`
+// is an *expression*. Wrapped as `Statement::ExprStmt { expr: Match{..} }`
+// — the compiler already guarantees every `Match` arm leaves exactly one
+// value on the stack (falls back to `push_null` for non-expression arm
+// bodies — see `compiler.rs`'s `Expression::Match` compilation), so this
+// composes cleanly with the ordinary `ExprStmt` compile-then-pop path with
+// no special-casing needed.
+//
+// `crush_cast::Pattern` only has four shapes (`Literal`, `Identifier`,
+// `Struct`, `Wildcard`) versus Python's much richer match-pattern grammar
+// (`rustpython_ast::Pattern` has eight variants including sequence/mapping/
+// or-patterns and guards) — mapped where there's a clean equivalent, bailing
+// loud everywhere else per the ticket's explicit guidance (class patterns,
+// guards, and or-patterns are a reasonable line to bail at).
+
+fn lower_match(
+    subject: &py_ast::Expr,
+    cases: &[py_ast::MatchCase],
+    ctx: &LowerCtx<'_>,
+    meta: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Statement> {
+    if cases.is_empty() {
+        anyhow::bail!("`match` statement with no `case` clauses");
+    }
+    let expression = Box::new(lower_expr(subject, ctx)?);
+    let mut arms = Vec::with_capacity(cases.len());
+    for case in cases {
+        if case.guard.is_some() {
+            anyhow::bail!(
+                "`case ... if <guard>:` not yet supported — crush_cast::Pattern has no \
+                 guard slot"
+            );
+        }
+        let pattern = lower_match_pattern(&case.pattern)?;
+        let mut body: Vec<Statement> = case
+            .body
+            .iter()
+            .map(|s| lower_stmt(s, ctx))
+            .collect::<Result<Vec<_>, _>>()?;
+        // `crush-frontend/compiler.rs`'s `Expression::Match` compilation
+        // treats an arm's *last* statement specially: if it's an `ExprStmt`,
+        // it compiles that expression directly (no `pop`) so its value
+        // becomes the arm's result — assuming every expression leaves
+        // exactly one value on the stack. That assumption doesn't hold for
+        // capabilities that return nothing (`print(...)` → `io.print`
+        // dispatches to `Ok(None)`, per `crush-vm/src/scheduler.rs`) — a
+        // Python match arm ending in a bare `print(...)` (completely
+        // ordinary Python) would leave the compiled Match's own stack
+        // accounting short by one value; reproduced independently via
+        // native `.crush` `match` syntax through `crushc`+`crush-run`,
+        // filed via `dejavue plan` as a pre-existing compiler gap, not
+        // fixed here (crush-frontend/src/parser/mod.rs's native match-arm
+        // parsing is out of this ticket's scope). Rather than touch the
+        // shared compiler, always end the lowered body with an explicit
+        // known-to-produce-a-value statement, so whatever the Match
+        // compiler inspects as "last statement" is always safe — a `return`
+        // earlier in the arm still exits the function before this is ever
+        // reached, so it's a no-op for arms that already return.
+        body.push(Statement::ExprStmt {
+            expr: Expression::NullLiteral { meta: meta.clone() },
+            meta: meta.clone(),
+        });
+        arms.push(crush_cast::MatchArm { pattern, body });
+    }
+    Ok(Statement::ExprStmt {
+        expr: Expression::Match {
+            expression,
+            arms,
+            meta: meta.clone(),
+        },
+        meta,
+    })
+}
+
+fn lower_match_pattern(pattern: &py_ast::Pattern) -> anyhow::Result<crush_cast::Pattern> {
+    match pattern {
+        py_ast::Pattern::MatchValue(py_ast::PatternMatchValue { value, .. }) => {
+            let expr = lower_match_literal(value)?;
+            Ok(crush_cast::Pattern::Literal { value: expr })
+        }
+        py_ast::Pattern::MatchSingleton(py_ast::PatternMatchSingleton { value, .. }) => {
+            let expr = match value {
+                py_ast::Constant::None => Expression::NullLiteral {
+                    meta: HashMap::new(),
+                },
+                py_ast::Constant::Bool(b) => Expression::BoolLiteral {
+                    value: *b,
+                    meta: HashMap::new(),
+                },
+                _ => anyhow::bail!("unsupported singleton match pattern: {:?}", value),
+            };
+            Ok(crush_cast::Pattern::Literal { value: expr })
+        }
+        py_ast::Pattern::MatchAs(py_ast::PatternMatchAs {
+            pattern: inner,
+            name,
+            ..
+        }) => match (inner, name) {
+            (None, None) => Ok(crush_cast::Pattern::Wildcard),
+            (None, Some(id)) => Ok(crush_cast::Pattern::Identifier { name: id.to_string() }),
+            (Some(inner_pat), None) => lower_match_pattern(inner_pat),
+            (Some(_), Some(_)) => anyhow::bail!(
+                "`case <pattern> as <name>:` (binding a name to a sub-pattern match) not \
+                 yet supported"
+            ),
+        },
+        py_ast::Pattern::MatchClass(py_ast::PatternMatchClass {
+            cls,
+            patterns,
+            kwd_attrs,
+            kwd_patterns,
+            ..
+        }) => {
+            if !patterns.is_empty() {
+                anyhow::bail!(
+                    "positional class patterns (`case Point(x, y):`) not yet supported — \
+                     crush_cast::Pattern::Struct only has named fields; use the keyword \
+                     form `case Point(x=x, y=y):`"
+                );
+            }
+            let name = match cls.as_ref() {
+                py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
+                py_ast::Expr::Attribute(py_ast::ExprAttribute { attr, .. }) => attr.to_string(),
+                _ => anyhow::bail!("unsupported class pattern head: {:?}", cls),
+            };
+            let mut fields = Vec::with_capacity(kwd_attrs.len());
+            for (attr, sub) in kwd_attrs.iter().zip(kwd_patterns.iter()) {
+                fields.push((attr.to_string(), lower_match_pattern(sub)?));
+            }
+            Ok(crush_cast::Pattern::Struct { name, fields })
+        }
+        py_ast::Pattern::MatchSequence(_) => anyhow::bail!(
+            "sequence patterns (`case [a, b]:`) not yet supported — no crush_cast::Pattern \
+             equivalent"
+        ),
+        py_ast::Pattern::MatchMapping(_) => anyhow::bail!(
+            "mapping patterns (`case {{'k': v}}:`) not yet supported — no crush_cast::Pattern \
+             equivalent"
+        ),
+        py_ast::Pattern::MatchStar(_) => {
+            anyhow::bail!("star patterns (`*rest`) not yet supported")
+        }
+        py_ast::Pattern::MatchOr(_) => anyhow::bail!(
+            "or-patterns (`case 1 | 2:`) not yet supported — no crush_cast::Pattern equivalent"
+        ),
+    }
+}
+
+/// `MatchValue`'s grammar restricts `value` to literals and dotted constant
+/// names; we only accept plain literal constants (including negative
+/// numbers, which parse as `UnaryOp(USub, Constant(..))`).
+fn lower_match_literal(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
+    match expr {
+        py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => {
+            lower_constant(value, HashMap::new())
+        }
+        py_ast::Expr::UnaryOp(py_ast::ExprUnaryOp {
+            op: py_ast::UnaryOp::USub,
+            operand,
+            ..
+        }) => match operand.as_ref() {
+            py_ast::Expr::Constant(py_ast::ExprConstant {
+                value: py_ast::Constant::Int(i),
+                ..
+            }) => {
+                let v: i64 = i
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("integer overflow in match pattern"))?;
+                Ok(Expression::IntLiteral {
+                    value: -v,
+                    meta: HashMap::new(),
+                })
+            }
+            py_ast::Expr::Constant(py_ast::ExprConstant {
+                value: py_ast::Constant::Float(f),
+                ..
+            }) => Ok(Expression::FloatLiteral {
+                value: -f,
+                meta: HashMap::new(),
+            }),
+            _ => anyhow::bail!("unsupported negative literal in match pattern: {:?}", operand),
+        },
+        _ => anyhow::bail!(
+            "match-value pattern must be a literal constant, got: {:?}",
+            expr
+        ),
+    }
+}
+
+#[cfg(test)]
+mod match_lowering_tests {
+    use super::*;
+    use crate::parser::parse_source;
+
+    fn ctx() -> LowerCtx<'static> {
+        LowerCtx::new("", "<test>", "python")
+    }
+
+    fn lower_one(src: &str) -> Statement {
+        let stmts = parse_source(src).expect("parse");
+        assert_eq!(stmts.len(), 1, "expected exactly one top-level statement");
+        let c = ctx();
+        lower_stmt(&stmts[0], &c).expect("lower")
+    }
+
+    #[test]
+    fn match_statement_wraps_expression_match_in_exprstmt() {
+        let stmt = lower_one(
+            "match x:\n    case 1:\n        y = 10\n    case _:\n        y = 0\n",
+        );
+        match stmt {
+            Statement::ExprStmt { expr: Expression::Match { arms, .. }, .. } => {
+                assert_eq!(arms.len(), 2);
+                match &arms[0].pattern {
+                    crush_cast::Pattern::Literal { value: Expression::IntLiteral { value, .. } } => {
+                        assert_eq!(*value, 1);
+                    }
+                    other => panic!("expected literal pattern `1`, got {other:?}"),
+                }
+                match &arms[1].pattern {
+                    crush_cast::Pattern::Wildcard => {}
+                    other => panic!("expected wildcard pattern `_`, got {other:?}"),
+                }
+                // Every arm body must end in a value-producing statement
+                // (the NullLiteral safety net) regardless of what the
+                // Python source wrote.
+                for arm in &arms {
+                    assert!(matches!(
+                        arm.body.last(),
+                        Some(Statement::ExprStmt { expr: Expression::NullLiteral { .. }, .. })
+                    ));
+                }
+            }
+            other => panic!("expected ExprStmt(Match), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_capture_pattern_binds_identifier() {
+        let stmt = lower_one("match x:\n    case n:\n        y = n\n");
+        match stmt {
+            Statement::ExprStmt { expr: Expression::Match { arms, .. }, .. } => {
+                match &arms[0].pattern {
+                    crush_cast::Pattern::Identifier { name } => assert_eq!(name, "n"),
+                    other => panic!("expected capture pattern, got {other:?}"),
+                }
+            }
+            other => panic!("expected ExprStmt(Match), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_guard_bails_loud() {
+        let stmts = parse_source("match x:\n    case n if n > 0:\n        y = n\n").unwrap();
+        let c = ctx();
+        let err = lower_stmt(&stmts[0], &c).unwrap_err();
+        assert!(err.to_string().contains("guard"));
+    }
+
+    #[test]
+    fn match_or_pattern_bails_loud() {
+        let stmts = parse_source("match x:\n    case 1 | 2:\n        y = 1\n").unwrap();
+        let c = ctx();
+        let err = lower_stmt(&stmts[0], &c).unwrap_err();
+        assert!(err.to_string().contains("or-pattern"));
+    }
+
+    #[test]
+    fn match_sequence_pattern_bails_loud() {
+        let stmts = parse_source("match x:\n    case [a, b]:\n        y = 1\n").unwrap();
+        let c = ctx();
+        let err = lower_stmt(&stmts[0], &c).unwrap_err();
+        assert!(err.to_string().contains("sequence"));
+    }
+
+    #[test]
+    fn match_class_pattern_keyword_form_lowers_to_struct_pattern() {
+        let stmt = lower_one(
+            "match p:\n    case Point(x=px, y=py):\n        z = px\n",
+        );
+        match stmt {
+            Statement::ExprStmt { expr: Expression::Match { arms, .. }, .. } => {
+                match &arms[0].pattern {
+                    crush_cast::Pattern::Struct { name, fields } => {
+                        assert_eq!(name, "Point");
+                        assert_eq!(fields.len(), 2);
+                        assert_eq!(fields[0].0, "x");
+                        assert_eq!(fields[1].0, "y");
+                    }
+                    other => panic!("expected Struct pattern, got {other:?}"),
+                }
+            }
+            other => panic!("expected ExprStmt(Match), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_positional_class_pattern_bails_loud() {
+        let stmts = parse_source("match p:\n    case Point(px, py):\n        z = 1\n").unwrap();
+        let c = ctx();
+        let err = lower_stmt(&stmts[0], &c).unwrap_err();
+        assert!(err.to_string().contains("positional"));
     }
 }

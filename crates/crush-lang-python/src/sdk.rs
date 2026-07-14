@@ -198,4 +198,33 @@ mod tests {
             "5" // 0, 2, 4, 6, 8
         );
     }
+
+    // ── CRUSHAST-PYLOWER-1: match ────────────────────────────────────────
+
+    #[test]
+    fn test_match_literal_and_wildcard_arms() {
+        assert_eq!(
+            run_python(concat!(
+                "def code(n):\n",
+                "    match n:\n",
+                "        case 0:\n",
+                "            return 100\n",
+                "        case 1:\n",
+                "            return 200\n",
+                "        case _:\n",
+                "            return 999\n",
+                "print(code(0) + code(1) + code(5))\n",
+            ))
+            .unwrap(),
+            "1299" // 100 + 200 + 999
+        );
+    }
+
+    #[test]
+    fn test_match_capture_pattern_binds_whole_subject() {
+        assert_eq!(
+            run_python("match 42:\n    case n:\n        print(n)\n").unwrap(),
+            "42"
+        );
+    }
 }
