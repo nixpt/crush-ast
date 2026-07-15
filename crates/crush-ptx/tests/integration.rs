@@ -7,6 +7,7 @@ fn test_compile_basic_ptx() {
     let mut func = Function {
         params: vec!["ptr_in".to_string(), "ptr_out".to_string()],
         locals: vec![],
+        type_hints: None,
         body: vec![],
     };
 
@@ -47,6 +48,7 @@ fn test_unimplemented_opcode_hard_errors() {
     let mut func = Function {
         params: vec![],
         locals: vec![],
+        type_hints: None,
         body: vec![],
     };
 
@@ -65,6 +67,7 @@ fn test_loop_and_tid() {
     let mut func = Function {
         params: vec![],
         locals: vec![],
+        type_hints: None,
         body: vec![],
     };
 
@@ -105,6 +108,7 @@ fn test_q6_ops() {
     let mut func = Function {
         params: vec![],
         locals: vec![],
+        type_hints: None,
         body: vec![],
     };
 
