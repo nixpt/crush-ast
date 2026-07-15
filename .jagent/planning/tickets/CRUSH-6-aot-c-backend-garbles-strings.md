@@ -53,6 +53,14 @@ against the interpreter path, which is exactly how this was found (used
 `crush-walk-run` on the same program first to know what correct output
 should look like).
 
+**Why the existing test suite didn't catch this**: `cargo test -p
+crush-aot --test integration_c` currently passes 16/19 (the 3 failures are
+`CRUSH-5`-related cross-backend comparisons, unrelated to this bug) —
+`crates/crush-aot/tests/integration_c.rs` has zero tests that exercise
+string output at all (`grep -n "fn test_.*string"` on that file: no
+matches). The C backend's numeric-only coverage is genuinely solid; string
+handling was simply never tested.
+
 ## Technical approach
 
 Not investigated — found via output comparison, not source-diving.
