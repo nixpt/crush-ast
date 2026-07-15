@@ -82,9 +82,37 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "join array elements with delimiter",
         });
+                reg(CapabilitySpec {
+            name: "append",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "append an element to an array",
+        });
+        reg(CapabilitySpec {
+            name: "push",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "push an element onto an array",
+        });
+        reg(CapabilitySpec {
+            name: "arr_set",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "set an array element at index",
+        });
+        reg(CapabilitySpec {
+            name: "arr_get",
+            argc: None,
+            returns: true,
+            privileged: false,
+            summary: "get an array element at index",
+        });
         reg(CapabilitySpec {
             name: "make_range",
-            argc: Some(2),
+            argc: None,  // variadic: 0, 1, or 2 args
             returns: true,
             privileged: false,
             summary: "create an integer range [start..end)",

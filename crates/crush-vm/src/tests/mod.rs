@@ -88,6 +88,11 @@ fn parse_crush_text(s: &str) -> Value {
             return Value::Handle(id);
         }
     }
+    if s.starts_with("<foreign ") && s.ends_with('>') {
+        if let Ok(id) = s[9..s.len() - 1].parse::<u64>() {
+            return Value::Foreign(id);
+        }
+    }
 
     Value::Str(s.to_string())
 }

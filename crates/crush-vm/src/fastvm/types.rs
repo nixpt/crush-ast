@@ -46,6 +46,13 @@ pub enum HostRequest {
     ImportVar { name: String },
     ExportVar { name: String, value: RuntimeValue },
     Await { event_id: String },
+    AiQuery { args: serde_json::Value },
+    AiToolchain { args: serde_json::Value },
+    AiAgentDelegation { args: serde_json::Value },
+    AiLearningLoop { args: serde_json::Value },
+    AiContextAware { args: serde_json::Value },
+    AiSemanticMatch { args: serde_json::Value },
+    AiSynthesize { args: serde_json::Value },
 }
 
 impl FastYield {

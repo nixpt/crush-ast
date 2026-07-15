@@ -1,6 +1,7 @@
 pub mod analyzer;
 pub mod backend;
 pub mod lower_swc;
+pub mod sdk;
 
 #[cfg(feature = "boa-backend")]
 pub mod analyzer_boa;
@@ -10,7 +11,7 @@ pub mod lower_boa;
 use std::any::Any;
 
 use crush_cast::Program;
-use walker_core::{FeatureReport, Frontend, LowerCtx};
+use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
 
 /// Wrapper for Boa-parsed AST + interner, transported via `Box<dyn Any>`.
 #[cfg(feature = "boa-backend")]
@@ -112,6 +113,26 @@ impl Frontend for JsFrontend {
 /// the parser backend and syntax mode.
 pub fn js_to_cast(source: &str, ext: &str) -> anyhow::Result<Program> {
     let frontend = JsFrontend::new(ext);
-    let (_, program) = walker_core::frontend_pipeline(&frontend, source)?;
+    let (_, program) = crush_walker_core::frontend_pipeline(&frontend, source)?;
     Ok(program)
+}
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use crush_walker_core::LanguageAdapter;
+
+
+/// JS/TS adapter — handles .js/.mjs/.cjs/.ts/.tsx/.mts
+pub struct JsAdapter;
+
+impl LanguageAdapter for JsAdapter {
+    fn language_name(&self) -> &'static str { "javascript" }
+    fn file_extensions(&self) -> &[&'static str] { &["js", "mjs", "cjs", "ts", "tsx", "mts"] }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        let ext = std::path::Path::new(filename).extension()
+            .and_then(|e| e.to_str()).unwrap_or("js");
+        let program = crate::js_to_cast(source, ext)
+            .map_err(|e| anyhow::anyhow!("javascript@CAST: {e}"))?;
+        Ok((FeatureReport { lang: "javascript".to_string(), ..Default::default() }, program))
+    }
 }

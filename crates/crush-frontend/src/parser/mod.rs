@@ -85,6 +85,13 @@ impl Parser {
             .unwrap_or(&Token::EOF(SourceLocation { line: 0, col: 0 }))
     }
 
+    /// Look `n` tokens past the current one without consuming anything.
+    fn peek_ahead(&self, n: usize) -> &Token {
+        self.tokens
+            .get(self.pos + n)
+            .unwrap_or(&Token::EOF(SourceLocation { line: 0, col: 0 }))
+    }
+
     fn advance(&mut self) -> &Token {
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
@@ -121,6 +128,7 @@ impl Parser {
             Token::Await(loc) => (loc.line, loc.col),
             Token::Spawn(loc) => (loc.line, loc.col),
             Token::Yield(loc) => (loc.line, loc.col),
+            Token::New(loc) => (loc.line, loc.col),
             Token::Export(loc) => (loc.line, loc.col),
             Token::Lang(loc) => (loc.line, loc.col),
             Token::Import(loc) => (loc.line, loc.col),
@@ -461,15 +469,40 @@ impl Parser {
             }
         }
 
-        // Create main function from top-level statements
+        // Create main function from top-level statements.
+        //
+        // Crush supports BOTH script style (bare top-level statements) and `fn main`. When a
+        // file has both, this used to `insert("main", ...)` unconditionally — which SILENTLY
+        // CLOBBERED the user's explicit `fn main`. The program then compiled to nothing and
+        // exited 0 with no output:
+        //
+        //     struct P { x }
+        //     fn main() { print("hi") }     // exit 0, steps=2, printed NOTHING
+        //
+        // It looked like "structs are broken", but any top-level statement did it — a `let`, a
+        // bare `print`. It is why struct programs have never run.
+        //
+        // Merge instead of clobber: top-level statements run first (they are module-init:
+        // struct decls, constants, setup), then the explicit `main` body. Nothing is discarded.
         if !statements.is_empty() {
-            let main_func = Function {
-                params: Vec::new(),
-                body: statements,
-                meta: HashMap::new(),
-                ..Default::default()
-            };
-            functions.insert("main".to_string(), main_func);
+            match functions.get_mut("main") {
+                Some(existing) => {
+                    let mut merged = statements;
+                    merged.append(&mut existing.body);
+                    existing.body = merged;
+                }
+                None => {
+                    functions.insert(
+                        "main".to_string(),
+                        Function {
+                            params: Vec::new(),
+                            body: statements,
+                            meta: HashMap::new(),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
 
         // Build module manifest from accumulated @module / @invariant / @exhaustive-match-sites
@@ -713,6 +746,19 @@ impl Parser {
             Token::If(_) => self.parse_if_statement(),
             Token::While(_) => self.parse_while_statement(),
             Token::For(_) => self.parse_for_statement(),
+            // bare `yield;` — Yield is an *Expression* in the CAST, and the compiler already
+            // lowers it. The parser just never dispatched on Token::Yield, so `yield;` died
+            // with "Unexpected token in expression: Yield".
+            Token::Yield(_) => {
+                self.advance();
+                self.maybe_semicolon();
+                Ok(Statement::ExprStmt {
+                    expr: Expression::Yield {
+                        meta: HashMap::new(),
+                    },
+                    meta: HashMap::new(),
+                })
+            }
             Token::Return(_) => self.parse_return_statement(),
             Token::Break(_) => {
                 self.advance();
@@ -1047,7 +1093,41 @@ impl Parser {
 
     /// Parse expression statement
     fn parse_expression_statement(&mut self) -> Result<Statement, ()> {
-        let expr = self.parse_expression()?;
+        #[allow(unused_assignments)]
+        let mut expr = self.parse_expression()?;
+
+        if matches!(self.peek(), Token::Assign(_)) {
+            match expr {
+                Expression::Var { name, .. } => {
+                    self.advance();
+                    let value = self.parse_expression()?;
+                    self.maybe_semicolon();
+                    return Ok(Statement::Assign {
+                        target: name,
+                        value,
+                        meta: HashMap::new(),
+                    });
+                }
+                // `p.x = 10` — field assignment. Statement::SetField already exists in the CAST
+                // and the compiler already lowers it; the parser simply never built one, so any
+                // field assignment died with "Unexpected token in expression: Assign".
+                Expression::GetField { target, field, .. } => {
+                    self.advance();
+                    let value = self.parse_expression()?;
+                    self.maybe_semicolon();
+                    return Ok(Statement::SetField {
+                        target: *target,
+                        field,
+                        value,
+                        meta: HashMap::new(),
+                    });
+                }
+                other => {
+                    // Put it back so the ExprStmt fallthrough below still sees it.
+                    expr = other;
+                }
+            }
+        }
 
         self.maybe_semicolon();
 
@@ -1089,6 +1169,9 @@ impl Parser {
         loop {
             let (op, prec, right_assoc) = match self.peek() {
                 Token::Pipe(_) => ("|>", 10, false),
+                // Range binds looser than every arithmetic/comparison op, so `0..n+1`
+                // is `0..(n+1)` — the same choice Rust makes.
+                Token::DotDot(_) => ("..", 15, false),
                 Token::Or(_) => ("||", 20, false),
                 Token::And(_) => ("&&", 30, false),
                 Token::Eq(_) => ("==", 40, false),
@@ -1116,7 +1199,14 @@ impl Parser {
 
             let next_min_prec = if right_assoc { prec } else { prec + 1 };
 
-            left = if op == "|>" {
+            left = if op == ".." {
+                let end = self.parse_expression_with_precedence(next_min_prec)?;
+                Expression::Range {
+                    start: Box::new(left),
+                    end: Box::new(end),
+                    meta: HashMap::new(),
+                }
+            } else if op == "|>" {
                 // Pipeline: left |> right becomes right(left)
                 let right = self.parse_expression_with_precedence(next_min_prec)?;
                 match right {
@@ -1238,6 +1328,64 @@ impl Parser {
     /// Parse primary expression
     fn parse_primary(&mut self) -> Result<Expression, ()> {
         match self.peek() {
+            // `new Point()` — struct instantiation. Expression::NewStruct is in the CAST and
+            // compiler.rs emits `new_struct` for it; the lexer did not even have a `new` keyword,
+            // so `new P()` lexed as the identifier "new" and died with "Undefined variable: new".
+            // Structs were unusable: you could declare one and never instantiate it.
+            Token::New(_) => {
+                self.advance();
+                let name = match self.peek() {
+                    Token::Ident(n, _) => {
+                        let n = n.clone();
+                        self.advance();
+                        n
+                    }
+                    _ => {
+                        let (line, col) = self.get_location(self.peek());
+                        self.errors.push(ParseError::Expected {
+                            line,
+                            col,
+                            expected: "struct name after `new`".to_string(),
+                            found: format!("{:?}", self.peek()),
+                        });
+                        return Err(());
+                    }
+                };
+                // `new P()` — the parens are accepted but Expression::NewStruct carries no args,
+                // so a constructor argument would be SILENTLY DROPPED. Reject it loudly instead.
+                if matches!(self.peek(), Token::LParen(_)) {
+                    self.advance();
+                    if !matches!(self.peek(), Token::RParen(_)) {
+                        let (line, col) = self.get_location(self.peek());
+                        self.errors.push(ParseError::UnexpectedToken {
+                            line,
+                            col,
+                            msg: format!(
+                                "`new {name}(...)` does not take constructor arguments; \
+                                 build it with `new {name}()` and assign fields individually"
+                            ),
+                        });
+                        return Err(());
+                    }
+                    self.advance();
+                }
+                Ok(Expression::NewStruct {
+                    name,
+                    meta: HashMap::new(),
+                })
+            }
+            // `async` is a CONTEXTUAL keyword. The lexer emits Token::Async for it
+            // unconditionally, which made the `async.*` capability namespace unreachable:
+            // `await async.sleep(100)` died with "Unexpected token in expression: Async"
+            // before the parser ever saw the `.`. Treat `async` followed by `.` as the plain
+            // identifier it is. (`await` was never the problem — it parses fine.)
+            Token::Async(_) if matches!(self.peek_ahead(1), Token::Dot(_)) => {
+                self.advance();
+                Ok(Expression::Var {
+                    name: "async".to_string(),
+                    meta: HashMap::new(),
+                })
+            }
             Token::Int(n, _) => {
                 let value = *n;
                 self.advance();

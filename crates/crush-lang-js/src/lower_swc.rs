@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
 use swc_ecma_ast::*;
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 
 fn meta(span: &swc_common::Span, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
     let offset = span.lo.0 as usize;
@@ -940,44 +940,43 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         Expr::Assign(AssignExpr {
             op, left, right, ..
         }) => {
-            let name = assign_target_to_name(left);
             let right = lower_expr(right, ctx)?;
             let value = match op {
                 AssignOp::Assign => right,
-                _ => Expression::BinaryOp {
-                    operator: match op {
-                        AssignOp::AddAssign => "+",
-                        AssignOp::SubAssign => "-",
-                        AssignOp::MulAssign => "*",
-                        AssignOp::DivAssign => "/",
-                        AssignOp::ModAssign => "%",
-                        AssignOp::LShiftAssign => "<<",
-                        AssignOp::RShiftAssign => ">>",
-                        AssignOp::BitOrAssign => "|",
-                        AssignOp::BitXorAssign => "^",
-                        AssignOp::BitAndAssign => "&",
-                        AssignOp::ExpAssign => "**",
-                        AssignOp::AndAssign => "&&",
-                        AssignOp::OrAssign => "||",
-                        AssignOp::NullishAssign => "??",
-                        _ => "=",
-                    }
-                    .to_string(),
-                    left: Box::new(Expression::Var {
-                        name: name.clone(),
+                _ => {
+                    let name = assign_target_to_name(left);
+                    Expression::BinaryOp {
+                        operator: match op {
+                            AssignOp::AddAssign => "+", AssignOp::SubAssign => "-",
+                            AssignOp::MulAssign => "*", AssignOp::DivAssign => "/",
+                            AssignOp::ModAssign => "%", AssignOp::LShiftAssign => "<<",
+                            AssignOp::RShiftAssign => ">>", AssignOp::BitOrAssign => "|",
+                            AssignOp::BitXorAssign => "^", AssignOp::BitAndAssign => "&",
+                            AssignOp::ExpAssign => "**", AssignOp::AndAssign => "&&",
+                            AssignOp::OrAssign => "||", AssignOp::NullishAssign => "??",
+                            _ => "=",
+                        }.to_string(),
+                        left: Box::new(Expression::Var { name: name.clone(), meta: m.clone() }),
+                        right: Box::new(right),
                         meta: m.clone(),
-                    }),
-                    right: Box::new(right),
-                    meta: m.clone(),
-                },
+                    }
+                }
             };
+            // Subscript assignment: arr[i] = val -> __crush_setindex__(arr, i, val)
+            if let Some((obj_expr, idx_expr)) = assign_target_subscript_parts(left) {
+                let obj = lower_expr(obj_expr, ctx)?;
+                let idx = lower_expr(idx_expr, ctx)?;
+                return Ok(Expression::Call {
+                    function: "__crush_setindex__".to_string(),
+                    args: vec![obj, idx, value],
+                    meta: m,
+                });
+            }
+            let name = assign_target_to_name(left);
             Ok(Expression::Call {
                 function: "__crush_assign__".to_string(),
                 args: vec![
-                    Expression::Var {
-                        name,
-                        meta: m.clone(),
-                    },
+                    Expression::Var { name, meta: m.clone() },
                     value,
                 ],
                 meta: m,
@@ -1455,5 +1454,18 @@ fn prop_name_to_string(key: &PropName) -> String {
         PropName::Num(n) => n.value.to_string(),
         PropName::Computed(_) => "[]".to_string(),
         PropName::BigInt(bi) => bi.value.to_string(),
+    }
+}
+
+/// If the assign target is a subscript (arr[i] = val), returns (obj_expr, idx_expr).
+fn assign_target_subscript_parts(target: &AssignTarget) -> Option<(&Expr, &Expr)> {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+            match &member.prop {
+                MemberProp::Computed(computed) => Some((&member.obj, &computed.expr)),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }

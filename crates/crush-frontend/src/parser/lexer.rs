@@ -75,6 +75,7 @@ pub enum Token {
     Await(SourceLocation),
     Spawn(SourceLocation),
     Yield(SourceLocation),
+    New(SourceLocation),
     Export(SourceLocation),
     Lang(SourceLocation),
     Import(SourceLocation),
@@ -321,15 +322,15 @@ impl Lexer {
 
         // Check for keywords
         match value.as_str() {
-            "let" => Token::Let(location),
+            "let" | "manau" | "设" | "させ" => Token::Let(location),
             "mut" => Token::Mut(location),
-            "fn" => Token::Fn(location),
-            "if" => Token::If(location),
-            "else" => Token::Else(location),
-            "while" => Token::While(location),
+            "fn" | "karya" | "函数" | "関数" => Token::Fn(location),
+            "if" | "yadi" | "如果" | "もし" => Token::If(location),
+            "else" | "natra" | "否则" | "それ以外" => Token::Else(location),
+            "while" | "jaba_samma" | "只要" | "間" => Token::While(location),
             "for" => Token::For(location),
             "in" => Token::In(location),
-            "return" => Token::Return(location),
+            "return" | "farkau" | "返回" | "戻る" => Token::Return(location),
             "try" => Token::Try(location),
             "catch" => Token::Catch(location),
             "throw" => Token::Throw(location),
@@ -342,12 +343,13 @@ impl Lexer {
             "await" => Token::Await(location),
             "spawn" => Token::Spawn(location),
             "yield" => Token::Yield(location),
+            "new" => Token::New(location),
             "export" => Token::Export(location),
             "lang" => Token::Lang(location),
             "import" => Token::Import(location),
             "match" => Token::Match(location),
-            "true" => Token::Bool(true, location),
-            "false" => Token::Bool(false, location),
+            "true" | "sahi" | "真" | "本当" => Token::Bool(true, location),
+            "false" | "galat" | "假" | "偽" => Token::Bool(false, location),
             "null" => Token::Null(location),
             _ => Token::Ident(value, location),
         }
@@ -565,7 +567,7 @@ impl Lexer {
             }
             '"' => self.read_string(),
             '0'..='9' => self.read_number(),
-            'a'..='z' | 'A'..='Z' | '_' => Ok(self.read_identifier()),
+            c if c.is_alphabetic() || c == '_' => Ok(self.read_identifier()),
             '+' => {
                 self.advance();
                 Ok(Token::Plus(location))

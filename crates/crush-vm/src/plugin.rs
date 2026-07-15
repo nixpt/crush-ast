@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use libloading::{Library, Symbol};
 use crate::host::{HostCap, HostCapSpec, HostCaps};
 use crate::vm::Value;
-use crush_ffi::{CrushPlugin, CrushPluginFunc, FfiType, FfiValue, FfiValueData, FfiString};
+use crush_ffi::{CrushPlugin, CrushPluginFunc, FfiArray, FfiObject, FfiType, FfiValue, FfiValueData, FfiString};
 
 /// Wraps a C-FFI function pointer as a Crush HostCap
 struct FfiHostCap {
@@ -61,6 +61,18 @@ fn value_to_ffi(val: Value) -> FfiValue {
             
             FfiValue { tag: FfiType::String, data: FfiValueData { string: FfiString { ptr, len } } }
         },
+        Value::Array(arr) => {
+            let a = arr.borrow();
+            let mut ffi_vals: Vec<FfiValue> = a.iter().map(|v| value_to_ffi(v.clone())).collect();
+            let ptr = ffi_vals.as_ptr();
+            let len = ffi_vals.len();
+            std::mem::forget(ffi_vals); // leak for FFI
+            FfiValue { tag: FfiType::Array, data: FfiValueData { array: FfiArray { ptr, len } } }
+        }
+        Value::Map(_m) => {
+            // Object/Map FFI passthrough not yet implemented — return null
+            FfiValue { tag: FfiType::Null, data: FfiValueData { integer: 0 } }
+        }
         _ => FfiValue { tag: FfiType::Null, data: FfiValueData { integer: 0 } },
     }
 }
@@ -80,6 +92,22 @@ fn ffi_to_value(ffi: FfiValue) -> Value {
                 Value::Str(String::from_utf8_lossy(slice).into_owned())
             }
         },
+        FfiType::Array => {
+            let ffi_arr = unsafe { ffi.data.array };
+            if ffi_arr.ptr.is_null() {
+                Value::Array(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())))
+            } else {
+                let mut vec = Vec::with_capacity(ffi_arr.len);
+                for i in 0..ffi_arr.len {
+                    vec.push(ffi_to_value(unsafe { std::ptr::read(ffi_arr.ptr.add(i)) }));
+                }
+                Value::Array(std::rc::Rc::new(std::cell::RefCell::new(vec)))
+            }
+        }
+        FfiType::Object => {
+            // Object FFI decode not yet implemented — return empty map
+            Value::Map(std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())))
+        }
     }
 }
 

@@ -1,0 +1,29 @@
+name: Mirror to Codeberg
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  mirror:
+    name: Push mirror -> codeberg.org/nixpt/crush-ast
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to Codeberg
+        env:
+          CODEBERG_SSH_KEY: ${{ secrets.CODEBERG_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$CODEBERG_SSH_KEY" > ~/.ssh/codeberg_mirror
+          chmod 600 ~/.ssh/codeberg_mirror
+          ssh-keyscan -t ed25519 codeberg.org >> ~/.ssh/known_hosts 2>/dev/null
+
+          git remote add codeberg git@codeberg.org:nixpt/crush-ast.git
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/codeberg_mirror -o IdentitiesOnly=yes" \
+            git push codeberg HEAD:main --tags

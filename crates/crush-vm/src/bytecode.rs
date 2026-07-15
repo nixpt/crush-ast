@@ -87,6 +87,31 @@ pub const GET_FIELD: u8 = 0x73;
 pub const SPAWN: u8 = 0x80;
 pub const YIELD: u8 = 0x81;
 pub const AWAIT: u8 = 0x82;
+pub const AI_QUERY: u8 = 0x90;
+pub const AI_SYNTHESIZE: u8 = 0x91;
+pub const AI_AGENT_DELEGATION: u8 = 0x92;
+pub const AI_SEMANTIC_MATCH: u8 = 0x93;
+pub const AI_LEARNING_LOOP: u8 = 0x94;
+pub const AI_CONTEXT_AWARE: u8 = 0x95;
+pub const AI_TOOLCHAIN: u8 = 0x96;
+
+pub const MATH_POW: u8 = 0xA0;
+pub const MATH_SQRT: u8 = 0xA1;
+pub const MATH_ABS: u8 = 0xA2;
+pub const MATH_ROUND: u8 = 0xA3;
+pub const MATH_FLOOR: u8 = 0xA4;
+pub const MATH_CEIL: u8 = 0xA5;
+
+pub const VEC_ADD: u8 = 0xA6;
+pub const VEC_DOT: u8 = 0xA7;
+pub const MAT_MUL: u8 = 0xA8;
+
+pub const STR_STARTS_WITH: u8 = 0xB0;
+pub const STR_ENDS_WITH: u8 = 0xB1;
+pub const STR_TO_UPPER: u8 = 0xB2;
+pub const STR_TO_LOWER: u8 = 0xB3;
+pub const STR_TRIM: u8 = 0xB4;
+
 pub const HALT: u8 = 0xFF;
 
 /// How an opcode's operand bytes are interpreted.
@@ -133,9 +158,8 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
-        EXEC_LANG => Some(OperandKind::Str),
-        SET_FIELD | GET_FIELD | CAST => Some(OperandKind::Str),
-        NEW_OBJ => Some(OperandKind::None),
+        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => Some(OperandKind::Str),
+        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
         NEW_ARRAY => Some(OperandKind::Count),
         _ => None,

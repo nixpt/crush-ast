@@ -1,5 +1,7 @@
 [package]
 name = "crush-cson"
+description = "CSON (Crush Semantic Object Notation) — a JSON-like config/serialization format with AI-native primitives: confidence weights, semantic keys, annotations, and synthesized values."
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,4 +10,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-crush-vm = { path = "../crush-vm" }
+crush-vm = { path = "../crush-vm", version = "0.3.0" }
+serde.workspace = true
+serde_json.workspace = true

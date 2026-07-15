@@ -106,16 +106,20 @@ pub fn execute_one(
             let argc = instr.arg2 as usize;
             let locals_base = locals.len();
 
-            // Move args from stack to new frame's locals
-            for i in 0..argc {
-                let arg = stack.pop().ok_or(FastError::StackUnderflow)?;
-                // Args are pushed in reverse order, so we need to reverse
-                while locals.len() <= locals_base + (argc - 1 - i) {
-                    locals.push(RuntimeValue::Null);
-                }
-                locals[locals_base + (argc - 1 - i)] = arg;
+            // Pop args from stack (top = last pushed = last arg)
+            if stack.len() < argc {
+                return Err(FastError::StackUnderflow);
+            }
+            let split_at = stack.len() - argc;
+            let call_args: Vec<RuntimeValue> = stack.drain(split_at..).collect();
+            // call_args is [first_arg, ..., last_arg]
+            // Callee's 'store param1' pops from top, so first_arg must be on top.
+            // Push last_arg first, ..., first_arg last:
+            for arg in call_args.iter().rev() {
+                stack.push(arg.clone());
             }
 
+            // Push call frame
             call_stack.push(FastFrame {
                 return_pc: *pc,
                 locals_base,
@@ -212,6 +216,38 @@ pub fn execute_one(
                 RuntimeValue::Float(x) => stack.push(RuntimeValue::Float(-x)),
                 _ => return Err(FastError::TypeMismatch),
             }
+        }
+        FastOp::MathPow => {
+            let exponent = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let base = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let base_f = match base {
+                RuntimeValue::Int(x) => x as f64,
+                RuntimeValue::Float(x) => x,
+                _ => return Err(FastError::TypeMismatch),
+            };
+            let exp_f = match exponent {
+                RuntimeValue::Int(x) => x as f64,
+                RuntimeValue::Float(x) => x,
+                _ => return Err(FastError::TypeMismatch),
+            };
+            stack.push(RuntimeValue::Float(base_f.powf(exp_f)));
+        }
+        FastOp::MathSqrt | FastOp::MathAbs | FastOp::MathRound | FastOp::MathFloor | FastOp::MathCeil => {
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let af = match a {
+                RuntimeValue::Int(x) => x as f64,
+                RuntimeValue::Float(x) => x,
+                _ => return Err(FastError::TypeMismatch),
+            };
+            let res = match instr.op {
+                FastOp::MathSqrt => af.sqrt(),
+                FastOp::MathAbs => af.abs(),
+                FastOp::MathRound => af.round(),
+                FastOp::MathFloor => af.floor(),
+                FastOp::MathCeil => af.ceil(),
+                _ => unreachable!(),
+            };
+            stack.push(RuntimeValue::Float(res));
         }
 
         // ===== Comparison =====
@@ -606,8 +642,24 @@ pub fn execute_one(
             stack.push(RuntimeValue::Ref(ptr));
         }
 
+        FastOp::ArrSet => {
+            let val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let key = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let container = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = container {
+                if let RuntimeValue::Int(idx) = key {
+                    if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
+                        let i = idx as usize;
+                        if i < arr.len() {
+                            arr[i] = val;
+                        }
+                    }
+                }
+            }
+        }
+
         // ===== String Ops =====
-        FastOp::StrContains => {
+        FastOp::StrContains | FastOp::StrStartsWith | FastOp::StrEndsWith => {
             let pattern_val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let str_val = stack.pop().ok_or(FastError::StackUnderflow)?;
 
@@ -621,12 +673,35 @@ pub fn execute_one(
 
             let res = match str_val {
                 RuntimeValue::Ref(p) => match arena.get(p) {
-                    Some(Object::Str(s)) => s.contains(&pattern),
+                    Some(Object::Str(s)) => match instr.op {
+                        FastOp::StrContains => s.contains(&pattern),
+                        FastOp::StrStartsWith => s.starts_with(&pattern),
+                        FastOp::StrEndsWith => s.ends_with(&pattern),
+                        _ => unreachable!(),
+                    },
                     _ => return Err(FastError::TypeMismatch),
                 },
                 _ => return Err(FastError::TypeMismatch),
             };
             stack.push(RuntimeValue::Bool(res));
+        }
+
+        FastOp::StrToUpper | FastOp::StrToLower | FastOp::StrTrim => {
+            let str_val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let res = match str_val {
+                RuntimeValue::Ref(p) => match arena.get(p) {
+                    Some(Object::Str(s)) => match instr.op {
+                        FastOp::StrToUpper => s.to_uppercase(),
+                        FastOp::StrToLower => s.to_lowercase(),
+                        FastOp::StrTrim => s.trim().to_string(),
+                        _ => unreachable!(),
+                    },
+                    _ => return Err(FastError::TypeMismatch),
+                },
+                _ => return Err(FastError::TypeMismatch),
+            };
+            let ptr = arena.alloc(Object::Str(res));
+            stack.push(RuntimeValue::Ref(ptr));
         }
 
         FastOp::StrSplit => {
@@ -950,6 +1025,42 @@ pub fn execute_one(
                 code,
                 variables,
             })));
+        }
+
+        FastOp::AiQuery => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiQuery { args })));
+        }
+        FastOp::AiToolchain => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiToolchain { args })));
+        }
+        FastOp::AiAgentDelegation => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiAgentDelegation { args })));
+        }
+        FastOp::AiLearningLoop => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiLearningLoop { args })));
+        }
+        FastOp::AiContextAware => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiContextAware { args })));
+        }
+        FastOp::AiSemanticMatch => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiSemanticMatch { args })));
+        }
+        FastOp::AiSynthesize => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiSynthesize { args })));
         }
 
         FastOp::Await => {

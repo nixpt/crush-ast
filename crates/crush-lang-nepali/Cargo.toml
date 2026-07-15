@@ -1,0 +1,19 @@
+[package]
+name = "crush-lang-nepali"
+version.workspace = true
+edition = "2024"
+description = "Nepali language support for Crush"
+readme = "../../README.md"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crush-cast = { workspace = true }
+crush-walker-core = { workspace = true }
+crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

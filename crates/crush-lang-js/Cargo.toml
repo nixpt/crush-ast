@@ -1,8 +1,9 @@
 [package]
 name = "crush-lang-js"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "JavaScript/TypeScript language support for Crush — dual-backend JS/TS frontend (swc primary + boa optional)"
+readme = "../../README.md"
 license.workspace = true
 repository.workspace = true
 
@@ -17,7 +18,7 @@ boa-backend = ["boa_ast", "boa_parser", "boa_interner"]
 
 [dependencies]
 crush-cast.workspace = true
-walker-core.workspace = true
+crush-walker-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -30,6 +31,7 @@ boa_ast = { version = "0.21", optional = true }
 boa_interner = { version = "0.21", optional = true }
 
 [dev-dependencies]
-crush-frontend = { path = "../crush-frontend" }
-crush-lang-sdk = { path = "../crush-lang-sdk" }
-crush-vm = { path = "../crush-vm" }
+crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
+crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.0" }
+crush-vm = { path = "../crush-vm", version = "0.3.0" }
+crush-lang-python = { path = "../crush-lang-python", version = "0.3.0" }

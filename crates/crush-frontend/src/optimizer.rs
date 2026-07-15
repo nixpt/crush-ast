@@ -1,5 +1,5 @@
 use crush_cast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct Optimizer;
 
@@ -60,6 +60,20 @@ impl Optimizer {
                     name,
                     value,
                     type_hint,
+                    meta,
+                }]
+            }
+            Statement::Assign {
+                target,
+                mut value,
+                meta,
+            } => {
+                Self::replace_vars_expr(&mut value, consts);
+                Self::optimize_expr(&mut value);
+                consts.remove(&target);
+                vec![Statement::Assign {
+                    target,
+                    value,
                     meta,
                 }]
             }
@@ -129,6 +143,12 @@ impl Optimizer {
                 mut body,
                 meta,
             } => {
+                let mut mutated = HashSet::new();
+                Self::collect_mutated_vars(&body, &mut mutated);
+                for var in mutated {
+                    consts.remove(&var);
+                }
+
                 Self::replace_vars_expr(&mut condition, consts);
                 Self::optimize_expr(&mut condition);
                 let mut loop_consts = consts.clone();
@@ -455,6 +475,33 @@ impl Optimizer {
                 Self::optimize_expr(index);
             }
             _ => {}
+        }
+    }
+
+    fn collect_mutated_vars(stmts: &[Statement], out: &mut HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Statement::Assign { target, .. } => {
+                    out.insert(target.clone());
+                }
+                Statement::If { then_body, else_body, .. } => {
+                    Self::collect_mutated_vars(then_body, out);
+                    if let Some(eb) = else_body {
+                        Self::collect_mutated_vars(eb, out);
+                    }
+                }
+                Statement::While { body, .. } => {
+                    Self::collect_mutated_vars(body, out);
+                }
+                Statement::For { body, .. } => {
+                    Self::collect_mutated_vars(body, out);
+                }
+                Statement::TryCatch { body, handler, .. } => {
+                    Self::collect_mutated_vars(body, out);
+                    Self::collect_mutated_vars(handler, out);
+                }
+                _ => {}
+            }
         }
     }
 }

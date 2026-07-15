@@ -49,7 +49,7 @@ fn collect_sites_in_stmt(fn_name: &str, stmt: &Statement, out: &mut Vec<Exhausti
         Statement::ExprStmt { expr, .. } => {
             collect_sites_in_expr(fn_name, expr, out);
         }
-        Statement::VarDecl { value, .. } | Statement::Export { value, .. } => {
+        Statement::VarDecl { value, .. } | Statement::Assign { value, .. } | Statement::Export { value, .. } => {
             collect_sites_in_expr(fn_name, value, out);
         }
         Statement::Return { value, .. } => {
@@ -211,7 +211,8 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
         | Expression::Var { .. }
         | Expression::Yield { .. }
         | Expression::NewStruct { .. }
-        | Expression::AI(_) => {}
+        | Expression::AI(_)
+        | Expression::VectorMath { .. } => {}
     }
 }
 

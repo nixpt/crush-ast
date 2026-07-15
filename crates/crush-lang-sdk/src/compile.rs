@@ -27,8 +27,180 @@ fn cap_returns_value(name: &str) -> bool {
 }
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
-    let casm_program = crush_frontend::compile_crush_source(source)?;
+    let mut program = crush_frontend::parse_source(source)?;
+    prepare_polyglot_blocks(&mut program);
+    let casm_program = crush_frontend::compile_cast(&program)?;
     casm_to_vm(&casm_program)
+}
+
+/// Fill in `Statement::LangBlock.variables` (inputs) and
+/// `meta["polyglot_output"]` (the single output var, per the current
+/// exec_lang protocol) for every `@python { ... }` block, via real
+/// free-variable analysis over the block's own AST — never a regex, never
+/// a blind "inject everything in scope". See
+/// `crush_lang_python::analyzer::free_variables`.
+///
+/// Other languages (no parser wired yet) are left alone: their blocks
+/// compile with no marshaling, the same behavior as before this pass
+/// existed — not a regression, just not-yet-implemented. A malformed
+/// Python block is left unmarshaled too rather than failing Crush
+/// compilation outright; the actual `python3` subprocess will raise its
+/// own loud syntax error at run time, which is still honest, just later.
+fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
+    for func in program.functions.values_mut() {
+        let mut known_locals: HashSet<String> =
+            func.params.iter().map(|(name, _)| name.clone()).collect();
+        prepare_stmts(&mut func.body, &mut known_locals);
+    }
+}
+
+fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet<String>) {
+    use crush_cast::Statement;
+    for stmt in stmts.iter_mut() {
+        match stmt {
+            Statement::VarDecl { name, .. }
+            | Statement::Assign { target: name, .. }
+            | Statement::Export { name, .. } => {
+                known_locals.insert(name.clone());
+            }
+            Statement::LangBlock {
+                lang,
+                code,
+                variables,
+                meta,
+                ..
+            } if lang == "python" => {
+                // The lexer captures the `{ ... }` body verbatim, including
+                // whatever leading indentation it happened to sit at inside
+                // `@python { ... }`. `python3 -c` tolerates that on its own
+                // (indentation is only ever relative), but
+                // rustpython-parser's `Suite::parse` here does not — dedent
+                // first so analysis sees the same shape `python3` would
+                // execute. The real `code` sent to the subprocess is
+                // dedented too, but only if a prologue/epilogue actually
+                // gets spliced in below (see `rewrite_python_marshaling`);
+                // an unmarshaled block is left completely untouched.
+                if let Ok(free_vars) = crush_lang_python::analyzer::free_variables(&dedent(code)) {
+                    let inputs: Vec<String> = free_vars
+                        .reads
+                        .into_iter()
+                        .filter(|name| known_locals.contains(name))
+                        .collect();
+                    let output_var = free_vars.top_level_bound.last().cloned();
+                    if let Some(output_var) = &output_var {
+                        meta.insert(
+                            "polyglot_output".to_string(),
+                            serde_json::json!(output_var),
+                        );
+                        known_locals.insert(output_var.clone());
+                    }
+                    if !inputs.is_empty() || output_var.is_some() {
+                        *code = rewrite_python_marshaling(code, &inputs, output_var.as_deref());
+                    }
+                    *variables = inputs;
+                }
+            }
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                prepare_stmts(then_body, known_locals);
+                if let Some(else_body) = else_body {
+                    prepare_stmts(else_body, known_locals);
+                }
+            }
+            Statement::While { body, .. } => prepare_stmts(body, known_locals),
+            Statement::For {
+                variable, body, ..
+            } => {
+                known_locals.insert(variable.clone());
+                prepare_stmts(body, known_locals);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Rewrite a `@python` block's source to bridge the Crush/Python value
+/// boundary: `scheduler.rs`'s EXEC_LANG only gives the subprocess its
+/// inputs as OS environment variables (always strings) and only gets a
+/// value back by scanning stdout for `crush_vm::scheduler::CRUSH_RESULT_SENTINEL`
+/// — the block's own bound names mean nothing to either side of that
+/// boundary on their own.
+///
+/// - Inputs: JSON-decoded from `os.environ` into real Python locals
+///   (round-trips int/float/bool/str/list/map, not just strings).
+/// - Output: JSON-encoded and printed on a sentinel-prefixed line, kept
+///   distinct from the block's own ordinary prints (which still flow
+///   through as normal program output — stdout is a shared channel).
+/// - A value that can't be JSON-encoded (NaN, a set, a custom object)
+///   fails loudly, naming the variable and its type, rather than being
+///   silently dropped.
+///
+/// The whole input-decoding prologue is kept on a single physical line so
+/// it shifts every line of the user's own code by exactly one line,
+/// keeping Python traceback line numbers predictable rather than off by
+/// a count that depends on how many variables happen to be marshaled.
+fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&str>) -> String {
+    let mut prologue_parts: Vec<String> = Vec::new();
+    if inputs.is_empty() {
+        prologue_parts.push("import json as __crush_json".to_string());
+    } else {
+        prologue_parts.push("import json as __crush_json, os as __crush_os".to_string());
+        for name in inputs {
+            prologue_parts.push(format!(
+                "{name} = __crush_json.loads(__crush_os.environ[{name:?}])"
+            ));
+        }
+    }
+    let prologue = prologue_parts.join("; ");
+
+    // Deliberately hand-written as a literal Python string token — NOT
+    // derived from `CRUSH_RESULT_SENTINEL` via `{:?}` — because Rust's
+    // Debug escaping (`\0`) and Python's string-escape syntax (`\x00`)
+    // are different grammars that happen to overlap for this one
+    // character; relying on that coincidence would be fragile. This
+    // MUST stay byte-for-byte in sync with
+    // `crush_vm::scheduler::CRUSH_RESULT_SENTINEL` by hand.
+    const PY_SENTINEL_LITERAL: &str = "\"\\x00CRUSH_RESULT\\x00\"";
+
+    let epilogue = match output_var {
+        // `name` is always a plain identifier (came off the AST as a bound
+        // name), never containing a quote — safe to splice directly into
+        // a single-quoted Python string literal without escaping.
+        Some(name) => format!(
+            "\ntry:\n    print({PY_SENTINEL_LITERAL} + __crush_json.dumps({name}))\nexcept TypeError as __crush_marshal_err:\n    import sys as __crush_sys\n    print(\"cannot marshal output variable '{name}' (type \" + type({name}).__name__ + \"): \" + str(__crush_marshal_err), file=__crush_sys.stderr)\n    __crush_sys.exit(1)\n",
+        ),
+        None => String::new(),
+    };
+
+    // The block's own leading indentation (from however it sits inside
+    // `@python { ... }`) is harmless on its own — `python3 -c` accepts a
+    // uniformly-indented script, since indentation is only ever relative.
+    // It becomes a real `IndentationError` the moment a column-0 prologue
+    // line precedes it, so dedent first to keep the two consistent.
+    format!("{prologue}\n{}{epilogue}", dedent(code))
+}
+
+/// Strip the common leading whitespace shared by every non-blank line, so
+/// a block's original relative indentation is preserved but its absolute
+/// column no longer depends on how it happened to sit inside `{ ... }`.
+fn dedent(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let common_indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
+        .map(|line| line.get(common_indent..).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
@@ -174,7 +346,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 }
                 "new_array" => {
                     let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    format!("NEW_ARRAY {size}")
+                    "NEW_ARRAY 0".to_string()
                 }
                 "array_push" => "ARR_PUSH".to_string(),
                 "array_pop" => "ARR_POP".to_string(),
@@ -286,6 +458,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
 #[cfg(test)]
 mod tests {
+    fn _poly_caps() -> crush_vm::HostCaps {
+        let mut c = crush_vm::HostCaps::new();
+        c.grant_polyglot(&["python", "javascript", "bash"]);
+        c
+    }
     use super::*;
 
     #[test]
@@ -356,5 +533,94 @@ mod tests {
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run throw/catch");
         assert_eq!(result.output, "caught");
+    }
+
+    // Regression: a `@javascript { ... }` polyglot block used to fail at
+    // CASM assembly time (the source's `;` broke the assembler's comment
+    // stripper — see crush_vm::assembler tests) before ever reaching the
+    // language executor, and even once it parsed, EXEC_LANG ran `node -c`
+    // (syntax-check-only) instead of `node -e` (execute). Requires `node`
+    // on PATH.
+    #[test]
+    fn test_javascript_polyglot_block_executes() {
+        let source = "fn main() {\n    @javascript { const x = 1; }\n    io.print(\"js ok\")\n}\n";
+        let prog = compile_crush_source(source).expect("compile js polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run js polyglot block");
+        assert_eq!(result.output, "js ok");
+    }
+
+    // An `@<lang>` block for a language with no registered executor must
+    // fail loudly and name the language — never silently no-op.
+    #[test]
+    fn test_unregistered_polyglot_language_errors_loudly() {
+        let source = "fn main() {\n    @cobol { DISPLAY \"hi\". }\n}\n";
+        let prog = compile_crush_source(source).expect("compile unregistered-lang block");
+        let quotas = crush_vm::Quotas::default();
+        let err = crush_vm::run_with_caps(&prog, &quotas, None)
+            .expect_err("unregistered language must not silently succeed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no executor registered for language 'cobol'"),
+            "error should name the unregistered language, got: {msg}"
+        );
+    }
+
+    // End-to-end: a Crush local flows into a `@python` block (input
+    // marshaling) and the block's own bound name flows back out (output
+    // marshaling), entirely via the AST free-variable analysis — no
+    // explicit declaration syntax needed. Requires `python3` on PATH.
+    #[test]
+    fn test_python_polyglot_block_marshals_input_and_output() {
+        let source =
+            "fn main() {\n    let base = 5;\n    @python {\n        result = base * 2\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        assert_eq!(result.output, "10");
+    }
+
+    // Same, but multi-line with an import and a non-integer result — the
+    // real shape of crush-website's example.crush.
+    #[test]
+    fn test_python_polyglot_block_marshals_float_result_with_import() {
+        let source = "fn main() {\n    let base = 5;\n    @python {\n        import math\n        result = math.pow(base, 3)\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        // JSON round-trip preserves float-ness (Python's json.dumps(125.0)
+        // stays "125.0"), not just the numeric value.
+        assert_eq!(result.output, "125.0");
+    }
+
+    // The block's own ordinary prints must keep flowing through as normal
+    // program output — only the sentinel-marked line is the marshaled
+    // return value, never the whole stdout stream.
+    #[test]
+    fn test_python_polyglot_block_own_prints_still_visible() {
+        let source = "fn main() {\n    let base = 5;\n    @python {\n        print(\"debug\")\n        result = base + 1\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        assert!(
+            result.output.contains("debug"),
+            "block's own print output should still appear, got: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains('6'),
+            "marshaled result should still appear, got: {}",
+            result.output
+        );
+    }
+
+    #[test]
+    fn test_dedent_strips_common_indent_only() {
+        assert_eq!(dedent("    a\n    b\n"), "a\nb");
+        assert_eq!(dedent("  a\n    b\n"), "a\n  b");
+        assert_eq!(dedent("a"), "a");
     }
 }

@@ -1,348 +1,355 @@
+//! Crush Semantic Object Notation (CSON) �� canonical types.
+//!
+//! CSON is a human-readable configuration and serialization format that
+//! blends JSON structure with AI-native primitives: confidence weights,
+//! semantic keys, annotations, and synthesized values.
+//!
+//! These types are the single source of truth for CSON across the crush
+//! ecosystem. They implement serde's `Serialize` and `Deserialize` for
+//! zero-code JSON/MessagePack/CBOR interop.
+
+pub mod parser;
 pub mod vm_cap;
+pub use parser::CsonParser;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// ── Core Types ─────────────────────────────────────────────────────────────
+
+/// A key in a CSON object — either an exact match or a semantic intent anchor.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum CsonKey {
+    /// Standard exact-match string key: `name: value`
     Exact(String),
+    /// Semantic fuzzy-match anchor: `~"Billing or refund issues": handler`
+    #[serde(rename = "~")]
     Semantic(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Core value types in the CSON data model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum CsonValue {
+    /// String literal: `"hello"`
     String(String),
+    /// Numeric value (all numbers are f64): `42`, `3.14`
     Number(f64),
+    /// Boolean: `true`, `false`
     Boolean(bool),
-    Object(HashMap<CsonKey, CsonNode>),
+    /// Null placeholder: `null`
+    Null,
+    /// Key-value object: `{ key: value, ... }`
+    Object(HashMap<String, CsonNode>),
+    /// Ordered sequence: `[a, b, c]`
     Array(Vec<CsonNode>),
+    /// AI-synthesized placeholder: `@synthesize("a complimentary color")`
+    #[serde(rename = "@synthesize")]
     Synthesize(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct CsonDocument {
-    pub version: String,
-    pub root: CsonNode,
-}
-
-#[derive(Debug, Clone, PartialEq)]
+/// A node in the CSON tree — a value with optional AI metadata.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CsonNode {
+    /// The node's value.
     pub value: CsonValue,
+    /// Confidence/probability weight: `value ~0.95`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
+    /// Annotations attached to this node: `@wip { owner: "foreman" }`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub annotations: Vec<CsonAnnotation>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Metadata annotation attached to a node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CsonAnnotation {
+    /// Annotation name: `@wip`, `@temporary`, `@decision`, etc.
     pub name: String,
+    /// Optional parenthesized argument: `@cson("1.5")`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<String>,
+    /// Key-value properties: `@wip { owner: "foreman" }`
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub properties: HashMap<String, String>,
 }
 
-/// A very basic, MVP parser for Crush Semantic Object Notation (CSON).
-pub struct CsonParser<'a> {
-    input: &'a str,
-    pos: usize,
+/// The root document structure for a `.cson` file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CsonDocument {
+    /// Document format version (from `@cson { version: "1.0" }`).
+    #[serde(default = "default_version")]
+    pub version: String,
+    /// The root value node.
+    pub root: CsonNode,
 }
 
-impl<'a> CsonParser<'a> {
-    pub fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
+fn default_version() -> String { "1.0".to_string() }
+
+// ── Convenience constructors ───────────────────────────────────────────────
+
+impl CsonNode {
+    pub fn new(value: CsonValue) -> Self {
+        Self { value, confidence: None, annotations: vec![] }
     }
 
-    fn skip_whitespace_and_comments(&mut self) {
-        while self.pos < self.input.len() {
-            let rest = &self.input[self.pos..];
-            if rest.starts_with("//") || rest.starts_with("#") {
-                let end = rest.find('\n').unwrap_or(rest.len());
-                self.pos += end;
-            } else if rest.starts_with(char::is_whitespace) {
-                self.pos += rest.chars().next().unwrap().len_utf8();
-            } else {
-                break;
-            }
-        }
+    pub fn with_confidence(mut self, c: f64) -> Self {
+        self.confidence = Some(c);
+        self
     }
 
-    pub fn parse(&mut self) -> Result<CsonDocument, String> {
-        let mut root_obj = HashMap::new();
-        let mut current_section = None;
-        let mut pending_annotations = Vec::new();
-        let mut document_version = "1.0".to_string();
-
-        while self.pos < self.input.len() {
-            self.skip_whitespace_and_comments();
-            if self.pos >= self.input.len() { break; }
-
-            let rest = &self.input[self.pos..];
-
-            // 1. Annotations (e.g. `@wip { owner: "foreman" }`)
-            if rest.starts_with('@') {
-                let ann = self.parse_annotation()?;
-                if ann.name == "cson" {
-                    if let Some(v) = ann.properties.get("version") {
-                        document_version = v.clone();
-                    } else if let Some(ref arg) = ann.args {
-                        document_version = arg.trim_matches('"').to_string();
-                    }
-                }
-                pending_annotations.push(ann);
-                continue;
-            }
-
-            // 2. Sections (e.g. `[routing_table]`)
-            if rest.starts_with('[') {
-                self.pos += 1; // skip '['
-                let end = self.input[self.pos..].find(']').ok_or("Unclosed section")?;
-                let section_name = self.input[self.pos..self.pos+end].trim().to_string();
-                self.pos += end + 1; // skip ']'
-                current_section = Some(section_name);
-                continue;
-            }
-
-            // 3. Key-Value pairs
-            if let Some((key, mut node)) = self.parse_kv_pair()? {
-                node.annotations.extend(pending_annotations.drain(..));
-                
-                if let Some(ref sec) = current_section {
-                    // It belongs to a section. If section object doesn't exist, create it.
-                    let sec_key = CsonKey::Exact(sec.clone());
-                    let section_node = root_obj.entry(sec_key).or_insert_with(|| CsonNode {
-                        value: CsonValue::Object(HashMap::new()),
-                        confidence: None,
-                        annotations: vec![],
-                    });
-                    
-                    if let CsonValue::Object(ref mut map) = section_node.value {
-                        map.insert(key, node);
-                    }
-                } else {
-                    root_obj.insert(key, node);
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(CsonDocument {
-            version: document_version,
-            root: CsonNode {
-                value: CsonValue::Object(root_obj),
-                confidence: None,
-                annotations: pending_annotations, // Leftovers applied to root
-            }
-        })
-    }
-
-    fn parse_annotation(&mut self) -> Result<CsonAnnotation, String> {
-        self.pos += 1; // skip '@'
-        let name_end = self.input[self.pos..].find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(self.input.len() - self.pos);
-        let name = self.input[self.pos..self.pos+name_end].to_string();
-        self.pos += name_end;
-
-        self.skip_whitespace_and_comments();
-        
-        let mut args = None;
-        if self.input[self.pos..].starts_with('(') {
-            self.pos += 1;
-            let end = self.input[self.pos..].find(')').ok_or("Unclosed annotation args")?;
-            args = Some(self.input[self.pos..self.pos+end].to_string());
-            self.pos += end + 1;
-        }
-
-        self.skip_whitespace_and_comments();
-        
-        let mut properties = HashMap::new();
-        if self.input[self.pos..].starts_with('{') {
-            self.pos += 1; // skip '{'
-            // Very naive property parsing
-            let end = self.input[self.pos..].find('}').ok_or("Unclosed annotation properties")?;
-            let props_str = &self.input[self.pos..self.pos+end];
-            for pair in props_str.split(',') {
-                if let Some((k, v)) = pair.split_once(':') {
-                    properties.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
-                }
-            }
-            self.pos += end + 1;
-        }
-
-        Ok(CsonAnnotation { name, args, properties })
-    }
-
-    fn parse_kv_pair(&mut self) -> Result<Option<(CsonKey, CsonNode)>, String> {
-        self.skip_whitespace_and_comments();
-        if self.pos >= self.input.len() { return Ok(None); }
-        if self.input[self.pos..].starts_with('[') || self.input[self.pos..].starts_with('@') {
-            return Ok(None);
-        }
-
-        let mut is_semantic = false;
-        if self.input[self.pos..].starts_with('~') {
-            is_semantic = true;
-            self.pos += 1;
-        }
-
-        // Parse key
-        let key_str;
-        if self.input[self.pos..].starts_with('"') {
-            self.pos += 1;
-            let end = self.input[self.pos..].find('"').ok_or("Unclosed string key")?;
-            key_str = self.input[self.pos..self.pos+end].to_string();
-            self.pos += end + 1;
-        } else {
-            let end = self.input[self.pos..].find(':').ok_or("Missing colon in kv pair")?;
-            key_str = self.input[self.pos..self.pos+end].trim().to_string();
-            self.pos += end;
-        }
-
-        let key = if is_semantic { CsonKey::Semantic(key_str) } else { CsonKey::Exact(key_str) };
-
-        self.skip_whitespace_and_comments();
-        if !self.input[self.pos..].starts_with(':') {
-            return Err("Expected ':' after key".to_string());
-        }
-        self.pos += 1; // skip ':'
-        
-        self.skip_whitespace_and_comments();
-
-        let (value, confidence) = self.parse_value()?;
-
-        Ok(Some((key, CsonNode {
-            value,
-            confidence,
-            annotations: vec![],
-        })))
-    }
-
-    fn parse_value(&mut self) -> Result<(CsonValue, Option<f64>), String> {
-        self.skip_whitespace_and_comments();
-        
-        let value;
-        if self.input[self.pos..].starts_with('@') {
-            let ann = self.parse_annotation()?;
-            if ann.name == "synthesize" {
-                value = CsonValue::Synthesize(ann.args.unwrap_or_default().trim_matches('"').to_string());
-            } else {
-                return Err("Only @synthesize is supported as a value annotation".to_string());
-            }
-        } else if self.input[self.pos..].starts_with('"') {
-            self.pos += 1;
-            let end = self.input[self.pos..].find('"').ok_or("Unclosed string value")?;
-            value = CsonValue::String(self.input[self.pos..self.pos+end].to_string());
-            self.pos += end + 1;
-        } else if self.input[self.pos..].starts_with('{') {
-            self.pos += 1;
-            let mut map = HashMap::new();
-            while !self.input[self.pos..].starts_with('}') {
-                if let Some((k, n)) = self.parse_kv_pair()? {
-                    map.insert(k, n);
-                } else {
-                    break;
-                }
-                self.skip_whitespace_and_comments();
-            }
-            self.pos += 1;
-            value = CsonValue::Object(map);
-        } else if self.input[self.pos..].starts_with('[') {
-            self.pos += 1;
-            let mut arr = Vec::new();
-            while !self.input[self.pos..].starts_with(']') {
-                self.skip_whitespace_and_comments();
-                if self.input[self.pos..].starts_with(']') { break; }
-                let (val, _) = self.parse_value()?;
-                arr.push(CsonNode {
-                    value: val,
-                    confidence: None,
-                    annotations: vec![],
-                });
-                self.skip_whitespace_and_comments();
-                if self.input[self.pos..].starts_with(',') {
-                    self.pos += 1; // skip comma
-                }
-            }
-            self.pos += 1;
-            value = CsonValue::Array(arr);
-        } else {
-            // Unquoted string or number
-            let end = self.input[self.pos..].find(|c: char| c == '\n' || c == '~').unwrap_or(self.input.len() - self.pos);
-            let raw = self.input[self.pos..self.pos+end].trim().to_string();
-            self.pos += end;
-            
-            if let Ok(num) = raw.parse::<f64>() {
-                value = CsonValue::Number(num);
-            } else if raw == "true" {
-                value = CsonValue::Boolean(true);
-            } else if raw == "false" {
-                value = CsonValue::Boolean(false);
-            } else {
-                value = CsonValue::String(raw);
-            }
-        }
-
-        // Check for confidence modifier `~0.95`
-        let mut confidence = None;
-        self.skip_whitespace_and_comments();
-        if self.pos < self.input.len() && self.input[self.pos..].starts_with('~') {
-            self.pos += 1;
-            let end = self.input[self.pos..].find(|c: char| c.is_whitespace()).unwrap_or(self.input.len() - self.pos);
-            let conf_str = self.input[self.pos..self.pos+end].trim();
-            if let Ok(c) = conf_str.parse::<f64>() {
-                confidence = Some(c);
-                self.pos += end;
-            } else {
-                self.pos -= 1; // rollback if it's not a valid number
-            }
-        }
-
-        Ok((value, confidence))
+    pub fn with_annotation(mut self, ann: CsonAnnotation) -> Self {
+        self.annotations.push(ann);
+        self
     }
 }
+
+impl CsonValue {
+    /// Convenience: create a string value.
+    pub fn string(s: impl Into<String>) -> Self { CsonValue::String(s.into()) }
+    /// Convenience: create a number value.
+    pub fn number(n: f64) -> Self { CsonValue::Number(n) }
+    /// Convenience: create a boolean value.
+    pub fn bool_value(b: bool) -> Self { CsonValue::Boolean(b) }
+}
+
+// ── JSON serialization ─────────────────────────────────────────────────────
+
+impl CsonDocument {
+    /// Serialize this CSON document to a JSON string.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Serialize this CSON document to compact JSON bytes.
+    pub fn to_json_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+
+    /// Deserialize a CSON document from a JSON string.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Deserialize a CSON document from JSON bytes.
+    pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
+    }
+}
+
+// ── Display ────────────────────────────────────────────────────────────────
+
+impl std::fmt::Display for CsonValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CsonValue::String(s) => write!(f, "\"{s}\""),
+            CsonValue::Number(n) => write!(f, "{n}"),
+            CsonValue::Boolean(b) => write!(f, "{b}"),
+            CsonValue::Null => write!(f, "null"),
+            CsonValue::Object(_) => write!(f, "{{object}}"),
+            CsonValue::Array(_) => write!(f, "[array]"),
+            CsonValue::Synthesize(p) => write!(f, "@synthesize({p:?})"),
+        }
+    }
+}
+
+impl std::fmt::Display for CsonNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)?;
+        if let Some(c) = self.confidence {
+            write!(f, " ~{c}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for CsonKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CsonKey::Exact(s) => write!(f, "{s}"),
+            CsonKey::Semantic(s) => write!(f, "~\"{s}\""),
+        }
+    }
+}
+
+// ── Tests ──��────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_basic_parse() {
-        let input = r#"
-        @module { purpose: "Config" }
-        
-        name: "SupportBot"
-        temperature: 0.7
-        
-        [routing_table]
-        ~"cancel subscription": { action: "retention" }
-        ~"mobile bug": { action: "engineering" } ~0.9
-        "#;
-        
-        let mut parser = CsonParser::new(input);
-        let doc = parser.parse().unwrap();
-        
-        let CsonValue::Object(map) = doc.root.value else { panic!() };
-        
-        let name_node = map.get(&CsonKey::Exact("name".to_string())).unwrap();
-        assert_eq!(name_node.annotations.len(), 1);
-        assert_eq!(name_node.annotations[0].name, "module");
-        assert_eq!(name_node.annotations[0].properties.get("purpose").unwrap(), "Config");
-        
-        assert_eq!(name_node.value, CsonValue::String("SupportBot".to_string()));
-        
-        let temp_node = map.get(&CsonKey::Exact("temperature".to_string())).unwrap();
-        assert_eq!(temp_node.value, CsonValue::Number(0.7));
-        
-        let routing_node = map.get(&CsonKey::Exact("routing_table".to_string())).unwrap();
-        let CsonValue::Object(routing_map) = &routing_node.value else { panic!() };
-        
-        let bug_node = routing_map.get(&CsonKey::Semantic("mobile bug".to_string())).unwrap();
-        assert_eq!(bug_node.confidence, Some(0.9));
+    fn test_json_roundtrip() {
+        let doc = CsonDocument {
+            version: "1.0".into(),
+            root: CsonNode::new(CsonValue::Object(HashMap::from([
+                ("name".into(), CsonNode::new(CsonValue::string("test")).with_confidence(0.95)),
+                ("count".into(), CsonNode::new(CsonValue::number(42.0))),
+            ]))),
+        };
+
+        let json = doc.to_json().unwrap();
+        let doc2 = CsonDocument::from_json(&json).unwrap();
+        assert_eq!(doc.version, doc2.version);
+        assert_eq!(doc.root.value, doc2.root.value);
     }
 
     #[test]
-    fn test_version_parsing() {
-        let input = r#"
-        @cson { version: "1.5" }
-        name: "Test"
-        "#;
-        let mut parser = CsonParser::new(input);
-        let doc = parser.parse().unwrap();
-        assert_eq!(doc.version, "1.5");
+    fn test_json_roundtrip_array() {
+        let doc = CsonDocument {
+            version: "1.0".into(),
+            root: CsonNode::new(CsonValue::Array(vec![
+                CsonNode::new(CsonValue::string("a")),
+                CsonNode::new(CsonValue::string("b")),
+            ])),
+        };
+
+        let json = doc.to_json().unwrap();
+        let doc2 = CsonDocument::from_json(&json).unwrap();
+        assert_eq!(doc.root.value, doc2.root.value);
+    }
+
+    #[test]
+    fn test_json_roundtrip_annotations() {
+        let mut props = HashMap::new();
+        props.insert("owner".into(), "foreman".into());
+        let doc = CsonDocument {
+            version: "1.0".into(),
+            root: CsonNode::new(CsonValue::Null)
+                .with_annotation(CsonAnnotation { name: "wip".into(), args: None, properties: props }),
+        };
+
+        let json = doc.to_json().unwrap();
+        let doc2 = CsonDocument::from_json(&json).unwrap();
+        assert_eq!(doc2.root.annotations.len(), 1);
+        assert_eq!(doc2.root.annotations[0].name, "wip");
+    }
+
+    #[test]
+    fn test_synthesize() {
+        let doc = CsonDocument {
+            version: "1.0".into(),
+            root: CsonNode::new(CsonValue::Synthesize("a warm color".into())),
+        };
+        let json = doc.to_json().unwrap();
+        // Synthesize values serialise as plain strings with #[serde(untagged)],
+        // so they deserialise as String. The semantic distinction is preserved
+        // at the CSON level; JSON is a lossy transport for the @synthesize tag.
+        let doc2 = CsonDocument::from_json(&json).unwrap();
+        assert_eq!(doc2.root.value, CsonValue::String("a warm color".into()));
+    }
+}
+
+// ── CSON serialization ─────────────────────────────────────────────────────
+
+impl CsonDocument {
+    pub fn to_cson(&self) -> String {
+        let mut out = String::new();
+        if self.version != "1.0" {
+            out.push_str(&format!("@cson {{ version: \"{}\" }}\n", self.version));
+        }
+        
+        if let CsonValue::Object(obj) = &self.root.value {
+            let mut items: Vec<_> = obj.iter().collect();
+            items.sort_by_key(|(k, _)| *k);
+            for (k, v) in items {
+                if k.starts_with('~') {
+                    out.push_str(&format!("~\"{}\": ", k.trim_start_matches('~')));
+                } else if k.chars().all(|c| c.is_alphanumeric() || c == '_') && !k.is_empty() {
+                    out.push_str(&format!("{}: ", k));
+                } else {
+                    out.push_str(&format!("\"{}\": ", k));
+                }
+                out.push_str(&v.to_cson(0));
+                out.push('\n');
+            }
+        } else {
+            out.push_str(&self.root.to_cson(0));
+            out.push('\n');
+        }
+        
+        out
+    }
+}
+
+impl CsonNode {
+    pub fn to_cson(&self, indent: usize) -> String {
+        let mut out = String::new();
+        for ann in &self.annotations {
+            out.push_str(&format!("@{}", ann.name));
+            if let Some(args) = &ann.args {
+                out.push_str(&format!("(\"{}\")", args));
+            }
+            if !ann.properties.is_empty() {
+                out.push_str(" {");
+                let mut props: Vec<_> = ann.properties.iter().collect();
+                props.sort_by_key(|(k, _)| *k);
+                for (i, (k, v)) in props.iter().enumerate() {
+                    if i > 0 { out.push_str(","); }
+                    out.push_str(&format!(" {}: \"{}\"", k, v.replace('"', "\\\"")));
+                }
+                out.push_str(" }");
+            }
+            out.push('\n');
+            out.push_str(&" ".repeat(indent * 4));
+        }
+        
+        out.push_str(&self.value.to_cson(indent));
+        
+        if let Some(c) = self.confidence {
+            out.push_str(&format!(" ~{}", c));
+        }
+        out
+    }
+}
+
+impl CsonValue {
+    pub fn to_cson(&self, indent: usize) -> String {
+        match self {
+            CsonValue::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")),
+            CsonValue::Number(n) => n.to_string(),
+            CsonValue::Boolean(b) => b.to_string(),
+            CsonValue::Null => "null".to_string(),
+            CsonValue::Synthesize(s) => format!("@synthesize(\"{}\")", s),
+            CsonValue::Array(arr) => {
+                if arr.is_empty() {
+                    return "[]".to_string();
+                }
+                let mut out = String::from("[\n");
+                let child_indent = indent + 1;
+                for item in arr {
+                    out.push_str(&" ".repeat(child_indent * 4));
+                    out.push_str(&item.to_cson(child_indent));
+                    out.push_str(",\n");
+                }
+                out.push_str(&" ".repeat(indent * 4));
+                out.push(']');
+                out
+            }
+            CsonValue::Object(obj) => {
+                if obj.is_empty() {
+                    return "{}".to_string();
+                }
+                let mut out = String::from("{\n");
+                let child_indent = indent + 1;
+                let mut items: Vec<_> = obj.iter().collect();
+                items.sort_by_key(|(k, _)| *k);
+                for (k, v) in items {
+                    out.push_str(&" ".repeat(child_indent * 4));
+                    if k.starts_with('~') {
+                        out.push_str(&format!("~\"{}\": ", k.trim_start_matches('~')));
+                    } else if k.chars().all(|c| c.is_alphanumeric() || c == '_') && !k.is_empty() {
+                        out.push_str(&format!("{}: ", k));
+                    } else {
+                        out.push_str(&format!("\"{}\": ", k));
+                    }
+                    out.push_str(&v.to_cson(child_indent));
+                    out.push_str(",\n");
+                }
+                out.push_str(&" ".repeat(indent * 4));
+                out.push('}');
+                out
+            }
+        }
     }
 }

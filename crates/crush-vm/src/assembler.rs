@@ -331,6 +331,27 @@ pub fn disassemble(program: &Program) -> String {
         (STR_JOIN, "STR_JOIN"),
         (MAKE_RANGE, "MAKE_RANGE"),
         (EXEC_LANG, "EXEC_LANG"),
+        (AI_QUERY, "AI_QUERY"),
+        (AI_SYNTHESIZE, "AI_SYNTHESIZE"),
+        (AI_AGENT_DELEGATION, "AI_AGENT_DELEGATION"),
+        (AI_SEMANTIC_MATCH, "AI_SEMANTIC_MATCH"),
+        (AI_LEARNING_LOOP, "AI_LEARNING_LOOP"),
+        (AI_CONTEXT_AWARE, "AI_CONTEXT_AWARE"),
+        (AI_TOOLCHAIN, "AI_TOOLCHAIN"),
+        (MATH_POW, "MATH_POW"),
+        (MATH_SQRT, "MATH_SQRT"),
+        (MATH_ABS, "MATH_ABS"),
+        (MATH_ROUND, "MATH_ROUND"),
+        (MATH_FLOOR, "MATH_FLOOR"),
+        (MATH_CEIL, "MATH_CEIL"),
+        (VEC_ADD, "VEC_ADD"),
+        (VEC_DOT, "VEC_DOT"),
+        (MAT_MUL, "MAT_MUL"),
+        (STR_STARTS_WITH, "STR_STARTS_WITH"),
+        (STR_ENDS_WITH, "STR_ENDS_WITH"),
+        (STR_TO_UPPER, "STR_TO_UPPER"),
+        (STR_TO_LOWER, "STR_TO_LOWER"),
+        (STR_TRIM, "STR_TRIM"),
         (NEW_OBJ, "NEW_OBJ"),
         (SET_FIELD, "SET_FIELD"),
         (GET_FIELD, "GET_FIELD"),
@@ -475,6 +496,27 @@ fn opcode_for(name: &str) -> Option<u8> {
         "SPAWN" => Some(SPAWN),
         "YIELD" => Some(YIELD),
         "AWAIT" => Some(AWAIT),
+        "AI_QUERY" => Some(AI_QUERY),
+        "AI_SYNTHESIZE" => Some(AI_SYNTHESIZE),
+        "AI_AGENT_DELEGATION" => Some(AI_AGENT_DELEGATION),
+        "AI_SEMANTIC_MATCH" => Some(AI_SEMANTIC_MATCH),
+        "AI_LEARNING_LOOP" => Some(AI_LEARNING_LOOP),
+        "AI_CONTEXT_AWARE" => Some(AI_CONTEXT_AWARE),
+        "AI_TOOLCHAIN" => Some(AI_TOOLCHAIN),
+        "MATH_POW" => Some(MATH_POW),
+        "MATH_SQRT" => Some(MATH_SQRT),
+        "MATH_ABS" => Some(MATH_ABS),
+        "MATH_ROUND" => Some(MATH_ROUND),
+        "MATH_FLOOR" => Some(MATH_FLOOR),
+        "MATH_CEIL" => Some(MATH_CEIL),
+        "vec_add" | "VEC_ADD" => Some(VEC_ADD),
+        "vec_dot" | "VEC_DOT" => Some(VEC_DOT),
+        "mat_mul" | "MAT_MUL" => Some(MAT_MUL),
+        "STR_STARTS_WITH" => Some(STR_STARTS_WITH),
+        "STR_ENDS_WITH" => Some(STR_ENDS_WITH),
+        "STR_TO_UPPER" => Some(STR_TO_UPPER),
+        "STR_TO_LOWER" => Some(STR_TO_LOWER),
+        "STR_TRIM" => Some(STR_TRIM),
         "HALT" => Some(HALT),
         _ => None,
     }
@@ -486,8 +528,11 @@ fn strip_comment(line: &str) -> &str {
     let mut esc = false;
     for (i, &ch) in chars.iter().enumerate() {
         if in_str {
-            esc = if esc { false } else { ch == '\\' };
-            if !esc && ch == '"' {
+            if esc {
+                esc = false;
+            } else if ch == '\\' {
+                esc = true;
+            } else if ch == '"' {
                 in_str = false;
             }
             continue;

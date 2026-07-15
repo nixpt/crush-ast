@@ -39,13 +39,13 @@ impl Default for ReplConfig {
     }
 }
 
-struct ReplState {
-    functions: HashMap<String, Function>,
-    main_statements: Vec<Statement>,
+pub struct ReplState {
+    pub functions: HashMap<String, Function>,
+    pub main_statements: Vec<Statement>,
 }
 
 impl ReplState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             functions: HashMap::new(),
             main_statements: Vec::new(),
@@ -90,7 +90,7 @@ impl ReplState {
 
     /// Returns (Program, bool) where bool is true if the last expression was
     /// converted to a Return (meaning the result value is meaningful).
-    fn to_exec_program(&self) -> (Program, bool) {
+    pub fn to_exec_program(&self) -> (Program, bool) {
         let mut program = self.to_program();
         let mut converted = false;
         if let Some(main) = program.functions.get_mut("main")
@@ -369,6 +369,97 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> Result<bool, MetaC
     )))
 }
 
+pub struct ReplEvalResult {
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub defined: Vec<String>,
+}
+
+pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig) -> ReplEvalResult {
+    let mut eval_result = ReplEvalResult { output: None, error: None, defined: vec![] };
+
+    let snippet = match parse_repl_source(source) {
+        Ok(s) => s,
+        Err(errors) => {
+            let rendered = crate::theme::render_parse_errors(&errors, None, source);
+            eval_result.error = Some(rendered);
+            return eval_result;
+        }
+    };
+
+    let mut defined: Vec<String> = snippet
+        .functions
+        .keys()
+        .filter(|k| *k != "main")
+        .cloned()
+        .collect();
+    eval_result.defined = defined;
+
+    let had_main_statements = state.merge_snippet(snippet);
+    let (compiled_program, show_result) = state.to_exec_program();
+    
+    let casm = match compile_pipeline(compiled_program) {
+        Ok(c) => c,
+        Err(e) => {
+            eval_result.error = Some(e.to_string());
+            return eval_result;
+        }
+    };
+    
+    let vm_program = match compile::casm_to_vm(&casm) {
+        Ok(p) => p,
+        Err(e) => {
+            eval_result.error = Some(e.to_string());
+            return eval_result;
+        }
+    };
+
+    if had_main_statements {
+        let mut vm = PortableVm::new(vm_program);
+        vm.set_quotas(config.quotas.clone());
+        #[cfg(feature = "stdlib")]
+        if config.stdlib {
+            let mut builder = crate::HostCapsBuilder::new();
+            builder = builder.stdlib(true);
+            vm.set_host_caps(builder.build());
+        }
+        
+        match vm.run() {
+            Ok(result) => {
+                let mut out_str = String::new();
+                if !result.output.is_empty() {
+                    out_str.push_str(&result.output);
+                }
+                if show_result && !result.stack.is_empty() {
+                    let top = crush_vm::value_to_text(result.stack.last().unwrap());
+                    out_str.push_str(&crate::theme::format_repl_result(&top));
+                    out_str.push('\n');
+                }
+                if !result.halted {
+                    out_str.push_str("[fell off end]\n");
+                }
+                if !out_str.is_empty() {
+                    eval_result.output = Some(out_str);
+                }
+            }
+            Err(e) => {
+                match config.message_format {
+                    MessageFormat::Text => {
+                        eval_result.error = Some(crate::theme::render_runtime_error(&e));
+                    }
+                    MessageFormat::Json => {
+                        let diag = JsonDiagnostic::runtime_error(&crate::RuntimeError::Vm(e));
+                        eval_result.error = Some(diag.to_line());
+                    }
+                }
+            }
+        }
+    }
+
+    eval_result
+}
+
+
 fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> anyhow::Result<()> {
     let snippet = parse_repl_source(source).map_err(|errors| {
         // Re-flatten the typed parse-error vector into a `#[error]`-shaped
@@ -454,8 +545,28 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
     let mut state = ReplState::new();
     let mut pending = String::new();
 
-    println!("crush-repl — incremental Crush language REPL");
-    println!("Type .help for commands, .quit to exit.");
+    let banner = r#"
+  ____  ____  _   _ ____  _   _ 
+ / ___||  _ \| | | / ___|| | | |
+| |    | |_) | | | \___ \| |_| |
+| |___ |  _ <| |_| |___) |  _  |
+ \____||_| \_\\___/|____/|_| |_|
+"#;
+    for line in banner.lines() {
+        if !line.is_empty() {
+            println!("\x1b[1;35m{}\x1b[0m", line);
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+    }
+    
+    let subtext = "crush-repl — incremental Crush polyglot language REPL";
+    for ch in subtext.chars() {
+        print!("{}", ch);
+        let _ = io::stdout().flush();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    println!();
+    println!("Type \x1b[1;36m.help\x1b[0m for commands, \x1b[1;31m.quit\x1b[0m to exit.\n");
 
     loop {
         if pending.is_empty() {

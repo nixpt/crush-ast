@@ -80,7 +80,7 @@ pub fn try_decode_frame(buf: &[u8]) -> Result<Option<(Frame, usize)>, NetError> 
     Ok(Some((Frame { typ, flags, payload }, total)))
 }
 
-pub fn encode_request(req: &mesh_proto::MeshRequest) -> Result<Vec<u8>, NetError> {
+pub fn encode_request(req: &crate::mesh_request::MeshRequest) -> Result<Vec<u8>, NetError> {
     let payload = serde_json::to_vec(req).map_err(|e| NetError::Mesh(e.to_string()))?;
     let frame = Frame {
         typ: FRAME_TYPE_MESH_REQUEST,
@@ -92,12 +92,12 @@ pub fn encode_request(req: &mesh_proto::MeshRequest) -> Result<Vec<u8>, NetError
     Ok(buf)
 }
 
-pub fn decode_request(buf: &[u8]) -> Result<(mesh_proto::MeshRequest, usize), NetError> {
+pub fn decode_request(buf: &[u8]) -> Result<(crate::mesh_request::MeshRequest, usize), NetError> {
     let (frame, n) = try_decode_frame(buf)?.ok_or(NetError::Truncated)?;
     if frame.typ != FRAME_TYPE_MESH_REQUEST {
         return Err(NetError::UnexpectedType(frame.typ));
     }
-    let req: mesh_proto::MeshRequest =
+    let req: crate::mesh_request::MeshRequest =
         serde_json::from_slice(&frame.payload).map_err(|e| NetError::Mesh(e.to_string()))?;
     Ok((req, n))
 }
@@ -105,7 +105,7 @@ pub fn decode_request(buf: &[u8]) -> Result<(mesh_proto::MeshRequest, usize), Ne
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mesh_proto::MeshRequest;
+    use crate::mesh_request::MeshRequest;
     use serde_json::json;
 
     #[test]

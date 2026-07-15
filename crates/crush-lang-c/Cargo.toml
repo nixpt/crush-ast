@@ -2,7 +2,7 @@
 license.workspace = true
 description = "C language walker — parses C source code into CAST IR"
 name = "crush-lang-c"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 [lib]
@@ -20,11 +20,9 @@ clap.workspace = true
 anyhow.workspace = true
 tree-sitter.workspace = true
 tree-sitter-c = "0.23"
-walker-core.workspace = true
+crush-walker-core.workspace = true
 crush-cast.workspace = true
 tree-sitter-cpp = "0.23"
-
-[dev-dependencies]
 crush-frontend.workspace = true
 crush-lang-sdk.workspace = true
 crush-vm.workspace = true

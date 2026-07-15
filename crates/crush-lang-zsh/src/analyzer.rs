@@ -1,4 +1,4 @@
-use walker_core::FeatureReport;
+use crush_walker_core::FeatureReport;
 use zshrs_parse::parser::*;
 
 const DANGEROUS_COMMANDS: &[&str] = &[

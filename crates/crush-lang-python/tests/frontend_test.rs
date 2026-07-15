@@ -1,8 +1,8 @@
 use crush_lang_python::PythonFrontend;
-use walker_core::Frontend;
+use crush_walker_core::Frontend;
 
 /// Helper: just run analyze (not full pipeline) on source.
-fn test_analyze(source: &str) -> walker_core::FeatureReport {
+fn test_analyze(source: &str) -> crush_walker_core::FeatureReport {
     let frontend = PythonFrontend;
     let ast = frontend.parse(source).unwrap();
     frontend.analyze(&ast).unwrap()
@@ -20,7 +20,7 @@ fn test_python_frontend_detects_dangerous_imports() {
 fn test_python_frontend_safe_code() {
     let source = "x = 42\nprint(x + 1)\n";
     let frontend = PythonFrontend;
-    let (report, program) = walker_core::frontend_pipeline(&frontend, source).unwrap();
+    let (report, program) = crush_walker_core::frontend_pipeline(&frontend, source).unwrap();
     assert!(report.dangerous_imports.is_empty());
     assert!(report.can_lower_safely());
     assert!(program.functions.contains_key("main"));

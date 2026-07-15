@@ -19,6 +19,38 @@ fn push_str() {
 }
 
 #[test]
+fn string_ops() {
+    let src = "
+    PUSH_STR \"hello world\"
+    PUSH_STR \"world\"
+    STR_CONTAINS
+    PUSH_STR \"hello\"
+    PUSH_STR \"hell\"
+    STR_STARTS_WITH
+    PUSH_STR \"world\"
+    PUSH_STR \"ld\"
+    STR_ENDS_WITH
+    PUSH_STR \" UPPER \"
+    STR_TRIM
+    STR_TO_LOWER
+    PUSH_STR \"lower\"
+    STR_TO_UPPER
+    HALT
+    ";
+    let r = run_src(src);
+    assert_eq!(
+        r.stack,
+        vec![
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Str("upper".to_string()),
+            Value::Str("LOWER".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn push_null() {
     let r = run_src("PUSH_NULL\nHALT");
     assert_eq!(r.stack, vec![Value::Null]);

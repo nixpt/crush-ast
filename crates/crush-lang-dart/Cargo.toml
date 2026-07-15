@@ -1,0 +1,23 @@
+[package]
+license.workspace = true
+description = "Dart walker — parses Dart source into CAST IR via tree-sitter-dart"
+readme = "../../README.md"
+name = "crush-lang-dart"
+version.workspace = true
+edition = "2024"
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crush-cast.workspace = true
+crush-walker-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+tree-sitter.workspace = true
+tree-sitter-dart = "0.2"
+
+[dev-dependencies]
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

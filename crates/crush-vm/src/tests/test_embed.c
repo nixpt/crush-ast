@@ -1,5 +1,5 @@
 /*
- * test_embed.c — Verify libcrush_vm.so can be loaded from a C program.
+ * test_embed.c — Verify libcrush_vm.so works from a C program.
  *
  * Built and run automatically by the `test_c_embed` Rust test.
  */
@@ -39,7 +39,6 @@ int main(void) {
     printf("PASS: crush_vm_run_casm\n");
 
     crush_vm_init();
-    // Test ASM path without needing io.print permission
     const char *asm_src =
         "PUSH 42\n"
         "PUSH 58\n"

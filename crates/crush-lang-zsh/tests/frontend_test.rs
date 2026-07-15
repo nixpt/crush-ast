@@ -1,8 +1,8 @@
 use crush_cast::{Expression, Statement};
 use crush_lang_zsh::ZshFrontend;
-use walker_core::Frontend;
+use crush_walker_core::Frontend;
 
-fn test_analyze(source: &str) -> walker_core::FeatureReport {
+fn test_analyze(source: &str) -> crush_walker_core::FeatureReport {
     let frontend = ZshFrontend;
     let ast = frontend.parse(source).unwrap();
     frontend.analyze(&ast).unwrap()
@@ -19,7 +19,7 @@ fn test_zsh_detects_dangerous_commands() {
 fn test_zsh_safe_code() {
     let source = "NAME=\"World\"\necho \"Hello\"\n";
     let frontend = ZshFrontend;
-    let (report, program) = walker_core::frontend_pipeline(&frontend, source).unwrap();
+    let (report, program) = crush_walker_core::frontend_pipeline(&frontend, source).unwrap();
     assert!(report.can_lower_safely());
     assert!(program.functions.contains_key("main"));
 }

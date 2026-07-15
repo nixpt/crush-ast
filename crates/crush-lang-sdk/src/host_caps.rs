@@ -15,6 +15,7 @@ use crush_vm::{HostCap, HostCapSpec, HostCaps};
 #[derive(Default)]
 pub struct HostCapsBuilder {
     fs: bool,
+    polyglot: Vec<&'static str>,
     env: bool,
     time: bool,
     bus: bool,
@@ -45,6 +46,14 @@ impl HostCapsBuilder {
     }
 
     /// Enable filesystem capabilities (`fs.read`, `fs.write`, `fs.exists`, `fs.list`).
+    /// Grant polyglot execution for the given languages (canonical: "python", "javascript",
+    /// "bash"). Each becomes a `polyglot.<lang>` gate in the registry. Without this, @lang blocks
+    /// refuse to spawn — polyglot is NOT ambient.
+    pub fn polyglot(mut self, langs: &[&'static str]) -> Self {
+        self.polyglot = langs.to_vec();
+        self
+    }
+
     pub fn fs(mut self, enable: bool) -> Self {
         self.fs = enable;
         self
@@ -152,6 +161,8 @@ impl HostCapsBuilder {
     /// Build the [`HostCaps`] registry.
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
+        caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
+        caps.grant_polyglot(&self.polyglot);
         if self.fs {
             let root = self.fs_root.unwrap_or_else(|| ".".to_string());
             caps.register(Box::new(FsReadCap::new(&root)));
@@ -598,3 +609,5 @@ mod tests {
         );
     }
 }
+
+

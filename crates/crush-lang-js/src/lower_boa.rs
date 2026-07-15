@@ -15,7 +15,7 @@ use boa_ast::{ModuleItem, Statement, StatementListItem};
 use boa_interner::{Interner, Sym};
 use crush_cast::{CastType, Expression as CastExpr, Function, Program, Statement as CastStmt};
 
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 
 use crate::backend::boa::BoaAst;
 

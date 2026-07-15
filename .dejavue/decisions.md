@@ -482,3 +482,11 @@ Outcome:
 Reason:
 The gpu.* host capability holds the CUDA context/module-cache/handle-table directly in Arc<GpuState>; no GpuHal trait for v0. Fewest moving parts; zorro registers handlers over its existing device-0 primary context so crush-kernel PTX and zorro's own kernels share one context and buffers interop. Refactor to fastvm Hal only if exo-light needs GPU capsules — call() body is identical, migration mechanical.
 
+## 2026-07-13T03:25:00-05:00 — Full-session audit: state captured, .jagent initialized
+
+Reason:
+A complete audit of the crush-ast workspace was performed (35 crates, 874 tests, 1 known failure). All gaps documented: 16 NOP runtime opcodes (10 AI + 3 DOM + spawn + yield + await), debugger scaffold, JIT Phase 1 only, 18 error paths with zero coverage, MOD sign bug, EXEC_LANG missing from PortableVm. The .jagent/ planning board was initialized following the squadron template used by crush-notebook — STATE.md, ROADMAP.md, TASKS.md with P0-P5 priorities, ticket template, and first CRUSH-1 ticket.
+
+Rejected alternatives:
+- **Keep only dejavue** — dejavue is for architectural memory (decisions, invariants, why); .jagent is for execution planning (milestones, status, what/when). Both are needed.
+- **Use crush-notebook's ticket IDs** — separate repos use separate ID spaces (CRUSH-NNN vs NB-NNN) to avoid confusion during cross-project work.

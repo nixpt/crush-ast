@@ -275,8 +275,9 @@ impl CrushIndex {
         match &node.value {
             crush_cson::CsonValue::Object(map) => {
                 for (k, v) in map {
-                    if let crush_cson::CsonKey::Semantic(s) = k {
-                        keys.push((s.clone(), path.to_string(), v.confidence));
+                    // Object keys are now plain Strings; semantic keys are serialized with "~" prefix
+                    if let Some(s) = k.strip_prefix('~') {
+                        keys.push((s.to_string(), path.to_string(), v.confidence));
                     }
                     self.extract_semantic_keys(v, path, keys);
                 }
@@ -329,7 +330,7 @@ fn collect_calls_in_stmt(
 ) {
     match stmt {
         Statement::ExprStmt { expr, .. } => collect_calls_in_expr(expr, module, caller_fn, out),
-        Statement::VarDecl { value, .. } | Statement::Export { value, .. } => {
+        Statement::VarDecl { value, .. } | Statement::Assign { value, .. } | Statement::Export { value, .. } => {
             collect_calls_in_expr(value, module, caller_fn, out)
         }
         Statement::Return { value, .. } => {
@@ -477,6 +478,7 @@ fn collect_calls_in_expr(
         | Expression::Var { .. }
         | Expression::Yield { .. }
         | Expression::NewStruct { .. }
-        | Expression::AI(_) => {}
+        | Expression::AI(_)
+        | Expression::VectorMath { .. } => {}
     }
 }

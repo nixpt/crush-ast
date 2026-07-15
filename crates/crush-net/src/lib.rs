@@ -12,7 +12,7 @@
 //! - [`transport`] — `AsyncRead` / `AsyncWrite` / `AsyncAccept` / `Transport`
 //!   traits + a `parse_uri("tcp://host:port")` helper.
 //! - [`codec`] — fixed-header TLV frame format with a 16 MiB hard ceiling +
-//!   `encode_request` / `decode_request` for `mesh_proto::MeshRequest`.
+//!   `encode_request` / `decode_request` for [`mesh_request::MeshRequest`].
 //! - [`reactor`] — a single polling-thread reactor that drives registered
 //!   [`Source`]s and wakes futures via `Waker`.
 //! - [`tcp`] — [`TcpTransport`] / [`TcpConnection`] / [`TcpListener`] gluing
@@ -22,6 +22,7 @@
 
 pub mod caps;
 pub mod codec;
+pub mod mesh_request;
 pub mod reactor;
 pub mod tcp;
 pub mod transport;

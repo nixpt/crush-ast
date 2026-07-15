@@ -1,0 +1,15 @@
+[package]
+license.workspace = true
+description = "Walker core — Walker trait, BaseWalker, and capability mappings"
+readme = "../../README.md"
+name = "crush-walker-core"
+version.workspace = true
+edition = "2021"
+repository.workspace = true
+
+[dependencies]
+tree-sitter.workspace = true
+crush-cast.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true

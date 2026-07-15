@@ -1,0 +1,29 @@
+[package]
+license.workspace = true
+description = "Go language walker — parses Go source code into CAST IR"
+name = "crush-lang-go"
+version.workspace = true
+edition = "2021"
+repository.workspace = true
+[lib]
+name = "crush_lang_go"
+
+[[bin]]
+name = "crush-lang-go"
+path = "src/main.rs"
+
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tree-sitter.workspace = true
+tree-sitter-go = "0.23"
+crush-walker-core.workspace = true
+crush-cast.workspace = true
+
+[dev-dependencies]
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

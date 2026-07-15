@@ -263,7 +263,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "go",
             &["go"],
-            "go_walker",
+            "crush_lang_go",
             LanguageCapabilities {
                 version: "1.21".to_string(),
                 execution_model: ExecutionModel::Compiled,
@@ -305,7 +305,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "zig",
             &["zig"],
-            "zig_walker",
+            "crush_lang_zig",
             LanguageCapabilities {
                 version: "0.11".to_string(),
                 execution_model: ExecutionModel::Compiled,
@@ -341,7 +341,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "wasm",
             &["wasm"],
-            "wasm_walker",
+            "crush_lang_wasm",
             LanguageCapabilities {
                 version: "2.0".to_string(),
                 execution_model: ExecutionModel::Compiled,

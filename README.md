@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/banner.jpg" alt="Crush AST Banner" width="100%" />
+  <img src="assets/hero.png" alt="Crush AST Banner" width="100%" />
 </p>
 
 <h1 align="center">
-  <img src="docs/assets/logo.jpg" alt="Crush Logo" width="40" height="40" style="vertical-align: middle;" />
+  <img src="assets/logo.png" alt="Crush Logo" width="40" height="40" style="vertical-align: middle;" />
   Crush AST
 </h1>
 
@@ -16,41 +16,65 @@
   <img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust Version">
 </p>
 
+<p align="center">
+  <a href="https://crushlang.org">crushlang.org</a> ·
+  <a href="https://docs.crushlang.org">Language Guide</a>
+</p>
+
 ---
 
 **Crush** is a capability-based, polyglot programming language and virtual runtime. This repository hosts the **standalone Crush implementation**: providing the CAST intermediate representation, tree-sitter grammar, polyglot walkers, compiler frontend, VM runtime, package manager, and installer.
+
+👉 **[crushlang.org](https://crushlang.org)** for the landing page and a live example, or **[docs.crushlang.org](https://docs.crushlang.org)** for the full language guide (syntax, capability system, polyglot programming, stdlib, CAST/CASM, worked examples).
 
 ## 🌌 Relationship to Exosphere
 
 This repository was extracted from the [exosphere](https://github.com/nixpt/exosphere) agent-native OS monorepo on 2026-06-12. The walker crate tree (the polyglot source → CAST translators) was split out so it could compile independently without pulling in the full exosphere kernel runtime. Exosphere retains a subprocess-based `WalkerRegistry` that invokes the walker binaries produced here.
 
-The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's copies are at v0.2.0.
+The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's copies are at v0.3.0.
 
 ## 🏗️ Repository Structure
 
 ```text
 crates/
-├── crush-errors/       # Unified error types (leaf crate)
-├── crush-cast/         # CAST — Crush Abstract Syntax Tree IR
-├── casm/               # CASM — Crush Assembly bytecode format
-├── tree-sitter-crush/  # Tree-sitter grammar for the Crush language
+├── crush-errors/         # Unified error types (leaf crate)
+├── crush-cast/           # CAST — Crush Abstract Syntax Tree IR
+├── crush-cson/           # CSON config/serialization format on top of CAST
+├── casm/                 # CASM — Crush Assembly bytecode format
+├── tree-sitter-crush/    # Tree-sitter grammar for the Crush language
+├── crush-diagnostics/    # Shared diagnostics/wire-format types
+├── crush-index/          # Cross-crate symbol/reference index
 │
-├── walker-core/        # Walker trait + BaseWalker utilities
-├── cli/                # CLI that auto-detects language and dispatches walker
-├── python_walker/      # Python → CAST
-├── rust_walker/        # Rust → CAST
-├── js_walker/          # JavaScript → CAST
-├── go_walker/          # Go → CAST
-├── c_walker/           # C → CAST
-├── zig_walker/         # Zig → CAST
-├── bash_walker/        # Bash → CAST
-├── wasm_walker/        # WebAssembly → CAST
+├── crush-walker-core/    # LanguageAdapter trait + shared walker utilities (renamed from walker-core)
+├── cli/                  # crush-walker — CLI that auto-detects source language and dispatches a walker
+├── crush-lang-python/    # Python → CAST (bin: python_walker)
+├── crush-lang-rust/      # Rust → CAST
+├── crush-lang-js/        # JavaScript → CAST
+├── crush-lang-go/        # Go → CAST
+├── crush-lang-c/         # C → CAST
+├── crush-lang-zig/       # Zig → CAST
+├── crush-lang-bash/      # Bash → CAST
+├── crush-lang-zsh/       # Zsh → CAST
+├── crush-lang-wasm/      # WebAssembly walker — parses Wasm modules into CAST IR
+├── crush-lang-dart/      # Dart → CAST
+├── crush-lang-nepali/    # Nepali (Sona) → CAST
+├── crush-lang-custom/    # Custom/user-defined language adapter scaffold
 │
-├── crush-frontend/     # Crush language parser, semantic analyzer, optimizer, and CASM compiler
-├── crush-lang-sdk/     # Rust SDK for hosting the CVM1 runtime (produces: crushc, crush-run, crush-compile, crush-repl)
-├── crush-vm/           # CVM1 bytecode assembler, disassembler, and sandboxed interpreter
-├── crush-pkg/          # Package manager — cargo-like build tool for Crush
-└── crush-installer/    # Toolchain installer and uninstaller
+├── crush-frontend/       # Crush language parser, semantic analyzer, optimizer, and CASM compiler
+├── crush-lang-sdk/       # Rust SDK for hosting the CVM1 runtime (produces: crushc, crush-run, crush-compile, crush-repl)
+├── crush-vm/             # CVM1 bytecode assembler, disassembler, and sandboxed interpreter (incl. polyglot exec + capability gates)
+├── crush-jit/            # Cranelift-based JIT backend (native execution tier)
+├── crush-aot/            # Ahead-of-time C codegen across all language walkers
+├── crush-ffi/            # C-ABI plugin interface
+├── crush-plugin-example/ # Example native plugin built on crush-ffi
+├── crush-python/         # PyO3 bindings exposing crush-cast to Python
+├── crush-debugger/       # Debugger hooks over crush-vm
+├── crush-lint/           # Static lint pass over CAST/CASM
+├── crush-macros/         # Proc-macros shared across the workspace
+├── crush-net/            # Mesh/network-facing bindings (crush-lang-sdk over mesh-proto)
+├── crush-tui/            # Terminal UI front-end
+├── crush-pkg/            # Package manager — cargo-like build tool for Crush (uses buckets for sandboxed script runtimes)
+└── crush-installer/      # Toolchain installer and uninstaller
 ```
 
 ## 🚀 Quick Start

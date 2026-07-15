@@ -1,9 +1,10 @@
 [package]
 name = "crush-pkg"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 description = "Crush language package manager — cargo-like build tool for Crush programs"
+readme = "../../README.md"
 license.workspace = true
 
 [[bin]]
@@ -37,7 +38,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Pinned-toolchain, sandboxed execution for script capsules (ScriptRunner) —
 # resolves node/python/bun/deno instead of shelling out to whatever happens
 # to be on the host PATH. Peer path-dep, flat projects/ layout.
-buckets = { path = "../../../buckets" }
+buckets = { path = "../../../buckets", package = "crush-buckets", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3"

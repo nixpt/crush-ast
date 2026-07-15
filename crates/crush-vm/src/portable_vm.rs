@@ -397,6 +397,27 @@ impl PortableVm {
                 let v = self.stack.remove(idx);
                 self.push(v);
             }
+            // `+` concatenates when EITHER side is a string. This MUST match scheduler.rs exactly:
+            // the two VMs run the same programs, and a divergence here is a silent miscompile.
+            //
+            // It was already diverging. This arm did not guard its operands, and to_f64_p ends in
+            // `_ => 0.0` — so portable_vm silently evaluated `"a" + "b"` to 0 and `"x: " + 5` to 5,
+            // while scheduler.rs raised a TypeError on the very same source. No error either way.
+            ADD if matches!(self.peek_n(0), Some(Value::Str(_)))
+                || matches!(self.peek_n(1), Some(Value::Str(_))) =>
+            {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.push(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
+            }
+            // Anything else non-numeric is a LOUD error, not a silent 0.
+            ADD | SUB | MUL | DIV | MOD
+                if !matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
+                    || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_))) =>
+            {
+                let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
+                return Err(VmError::TypeError { expected: "numeric", got });
+            }
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
@@ -466,14 +487,114 @@ impl PortableVm {
             NEG => {
                 let a = self.pop()?;
                 match a {
-                    Value::Int(i) => self.push(Value::Int(-i)),
-                    Value::Float(f) => self.push(Value::Float(-f)),
+                    Value::Int(x) => self.push(Value::Int(-x)),
+                    Value::Float(x) => self.push(Value::Float(-x)),
                     other => {
                         return Err(VmError::TypeError {
                             expected: "numeric",
                             got: value_type_name(&other),
                         });
                     }
+                }
+            }
+            MATH_POW => {
+                let exp = self.pop()?;
+                let base = self.pop()?;
+                let base_f = to_f64_p(&base);
+                let exp_f = to_f64_p(&exp);
+                self.push(Value::Float(base_f.powf(exp_f)));
+            }
+            MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL => {
+                let a = self.pop()?;
+                let af = to_f64_p(&a);
+                let res = match opcode {
+                    MATH_SQRT => af.sqrt(),
+                    MATH_ABS => af.abs(),
+                    MATH_ROUND => af.round(),
+                    MATH_FLOOR => af.floor(),
+                    MATH_CEIL => af.ceil(),
+                    _ => unreachable!(),
+                };
+                self.push(Value::Float(res));
+            }
+            VEC_ADD => {
+                let right = self.pop()?;
+                let left = self.pop()?;
+                if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                    let a_ref = a.borrow();
+                    let b_ref = b.borrow();
+                    let len = a_ref.len().min(b_ref.len());
+                    let mut res = Vec::with_capacity(len);
+                    for i in 0..len {
+                        let va = to_f64_p(&a_ref[i]);
+                        let vb = to_f64_p(&b_ref[i]);
+                        res.push(Value::Float(va + vb));
+                    }
+                    self.push(Value::new_array(res));
+                } else {
+                    return Err(VmError::TypeError {
+                        expected: "array",
+                        got: "non-array in VEC_ADD".into(),
+                    });
+                }
+            }
+            VEC_DOT => {
+                let right = self.pop()?;
+                let left = self.pop()?;
+                if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                    let a_ref = a.borrow();
+                    let b_ref = b.borrow();
+                    let len = a_ref.len().min(b_ref.len());
+                    let mut sum = 0.0;
+                    for i in 0..len {
+                        let va = to_f64_p(&a_ref[i]);
+                        let vb = to_f64_p(&b_ref[i]);
+                        sum += va * vb;
+                    }
+                    self.push(Value::Float(sum));
+                } else {
+                    return Err(VmError::TypeError {
+                        expected: "array",
+                        got: "non-array in VEC_DOT".into(),
+                    });
+                }
+            }
+            MAT_MUL => {
+                // Naive Matrix Multiply assuming arrays of arrays (List[List[float]])
+                let right = self.pop()?;
+                let left = self.pop()?;
+                if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                    let a_ref = a.borrow();
+                    let b_ref = b.borrow();
+                    let mut res = Vec::new();
+                    // Just fallback to returning null if shape is bad for now
+                    if a_ref.is_empty() || b_ref.is_empty() {
+                        self.push(Value::new_array(vec![]));
+                    } else {
+                        let rows_a = a_ref.len();
+                        let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
+                        let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
+                        
+                        for i in 0..rows_a {
+                            let mut row_res = Vec::new();
+                            for j in 0..cols_b {
+                                let mut sum = 0.0;
+                                for k in 0..cols_a {
+                                    let val_a = if let Value::Array(r) = &a_ref[i] { to_f64_p(&r.borrow()[k]) } else { 0.0 };
+                                    let val_b = if let Value::Array(r) = &b_ref[k] { to_f64_p(&r.borrow()[j]) } else { 0.0 };
+                                    sum += val_a * val_b;
+                                }
+                                row_res.push(Value::Float(sum));
+                            }
+                            res.push(Value::new_array(row_res));
+                        }
+                        self.push(Value::new_array(res));
+                    }
+                } else {
+                    return Err(VmError::TypeError {
+                        expected: "array",
+                        got: "non-array in MAT_MUL".into(),
+                    });
                 }
             }
             EQ | NE => {
@@ -826,12 +947,29 @@ impl PortableVm {
                     value_to_text(&err_val)
                 )));
             }
-            STR_CONTAINS => {
+            STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
                 let needle = self.pop()?;
                 let haystack = self.pop()?;
-                self.push(Value::Bool(
-                    value_to_text(&haystack).contains(&value_to_text(&needle)),
-                ));
+                let haystack_str = value_to_text(&haystack);
+                let pattern_str = value_to_text(&needle);
+                let res = match opcode {
+                    STR_CONTAINS => haystack_str.contains(&pattern_str),
+                    STR_STARTS_WITH => haystack_str.starts_with(&pattern_str),
+                    STR_ENDS_WITH => haystack_str.ends_with(&pattern_str),
+                    _ => unreachable!(),
+                };
+                self.push(Value::Bool(res));
+            }
+            STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => {
+                let s = self.pop()?;
+                let text = value_to_text(&s);
+                let res = match opcode {
+                    STR_TO_UPPER => text.to_uppercase(),
+                    STR_TO_LOWER => text.to_lowercase(),
+                    STR_TRIM => text.trim().to_string(),
+                    _ => unreachable!(),
+                };
+                self.push(Value::Str(res));
             }
             STR_SPLIT => {
                 let delim = self.pop()?;
@@ -920,8 +1058,24 @@ impl PortableVm {
                     }
                 }
                 var_values.reverse();
-                let mut cmd = std::process::Command::new(lang);
-                cmd.arg("-c").arg(code_str);
+                // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
+                // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
+                // named "javascript" with `-c`. An unknown language is a loud error, never a
+                // silent spawn attempt.
+                let (binary, exec_flag) = crate::scheduler::resolve_lang_binary(lang)
+                    .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
+                // CAPABILITY GATE — must match scheduler.rs exactly (crush-diff would catch drift).
+                // A @lang block spawns an interpreter with full host authority; require polyglot.<lang>.
+                let gate = crate::scheduler::canonical_lang(lang)
+                    .map(|c| format!("polyglot.{c}"))
+                    .unwrap_or_else(|| format!("polyglot.{lang}"));
+                if self.host_caps.as_ref().map(|h| h.get(&gate).is_none()).unwrap_or(true) {
+                    return Err(VmError::UnknownCap(format!(
+                        "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
+                    )));
+                }
+                let mut cmd = std::process::Command::new(binary);
+                cmd.arg(exec_flag).arg(code_str);
                 for (name, val) in var_names.iter().zip(var_values.iter()) {
                     cmd.env(name, value_to_text(val));
                 }
@@ -939,6 +1093,10 @@ impl PortableVm {
                     let err = String::from_utf8_lossy(&output.stderr);
                     return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
                 }
+            }
+            AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
+                // Portable VM does not support async AI opcodes. Stub to Null.
+                self.push(Value::Null);
             }
             SPAWN => {
                 let argc = u16::from_be_bytes(
@@ -1060,32 +1218,51 @@ impl PortableVm {
                         }),
                     }
                 }
-                "make_range" => {
-                    let start = match &args[0] {
-                        Value::Int(i) => *i,
-                        other => {
-                            return Err(VmError::TypeError {
-                                expected: "int",
-                                got: value_type_name(other),
-                            });
+                                "make_range" => {
+                    let (start, end) = match args.len() {
+                        0 => (0i64, 100i64),
+                        1 => {
+                            let end = match &args[0] { Value::Int(i) => *i, _ => 100 };
+                            (0, end.max(0))
                         }
-                    };
-                    let end = match &args[1] {
-                        Value::Int(i) => *i,
-                        other => {
-                            return Err(VmError::TypeError {
-                                expected: "int",
-                                got: value_type_name(other),
-                            });
+                        _ => {
+                            let s = match &args[0] { Value::Int(i) => *i, _ => 0 };
+                            let e = match &args[1] { Value::Int(i) => *i, _ => 0 };
+                            (s, e)
                         }
                     };
                     let mut elems = Vec::new();
-                    if start < end {
-                        for i in start..end {
-                            elems.push(Value::Int(i));
-                        }
-                    }
+                    if start < end { for i in start..end { elems.push(Value::Int(i)); } }
                     Ok(Some(Value::new_array(elems)))
+                }
+                "append" | "push" => {
+                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                    match &args[0] {
+                        Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(None) }
+                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    }
+                }
+                "arr_set" => {
+                    if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                    match &args[0] {
+                        Value::Array(elems) => {
+                            let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                            let mut arr = elems.borrow_mut();
+                            if idx < arr.len() { arr[idx] = args[2].clone(); }
+                            Ok(None)
+                        }
+                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    }
+                }
+                "arr_get" => {
+                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                    match &args[0] {
+                        Value::Array(elems) => {
+                            let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                            Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                        }
+                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    }
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
@@ -1137,6 +1314,14 @@ impl PortableVm {
 
     fn peek(&self) -> Result<&Value, VmError> {
         self.stack.last().ok_or(VmError::StackUnderflow)
+    }
+
+    /// Peek `n` values down the stack without popping (0 = top).
+    ///
+    /// The ADD arms must inspect operand TYPES before committing to a numeric or a string
+    /// interpretation, which they cannot do after popping.
+    fn peek_n(&self, n: usize) -> Option<&Value> {
+        self.stack.len().checked_sub(n + 1).and_then(|k| self.stack.get(k))
     }
 
     fn check_step_quota(&self) -> Result<(), VmError> {
@@ -1240,6 +1425,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
         Value::Handle(_) => "handle",
+        Value::Foreign(_) => "foreign",
     }
 }
 
@@ -1272,6 +1458,7 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Error(e) => format!("error({})", e),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         Value::Handle(id) => format!("<handle {}>", id),
+        Value::Foreign(id) => format!("<foreign {}>", id),
     }
 }
 
@@ -1288,6 +1475,7 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Error(_) => true,
         Value::Bytes(b) => !b.is_empty(),
         Value::Handle(_) => true,
+        Value::Foreign(_) => true,
     }
 }
 
@@ -1627,6 +1815,9 @@ HALT"#;
         );
         let program = assemble(&src, None, Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
+        let mut caps = crate::HostCaps::new();
+        caps.grant_polyglot(&["bash"]);
+        vm.set_host_caps(caps);
         let result = vm.run().unwrap();
         assert_eq!(result.output, "hello");
         assert!(result.halted);
@@ -1648,6 +1839,9 @@ HALT"#;
         );
         let program = assemble(&src, None, Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
+        let mut caps = crate::HostCaps::new();
+        caps.grant_polyglot(&["bash"]);
+        vm.set_host_caps(caps);
         let result = vm.run().unwrap();
         assert_eq!(result.output, "abAB");
         assert!(result.halted);

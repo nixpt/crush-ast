@@ -5,12 +5,13 @@ members = [
     "crates/crush-cast",
     "crates/casm",
     "crates/tree-sitter-crush",
-    "crates/walker-core",
-    "crates/wasm_walker",
+    "crates/crush-walker-core",
+    "crates/crush-lang-wasm",
+    "crates/crush-lang-dart",
     "crates/cli",
-    "crates/go_walker",
+    "crates/crush-lang-go",
     "crates/crush-lang-c",
-    "crates/zig_walker",
+    "crates/crush-lang-zig",
     "crates/crush-vm",
     "crates/crush-lang-sdk",
     "crates/crush-frontend",
@@ -20,6 +21,7 @@ members = [
     "crates/crush-diagnostics",
     "crates/crush-python",
     "crates/crush-lang-python",
+    "crates/crush-lang-nepali",
     "crates/crush-lang-rust",
     "crates/crush-lang-js",
     "crates/crush-lang-bash",
@@ -27,11 +29,13 @@ members = [
     "crates/crush-net",
     "crates/crush-debugger",
     "crates/crush-jit",
+    "crates/crush-macros",
+    "crates/crush-aot",
     "xtask"
-    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-ptx"]
+    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx"]
 
 [workspace.package]
-version       = "0.2.0"
+version       = "0.3.0"
 edition       = "2024"
 license       = "MIT OR Apache-2.0"
 homepage      = "https://github.com/nixpt/crush-ast"
@@ -39,20 +43,22 @@ repository    = "https://github.com/nixpt/crush-ast"
 rust-version  = "1.95.0"
 
 [workspace.dependencies]
-crush-errors      = { path = "crates/crush-errors",      version = "0.2.0" }
-crush-cast        = { path = "crates/crush-cast",        version = "0.2.0" }
-casm              = { path = "crates/casm",              version = "0.2.0" }
-crush-vm          = { path = "crates/crush-vm",          version = "0.2.0" }
-crush-frontend    = { path = "crates/crush-frontend",    version = "0.2.0" }
-crush-index       = { path = "crates/crush-index",       version = "0.2.0" }
-crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.2.0" }
-crush-debugger            = { path = "crates/crush-debugger",            version = "0.2.0" }
-crush-jit         = { path = "crates/crush-jit",         version = "0.2.0" }
+crush-errors      = { path = "crates/crush-errors",      version = "0.3.0" }
+crush-cast        = { path = "crates/crush-cast",        version = "0.3.0" }
+crush-cson        = { path = "crates/crush-cson",        version = "0.3.0" }
+casm              = { path = "crates/casm",              version = "0.3.0" }
+crush-vm          = { path = "crates/crush-vm",          version = "0.3.0" }
+crush-frontend    = { path = "crates/crush-frontend",    version = "0.3.0" }
+crush-index       = { path = "crates/crush-index",       version = "0.3.0" }
+crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.3.0" }
+crush-debugger            = { path = "crates/crush-debugger",            version = "0.3.0" }
+crush-jit         = { path = "crates/crush-jit",         version = "0.3.0" }
+crush-macros      = { path = "crates/crush-macros",      version = "0.3.0" }
+crush-aot         = { path = "crates/crush-aot",         version = "0.3.0" }
 yansi            = { version = "1.0", default-features = false }
-crush-diagnostics = { path = "crates/crush-diagnostics", version = "0.2.0" }
-tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.2.0" }
-walker-core       = { path = "crates/walker-core",       version = "0.1.0" }
-
+crush-diagnostics = { path = "crates/crush-diagnostics", version = "0.3.0" }
+tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.3.0" }
+crush-walker-core       = { path = "crates/crush-walker-core",       version = "0.3.0" }
 serde       = { version = "1.0", features = ["derive"] }
 serde_json  = "1.0"
 anyhow      = "1.0"
@@ -61,3 +67,13 @@ tree-sitter = "0.25"
 clap        = { version = "4.0", features = ["derive"] }
 chrono      = { version = "0.4", default-features = false, features = ["clock", "std"] }
 indexmap    = "2.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+
+# The AOT C codegen already passes -O3 -flto to gcc/clang.
+# This profile only governs Rust crates; C dependencies inherit
+# their own CFLAGS/LDFLAGS from the build environment.

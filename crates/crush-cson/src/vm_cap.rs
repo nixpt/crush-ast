@@ -2,7 +2,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crush_vm::host::{HostCap, HostCapSpec};
 use crush_vm::vm::Value;
-use crate::{CsonParser, CsonNode, CsonValue, CsonKey};
+use crate::parser::CsonParser;
+use crate::{CsonNode, CsonValue};
 
 /// Exposes the `cson.parse` capability to Crush VM.
 pub struct CsonParseCap;
@@ -34,9 +35,8 @@ fn node_to_value(node: CsonNode) -> Value {
         CsonValue::String(s) => Value::Str(s),
         CsonValue::Number(n) => Value::Float(n),
         CsonValue::Boolean(b) => Value::Bool(b),
+        CsonValue::Null => Value::Null,
         CsonValue::Synthesize(s) => {
-            // For now, return the synthesize prompt as a special string format.
-            // In a fully integrated runtime, this would trigger an AI prediction.
             Value::Str(format!("<< SYNTHESIZE: {} >>", s))
         },
         CsonValue::Array(arr) => {
@@ -46,11 +46,7 @@ fn node_to_value(node: CsonNode) -> Value {
         CsonValue::Object(obj) => {
             let mut map = std::collections::HashMap::new();
             for (k, v) in obj {
-                let key_str = match k {
-                    CsonKey::Exact(s) => s,
-                    CsonKey::Semantic(s) => format!("~{}", s), // Expose semantic keys with prefix
-                };
-                map.insert(key_str, node_to_value(v));
+                map.insert(k, node_to_value(v));
             }
             Value::Map(Rc::new(RefCell::new(map)))
         }

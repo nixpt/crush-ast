@@ -36,6 +36,38 @@ fn sub_mul_div() {
 }
 
 #[test]
+fn math_funcs() {
+    let src = "
+    PUSH 2
+    PUSH 3
+    MATH_POW
+    PUSH_F64 16.0
+    MATH_SQRT
+    PUSH -5
+    MATH_ABS
+    PUSH_F64 2.5
+    MATH_ROUND
+    PUSH_F64 2.7
+    MATH_FLOOR
+    PUSH_F64 2.1
+    MATH_CEIL
+    HALT
+    ";
+    let r = run_src(src);
+    assert_eq!(
+        r.stack,
+        vec![
+            Value::Float(8.0),
+            Value::Float(4.0),
+            Value::Float(5.0),
+            Value::Float(3.0),
+            Value::Float(2.0),
+            Value::Float(3.0),
+        ]
+    );
+}
+
+#[test]
 fn modulo() {
     let r = run_src("PUSH 10\nPUSH 3\nMOD\nHALT");
     assert_eq!(r.stack, vec![Value::Int(1)]);

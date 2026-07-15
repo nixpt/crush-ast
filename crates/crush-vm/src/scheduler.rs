@@ -16,6 +16,44 @@ use crate::vm::{Frame, GreenThread, Quotas, Value, VmError, VmResult};
 
 const SLICE_SIZE: usize = 50;
 
+/// Marks the line in a polyglot block's stdout that carries its marshaled
+/// return value, as JSON, so it can be told apart from the block's own
+/// ordinary prints (which must still flow through untouched — stdout is a
+/// shared channel, and the two must never be conflated). NUL bytes can't
+/// appear in ordinary program output, so this cannot collide by accident.
+pub const CRUSH_RESULT_SENTINEL: &str = "\u{0}CRUSH_RESULT\u{0}";
+
+/// Map an `@<lang>` polyglot block tag to the interpreter binary and the
+/// flag it uses to execute a code string (this is NOT uniform across
+/// languages — e.g. Node's `-c` means "check syntax only", not "execute";
+/// `-e` is Node's equivalent of Python's `-c`). Returns `None` for
+/// languages with no registered executor — callers must surface that as a
+/// loud error, never a silent no-op (an unknown/misspelled language should
+/// fail the same way whether or not one happens to exist on PATH under its
+/// bare tag name).
+/// Canonical capability-name suffix for a @lang tag: `python`/`py`/`python3` all map to the
+/// single grant `polyglot.python`. This is what a host must grant to allow that language.
+pub(crate) fn canonical_lang(lang: &str) -> Option<&'static str> {
+    match lang {
+        "python" | "python3" | "py" => Some("python"),
+        "javascript" | "js" | "es6" | "ecmascript" | "node" => Some("javascript"),
+        "bash" | "sh" => Some("bash"),
+        _ => None,
+    }
+}
+
+/// The @lang → (binary, exec-flag) allowlist. SHARED with portable_vm so the two backends can
+/// never drift on which languages run or how (found drifting by crush-diff: portable used the raw
+/// tag `javascript` with `-c`, scheduler mapped it to `node -e`).
+pub(crate) fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static str)> {
+    match lang {
+        "python" | "python3" | "py" => Some(("python3", "-c")),
+        "javascript" | "js" | "es6" | "ecmascript" | "node" => Some(("node", "-e")),
+        "bash" | "sh" => Some(("bash", "-c")),
+        _ => None,
+    }
+}
+
 /// Actions a green thread can request from the scheduler.
 pub(crate) enum StepAction {
     /// Normal execution: ip advanced to next_ip.
@@ -38,6 +76,19 @@ pub fn run_scheduled(
 ) -> Result<VmResult, VmError> {
     let code = &program.code;
     let n = code.len();
+    if n == 0 {
+        // A genuinely empty program (e.g. a source file that lowers to no CAST
+        // statements at all) is a degenerate but valid input, not an error —
+        // there's nothing to run. Every other exit path in this scheduler
+        // indexes into `code`/`threads` assuming at least one instruction
+        // exists; short-circuit here instead of panicking on `code[0]`.
+        return Ok(VmResult {
+            output: String::new(),
+            steps: 0,
+            halted: true,
+            stack: Vec::new(),
+        });
+    }
     let declared: std::collections::HashSet<&str> = program
         .manifest
         .permissions
@@ -280,6 +331,21 @@ fn execute_one(
             let a = pop!();
             push!(Value::Bool(a != b));
         }
+        // `+` is overloaded: numeric addition, and string concatenation when EITHER side is a
+        // string. `io.print("Python says 5^3 is: " + result)` — mixing a string with a number —
+        // is the single most common thing anyone writes, and it was a hard type error.
+        // (`"a" + "b"` already worked; only the MIXED case failed.)
+        ADD if matches!(stack.last(), Some(Value::Str(_)))
+            || matches!(stack.len().checked_sub(2).and_then(|k| stack.get(k)), Some(Value::Str(_))) =>
+        {
+            let b = pop!();
+            let a = pop!();
+            let joined = format!("{}{}", a.as_text(), b.as_text());
+            if joined.len() > quotas.max_output {
+                return Err(VmError::OutputQuota(quotas.max_output));
+            }
+            push!(Value::Str(joined));
+        }
         ADD | SUB | MUL | DIV | MOD | LT | GT | LE | GE => {
             let b = need_num!(pop!());
             let a = need_num!(pop!());
@@ -327,6 +393,106 @@ fn execute_one(
                 Value::Float(f) => Value::Float(-f),
                 _ => unreachable!(),
             });
+        }
+        MATH_POW => {
+            let exp = need_num!(pop!());
+            let base = need_num!(pop!());
+            let base_f = match base {
+                Value::Int(x) => x as f64,
+                Value::Float(x) => x,
+                _ => unreachable!(),
+            };
+            let exp_f = match exp {
+                Value::Int(x) => x as f64,
+                Value::Float(x) => x,
+                _ => unreachable!(),
+            };
+            push!(Value::Float(base_f.powf(exp_f)));
+        }
+        MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL => {
+            let a = need_num!(pop!());
+            let af = match a {
+                Value::Int(x) => x as f64,
+                Value::Float(x) => x,
+                _ => unreachable!(),
+            };
+            let res = match opcode {
+                MATH_SQRT => af.sqrt(),
+                MATH_ABS => af.abs(),
+                MATH_ROUND => af.round(),
+                MATH_FLOOR => af.floor(),
+                MATH_CEIL => af.ceil(),
+                _ => unreachable!(),
+            };
+            push!(Value::Float(res));
+        }
+        VEC_ADD => {
+            let right = pop!();
+            let left = pop!();
+            if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
+                let len = a_ref.len().min(b_ref.len());
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    res.push(Value::Float(va + vb));
+                }
+                push!(Value::new_array(res));
+            } else {
+                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+            }
+        }
+        VEC_DOT => {
+            let right = pop!();
+            let left = pop!();
+            if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
+                let len = a_ref.len().min(b_ref.len());
+                let mut sum = 0.0;
+                for i in 0..len {
+                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    sum += va * vb;
+                }
+                push!(Value::Float(sum));
+            } else {
+                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+            }
+        }
+        MAT_MUL => {
+            let right = pop!();
+            let left = pop!();
+            if let (Value::Array(a), Value::Array(b)) = (&left, &right) {
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
+                let mut res = Vec::new();
+                if a_ref.is_empty() || b_ref.is_empty() {
+                    push!(Value::new_array(vec![]));
+                } else {
+                    let rows_a = a_ref.len();
+                    let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
+                    let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
+                    for i in 0..rows_a {
+                        let mut row_res = Vec::new();
+                        for j in 0..cols_b {
+                            let mut sum = 0.0;
+                            for k in 0..cols_a {
+                                let va = if let Value::Array(r) = &a_ref[i] { match &r.borrow()[k] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
+                                let vb = if let Value::Array(r) = &b_ref[k] { match &r.borrow()[j] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
+                                sum += va * vb;
+                            }
+                            row_res.push(Value::Float(sum));
+                        }
+                        res.push(Value::new_array(row_res));
+                    }
+                    push!(Value::new_array(res));
+                }
+            } else {
+                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+            }
         }
         AND | OR => {
             let b = pop!();
@@ -553,8 +719,24 @@ fn execute_one(
                 }
             }
             var_values.reverse();
-            let mut cmd = std::process::Command::new(lang);
-            cmd.arg("-c").arg(code_str);
+            let (binary, exec_flag) = resolve_lang_binary(lang).ok_or_else(|| {
+                VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
+            })?;
+            // CAPABILITY GATE. A polyglot block spawns a real interpreter with the host process's
+            // full authority — `@python { import os; os.system(...) }` is arbitrary code exec. In a
+            // capability-based language that MUST be granted, exactly like fs.read or net.get.
+            // The grant is `polyglot.<lang>` in the host-caps registry (crush-run: --polyglot;
+            // exo-light: derived from the CapabilitySet). No grant → refuse, loudly.
+            let gate = canonical_lang(lang)
+                .map(|c| format!("polyglot.{c}"))
+                .unwrap_or_else(|| format!("polyglot.{lang}"));
+            if host_caps.map(|h| h.get(&gate).is_none()).unwrap_or(true) {
+                return Err(VmError::UnknownCap(format!(
+                    "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
+                )));
+            }
+            let mut cmd = std::process::Command::new(binary);
+            cmd.arg(exec_flag).arg(code_str);
             for (name, val) in var_names.iter().zip(var_values.iter()) {
                 cmd.env(name, val.as_text());
             }
@@ -562,17 +744,38 @@ fn execute_one(
                 .output()
                 .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
             if output.status.success() {
-                let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                *out_len += s.len();
+                let raw = String::from_utf8_lossy(&output.stdout);
+                let mut visible_lines: Vec<&str> = Vec::new();
+                let mut result_payload: Option<&str> = None;
+                for line in raw.lines() {
+                    match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
+                        // Last one wins, matching "the block's final bound
+                        // output" if it somehow printed the sentinel more
+                        // than once.
+                        Some(payload) => result_payload = Some(payload),
+                        None => visible_lines.push(line),
+                    }
+                }
+                let visible = visible_lines.join("\n").trim().to_string();
+                *out_len += visible.len();
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(s.clone());
-                push!(Value::Str(s));
+                out_parts.push(visible.clone());
+                let result_value = match result_payload {
+                    Some(payload) => serde_json::from_str::<Value>(payload)
+                        .unwrap_or_else(|_| Value::Str(payload.to_string())),
+                    None => Value::Str(visible),
+                };
+                push!(result_value);
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
             }
+        }
+        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
+            // Scheduler VM does not support async AI opcodes natively yet. Stub to Null.
+            push!(Value::Null);
         }
         ENTER_TRY => {
             let target = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap()) as usize;
@@ -593,10 +796,29 @@ fn execute_one(
             }
             return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
         }
-        STR_CONTAINS => {
+        STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
             let needle = pop!();
             let haystack = pop!();
-            push!(Value::Bool(haystack.as_text().contains(&needle.as_text())));
+            let haystack_str = haystack.as_text();
+            let pattern_str = needle.as_text();
+            let res = match opcode {
+                STR_CONTAINS => haystack_str.contains(&pattern_str),
+                STR_STARTS_WITH => haystack_str.starts_with(&pattern_str),
+                STR_ENDS_WITH => haystack_str.ends_with(&pattern_str),
+                _ => unreachable!(),
+            };
+            push!(Value::Bool(res));
+        }
+        STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => {
+            let s = pop!();
+            let text = s.as_text();
+            let res = match opcode {
+                STR_TO_UPPER => text.to_uppercase(),
+                STR_TO_LOWER => text.to_lowercase(),
+                STR_TRIM => text.trim().to_string(),
+                _ => unreachable!(),
+            };
+            push!(Value::Str(res));
         }
         STR_SPLIT => {
             let delim = pop!();
@@ -835,11 +1057,50 @@ fn dispatch_cap(
                 }
             }
             "make_range" => {
-                let start = match &args[0] { Value::Int(i) => *i, other => { return Err(VmError::TypeError { expected: "int", got: other.type_name() }); } };
-                let end = match &args[1] { Value::Int(i) => *i, other => { return Err(VmError::TypeError { expected: "int", got: other.type_name() }); } };
+                let (start, end) = match args.len() {
+                    0 => (0i64, 100i64),  // large default, for-loop break handles exit
+                    1 => {
+                        let end = match &args[0] { Value::Int(i) => *i, _ => 100 };
+                        (0, end.max(0))
+                    }
+                    _ => {
+                        let s = match &args[0] { Value::Int(i) => *i, _ => 0 };
+                        let e = match &args[1] { Value::Int(i) => *i, _ => 0 };
+                        (s, e)
+                    }
+                };
                 let mut elems = Vec::new();
                 if start < end { for i in start..end { elems.push(Value::Int(i)); } }
                 Ok(Some(Value::new_array(elems)))
+            }
+            "append" | "push" => {
+                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(None) }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
+            }
+            "arr_set" => {
+                if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                        let mut arr = elems.borrow_mut();
+                        if idx < arr.len() { arr[idx] = args[2].clone(); }
+                        Ok(None)
+                    }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
+            }
+            "arr_get" => {
+                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                        Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                    }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
             }
             _ => Err(VmError::UnknownCap(cap.to_string())),
         };

@@ -1,8 +1,9 @@
 [package]
 name = "crush-lang-rust"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Rust language support for Crush — parser + CAST lowering backed by syn"
+readme = "../../README.md"
 license.workspace = true
 repository.workspace = true
 
@@ -12,14 +13,14 @@ path = "src/bin/walker.rs"
 
 [dependencies]
 crush-cast.workspace = true
-walker-core.workspace = true
+crush-walker-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 
 [dev-dependencies]
-crush-frontend = { path = "../crush-frontend" }
-crush-lang-sdk = { path = "../crush-lang-sdk" }
-crush-vm = { path = "../crush-vm" }
+crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
+crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.0" }
+crush-vm = { path = "../crush-vm", version = "0.3.0" }
 

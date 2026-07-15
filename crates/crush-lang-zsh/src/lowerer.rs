@@ -1,6 +1,6 @@
 use crush_cast::{CastType, Expression, Function, Program, Statement};
 use std::collections::HashMap;
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 use zshrs_parse::lexer::untokenize;
 use zshrs_parse::parser::*;
 

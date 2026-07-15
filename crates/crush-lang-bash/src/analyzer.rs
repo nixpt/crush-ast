@@ -1,5 +1,5 @@
 use brush_parser::ast::{self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline};
-use walker_core::FeatureReport;
+use crush_walker_core::FeatureReport;
 
 const DANGEROUS_COMMANDS: &[&str] = &[
     "eval", "exec", "source", ".", "alias", "unset", "trap", "kill",

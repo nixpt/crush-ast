@@ -1,0 +1,11 @@
+let a = 100;
+let b = a + 50;
+let c = b * 3;
+let d = c - 200;
+let e = Math.floor(d / 5);
+let f = e + 77;
+let g = f * 2;
+let h = g - 100;
+let i = h + 1;
+let j = i * 3;
+console.log(j);

@@ -21,11 +21,11 @@ fn walker_binary(ext: &str) -> Option<&'static str> {
         "js" | "mjs" | "cjs" => Some("js_walker"),
         "ts" | "tsx" | "mts" => Some("js_walker"),
         "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" => Some("c_walker"),
-        "go" => Some("go_walker"),
-        "zig" => Some("zig_walker"),
+        "go" => Some("crush_lang_go"),
+        "zig" => Some("crush_lang_zig"),
         "sh" | "bash" => Some("bash_walker"),
         "zsh" => Some("zsh_walker"),
-        "wasm" => Some("wasm_walker"),
+        "wasm" => Some("crush_lang_wasm"),
         _ => None,
     }
 }

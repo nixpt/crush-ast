@@ -24,10 +24,6 @@
 //
 // This is the "element kernel" that crush-aotc can vectorise with AVX2.
 
-@module {
-    @description "Q6_K dequantization kernel — CPU AOT path"
-    @kernel
-}
 
 // Element kernel: one Q6_K element → one fp64 activation value.
 // crush-aotc detects the pattern (load * const * const) and emits AVX2 fmadd.

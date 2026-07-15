@@ -1,6 +1,6 @@
 [package]
 name = "crush-lang-sdk"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Rust SDK for hosting and extending the crush-vm CVM1 runtime"
 license.workspace = true
@@ -40,8 +40,10 @@ chrono.workspace = true
 crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
+crush-lang-python = { path = "../crush-lang-python", version = "0.3.0" }
 crush-errors.workspace = true
 crush-index.workspace = true
+crush-cson.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser as ClapParser;
-use walker_core::run_walker_binary;
+use crush_walker_core::run_walker_binary;
 
 #[derive(ClapParser)]
 #[command(name = "c_walker")]

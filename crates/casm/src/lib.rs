@@ -178,6 +178,26 @@ pub enum OpCode {
         var_count: usize,
     },
 
+    // AI opcodes
+    AiQuery(serde_json::Value),
+    AiToolchain(serde_json::Value),
+    AiAgentDelegation(serde_json::Value),
+    AiLearningLoop(serde_json::Value),
+    AiContextAware(serde_json::Value),
+    AiSemanticMatch(serde_json::Value),
+    AiSynthesize(serde_json::Value),
+    MathPow,
+    MathSqrt,
+    MathAbs,
+    MathRound,
+    MathFloor,
+    MathCeil,
+    StrStartsWith,
+    StrEndsWith,
+    StrToUpper,
+    StrToLower,
+    StrTrim,
+
     // Program control
     Halt, // Halt execution
 
@@ -194,6 +214,8 @@ pub struct Function {
     pub params: Vec<String>,
     #[serde(default)]
     pub locals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_hints: Option<HashMap<String, String>>,
     pub body: Vec<Instruction>,
 }
 
@@ -426,8 +448,26 @@ impl Instruction {
             "call_interface" => Ok(OpCode::CallInterface {
                 handle: self.require_field("handle", |v| v.as_str().map(String::from))?,
                 method: self.require_field("method", |v| v.as_str().map(String::from))?,
-                argc: self.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                argc: self.require_field("argc", |v| v.as_u64().map(|n| n as usize))?,
             }),
+            "ai_query" => Ok(OpCode::AiQuery(self.args.clone())),
+            "ai_toolchain" => Ok(OpCode::AiToolchain(self.args.clone())),
+            "ai_agent_delegation" => Ok(OpCode::AiAgentDelegation(self.args.clone())),
+            "ai_learning_loop" => Ok(OpCode::AiLearningLoop(self.args.clone())),
+            "ai_context_aware" => Ok(OpCode::AiContextAware(self.args.clone())),
+            "ai_semantic_match" => Ok(OpCode::AiSemanticMatch(self.args.clone())),
+            "ai_synthesize" => Ok(OpCode::AiSynthesize(self.args.clone())),
+            "math_pow" => Ok(OpCode::MathPow),
+            "math_sqrt" => Ok(OpCode::MathSqrt),
+            "math_abs" => Ok(OpCode::MathAbs),
+            "math_round" => Ok(OpCode::MathRound),
+            "math_floor" => Ok(OpCode::MathFloor),
+            "math_ceil" => Ok(OpCode::MathCeil),
+            "str_starts_with" => Ok(OpCode::StrStartsWith),
+            "str_ends_with" => Ok(OpCode::StrEndsWith),
+            "str_to_upper" => Ok(OpCode::StrToUpper),
+            "str_to_lower" => Ok(OpCode::StrToLower),
+            "str_trim" => Ok(OpCode::StrTrim),
             _ => Err(CasmError::UnknownOpcode(self.op.clone()).into()),
         }
     }

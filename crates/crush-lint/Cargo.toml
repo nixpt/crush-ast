@@ -1,5 +1,7 @@
 [package]
 name = "crush-lint"
+description = "AI-augmented linter for Crush — an ONNX-backed engine that supplements standard compiler diagnostics."
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +10,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-crush-diagnostics = { path = "../crush-diagnostics" }
+crush-diagnostics = { path = "../crush-diagnostics", version = "0.3.0" }
 ort = "2.0.0-rc.2" # Same version used in crush-vm
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-casm = { path = "../casm" }
+casm = { path = "../casm", version = "0.3.0" }
 parking_lot = "0.12.5"

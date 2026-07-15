@@ -2,7 +2,7 @@
 license.workspace = true
 description = "Crush Assembly (CASM) — bytecode format for the Crush VM"
 name = "casm"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 repository.workspace = true
 homepage.workspace = true

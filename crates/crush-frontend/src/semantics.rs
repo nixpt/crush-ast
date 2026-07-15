@@ -159,6 +159,10 @@ impl SemanticAnalyzer {
                 let ret = self.parse_cast_type(returns)?;
                 Ok(Type::Function(param_types, Box::new(ret)))
             }
+            CastType::F32 => Ok(Type::Float),
+            CastType::BigInt => Ok(Type::Int),
+            CastType::Complex => Ok(Type::Float),
+            CastType::Tensor(inner) => Ok(Type::Array(Box::new(self.parse_cast_type(inner)?))),
             CastType::Any => Ok(Type::Any),
             CastType::TypeRef(name) | CastType::Struct(name) => {
                 if self.structs.contains_key(name) {
@@ -241,6 +245,20 @@ impl SemanticAnalyzer {
                 }
             }
             Statement::StructDef { .. } => {} // Already handled in Pass 1
+            Statement::LangBlock { meta, .. } => {
+                // A polyglot block's own body is opaque to Crush's checker
+                // (it's a different language's source text), but if a
+                // free-variable analysis pass (crush-lang-sdk::compile, for
+                // @python blocks) determined an output variable and
+                // recorded it in meta["polyglot_output"], that name is
+                // real and must be declared here — otherwise every read of
+                // it later in the same scope reports as undefined, even
+                // though the compiler emits a `store` into exactly that
+                // name right after `exec_lang`.
+                if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
+                    self.define_var(output_var, Type::Any);
+                }
+            }
             _ => {
                 // TODO: Implement remaining statements
             }
@@ -555,6 +573,10 @@ impl SemanticAnalyzer {
                     let ty = self.check_expr(value)?;
                     self.define_var(name, ty);
                 }
+                Statement::Assign { target, value, .. } => {
+                    let ty = self.check_expr(value)?;
+                    // In a stricter lang we'd check if target is defined and matches ty.
+                }
                 Statement::ExprStmt { expr, .. } => {
                     self.check_expr(expr)?;
                 }
@@ -620,6 +642,17 @@ impl SemanticAnalyzer {
                     self.define_var(error_var, Type::Any);
                     self.collect_return_types_in_order(handler, out)?;
                     self.exit_scope();
+                }
+                Statement::LangBlock { meta, .. } => {
+                    // See the matching arm in `check_stmt` for why this is
+                    // needed: a polyglot block's marshaled output variable
+                    // (meta["polyglot_output"]) is real and must be
+                    // declared, or any read of it later in this same
+                    // return-type-inference walk reports as undefined.
+                    if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str())
+                    {
+                        self.define_var(output_var, Type::Any);
+                    }
                 }
                 _ => {}
             }

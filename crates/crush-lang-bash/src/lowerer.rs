@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use brush_parser::ast::{self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline, SourceLocation};
 use crush_cast::{CastType, Expression, Function, Program, Statement};
-use walker_core::LowerCtx;
+use crush_walker_core::LowerCtx;
 
 /// Get source position metadata from a brush-parser AST node.
 fn node_meta<T: SourceLocation>(node: &T, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {

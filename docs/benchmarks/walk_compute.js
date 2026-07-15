@@ -1,0 +1,10 @@
+var a = 100;
+var b = a + 50;
+var c = b * 3;
+var d = c - 200;
+var e = d / 5;
+var f = e + 77;
+var g = f * 2;
+var h = g - 100;
+var i = h + 1;
+var j = i * 3;

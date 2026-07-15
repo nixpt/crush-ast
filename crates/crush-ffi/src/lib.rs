@@ -3,7 +3,7 @@
 use std::ffi::{c_char, CStr, CString};
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FfiType {
     Null = 0,
     Bool = 1,
@@ -11,6 +11,8 @@ pub enum FfiType {
     Float = 3,
     String = 4,
     Error = 5,
+    Array = 6,
+    Object = 7,
 }
 
 #[repr(C)]
@@ -30,6 +32,29 @@ impl FfiString {
             std::str::from_utf8(slice).ok()
         }
     }
+
+    /// Create an FfiString from a Rust &str (caller must keep source alive).
+    pub fn from_str(s: &str) -> Self {
+        FfiString {
+            ptr: s.as_ptr() as *const c_char,
+            len: s.len(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct FfiArray {
+    pub ptr: *const FfiValue,
+    pub len: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct FfiObject {
+    /// Opaque pointer to heap-allocated object data.
+    pub ptr: *mut std::ffi::c_void,
+    pub len: usize,
 }
 
 #[repr(C)]
@@ -39,6 +64,8 @@ pub union FfiValueData {
     pub integer: i64,
     pub float: f64,
     pub string: FfiString,
+    pub array: FfiArray,
+    pub object: FfiObject,
 }
 
 #[repr(C)]
@@ -53,6 +80,25 @@ impl Default for FfiValue {
             tag: FfiType::Null,
             data: FfiValueData { integer: 0 },
         }
+    }
+}
+
+impl FfiValue {
+    pub fn null() -> Self { Self::default() }
+    pub fn from_bool(b: bool) -> Self {
+        FfiValue { tag: FfiType::Bool, data: FfiValueData { boolean: b } }
+    }
+    pub fn from_int(i: i64) -> Self {
+        FfiValue { tag: FfiType::Int, data: FfiValueData { integer: i } }
+    }
+    pub fn from_float(f: f64) -> Self {
+        FfiValue { tag: FfiType::Float, data: FfiValueData { float: f } }
+    }
+    pub fn from_string(s: &str) -> Self {
+        FfiValue { tag: FfiType::String, data: FfiValueData { string: FfiString::from_str(s) } }
+    }
+    pub fn error(msg: &str) -> Self {
+        FfiValue { tag: FfiType::Error, data: FfiValueData { string: FfiString::from_str(msg) } }
     }
 }
 

@@ -3,7 +3,9 @@ use crush_cast::{self as ast, CastType, Expression, Statement};
 use serde_json::json;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
-use walker_core::{BaseWalker, Walker};
+
+pub mod sdk;
+use crush_walker_core::{BaseWalker, Walker};
 
 #[cfg(test)]
 #[path = "sdk.rs"]
@@ -111,12 +113,30 @@ impl<'a> Visitor<'a> {
                 for child in node.children(&mut node.walk()) {
                     if child.kind() == "init_declarator" {
                         let name_node = child.child_by_field_name("declarator").unwrap();
-                        let name = self.base.text(name_node)?.to_string();
-                        let value_node = child.child_by_field_name("value").unwrap();
-                        let value = self.visit_expression(value_node)?;
+                        let name = self.extract_name_from_declarator(name_node)?.to_string();
+                        if let Some(value_node) = child.child_by_field_name("value") {
+                            let value = self.visit_expression(value_node)?;
+                            decls.push(Statement::VarDecl {
+                                name,
+                                value,
+                                type_hint: CastType::Any,
+                                meta: meta.clone(),
+                            });
+                        } else {
+                            // Bare declarator with no value (e.g., `int x;` inside init_declarator)
+                            decls.push(Statement::VarDecl {
+                                name,
+                                value: Expression::NullLiteral { meta: meta.clone() },
+                                type_hint: CastType::Any,
+                                meta: meta.clone(),
+                            });
+                        }
+                    } else if child.kind() == "declarator" || child.kind() == "array_declarator" {
+                        // Multi-variable declarations: `int i, j;` or `int arr[10];`
+                        let name = self.extract_name_from_declarator(child)?.to_string();
                         decls.push(Statement::VarDecl {
                             name,
-                            value,
+                            value: Expression::NullLiteral { meta: meta.clone() },
                             type_hint: CastType::Any,
                             meta: meta.clone(),
                         });
@@ -280,6 +300,167 @@ impl<'a> Visitor<'a> {
                 
                 Ok(for_statements)
             }
+            "break_statement" => {
+                Ok(vec![Statement::Break { meta }])
+            }
+            "continue_statement" => {
+                Ok(vec![Statement::Continue { meta }])
+            }
+            "do_statement" => {
+                // do { body } while (condition);
+                let body_node = node.child_by_field_name("body").unwrap();
+                let body = self.visit_block_or_statement(body_node)?;
+                let cond_node = node
+                    .child_by_field_name("condition")
+                    .unwrap()
+                    .child(1)
+                    .unwrap(); // inside parens
+                let condition = self.visit_expression(cond_node)?;
+                // Desugar: body + while(condition) { body }
+                let mut stmts = body.clone();
+                stmts.push(Statement::While {
+                    condition: Box::new(condition),
+                    body,
+                    meta: meta.clone(),
+                });
+                Ok(stmts)
+            }
+            "switch_statement" => {
+                // switch (expr) { case val1: ... case val2: ... default: ... }
+                // Desugar to if-else chain (no fallthrough support)
+                let cond_node = node
+                    .child_by_field_name("condition")
+                    .unwrap()
+                    .child(1)
+                    .unwrap(); // inside parens
+                let switch_cond = self.visit_expression(cond_node)?;
+                let body_node = node.child_by_field_name("body").unwrap();
+
+                // Collect cases from body
+                let mut cases: Vec<(Option<Expression>, Vec<Statement>)> = Vec::new();
+
+                for child in body_node.children(&mut body_node.walk()) {
+                    match child.kind() {
+                        "case_statement" => {
+                            let mut case_body = Vec::new();
+                            let val_node = child.child_by_field_name("value");
+                            let case_val = if let Some(vn) = val_node {
+                                Some(self.visit_expression(vn)?)
+                            } else {
+                                None
+                            };
+                            for case_child in child.children(&mut child.walk()) {
+                                if case_child.kind() != "case"
+                                    && case_child.kind() != "value"
+                                    && case_child.kind() != ":"
+                                {
+                                    if let Ok(stmts) = self.visit_statement(case_child) {
+                                        case_body.extend(stmts);
+                                    }
+                                }
+                            }
+                            // Filter out break/continue — they belong to the switch, not a loop
+                            case_body.retain(|s| {
+                                !matches!(s, Statement::Break { .. } | Statement::Continue { .. })
+                            });
+                            cases.push((case_val, case_body));
+                        }
+                        "default_statement" => {
+                            let mut case_body = Vec::new();
+                            for case_child in child.children(&mut child.walk()) {
+                                if case_child.kind() != "default" && case_child.kind() != ":" {
+                                    if let Ok(stmts) = self.visit_statement(case_child) {
+                                        case_body.extend(stmts);
+                                    }
+                                }
+                            }
+                            case_body.retain(|s| {
+                                !matches!(s, Statement::Break { .. } | Statement::Continue { .. })
+                            });
+                            cases.push((None, case_body));
+                        }
+                        "{" | "}" => {} // skip braces
+                        _ => {} // ignore other nodes inside switch body
+                    }
+                }
+
+                if cases.is_empty() {
+                    return Ok(vec![]);
+                }
+
+                // Build if-else chain from the cases
+                // For each case with a value: if (switch_cond == val) { stmts }
+                // For the default case (value = None): else { stmts }
+                let first = &cases[0];
+                let mut result_stmts: Vec<Statement> = Vec::new();
+
+                if first.0.is_some() {
+                    // First case: if (switch_cond == val1) { body1 }
+                    let mut else_chain: Option<Vec<Statement>> = None;
+                    // Build from the end
+                    for (i, (case_val, case_body)) in cases.iter().enumerate().rev() {
+                        if let Some(val) = case_val {
+                            let condition = Expression::BinaryOp {
+                                operator: "==".to_string(),
+                                left: Box::new(switch_cond.clone()),
+                                right: Box::new(val.clone()),
+                                meta: meta.clone(),
+                            };
+                            let if_stmt = Statement::If {
+                                condition,
+                                then_body: case_body.clone(),
+                                else_body: else_chain.take(),
+                                meta: meta.clone(),
+                            };
+                            if i == 0 {
+                                result_stmts.push(if_stmt);
+                            } else {
+                                else_chain = Some(vec![if_stmt]);
+                            }
+                        } else {
+                            // Default case — becomes the innermost else_body
+                            else_chain = Some(case_body.clone());
+                        }
+                    }
+                    // If there's a leftover else_chain from default not consumed by if-building
+                    if let Some(default_body) = else_chain {
+                        // It becomes a standalone block after the last if
+                        result_stmts.extend(default_body);
+                    }
+                } else {
+                    // First case is default — just emit it
+                    result_stmts.extend(first.1.clone());
+                    // Then handle remaining cases as if-else
+                    let remaining = &cases[1..];
+                    if !remaining.is_empty() {
+                        let mut else_chain: Option<Vec<Statement>> = None;
+                        for (i, (case_val, case_body)) in remaining.iter().enumerate().rev() {
+                            if let Some(val) = case_val {
+                                let condition = Expression::BinaryOp {
+                                    operator: "==".to_string(),
+                                    left: Box::new(switch_cond.clone()),
+                                    right: Box::new(val.clone()),
+                                    meta: meta.clone(),
+                                };
+                                let if_stmt = Statement::If {
+                                    condition,
+                                    then_body: case_body.clone(),
+                                    else_body: else_chain.take(),
+                                    meta: meta.clone(),
+                                };
+                                if i == 0 {
+                                    result_stmts.push(if_stmt);
+                                } else {
+                                    else_chain = Some(vec![if_stmt]);
+                                }
+                            } else {
+                                else_chain = Some(case_body.clone());
+                            }
+                        }
+                    }
+                }
+                Ok(result_stmts)
+            }
             "compound_statement" => {
                 self.visit_block(node)
             }
@@ -419,7 +600,7 @@ impl<'a> Visitor<'a> {
                 let func_name = self.base.text(func_node)?;
 
                 // Use centralized capability mapping
-                if let Some(cap_name) = walker_core::map_to_capability("c", func_name) {
+                if let Some(cap_name) = crush_walker_core::map_to_capability("c", func_name) {
                     return Ok(Expression::CapabilityCall {
                         name: cap_name.to_string(),
                         args,
@@ -669,5 +850,31 @@ mod tests {
         if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[5] {
             assert_eq!(function, "__crush_ternary__");
         } else { panic!("Expected __crush_ternary__"); }
+    }
+}
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use crush_walker_core::LanguageAdapter;
+
+pub struct CAdapter;
+impl LanguageAdapter for CAdapter {
+    fn language_name(&self) -> &'static str { "c" }
+    fn file_extensions(&self) -> &[&'static str] { &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"] }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("c");
+        let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
+        let mut parser = tree_sitter::Parser::new();
+        if is_cpp {
+            parser.set_language(&tree_sitter_cpp::LANGUAGE.into())
+                .map_err(|e| anyhow::anyhow!("tree-sitter-cpp init: {e}"))?;
+        } else {
+            parser.set_language(&tree_sitter_c::LANGUAGE.into())
+                .map_err(|e| anyhow::anyhow!("tree-sitter-c init: {e}"))?;
+        }
+        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
+        let walker = crate::CWalker { file_name: filename.to_string() };
+        let program = walker.walk(&tree, source.as_bytes())?;
+        Ok((crush_walker_core::FeatureReport { lang: "c".to_string(), ..Default::default() }, program))
     }
 }

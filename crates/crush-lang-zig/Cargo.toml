@@ -1,0 +1,29 @@
+[package]
+name = "crush-lang-zig"
+version.workspace = true
+edition = "2021"
+repository.workspace = true
+description = "Zig to CAST walker for CRUSH"
+readme = "../../README.md"
+license.workspace = true
+[lib]
+name = "crush_lang_zig"
+
+[[bin]]
+name = "crush-lang-zig"
+path = "src/main.rs"
+
+[dependencies]
+crush-cast.workspace = true
+tree-sitter.workspace = true
+tree-sitter-zig = "1.1"
+clap.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+crush-walker-core.workspace = true
+
+[dev-dependencies]
+crush-frontend.workspace = true
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

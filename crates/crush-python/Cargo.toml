@@ -1,6 +1,6 @@
 [package]
 name = "crush-python"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 description = "Python bindings for crush-cast — parse and validate CAST IR from Python"
 license.workspace = true
@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 crush-cast.workspace = true
 crush-vm.workspace = true
 casm.workspace = true
-crush-cson = { path = "../crush-cson" }
+crush-cson = { path = "../crush-cson", version = "0.3.0" }
 serde_json.workspace = true
 pyo3 = { version = "0.23", features = ["abi3", "abi3-py311"] }
 

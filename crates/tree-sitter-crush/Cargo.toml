@@ -2,7 +2,7 @@
 license.workspace = true
 description = "Tree-sitter grammar for the Crush programming language"
 name = "tree-sitter-crush"
-version = "0.2.0"
+version.workspace = true
 edition = "2021"
 repository.workspace = true
 homepage.workspace = true
