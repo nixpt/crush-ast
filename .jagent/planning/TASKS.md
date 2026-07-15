@@ -24,6 +24,8 @@
 - [ ] Fill 18 zero-coverage error paths
 - [ ] Fix MOD sign bug between portable_vm and FastVM
 - [ ] Add EXEC_LANG opcode to PortableVm
+- [ ] **CRUSH-2**: array mutation effectively unusable — no index-assignment, `.push()` chaining broken, nested array-literal indexing broken (found porting `examples/crush/snake.crush`)
+- [ ] **CRUSH-3**: `examples/crush/fibonacci.crush` and `arrays_and_loops.crush` don't actually run against current `crushc`/`crush-run` (same discovery)
 
 ## P2 — Walkers & Frontends ✅
 

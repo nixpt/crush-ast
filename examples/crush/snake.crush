@@ -1,0 +1,282 @@
+# Snake — self-playing simulation.
+#
+# Ported from crush-capsules/games/snake (an aspirational vision file using
+# structs/enums/&mut refs/a Canvas+audio API/on_key_down callbacks — none of
+# which exist in current crush-ast). Real current Crush has no interactive
+# stdin, no sleep, no numeric RNG (only --crypto random bytes), no array
+# index-assignment, and array .push() cannot be chained onto a previous
+# .push() result (confirmed broken during porting) — so a live keyboard-
+# controlled game isn't representable today. This is an honest port within
+# those constraints: the snake plays itself (simple greedy pathing toward
+# food) and each tick renders as an ASCII frame via plain print().
+#
+# The snake body is a fixed number of trailing segments (6)
+# passed as explicit recursive-call arguments and shifted each tick —
+# arrays can't hold mutable growing state here, so this uses the VM's
+# actual working primitive (function-argument passing through recursion)
+# instead. Growth is real up to 6; food eaten beyond that only
+# adds score, documented below at 6.
+
+
+fn lcg_next(state) {
+    return (state * 1103515245 + 12345) % 2147483648;
+}
+
+fn render_cell(x, y, hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y) {
+    if x == hx {
+        if y == hy {
+            return "@";
+        }
+    }
+    if length > 1 {
+        if x == s1x {
+            if y == s1y {
+                return "o";
+            }
+        }
+    }
+    if length > 2 {
+        if x == s2x {
+            if y == s2y {
+                return "o";
+            }
+        }
+    }
+    if length > 3 {
+        if x == s3x {
+            if y == s3y {
+                return "o";
+            }
+        }
+    }
+    if length > 4 {
+        if x == s4x {
+            if y == s4y {
+                return "o";
+            }
+        }
+    }
+    if length > 5 {
+        if x == s5x {
+            if y == s5y {
+                return "o";
+            }
+        }
+    }
+    if x == food_x {
+        if y == food_y {
+            return "*";
+        }
+    }
+    return ".";
+}
+
+fn render_row(y, hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y) {
+    let line = "";
+    let x = 0;
+    while x < 16 {
+        line = line + render_cell(x, y, hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y);
+        x = x + 1;
+    }
+    print(line + "\n");
+}
+
+fn render_frame(hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y, score) {
+    let y = 0;
+    while y < 10 {
+        render_row(y, hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y);
+        y = y + 1;
+    }
+    print("score: " + score + "\n\n");
+}
+
+fn hits_body(x, y, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length) {
+    if length > 1 {
+        if x == s1x {
+            if y == s1y {
+                return true;
+            }
+        }
+    }
+    if length > 2 {
+        if x == s2x {
+            if y == s2y {
+                return true;
+            }
+        }
+    }
+    if length > 3 {
+        if x == s3x {
+            if y == s3y {
+                return true;
+            }
+        }
+    }
+    if length > 4 {
+        if x == s4x {
+            if y == s4y {
+                return true;
+            }
+        }
+    }
+    if length > 5 {
+        if x == s5x {
+            if y == s5y {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+# Greedy movement: reduce whichever axis has the larger gap to the food.
+fn choose_dx(hx, hy, food_x, food_y) {
+    let gap_x = food_x - hx;
+    let gap_y = food_y - hy;
+    let abs_x = gap_x;
+    if abs_x < 0 {
+        abs_x = 0 - abs_x;
+    }
+    let abs_y = gap_y;
+    if abs_y < 0 {
+        abs_y = 0 - abs_y;
+    }
+    if abs_x >= abs_y {
+        if gap_x > 0 {
+            return 1;
+        }
+        if gap_x < 0 {
+            return 0 - 1;
+        }
+    }
+    return 0;
+}
+
+fn choose_dy(hx, hy, food_x, food_y) {
+    let gap_x = food_x - hx;
+    let gap_y = food_y - hy;
+    let abs_x = gap_x;
+    if abs_x < 0 {
+        abs_x = 0 - abs_x;
+    }
+    let abs_y = gap_y;
+    if abs_y < 0 {
+        abs_y = 0 - abs_y;
+    }
+    if abs_x >= abs_y {
+        return 0;
+    }
+    if gap_y > 0 {
+        return 1;
+    }
+    return 0 - 1;
+}
+
+fn spawn_food(rng, hx, hy) {
+    let r = lcg_next(rng);
+    let fx = r % 16;
+    let fy = (r / 16) % 10;
+    if fx == hx {
+        if fy == hy {
+            return spawn_food(r, hx, hy);
+        }
+    }
+    return fx;
+}
+
+fn spawn_food_y(rng, hx, hy) {
+    let r = lcg_next(rng);
+    let fx = r % 16;
+    let fy = (r / 16) % 10;
+    if fx == hx {
+        if fy == hy {
+            return spawn_food_y(r, hx, hy);
+        }
+    }
+    return fy;
+}
+
+fn spawn_food_rng(rng, hx, hy) {
+    let r = lcg_next(rng);
+    let fx = r % 16;
+    let fy = (r / 16) % 10;
+    if fx == hx {
+        if fy == hy {
+            return spawn_food_rng(r, hx, hy);
+        }
+    }
+    return r;
+}
+
+fn tick(hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y, rng, score, ticks_left) {
+    render_frame(hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length, food_x, food_y, score);
+
+    if ticks_left <= 0 {
+        print("out of ticks — final score: " + score + "\n");
+        return score;
+    }
+
+    let dx = choose_dx(hx, hy, food_x, food_y);
+    let dy = choose_dy(hx, hy, food_x, food_y);
+    let nhx = hx + dx;
+    let nhy = hy + dy;
+
+    if nhx < 0 {
+        print("hit the wall — final score: " + score + "\n");
+        return score;
+    }
+    if nhx >= 16 {
+        print("hit the wall — final score: " + score + "\n");
+        return score;
+    }
+    if nhy < 0 {
+        print("hit the wall — final score: " + score + "\n");
+        return score;
+    }
+    if nhy >= 10 {
+        print("hit the wall — final score: " + score + "\n");
+        return score;
+    }
+    if hits_body(nhx, nhy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, s5x, s5y, length) {
+        print("hit itself — final score: " + score + "\n");
+        return score;
+    }
+
+    let ate = false;
+    if nhx == food_x {
+        if nhy == food_y {
+            ate = true;
+        }
+    }
+
+    let new_length = length;
+    let new_score = score;
+    let new_food_x = food_x;
+    let new_food_y = food_y;
+    let new_rng = rng;
+
+    if ate {
+        new_score = score + 10;
+        if length < 6 {
+            new_length = length + 1;
+        }
+        new_food_x = spawn_food(rng, nhx, nhy);
+        new_food_y = spawn_food_y(rng, nhx, nhy);
+        new_rng = spawn_food_rng(rng, nhx, nhy);
+    }
+
+    # shift the trailing segments: the old head becomes s1, s1->s2, ... s4->s5 (s5 drops)
+    return tick(nhx, nhy, hx, hy, s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, new_length, new_food_x, new_food_y, new_rng, new_score, ticks_left - 1);
+}
+
+fn main() {
+    let start_hx = 16 / 2;
+    let start_hy = 10 / 2;
+    let start_food_x = spawn_food(42, start_hx, start_hy);
+    let start_food_y = spawn_food_y(42, start_hx, start_hy);
+    let start_rng = spawn_food_rng(42, start_hx, start_hy);
+
+    print("Snake (self-playing) — @ head, o body, * food\n\n");
+
+    return tick(start_hx, start_hy, start_hx, start_hy, start_hx, start_hy, start_hx, start_hy, start_hx, start_hy, start_hx, start_hy, 1, start_food_x, start_food_y, start_rng, 0, 60);
+}

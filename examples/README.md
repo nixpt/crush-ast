@@ -18,6 +18,7 @@ super-surfer web apps, and the crush-pipefish-dashboard demo.
 | `exception_test.crush` | exosphere language tests | Try/catch/throw |
 | `async_test.crush` | exosphere language tests | Async/await |
 | `polyglot_braces.crush` | exosphere language tests | Polyglot embedding |
+| `snake.crush` | ported from `crush-capsules/games/snake` | Self-playing Snake — recursion + fixed-arity argument state (no arrays: no index-assignment, `.push()` can't chain); verified end-to-end via `crushc`/`crush-run` |
 | `lang_test.crush` | exosphere language tests | Various language features |
 | `build_pipeline.crush` | exosphere examples | Multi-function pipeline |
 | `dashboard.crush` | crush-pipefish-dashboard | Real web dashboard app |
