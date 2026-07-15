@@ -27,9 +27,27 @@ super-surfer web apps, and the crush-pipefish-dashboard demo.
 | `greeting.crush` | super-surfer app | Greeting app |
 | — 11 more | super-surfer / stdlib / coreutils | — |
 
+## JS, walked (`examples/js-walked/`)
+
+Real JavaScript source, walked through `crush-lang-js` (`js_walker`/swc
+backend) into CAST, then compiled and run the same way native `.crush`
+source is — a different pipeline from `examples/crush/polyglot_braces.crush`
+(which embeds JS via `@javascript{}` blocks that spawn a `node` subprocess;
+this directory's JS instead becomes CAST/CASM directly, no subprocess).
+
+| File | Source | Description |
+|------|--------|-------------|
+| `turtle_runner.js` | ported from `crush-capsules/games/turtle-runner` | Self-playing Chrome-Dino-style runner. `crush-walk-run examples/js-walked/turtle_runner.js` runs it end-to-end (walk → CAST → compile → CVM1 → interpret). See the file's header comment for the (large) set of confirmed-broken JS constructs it avoids — filed as `CRUSH-4`/`CRUSH-5`/`CRUSH-6`. |
+
 ## CAST (`examples/cast/`)
 
 JSON-format CAST programs (Abstract Syntax Tree level). Use
-`crush_cast::validate_json` or `crush compile --from-cast` to process.
+`crush_cast::validate_json` to process — NOTE: `docs/cast/cookbook.md`
+documents a `crush compile --from-cast` command that does not exist in the
+current CLI surface (no such flag on `crushc`, no such subcommand found
+anywhere); that doc predates the current tool names and is stale, found
+while cross-checking CAST tooling for `examples/js-walked/`. Not filed as
+a ticket, just noting it here since it's directly adjacent to what this
+section is about.
 
 See `cookbook.md` in `docs/cast/` for the full index.
