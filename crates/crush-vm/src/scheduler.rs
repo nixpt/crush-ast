@@ -439,6 +439,66 @@ fn execute_one(
             push!(Value::Array(arr_rc.clone()));
             push!(val);
         }
+        NEW_TUPLE => {
+            let count = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let mut vals = Vec::with_capacity(count);
+            for _ in 0..count {
+                vals.push(pop!());
+            }
+            vals.reverse();
+            push!(Value::new_tuple(vals));
+        }
+        TUPLE_PUSH => {
+            let val = pop!();
+            let mut t = need_tuple(pop!())?;
+            t.push(val);
+            push!(Value::Tuple(t));
+        }
+        NEW_LIST => {
+            let count = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let mut vals = Vec::with_capacity(count);
+            for _ in 0..count {
+                vals.push(pop!());
+            }
+            vals.reverse();
+            push!(Value::new_list(vals));
+        }
+        LIST_PUSH => {
+            let val = pop!();
+            let l_rc = need_list(pop!())?;
+            l_rc.borrow_mut().push_back(val);
+            push!(Value::List(l_rc));
+        }
+        NEW_VECTOR => {
+            let count = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let mut vals = Vec::with_capacity(count);
+            for _ in 0..count {
+                vals.push(pop!());
+            }
+            vals.reverse();
+            push!(Value::new_vector(vals));
+        }
+        VECTOR_PUSH => {
+            let val = pop!();
+            let v_rc = need_vector(pop!())?;
+            v_rc.borrow_mut().push(val);
+            push!(Value::Vector(v_rc));
+        }
+        NEW_SET => {
+            let count = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let mut vals = Vec::with_capacity(count);
+            for _ in 0..count {
+                vals.push(pop!());
+            }
+            vals.reverse();
+            push!(Value::new_set(vals));
+        }
+        SET_PUSH => {
+            let val = pop!();
+            let s_rc = need_set(pop!())?;
+            s_rc.borrow_mut().push(val);
+            push!(Value::Set(s_rc));
+        }
         LOAD => {
             let slot = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap());
             let v = call_stack
@@ -742,6 +802,34 @@ fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, V
     match v {
         Value::Array(a) => Ok(a),
         other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+    }
+}
+
+fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
+    match v {
+        Value::Tuple(t) => Ok(t),
+        other => Err(VmError::TypeError { expected: "tuple", got: other.type_name() }),
+    }
+}
+
+fn need_list(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
+    match v {
+        Value::List(l) => Ok(l),
+        other => Err(VmError::TypeError { expected: "list", got: other.type_name() }),
+    }
+}
+
+fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+    match v {
+        Value::Vector(v_rc) => Ok(v_rc),
+        other => Err(VmError::TypeError { expected: "vector", got: other.type_name() }),
+    }
+}
+
+fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+    match v {
+        Value::Set(s) => Ok(s),
+        other => Err(VmError::TypeError { expected: "set", got: other.type_name() }),
     }
 }
 

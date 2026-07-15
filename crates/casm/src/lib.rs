@@ -138,6 +138,16 @@ pub enum OpCode {
     ArrPush,         // array, value -> array
     ArrPop,          // array -> array, value
 
+    // Collection operations
+    NewTuple(usize),
+    TuplePush,
+    NewList(usize),
+    ListPush,
+    NewVector(usize),
+    VectorPush,
+    NewSet(usize),
+    SetPush,
+
     // Object operations
     NewObj,            // Create empty object
     NewStruct(String), // Create named struct
@@ -369,6 +379,14 @@ impl Instruction {
             "arr_len" => Ok(OpCode::ArrLen),
             "arr_push" => Ok(OpCode::ArrPush),
             "arr_pop" => Ok(OpCode::ArrPop),
+            "new_tuple" => Ok(OpCode::NewTuple(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "tuple_push" => Ok(OpCode::TuplePush),
+            "new_list" => Ok(OpCode::NewList(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "list_push" => Ok(OpCode::ListPush),
+            "new_vector" => Ok(OpCode::NewVector(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "vector_push" => Ok(OpCode::VectorPush),
+            "new_set" => Ok(OpCode::NewSet(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "set_push" => Ok(OpCode::SetPush),
             "new_obj" => Ok(OpCode::NewObj),
             "new_struct" => Ok(OpCode::NewStruct(
                 self.args

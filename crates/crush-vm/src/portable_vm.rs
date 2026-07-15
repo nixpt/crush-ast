@@ -748,6 +748,66 @@ impl PortableVm {
                 self.push(Value::Array(arr_rc.clone()));
                 self.push(val);
             }
+            NEW_TUPLE => {
+                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let mut vals = Vec::with_capacity(count);
+                for _ in 0..count {
+                    vals.push(self.pop()?);
+                }
+                vals.reverse();
+                self.push(Value::new_tuple(vals));
+            }
+            TUPLE_PUSH => {
+                let val = self.pop()?;
+                let mut t = need_tuple(self.pop()?)?;
+                t.push(val);
+                self.push(Value::Tuple(t));
+            }
+            NEW_LIST => {
+                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let mut vals = Vec::with_capacity(count);
+                for _ in 0..count {
+                    vals.push(self.pop()?);
+                }
+                vals.reverse();
+                self.push(Value::new_list(vals));
+            }
+            LIST_PUSH => {
+                let val = self.pop()?;
+                let l_rc = need_list(self.pop()?)?;
+                l_rc.borrow_mut().push_back(val);
+                self.push(Value::List(l_rc));
+            }
+            NEW_VECTOR => {
+                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let mut vals = Vec::with_capacity(count);
+                for _ in 0..count {
+                    vals.push(self.pop()?);
+                }
+                vals.reverse();
+                self.push(Value::new_vector(vals));
+            }
+            VECTOR_PUSH => {
+                let val = self.pop()?;
+                let v_rc = need_vector(self.pop()?)?;
+                v_rc.borrow_mut().push(val);
+                self.push(Value::Vector(v_rc));
+            }
+            NEW_SET => {
+                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let mut vals = Vec::with_capacity(count);
+                for _ in 0..count {
+                    vals.push(self.pop()?);
+                }
+                vals.reverse();
+                self.push(Value::new_set(vals));
+            }
+            SET_PUSH => {
+                let val = self.pop()?;
+                let s_rc = need_set(self.pop()?)?;
+                s_rc.borrow_mut().push(val); // In actual Set might check uniqueness, using Vec for now
+                self.push(Value::Set(s_rc));
+            }
             NEW_OBJ => {
                 self.push(Value::new_map(std::collections::HashMap::new()));
             }
@@ -1181,10 +1241,35 @@ pub enum VmYield {
 fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-        other => Err(VmError::TypeError {
-            expected: "array",
-            got: value_type_name(&other),
-        }),
+        other => Err(VmError::TypeError { expected: "array", got: value_type_name(&other) }),
+    }
+}
+
+fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
+    match v {
+        Value::Tuple(t) => Ok(t),
+        other => Err(VmError::TypeError { expected: "tuple", got: value_type_name(&other) }),
+    }
+}
+
+fn need_list(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
+    match v {
+        Value::List(l) => Ok(l),
+        other => Err(VmError::TypeError { expected: "list", got: value_type_name(&other) }),
+    }
+}
+
+fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+    match v {
+        Value::Vector(v_rc) => Ok(v_rc),
+        other => Err(VmError::TypeError { expected: "vector", got: value_type_name(&other) }),
+    }
+}
+
+fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+    match v {
+        Value::Set(s) => Ok(s),
+        other => Err(VmError::TypeError { expected: "set", got: value_type_name(&other) }),
     }
 }
 
@@ -1236,6 +1321,10 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Float(_) => "float",
         Value::Str(_) => "str",
         Value::Array(_) => "array",
+        Value::Tuple(_) => "tuple",
+        Value::List(_) => "list",
+        Value::Vector(_) => "vector",
+        Value::Set(_) => "set",
         Value::Map(_) => "map",
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
@@ -1261,6 +1350,22 @@ pub fn value_to_text(v: &Value) -> String {
             let items: Vec<String> = a.borrow().iter().map(value_to_text).collect();
             format!("[{}]", items.join(", "))
         }
+        Value::Tuple(t) => {
+            let items: Vec<String> = t.iter().map(value_to_text).collect();
+            format!("({})", items.join(", "))
+        }
+        Value::List(l) => {
+            let items: Vec<String> = l.borrow().iter().map(value_to_text).collect();
+            format!("List[{}]", items.join(", "))
+        }
+        Value::Vector(v) => {
+            let items: Vec<String> = v.borrow().iter().map(value_to_text).collect();
+            format!("Vector[{}]", items.join(", "))
+        }
+        Value::Set(s) => {
+            let items: Vec<String> = s.borrow().iter().map(value_to_text).collect();
+            format!("Set{{{}}}", items.join(", "))
+        }
         Value::Map(m) => {
             let items: Vec<String> = m
                 .borrow()
@@ -1284,6 +1389,10 @@ fn value_is_truthy(v: &Value) -> bool {
         Value::Float(f) => *f != 0.0,
         Value::Str(s) => !s.is_empty(),
         Value::Array(a) => !a.borrow().is_empty(),
+        Value::Tuple(t) => !t.is_empty(),
+        Value::List(l) => !l.borrow().is_empty(),
+        Value::Vector(v) => !v.borrow().is_empty(),
+        Value::Set(s) => !s.borrow().is_empty(),
         Value::Map(m) => !m.borrow().is_empty(),
         Value::Error(_) => true,
         Value::Bytes(b) => !b.is_empty(),

@@ -342,6 +342,26 @@ pub enum Expression {
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
+    TupleLiteral {
+        elements: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    ListLiteral {
+        elements: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    VectorLiteral {
+        elements: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    SetLiteral {
+        elements: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     ObjectLiteral {
         properties: Vec<(String, Expression)>,
         #[serde(default)]

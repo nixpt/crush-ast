@@ -147,6 +147,13 @@ impl SemanticAnalyzer {
             CastType::String => Ok(Type::String),
             CastType::Null => Ok(Type::Null),
             CastType::Array(inner) => Ok(Type::Array(Box::new(self.parse_cast_type(inner)?))),
+            CastType::Tuple(types) => {
+                let parsed: Result<Vec<_>> = types.iter().map(|t| self.parse_cast_type(t)).collect();
+                Ok(Type::Tuple(parsed?))
+            }
+            CastType::List(inner) => Ok(Type::List(Box::new(self.parse_cast_type(inner)?))),
+            CastType::Vector(inner) => Ok(Type::Vector(Box::new(self.parse_cast_type(inner)?))),
+            CastType::Set(inner) => Ok(Type::Set(Box::new(self.parse_cast_type(inner)?))),
             CastType::Map(value) => Ok(Type::Map(
                 Box::new(Type::String),
                 Box::new(self.parse_cast_type(value)?),

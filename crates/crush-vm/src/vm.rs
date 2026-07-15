@@ -76,6 +76,14 @@ pub enum Value {
     Str(String),
     /// Shared array (reference semantics via Rc<RefCell<...>>).
     Array(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
+    /// Fixed-length heterogeneous sequence
+    Tuple(Vec<Value>),
+    /// Shared list
+    List(std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>),
+    /// Shared vector
+    Vector(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
+    /// Shared set (using Vec for uniqueness since Value doesn't impl Hash)
+    Set(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
     /// Shared string-keyed map (reference semantics via Rc<RefCell<...>>).
     Map(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>),
     /// Error value (carries a message string).
@@ -95,6 +103,10 @@ impl PartialEq for Value {
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
+            (Value::List(a), Value::List(b)) => *a.borrow() == *b.borrow(),
+            (Value::Vector(a), Value::Vector(b)) => *a.borrow() == *b.borrow(),
+            (Value::Set(a), Value::Set(b)) => *a.borrow() == *b.borrow(),
             (Value::Map(a), Value::Map(b)) => *a.borrow() == *b.borrow(),
             (Value::Error(a), Value::Error(b)) => a == b,
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
@@ -113,6 +125,10 @@ impl Value {
             Value::Float(_) => "float",
             Value::Str(_) => "str",
             Value::Array(_) => "array",
+            Value::Tuple(_) => "tuple",
+            Value::List(_) => "list",
+            Value::Vector(_) => "vector",
+            Value::Set(_) => "set",
             Value::Map(_) => "map",
             Value::Error(_) => "error",
             Value::Bytes(_) => "bytes",
@@ -128,6 +144,10 @@ impl Value {
             Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
             Value::Array(a) => !a.borrow().is_empty(),
+            Value::Tuple(t) => !t.is_empty(),
+            Value::List(l) => !l.borrow().is_empty(),
+            Value::Vector(v) => !v.borrow().is_empty(),
+            Value::Set(s) => !s.borrow().is_empty(),
             Value::Map(m) => !m.borrow().is_empty(),
             Value::Error(_) => true,
             Value::Bytes(b) => !b.is_empty(),
@@ -194,6 +214,22 @@ impl std::fmt::Display for Value {
                 // borrow is enough — no risk of conflicting borrows.
                 let inner: Vec<String> = a.borrow().iter().map(|v| v.to_string()).collect();
                 write!(f, "[{}]", inner.join(", "))
+            }
+            Value::Tuple(t) => {
+                let inner: Vec<String> = t.iter().map(|v| v.to_string()).collect();
+                write!(f, "({})", inner.join(", "))
+            }
+            Value::List(l) => {
+                let inner: Vec<String> = l.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "List[{}]", inner.join(", "))
+            }
+            Value::Vector(v) => {
+                let inner: Vec<String> = v.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "Vector[{}]", inner.join(", "))
+            }
+            Value::Set(s) => {
+                let inner: Vec<String> = s.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "Set{{{}}}", inner.join(", "))
             }
             Value::Map(m) => {
                 let inner: Vec<String> = m
@@ -264,6 +300,13 @@ impl serde::Serialize for Value {
                 // through this same impl, no manual nesting needed.
                 a.borrow().serialize(serializer)
             }
+            Value::Tuple(t) => t.serialize(serializer),
+            Value::List(l) => {
+                let vec: Vec<_> = l.borrow().iter().cloned().collect();
+                vec.serialize(serializer)
+            }
+            Value::Vector(v) => v.borrow().serialize(serializer),
+            Value::Set(s) => s.borrow().serialize(serializer),
             Value::Map(m) => {
                 // `Rc<RefCell<HashMap<String, Value>>>` — single borrow
                 // at serialise time. HashMap iteration order is
@@ -527,6 +570,22 @@ impl GreenThread {
 impl Value {
     pub fn new_array(v: Vec<Value>) -> Self {
         Value::Array(std::rc::Rc::new(std::cell::RefCell::new(v)))
+    }
+
+    pub fn new_tuple(v: Vec<Value>) -> Self {
+        Value::Tuple(v)
+    }
+
+    pub fn new_list(v: Vec<Value>) -> Self {
+        Value::List(std::rc::Rc::new(std::cell::RefCell::new(v.into_iter().collect())))
+    }
+
+    pub fn new_vector(v: Vec<Value>) -> Self {
+        Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(v)))
+    }
+
+    pub fn new_set(v: Vec<Value>) -> Self {
+        Value::Set(std::rc::Rc::new(std::cell::RefCell::new(v)))
     }
 
     pub fn new_map(m: std::collections::HashMap<String, Value>) -> Self {

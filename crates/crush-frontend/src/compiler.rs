@@ -1500,11 +1500,58 @@ impl Compiler {
                     serde_json::json!({"size": elements.len()}),
                     meta,
                 ));
-
                 for element in elements {
                     instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("array_push", serde_json::json!({}), meta));
+                }
+            }
+            Expression::TupleLiteral { elements, meta } => {
+                instrs.push(self.create_instr(
+                    "new_tuple",
+                    serde_json::json!({"size": elements.len()}),
+                    meta,
+                ));
+                for element in elements {
+                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    self.compile_expr(element, instrs)?;
+                    instrs.push(self.create_instr("tuple_push", serde_json::json!({}), meta));
+                }
+            }
+            Expression::ListLiteral { elements, meta } => {
+                instrs.push(self.create_instr(
+                    "new_list",
+                    serde_json::json!({"size": elements.len()}),
+                    meta,
+                ));
+                for element in elements {
+                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    self.compile_expr(element, instrs)?;
+                    instrs.push(self.create_instr("list_push", serde_json::json!({}), meta));
+                }
+            }
+            Expression::VectorLiteral { elements, meta } => {
+                instrs.push(self.create_instr(
+                    "new_vector",
+                    serde_json::json!({"size": elements.len()}),
+                    meta,
+                ));
+                for element in elements {
+                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    self.compile_expr(element, instrs)?;
+                    instrs.push(self.create_instr("vector_push", serde_json::json!({}), meta));
+                }
+            }
+            Expression::SetLiteral { elements, meta } => {
+                instrs.push(self.create_instr(
+                    "new_set",
+                    serde_json::json!({"size": elements.len()}),
+                    meta,
+                ));
+                for element in elements {
+                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    self.compile_expr(element, instrs)?;
+                    instrs.push(self.create_instr("set_push", serde_json::json!({}), meta));
                 }
             }
             Expression::Yield { meta } => {
