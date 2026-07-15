@@ -130,12 +130,12 @@ fn bin_arith(stack: &mut Vec<RuntimeValue>, iop: fn(i64,i64)->i64, fop: fn(f64,f
 /// MUST match crush-vm's scheduler.rs and portable_vm.rs exactly. These are separate
 /// implementations of the same language, and any divergence is a silent miscompile.
 fn bin_add(stack: &mut Vec<RuntimeValue>) {
-    let is_str = |v: &RuntimeValue| matches!(v, RuntimeValue::Str(_));
+    let is_str = |v: &RuntimeValue| matches!(v, RuntimeValue::String(_));
     let n = stack.len();
     let mixed = n >= 2 && (is_str(&stack[n - 1]) || is_str(&stack[n - 2]));
     if mixed {
         let (a, b) = pop2(stack);
-        stack.push(RuntimeValue::Str(format!("{}{}", as_text(&a), as_text(&b))));
+        stack.push(RuntimeValue::String(format!("{}{}", as_text(&a), as_text(&b))));
     } else {
         bin_arith(stack, |a, b| a.wrapping_add(b), |a, b| a + b);
     }
@@ -143,7 +143,7 @@ fn bin_add(stack: &mut Vec<RuntimeValue>) {
 
 fn as_text(v: &RuntimeValue) -> String {
     match v {
-        RuntimeValue::Str(s) => s.clone(),
+        RuntimeValue::String(s) => s.clone(),
         RuntimeValue::Int(i) => i.to_string(),
         RuntimeValue::Float(f) => f.to_string(),
         RuntimeValue::Bool(b) => b.to_string(),
