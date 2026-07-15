@@ -162,7 +162,15 @@ impl PtxCompiler {
                     }
                     let r = self.next_reg(a.ty.clone());
                     let op_str = instr.op.as_str();
-                    instrs.push(format!("\t{}{} {}, {}, {};", op_str, r.ty.to_str(), r.name(), a.name(), b.name()));
+                    // PTX ISA requires a rounding modifier on floating-point `div` (ptxas:
+                    // "Rounding modifier required for instruction 'div'") — integer div and
+                    // every other op in this bundle (add/sub/mul/bitwise/shift) don't take one.
+                    let rnd = if op_str == "div" && matches!(a.ty, PtxType::F32 | PtxType::F64) {
+                        ".rn"
+                    } else {
+                        ""
+                    };
+                    instrs.push(format!("\t{}{}{} {}, {}, {};", op_str, rnd, r.ty.to_str(), r.name(), a.name(), b.name()));
                     self.stack.push(r);
                 }
                 "fma" => {
@@ -193,8 +201,23 @@ impl PtxCompiler {
                         _ => return Err(format!("Unsupported cvt dest type: {}", to_ty_str)),
                     };
                     let r = self.next_reg(to_ty.clone());
-                    // basic cvt
-                    instrs.push(format!("\tcvt{}{} {}, {};", r.ty.to_str(), a.ty.to_str(), r.name(), a.name()));
+                    // PTX ISA requires a rounding modifier on `cvt` whenever the destination
+                    // is an integer converted from a float (`.rni`), or a float narrowed from
+                    // a wider float (`.rn`) — ptxas rejects the instruction otherwise ("Rounding
+                    // modifier required for instruction 'cvt'"). Widening (e.g. f32->f64) and
+                    // plain integer<->integer conversions need no modifier.
+                    let is_float = |t: &PtxType| matches!(t, PtxType::F64 | PtxType::F32 | PtxType::F16);
+                    let float_width = |t: &PtxType| match t {
+                        PtxType::F64 => 64, PtxType::F32 => 32, PtxType::F16 => 16, _ => 0,
+                    };
+                    let rnd = if is_float(&a.ty) && !is_float(&r.ty) {
+                        ".rni"
+                    } else if is_float(&a.ty) && is_float(&r.ty) && float_width(&r.ty) < float_width(&a.ty) {
+                        ".rn"
+                    } else {
+                        ""
+                    };
+                    instrs.push(format!("\tcvt{}{}{} {}, {};", rnd, r.ty.to_str(), a.ty.to_str(), r.name(), a.name()));
                     self.stack.push(r);
                 }
                 "ptx_shfl_sync_bfly" => {

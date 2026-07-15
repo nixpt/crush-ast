@@ -137,6 +137,24 @@ fn test_q6_ops() {
     // we won't test shfl thoroughly if we don't have push_int, but fma and cvt should be in the output
     let ptx = compile_program(&program).expect("Failed to compile");
     assert!(ptx.contains("fma.rn.f64"));
-    assert!(ptx.contains("cvt.s32.f64"));
+    assert!(ptx.contains("cvt.rni.s32.f64")); // PTX requires a rounding modifier float->int
     assert!(ptx.contains("%laneid"));
+}
+
+// Regression: ptxas rejects `div.f64`/`div.f32` without a rounding modifier
+// ("Rounding modifier required for instruction 'div'") — found by actually running
+// ptxas against emitted PTX, not just checking it compiles as Rust. Integer div needs
+// no modifier; float div does. Confirmed against real ptxas (CUDA 12.9, sm_80): both
+// forms below assemble to a valid cubin.
+#[test]
+fn test_float_div_has_rounding_modifier() {
+    let mut func = Function { params: vec![], locals: vec![], type_hints: None, body: vec![] };
+    func.body.push(Instruction { op: "push_float".into(), lang: None, meta: None, args: serde_json::json!({"value": 10.0}) });
+    func.body.push(Instruction { op: "push_float".into(), lang: None, meta: None, args: serde_json::json!({"value": 4.0}) });
+    func.body.push(Instruction { op: "div".into(), lang: None, meta: None, args: serde_json::json!({}) });
+    let mut program = Program::default();
+    program.functions.insert("div_kernel".to_string(), func);
+
+    let ptx = compile_program(&program).expect("Failed to compile");
+    assert!(ptx.contains("div.rn.f64"), "float div must carry a PTX rounding modifier:\n{ptx}");
 }
