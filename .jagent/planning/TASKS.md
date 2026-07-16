@@ -40,6 +40,8 @@ reproduces.
 - [ ] **CRUSH-15** (S): `crushc --emit casm`'s text output and `crush-run`'s CASM assembler are two incompatible dialects; docs imply a round-trip that doesn't work (`--emit vm` binary round-trip works fine, this is text-format only).
 - [x] **CRUSH-17** (S): Parser error messages leaked `Token`'s Debug format — fixed s388, added `Token::describe()`/`Display`, 30 call sites updated, verified live + 91 tests green.
 - [ ] **CRUSH-18** (M): Polyglot block runtime errors (`@python`/`@javascript`/`@bash` guest exceptions) aren't mapped into crush's diagnostic system — mislabeled `VmError::UnknownCap` (same variant as "capability not granted"), raw foreign-language traceback dumped verbatim, zero crush-side location. Verified live for both Python (`ZeroDivisionError`) and JS (Node stack trace + version banner).
+- [ ] **CRUSH-19** (M): `CAP_CALL` has no wall-clock timeout — `dispatch_cap`/`HostCap::call()` runs synchronously with no bound (confirmed by reading the code). CRUSHAST-CAPTIMEOUT-1 explicitly scoped this out of its own fix. Recommended prerequisite for CRUSH-20.
+- [ ] **CRUSH-20** (L, mini-milestone): Wire `buckets` as a sandboxed 4th polyglot execution path. **Already spiked and empirically proven** (`CRUSHAST-BUCKETSPIKE-1`/`-2`, merged — `crates/crush-bucketspike` + `SPIKE_RESULTS*.md` are the receipts: bwrap sandboxing genuinely exercised, marshaling survives intact, real cold/warm latency measured). What's left is production wiring: `@lang[deps]` annotation syntax, a layer-ownership decision (crush-vm vs crush-lang-sdk), the numpy/PyPI-deps reframe (buckets provisions bare runtimes only), and actually swapping `EXEC_LANG`'s host `Command::new` for a buckets-backed sandboxed spawn. See `workspace-meta/plans/2026-07-14-crush-polyglot-via-buckets.md` for the full design.
 
 ## M2 — JIT completion
 
@@ -92,7 +94,6 @@ reproduces.
 - [ ] `exo.*` capability modules
 - [ ] Import firewall, fuel budgets, deterministic mode, snapshot/replay
 - [ ] Unified capsule-aware GC + ML "GC policy brain"
-- [ ] Polyglot-via-buckets (sandboxed 4th execution path) — scoped design exists at `workspace-meta/plans/2026-07-14-crush-polyglot-via-buckets.md`, viable, not started
 - [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs`
 - [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue.
 
