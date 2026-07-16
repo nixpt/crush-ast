@@ -85,23 +85,23 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
                 reg(CapabilitySpec {
             name: "append",
             argc: None,
-            returns: false,
+            returns: true,
             privileged: false,
-            summary: "append an element to an array",
+            summary: "append an element to an array; returns the modified array",
         });
         reg(CapabilitySpec {
             name: "push",
             argc: None,
-            returns: false,
+            returns: true,
             privileged: false,
-            summary: "push an element onto an array",
+            summary: "push an element onto an array; returns the modified array",
         });
         reg(CapabilitySpec {
             name: "arr_set",
             argc: None,
-            returns: false,
+            returns: true,
             privileged: false,
-            summary: "set an array element at index",
+            summary: "set an array element at index; returns the modified array",
         });
         reg(CapabilitySpec {
             name: "arr_get",

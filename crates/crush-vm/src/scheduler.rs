@@ -456,52 +456,25 @@ fn execute_one(
             push!(Value::Str(joined));
         }
         ADD | SUB | MUL | DIV | MOD | LT | GT | LE | GE => {
-            let b = need_num!(pop!());
-            let a = need_num!(pop!());
-            let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
-            let af = to_f64(&a);
-            let bf = to_f64(&b);
+            let b = pop!();
+            let a = pop!();
             let result = match opcode {
-                ADD => {
-                    if is_float { Value::Float(af + bf) }
-                    else { Value::Int(to_i64(&a).checked_add(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
-                }
-                SUB => {
-                    if is_float { Value::Float(af - bf) }
-                    else { Value::Int(to_i64(&a).checked_sub(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
-                }
-                MUL => {
-                    if is_float { Value::Float(af * bf) }
-                    else { Value::Int(to_i64(&a).checked_mul(to_i64(&b)).ok_or(VmError::ArithmeticOverflow)?) }
-                }
-                DIV => {
-                    if bf == 0.0 { return Err(VmError::DivByZero); }
-                    if is_float { Value::Float(af / bf) }
-                    else { Value::Int(trunc_div(to_i64(&a), to_i64(&b))) }
-                }
-                MOD => {
-                    if bf == 0.0 { return Err(VmError::DivByZero); }
-                    if is_float { Value::Float(af % bf) }
-                    else {
-                        let ai = to_i64(&a); let bi = to_i64(&b);
-                        Value::Int(ai - bi * trunc_div(ai, bi))
-                    }
-                }
-                LT => Value::Bool(af < bf),
-                GT => Value::Bool(af > bf),
-                LE => Value::Bool(af <= bf),
-                GE => Value::Bool(af >= bf),
+                ADD => crate::arithmetic::add_values(&a, &b)?,
+                SUB => crate::arithmetic::sub_values(&a, &b)?,
+                MUL => crate::arithmetic::mul_values(&a, &b)?,
+                DIV => crate::arithmetic::div_values(&a, &b)?,
+                MOD => crate::arithmetic::mod_values(&a, &b)?,
+                LT => crate::arithmetic::compare_values(&a, &b, |x, y| x < y)?,
+                GT => crate::arithmetic::compare_values(&a, &b, |x, y| x > y)?,
+                LE => crate::arithmetic::compare_values(&a, &b, |x, y| x <= y)?,
+                GE => crate::arithmetic::compare_values(&a, &b, |x, y| x >= y)?,
                 _ => unreachable!(),
             };
             push!(result);
         }
         NEG => {
-            let v = need_num!(pop!());
-            push!(match v {
-                Value::Int(i) => Value::Int(-i),
-                Value::Float(f) => Value::Float(-f),
-                _ => unreachable!(),
-            });
+            let v = pop!();
+            push!(crate::arithmetic::neg_value(&v)?);
         }
         MATH_POW => {
             let exp = need_num!(pop!());
@@ -1224,8 +1197,8 @@ fn dispatch_cap(
         }
         return match cap {
             "io.print" => {
-                let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
-                let line = format!("{s}\n");
+                let parts: Vec<String> = args.iter().map(|a| a.as_text()).collect();
+                let line = crate::io_print::format_io_print_line(&parts);
                 *out_len += line.len();
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
@@ -1292,7 +1265,7 @@ fn dispatch_cap(
             "append" | "push" => {
                 if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
                 match &args[0] {
-                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(None) }
+                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(Some(args[0].clone())) }
                     _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                 }
             }
@@ -1303,7 +1276,7 @@ fn dispatch_cap(
                         let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
                         let mut arr = elems.borrow_mut();
                         if idx < arr.len() { arr[idx] = args[2].clone(); }
-                        Ok(None)
+                        Ok(Some(args[0].clone()))
                     }
                     _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                 }

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-7 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -107,6 +107,32 @@ starting points for whoever picks this up:
 - `crates/crush-frontend/src/parser/` (index-as-lvalue grammar)
 - `crates/crush-frontend/src/compiler.rs` (method-call dispatch allowlist)
 - `crates/crush-vm/src/portable_vm.rs` / `crates/crush-vm/src/scheduler.rs` (array opcode runtime behavior)
+
+## Resolution
+
+### Fixed issues
+
+**1. Index assignment parse error (`xs[0] = 9`)** — Added `Expression::Index { target, index }` as a valid lvalue in `parse_expression_statement()` in the parser. The assignment is lowered to a `cap_call "arr_set"` with 3 args (array, index, value), which the compiler and VM already handle.
+
+**2. Chained `.push()` stack underflow** — Changed `push`/`append`/`arr_set` capability implementations in both `scheduler.rs` and `portable_vm.rs` to return `Ok(Some(args[0].clone()))` instead of `Ok(None)`. The modified array is now pushed back onto the stack, so `let a2 = a1.push(2); let a3 = a2.push(3);` works correctly.
+
+**3. Updated `caps.rs` metadata** — Changed `returns: false` to `returns: true` for `push`, `append`, and `arr_set` to match the new runtime behavior.
+
+### Unaddressed (still open)
+
+- **Nested array indexing** (`snake[0]` where `snake = [[5,5],[5,6]]` returns int instead of array) — root cause unclear; may be in `arr_get`/`index` opcode or `array_push` construction of nested arrays. Deferred for separate investigation.
+- **Slicing syntax** (`xs[1:]` / `xs[1:3]`) — parse error. Deferred as non-goal per ticket.
+
+### Verification
+```bash
+# Index assignment now parses and runs:
+echo 'let xs = [5,5,5]; xs[0] = 9; print(xs[0]);' | crushc /dev/stdin -o /tmp/t.cvm1 && crush-run run /tmp/t.cvm1
+# Expected: 9
+
+# Chained push now works:
+echo 'let a1 = [1]; let a2 = a1.push(2); let a3 = a2.push(3); print(len(a3));' | crushc /dev/stdin -o /tmp/t2.cvm1 && crush-run run /tmp/t2.cvm1
+# Expected: 3
+```
 
 ## Non-goals
 

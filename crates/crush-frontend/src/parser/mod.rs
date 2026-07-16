@@ -1122,6 +1122,21 @@ impl Parser {
                         meta: HashMap::new(),
                     });
                 }
+                // `xs[0] = 9` — indexed assignment. Lowered to a cap_call "arr_set"
+                // since the compiler and VM already support this capability.
+                Expression::Index { target, index, .. } => {
+                    self.advance();
+                    let value = self.parse_expression()?;
+                    self.maybe_semicolon();
+                    return Ok(Statement::ExprStmt {
+                        expr: Expression::CapabilityCall {
+                            name: "arr_set".to_string(),
+                            args: vec![*target, *index, value],
+                            meta: HashMap::new(),
+                        },
+                        meta: HashMap::new(),
+                    });
+                }
                 other => {
                     // Put it back so the ExprStmt fallthrough below still sees it.
                     expr = other;

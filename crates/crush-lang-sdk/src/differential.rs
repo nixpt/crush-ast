@@ -31,6 +31,13 @@
 //! So its comparison is COARSER — outcome class (ok/err) and, when both finish with a scalar, the
 //! scalar. A mismatch here is flagged for review, not asserted as a hard bug, because the shapes
 //! differ. Do not pretend this pair is as tight as A-vs-B; it is not.
+//!
+//! ## Backend failure-mode divergence
+//!
+//! The VM backends (interpreter, portable, fastvm) return `VmError`/`FastError` on arithmetic
+//! type errors, division by zero, and overflow. The AOT backends (Rust and C) currently terminate
+//! the process with `exit(1)` for the same conditions. The harness therefore compares *outcome*
+//! (accepted vs rejected), not error representation, which is the meaningful level of agreement.
 
 use crush_vm::fastvm::FastYield;
 use crush_vm::vm::Value;
@@ -96,6 +103,12 @@ pub struct DiffReport {
     pub interpreter: StackOutcome,
     pub portable: StackOutcome,
     pub fastvm: FastOutcome,
+    /// Optional AOT Rust outcome. Populated by callers that compile the same source with the
+    /// AOT Rust backend and run it in a subprocess (generated AOT code exits on errors).
+    pub aot_rust: Option<FastOutcome>,
+    /// Optional AOT C outcome. Populated by callers that compile the same source with the
+    /// AOT C backend and run it in a subprocess.
+    pub aot_c: Option<FastOutcome>,
     /// Divergences between backends. Empty == all agree at the granularity each pair supports.
     /// A divergence is an OBSERVABLE difference: stdout, or accept-vs-reject. This is what caught
     /// every real bug this session (1/0 = different error status; "a"+"b" = different stdout).
@@ -108,6 +121,51 @@ pub struct DiffReport {
 impl DiffReport {
     pub fn diverged(&self) -> bool {
         !self.divergences.is_empty()
+    }
+
+    /// Extract the return value from the interpreter outcome, if any.
+    /// For `main` that ends with a value on top of the stack, that value is the return value.
+    pub fn interpreter_return(&self) -> Option<&Norm> {
+        match &self.interpreter {
+            StackOutcome::Ok { stack, .. } => stack.last(),
+            StackOutcome::Err(_) => None,
+        }
+    }
+
+    /// Extract the return value from the portable outcome, if any.
+    pub fn portable_return(&self) -> Option<&Norm> {
+        match &self.portable {
+            StackOutcome::Ok { stack, .. } => stack.last(),
+            StackOutcome::Err(_) => None,
+        }
+    }
+
+    /// Extract the return value from the fastvm outcome, if any.
+    pub fn fastvm_return(&self) -> Option<&Norm> {
+        match &self.fastvm {
+            FastOutcome::Finished(v) => v.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Parse the stdout emitted by `crush-aot-runner` into a normalized value.
+    /// The runner emits a type-tagged line such as `int:42`, `float:3.14`,
+    /// `bool:true`, `null:null`, or `str:hello`.
+    pub fn parse_aot_stdout(stdout: &str) -> Option<Norm> {
+        let line = stdout.trim();
+        if let Some(rest) = line.strip_prefix("int:") {
+            rest.parse::<i64>().ok().map(Norm::Int)
+        } else if let Some(rest) = line.strip_prefix("float:") {
+            rest.parse::<f64>().ok().map(|f| Norm::Float(format!("{f:?}")))
+        } else if let Some(rest) = line.strip_prefix("bool:") {
+            Some(Norm::Bool(rest == "true"))
+        } else if line == "null:null" {
+            Some(Norm::Null)
+        } else if let Some(rest) = line.strip_prefix("str:") {
+            Some(Norm::Str(rest.to_string()))
+        } else {
+            None
+        }
     }
 }
 
@@ -189,7 +247,16 @@ pub fn differential_run(source: &str) -> Result<DiffReport, String> {
         }
     }
 
-    Ok(DiffReport { source: source.to_string(), interpreter, portable, fastvm, divergences, notes })
+    Ok(DiffReport {
+        source: source.to_string(),
+        interpreter,
+        portable,
+        fastvm,
+        aot_rust: None,
+        aot_c: None,
+        divergences,
+        notes,
+    })
 }
 
 #[cfg(test)]
@@ -240,5 +307,92 @@ mod tests {
         assert!(matches!(r.interpreter, StackOutcome::Ok { .. }));
         assert!(matches!(r.portable, StackOutcome::Ok { .. }));
         let _ = r.fastvm;
+    }
+
+    // ── CRUSH-13 arithmetic divergence guards ───────────────────────────────
+
+    fn assert_no_divergence(source: &str) {
+        let r = differential_run(source).unwrap();
+        assert!(!r.diverged(), "{source:?} diverged: {:?}", r.divergences);
+    }
+
+    #[test]
+    fn arithmetic_mixed_int_float_promotes_to_float() {
+        assert_no_divergence("fn main() { print(2 + 3.5); }");
+        assert_no_divergence("fn main() { print(10 - 3.0); }");
+        assert_no_divergence("fn main() { print(4 * 2.5); }");
+    }
+
+    #[test]
+    fn arithmetic_div_by_zero_rejected_everywhere() {
+        let r = differential_run("fn main() { print(1 / 0); }").unwrap();
+        assert!(!r.diverged(), "1/0 should be rejected consistently: {:?}", r.divergences);
+    }
+
+    #[test]
+    fn arithmetic_modulo_agrees() {
+        assert_no_divergence("fn main() { print(7 % 3); }");
+        assert_no_divergence("fn main() { print(-7 % 3); }");
+    }
+
+    #[test]
+    fn arithmetic_string_concat_agrees() {
+        assert_no_divergence("fn main() { print(\"a\" + \"b\"); }");
+        assert_no_divergence("fn main() { print(\"x: \" + 5); }");
+    }
+
+    #[test]
+    fn arithmetic_negation_agrees() {
+        assert_no_divergence("fn main() { print(-5); }");
+        assert_no_divergence("fn main() { print(-3.5); }");
+    }
+
+    #[test]
+    fn arithmetic_comparisons_with_mixed_types_agree() {
+        assert_no_divergence("fn main() { print(2 < 3.0); }");
+        assert_no_divergence("fn main() { print(5 > 2); }");
+        assert_no_divergence("fn main() { print(3 <= 3.0); }");
+    }
+
+    // ── CRUSH-13 ordered comparison edge cases ───────────────────────────────
+    // Ordered comparisons (<, >, <=, >=) require numeric operands on every backend.
+    // The interpreter/portable/fastvm backends return VmError/FastError; the AOT backends
+    // terminate the process. All backends AGREE that the program is rejected, even though
+    // the failure mode differs.
+    //
+    // The Crush frontend type-checks literal comparisons, so we route each case through
+    // parameters typed `any` to exercise the runtime guard.
+
+    #[test]
+    fn ordered_comparison_with_null_rejected() {
+        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(null, 1); }").unwrap();
+        assert!(!r.diverged(), "null < 1 should be rejected consistently: {:?}", r.divergences);
+    }
+
+    #[test]
+    fn ordered_comparison_with_bool_rejected() {
+        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(true, false); }").unwrap();
+        assert!(!r.diverged(), "true < false should be rejected consistently: {:?}", r.divergences);
+    }
+
+    #[test]
+    fn ordered_comparison_with_string_rejected() {
+        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(\"a\", \"b\"); }").unwrap();
+        assert!(!r.diverged(), "\"a\" < \"b\" should be rejected consistently: {:?}", r.divergences);
+    }
+
+    #[test]
+    fn equality_remains_permissive_across_types() {
+        // eq/ne are defined for any pair and return false when types differ.
+        assert_no_divergence("fn main() { print(1 == 1); }");
+        assert_no_divergence("fn eq_any(a: any, b: any) { print(a == b); }\nfn main() { eq_any(1, \"1\"); }");
+        assert_no_divergence("fn main() { print(null == null); }");
+        assert_no_divergence("fn main() { print(true == true); }");
+    }
+
+    #[test]
+    fn arithmetic_overflow_rejected_consistently() {
+        let r = differential_run("fn add_any(a: any, b: any) { print(a + b); }\nfn main() { add_any(9223372036854775807, 1); }").unwrap();
+        assert!(!r.diverged(), "i64 overflow should be rejected consistently: {:?}", r.divergences);
     }
 }

@@ -47,10 +47,10 @@ impl std::fmt::Display for RuntimeValue {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             RuntimeValue::Int(i) => write!(f, "{}", i),
-            RuntimeValue::Float(n) => write!(f, "{}", n),
+            RuntimeValue::Float(n) => write!(f, "{}", crush_float_to_text(*n)),
             RuntimeValue::Bool(b) => write!(f, "{}", b),
             RuntimeValue::Null => write!(f, "null"),
-            RuntimeValue::String(s) => write!(f, "\"{}\"", s),
+            RuntimeValue::String(s) => write!(f, "{}", s),
             RuntimeValue::Array(arr) => {{
                 let a = arr.borrow();
                 write!(f, "[")?;
@@ -105,10 +105,20 @@ fn pop2(stack: &mut Vec<RuntimeValue>) -> (RuntimeValue, RuntimeValue) {
     (a, b)
 }
 
-fn bin_arith(stack: &mut Vec<RuntimeValue>, iop: fn(i64,i64)->i64, fop: fn(f64,f64)->f64) {
+fn arith_overflow() -> ! {
+    eprintln!("crush(aot): arithmetic overflow");
+    std::process::exit(1);
+}
+
+fn arith_type_error(a: &RuntimeValue, b: &RuntimeValue) -> ! {
+    eprintln!("crush(aot): type error: arithmetic on non-numeric operands ({:?}, {:?})", a, b);
+    std::process::exit(1);
+}
+
+fn bin_arith(stack: &mut Vec<RuntimeValue>, iop: fn(i64,i64)->RuntimeValue, fop: fn(f64,f64)->f64) {
     let (a, b) = pop2(stack);
     let r = match (&a, &b) {
-        (RuntimeValue::Int(x), RuntimeValue::Int(y)) => RuntimeValue::Int(iop(*x, *y)),
+        (RuntimeValue::Int(x), RuntimeValue::Int(y)) => iop(*x, *y),
         (RuntimeValue::Float(x), RuntimeValue::Float(y)) => RuntimeValue::Float(fop(*x, *y)),
         (RuntimeValue::Int(x), RuntimeValue::Float(y)) => RuntimeValue::Float(fop(*x as f64, *y)),
         (RuntimeValue::Float(x), RuntimeValue::Int(y)) => RuntimeValue::Float(fop(*x, *y as f64)),
@@ -117,10 +127,7 @@ fn bin_arith(stack: &mut Vec<RuntimeValue>, iop: fn(i64,i64)->i64, fop: fn(f64,f
         // `crush-run` returned different answers with no error from either. Crash instead.
         // (String `+` is handled by bin_add before this is ever reached; anything landing here
         // is a genuine type error.)
-        _ => {
-            eprintln!("crush(aot): type error: arithmetic on non-numeric operands ({:?}, {:?})", a, b);
-            std::process::exit(1);
-        }
+        _ => arith_type_error(&a, &b),
     };
     stack.push(r);
 }
@@ -137,7 +144,7 @@ fn bin_add(stack: &mut Vec<RuntimeValue>) {
         let (a, b) = pop2(stack);
         stack.push(RuntimeValue::String(format!("{}{}", as_text(&a), as_text(&b))));
     } else {
-        bin_arith(stack, |a, b| a.wrapping_add(b), |a, b| a + b);
+        bin_arith(stack, |a, b| a.checked_add(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()), |a, b| a + b);
     }
 }
 
@@ -145,7 +152,7 @@ fn as_text(v: &RuntimeValue) -> String {
     match v {
         RuntimeValue::String(s) => s.clone(),
         RuntimeValue::Int(i) => i.to_string(),
-        RuntimeValue::Float(f) => f.to_string(),
+        RuntimeValue::Float(f) => crush_float_to_text(*f),
         RuntimeValue::Bool(b) => b.to_string(),
         RuntimeValue::Null => "null".to_string(),
         other => format!("{:?}", other),
@@ -162,18 +169,48 @@ fn div_zero_f() -> f64 {
     std::process::exit(1);
 }
 
-fn bin_cmp(stack: &mut Vec<RuntimeValue>, icmp: fn(i64,i64)->bool, fcmp: fn(f64,f64)->bool) {
-    let (a, b) = pop2(stack);
-    let r = match (&a, &b) {
+fn cmp_type_error(a: &RuntimeValue, b: &RuntimeValue) -> ! {
+    eprintln!("crush(aot): type error: comparison on non-numeric operands ({:?}, {:?})", a, b);
+    std::process::exit(1);
+}
+
+fn cmp_numeric(a: &RuntimeValue, b: &RuntimeValue, icmp: fn(i64,i64)->bool, fcmp: fn(f64,f64)->bool) -> bool {
+    match (a, b) {
         (RuntimeValue::Int(x), RuntimeValue::Int(y)) => icmp(*x, *y),
         (RuntimeValue::Float(x), RuntimeValue::Float(y)) => fcmp(*x, *y),
         (RuntimeValue::Int(x), RuntimeValue::Float(y)) => fcmp(*x as f64, *y),
         (RuntimeValue::Float(x), RuntimeValue::Int(y)) => fcmp(*x, *y as f64),
-        (RuntimeValue::Bool(x), RuntimeValue::Bool(y)) => x == y,
-        (RuntimeValue::Null, RuntimeValue::Null) => true,
-        _ => false,
+        _ => unreachable!(),
+    }
+}
+
+fn is_numeric_rtv(v: &RuntimeValue) -> bool {
+    matches!(v, RuntimeValue::Int(_) | RuntimeValue::Float(_))
+}
+
+fn bin_cmp_eq_ne(stack: &mut Vec<RuntimeValue>, is_eq: bool) {
+    let (a, b) = pop2(stack);
+    let r = if is_numeric_rtv(&a) && is_numeric_rtv(&b) {
+        if is_eq {
+            cmp_numeric(&a, &b, |a, b| a == b, |a, b| a == b)
+        } else {
+            cmp_numeric(&a, &b, |a, b| a != b, |a, b| a != b)
+        }
+    } else {
+        // eq/ne use RuntimeValue::PartialEq which handles all types correctly:
+        // strings, bools, nulls, and cross-type returns false.
+        if is_eq { a == b } else { a != b }
     };
     stack.push(RuntimeValue::Bool(r));
+}
+
+fn bin_cmp_ordered(stack: &mut Vec<RuntimeValue>, icmp: fn(i64,i64)->bool, fcmp: fn(f64,f64)->bool) {
+    let (a, b) = pop2(stack);
+    // lt/gt/le/ge require numeric operands, matching the scheduler.
+    if !is_numeric_rtv(&a) || !is_numeric_rtv(&b) {
+        cmp_type_error(&a, &b);
+    }
+    stack.push(RuntimeValue::Bool(cmp_numeric(&a, &b, icmp, fcmp)));
 }
 
 fn logic_op(stack: &mut Vec<RuntimeValue>, is_and: bool) {
@@ -184,9 +221,12 @@ fn logic_op(stack: &mut Vec<RuntimeValue>, is_and: bool) {
 
 fn negate(stack: &mut Vec<RuntimeValue>) {
     match stack.pop().unwrap_or(RuntimeValue::Null) {
-        RuntimeValue::Int(i) => stack.push(RuntimeValue::Int(-i)),
+        RuntimeValue::Int(i) => stack.push(i.checked_neg().map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow())),
         RuntimeValue::Float(f) => stack.push(RuntimeValue::Float(-f)),
-        _ => stack.push(RuntimeValue::Null),
+        other => {
+            eprintln!("crush(aot): type error: negate on non-numeric operand ({:?})", other);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -199,6 +239,26 @@ fn wrap_index(idx: i64, len: usize) -> Option<usize> {
     let ilen = len as i64;
     let wrapped = if idx < 0 { ilen + idx } else { idx };
     if wrapped >= 0 && wrapped < ilen { Some(wrapped as usize) } else { None }
+}
+
+/// Single source of truth for the trailing newline that `io.print` must emit.
+/// Mirrors `crush_vm::io_print::format_io_print_line` so the AOT Rust backend
+/// stays consistent with the interpreter and FastVM.
+fn io_print_line(parts: &[&str]) -> String {
+    let mut line = String::new();
+    for part in parts { line.push_str(part); }
+    line.push('\n');
+    line
+}
+
+/// Format a float the same way crush-vm's scheduler does:
+/// integer-valued finite floats get a `.0` suffix so `3.0` prints as `3.0`.
+fn crush_float_to_text(f: f64) -> String {
+    if f.is_finite() && f.fract() == 0.0 {
+        format!("{:.1}", f)
+    } else {
+        f.to_string()
+    }
 }
 
 "#);
@@ -228,10 +288,12 @@ fn emit_function(
     out.push_str("    let mut locals: HashMap<String, RuntimeValue> = HashMap::new();\n");
 
     // Load parameters for non-main functions
+    // Push function arguments onto the stack so that subsequent `store`
+    // instructions (which pop from the stack into locals) work correctly.
     if !is_main {
         for (i, param) in func.params.iter().enumerate() {
             out.push_str(&format!(
-                "    locals.insert(\"{param}\".to_string(), args.get({i}).cloned().unwrap_or(RuntimeValue::Null));\n"
+                "    stack.push(args.get({i}).cloned().unwrap_or(RuntimeValue::Null));\n"
             ));
         }
     }
@@ -336,13 +398,13 @@ fn emit_body(
 
         // ── Arithmetic ──
         "add"  => { out.push_str(&format!("{ind}bin_add(&mut stack);\n")); out.push_str(&next_pc_str); }
-        "sub"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.wrapping_sub(b), |a,b| a-b);\n")); out.push_str(&next_pc_str); }
-        "mul"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.wrapping_mul(b), |a,b| a*b);\n")); out.push_str(&next_pc_str); }
+        "sub"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.checked_sub(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()), |a,b| a-b);\n")); out.push_str(&next_pc_str); }
+        "mul"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| a.checked_mul(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()), |a,b| a*b);\n")); out.push_str(&next_pc_str); }
         // Division by zero was SILENTLY yielding 0 here while the interpreter raised
         // VmError::DivisionByZero on the same source. `1 / 0` printed "0" from an AOT binary
         // and errored under crush-run. Same program, different answers, no error. Now both die.
-        "div"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a/b }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a/b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
-        "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ a%b }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a%b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
+        "div"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ RuntimeValue::Int(a/b) }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a/b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
+        "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ RuntimeValue::Int(a%b) }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a%b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
         "neg"  => { out.push_str(&format!("{ind}negate(&mut stack);\n")); out.push_str(&next_pc_str); }
 
         // ── Math ops ──
@@ -372,12 +434,12 @@ fn emit_body(
         }
 
         // ── Comparison ──
-        "eq" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a==b, |a,b| a==b);\n")); out.push_str(&next_pc_str); }
-        "ne" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a!=b, |a,b| a!=b);\n")); out.push_str(&next_pc_str); }
-        "lt" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a<b, |a,b| a<b);\n")); out.push_str(&next_pc_str); }
-        "le" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a<=b, |a,b| a<=b);\n")); out.push_str(&next_pc_str); }
-        "gt" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a>b, |a,b| a>b);\n")); out.push_str(&next_pc_str); }
-        "ge" => { out.push_str(&format!("{ind}bin_cmp(&mut stack, |a,b| a>=b, |a,b| a>=b);\n")); out.push_str(&next_pc_str); }
+"eq" => { out.push_str(&format!("{ind}bin_cmp_eq_ne(&mut stack, true);\n")); out.push_str(&next_pc_str); }
+"ne" => { out.push_str(&format!("{ind}bin_cmp_eq_ne(&mut stack, false);\n")); out.push_str(&next_pc_str); }
+"lt" => { out.push_str(&format!("{ind}bin_cmp_ordered(&mut stack, |a,b| a<b, |a,b| a<b);\n")); out.push_str(&next_pc_str); }
+"le" => { out.push_str(&format!("{ind}bin_cmp_ordered(&mut stack, |a,b| a<=b, |a,b| a<=b);\n")); out.push_str(&next_pc_str); }
+"gt" => { out.push_str(&format!("{ind}bin_cmp_ordered(&mut stack, |a,b| a>b, |a,b| a>b);\n")); out.push_str(&next_pc_str); }
+"ge" => { out.push_str(&format!("{ind}bin_cmp_ordered(&mut stack, |a,b| a>=b, |a,b| a>=b);\n")); out.push_str(&next_pc_str); }
 
         // ── Logical ──
         "and"   => { out.push_str(&format!("{ind}logic_op(&mut stack, true);\n")); out.push_str(&next_pc_str); }
@@ -561,7 +623,7 @@ fn emit_body(
                     out.push_str(&next_pc_str);
                 }
                 "io.print" | "print" => {
-                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); println!(\"{{}}\", __v); }}\n"));
+                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 _ => {
@@ -594,6 +656,20 @@ pub extern "C" fn crush_run() -> *mut std::ffi::c_char {
 pub extern "C" fn crush_run_free(s: *mut std::ffi::c_char) {
     if !s.is_null() {
         unsafe { drop(std::ffi::CString::from_raw(s)); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rust_aot_io_print_emits_trailing_newline() {
+        let source = "fn main() { print(\"hello\"); }";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let rust_src = gen_rust_source(&program);
+        assert!(rust_src.contains("fn io_print_line"), "generated Rust should contain io_print_line helper");
+        assert!(rust_src.contains("io_print_line(&[__v.to_string().as_str()])"), "io.print should use the newline helper via to_string");
     }
 }
 "#);

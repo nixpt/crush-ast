@@ -51,3 +51,7 @@ path = "src/bin/aotc.rs"
 [[bin]]
 name = "crush-walk-run"
 path = "src/bin/walk_run.rs"
+
+[[bin]]
+name = "crush-aot-runner"
+path = "src/bin/aot_runner.rs"

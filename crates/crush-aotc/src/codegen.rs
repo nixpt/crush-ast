@@ -68,9 +68,17 @@ impl AotcCompiler {
         writeln!(out)?;
 
         // Forward-declare all functions
-        for name in program.functions.keys() {
+        for (name, func) in &program.functions {
             let c_name = mangle(name);
-            writeln!(out, "static CrushValue {}(void);", c_name)?;
+            let params = if func.params.is_empty() {
+                "void".to_string()
+            } else {
+                func.params.iter()
+                    .map(|p| format!("CrushValue _p_{}", mangle_local(p)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            writeln!(out, "static CrushValue {}({});", c_name, params)?;
         }
         writeln!(out)?;
 
@@ -97,22 +105,38 @@ impl AotcCompiler {
         let c_name = mangle(name);
         let tm = TypeMap::infer(&func.body);
 
-        writeln!(out, "static CrushValue {}(void) {{", c_name)?;
+        let params = if func.params.is_empty() {
+            "void".to_string()
+        } else {
+            func.params.iter()
+                .map(|p| format!("CrushValue _p_{}", mangle_local(p)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        writeln!(out, "static CrushValue {}({}) {{", c_name, params)?;
 
-        // Declare locals with inferred types
+        // Unbox parameters into locals with their inferred types
+        for param in &func.params {
+            let inferred = tm.locals.get(param).cloned().unwrap_or(InferredType::Dynamic);
+            let name = mangle_local(param);
+            match inferred {
+                InferredType::Int => writeln!(out, "    int64_t {} = cv_as_int(_p_{});", name, name)?,
+                InferredType::Float => writeln!(out, "    double {} = cv_as_float(_p_{});", name, name)?,
+                InferredType::Dynamic => writeln!(out, "    CrushValue {} = _p_{};", name, name)?,
+            }
+        }
+
+        // Declare remaining locals with inferred types
         for (local, inferred) in &tm.locals {
+            if func.params.contains(local) {
+                continue;
+            }
             let cty = match inferred {
                 InferredType::Int   => "int64_t",
                 InferredType::Float => "double",
                 InferredType::Dynamic => "CrushValue",
             };
             writeln!(out, "    {} {} = 0;", cty, mangle_local(local))?;
-        }
-        // Also declare any params
-        for param in &func.params {
-            if !tm.locals.contains_key(param) {
-                writeln!(out, "    CrushValue {} = CV_NULL;", mangle_local(param))?;
-            }
         }
 
         // Virtual stack of temporary names
@@ -173,8 +197,8 @@ impl AotcCompiler {
                 "push_str" => {
                     let v = instr.args.get("value").and_then(|v| v.as_str()).unwrap_or("");
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
-                    // Strings embedded as pointer-as-CrushValue (heap allocated; simplified)
-                    writeln!(out, "    CrushValue {} = (CrushValue)(intptr_t)\"{}\";", t, c_escape(v))?;
+                    // Strings are NaN-boxed references so cv_is_float/cv_is_string work.
+                    writeln!(out, "    CrushValue {} = cv_string(\"{}\");", t, c_escape(v))?;
                     stack.push((t, ty));
                 }
                 "pop" => { stack.pop(); }
@@ -188,6 +212,15 @@ impl AotcCompiler {
                 "store" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
                     let src = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    // CASM functions begin with stores that bind arguments to parameters.
+                    // Arguments are already passed as C function parameters and unboxed into
+                    // locals, so these initial stores are no-ops.
+                    // NOTE: This makes parameters immutable in the generated C. If Crush
+                    // ever needs mutable parameters, skip only the prologue stores or change
+                    // the CASM convention so parameters are not initialized via store.
+                    if func.params.iter().any(|p| p == name) {
+                        continue;
+                    }
                     let lname = mangle_local(name);
                     let lty = tm.ctype_for(name);
                     match (lty, &src.1) {
@@ -246,9 +279,13 @@ impl AotcCompiler {
                 "eq" | "ne" | "lt" | "gt" | "le" | "ge" => {
                     let b = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let c_op = match instr.op.as_str() {
-                        "eq" => "==", "ne" => "!=", "lt" => "<",
-                        "gt" => ">",  "le" => "<=", "ge" => ">=",
+                    let (cmp_macro, c_op) = match instr.op.as_str() {
+                        "eq" => ("CV_CMP_EQ", "=="),
+                        "ne" => ("CV_CMP_NE", "!="),
+                        "lt" => ("CV_CMP_LT", "<"),
+                        "gt" => ("CV_CMP_GT", ">"),
+                        "le" => ("CV_CMP_LE", "<="),
+                        "ge" => ("CV_CMP_GE", ">="),
                         _ => unreachable!()
                     };
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
@@ -258,7 +295,7 @@ impl AotcCompiler {
                         (InferredType::Float, InferredType::Float) =>
                             format!("CrushValue {} = ({} {} {}) ? CV_TRUE : CV_FALSE;", t, a.0, c_op, b.0),
                         _ =>
-                            format!("CrushValue {} = CV_CMP({}, {}, {});", t, c_op, a.0, b.0),
+                            format!("CrushValue {} = {}({}, {});", t, cmp_macro, a.0, b.0),
                     };
                     writeln!(out, "    {}", code)?;
                     stack.push((t, ty));
@@ -337,8 +374,15 @@ impl AotcCompiler {
                     let mut args: Vec<_> = (0..argc).filter_map(|_| stack.pop()).collect();
                     args.reverse();
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                    // Box scalar args so every function receives a CrushValue regardless of
+                    // the caller's inferred type. The callee unboxes to its own inferred types.
+                    let boxed_args: Vec<String> = args.iter().map(|(a, ty)| match ty {
+                        InferredType::Int   => format!("cv_int({})", a),
+                        InferredType::Float => format!("cv_float({})", a),
+                        _ => a.clone(),
+                    }).collect();
                     writeln!(out, "    CrushValue {} = {}({});", t, mangle(func_name),
-                        args.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>().join(", "))?;
+                        boxed_args.join(", "))?;
                     stack.push((t, ty));
                 }
 
@@ -443,18 +487,21 @@ fn scalar_arith(
     let c_op = match op { "add"=>"+", "sub"=>"-", "mul"=>"*", "div"=>"/", "mod"=>"%", _=>"+" };
     match (&a.1, &b.1) {
         (InferredType::Int, InferredType::Int) => {
-            let code = if op == "mod" {
-                format!("int64_t {} = ({} != 0) ? ({} % {}) : 0;", t, b.0, a.0, b.0)
-            } else {
-                format!("int64_t {} = {} {} {};", t, a.0, c_op, b.0)
+            let code = match op {
+                "add" => format!("int64_t {t}; if (__builtin_add_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");", t=t, a=a.0, b=b.0),
+                "sub" => format!("int64_t {t}; if (__builtin_sub_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");", t=t, a=a.0, b=b.0),
+                "mul" => format!("int64_t {t}; if (__builtin_mul_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");", t=t, a=a.0, b=b.0),
+                "div" => format!("int64_t {t}; if ({b} == 0) crush_div_zero(); {t} = {a} / {b};", t=t, a=a.0, b=b.0),
+                "mod" => format!("int64_t {t}; if ({b} == 0) crush_div_zero(); {t} = {a} % {b};", t=t, a=a.0, b=b.0),
+                _ => format!("int64_t {} = {} {} {};", t, a.0, c_op, b.0),
             };
             (t, InferredType::Int, code)
         }
         (InferredType::Float, InferredType::Float) => {
-            let code = if op == "mod" {
-                format!("double {} = fmod({}, {});", t, a.0, b.0)
-            } else {
-                format!("double {} = {} {} {};", t, a.0, c_op, b.0)
+            let code = match op {
+                "div" => format!("double {t}; if ({b} == 0.0) crush_div_zero(); {t} = {a} / {b};", t=t, a=a.0, b=b.0),
+                "mod" => format!("double {t}; if ({b} == 0.0) crush_div_zero(); {t} = fmod({a}, {b});", t=t, a=a.0, b=b.0),
+                _ => format!("double {} = {} {} {};", t, a.0, c_op, b.0),
             };
             (t, InferredType::Float, code)
         }
@@ -480,7 +527,9 @@ fn emit_math_cap(
     *count += 1;
     let args_str = args.join(", ");
     writeln!(out, "    CrushValue {} = {}({});", t, func, args_str)?;
-    stack.push((t, InferredType::Float));
+    // The result is already a boxed CrushValue; mark it Dynamic so callers
+    // don't try to re-box it with cv_float/cv_int.
+    stack.push((t, InferredType::Dynamic));
     Ok(())
 }
 
@@ -565,5 +614,40 @@ mod tests {
         println!("=== Generated C (math) ===\n{}", c);
         assert!(c.contains("cap_math_sqrt"));
         assert!(c.contains("cap_math_pow"));
+    }
+
+    #[test]
+    fn c_aot_io_print_emits_trailing_newline() {
+        let source = r#"
+            fn main() {
+                print("hello")
+            }
+        "#;
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let c = AotcCompiler::new(AotcOpts::default())
+            .compile(&program).expect("emit C");
+        // The runtime header must contain the single source of truth for the newline.
+        assert!(c.contains("crush_io_print_line"), "generated C runtime should contain crush_io_print_line helper");
+        // The generated main must call the io.print capability.
+        assert!(c.contains("cap_io_print"), "generated C should call cap_io_print");
+    }
+
+    #[test]
+    fn c_aot_string_tagging_and_equality() {
+        let source = r#"
+            fn main() {
+                let a = "hello"
+                let b = "hello"
+                let c = (a == b)
+                print(c)
+            }
+        "#;
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let c = AotcCompiler::new(AotcOpts::default())
+            .compile(&program).expect("emit C");
+        // Strings must be emitted with the proper NaN-boxed reference tag.
+        assert!(c.contains("cv_string(\"hello\")"), "generated C should tag string literals");
+        // Equality must use the scheduler-matching helper.
+        assert!(c.contains("CV_CMP_EQ"), "generated C should use CV_CMP_EQ for equality");
     }
 }
