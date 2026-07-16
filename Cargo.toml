@@ -32,7 +32,7 @@ members = [
     "crates/crush-macros",
     "crates/crush-aot",
     "xtask"
-    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx"]
+    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
 
 [workspace.package]
 version       = "0.3.0"
