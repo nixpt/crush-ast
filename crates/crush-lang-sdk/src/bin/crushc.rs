@@ -15,7 +15,6 @@
 //! crushc program.crush -L ./modules -L /usr/lib/crush
 //! ```
 
-use std::fmt::Write;
 use std::path::PathBuf;
 
 use clap::Parser as ClapParser;
@@ -264,7 +263,11 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
             let mut compiler = crush_frontend::compiler::Compiler::new()
                 .with_invariant_runtime(cli.invariant_runtime);
             let casm_prog = compiler.compile(program)?;
-            let casm_text = format_casm_program(&casm_prog, &cli.caps);
+            // Convert CASM IR to VM bytecode and disassemble back to text.
+            // This produces the canonical VM assembly format that
+            // crush_vm::assemble() (and `crush-vm asm`) can consume.
+            let vm_prog = crush_lang_sdk::compile::casm_to_vm(&casm_prog)?;
+            let casm_text = crush_vm::disassemble(&vm_prog);
             emit_text_output(cli, &casm_text)?;
             Ok(())
         }
@@ -328,70 +331,4 @@ fn emit_text_output(cli: &Cli, content: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Render a CASM program as human-readable assembly text.
-fn format_casm_program(program: &casm::Program, extra_caps: &[String]) -> String {
-    let mut out = String::new();
 
-    // Permission declarations
-    let all_perms: Vec<&str> = {
-        let mut p: Vec<&str> = program
-            .manifest
-            .permissions
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        for cap in extra_caps {
-            if !p.contains(&cap.as_str()) {
-                p.push(cap);
-            }
-        }
-        p
-    };
-    if !all_perms.is_empty() {
-        for perm in &all_perms {
-            let _ = writeln!(out, ".permission {perm}");
-        }
-        let _ = writeln!(out);
-    }
-
-    // Function bodies
-    for (fname, func) in &program.functions {
-        let _ = writeln!(out, ".func {fname}");
-        for instr in &func.body {
-            let args_str = fmt_casm_args(&instr.args);
-            let _ = writeln!(out, "    {} {}", instr.op, args_str);
-        }
-        let _ = writeln!(out);
-    }
-
-    out
-}
-
-fn fmt_casm_args(args: &serde_json::Value) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(obj) = args.as_object() {
-        for (k, v) in obj {
-            match v {
-                serde_json::Value::String(s) => {
-                    let esc = s
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r");
-                    parts.push(format!("{k}={esc:?}"));
-                }
-                serde_json::Value::Number(n) => {
-                    if let Some(i) = n.as_i64() {
-                        parts.push(format!("{k}={i}"));
-                    } else if let Some(f) = n.as_f64() {
-                        parts.push(format!("{k}={f}"));
-                    }
-                }
-                serde_json::Value::Bool(b) => parts.push(format!("{k}={b}")),
-                serde_json::Value::Null => parts.push(format!("{k}=null")),
-                _ => {}
-            }
-        }
-    }
-    parts.join(" ")
-}
