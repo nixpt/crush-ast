@@ -66,6 +66,7 @@ reproduces.
 - [x] **C↔Crush FFI bridge**: plugin auto-build, test_ffi_gateway_cap passing, libcrush_vm.so
 - [ ] Tier-3: Migrate surfer's in-tree Crush runtime → crush-ast
 - [ ] Reconcile divergence with exosphere's in-tree crush
+- [ ] **CRUSH-23**: Crush embedded in exosphere/nakshatra — exosphere half already mapped by `EXO-194` (DECIDED, passive convergence); nakshatra half is new: it has no engine of its own, but its one real Crush artifact (`tools/build.crush`) already runs on exosphere's frozen in-tree path. Captured, not designed — see ticket.
 
 ## Publish lane (blocks crates.io release of the walker family)
 
