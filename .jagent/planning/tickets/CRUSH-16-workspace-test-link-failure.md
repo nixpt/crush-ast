@@ -71,12 +71,13 @@ Applied the scoped fix from the ticket:
 
 1. `Cargo.toml`: changed `[profile.release]` `lto = "fat"` → `lto = "thin"` to fix AOT test-binary linking.
 2. `crates/crush-python/Cargo.toml`: changed `crate-type = ["cdylib", "rlib"]` → `crate-type = ["cdylib"]` to stop `casm` from being compiled twice in the same link unit.
-3. `crates/crush-vm/Cargo.toml`: changed `crate-type = ["lib", "cdylib"]` → `crate-type = ["lib"]` to avoid the same duplicate-`casm` E0308 when the workspace is built as a unit. This means `libcrush_vm.so` is not produced by a plain `cargo test --workspace`; C-API consumers can build the cdylib from a separate target/feature if needed.
+3. `crates/crush-vm/Cargo.toml`: changed `crate-type = ["lib", "cdylib"]` → `crate-type = ["lib"]` so the workspace builds `crush-vm` as a plain Rust library.
+4. Created `crates/crush-vm-capi/` as a separate workspace member that builds `libcrush_vm_capi.so` (`crate-type = ["lib", "cdylib"]`). It contains the C-ABI entry points (`crush_vm_init`, `crush_vm_run_casm`, etc.) that used to live inside `crush-vm/src/c_api.rs`. This preserves the C-API while isolating the cdylib from the workspace's main dependency graph, preventing the duplicate-`casm` E0308.
 
 Verification:
 ```bash
-cargo test -p crush-vm -p crush-lang-sdk -p crush-python -p crush-aotc -p crush-lang-c
-# all pass
+cargo test --workspace
+# all workspace suites pass (including crush-vm-capi::test_c_embed)
 ```
 
 `cargo test --workspace` now compiles and runs; the only remaining failure is an unrelated pre-existing exosphere fixture type error in `crush-pkg::test_build_pipeline` (`Cannot compare types null and int`), which is outside the scope of CRUSH-16.

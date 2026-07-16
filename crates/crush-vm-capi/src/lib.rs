@@ -1,11 +1,14 @@
-//! C API for embedding the CrushVM in C/C++ programs.
+//! C API shared library for embedding the CrushVM in C/C++ programs.
+//!
+//! This crate is built as a `cdylib` (`libcrush_vm_capi.so`) so that the
+//! main `crush-vm` crate can remain a plain `lib`, avoiding duplicate
+//! compilation of `casm` in workspace builds.
 //!
 //! Follows the exosphere `crush-abi-c` pattern:
 //! - Opaque handle types
 //! - Integer error codes (0 = success)
 //! - `extern "C"` + `#[no_mangle]` for all entry points
 //!
-//! Build as a staticlib (`libcrush_vm.a`) or cdylib (`libcrush_vm.so`).
 //! Generate the C header via cbindgen or use the handwritten `crush_vm.h`.
 
 use std::ffi::{CStr, c_char};
@@ -67,7 +70,7 @@ pub unsafe extern "C" fn crush_vm_run_casm(casm_json: *const c_char) -> i32 {
         }
     };
 
-    match crate::vm::run_fastvm(&program) {
+    match crush_vm::vm::run_fastvm(&program) {
         Ok(yield_state) => {
             let mut state = VM_STATE.lock().unwrap();
             state.output.push(format!("{:?}", yield_state));
@@ -102,7 +105,7 @@ pub unsafe extern "C" fn crush_vm_run_asm(asm_source: *const c_char) -> i32 {
         }
     };
 
-    let program = match crate::assemble(source, None, None) {
+    let program = match crush_vm::assemble(source, None, None) {
         Ok(p) => p,
         Err(e) => {
             let mut state = VM_STATE.lock().unwrap();
@@ -111,9 +114,9 @@ pub unsafe extern "C" fn crush_vm_run_asm(asm_source: *const c_char) -> i32 {
         }
     };
 
-    let quotas = crate::vm::Quotas::default();
+    let quotas = crush_vm::vm::Quotas::default();
 
-    match crate::vm::run(&program, &quotas) {
+    match crush_vm::vm::run(&program, &quotas) {
         Ok(result) => {
             let mut state = VM_STATE.lock().unwrap();
             state.output.push(format!("{:?}", result));
@@ -150,5 +153,5 @@ pub extern "C" fn crush_vm_last_error() -> *const c_char {
 /// Get the CrushVM library version string.
 #[unsafe(no_mangle)]
 pub extern "C" fn crush_vm_version() -> *const c_char {
-    b"0.2.0\0".as_ptr() as *const c_char
+    b"0.3.0\0".as_ptr() as *const c_char
 }

@@ -1,0 +1,21 @@
+[package]
+name = "crush-vm-capi"
+version.workspace = true
+edition = "2024"
+repository.workspace = true
+homepage.workspace = true
+description = "C API shared library for embedding the CrushVM in C/C++ programs"
+license.workspace = true
+readme = "README.md"
+keywords = ["crush", "vm", "c-api", "cdylib", "embedding"]
+categories = ["compilers"]
+
+[lib]
+name = "crush_vm_capi"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+crush-vm = { path = "../crush-vm", version = "0.3.0" }
+casm.workspace = true
+serde_json.workspace = true
+

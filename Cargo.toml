@@ -13,6 +13,7 @@ members = [
     "crates/crush-lang-c",
     "crates/crush-lang-zig",
     "crates/crush-vm",
+    "crates/crush-vm-capi",
     "crates/crush-lang-sdk",
     "crates/crush-frontend",
     "crates/crush-index",
