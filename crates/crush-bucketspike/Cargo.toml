@@ -1,0 +1,41 @@
+[workspace]
+# Deliberately its OWN workspace root (spike-only), NOT a member of
+# crush-ast's root workspace: crush-ast's workspace can't currently load
+# at all in this nested-worktree layout because crates/crush-pkg has its
+# own, separate, already-tracked broken `buckets` path dependency (see
+# this crate's own dependency comment below) — `cargo build` on the full
+# workspace fails trying to read crush-pkg's manifest before it ever gets
+# to this crate. Declaring `[workspace]` here cuts the upward directory
+# walk off at this Cargo.toml so cargo never touches crush-pkg's manifest
+# at all. Not a fix for that issue — out of scope for this spike per the
+# task brief — just a way to build+run this crate without tripping over it.
+
+[package]
+name = "crush-bucketspike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "CRUSHAST-BUCKETSPIKE-1 throwaway spike — NOT part of the crush-ast release surface. Proves/disproves that @python polyglot blocks can run inside a buckets-provisioned bwrap sandbox instead of host python3, with the sentinel-line marshaling protocol intact. See SPIKE_RESULTS.md at repo root."
+
+[[bin]]
+name = "bucketspike"
+path = "src/main.rs"
+
+[dependencies]
+# Real project dep for the sentinel constant + Value type, so the spike's
+# scanning logic can't silently drift from the real EXEC_LANG opcode
+# handler in crates/crush-vm/src/scheduler.rs.
+crush-vm = { path = "../crush-vm" }
+serde_json = "1.0"
+anyhow = "1.0"
+
+# NOTE (spike-only, see task CRUSHAST-BUCKETSPIKE-1): absolute path dep.
+# This resolves outside the crush-ast worktree entirely, to the real
+# buckets project checkout — deliberate for a throwaway branch. A real
+# integration would need a relative sibling-project path (like the rest
+# of this workspace's peer-project convention) or a registry dependency;
+# an absolute path is NOT appropriate for anything that ships. Also note:
+# crates/crush-pkg has its own, separate, already-tracked broken `buckets`
+# path dependency in nested-worktree layouts — this crate does not touch
+# crush-pkg and is unaffected by (and does not fix) that issue.
+buckets = { path = "/home/nixp/WORKSPACE/projects/buckets" }
