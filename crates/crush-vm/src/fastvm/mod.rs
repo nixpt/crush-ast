@@ -6,6 +6,7 @@
 pub mod types;
 pub mod instructions;
 pub mod operations;
+pub mod arithmetic;
 pub mod similarity;
 pub mod execution;
 

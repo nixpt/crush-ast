@@ -421,81 +421,19 @@ impl PortableVm {
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
-                let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
-                let af = to_f64_p(&a);
-                let bf = to_f64_p(&b);
                 let result = match opcode {
-                    ADD => {
-                        if is_float {
-                            Value::Float(af + bf)
-                        } else {
-                            Value::Int(
-                                to_i64(&a)
-                                    .checked_add(to_i64(&b))
-                                    .ok_or(VmError::ArithmeticOverflow)?,
-                            )
-                        }
-                    }
-                    SUB => {
-                        if is_float {
-                            Value::Float(af - bf)
-                        } else {
-                            Value::Int(
-                                to_i64(&a)
-                                    .checked_sub(to_i64(&b))
-                                    .ok_or(VmError::ArithmeticOverflow)?,
-                            )
-                        }
-                    }
-                    MUL => {
-                        if is_float {
-                            Value::Float(af * bf)
-                        } else {
-                            Value::Int(
-                                to_i64(&a)
-                                    .checked_mul(to_i64(&b))
-                                    .ok_or(VmError::ArithmeticOverflow)?,
-                            )
-                        }
-                    }
-                    DIV => {
-                        if bf == 0.0 {
-                            return Err(VmError::DivByZero);
-                        }
-                        if is_float {
-                            Value::Float(af / bf)
-                        } else {
-                            Value::Int(to_i64(&a) / to_i64(&b))
-                        }
-                    }
-                    MOD => {
-                        if bf == 0.0 {
-                            return Err(VmError::DivByZero);
-                        }
-                        if is_float {
-                            Value::Float(af % bf)
-                        } else {
-                            let ai = to_i64(&a);
-                            let bi = to_i64(&b);
-                            Value::Int(ai - bi * (ai / bi))
-                        }
-                    }
+                    ADD => crate::arithmetic::add_values(&a, &b)?,
+                    SUB => crate::arithmetic::sub_values(&a, &b)?,
+                    MUL => crate::arithmetic::mul_values(&a, &b)?,
+                    DIV => crate::arithmetic::div_values(&a, &b)?,
+                    MOD => crate::arithmetic::mod_values(&a, &b)?,
                     _ => unreachable!(),
                 };
                 self.push(result);
             }
             NEG => {
                 let a = self.pop()?;
-                match a {
-                    Value::Int(x) => self.push(Value::Int(-x)),
-                    Value::Float(x) => self.push(Value::Float(-x)),
-                    other => {
-                        return Err(VmError::TypeError {
-                            expected: "numeric",
-                            got: value_type_name(&other),
-                        });
-                    }
-                }
+                self.push(crate::arithmetic::neg_value(&a)?);
             }
             MATH_POW => {
                 let exp = self.pop()?;
@@ -609,30 +547,11 @@ impl PortableVm {
             LT | GT | LE | GE => {
                 let b = self.pop()?;
                 let a = self.pop()?;
-                let is_float = matches!((&a, &b), (Value::Float(_), _) | (_, Value::Float(_)));
-                let af = to_f64_p(&a);
-                let bf = to_f64_p(&b);
                 let result = match opcode {
-                    LT => Value::Bool(if is_float {
-                        af < bf
-                    } else {
-                        to_i64(&a) < to_i64(&b)
-                    }),
-                    GT => Value::Bool(if is_float {
-                        af > bf
-                    } else {
-                        to_i64(&a) > to_i64(&b)
-                    }),
-                    LE => Value::Bool(if is_float {
-                        af <= bf
-                    } else {
-                        to_i64(&a) <= to_i64(&b)
-                    }),
-                    GE => Value::Bool(if is_float {
-                        af >= bf
-                    } else {
-                        to_i64(&a) >= to_i64(&b)
-                    }),
+                    LT => crate::arithmetic::compare_values(&a, &b, |x, y| x < y)?,
+                    GT => crate::arithmetic::compare_values(&a, &b, |x, y| x > y)?,
+                    LE => crate::arithmetic::compare_values(&a, &b, |x, y| x <= y)?,
+                    GE => crate::arithmetic::compare_values(&a, &b, |x, y| x >= y)?,
                     _ => unreachable!(),
                 };
                 self.push(result);
@@ -1255,8 +1174,8 @@ impl PortableVm {
             }
             return match cap {
                 "io.print" => {
-                    let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
-                    let line = format!("{s}\n");
+                    let parts: Vec<String> = args.iter().map(value_to_text).collect();
+                    let line = crate::io_print::format_io_print_line(&parts);
                     self.out_len += line.len();
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));

@@ -204,42 +204,120 @@ static inline bool _truthy(Value v) {
 
 static inline bool _is_num(Value v) { return v.tag == TAG_INT || v.tag == TAG_FLOAT; }
 
+// ── String rendering (for string concatenation) ─────────────────────────
+// Render a Value to its text form. When the result is a numeric value that
+// must be formatted into a buffer, writes to `buf` (which must be at least
+// STRBUF_SIZE bytes long). Returns a pointer to either a string constant,
+// `v.s`, or `buf`.
+static inline const char* _to_text_buf(Value v, char* buf, size_t bufsz) {
+    switch (v.tag) {
+        case TAG_INT:   snprintf(buf, bufsz, "%ld", (long)v.i); return buf;
+        case TAG_FLOAT:
+            if (isfinite(v.f) && v.f == (double)(int64_t)v.f) {
+                snprintf(buf, bufsz, "%.1f", v.f);
+            } else {
+                snprintf(buf, bufsz, "%.15g", v.f);
+            }
+            return buf;
+        case TAG_BOOL:  return v.b ? "true" : "false";
+        case TAG_NULL:  return "null";
+        case TAG_STRING: return v.s;
+        default:        return "[opaque]";
+    }
+}
+// Convenience wrapper using the global _strbuf (safe only when result is used immediately).
+static inline const char* _to_text(Value v) {
+    return _to_text_buf(v, _strbuf, STRBUF_SIZE);
+}
+
+static inline void _crush_arith_error(const char *msg) {
+    fprintf(stderr, "crush(aotc): %s\n", msg);
+    exit(1);
+}
+
 static Value _add(Value a, Value b) {
-    if (a.tag == TAG_INT && b.tag == TAG_INT) return mk_int(a.i + b.i);
+    // String concatenation when either operand is a string
+    if (a.tag == TAG_STRING || b.tag == TAG_STRING) {
+        char _ta[STRBUF_SIZE], _tb[STRBUF_SIZE];
+        const char* sa = _to_text_buf(a, _ta, STRBUF_SIZE);
+        const char* sb = _to_text_buf(b, _tb, STRBUF_SIZE);
+        int slen = (int)(strlen(sa) + strlen(sb));
+        if (slen < STRBUF_SIZE) {
+            _strbuf_idx = 0; // reset ring buffer to start
+            char* buf = _strbuf;
+            int pos = 0;
+            while (*sa) buf[pos++] = *sa++;
+            while (*sb) buf[pos++] = *sb++;
+            // _strbuf is now owned by the pushed Value — save via _str_alloc
+            _strbuf[pos] = '\0';
+            return mk_string(buf);
+        }
+        return mk_null();
+    }
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        int64_t out;
+        if (__builtin_add_overflow(a.i, b.i, &out)) _crush_arith_error("arithmetic overflow");
+        return mk_int(out);
+    }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
     double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
     return mk_float(fa + fb);
 }
 static Value _sub(Value a, Value b) {
-    if (a.tag == TAG_INT && b.tag == TAG_INT) return mk_int(a.i - b.i);
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        int64_t out;
+        if (__builtin_sub_overflow(a.i, b.i, &out)) _crush_arith_error("arithmetic overflow");
+        return mk_int(out);
+    }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
     double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
     return mk_float(fa - fb);
 }
 static Value _mul(Value a, Value b) {
-    if (a.tag == TAG_INT && b.tag == TAG_INT) return mk_int(a.i * b.i);
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        int64_t out;
+        if (__builtin_mul_overflow(a.i, b.i, &out)) _crush_arith_error("arithmetic overflow");
+        return mk_int(out);
+    }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
     double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
     return mk_float(fa * fb);
 }
 static Value _div(Value a, Value b) {
-    if (a.tag == TAG_INT && b.tag == TAG_INT) return mk_int(b.i != 0 ? a.i / b.i : 0);
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i == 0) _crush_arith_error("division by zero");
+        return mk_int(a.i / b.i);
+    }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
     double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
-    return mk_float(fb != 0.0 ? fa / fb : 0.0);
+    if (fb == 0.0) _crush_arith_error("division by zero");
+    return mk_float(fa / fb);
 }
 static Value _mod(Value a, Value b) {
-    if (a.tag == TAG_INT && b.tag == TAG_INT) return mk_int(b.i != 0 ? a.i % b.i : 0);
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i == 0) _crush_arith_error("division by zero");
+        return mk_int(a.i % b.i);
+    }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
     double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
-    return mk_float(fb != 0.0 ? fmod(fa, fb) : 0.0);
+    if (fb == 0.0) _crush_arith_error("division by zero");
+    return mk_float(fmod(fa, fb));
 }
 static Value _neg(Value v) {
-    if (v.tag == TAG_INT)  return mk_int(-v.i);
+    if (v.tag == TAG_INT) {
+        if (v.i == INT64_MIN) _crush_arith_error("arithmetic overflow");
+        return mk_int(-v.i);
+    }
     if (v.tag == TAG_FLOAT) return mk_float(-v.f);
+    _crush_arith_error("type error: negate on non-numeric operand");
     return mk_null();
 }
 static Value _not(Value v) { return mk_bool(!_truthy(v)); }
+
+static void _cmp_type_error(void) {
+    fprintf(stderr, "crush(aotc): type error: ordered comparison on non-numeric operands\n");
+    exit(1);
+}
 
 static Value _cmp(Value a, Value b, int op) {
     // op: 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE
@@ -258,9 +336,12 @@ static Value _cmp(Value a, Value b, int op) {
             case 2: r = fa <  fb; break; case 3: r = fa <= fb; break;
             case 4: r = fa >  fb; break; case 5: r = fa >= fb; break;
         }
-    } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL) {
+    } else if (a.tag == TAG_STRING && b.tag == TAG_STRING && (op == 0 || op == 1)) {
+        int c = strcmp(a.s, b.s);
+        r = (op == 0) ? (c == 0) : (c != 0);
+    } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL && (op == 0 || op == 1)) {
         r = (op == 0) ? (a.b == b.b) : (a.b != b.b);
-    } else if (a.tag == TAG_NULL && b.tag == TAG_NULL) {
+    } else if (a.tag == TAG_NULL && b.tag == TAG_NULL && (op == 0 || op == 1)) {
         r = (op == 0);
     }
     return mk_bool(r);
@@ -655,10 +736,10 @@ fn emit_c_instr(
         // ── Comparison ──
         "eq" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,0)); }} _pc={next_pc}; break;\n")); }
         "ne" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,1)); }} _pc={next_pc}; break;\n")); }
-        "lt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,2)); }} _pc={next_pc}; break;\n")); }
-        "le" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,3)); }} _pc={next_pc}; break;\n")); }
-        "gt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,4)); }} _pc={next_pc}; break;\n")); }
-        "ge" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,5)); }} _pc={next_pc}; break;\n")); }
+        "lt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,2)); }} _pc={next_pc}; break;\n")); }
+        "le" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,3)); }} _pc={next_pc}; break;\n")); }
+        "gt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,4)); }} _pc={next_pc}; break;\n")); }
+        "ge" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,5)); }} _pc={next_pc}; break;\n")); }
 
         // ── Logical ──
         "and" => {
@@ -841,7 +922,15 @@ const char* crush_run(void) {
     static char _buf[512];
     switch (result.tag) {
         case TAG_INT:   snprintf(_buf, sizeof(_buf), "%ld", (long)result.i); break;
-        case TAG_FLOAT: snprintf(_buf, sizeof(_buf), "%.15g", result.f); break;
+        case TAG_FLOAT: {
+            double __f = result.f;
+            if (isfinite(__f) && __f == (double)(int64_t)__f) {
+                snprintf(_buf, sizeof(_buf), "%.1f", __f);
+            } else {
+                snprintf(_buf, sizeof(_buf), "%.15g", __f);
+            }
+            break;
+        }
         case TAG_BOOL:  snprintf(_buf, sizeof(_buf), "%s", result.b ? "true" : "false"); break;
         case TAG_NULL:  snprintf(_buf, sizeof(_buf), "null"); break;
         case TAG_STRING: snprintf(_buf, sizeof(_buf), "\"%s\"", result.s); break;

@@ -2,7 +2,8 @@
 
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
-use super::operations::{binary_op, compare_op, current_locals_base, is_truthy};
+use super::operations::{compare_op, current_locals_base, is_truthy};
+use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_rtv};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest};
 use crate::memory::{Arena, Object};
@@ -171,51 +172,34 @@ pub fn execute_one(
         }
 
         // ===== Arithmetic =====
-        FastOp::Add => binary_op(stack, |a, b| a + b, |a, b| a + b)?,
-        FastOp::Sub => binary_op(stack, |a, b| a - b, |a, b| a - b)?,
-        FastOp::Mul => binary_op(stack, |a, b| a * b, |a, b| a * b)?,
+        FastOp::Add => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(add_rtv(&a, &b, arena)?);
+        }
+        FastOp::Sub => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(sub_rtv(&a, &b)?);
+        }
+        FastOp::Mul => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(mul_rtv(&a, &b)?);
+        }
         FastOp::Div => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    if *y == 0 {
-                        return Err(FastError::DivisionByZero);
-                    }
-                    stack.push(RuntimeValue::Int(x / y));
-                }
-                (RuntimeValue::Float(x), RuntimeValue::Float(y)) => {
-                    stack.push(RuntimeValue::Float(x / y));
-                }
-                (RuntimeValue::Int(x), RuntimeValue::Float(y)) => {
-                    stack.push(RuntimeValue::Float(*x as f64 / y));
-                }
-                (RuntimeValue::Float(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Float(x / *y as f64));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
+            stack.push(div_rtv(&a, &b)?);
         }
         FastOp::Mod => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    if *y == 0 {
-                        return Err(FastError::DivisionByZero);
-                    }
-                    stack.push(RuntimeValue::Int(x % y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
+            stack.push(mod_rtv(&a, &b)?);
         }
         FastOp::Neg => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match a {
-                RuntimeValue::Int(x) => stack.push(RuntimeValue::Int(-x)),
-                RuntimeValue::Float(x) => stack.push(RuntimeValue::Float(-x)),
-                _ => return Err(FastError::TypeMismatch),
-            }
+            stack.push(neg_rtv(&a)?);
         }
         FastOp::MathPow => {
             let exponent = stack.pop().ok_or(FastError::StackUnderflow)?;
@@ -253,10 +237,26 @@ pub fn execute_one(
         // ===== Comparison =====
         FastOp::Eq => compare_op(stack, |a, b| a == b, |a, b| a == b)?,
         FastOp::Ne => compare_op(stack, |a, b| a != b, |a, b| a != b)?,
-        FastOp::Lt => compare_op(stack, |a, b| a < b, |a, b| a < b)?,
-        FastOp::Le => compare_op(stack, |a, b| a <= b, |a, b| a <= b)?,
-        FastOp::Gt => compare_op(stack, |a, b| a > b, |a, b| a > b)?,
-        FastOp::Ge => compare_op(stack, |a, b| a >= b, |a, b| a >= b)?,
+        FastOp::Lt => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(compare_rtv(&a, &b, |x, y| x < y)?);
+        }
+        FastOp::Le => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(compare_rtv(&a, &b, |x, y| x <= y)?);
+        }
+        FastOp::Gt => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(compare_rtv(&a, &b, |x, y| x > y)?);
+        }
+        FastOp::Ge => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(compare_rtv(&a, &b, |x, y| x >= y)?);
+        }
 
         // ===== Logical =====
         FastOp::And => {

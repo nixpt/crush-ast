@@ -12,7 +12,7 @@
 //! Generate the C header via cbindgen or use the handwritten `crush_vm.h`.
 
 use std::ffi::{CStr, c_char};
-use std::sync::{Arc, Mutex, LazyLock};
+use std::sync::{Mutex, LazyLock};
 
 /// Opaque VM state.
 struct CrushVmState {
@@ -153,5 +153,5 @@ pub extern "C" fn crush_vm_last_error() -> *const c_char {
 /// Get the CrushVM library version string.
 #[unsafe(no_mangle)]
 pub extern "C" fn crush_vm_version() -> *const c_char {
-    b"0.3.0\0".as_ptr() as *const c_char
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }
