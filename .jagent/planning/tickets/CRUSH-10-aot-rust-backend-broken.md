@@ -4,11 +4,23 @@
 |-------|-------|
 | **ID** | CRUSH-10 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | **Done** — verified s388 (2026-07-16) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | fixed via `agent/kai/CRUSHAST-RELEASE-1`-era `RuntimeValue::Str`→`RuntimeValue::String` fix, `crush-ast` `5f30520`/`c27601e` |
 | **Dependencies** | none |
 | **Estimated effort** | S |
+
+## Resolution (verified s388)
+
+Confirmed fixed independent of this ticket, by a different session's AOT
+verification pass (the `RuntimeValue::Str` vs the enum's real `String`
+variant fix, `crush-ast` `5f30520`/`c27601e`). Re-verified end-to-end here:
+`crush-aotc compile --emit so` on a pure-numeric program compiled AND
+executed correctly via `ctypes.CDLL` (`print(5+3)` → `8`, correct). The
+crate's own `cargo test -p crush-aot --test integration` (this ticket's
+"22/22 failing" evidence) is now **all green** as part of the same-day full
+workspace test run. `grep -rn RuntimeValue::Str` across `crush-aot` returns
+zero hits — only the correct `RuntimeValue::String` remains.
 
 ## Problem
 

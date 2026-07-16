@@ -1,62 +1,45 @@
 # TASKS — crush-ast
 
+Refreshed s388 (2026-07-16): every open item below was either re-verified against
+current `main`, or is a genuinely-still-open ticket. Previously this file had ~60
+lines of unstructured findings dumped under "Aspirational" that were neither
+aspirational nor current — several described bugs already fixed by unrelated work
+(the CRUSHAST-RELEASE-1 arc, this session's merge wave). Don't trust a stale
+"critical"/"P0" label without re-running the repro first — see `RULES.md` §1.
+
+See `.jagent/planning/tickets/` for full detail on every `CRUSH-N` ID referenced
+here. See `RULES.md` for the worktree/branch/commit discipline every agent
+working this backlog must follow.
+
 ## P0 — Build & Core Health ✅
 
 - [x] `--all-features` build fixed (rustls dep:)
 - [x] `--no-default-features` build (crush-net needs cfg gates)
-- [x] 129+ tests pass (11 Rust SDK + 8 Python SDK + 11 JS SDK + 12 C SDK + 99 VM + 6 walker), 0 failures
 - [x] Core crates published (casm, crush-cast, crush-errors, crush-vm, crush-frontend, crush-lang-sdk)
 - [x] **LTO enabled**: 3-layer (Rust fat LTO + gcc -flto + CFLAGS -flto). Binary size 64-80% reduction (53-142MB → 19-30MB)
+- [x] **CRUSH-2** (polyglot capability bypass) — verified fixed s388, `polyglot_gate()` gates `EXEC_LANG` in both scheduler.rs and portable_vm.rs
+- [x] **CRUSH-10** (AOT Rust backend can't compile anything) — verified fixed s388, compiles + executes correctly
+- [ ] **CRUSH-16** (P1): `cargo test --workspace` link failure — AOT bins under fat-LTO + crush-python cdylib/rlib dup-compile. Scoped fix known, not yet applied.
 
-## P1 — VM Coverage & Parity ✅
+## M1 — Correctness sweep (black-box bugs found porting real examples)
 
-- [x] portable_vm parity: 10 missing opcodes added + 11 parity tests
-- [x] Lambda compilation wired
-- [x] Match compilation wired
-- [x] async/await/spawn parsed
-- [x] **bitwise opcode coverage** (bit_and/or/xor/not/shl/shr in AOT C + AOT Rust)
-- [x] **math opcode coverage** (math_pow/sqrt/abs/round/floor/ceil in AOT C + AOT Rust)
-- [x] **string opcode coverage** (str_contains/starts_with/ends_with/to_upper/to_lower/trim in AOT C + AOT Rust)
-- [x] **test_ffi_gateway_cap** now passes (auto-build via build.rs)
-- [x] **libcrush_vm.so** built as cdylib (19MB with LTO)
-- [ ] Wire AI-native opcodes in crush-vm (Query, Synthesize, AgentDelegation, etc.)
-- [ ] Wire spawn/await/yield to VM execution
-- [ ] Fill 18 zero-coverage error paths
-- [ ] Fix MOD sign bug between portable_vm and FastVM
-- [ ] Add EXEC_LANG opcode to PortableVm
-- [ ] **CRUSH-7**: array mutation effectively unusable — no index-assignment, `.push()` chaining broken, nested array-literal indexing broken (found porting `examples/crush/snake.crush`)
-- [ ] **CRUSH-8**: `examples/crush/fibonacci.crush` and `arrays_and_loops.crush` don't actually run against current `crushc`/`crush-run` (same discovery)
-- [ ] **CRUSH-9**: JS-walked CAST hits severe, non-local type-inference bugs in `compile_cast` — an unrelated, uncalled function's shape can flip whether a totally different function type-checks (found porting `examples/js-walked/turtle_runner.js`)
-- [ ] **CRUSH-10** (P0): AOT Rust-codegen backend (`crush_aot::compile_casm`) can't compile *any* program — generated code references a `RuntimeValue::Str` variant that doesn't exist, unconditionally, even for pure-numeric programs
-- [ ] **CRUSH-11**: AOT C-codegen backend (`--backend gcc`) runs but silently garbles string output (prints garbage floats like `1.73347e-308` instead of string content) — numeric output is correct, only strings are corrupted
+Every item here was found by actually running programs against the toolchain,
+not by source-diving. **Re-verify each repro before fixing** — this session
+found 2 of the "P0 critical" tickets in this exact folder were already fixed
+by unrelated work; don't assume a ticket's Backlog status means the bug still
+reproduces.
 
-## P2 — Walkers & Frontends ✅
+- [ ] **CRUSH-1** (L): Wire 10 AI-native opcodes + spawn/await/yield to real VM execution (currently all NOP). Blocks crush-notebook's AI-native cells.
+- [ ] **CRUSH-7** (M): Array mutation effectively unusable — no index-assignment, chained `.push()` breaks with stack underflow, nested array-literal indexing broken, no slicing.
+- [ ] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) fail against current `crushc`/`crush-run` — typed-recursive-function type error, and a stack-quota crash on array-to-string concat.
+- [ ] **CRUSH-9** (L): JS-walked CAST hits severe, non-local type-inference bugs — an unrelated, uncalled function's shape (even a no-op `console.log("")`) can flip whether a totally different function type-checks. Primary suspect: `crush-frontend/src/semantics.rs` return-type unification state not properly scoped per-function.
+- [ ] **CRUSH-11** (M): AOT C backend's string-output garbling — **needs re-verification first** (simple literal-print case no longer reproduces as of s388; the ticket's actual repro via `examples/js-walked/turtle_runner.js`, recursively-built strings, was not re-tested — that file now exists in-repo, run it before doing anything else).
+- [ ] **CRUSH-12** (M): Any `struct` declaration silently kills `main` — zero exit code, zero output, `main` never called. The purest silent-failure bug in the codebase; `steps=` VM instruction counter is a free oracle for catching it.
+- [ ] **CRUSH-13** (L): Five independent arithmetic implementations (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero (loud error vs. silent 0) and likely other operators. The bugarium flagship differential-testing target; `crush-diff` harness exists but doesn't yet cover the AOT backends.
+- [ ] **CRUSH-14** (S): `io.print` emits no trailing newline — cosmetic but visible in every multi-line example, including the website demo.
+- [ ] **CRUSH-15** (S): `crushc --emit casm`'s text output and `crush-run`'s CASM assembler are two incompatible dialects; docs imply a round-trip that doesn't work (`--emit vm` binary round-trip works fine, this is text-format only).
 
-- [x] Rust walker (syn → CAST)
-- [x] Python walker (PyO3)
-- [x] JS/TS walker (swc + boa dual-backend)
-- [x] Bash walker (tree-sitter)
-- [x] Zsh walker (tree-sitter)
-- [x] C/C++ walker
-- [x] Go walker
-- [x] Zig walker
-- [x] Wasm walker
-- [x] **C walker SDK** (c_to_cast, cast_to_casm, run_c, 12 tests)
-- [x] **Python walker SDK** (run_python, 8 tests, slices, in/is, AOT path)
-- [x] **JS walker SDK** (run_js, 11 tests, subscript fix, TS stripping, polyglot merge)
-- [x] **Rust walker SDK** (run_rust, 11 tests, field access, array literals, closures)
-- [x] **AOT C path for all 4 languages** (C, Python, JS/TS, Rust ��� `crush-aotc compile --emit c`)
-- [x] **Polyglot merge** (Program::merge → JS + Python in one CASM → one .so)
-
-## P3 — AOT Backends ✅
-
-- [x] **AOT C backend** (852L): CASM → C99 + gcc -O3 -flto, arrays/objects/math/string/bitwise/SIMD
-- [x] **AOT Rust backend** (590L): CASM → Rust + rustc, math/string/bitwise parity with C
-- [x] **Forward declarations** for cross-function calls in C codegen
-- [x] **Array pool bump** (ARRAY_DATA_CAP 1024 �� 65536 for sieve workloads)
-- [x] **Type inference disabled** for non-crush sources (Value-mode locals)
-
-## P4 — JIT
+## M2 — JIT completion
 
 - [x] Phase 1: Skeleton (stack ops, arithmetic, logic, jumps, locals, 21 tests)
 - [ ] Phase 2: Locals & Calls (function calls, store/load, CapCall, CallHost)
@@ -65,93 +48,52 @@
 - [ ] Phase 5: ExoLight integration
 - [ ] Phase 6: Optimization passes
 - [ ] Phase 7: AOT compilation
+- [ ] (unfiled) crush-jit silently miscompiles ~55 of 86 FastOps per a cranelift fuzz target disagreement (panini, 2026-07-14) — needs its own ticket before work starts; scope unclear from the one-line finding alone.
 
-## P5 — Debugger
+## M3 — Debugger completion
 
-- [x] Breakpoint registry (file:line keyed, bytecode resolution)
-- [x] REPL (break, delete, step, continue, list, status, quit, help)
-- [x] VM integration (set_breakpoints, DebugBreak yield, is_halted)
-- [x] VmDriver abstraction (PortableVmDriver + MockVmDriver)
-- [x] NDJSON wire consumer
+- [x] Breakpoint registry, REPL, VM integration, VmDriver abstraction, NDJSON wire consumer
 - [ ] Variable inspection (`print <var>`)
 - [ ] Source → bytecode sourcemap (crush-frontend integration)
 - [ ] Step-by-step state inspection
 
-## P6 — Cross-Project
+## M4 — Cross-project integration
 
 - [x] **C↔Crush FFI bridge**: plugin auto-build, test_ffi_gateway_cap passing, libcrush_vm.so
 - [ ] Tier-3: Migrate surfer's in-tree Crush runtime → crush-ast
 - [ ] Reconcile divergence with exosphere's in-tree crush
 
-## 💡 Aspirational
+## Publish lane (blocks crates.io release of the walker family)
+
+- [ ] Version drift: only 9/35 crates use `version.workspace = true`; 6 crates
+      (walker-core, cli/"walker", go_walker, zig_walker, dart_walker,
+      wasm_walker) hardcode a stale `0.1.0` and have drifted from the
+      workspace's `0.3.0`. `walker-core` isn't on crates.io at all, blocking
+      10 dependent crates (crush-aot + all 8 crush-lang-* + crush-aotc) from
+      publishing. Fix: `version.workspace = true` everywhere + publish
+      `walker-core`. Note: `crates/cli`'s package name `walker` is squatted
+      on crates.io (unrelated project) — needs a rename to `crush-walker`
+      before it can publish (name is otherwise free).
+- [ ] The `crush-lang-*` vs `*_walker` naming split reflects two incomplete
+      generations of the same `Frontend`/`Walker`/`LanguageAdapter` trait
+      unification — 6 crates (bash/custom/nepali/python/rust/zsh) implement
+      only the old `Frontend` trait and can't register with
+      `AdapterRegistry`. `crates/cli/src/main.rs` maps `py`/`pyw` to a
+      `python_walker` crate that doesn't exist. Migrating those 6 onto
+      `LanguageAdapter` is real, scoped work — not just a rename.
+
+## 💡 Aspirational / research (not scheduled)
 
 - [ ] V8 fallback for dynamic JS (feature-gated, snapshot-based, DevTools)
 - [ ] Node.js API compatibility shim (require('http') → CAP_CALL)
 - [ ] Embedded RustPython VM lane
-- [ ] Subprocess/CPython lane + three-way lane router
 - [ ] `exo.*` capability modules
 - [ ] Import firewall, fuel budgets, deterministic mode, snapshot/replay
 - [ ] Unified capsule-aware GC + ML "GC policy brain"
-- [x] **issue** — crush-cson: inline comments are NOT stripped inside values (kai, 2026-07-14)
-- [x] **issue** — crush-cson: annotation properties split on ',' naively (kai, 2026-07-14)
-- [x] **gap** — crush-cson: string escapes unsupported, no serializer (kai, 2026-07-14)
-- [x] **gap** — crush-cson: CsonParseCap never registered (kai, 2026-07-14)
-- [ ] **issue** — crush-jit: silently miscompiles ~55 of 86 FastOps, cranelift fuzz target disagrees (panini, 2026-07-14)
-- [ ] **issue** — lambdas cannot be written in crush: pipe token collision (panini, 2026-07-14)
-- [ ] **issue** — example.crush (crush-website playground) does NOT run: @python/@javascript/@rust polyglot blocks have NO runtime capability. 'crush-run caps' lists io/str/fs/env/time/bus/task/akg/process/crypto/graphics/stdlib/net/db — no polyglot cap exists. @python block yields 'Undefined variable: result' (no marshaling back); @javascript/@rust yield malformed-JSON 'expected quoted string' (half-wired). Polyglot is the language's headline pitch and the website's hero claim.  _(unknown, 2026-07-14)_
-- [ ] **issue** — Parser rejects @io.print(...) in expression position ('Unexpected token in expression: AtIdent(io)') even though io.print IS a real built-in portable capability at runtime. The guide teaches @io.print in getting-started.md and appendix/quick_reference.md, but its own 82 examples use bare print(). Runtime has the cap; surface syntax cannot reach it.  _(unknown, 2026-07-14)_
-- [ ] **gap** — Polyglot is UNWIRED, not absent — 3 distinct defects. (1) crush-lang-python crate exists but crush-lang-sdk (builds crush-run) has no dep on it; registration is a global side-effect registry (register_executor), so @python no-ops -> 'Undefined variable: result'. (2) @javascript HAS a builtin executor (builtin_executors.rs: js/javascript/es6/ecmascript) but dies earlier at CASM parse: 'expected quoted string, got {"code":...' — the block's JSON spec is embedded in CASM unescaped. (3) @rust has no executor at all. Nothing is feature-gated.  _(unknown, 2026-07-14)_
-- [ ] **issue** — Version drift blocks the whole crush-lang-* publish lane. [workspace.package] version=0.2.0, but only 9 crates use version.workspace=true. 21 hardcode 0.2.0 (correct today, will silently drift on next bump). 6 hardcode 0.1.0 and HAVE drifted: walker-core, cli(pkg name=walker), go_walker, zig_walker, dart_walker, wasm_walker. walker-core@0.1.0 is a dep of 10 crates at 0.2.0 — incl crush-aot and ALL 8 crush-lang-* (bash/c/custom/js/nepali/python/rust/zsh). walker-core is NOT on crates.io, so none of those can publish. The 7 crates that ARE published (casm, crush-cast, crush-errors, crush-frontend, crush-lang-sdk, crush-vm, tree-sitter-crush @0.2.0) are clean of walkers — that's why they made it. Fix: version.workspace=true everywhere + publish walker-core. Note crates/cli pkg 'walker' is TAKEN on crates.io (passcod) — rename to crush-walker on unmerged branch agent/kai/CRUSHAST-RENAME.  _(unknown, 2026-07-14)_
-- [ ] **issue** — The crush-lang-* vs *_walker naming split IS the polyglot bug, not a cosmetic issue. walker-core defines THREE traits for one job (source->CAST): Frontend (old, parse->Box<dyn Any>), Walker (tree-sitter specific), LanguageAdapter (the unifier, added by 'Universal Walker Adapter' commit). AdapterRegistry ONLY accepts Box<dyn LanguageAdapter>. The unification is INCOMPLETE: 6 crates still implement ONLY Frontend (crush-lang-{bash,custom,nepali,python,rust,zsh}) so they CANNOT be registered. The 4 *_walker crates implement LanguageAdapter. js+c straddle both. So crush-lang-* = old Frontend generation, *_walker = new LanguageAdapter generation. KICKER: crates/cli/src/main.rs:20 maps 'py'|'pyw' => Some("python_walker") — a crate that DOES NOT EXIST. The only 'python' registration in the tree is a MockAdapter in a walker-core unit test. That is precisely why @python silently no-ops. Fix = migrate the 6 Frontend-only crates onto LanguageAdapter AND unify the names; the rename forces the migration.  _(unknown, 2026-07-14)_
-- [ ] **issue** — PRE-EXISTING on feat/python-crush-bridge (NOT caused by the rename or polyglot work): 'cargo test --workspace' fails exit 101 with E0308 'multiple different versions of crate casm in the dependency graph' in crush-python. crush-python is crate-type=[cdylib,rlib]; cargo emits 'output filename collision' warnings naming the SAME package twice (libcrush_vm.rlib/.so). Per-crate tests are green (crush-vm 128, crush-lang-sdk 100) which masks it — only the full workspace link fails. Verified against a clean target dir and against the base branch with the IDENTICAL command.  _(kai, 2026-07-14)_
-- [ ] **issue** — @ is OVERLOADED in Crush across 4 constructs, all sharing one AtIdent token (lexer.rs:125 '// @mcp, @cap, @lang, etc'); the PARSER disambiguates by context, not the sigil. (1) polyglot blocks @python{}/@javascript{} — required. (2) compiler/backend directives @gpu/@kernel/@target — crush-ptx lane. (3) AST/AI annotations @invariant/@decision/@covers/@writes/@synthesize — typed CAST metadata. (4) capability calls @io.print — the ONLY wrong one; caps take NO sigil (fixed in the guide, 163 call sites). CONSEQUENCE: any generic 'AtIdent in expression position' parser rule would silently swallow compiler directives and AI annotations as capability calls = silent miscompile. Any source-rewriting tool must NOT treat @ as one construct — note crush-notebook's @wip.started_by carries a DOT, so a 'strip @ from @x.y' rule eats it.  _(kai, 2026-07-14)_
-- [ ] **issue** — ARCHIVE ARCHAEOLOGY (exosphere-1.0.zip 2026-02-24 + crush.zip 2025-12): POLYGLOT HAS NEVER WORKED IN ANY GENERATION. (1) crush.zip = the original Dec-2025 PYTHON prototype (casm.py/casavm.py) — no polyglot. (2) exosphere-1.0 archive/archived-stdlib/ = 137 caps across 23 namespaces incl polyglot.call/lib/transfer + python.stdlib/js.stdlib — but polyglot_bridge.rs (664 lines) is a MOCK: execute_polyglot_function() says 'For now, return mock results' and hardcodes (python,math,sqrt)->sqrt computed IN RUST, (python,json,loads)->fixed string. ZERO Command::new/pyo3/rustpython in the crate. It cannot execute Python at all. (3) in-tree crush-lang: variables:Vec::new() hardcoded (cece). (4) crush-ast today: same. DANGER: the mock returns PLAUSIBLE values (a real sqrt) so restoring it would PASS tests — a perfect silent-wrong-answer generator. Do not restore; build fresh with the rustpython AST route. ALSO: @io.print appears in ZERO archive files; io.print/io.echo/io.input existed and were ALWAYS unprefixed — confirms the guide fix. ALSO: the guide's sys./array./map./console./convert./type. namespaces existed in NO generation (archive used system./data./text./dom./binary./result.) — never real anywhere. ALSO: the archive's 137 caps vs today's ~26 = ~111 capabilities lost when the stdlib was archived; that is the real 'stdcap' divergence the captain remembered.  _(unknown, 2026-07-14)_
-- [ ] **opportunity** — STDLIB RESTORATION MAP (from exosphere-1.0.zip archive/archived-stdlib, 137 caps / 23 namespaces vs today's ~26). Split by mock-density audit: CLEAN + RESTORABLE = 103 caps across text(555 LOC) fs(463) missing_capabilities(521) storage(263) bytes(222) result(161) binary(153) math(127) gfx(123) task(81) async_cap(62) — zero mock markers, real impls. MOCK-TAINTED = 46 caps across polyglot_bridge(664 LOC, 9 markers, execute_polyglot_function returns HARDCODED values), ai_capabilities(1481, 9), dom(780, 5) — DO NOT restore without rewriting; they return plausible fakes that pass tests. Partial: ics(490,2) buffer(249,1). USAGE SPEC: crush-capsules/demos/ (4 Rust demos) are the API-in-use reference — ai-data-analysis imports crush_stdlib::{ai_capabilities,polyglot_bridge} + nanovm, so ITS results were mock; advanced-capsules + distributed-orchestrator use exo_core capsule_engine/ecap (real infra); data-encryption-demo is just exo_core::crypto. All 4 demos are DEAD: path deps point at /workspace/core/{exo-core,crush-common} which do not exist.  _(unknown, 2026-07-14)_
-- [ ] **issue** — REAL extraction regression (NOT @io.print/EXO-47 — those were false leads). Ran exosphere's OWN tests/language/*.crush corpus against crush-ast crush-run: 4/7 parse, 3 FAIL. (a) for_loop_test.crush: 'for i in 0..3 { }' range-based for loops DO NOT PARSE (Expected LBrace). (b) async_test.crush: 'Unexpected token in expression: Async'. (c) concurrency_structs.crush: assign-in-expression line 6. These PASS in exosphere/crates/core/crush-lang. crush-ast lost real language features in the extraction. exosphere's corpus IS the acceptance test for the fix. ALSO: crush-capsules is NOT an example source — tools/core + standalone/app-runtime + examples have ZERO .crush files (all Rust host-side capsule demos); only 2 .crush exist repo-wide: squad-bridge-peek/main.crush (7 LOC, parses) and games/snake/game.crush (559 LOC, 226 parse errors — written in a far richer Rust-like dialect with mut/generics/::/match =>/type annotations/-> returns). Snake is a ROADMAP SPEC for where the language was headed, not a borrowable example.  _(kai, 2026-07-14)_
-- [ ] **issue** — Crush's + operator does not support string + number concatenation at all — 'io.print("x: " + 5)' fails with 'type error: expected numeric, got str'. This breaks crush-website/example.crush's own 'Python says 5^3 is: ' + result pattern once @io.print and @python marshaling are both fixed (found while verifying CRUSHAST-POLYGLOT-1 end-to-end against the real file). Out of scope for CRUSHAST-POLYGLOT-1 — logged for whoever owns operator semantics next.  _(unknown, 2026-07-14)_
-- [ ] **issue** — SEVERE PRE-EXISTING: ANY struct declaration silently kills main. 'struct P { x } fn main() { print("hi") }' exits 0, steps=2, prints NOTHING. No error, no warning, zero exit code. Verified against the parent commit — not caused by the s385 parser work. main is never called. Struct programs have NEVER worked. concurrency_structs.crush now PARSES (7/7 corpus) but still cannot RUN because of this. This is the purest silent failure in the codebase and the flagship target for the khukuri-bugarium parking lot (workspace-meta/plans/2026-07-14-PARKING-LOT-bugarium-vs-crush.md) — the 'steps=' counter is a free oracle: assert main's body executed >=1 instruction.  _(unknown, 2026-07-14)_
-- [ ] **issue** — Program::serialize(Format::Binary) (rmp-serde/MessagePack) is broken for any Program containing an Instruction — #[serde(flatten)] on Instruction.args (crates/casm/src/lib.rs) is a well-known rmp-serde incompatibility: flatten forces map-based (de)serialization, but rmp-serde's struct default is sequence/array-based, and encoding it via #[serde(flatten)] does not fix the DEcode side. Isolated with a throwaway repro calling just serialize+deserialize with no encryption/paging involved — fails identically to the ecasm encrypt/decrypt roundtrip tests, which is why 2 tests in crates/casm/src/ecasm.rs are marked #[ignore] (not deleted) with the full trace inline. Format::Json round-trips fine (serde_json is natively map-based). Not a regression — this file has had only 3 commits ever, back to the original workspace extraction; Format::Binary program round-trips have apparently never worked. Real fix needs a deliberate design call: custom (de)serialize for Instruction that hand-rolls the flatten merge in a binary-safe way, or dropping flatten (wire-format break for every .castb consumer).  _(unknown, 2026-07-14)_
-- [ ] **cleanup** — PARKED (captain's call, s385): cargo test --workspace on crush-ast main has two PRE-EXISTING build-config failures (NOT code, NOT introduced this session — both predate on feat/python-crush-bridge, now on main via the c5918a9 merge). cargo check --workspace is CLEAN and core suites (crush-vm/crush-frontend/crush-lang-sdk = 468) are green; only the full-workspace test-binary LINK fails. (1) AOT binaries crush-aotc/crush-walk-run don't link — ROOT CAUSE per captain: [profile.release] lto="fat" (Cargo.toml:72, from commit c254541 'enable LTO at all 3 layers'). (2) crush-python crate-type=[cdylib,rlib] duplicate-compiles casm → E0308 'multiple different versions of crate casm'. LIKELY FIX (scoped, small): lto="thin" or exclude the AOT bin targets / cdylib from fat-LTO; give crush-python a single crate-type for the test build (or feature-gate the cdylib). Would get cargo test --workspace green on main. Standalone ticket, no dependency on other work.  _(unknown, 2026-07-14)_
-- [x] **CRUSHAST-CAPTIMEOUT-1** — CAP_CALL/EXEC_LANG had no wall-clock bound: step/depth/output quotas never trip for a process blocked on I/O (a cold bucket provision, a hung subprocess), since it executes zero crush instructions while hanging. Fixed: `Quotas.max_wall_time_ms` (default 30s) via shared `scheduler::run_with_wall_clock_limit`, wired into both scheduler.rs and portable_vm.rs's EXEC_LANG (crush-diff confirms no divergence). Named, loud `VmError::CapTimeout` on trip, never a silent hang. Two real bugs found building it: (1) naive spawn+poll+read-after-exit deadlocks on a chatty child filling the OS pipe buffer before exiting — fixed with dedicated reader threads from the moment of spawn. (2) killing the tracked PID isn't enough — `bash -c "sleep 30"` forks `sleep` as bash's own child, which inherits bash's stdout/stderr pipes; killing bash alone leaves sleep running and the pipe never sees EOF until sleep's own 30s elapses (every individual step looked correct in isolation — only an end-to-end test taking the full 30s instead of ~0.2s caught it) — fixed with `Command::process_group(0)` at spawn + `libc::kill(-pgid, SIGKILL)` on timeout (std has no process-group-kill primitive). Deliberately does NOT cover CAP_CALL's generic `HostCap::call()` dispatch — `Value`'s `Rc<RefCell<...>>` isn't `Send`, so an arbitrary trait call can't safely be preempted from another thread without making `Value` Send first (out of scope, noted in the code). 4 new unit tests on the primitive + 1 end-to-end test through the real compile+run pipeline; full suite green. Branch `agent/cece/CRUSHAST-CAPTIMEOUT-1`, based on `agent/kai/CRUSHAST-RELEASE-1`. Full writeup: `dejavue decision` "EXEC_LANG wall-clock timeout: process-group kill, not single-PID kill".  _(cece, 2026-07-14)_
-- [ ] **issue** — io.print does NOT emit a trailing newline — example.crush's output runs together on one line ('🚀 Crush...Python: 5^3 = 125.0Back in Crush...'). The archived stdlib had io.print AND io.echo as distinct caps, suggesting one was line-oriented. Need either a newline on io.print or a println/io.echo cap. Cosmetic but it makes any multi-line demo look broken, and the website demo is the first thing anyone will run.  _(unknown, 2026-07-14)_
-- [ ] **issue** — FIVE independent 'add' implementations exist and they DISAGREE.
-(1) crush-vm/scheduler.rs [interpreter - what crush-run uses]
-(2) crush-vm/portable_vm.rs
-(3) crush-vm/fastvm/execution.rs [FastOp::Add via binary_op - NUMERIC ONLY; crush-python calls run_fastvm]
-(4) crush-aot/codegen.rs [emits Rust via bin_arith - NUMERIC ONLY]
-(5) crush-aot/codegen_c.rs [emits C via _add()]
-s385 fixed string-concat + loud TypeError in (1) and (2) ONLY, so the gap is now WIDER.
-PROVEN DIVERGENCE, independent of that fix: '1 / 0' -> scheduler raises DivisionByZero LOUDLY;
-crush-aot/codegen.rs emits 'if b != 0 then a/b else 0' and SILENTLY RETURNS 0. Same for mod.
-Same program, different answers, no error from either.
-crush-aot is NOT in the runtime dep graph (zero reverse deps; no source file imports crush_aot)
-BUT it IS a workspace member that builds and ships two binaries (crush-aotc, crush-walk-run),
-so a user CAN invoke it and get silently different semantics.
-THIS IS THE BUGARIUM FLAGSHIP TARGET: differential replay across all 5 backends over the corpus;
-any divergence = a silent miscompile. Related: crush-jit's catch-all pushing TAG_NULL.  _(unknown, 2026-07-14)_
-- [ ] **issue** — CRITICAL / SECURITY: polyglot blocks TOTALLY BYPASS the capability system — the entire premise of the language.
-Crush is capability-based: code gets exactly the authority granted (--fs, --net, --process) and nothing more.
-But @python/@bash/@javascript blocks spawn full interpreters (python3 -c / bash -c / node -e) via
-scheduler.rs resolve_lang_binary, with the crush-run PROCESS's full ambient authority and NO capability check.
-PROVEN: `@bash { touch /tmp/crush_escape_probe }` run with ZERO grants (no --fs, no --process) WROTE THE FILE.
-`@bash { echo PROOF }` executes shell with zero caps. @python { import os; os.system(...) } is arbitrary code exec.
-The website example.crush I just committed literally advertises "Held: io, str, math. Not fs. Not net.
-There is no ambient authority to escape from." — while a @bash block one screen up can rm -rf anything the
-user can. The demo's central security claim is false the moment any polyglot block runs.
-FOUND BY khukuri MCP (SAST): it flagged scheduler.rs:698 Command::new. resolve_lang_binary IS a fixed
-allowlist so the BINARY is not injectable (that part is fine) — but the allowlist INCLUDES bash, and none of
-the spawns are gated behind a capability grant. khukuri found the site; the capability-bypass is the real bug.
-FIX DIRECTION: @lang execution must require an explicit capability (e.g. a `polyglot` or per-language grant,
-like --fs/--net), and ideally run the child under the same sandbox the caps model implies. Until then, the
-polyglot feature and the capability pitch are mutually contradictory. This gates any honest crushlang.org launch
-that sells capabilities as the headline. Related: the whole point of cece's CRUSHAST-POLYGLOT-1 work now needs a
-security story before it ships.  _(unknown, 2026-07-14)_
-- [ ] **opportunity** — khukuri replay machine CORRECTION (captain's tip: 'ported out of exosphere, mostly a replay machine' — TRUE, with nuance). (1) The replay engine SURVIVED extraction: standalone khukuri still has src/core/{replay,hash,engine}.rs, exposed via the MCP 'verify' verb. My earlier 'the MCP isn't the replay machine' was WRONG — I only used the analyze/SAST verb. (2) BUT it is AUDIT-LOG replay, not execution replay: replay.rs (10 lines) folds canonical_hash(prev,event,seed) over a stream of actor/action/resource/payload Events for tamper-detection/provenance. verify_transition predicts the next hash. It does NOT re-execute a program and diff VM state. Zero divergence detection in core. (3) WHAT WAS DROPPED: adapters/crush.rs — 15KB in exosphere-1.0.zip, a real TargetAdapter (spawn/request_snapshot/eval/control a crush program). GONE from standalone (only in_process + benchmark stub remain). Same extraction-loss pattern as crush polyglot/@io.print. (4) THIS SHRINKS the differential-replay work: the archived CrushAdapter's request_snapshot already captures {stdout,stderr,exit_code,compiled,return_value} — enough to catch every divergence found this session (1/0=diff exit; a+b=diff stdout). canonical_hash already exists. Harness = restore adapters/crush.rs from the archive + add a backend selector + run corpus x5 backends + hash-compare. Result-level catches the known divergences + struct-clobber. Per-instruction is a later refinement.  _(unknown, 2026-07-14)_
-- [ ] **opportunity** — DIFFERENTIAL HARNESS BUILT (crush-diff) — parking-lot flagship, real for 3 of 5 backends. crates/crush-lang-sdk/src/differential.rs + bin/crush-diff.rs (crush-diff <file|dir>, exit 1 on divergence). Drives A=interpreter(crush_vm::run) B=portable(PortableVm::run) C=fastvm(run_fastvm, its own lowering). D/E=aot codegen do not link (pre-existing) — slot in when link bug fixed. Comparison: DIVERGENCE=observable diff (stdout or accept-vs-reject); NOTES=non-observable (residual stack); fastvm ABSTAINS on missing-capability rather than false-flag. FOUND A REAL DIVERGENCE FIRST RUN: polyglot_braces.crush — interpreter ran @javascript (node -e), portable_vm tried to spawn binary "javascript" with -c and errored. cece's resolve_lang_binary fix was in scheduler.rs NOT portable_vm.rs. FIXED: resolve_lang_binary now pub(crate), BOTH backends share it, allowlist can't drift again. Corpus 1 DIVERGED -> 0. OPEN NOTE (not fixed): portable_vm leaves residual Null on stack after main where interpreter leaves []; same output, benign, follow up. NEXT for the harness: wire capabilities into run_fastvm so fastvm stops abstaining (currently every io.print program = InvalidCapability(0)); then fastvm becomes a real third opinion. Landed on agent/kai/CRUSHAST-RELEASE-1 e2749a2, 465 tests green.  _(unknown, 2026-07-14)_
-- [ ] **opportunity** — LiteVM/exo-light path IS VIABLE and DOES have WASM — captain was right, my website 'no WASM' was over-corrected. THE STACK (exo-light = LiteVM v0.1, format-dispatching capsule runtime): (1) .cvm1/.cvm -> crush-vm in-process, object-capability gate (3 layers) + step quotas. (2) .wasm -> wasmtime, fuel-metered WASI sandbox, preopen-scoped FS. (3) else -> subprocess. exo-light DEPENDS on crush-vm directly (path dep) and runs it via crush_vm::run_with_caps(program, quotas, Some(registry)). capsule-contract defines the shared Capability/CapabilitySet/Enforcer model; exo-light's Enforcer::Enforcement = Vec<Box<dyn crush_vm::HostCap>> — it DERIVES crush's host-cap registry from a CapabilitySet. So exo-light IS a real, working capability-enforcement + WASM-sandbox layer. OPENKO (production integration, openko-network/openko): ExoLightRuntime is 'the default and only built-in runtime' — WASM capsules via wasmtime (fuel+memory+capability-gated), non-WASM binaries as ENV-CLEARED subprocesses, crush integrated directly as an advanced backend. So the LiteVM/exo-light capability+WASM story ALREADY SHIPS in openko. BUT THE POLYGLOT ESCAPE PERSISTS EVEN HERE: crush-vm's exec_lang (scheduler.rs:698) does resolve_lang_binary then Command::new(binary) DIRECTLY, and it receives host_caps: Option<&HostCaps> but NEVER checks it (contrast fs.read at :1072 which does `if let Some(host)=host_caps`). So @python/@bash spawn below exo-light's enforcement seam — even openko running crush with a restricted CapabilitySet cannot contain @python{import os;os.system(...)}. THE FIX IS NOW ARCHITECTURALLY CLEAR: make @lang a HOST CAPABILITY routed through the host_caps registry, exactly like fs/net. Then ONE fix gates it at THREE points: crush-run --cap flag, exo-light Enforcer (CapabilitySet->HostCaps), openko per-capsule. exo-light proves the enforcement machinery already exists. WEBSITE CORRECTION: 'no WASM' is true for the standalone crush-run binary (cargo install path) but FALSE for the LiteVM/exo-light deployment stack which has real wasmtime WASI. Nuance the claim, don't remove WASM absolutely.  _(unknown, 2026-07-14)_
-- [ ] **opportunity** — CRUSH-VM x EXO-LIGHT PACKING PATH (the deployment shape + the polyglot enforcement wiring). WHERE THINGS STAND: exo-light (nixpt/exo-light, master) is LiteVM v0.1, format-dispatcher, already deps crush-vm via path and runs .cvm1 capsules through crush_vm::run_with_caps(program, quotas, Some(registry)) at lib.rs:797. Its CrushCapEnforcer (lib.rs:202) derives Vec<Box<dyn crush_vm::HostCap>> from a capsule-contract CapabilitySet. THE POLYGLOT SEAM IS NOW OPEN: crush-vm exposes pub fn polyglot_gate(lang)->Box<dyn HostCap> (c5918a9). exo-light's Enforcer::derive Named(_) arm is a no-op today; the 3-line change (exo-light side, coordinate the repo): CapView::Named(name) => if let Some(lang)=name.strip_prefix("polyglot.") { out.push(crush_vm::polyglot_gate(lang)); }. Then a capsule declaring polyglot.python in its CapabilitySet gets a live @python gate; one that doesn't cannot spawn — SAME enforcement as crush-run --polyglot, driven by the contract. THE THREE ENFORCEMENT POINTS NOW UNIFIED through the host_caps registry: (1) crush-run --polyglot flag [DONE], (2) exo-light Enforcer [seam open, 3-line change pending], (3) openko per-capsule [flows automatically via exo-light]. BROADER PACKING SHAPE (already real, not new work): crush programs deploy as .cvm1 capsules; exo-light dispatches .cvm1->crush-vm in-process (obj-cap gate + step quotas), .wasm->wasmtime WASI, else->env-cleared subprocess; openko runs ExoLightRuntime as its default+only runtime. So 'packing crush-vm with exo-light' = crush is ALREADY the .cvm1 backend; the missing piece was polyglot enforcement, now seam-ready. NEXT ACTIONS: (a) coordinate the exo-light 3-line Named-arm change (separate repo), (b) verify the round-trip: a .cvm1 capsule with polyglot.python in its manifest runs @python, one without refuses. crush-diff proves both crush-vm backends gate identically so exo-light gets consistent behavior regardless of which it invokes.  _(unknown, 2026-07-14)_
-- [ ] **opportunity** — FOURTH polyglot execution path: run @python/@javascript in a BUCKET (bwrap-sandboxed, dep-provisioned runtime) instead of host interpreter. @python[numpy] provisions numpy; block runs isolated, no host authority, no host python needed. All pieces exist: buckets (bwrap sandbox + LIBRARY, already routes node/python/bun/deno commit 4e54caf), firefly (which python@3.11 --json = provision+hand-back-env, flame's cousin same repo), exo-hydra x2 (ephemeral capsule provisioning), ptxas-via-buckets precedent (this session). Connects to the polyglot.<lang> capability fix: the gate AUTHORIZES the spawn, buckets SANDBOXES it — grant+bucket = the real capability promise. Seam: exec_lang swaps Command::new(host python3) for buckets::resolve([python@3.11,deps])+sandboxed_command. Open Qs: deps CAST annotation, layer ownership (lean sdk not crush-vm), marshaling-survives-sandbox (cece's sentinel should, VERIFY), cold-start (buckets caches, warm-handle needed for notebooks). VERDICT: viable, high-value, wiring not invention. First step = 1-afternoon spike, not a research wave. Full: workspace-meta/plans/2026-07-14-crush-polyglot-via-buckets.md  _(unknown, 2026-07-14)_
-- [ ] **issue** — crush-frontend/compiler.rs: Expression::ObjectLiteral and Expression::ArrayLiteral both compiled a redundant 'dup' before each element/property, on top of SET_FIELD/ARR_PUSH already re-pushing the container after each insert (their documented contract). Net effect: +1 stray container reference leaked onto the operand stack per property/element, invisible for 0-1 property/element literals or when nothing downstream does a type-checked pop, but corrupting later type-checked pops (GET_FIELD/SET_FIELD/THROW's error binding) once a literal had >1 element or a nested literal value — surfaced by CRUSHAST-PYLOWER-1's raise-value ObjectLiteral (3 properties, one an ArrayLiteral). FIXED both (removed the dup, relying on the opcodes' own re-push) as part of this ticket, with a regression comment in place; commit is on agent/cece/CRUSHAST-PYLOWER-1.  _(unknown, 2026-07-14)_
-- [ ] **issue** — crush-frontend's Expression::Match compilation (compiler.rs) assumes an arm's last statement, if ExprStmt, always leaves exactly one stack value (skips the normal pop so that value becomes the arm's result). False for any expression whose capability dispatch returns None (e.g. print(...) -> io.print, which per crush-vm/src/scheduler.rs's dispatch_cap returns Ok(None), pushing nothing) — an arm body ending in a bare print(...) (completely ordinary code) underflows the stack. Reproduced independently via native .crush match syntax (crushc+crush-run), NOT just via CRUSHAST-PYLOWER-1's Python lowerer. Worked around on the Python-lowering side only (lower_stmt.rs::lower_match always appends a trailing NullLiteral ExprStmt to every arm body) since crush-frontend/src/parser/mod.rs's native parse_match_arm is out of this ticket's scope; the native-syntax path is still exposed to this bug. A real fix belongs in compiler.rs's Match compilation itself (e.g. push_null unconditionally after a non-returning last expression, or check the capability's declared returns spec).  _(unknown, 2026-07-14)_
-- [ ] **gap** — crushc --emit casm's output format and crush-run's CASM-text assembler (crush-vm/src/assembler.rs) are two different, incompatible CASM dialects: crushc emits '.permission'/lowercase-mnemonic key=value text (a raw Instruction-list dump), the assembler only recognizes '.func' plus UPPERCASE mnemonics (matching crush-lang-sdk::compile::casm_to_vm's internal text generation). 'crushc foo.crush --emit casm' output cannot be fed to 'crush-run run foo.casm' as the tool's own doc comments imply — found while trying to manually verify CRUSHAST-PYLOWER-1 via crush-run; worked around by using --emit vm (CVM1 binary) instead, which round-trips fine. Someone should either unify the two textual dialects or fix crushc's docs to stop implying that combo works.  _(unknown, 2026-07-14)_
-- [ ] **gap** — This worktree (nested at .claude/worktrees/<agent>/, not the flat /home/nixp/worktrees/<agent>/ layout the fleet doctrine describes) cannot run 'cargo check'/'cargo test' for ANY workspace member: crates/crush-pkg/Cargo.toml has 'buckets = { path = "../../../buckets" }', which from this nesting depth resolves outside the worktree (to .claude/worktrees/buckets, which doesn't exist and can't be created — writes outside the agent's own worktree dir are blocked by policy, and symlinking to the real /workspace/projects/buckets project was also correctly blocked as a shared-resource risk). Same root cause as the already-recorded worktree-vendor-submodule-trap / peer-repo-worktree-path-dep memories, but this is the first time it's fully blocked ALL cargo commands rather than just one dependent crate. Worked around for CRUSHAST-PYLOWER-1 by copying the ~12-crate dependency closure crush-lang-python actually needs into a throwaway crates/-mirroring workspace entirely inside the worktree (_verify_ws/, gitignored/untracked, not committed) with its own root Cargo.toml excluding crush-pkg. Whoever provisions worktrees nested this way should either seed a real/stub buckets checkout at the resolved sibling path, or make crush-pkg's buckets dependency optional/feature-gated so it doesn't block the rest of the workspace's cargo graph.  _(unknown, 2026-07-14)_
+- [ ] Polyglot-via-buckets (sandboxed 4th execution path) — scoped design exists at `workspace-meta/plans/2026-07-14-crush-polyglot-via-buckets.md`, viable, not started
+- [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs`
+- [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue.
+
+## Done this session (s388, for context — see FOREMAN_SESSIONS.md s388 for the full merge-wave writeup)
+
+- 8 branches merged: CRUSHAST-CAPTIMEOUT-1 (EXEC_LANG wall-clock timeout), EXECLANG-PLUGGABLE-1, BUCKETSPIKE-1/2 (buckets sandbox proof), PTX-REBASE-1 (crush-ptx + crush-aotc PTX backend scaffold), WEB-1 (crush-web wasm32 target), COLLECTIONS-RECOVER (Tuple/List/Vector/Set types), PYLOWER-1 (Tier 1 Python try/except/match/comprehension lowering), SNAKE-1 (Snake+Turtle Runner examples, filed CRUSH-7..11)

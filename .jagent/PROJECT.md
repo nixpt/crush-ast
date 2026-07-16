@@ -9,6 +9,9 @@ AI-native language ecosystem. Compiler, multi-tier VM (CVM1→FastVM→JIT), deb
 - **Ecosystem:** Part of the Exosphere project family. Powers surfer-browser scripting, crush-notebook cells, crush-pkg ecosystem.
 - **Protocol:** CLI binaries + library crates. No MCP server (that's crush-notebook's domain).
 
+**Working this backlog?** Read `.jagent/planning/RULES.md` first — verify-before-fix +
+one worktree/branch per milestone + push at every phase boundary, not at the end.
+
 ## Workspace (35 crates)
 
 ```

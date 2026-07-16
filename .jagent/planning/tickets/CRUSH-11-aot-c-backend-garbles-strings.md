@@ -4,11 +4,25 @@
 |-------|-------|
 | **ID** | CRUSH-11 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | **Needs re-verification** — partially checked s388 (2026-07-16), not closed |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
 | **Estimated effort** | M |
+
+## Partial verification (s388, 2026-07-16)
+
+Simple cases do NOT reproduce the garbling anymore: a literal `print("hello
+world")` compiled via `--emit c` and run through `ctypes.CDLL` printed
+`hello world` cleanly (no `1.73347e-308`-style corruption) — checked both
+the io.print side-effect path and a bare-value function-return path.
+**Did not re-run this ticket's own actual repro** (`examples/js-walked/
+turtle_runner.js`, walked through `js_walker` — this file now exists in the
+repo as of the `CRUSHAST-SNAKE-1` merge, so the exact repro is finally
+runnable without recreating it). The ticket's specific complaint involves
+recursively-built strings (`build_air_row`/`build_ground_row`) which is a
+meaningfully different code path than a literal string — **do not assume
+fixed from the simple-case check above; re-run the real repro first.**
 
 ## Problem
 

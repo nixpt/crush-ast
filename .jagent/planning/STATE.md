@@ -1,8 +1,8 @@
 # Planning state — crush-ast
 
-**Updated:** 2026-07-14T07:30:00-05:00
-**Milestone focus:** Production hardening & polyglot pipeline completion
-**Branch:** `feat/python-crush-bridge` (→ main via PR)
+**Updated:** 2026-07-16T03:00:00-05:00
+**Milestone focus:** M1 — correctness sweep (see TASKS.md, RULES.md for the worktree/branch discipline)
+**Branch:** `main` (8 branches merged s388: CAPTIMEOUT-1, EXECLANG-PLUGGABLE-1, BUCKETSPIKE-1/2, PTX-REBASE-1, WEB-1, COLLECTIONS-RECOVER, PYLOWER-1, SNAKE-1)
 
 ## Delivery snapshot
 
@@ -33,11 +33,20 @@
 
 ## Active work
 
-_Polyglot pipeline complete._ C, Python, JS/TS, and Rust all walk to CAST, compile to CASM, and run through CVM1 (dev) and AOT C (prod). The unified pipeline enables multi-file polyglot compilation (JS + Python → one .so). Next: (1) V8 fallback for JS, (2) AI opcodes, (3) JIT completion.
+M1 correctness sweep: 9 real bugs found by black-box testing against actual
+example programs (array mutation, JS-walker type inference, struct-kills-main,
+5-way arithmetic divergence, AOT string-output re-verification, plus smaller
+gaps) — see TASKS.md's M1 section and `.jagent/planning/tickets/CRUSH-{1,7,8,9,11,12,13,14,15}`.
+Two previously-"P0-critical" tickets (CRUSH-2 polyglot capability bypass,
+CRUSH-10 AOT-Rust backend) were re-verified s388 and are **already fixed** by
+unrelated work — don't assume a ticket's Backlog status is current, see
+`RULES.md` §1. After M1: AI opcodes (CRUSH-1), JIT completion (M2), debugger (M3).
 
 ## Blockers
 
-_None._ `test_ffi_gateway_cap` now passes (auto-build via build.rs). Tree-sitter linker issue in `crush-lang-c` tests (pre-existing, `ts_parser_parse_with_options` unresolved).
+_None known._ `test_ffi_gateway_cap` passes (auto-build via build.rs).
+CRUSH-16 (cargo test --workspace link failure, AOT-bins-under-LTO +
+crush-python cdylib/rlib) has a known, scoped fix, just not yet applied.
 
 ## Metrics
 
@@ -61,14 +70,14 @@ _None._ `test_ffi_gateway_cap` now passes (auto-build via build.rs). Tree-sitter
 | Decisions captured | 20+ |
 | Known error-path gaps | 18 with zero coverage |
 
-## Next 6 (from TASKS.md, priority order)
+## Next 6 (from TASKS.md M1, priority order — verify-before-fix per RULES.md §1)
 
-1. V8 fallback for dynamic JS (feature-gated behind `crush-v8-fallback`)
-2. Wire AI-native opcodes in crush-vm (Query, Synthesize, AgentDelegation, etc.)
-3. Wire spawn/await/yield to VM execution
-4. Complete debugger variable inspection
-5. Advance JIT to Phase 2 (function calls, cap calls, store/load)
-6. Fill 18 zero-coverage error path tests
+1. CRUSH-12: struct declaration silently kills `main` (purest silent-failure bug)
+2. CRUSH-13: five arithmetic implementations disagree on div/mod-by-zero
+3. CRUSH-7: array mutation effectively unusable (index-assign, chained push, nested indexing)
+4. CRUSH-9: JS-walker type-inference bugs (non-local, order-dependent)
+5. CRUSH-11: re-verify AOT-C string garbling against the real repro (turtle_runner.js) before fixing anything
+6. CRUSH-1: wire AI-native opcodes (largest single item, L effort)
 
 ## Memory split
 
@@ -76,5 +85,6 @@ _None._ `test_ffi_gateway_cap` now passes (auto-build via build.rs). Tree-sitter
 |---------|------|
 | *Why* | `.dejavue/` (`dejavue context`) |
 | *What / when* | `.jagent/planning/` (this file, ROADMAP, TASKS, tickets) |
+| *How to work this backlog* | `.jagent/planning/RULES.md` (worktree/branch/verify discipline) |
 | Identity | `.jagent/PROJECT.md` |
 | Active threads | `.dejavue/threads.md` |

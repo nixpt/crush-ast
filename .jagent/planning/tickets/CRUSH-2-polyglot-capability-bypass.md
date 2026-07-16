@@ -4,11 +4,28 @@
 |-------|-------|
 | **ID** | CRUSH-2 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | **Done** — verified s388 (2026-07-16) |
 | **Phase** | M0 |
-| **Assignee** | unassigned — captain's call on scope |
+| **Assignee** | fixed via `polyglot_gate()` (crush-vm `host.rs`), merged `agent/kai/CRUSHAST-RELEASE-1` |
 | **Dependencies** | none |
 | **Estimated effort** | M (design work; the fix itself is likely small once the design is settled) |
+
+## Resolution (verified s388)
+
+Re-ran this ticket's own repro verbatim: `crushc /tmp/escape.crush -o /tmp/escape.cvm1 &&
+crush-run run /tmp/escape.cvm1` with **zero capabilities granted**. Result:
+
+```
+[runtime] unknown capability: @bash requires the 'polyglot.bash' capability (run with --polyglot to grant it); refusing to spawn
+```
+
+No probe file created — matches every success criterion below (loud, named
+denial via `polyglot.<lang>`, `--polyglot` grants it explicitly, no silent
+no-op). `scheduler.rs` and `portable_vm.rs` both gate `EXEC_LANG` through
+`crush_vm::polyglot_gate(lang)` before `Command::new` is ever reached
+(confirmed both call sites, `crush-diff` proves no divergence between them).
+Sandboxing depth (bwrap/seccomp) is still open — see the buckets-integration
+opportunity in TASKS.md — but the capability-bypass itself is closed.
 
 ## Problem
 
