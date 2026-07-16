@@ -9,8 +9,8 @@ rust-version.workspace = true
 description = "Crush AOT compiler: CASM → C source → shared library (.so)"
 
 [dependencies]
-casm = { path = "../casm" }
-crush-frontend = { path = "../crush-frontend" }
+casm = { path = "../casm", version = "0.3.0" }
+crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
 anyhow = "1.0"
 tempfile = "3"
 

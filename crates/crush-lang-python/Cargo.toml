@@ -21,6 +21,6 @@ rustpython-parser = "0.4"
 rustpython-ast = "0.4"
 
 [dev-dependencies]
-crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
-crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.0" }
-crush-vm = { path = "../crush-vm", version = "0.3.0" }
+crush-frontend = { path = "../crush-frontend" }
+crush-lang-sdk = { path = "../crush-lang-sdk" }
+crush-vm = { path = "../crush-vm" }
