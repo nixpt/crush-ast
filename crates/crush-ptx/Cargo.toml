@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-casm = { path = "../casm" }
-crush-errors = { path = "../crush-errors" }
+casm = { path = "../casm", version = "0.3.0" }
+crush-errors = { path = "../crush-errors", version = "0.3.0" }
 
 [dev-dependencies]
 serde_json = "1.0"
