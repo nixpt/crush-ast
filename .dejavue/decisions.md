@@ -477,6 +477,11 @@ Outcome:
 - Core crates tested (95/96 pass; test_ffi_gateway_cap expects pre-built .so)
 - State.md updated with new crates (crush-debugger, crush-ffi, crush-plugin-example, crush-cson, crush-lint, fastvm modules)
 
+## 2026-07-11T04:52:45-05:00 — crush gpu capability v0: cap-owns-context (not HAL)
+
+Reason:
+The gpu.* host capability holds the CUDA context/module-cache/handle-table directly in Arc<GpuState>; no GpuHal trait for v0. Fewest moving parts; zorro registers handlers over its existing device-0 primary context so crush-kernel PTX and zorro's own kernels share one context and buffers interop. Refactor to fastvm Hal only if exo-light needs GPU capsules — call() body is identical, migration mechanical.
+
 ## 2026-07-13T03:25:00-05:00 — Full-session audit: state captured, .jagent initialized
 
 Reason:

@@ -4,8 +4,7 @@ Sibling to `crush-jit-backend.md` (the CASM→Cranelift **CPU** JIT). This doc
 pins the vocabulary for a CASM→**PTX** GPU backend so crush kernels can run on
 NVIDIA GPUs — the "kernels in crush" thread.
 
-Status: **design / discussion.** No code yet. This is the turn-3 artifact of a
-multi-turn design arc (borrowing from pyptx, the razor megakernel, haiku_san).
+Status: **scaffolded (Way 3 chosen).** Initial implementation in `crates/crush-ptx`. This is the Turn-3 artifact of a multi-turn design arc (borrowing heavily from pyptx).
 
 ## Context — what we're borrowing from
 
@@ -54,10 +53,10 @@ end. CASM is already a linear instruction stream — the port is CASM → PTX te
 
 | Tier | Vocabulary | CASM today | Gap |
 |---|---|---|---|
-| **0 · SIMT model** | `thread_idx.{x,y,z}`, `block_idx`, `block_dim`, `grid_dim`, `lane_id`, `warp_id`; `@kernel` entry + param space; `barrier_sync()` | none | new intrinsics → `mov.u32 %r,%tid.x`, `.visible .entry`, `bar.sync`. pyptx `_Special`/`global_ptrs`. |
-| **1 · Memory** | address spaces (global/shared/local/param); typed `ld`/`st`; `.shared` arrays w/ align | stack is space-less | new `LOAD_<space>_<ty>`/`STORE_…` + `var()` decl. pyptx `var`/`_make_address`. |
-| **2 · Typed scalar ALU** | add/sub/mul/mad/shl/shr/and/or/xor/min/max **with dtype**; `setp`→predicate; `cvt` (u8→f32, f32→f16, rounding); `fma.rn` | has ops, **untyped** | attach dtype (pyptx infers modifier from `Reg.dtype`); add `CVT` + predicate-producing compare. `cvt` is the quant-dequant workhorse. |
-| **3 · Control flow** | structured `if/else/for/loop` → predicated `bra` + labels | has `jmp`/cond-jump | add **predicated** branch (`@%p bra`); structured→label lowering. pyptx `if_`/`range_`. |
+| **0 · SIMT model** | `thread_idx.{x,y,z}`, `block_idx`, `block_dim`, `grid_dim`, `lane_id`, `warp_id`; `@kernel` entry + param space; `barrier_sync()` | `ptx_thread_idx_x`, `ptx_block_idx_x` | implemented basics; need `bar.sync` and full dim access. |
+| **1 · Memory** | address spaces (global/shared/local/param); typed `ld`/`st`; `.shared` arrays w/ align | `ptx_ld_global`, `ptx_st_global` | implemented global and param spaces; missing `.shared` and `.local`. |
+| **2 · Typed scalar ALU** | add/sub/mul/mad/shl/shr/and/or/xor/min/max **with dtype**; `setp`→predicate; `cvt` (u8→f32, f32→f16, rounding); `fma.rn` | standard `add/sub/mul/div`, `push_float` | implemented virtual reg mapped ops; `s64` is the default map for crush vars. `cvt` still needed. |
+| **3 · Control flow** | structured `if/else/for/loop` → predicated `bra` + labels | `jmp`, `jmp_if`, `jmp_if_not` | implemented using labels and `bra`. |
 | **4 · Warp collectives** | `shfl.sync.{bfly,idx,up,down}`; `warp_reduce_sum/max/min` | none | one primitive `SHFL`; `warp_reduce` is then crush **library code** (pyptx builds it from shfl). Needed for GEMV reduction. |
 | **5 · Tensor-core / async** | wgmma / mma.sync / tcgen05, cp.async, TMA, mbarrier | none | **DEFER.** Not needed for GEMV; pyptx has full reference impls to borrow at GEMM/flash-attn. |
 
@@ -94,11 +93,9 @@ The emitter is the foundation both were missing.
    gives it turnkey; a crush-owned SPIR-V target (a second emitter backend, like
    cubecl has many) gives it under our control later. pyptx is NVIDIA-only.
 
-## Open decisions (for the next turns)
+## Resolved Decisions (from scaffold)
 
-- Way 3 (crush owns PTX, port pyptx design) vs Way 1 (crush→LLVM→nvvm). Leaning
-  Way 3 on merit.
-- Spike target sm_120-only, or SPIR-V/vendor-neutral in scope from the start
-  (pushes toward a cubecl-style multi-backend IR vs a pyptx-style direct emitter).
-- Crush *surface syntax* for the SIMT intrinsics (`@thread_idx`, `@shared`,
-  `@sync`, warp ops) — the actual language extension.
+- **Way 3 (crush owns PTX) is chosen**. The `crush-ptx` crate translates CASM directly to PTX. This is fully in our control, bypassing LLVM.
+- **Parameters are passed as `.param` pointers**: Following `pyptx`'s lead, tensors are passed as 64-bit `.param .u64` pointers, which the body loads into virtual registers.
+- **PTXAS is the sole optimizer**: We map variables to fresh virtual registers and allow `ptxas` to perform register allocation and graph coloring.
+- **Hard errors on unimplemented opcodes**: We eliminated the `TAG_NULL` fallback flaw; the backend loudly fails on unknown instructions to ensure safety.

@@ -70,9 +70,13 @@ fn test_ffi_gateway_cap() {
     let mut host_caps = crate::host::HostCaps::new();
     host_caps.register(Box::new(crate::plugin::FfiGatewayCap));
 
-    // Load the example C plugin compiled by build.rs.
+    // Load the example C plugin compiled by build.rs at OUT_DIR.
+    // If it wasn't built (e.g., gcc missing), skip the test.
     let plugin_so = env!("EXAMPLE_C_PLUGIN_SO");
-
+    if !std::path::Path::new(plugin_so).exists() {
+        eprintln!("Skipping test_ffi_gateway_cap: example_c_plugin.so not built (gcc missing?)");
+        return;
+    }
     let asm = format!(
         r#"PUSH_STR "{plugin_so}"
         PUSH_STR "math.add"
@@ -81,8 +85,6 @@ fn test_ffi_gateway_cap() {
         CAP_CALL "__crush_ffi__" 4
         HALT"#
     );
-    eprintln!("plugin_so: {plugin_so}");
-    eprintln!("asm:\n{asm}");
     let prog = assemble(
         &asm,
         Some(&["__crush_ffi__"]),
@@ -94,8 +96,8 @@ fn test_ffi_gateway_cap() {
     assert_eq!(result.stack, vec![Value::Int(42)]);
 }
 
-/// Compile and run test_embed.c linked against libcrush_vm.so.
-/// Verifies the C API (crush_vm.h) works from a real C program.
+/// Compile and run `test_embed.c` linked against `libcrush_vm.so`.
+/// Verifies that the C API (crush_vm.h) works from a real C program.
 #[test]
 fn test_c_embed() {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -104,41 +106,73 @@ fn test_c_embed() {
         eprintln!("Skipping test_c_embed: test_embed.c not found");
         return;
     }
+
+    // Find libcrush_vm.so — it's in the same directory as the test binary
+    let so_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
     let include_dir = manifest_dir.join("include");
 
-    // Find libcrush_vm.so
+    // Try multiple locations for libcrush_vm.so
     let so_candidates = [
-        std::path::PathBuf::from("/build/debug/libcrush_vm.so"),
+        so_dir.join("libcrush_vm.so"),
         manifest_dir.join("../../target/debug/libcrush_vm.so"),
+        std::path::PathBuf::from("/build/debug/libcrush_vm.so"),
     ];
-    let so_path = so_candidates.iter().find(|p| p.exists()).cloned();
+
+    let so_path = so_candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned();
+
     let so_path = match so_path {
         Some(p) => p,
-        None => { eprintln!("Skipping: libcrush_vm.so not found"); return; }
+        None => {
+            eprintln!("Skipping test_c_embed: libcrush_vm.so not found");
+            return;
+        }
     };
 
+    // Compile test_embed.c
     let out_exe = std::env::temp_dir().join("crush_vm_test_embed");
     let rpath = format!("-Wl,-rpath,{}", so_path.parent().unwrap().display());
-    let ldir = so_path.parent().unwrap().to_str().unwrap();
-    let idir = include_dir.to_str().unwrap();
-    let tc = test_c.to_str().unwrap();
-    let oe = out_exe.to_str().unwrap();
-
+    let ldir = so_path.parent().unwrap().to_str().unwrap().to_string();
+    let idir = include_dir.to_str().unwrap().to_string();
+    let tc = test_c.to_str().unwrap().to_string();
+    let oe = out_exe.to_str().unwrap().to_string();
     let compile = std::process::Command::new("gcc")
-        .args(["-o", oe, tc, "-I", idir, "-L", ldir, "-lcrush_vm", "-ldl", &rpath])
+        .args([
+            "-o", &oe,
+            &tc,
+            "-I", &idir,
+            "-L", &ldir,
+            "-lcrush_vm",
+            "-ldl",
+            &rpath,
+        ].as_slice())
         .output()
         .expect("gcc must be on PATH");
+
     if !compile.status.success() {
-        panic!("gcc failed: {}", String::from_utf8_lossy(&compile.stderr));
+        let stderr = String::from_utf8_lossy(&compile.stderr);
+        panic!("gcc compilation failed:\n{stderr}");
     }
 
+    // Run the test
     let run = std::process::Command::new(&out_exe)
         .env("LD_LIBRARY_PATH", so_path.parent().unwrap())
         .output()
-        .expect("test_embed must run");
+        .expect("test_embed executable must run");
+
     let stdout = String::from_utf8_lossy(&run.stdout);
+    let stderr_str = String::from_utf8_lossy(&run.stderr);
+
     if !run.status.success() || !stdout.contains("ALL OK") {
-        panic!("C embed test failed ({}):\n{stdout}\n{}", run.status.code().unwrap_or(-1), String::from_utf8_lossy(&run.stderr));
+        panic!(
+            "C embed test failed (exit={}):\nstdout:\n{stdout}\nstderr:\n{stderr_str}",
+            run.status.code().unwrap_or(-1)
+        );
     }
     let _ = std::fs::remove_file(&out_exe);
 }
