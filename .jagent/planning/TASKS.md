@@ -97,6 +97,7 @@ reproduces.
 - [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs`
 - [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue.
 - [ ] **CRUSH-21**: Java/Kotlin language family — new `crush-lang-java`/`crush-lang-kotlin` walkers (same tree-sitter-based shape as `crush-lang-go`) plus, separately, a JVM/Android-API capability bridge for crush capsules on mobile. Captured, not designed — see ticket for the open questions.
+- [ ] **CRUSH-22**: Build platforms & architectures (Windows/macOS/Android/RISC-V/Pi, Intel/AMD CPU-or-GPU ambiguity) — CI is `ubuntu-latest`-only today, two AOT backends disagree on OS-cfg coverage, zero arch-specific (`aarch64`/`riscv`) code anywhere. Captured, not designed — see ticket.
 
 ## Done this session (s388, for context — see FOREMAN_SESSIONS.md s388 for the full merge-wave writeup)
 
