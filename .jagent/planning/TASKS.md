@@ -30,7 +30,7 @@ by unrelated work; don't assume a ticket's Backlog status means the bug still
 reproduces.
 
 - [ ] **CRUSH-1** (L): Wire 10 AI-native opcodes + spawn/await/yield to real VM execution (currently all NOP). Blocks crush-notebook's AI-native cells.
-- [ ] **CRUSH-7** (M): Array mutation effectively unusable — no index-assignment, chained `.push()` breaks with stack underflow, nested array-literal indexing broken, no slicing.
+- [x] **CRUSH-7** (M): Array mutation effectively unusable — index-assignment fixed, chained `.push()` fixed (scheduler/portable return array). Nested indexing and slicing still open per ticket Resolution.
 - [ ] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) fail against current `crushc`/`crush-run` — typed-recursive-function type error, and a stack-quota crash on array-to-string concat.
 - [ ] **CRUSH-9** (L): JS-walked CAST hits severe, non-local type-inference bugs — an unrelated, uncalled function's shape (even a no-op `console.log("")`) can flip whether a totally different function type-checks. Primary suspect: `crush-frontend/src/semantics.rs` return-type unification state not properly scoped per-function.
 - [ ] **CRUSH-11** (M): AOT C backend's string-output garbling — **needs re-verification first** (simple literal-print case no longer reproduces as of s388; the ticket's actual repro via `examples/js-walked/turtle_runner.js`, recursively-built strings, was not re-tested — that file now exists in-repo, run it before doing anything else).

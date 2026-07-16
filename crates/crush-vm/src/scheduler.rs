@@ -1265,7 +1265,7 @@ fn dispatch_cap(
             "append" | "push" => {
                 if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
                 match &args[0] {
-                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(None) }
+                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(Some(args[0].clone())) }
                     _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                 }
             }
@@ -1276,7 +1276,7 @@ fn dispatch_cap(
                         let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
                         let mut arr = elems.borrow_mut();
                         if idx < arr.len() { arr[idx] = args[2].clone(); }
-                        Ok(None)
+                        Ok(Some(args[0].clone()))
                     }
                     _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                 }
