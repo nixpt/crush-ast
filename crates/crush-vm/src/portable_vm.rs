@@ -751,11 +751,21 @@ impl PortableVm {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
                 let idx = need_array_index(&idx_v)?;
-                let arr_rc = need_array(arr_v)?;
-                let arr = arr_rc.borrow();
-                let len = arr.len();
-                let actual = wrap_index(idx, len)?;
-                self.push(arr[actual].clone());
+                match arr_v {
+                    Value::Array(arr_rc) => {
+                        let arr = arr_rc.borrow();
+                        let len = arr.len();
+                        let actual = wrap_index(idx, len)?;
+                        self.push(arr[actual].clone());
+                    }
+                    Value::Str(s) => {
+                        let len = s.chars().count();
+                        let actual = wrap_index(idx, len)?;
+                        let ch = s.chars().nth(actual).map(|c| c.to_string()).unwrap_or_default();
+                        self.push(Value::Str(ch));
+                    }
+                    _ => return Err(VmError::TypeError { expected: "array or string", got: arr_v.type_name() }),
+                }
             }
             ARR_SET => {
                 let val = self.pop()?;

@@ -25,6 +25,7 @@ pub struct Compiler {
 
 struct LoopInfo {
     continue_target: usize,
+    continue_indices: Vec<usize>,
     break_indices: Vec<usize>,
 }
 
@@ -448,7 +449,11 @@ impl Compiler {
                 self.compile_expr(end, instrs)?;
                 instrs.push(self.create_instr("store", serde_json::json!({"name": &end_var}), meta));
 
-                self.loop_stack.push(LoopInfo { continue_target: 0, break_indices: Vec::new() });
+                self.loop_stack.push(LoopInfo {
+                    continue_target: 0,
+                    continue_indices: Vec::new(),
+                    break_indices: Vec::new(),
+                });
 
                 let loop_start = instrs.len();
                 instrs.push(self.create_instr("load", serde_json::json!({"name": &end_var}), meta));
@@ -462,7 +467,11 @@ impl Compiler {
                 }
 
                 let continue_idx = instrs.len();
-                self.loop_stack.last_mut().unwrap().continue_target = continue_idx;
+                let loop_info = self.loop_stack.last_mut().unwrap();
+                for idx in loop_info.continue_indices.drain(..) {
+                    instrs[idx].args = serde_json::json!({"target": continue_idx});
+                }
+                loop_info.continue_target = continue_idx;
 
                 instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
                 instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), meta));
@@ -474,6 +483,9 @@ impl Compiler {
                 let loop_end = instrs.len();
                 instrs[jmp_if_not_idx].args = serde_json::json!({"target": loop_end});
                 let loop_info = self.loop_stack.pop().unwrap();
+                for idx in loop_info.continue_indices {
+                    instrs[idx].args = serde_json::json!({"target": loop_start});
+                }
                 for idx in loop_info.break_indices {
                     instrs[idx].args = serde_json::json!({"target": loop_end});
                 }
@@ -569,6 +581,7 @@ impl Compiler {
                 let loop_start = instrs.len();
                 self.loop_stack.push(LoopInfo {
                     continue_target: loop_start,
+                    continue_indices: Vec::new(),
                     break_indices: Vec::new(),
                 });
 
@@ -592,8 +605,11 @@ impl Compiler {
                 let loop_end = instrs.len();
                 instrs[jmp_if_not_idx].args = serde_json::json!({"target": loop_end});
 
-                // Patch break jumps
+                // Patch continue/break jumps
                 let loop_info = self.loop_stack.pop().unwrap();
+                for idx in loop_info.continue_indices {
+                    instrs[idx].args = serde_json::json!({"target": loop_start});
+                }
                 for idx in loop_info.break_indices {
                     instrs[idx].args = serde_json::json!({"target": loop_end});
                 }
@@ -633,16 +649,12 @@ impl Compiler {
 
                 // Loop start
                 let loop_start = instrs.len();
-                // continue_target will be updated later (before increment)
-                // Actually, in many languages, continue jumps to the increment part.
-                // Let's check where the increment is. It's at the end.
-                // So if we continue, we skip the increment? No, that would be an infinite loop.
-                // So continue should jump to the increment part.
 
-                // Let's place a label for continue before the increment.
-
+                // Track continue jumps (same patching pattern as break_indices)
+                // because we don't know the final increment position yet.
                 self.loop_stack.push(LoopInfo {
-                    continue_target: 0, // Will patch later or adjust logic
+                    continue_target: 0,
+                    continue_indices: Vec::new(),
                     break_indices: Vec::new(),
                 });
 
@@ -681,7 +693,12 @@ impl Compiler {
 
                 // Continue target is here (before increment)
                 let continue_idx = instrs.len();
-                self.loop_stack.last_mut().unwrap().continue_target = continue_idx;
+                // Patch all continue jumps that were emitted during body compilation
+                let loop_info = self.loop_stack.last_mut().unwrap();
+                for idx in loop_info.continue_indices.drain(..) {
+                    instrs[idx].args = serde_json::json!({"target": continue_idx});
+                }
+                loop_info.continue_target = continue_idx;
 
                 // Increment index: __i = __i + 1
                 instrs.push(self.create_instr("load", serde_json::json!({"name": &idx_var}), meta));
@@ -826,15 +843,16 @@ impl Compiler {
                 }
             }
             Statement::Continue { meta } => {
-                if let Some(loop_info) = self.loop_stack.last() {
-                    instrs.push(self.create_instr(
-                        "jmp",
-                        serde_json::json!({"target": loop_info.continue_target}),
-                        meta,
-                    ));
-                } else {
+                if self.loop_stack.is_empty() {
                     bail!("continue outside of loop");
                 }
+                let idx = instrs.len();
+                instrs.push(self.create_instr(
+                    "jmp",
+                    serde_json::json!({"target": 0}),
+                    meta,
+                ));
+                self.loop_stack.last_mut().unwrap().continue_indices.push(idx);
             }
             Statement::StructDef { .. } => {}
             Statement::Import { import, meta } => {
