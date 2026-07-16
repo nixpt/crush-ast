@@ -34,6 +34,15 @@ members = [
     "xtask"
     , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
 
+# crush-web is deliberately NOT a member: many members depend on crush-vm
+# with default features (native-plugins on), and Cargo unifies features for
+# a shared path dependency across the whole workspace resolve graph even
+# with `cargo check -p <one-member>` — crush-web's `default-features = false`
+# override would get silently overridden back on by any sibling's plain
+# `crush-vm.workspace = true`. Excluding it gives it an independent
+# resolution root so its wasm32 build only sees what it actually depends on.
+exclude = ["crates/crush-web"]
+
 [workspace.package]
 version       = "0.3.0"
 edition       = "2024"

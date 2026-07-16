@@ -622,6 +622,7 @@ pub fn run_with_caps(
 }
 
 /// Run a program using the optimized FastVM architecture with empty capabilities.
+#[cfg(feature = "native-plugins")]
 pub fn run_fastvm(
     casm_program: &casm::Program,
 ) -> Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
@@ -629,6 +630,7 @@ pub fn run_fastvm(
 }
 
 /// Run a program using the optimized FastVM architecture with specified capabilities.
+#[cfg(feature = "native-plugins")]
 pub fn run_fastvm_with_caps(
     casm_program: &casm::Program,
     capabilities: Vec<std::sync::Arc<dyn crate::fastvm::Capability>>,
@@ -647,8 +649,10 @@ pub fn run_fastvm_with_caps(
     Ok(vm.run(1_000_000))
 }
 
+#[cfg(feature = "native-plugins")]
 #[derive(Debug)]
 struct DummyHal;
+#[cfg(feature = "native-plugins")]
 impl crate::fastvm::Hal for DummyHal {}
 
 /// Deserialize CASM JSON bytes and execute via FastVM.
@@ -656,6 +660,7 @@ impl crate::fastvm::Hal for DummyHal {}
 /// This is the entry point used by the `crush!` and `crush_file!` proc macros
 /// from `crush-macros`. It takes pre-compiled CASM JSON bytes (embedded at
 /// Rust compile time) and runs them through the FastVM hot path.
+#[cfg(feature = "native-plugins")]
 pub fn run_casm_json(
     json_bytes: &[u8],
 ) -> Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
@@ -675,6 +680,7 @@ pub fn run_casm_json(
 /// use crush_vm::CrushResultExt;
 /// let val: i64 = result.crush_unwrap_int();
 /// ```
+#[cfg(feature = "native-plugins")]
 pub trait CrushResultExt {
     fn crush_unwrap_int(self) -> i64;
     fn crush_unwrap_float(self) -> f64;
@@ -683,6 +689,7 @@ pub trait CrushResultExt {
     fn crush_is_null(&self) -> bool;
 }
 
+#[cfg(feature = "native-plugins")]
 impl CrushResultExt for Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
     fn crush_unwrap_int(self) -> i64 {
         match self.expect("Crush execution failed") {

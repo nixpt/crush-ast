@@ -31,6 +31,8 @@ pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
+// Compares against crush-vm's FastVM backend — native-plugins only.
+#[cfg(feature = "native-plugins")]
 pub mod differential;
 #[cfg(feature = "db")]
 pub mod db;

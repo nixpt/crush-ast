@@ -80,6 +80,7 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                 // dedented too, but only if a prologue/epilogue actually
                 // gets spliced in below (see `rewrite_python_marshaling`);
                 // an unmarshaled block is left completely untouched.
+                #[cfg(feature = "polyglot-python")]
                 if let Ok(free_vars) = crush_lang_python::analyzer::free_variables(&dedent(code)) {
                     let inputs: Vec<String> = free_vars
                         .reads
@@ -99,6 +100,14 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                     }
                     *variables = inputs;
                 }
+                // Without `polyglot-python` (e.g. crush-web's wasm32 build,
+                // where EXEC_LANG can't spawn a subprocess anyway — see
+                // portable_vm.rs/scheduler.rs), the block is left unmarshaled,
+                // same as any other not-yet-wired language: not a regression,
+                // just not applicable when polyglot execution itself is
+                // unavailable on this target.
+                #[cfg(not(feature = "polyglot-python"))]
+                let _ = (lang, code, variables, meta, &known_locals);
             }
             Statement::If {
                 then_body,
@@ -142,6 +151,7 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
 /// it shifts every line of the user's own code by exactly one line,
 /// keeping Python traceback line numbers predictable rather than off by
 /// a count that depends on how many variables happen to be marshaled.
+#[cfg(feature = "polyglot-python")]
 fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&str>) -> String {
     let mut prologue_parts: Vec<String> = Vec::new();
     if inputs.is_empty() {
@@ -186,6 +196,7 @@ fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&
 /// Strip the common leading whitespace shared by every non-blank line, so
 /// a block's original relative indentation is preserved but its absolute
 /// column no longer depends on how it happened to sit inside `{ ... }`.
+#[cfg(feature = "polyglot-python")]
 fn dedent(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let common_indent = lines
