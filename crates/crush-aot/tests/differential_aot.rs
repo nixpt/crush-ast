@@ -257,6 +257,28 @@ fn aot_cross_type_equality_returns_false() {
     assert_all_backends_agree(source);
 }
 
+// ── CRUSH-11 recursive string concatenation (turtle_runner-style) ────────
+// The original CRUSH-11 bug: `_add` in the C backend overwrites `_strbuf`
+// before reading the second operand when recursive string building stores
+// intermediate results in `_strbuf`. This test exercises that exact pattern.
+
+#[test]
+fn aot_recursive_string_concat_agrees() {
+    let source = r#"
+        fn build_row(n: Int) {
+            if n >= 5 {
+                return ""
+            }
+            return "." + build_row(n + 1)
+        }
+        fn main() {
+            return build_row(0)
+        }
+    "#;
+    // All five backends must produce the same output for recursive concat.
+    assert_all_backends_agree(source);
+}
+
 // ── CRUSH-13 ordered comparison edge cases ────────────────────────────────
 // Ordered comparisons require numeric operands on every backend. The AOT
 // backends terminate the process for non-numeric ordered comparisons, matching
