@@ -1,8 +1,8 @@
-# CRUSH-6 — AOT C-codegen backend runs but garbles string values
+# CRUSH-11 — AOT C-codegen backend runs but garbles string values
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-6 |
+| **ID** | CRUSH-11 |
 | **Priority** | P1 |
 | **Status** | Backlog |
 | **Phase** | M1 |
@@ -14,7 +14,7 @@
 
 `crush_aot::AotCompiler::compile_c` (`--backend gcc`/`clang`,
 `crates/crush-aot/src/codegen_c.rs`) compiles and *runs* successfully
-(unlike the Rust backend — see `CRUSH-5`), and correctly handles
+(unlike the Rust backend — see `CRUSH-10`), and correctly handles
 pure-numeric programs (`square(add(3,4))` → `49`, confirmed correct).
 Programs that print strings, however, produce garbage output: instead of
 the actual string content, the printed value is something like
@@ -47,7 +47,7 @@ Any AOT-compiled program that prints or otherwise surfaces string values
 via the C backend produces silently wrong output — not a crash, not an
 error, just corrupted data that looks superficially plausible (a real
 floating-point-looking number) rather than obviously broken. That's a
-worse failure mode than `CRUSH-5`'s hard compile error: a caller could
+worse failure mode than `CRUSH-10`'s hard compile error: a caller could
 easily ship this without noticing unless they specifically diff output
 against the interpreter path, which is exactly how this was found (used
 `crush-walk-run` on the same program first to know what correct output
@@ -55,7 +55,7 @@ should look like).
 
 **Why the existing test suite didn't catch this**: `cargo test -p
 crush-aot --test integration_c` currently passes 16/19 (the 3 failures are
-`CRUSH-5`-related cross-backend comparisons, unrelated to this bug) —
+`CRUSH-10`-related cross-backend comparisons, unrelated to this bug) —
 `crates/crush-aot/tests/integration_c.rs` has zero tests that exercise
 string output at all (`grep -n "fn test_.*string"` on that file: no
 matches). The C backend's numeric-only coverage is genuinely solid; string
@@ -80,5 +80,5 @@ the print/output boundary specifically).
 
 ## Non-goals
 
-- Fixing the Rust-codegen backend (`CRUSH-5`, separate — that one doesn't
+- Fixing the Rust-codegen backend (`CRUSH-10`, separate — that one doesn't
   even compile, so this bug doesn't apply there)

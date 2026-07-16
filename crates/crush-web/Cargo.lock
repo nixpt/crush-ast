@@ -337,6 +337,7 @@ dependencies = [
  "crush-diagnostics",
  "crush-errors",
  "hex",
+ "libc",
  "parking_lot",
  "serde",
  "serde_json",

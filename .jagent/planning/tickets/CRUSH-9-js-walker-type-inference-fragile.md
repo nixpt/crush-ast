@@ -1,13 +1,13 @@
-# CRUSH-4 — JS-walked CAST hits severe, non-local type-inference bugs
+# CRUSH-9 — JS-walked CAST hits severe, non-local type-inference bugs
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-4 |
+| **ID** | CRUSH-9 |
 | **Priority** | P1 |
 | **Status** | Backlog |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
-| **Dependencies** | none (adjacent to CRUSH-2/CRUSH-3, distinct root cause) |
+| **Dependencies** | none (adjacent to CRUSH-7/CRUSH-8, distinct root cause) |
 | **Estimated effort** | L |
 
 ## Problem
@@ -127,12 +127,12 @@ being mutated in an order-dependent way across the whole compilation unit.
   unification — primary suspect)
 - Possibly `crates/crush-lang-js/src/lower_swc.rs` (if the JS walker is
   emitting CAST in a shape that happens to trigger this more than native
-  Crush source does — not confirmed either way; CRUSH-3's native
+  Crush source does — not confirmed either way; CRUSH-8's native
   `fibonacci.crush` failure with typed params suggests the underlying bug
   is not walker-specific, but the walker's lowering may make it easier to
   hit by construction)
 
 ## Non-goals
 
-- Fixing CRUSH-2 or CRUSH-3 (array mutation, stale examples) — separate,
+- Fixing CRUSH-7 or CRUSH-8 (array mutation, stale examples) — separate,
   already-filed, unrelated root causes

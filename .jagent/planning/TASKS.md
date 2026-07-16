@@ -24,11 +24,11 @@
 - [ ] Fill 18 zero-coverage error paths
 - [ ] Fix MOD sign bug between portable_vm and FastVM
 - [ ] Add EXEC_LANG opcode to PortableVm
-- [ ] **CRUSH-2**: array mutation effectively unusable — no index-assignment, `.push()` chaining broken, nested array-literal indexing broken (found porting `examples/crush/snake.crush`)
-- [ ] **CRUSH-3**: `examples/crush/fibonacci.crush` and `arrays_and_loops.crush` don't actually run against current `crushc`/`crush-run` (same discovery)
-- [ ] **CRUSH-4**: JS-walked CAST hits severe, non-local type-inference bugs in `compile_cast` — an unrelated, uncalled function's shape can flip whether a totally different function type-checks (found porting `examples/js-walked/turtle_runner.js`)
-- [ ] **CRUSH-5** (P0): AOT Rust-codegen backend (`crush_aot::compile_casm`) can't compile *any* program — generated code references a `RuntimeValue::Str` variant that doesn't exist, unconditionally, even for pure-numeric programs
-- [ ] **CRUSH-6**: AOT C-codegen backend (`--backend gcc`) runs but silently garbles string output (prints garbage floats like `1.73347e-308` instead of string content) — numeric output is correct, only strings are corrupted
+- [ ] **CRUSH-7**: array mutation effectively unusable — no index-assignment, `.push()` chaining broken, nested array-literal indexing broken (found porting `examples/crush/snake.crush`)
+- [ ] **CRUSH-8**: `examples/crush/fibonacci.crush` and `arrays_and_loops.crush` don't actually run against current `crushc`/`crush-run` (same discovery)
+- [ ] **CRUSH-9**: JS-walked CAST hits severe, non-local type-inference bugs in `compile_cast` — an unrelated, uncalled function's shape can flip whether a totally different function type-checks (found porting `examples/js-walked/turtle_runner.js`)
+- [ ] **CRUSH-10** (P0): AOT Rust-codegen backend (`crush_aot::compile_casm`) can't compile *any* program — generated code references a `RuntimeValue::Str` variant that doesn't exist, unconditionally, even for pure-numeric programs
+- [ ] **CRUSH-11**: AOT C-codegen backend (`--backend gcc`) runs but silently garbles string output (prints garbage floats like `1.73347e-308` instead of string content) — numeric output is correct, only strings are corrupted
 
 ## P2 — Walkers & Frontends ✅
 

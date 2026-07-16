@@ -1,8 +1,8 @@
-# CRUSH-2 — Array mutation is effectively unusable
+# CRUSH-7 — Array mutation is effectively unusable
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-2 |
+| **ID** | CRUSH-7 |
 | **Priority** | P1 |
 | **Status** | Backlog |
 | **Phase** | M1 |
@@ -51,7 +51,7 @@ Any Crush program needing to build up or maintain array state across a
 loop or a sequence of operations — which is close to a hard requirement for
 most non-trivial programs — currently can't use arrays for it at all.
 `examples/crush/arrays_and_loops.crush` and `examples/crush/snake.crush`'s
-comment header document the workarounds found; see also `CRUSH-3` for two
+comment header document the workarounds found; see also `CRUSH-8` for two
 existing example files that fail for related/adjacent reasons.
 
 ## Reproduction

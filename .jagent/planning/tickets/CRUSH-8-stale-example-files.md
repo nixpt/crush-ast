@@ -1,8 +1,8 @@
-# CRUSH-3 — Two shipped `examples/crush/*.crush` files don't actually run
+# CRUSH-8 — Two shipped `examples/crush/*.crush` files don't actually run
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-3 |
+| **ID** | CRUSH-8 |
 | **Priority** | P2 |
 | **Status** | Backlog |
 | **Phase** | M1 |
@@ -29,7 +29,7 @@ example files fail outright against the current `crushc`/`crush-run`:
    `print("Array created: " + arr)` (concatenating a whole array directly
    into a string) — not confirmed, needs debugging.
 
-Neither of these has anything to do with `CRUSH-2` (array
+Neither of these has anything to do with `CRUSH-7` (array
 mutation) — `fibonacci.crush` doesn't touch arrays at all, and
 `arrays_and_loops.crush`'s failure is a stack quota during what should be
 straightforward printing, not an array-mutation operation.

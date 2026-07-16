@@ -8,7 +8,7 @@
 // (`new ClassName(...)`) don't compile ("Undefined function: new X"), and
 // getting even class-free, function-only JS through
 // `crush_frontend::compile_cast` took extensive black-box bisection — the
-// type-checker has severe, NON-LOCAL bugs (see CRUSH-4): a completely
+// type-checker has severe, NON-LOCAL bugs (see CRUSH-9): a completely
 // unrelated, never-called function's shape can flip whether an unrelated
 // OTHER function type-checks. Confirmed safe patterns used exclusively
 // here, all found by trial and error against the real compiler:
@@ -24,7 +24,7 @@
 //     unconditional `return <expr>;`, no `if` at all (next_jump_left,
 //     next_obstacle_x below). Mixing — one branch a literal, another a
 //     parameter/computed value — breaks return-type inference even when
-//     the function is never called (CRUSH-4).
+//     the function is never called (CRUSH-9).
 //   - Booleans are never passed as function arguments and used directly in
 //     an `if` there (`If condition must be bool, found any` — the type
 //     doesn't propagate through the parameter). Represented as 0/1 ints,
@@ -38,18 +38,18 @@
 // AOT-compiled too, as a second verification of the same walked CAST
 // (`crush_aot::AotCompiler`) — both backends found broken, filed
 // separately: the Rust-codegen backend can't compile ANY program, even
-// pure-numeric ones with no strings at all (CRUSH-5, references a
+// pure-numeric ones with no strings at all (CRUSH-10, references a
 // `RuntimeValue::Str` variant that doesn't exist in its own generated
 // enum); the C-codegen backend (`--backend gcc`) does compile and run,
 // gets numeric output right, but silently corrupts string output
-// (CRUSH-6, prints garbage floats like `1.73347e-308` instead of the
+// (CRUSH-11, prints garbage floats like `1.73347e-308` instead of the
 // actual grid/score text). Run via the interpreter path instead:
 // `crush-walk-run examples/js-walked/turtle_runner.js`.
 //
 // print()/console.log() don't append a trailing newline (same as native
 // Crush's print()) — frames run together on one line rather than
 // rendering as a clean grid. Left as-is rather than "fixed" with
-// `+ "\n"`: doing that reintroduced the CRUSH-4 type-inference bug in this
+// `+ "\n"`: doing that reintroduced the CRUSH-9 type-inference bug in this
 // exact file (removing a single no-op `console.log("");` call flipped a
 // working version back to a compile error) — not worth destabilizing a
 // confirmed-working file to chase a cosmetic-only fix.

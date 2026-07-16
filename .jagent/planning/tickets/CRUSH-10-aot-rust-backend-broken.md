@@ -1,8 +1,8 @@
-# CRUSH-5 — AOT Rust-codegen backend can't compile any program (missing enum variant)
+# CRUSH-10 — AOT Rust-codegen backend can't compile any program (missing enum variant)
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-5 |
+| **ID** | CRUSH-10 |
 | **Priority** | P0 |
 | **Status** | Backlog |
 | **Phase** | M1 |
@@ -29,11 +29,11 @@ variant.
 
 `crush-aotc compile`/`crush-aotc run` (default backend, no `--backend`
 flag) and `AotCompiler::compile_casm` cannot produce a working `.so` for
-**any** program today. Confirmed independently of `CRUSH-2`/`CRUSH-3`/
-`CRUSH-4` — this is a pure Rust-codegen bug, unrelated to array mutation,
+**any** program today. Confirmed independently of `CRUSH-7`/`CRUSH-8`/
+`CRUSH-9` — this is a pure Rust-codegen bug, unrelated to array mutation,
 stale examples, or the JS-walker type-inference issues. `crush-aotc
 compile --backend gcc` (the alternate C-codegen path) does not have this
-specific bug — see `CRUSH-6` for what *does* break there.
+specific bug — see `CRUSH-11` for what *does* break there.
 
 **This is not a rare edge case — it's the project's own shipped examples.**
 `crates/crush-aot/examples/{simple,arithmetic,sum1k}.crush` (three
@@ -54,14 +54,14 @@ error[E0599]: ...
 The **same three files, run with `--backend gcc` instead, all produce
 correct output**: `simple.crush` → `42`, `arithmetic.crush` → `44`,
 `sum1k.crush` → `499500`. So the C-codegen backend is the one that's
-actually alive and correct for numeric programs (see `CRUSH-6` for its
+actually alive and correct for numeric programs (see `CRUSH-11` for its
 separate string-output bug) — `docs/design/aotc-math-optimizations.md`
 ("Pathway 1... Active") is entirely about the C-codegen path too, which
 lines up: the Rust backend looks like dead/unmaintained code, not a
 recent regression in an actively-used path. **Suggest making `gcc`/`clang`
 the default backend** (flip `RunArgs`'s `--backend` default in
 `crates/crush-aot/src/bin/aotc.rs`) as an immediate, near-zero-risk
-stopgap while `CRUSH-5`/`CRUSH-6` get properly fixed — right now the
+stopgap while `CRUSH-10`/`CRUSH-11` get properly fixed — right now the
 *documented default* is the one that never works.
 
 **Decisive confirmation: the crate's own committed test suite is 100%
@@ -138,4 +138,4 @@ error[E0599]: no variant, associated function, or constant named `Str` found
 
 ## Non-goals
 
-- Fixing the C-codegen backend's string-output bug (`CRUSH-6`, separate)
+- Fixing the C-codegen backend's string-output bug (`CRUSH-11`, separate)

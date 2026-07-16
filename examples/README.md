@@ -37,7 +37,7 @@ this directory's JS instead becomes CAST/CASM directly, no subprocess).
 
 | File | Source | Description |
 |------|--------|-------------|
-| `turtle_runner.js` | ported from `crush-capsules/games/turtle-runner` | Self-playing Chrome-Dino-style runner. `crush-walk-run examples/js-walked/turtle_runner.js` runs it end-to-end (walk → CAST → compile → CVM1 → interpret). See the file's header comment for the (large) set of confirmed-broken JS constructs it avoids — filed as `CRUSH-4`/`CRUSH-5`/`CRUSH-6`. |
+| `turtle_runner.js` | ported from `crush-capsules/games/turtle-runner` | Self-playing Chrome-Dino-style runner. `crush-walk-run examples/js-walked/turtle_runner.js` runs it end-to-end (walk → CAST → compile → CVM1 → interpret). See the file's header comment for the (large) set of confirmed-broken JS constructs it avoids — filed as `CRUSH-9`/`CRUSH-10`/`CRUSH-11`. |
 
 ## CAST (`examples/cast/`)
 

@@ -938,6 +938,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-aotc"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "casm",
+ "crush-frontend",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "crush-buckets"
 version = "0.1.0"
 dependencies = [
