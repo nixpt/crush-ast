@@ -510,3 +510,41 @@ Rejected alternatives:
 Outcome:
 Quotas.max_wall_time_ms (default 30s) enforced via scheduler::run_with_wall_clock_limit, shared by both scheduler.rs and portable_vm.rs's EXEC_LANG handlers (crush-diff confirms no divergence). Spawns the child into its own process group (Command::process_group(0)) and kills the WHOLE GROUP on timeout (libc::kill(-pgid, SIGKILL)), not just the tracked child PID — std has no process-group-kill primitive of its own. Stdout/stderr are drained on dedicated reader threads from the moment of spawn, before any polling begins.
 
+
+## 2026-07-16T00:00:00-05:00 — [TACTICAL] [RESOLVED] crates-publish-sync's 10-min cron was completely stalled 24+ hours on two manifest bugs
+
+Reason:
+Captain asked to check on the workspace's `crates-publish-sync` systemd timer (setup to publish all
+39 workspace members over time, respecting crates.io's rate limits). Live investigation (journalctl
++ the tool's own log + reading `crates-publish-sync`'s topo-sort source directly) found the cron had
+made zero progress for 24+ hours: it walks a strict topological "first not-yet-published crate"
+order with no ability to skip a permanently-broken one and try the next in line, so it just retried
+the same blocked crate every 10-minute tick indefinitely.
+
+Two distinct, unrelated root causes, both real crates.io publish-verification failures (not local
+build problems — `cargo check` was fine either way):
+1. `crush-ptx`/`crush-aotc` (both newly added to the workspace this session, PTX-REBASE-1) have
+   path-only deps (`casm`, `crush-errors`, `crush-frontend`) with no `version =`. crates.io's publish
+   verification requires a version on every dependency even though a bare path resolves fine
+   locally. Fixed: added `version = "0.3.0"` alongside each path (both already published at 0.3.0).
+2. `crush-lang-bash`/`js`/`python`/`rust`/`zsh` pin dev-dependencies (`crush-frontend`/
+   `crush-lang-sdk`/`crush-vm`/`crush-lang-python`) to exact versions. crates.io still resolves
+   dev-dep versions during publish verification even though bare path-only dev-deps don't block
+   publish (the tool's own already-established doctrine, from an earlier crush-lang-sdk↔
+   crush-lang-python cycle fix) — and `crush-lang-sdk` itself isn't live at 0.3.0 on crates.io yet
+   (blocked on ITS OWN dependency, `crush-lang-python`, not yet published — a real, correct
+   topological ordering, not a bug), so every crate in the family failed identically the moment the
+   walk reached it. Fixed: dropped the explicit version, kept the bare path.
+
+Verified each of the 7 fixed crates individually with a real `cargo publish --dry-run` (exercises
+crates.io's actual manifest verification without uploading) plus a full `cargo check --workspace`.
+Did NOT force-publish anything — crates.io publishes are irreversible, and forcing one bypasses the
+exact rate-limit safety the existing tool exists to provide. The cron continues on its own schedule.
+
+State at fix time: 17 of 38 publishable workspace members (39 members minus `xtask`, `publish =
+false`) confirmed live on crates.io matching local version. ~20 more still queued behind natural
+topological order + crates.io's own rate limit (5 new-crate publishes/10min, 30 updates/min) — this
+will take real wall-clock time (likely days for a full backlog this size), by design, not a bug.
+
+Artifacts: crates/crush-ptx/Cargo.toml, crates/crush-aotc/Cargo.toml, crates/crush-lang-bash/Cargo.toml, crates/crush-lang-js/Cargo.toml, crates/crush-lang-python/Cargo.toml, crates/crush-lang-rust/Cargo.toml, crates/crush-lang-zsh/Cargo.toml
+
