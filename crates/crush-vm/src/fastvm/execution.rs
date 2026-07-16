@@ -588,6 +588,62 @@ pub fn execute_one(
             }
         }
 
+        FastOp::TuplePush => {
+            let val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = arr_ref {
+                if let Ok(Object::Tuple(arr)) = arena.get_mut(ptr) {
+                    arr.push(val);
+                } else {
+                    return Err(FastError::TypeMismatch);
+                }
+            } else {
+                return Err(FastError::TypeMismatch);
+            }
+        }
+
+        FastOp::ListPush => {
+            let val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = arr_ref {
+                if let Ok(Object::List(arr)) = arena.get_mut(ptr) {
+                    arr.push_back(val);
+                } else {
+                    return Err(FastError::TypeMismatch);
+                }
+            } else {
+                return Err(FastError::TypeMismatch);
+            }
+        }
+
+        FastOp::VectorPush => {
+            let val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = arr_ref {
+                if let Ok(Object::Vector(arr)) = arena.get_mut(ptr) {
+                    arr.push(val);
+                } else {
+                    return Err(FastError::TypeMismatch);
+                }
+            } else {
+                return Err(FastError::TypeMismatch);
+            }
+        }
+
+        FastOp::SetPush => {
+            let val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = arr_ref {
+                if let Ok(Object::Set(arr)) = arena.get_mut(ptr) {
+                    arr.push(val);
+                } else {
+                    return Err(FastError::TypeMismatch);
+                }
+            } else {
+                return Err(FastError::TypeMismatch);
+            }
+        }
+
         FastOp::NewObj => {
             let ptr = arena.alloc(Object::Object {
                 lang: "crush".to_string(),
@@ -656,6 +712,26 @@ pub fn execute_one(
                     }
                 }
             }
+        }
+        FastOp::NewTuple => {
+            let size = instr.arg as usize;
+            let ptr = arena.alloc(Object::Tuple(Vec::with_capacity(size)));
+            stack.push(RuntimeValue::Ref(ptr));
+        }
+        FastOp::NewList => {
+            let _size = instr.arg as usize;
+            let ptr = arena.alloc(Object::List(std::collections::LinkedList::new()));
+            stack.push(RuntimeValue::Ref(ptr));
+        }
+        FastOp::NewVector => {
+            let size = instr.arg as usize;
+            let ptr = arena.alloc(Object::Vector(Vec::with_capacity(size)));
+            stack.push(RuntimeValue::Ref(ptr));
+        }
+        FastOp::NewSet => {
+            let size = instr.arg as usize;
+            let ptr = arena.alloc(Object::Set(Vec::with_capacity(size)));
+            stack.push(RuntimeValue::Ref(ptr));
         }
 
         // ===== String Ops =====

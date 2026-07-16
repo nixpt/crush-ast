@@ -80,6 +80,14 @@ pub const ARR_SET: u8 = 0x62;
 pub const ARR_LEN: u8 = 0x63;
 pub const ARR_PUSH: u8 = 0x64;
 pub const ARR_POP: u8 = 0x65;
+pub const NEW_TUPLE: u8 = 0x66;
+pub const TUPLE_PUSH: u8 = 0x67;
+pub const NEW_LIST: u8 = 0x68;
+pub const LIST_PUSH: u8 = 0x69;
+pub const NEW_VECTOR: u8 = 0x6A;
+pub const VECTOR_PUSH: u8 = 0x6B;
+pub const NEW_SET: u8 = 0x6C;
+pub const SET_PUSH: u8 = 0x6D;
 pub const EXEC_LANG: u8 = 0x70;
 pub const NEW_OBJ: u8 = 0x71;
 pub const SET_FIELD: u8 = 0x72;
@@ -149,7 +157,8 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         | TYPEOF
         | ADD | SUB | MUL | DIV | MOD
         | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT
-        | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP => Some(OperandKind::None),
+        | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP
+        | TUPLE_PUSH | LIST_PUSH | VECTOR_PUSH | SET_PUSH => Some(OperandKind::None),
         SPAWN => Some(OperandKind::Count),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
@@ -161,7 +170,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => Some(OperandKind::Str),
         NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
-        NEW_ARRAY => Some(OperandKind::Count),
+        NEW_ARRAY | NEW_TUPLE | NEW_LIST | NEW_VECTOR | NEW_SET => Some(OperandKind::Count),
         _ => None,
     }
 }

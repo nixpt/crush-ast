@@ -445,7 +445,11 @@ fn collect_calls_in_expr(
         Expression::Await { expression, .. } => {
             collect_calls_in_expr(expression, module, caller_fn, out)
         }
-        Expression::ArrayLiteral { elements, .. } => {
+        Expression::ArrayLiteral { elements, .. }
+        | Expression::TupleLiteral { elements, .. }
+        | Expression::ListLiteral { elements, .. }
+        | Expression::VectorLiteral { elements, .. }
+        | Expression::SetLiteral { elements, .. } => {
             for e in elements {
                 collect_calls_in_expr(e, module, caller_fn, out);
             }

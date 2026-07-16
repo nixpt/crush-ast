@@ -26,6 +26,14 @@ pub enum CastType {
     Null,
     /// Homogeneous array
     Array(Box<CastType>),
+    /// Fixed-length heterogeneous sequence
+    Tuple(Vec<CastType>),
+    /// Homogeneous list
+    List(Box<CastType>),
+    /// Homogeneous vector
+    Vector(Box<CastType>),
+    /// Unordered collection of unique items
+    Set(Box<CastType>),
     /// Key-value map (String keys)
     Map(Box<CastType>),
     /// Named structure or class
@@ -55,6 +63,13 @@ impl std::fmt::Display for CastType {
             Self::Bool => write!(f, "Bool"),
             Self::Null => write!(f, "Null"),
             Self::Array(t) => write!(f, "Array<{}>", t),
+            Self::Tuple(t) => {
+                let types_str: Vec<String> = t.iter().map(|p| p.to_string()).collect();
+                write!(f, "Tuple<{}>", types_str.join(", "))
+            }
+            Self::List(t) => write!(f, "List<{}>", t),
+            Self::Vector(t) => write!(f, "Vector<{}>", t),
+            Self::Set(t) => write!(f, "Set<{}>", t),
             Self::Map(t) => write!(f, "Map<String, {}>", t),
             Self::Struct(s) => write!(f, "Struct<{}>", s),
             Self::Lambda { params, returns } => {

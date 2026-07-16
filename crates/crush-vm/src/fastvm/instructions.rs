@@ -103,6 +103,14 @@ pub enum FastOp {
     ArrSet,    // indexed array write (arr, idx, val on stack)
     ArrayPush,
     ArrayPop,
+    NewTuple,
+    TuplePush,
+    NewList,
+    ListPush,
+    NewVector,
+    VectorPush,
+    NewSet,
+    SetPush,
     Len,
     MakeRange,
 
@@ -818,11 +826,40 @@ fn lower_instruction(
             Ok(FastInstr::new(FastOp::MakeMap, count, 0))
         }
 
+        "new_array" => {
+            let size = instr
+                .args
+                .get("size")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            Ok(FastInstr::new(FastOp::NewArray, size, 0))
+        }
+        "new_tuple" => {
+            let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            Ok(FastInstr::new(FastOp::NewTuple, size, 0))
+        }
+        "new_list" => {
+            let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            Ok(FastInstr::new(FastOp::NewList, size, 0))
+        }
+        "new_vector" => {
+            let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            Ok(FastInstr::new(FastOp::NewVector, size, 0))
+        }
+        "new_set" => {
+            let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            Ok(FastInstr::new(FastOp::NewSet, size, 0))
+        }
+
         "index" | "get_index" => Ok(FastInstr::simple(FastOp::Index)),
         "len" => Ok(FastInstr::simple(FastOp::Len)),
         "make_range" => Ok(FastInstr::simple(FastOp::MakeRange)),
         "array_pop" => Ok(FastInstr::simple(FastOp::ArrayPop)),
         "array_push" => Ok(FastInstr::simple(FastOp::ArrayPush)),
+        "tuple_push" => Ok(FastInstr::simple(FastOp::TuplePush)),
+        "list_push" => Ok(FastInstr::simple(FastOp::ListPush)),
+        "vector_push" => Ok(FastInstr::simple(FastOp::VectorPush)),
+        "set_push" => Ok(FastInstr::simple(FastOp::SetPush)),
 
         "new_obj" => Ok(FastInstr::simple(FastOp::NewObj)),
         "new_struct" => {
@@ -851,10 +888,6 @@ fn lower_instruction(
                 .ok_or_else(|| LowerError::MissingArgument("set_field name".into()))?;
             let idx = symbols.intern_string(name);
             Ok(FastInstr::new(FastOp::SetField, idx as u64, 0))
-        }
-        "new_array" => {
-            let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-            Ok(FastInstr::new(FastOp::NewArray, size, 0))
         }
 
         // VM control

@@ -728,6 +728,46 @@ impl Renderer {
                 }
                 self.push_str("]");
             }
+            Expression::TupleLiteral { elements, .. } => {
+                self.push_str("(");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
+                    self.render_expression(elem, 0);
+                }
+                self.push_str(")");
+            }
+            Expression::ListLiteral { elements, .. } => {
+                self.push_str("List[");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
+                    self.render_expression(elem, 0);
+                }
+                self.push_str("]");
+            }
+            Expression::VectorLiteral { elements, .. } => {
+                self.push_str("Vector[");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
+                    self.render_expression(elem, 0);
+                }
+                self.push_str("]");
+            }
+            Expression::SetLiteral { elements, .. } => {
+                self.push_str("Set{");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
+                    self.render_expression(elem, 0);
+                }
+                self.push_str("}");
+            }
             Expression::ObjectLiteral { properties, .. } => {
                 self.push_str("{");
                 for (i, (key, value)) in properties.iter().enumerate() {
@@ -1259,6 +1299,10 @@ fn expr_precedence(expr: &Expression) -> u8 {
         | Expression::NullLiteral { .. }
         | Expression::Var { .. }
         | Expression::ArrayLiteral { .. }
+        | Expression::TupleLiteral { .. }
+        | Expression::ListLiteral { .. }
+        | Expression::VectorLiteral { .. }
+        | Expression::SetLiteral { .. }
         | Expression::ObjectLiteral { .. }
         | Expression::NewStruct { .. }
         | Expression::Yield { .. } => 100,

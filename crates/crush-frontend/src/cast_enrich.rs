@@ -184,7 +184,11 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
         Expression::Await { expression, .. } => {
             collect_sites_in_expr(fn_name, expression, out);
         }
-        Expression::ArrayLiteral { elements, .. } => {
+        Expression::ArrayLiteral { elements, .. }
+        | Expression::TupleLiteral { elements, .. }
+        | Expression::ListLiteral { elements, .. }
+        | Expression::VectorLiteral { elements, .. }
+        | Expression::SetLiteral { elements, .. } => {
             for e in elements {
                 collect_sites_in_expr(fn_name, e, out);
             }

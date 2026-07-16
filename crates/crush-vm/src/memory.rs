@@ -254,6 +254,10 @@ impl BorrowState {
 pub enum Object {
     Str(String),
     Array(Vec<RuntimeValue>),
+    Tuple(Vec<RuntimeValue>),
+    List(std::collections::LinkedList<RuntimeValue>),
+    Vector(Vec<RuntimeValue>),
+    Set(Vec<RuntimeValue>),
     Map(HashMap<String, RuntimeValue>),
     Object {
         lang: String,
@@ -386,7 +390,14 @@ impl Arena {
         let base = core::mem::size_of::<Object>();
         base + match obj {
             Object::Str(s) => s.len(),
-            Object::Array(arr) => arr
+            Object::Array(arr)
+            | Object::Tuple(arr)
+            | Object::Vector(arr)
+            | Object::Set(arr) => arr
+                .iter()
+                .map(Self::estimate_runtime_value_size)
+                .sum::<usize>(),
+            Object::List(arr) => arr
                 .iter()
                 .map(Self::estimate_runtime_value_size)
                 .sum::<usize>(),
