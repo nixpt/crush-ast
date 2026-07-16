@@ -102,4 +102,129 @@ mod tests {
         let r = run_python("arr = [1,2,3]\nprint(2 in arr)");
         assert!(r.is_ok(), "'in' should not crash: {:?}", r);
     }
+
+    // ── CRUSHAST-PYLOWER-1: try/except, comprehensions ──────────────────────
+    //
+    // Real end-to-end runs: Python source → CAST → CASM → CVM1, asserting on
+    // actual VM `output`, not just "lowering didn't panic" — per this repo's
+    // own `ee75f1b` precedent (top-level statements that looked lowered but
+    // were silently discarded and never executed).
+
+    #[test]
+    fn test_try_except_catches_and_reads_exception_field() {
+        assert_eq!(
+            run_python(
+                "try:\n    raise ValueError(\"bad thing\")\nexcept ValueError as e:\n    print(e.message)\n"
+            )
+            .unwrap(),
+            "bad thing"
+        );
+    }
+
+    #[test]
+    fn test_try_except_finally_always_runs() {
+        assert_eq!(
+            run_python(concat!(
+                "x = 0\n",
+                "try:\n",
+                "    x = 1\n",
+                "    raise ValueError(\"boom\")\n",
+                "except ValueError:\n",
+                "    x = 2\n",
+                "finally:\n",
+                "    x = x + 100\n",
+                "print(x)\n",
+            ))
+            .unwrap(),
+            "102"
+        );
+    }
+
+    #[test]
+    fn test_try_except_multi_handler_dispatches_by_type() {
+        assert_eq!(
+            run_python(concat!(
+                "n = 5\n",
+                "try:\n",
+                "    if n < 0:\n",
+                "        raise ValueError(\"negative\")\n",
+                "    else:\n",
+                "        raise TypeError(\"not a value error\")\n",
+                "except ValueError:\n",
+                "    print(1)\n",
+                "except TypeError:\n",
+                "    print(2)\n",
+            ))
+            .unwrap(),
+            "2"
+        );
+    }
+
+    #[test]
+    fn test_try_no_exception_skips_handler() {
+        assert_eq!(
+            run_python(concat!(
+                "x = 0\n",
+                "try:\n",
+                "    x = 1\n",
+                "except ValueError:\n",
+                "    x = 999\n",
+                "print(x)\n",
+            ))
+            .unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn test_list_comprehension_assignment_runs_the_loop() {
+        assert_eq!(
+            run_python(concat!(
+                "squares = [i * i for i in range(5)]\n",
+                "total = 0\n",
+                "for s in squares:\n",
+                "    total = total + s\n",
+                "print(total)\n",
+            ))
+            .unwrap(),
+            "30" // 0 + 1 + 4 + 9 + 16
+        );
+    }
+
+    #[test]
+    fn test_list_comprehension_with_filter_as_call_argument() {
+        assert_eq!(
+            run_python("print(len([x for x in range(10) if x % 2 == 0]))").unwrap(),
+            "5" // 0, 2, 4, 6, 8
+        );
+    }
+
+    // ── CRUSHAST-PYLOWER-1: match ────────────────────────────────────────
+
+    #[test]
+    fn test_match_literal_and_wildcard_arms() {
+        assert_eq!(
+            run_python(concat!(
+                "def code(n):\n",
+                "    match n:\n",
+                "        case 0:\n",
+                "            return 100\n",
+                "        case 1:\n",
+                "            return 200\n",
+                "        case _:\n",
+                "            return 999\n",
+                "print(code(0) + code(1) + code(5))\n",
+            ))
+            .unwrap(),
+            "1299" // 100 + 200 + 999
+        );
+    }
+
+    #[test]
+    fn test_match_capture_pattern_binds_whole_subject() {
+        assert_eq!(
+            run_python("match 42:\n    case n:\n        print(n)\n").unwrap(),
+            "42"
+        );
+    }
 }

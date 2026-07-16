@@ -1721,13 +1721,19 @@ impl Compiler {
                 ));
             }
             Expression::ArrayLiteral { elements, meta } => {
+                // Same bug shape (and same fix) as `Expression::ObjectLiteral`
+                // just above: ARR_PUSH's contract (crush-vm/src/scheduler.rs)
+                // is pop value, pop array, push element, *push the array back*
+                // — the re-push already carries the array forward, so the
+                // `dup` here was leaving one extra stray array reference on
+                // the stack per element (found via the same nested-ArrayLiteral
+                // exception `args` field that surfaced the ObjectLiteral bug).
                 instrs.push(self.create_instr(
                     "new_array",
                     serde_json::json!({"size": elements.len()}),
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("array_push", serde_json::json!({}), meta));
                 }
@@ -1824,11 +1830,23 @@ impl Compiler {
                 instrs.push(self.create_instr("index", serde_json::json!({}), meta));
             }
             Expression::ObjectLiteral { properties, meta } => {
-                // Create a new object/map
+                // Create a new object/map, then set each property in turn.
+                //
+                // SET_FIELD's contract (crush-vm/src/scheduler.rs) is: pop
+                // value, pop map, insert, *push the map back*. That re-push
+                // already carries the map forward to the next property —
+                // an extra `dup` before each property's value used to be
+                // pushed here too, which left one extra stray copy of the
+                // map on the stack per property (found while wiring
+                // CRUSHAST-PYLOWER-1's `raise`-value object literals: a
+                // 3-property object leaked 3 uncollected Map references,
+                // invisible for single-property objects/no downstream
+                // type-checked pop, but corrupting later type-checked pops
+                // — e.g. THROW's `error_var` binding — once anything with
+                // >1 property or a nested Array/Object value was built).
+                // No `dup` needed: stack stays exactly `[map]` throughout.
                 instrs.push(self.create_instr("new_obj", serde_json::json!({}), meta));
-                // Set each property
                 for (key, value) in properties {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta)); // Dup object ref
                     self.compile_expr(value, instrs)?;
                     instrs.push(self.create_instr(
                         "set_field",
