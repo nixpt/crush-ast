@@ -54,6 +54,115 @@ pub(crate) fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static 
     }
 }
 
+/// Outcome of a wall-clock-bounded subprocess run.
+pub(crate) enum CommandOutcome {
+    Output(std::process::Output),
+    TimedOut,
+}
+
+/// Run `cmd` to completion, but kill it and return `TimedOut` if it hasn't
+/// exited within `limit_ms`. SHARED with portable_vm — both backends spawn
+/// the same kind of polyglot subprocess and need the same bound.
+///
+/// `Child::wait_with_output()` alone has no timeout, and `Command::output()`
+/// (what both `EXEC_LANG` handlers used before this) blocks unboundedly —
+/// a hung `python3 -c` (or, eventually, a stalled network fetch inside a
+/// bucket-sandboxed capability) would hang the whole interpreter with
+/// nothing to stop it. Fixed by spawning, moving each pipe onto its own
+/// reader thread immediately (so a chatty child can't deadlock by filling
+/// an undrained pipe buffer while we poll), and polling `try_wait()` in
+/// this thread against a deadline. `child` itself is never moved out of
+/// this function, so it can still be killed here on timeout — only the
+/// pipe handles (`ChildStdout`/`ChildStderr`, plain `Send` OS handles, not
+/// `Value`) cross the thread boundary.
+pub(crate) fn run_with_wall_clock_limit(
+    mut cmd: std::process::Command,
+    limit_ms: u64,
+) -> std::io::Result<CommandOutcome> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    // Put the child in its own new process group (unix only — see the
+    // `libc` dependency comment in Cargo.toml). Killing a single tracked
+    // PID is not enough: `bash -c "sleep 30"` forks `sleep` as bash's own
+    // child, which inherits bash's stdout/stderr pipe write-ends. Kill
+    // bash alone and `sleep` keeps running, still holding those fds open —
+    // the reader threads below never see EOF until `sleep` exits on its
+    // own, defeating the whole timeout. A process group lets us kill the
+    // entire subtree at once.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn()?;
+
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut out) = stdout_handle {
+            let _ = out.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut err) = stderr_handle {
+            let _ = err.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(limit_ms);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+
+    match status {
+        Some(status) => {
+            let stdout = stdout_reader.join().unwrap_or_default();
+            let stderr = stderr_reader.join().unwrap_or_default();
+            Ok(CommandOutcome::Output(std::process::Output {
+                status,
+                stdout,
+                stderr,
+            }))
+        }
+        None => {
+            // Timed out: kill the whole process group (not just `child`)
+            // so no descendant survives to keep the output pipes open,
+            // then reap and join the reader threads.
+            #[cfg(unix)]
+            {
+                // SAFETY: plain libc call, no pointers/aliasing involved.
+                // `child.id()` is the pgid too, since we spawned it with
+                // `process_group(0)` above (new group, leader = itself).
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            Ok(CommandOutcome::TimedOut)
+        }
+    }
+}
+
 /// Actions a green thread can request from the scheduler.
 pub(crate) enum StepAction {
     /// Normal execution: ip advanced to next_ip.
@@ -740,9 +849,17 @@ fn execute_one(
             for (name, val) in var_names.iter().zip(var_values.iter()) {
                 cmd.env(name, val.as_text());
             }
-            let output = cmd
-                .output()
-                .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?;
+            let output = match run_with_wall_clock_limit(cmd, quotas.max_wall_time_ms)
+                .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?
+            {
+                CommandOutcome::Output(output) => output,
+                CommandOutcome::TimedOut => {
+                    return Err(VmError::CapTimeout {
+                        cap: gate,
+                        limit_ms: quotas.max_wall_time_ms,
+                    });
+                }
+            };
             if output.status.success() {
                 let raw = String::from_utf8_lossy(&output.stdout);
                 let mut visible_lines: Vec<&str> = Vec::new();
@@ -1119,4 +1236,77 @@ fn dispatch_cap(
     }
 
     Err(VmError::UnknownCap(cap.to_string()))
+}
+
+#[cfg(test)]
+mod wall_clock_limit_tests {
+    use super::*;
+
+    #[test]
+    fn fast_command_returns_its_real_output_within_the_limit() {
+        let mut cmd = std::process::Command::new("bash");
+        cmd.arg("-c").arg("echo hi");
+        match run_with_wall_clock_limit(cmd, 5_000).expect("spawn should succeed") {
+            CommandOutcome::Output(output) => {
+                assert!(output.status.success());
+                assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hi");
+            }
+            CommandOutcome::TimedOut => panic!("a fast command must not time out"),
+        }
+    }
+
+    #[test]
+    fn slow_command_is_killed_at_the_deadline_not_waited_out() {
+        let mut cmd = std::process::Command::new("bash");
+        cmd.arg("-c").arg("sleep 30");
+        let start = std::time::Instant::now();
+        let outcome = run_with_wall_clock_limit(cmd, 150).expect("spawn should succeed");
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(outcome, CommandOutcome::TimedOut),
+            "a 30s sleep against a 150ms limit must time out"
+        );
+        // The real proof: this returned near the 150ms deadline, not after
+        // the process's own 30s sleep completed on its own.
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "should return promptly after killing, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn failing_command_still_reports_its_real_exit_status_and_stderr() {
+        let mut cmd = std::process::Command::new("bash");
+        cmd.arg("-c").arg("echo oops >&2; exit 1");
+        match run_with_wall_clock_limit(cmd, 5_000).expect("spawn should succeed") {
+            CommandOutcome::Output(output) => {
+                assert!(!output.status.success());
+                assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "oops");
+            }
+            CommandOutcome::TimedOut => panic!("a fast-failing command must not time out"),
+        }
+    }
+
+    #[test]
+    fn a_chatty_process_does_not_deadlock_while_polling() {
+        // Regression guard for the exact bug this function was designed to
+        // avoid: if stdout weren't drained on its own thread while the main
+        // thread polls `try_wait`, a process writing enough output to fill
+        // the OS pipe buffer (~64KiB on Linux) would block on its own
+        // write() and never reach exit, hanging forever regardless of the
+        // wall-clock limit.
+        let mut cmd = std::process::Command::new("bash");
+        cmd.arg("-c").arg("head -c 1000000 /dev/zero | tr '\\0' 'a'");
+        let start = std::time::Instant::now();
+        match run_with_wall_clock_limit(cmd, 5_000).expect("spawn should succeed") {
+            CommandOutcome::Output(output) => {
+                assert!(output.status.success());
+                assert_eq!(output.stdout.len(), 1_000_000);
+            }
+            CommandOutcome::TimedOut => {
+                panic!("a 1MB write should complete well within 5s if pipes are drained correctly")
+            }
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
 }
