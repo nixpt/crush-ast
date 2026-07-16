@@ -39,6 +39,7 @@ reproduces.
 - [ ] **CRUSH-14** (S): `io.print` emits no trailing newline — cosmetic but visible in every multi-line example, including the website demo.
 - [ ] **CRUSH-15** (S): `crushc --emit casm`'s text output and `crush-run`'s CASM assembler are two incompatible dialects; docs imply a round-trip that doesn't work (`--emit vm` binary round-trip works fine, this is text-format only).
 - [x] **CRUSH-17** (S): Parser error messages leaked `Token`'s Debug format — fixed s388, added `Token::describe()`/`Display`, 30 call sites updated, verified live + 91 tests green.
+- [ ] **CRUSH-18** (M): Polyglot block runtime errors (`@python`/`@javascript`/`@bash` guest exceptions) aren't mapped into crush's diagnostic system — mislabeled `VmError::UnknownCap` (same variant as "capability not granted"), raw foreign-language traceback dumped verbatim, zero crush-side location. Verified live for both Python (`ZeroDivisionError`) and JS (Node stack trace + version banner).
 
 ## M2 — JIT completion
 
