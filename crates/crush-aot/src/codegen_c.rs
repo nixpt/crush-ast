@@ -243,6 +243,18 @@ static Value _add(Value a, Value b) {
         const char* sb = _to_text_buf(b, _tb, STRBUF_SIZE);
         int slen = (int)(strlen(sa) + strlen(sb));
         if (slen < STRBUF_SIZE) {
+            // CRITICAL: either sa or sb may point directly into _strbuf (e.g., when
+            // concatenating the result of a recursive string-building function like
+            // build_air_row onto a literal). Writing the concatenated result to
+            // _strbuf below would DESTROY the source data mid-copy.
+            // Save _strbuf contents to a local buffer first if needed.
+            char _strbuf_save[STRBUF_SIZE];
+            int need_save = (sa == _strbuf) || (sb == _strbuf);
+            if (need_save) {
+                memcpy(_strbuf_save, _strbuf, STRBUF_SIZE);
+                if (sa == _strbuf) sa = _strbuf_save;
+                if (sb == _strbuf) sb = _strbuf_save;
+            }
             _strbuf_idx = 0; // reset ring buffer to start
             char* buf = _strbuf;
             int pos = 0;
