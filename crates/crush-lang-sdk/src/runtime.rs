@@ -256,7 +256,7 @@ mod tests {
             .run_casm(source, &["io.print"], Some("hello"))
             .expect("run should succeed");
 
-        assert_eq!(result.output, "hi");
+        assert_eq!(result.output, "hi\n");
         assert!(result.halted);
     }
 

@@ -1256,11 +1256,12 @@ impl PortableVm {
             return match cap {
                 "io.print" => {
                     let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
-                    self.out_len += s.len();
+                    let line = format!("{s}\n");
+                    self.out_len += line.len();
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(s);
+                    self.out_parts.push(line);
                     Ok(None)
                 }
                 "str.concat" => {
@@ -1632,7 +1633,7 @@ mod tests {
         let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
         let result = vm.run().unwrap();
-        assert_eq!(result.output, "hello");
+        assert_eq!(result.output, "hello\n");
         assert!(result.halted);
     }
 
@@ -1649,7 +1650,7 @@ mod tests {
         let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
         let result = vm.run().unwrap();
-        assert_eq!(result.output, "15");
+        assert_eq!(result.output, "15\n");
     }
 
     #[test]
@@ -1670,7 +1671,7 @@ mod tests {
         let result = vm.run();
         match result {
             Ok(r) => {
-                assert_eq!(r.output, "15");
+                assert_eq!(r.output, "15\n");
             }
             Err(e) => {
                 eprintln!("VM Error: {:?}", e);
@@ -1714,7 +1715,7 @@ mod tests {
         let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
         let result = vm.run().unwrap();
-        assert_eq!(result.output, "3");
+        assert_eq!(result.output, "3\n");
     }
 
     // ── parity tests (mirror canonical src/tests.rs for these opcodes) ─────

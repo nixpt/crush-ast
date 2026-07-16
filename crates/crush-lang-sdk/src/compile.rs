@@ -497,7 +497,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run");
-        assert_eq!(result.output, "hello from crush");
+        assert_eq!(result.output, "hello from crush\n");
         assert!(result.halted);
     }
 
@@ -507,7 +507,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile bool");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run bool");
-        assert_eq!(result.output, "true");
+        assert_eq!(result.output, "true\n");
     }
 
     #[test]
@@ -516,7 +516,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile if bool");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run if bool");
-        assert_eq!(result.output, "yes");
+        assert_eq!(result.output, "yes\n");
     }
 
     #[test]
@@ -525,7 +525,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile object");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run object");
-        assert_eq!(result.output, "crush");
+        assert_eq!(result.output, "crush\n");
     }
 
     #[test]
@@ -534,7 +534,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile try/catch");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run try/catch");
-        assert_eq!(result.output, "in try");
+        assert_eq!(result.output, "in try\n");
     }
 
     #[test]
@@ -543,7 +543,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile throw/catch");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run throw/catch");
-        assert_eq!(result.output, "caught");
+        assert_eq!(result.output, "caught\n");
     }
 
     // Regression: a `@javascript { ... }` polyglot block used to fail at
@@ -558,7 +558,7 @@ mod tests {
         let prog = compile_crush_source(source).expect("compile js polyglot block");
         let quotas = crush_vm::Quotas::default();
         let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run js polyglot block");
-        assert_eq!(result.output, "js ok");
+        assert_eq!(result.output, "js ok\n");
     }
 
     // An `@<lang>` block for a language with no registered executor must
@@ -619,7 +619,7 @@ mod tests {
         let quotas = crush_vm::Quotas::default();
         let result =
             crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
-        assert_eq!(result.output, "10");
+        assert_eq!(result.output, "10\n");
     }
 
     // Same, but multi-line with an import and a non-integer result — the
@@ -633,7 +633,7 @@ mod tests {
             crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
         // JSON round-trip preserves float-ness (Python's json.dumps(125.0)
         // stays "125.0"), not just the numeric value.
-        assert_eq!(result.output, "125.0");
+        assert_eq!(result.output, "125.0\n");
     }
 
     // The block's own ordinary prints must keep flowing through as normal

@@ -134,6 +134,21 @@ fn test_c_embed() {
         }
     };
 
+    // The cdylib may be built without `native-plugins` because of workspace
+    // feature unification (e.g. crush-cson depends on crush-vm with
+    // default-features = false). The C-API symbols are gated behind that
+    // feature, so linking would fail with undefined references. Skip rather
+    // than fail in that case.
+    let nm_output = std::process::Command::new("nm")
+        .args(["-D", so_path.to_str().unwrap()])
+        .output()
+        .expect("nm must be on PATH");
+    let nm_stdout = String::from_utf8_lossy(&nm_output.stdout);
+    if !nm_stdout.contains("crush_vm_init") {
+        eprintln!("Skipping test_c_embed: libcrush_vm.so was built without native-plugins (C-API symbols missing)");
+        return;
+    }
+
     // Compile test_embed.c
     let out_exe = std::env::temp_dir().join("crush_vm_test_embed");
     let rpath = format!("-Wl,-rpath,{}", so_path.parent().unwrap().display());

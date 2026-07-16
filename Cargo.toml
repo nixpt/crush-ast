@@ -78,7 +78,7 @@ chrono      = { version = "0.4", default-features = false, features = ["clock", 
 indexmap    = "2.0"
 
 [profile.release]
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 opt-level = 3
 strip = "symbols"
@@ -86,3 +86,4 @@ strip = "symbols"
 # The AOT C codegen already passes -O3 -flto to gcc/clang.
 # This profile only governs Rust crates; C dependencies inherit
 # their own CFLAGS/LDFLAGS from the build environment.
+

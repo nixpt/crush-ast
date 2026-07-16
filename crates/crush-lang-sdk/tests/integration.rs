@@ -16,7 +16,7 @@ fn hello_world_capsule() {
         .expect("build");
 
     let result = Runtime::new().run(&program).expect("run");
-    assert_eq!(result.output, "hello, world");
+    assert_eq!(result.output, "hello, world\n");
     assert!(result.halted);
 }
 
@@ -40,7 +40,7 @@ fn string_operations() {
         .expect("build");
 
     let result = Runtime::new().run(&program).expect("run");
-    assert_eq!(result.output, "ab3");
+    assert_eq!(result.output, "ab\n3\n");
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn run_from_blob_roundtrip() {
 
     let blob = program.to_blob();
     let result = Runtime::new().run_blob(&blob).expect("run blob");
-    assert_eq!(result.output, "from blob");
+    assert_eq!(result.output, "from blob\n");
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn host_env_capabilities() {
         .run(&program)
         .expect("run");
 
-    assert_eq!(result.output, "crush-value");
+    assert_eq!(result.output, "crush-value\n");
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn test_lambda_compilation_and_execution() {
     "#;
     let program = crush_lang_sdk::compile::compile_crush_source(source).expect("compile");
     let result = Runtime::new().run(&program).expect("run");
-    assert_eq!(result.output, "10");
+    assert_eq!(result.output, "10\n");
 }
 
 #[test]
@@ -386,5 +386,5 @@ fn test_match_compilation_and_execution() {
     "#;
     let program = crush_lang_sdk::compile::compile_crush_source(source).expect("compile");
     let result = Runtime::new().run(&program).expect("run");
-    assert_eq!(result.output, "two");
+    assert_eq!(result.output, "two\n");
 }

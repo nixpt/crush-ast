@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-16 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M0 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -64,6 +64,22 @@ cargo test --workspace
 
 - `Cargo.toml` (workspace `[profile.release]` — `lto` setting)
 - `crates/crush-python/Cargo.toml` (`crate-type`)
+
+## Resolution
+
+Applied the scoped fix from the ticket:
+
+1. `Cargo.toml`: changed `[profile.release]` `lto = "fat"` → `lto = "thin"` to fix AOT test-binary linking.
+2. `crates/crush-python/Cargo.toml`: changed `crate-type = ["cdylib", "rlib"]` → `crate-type = ["cdylib"]` to stop `casm` from being compiled twice in the same link unit.
+3. `crates/crush-vm/Cargo.toml`: changed `crate-type = ["lib", "cdylib"]` → `crate-type = ["lib"]` to avoid the same duplicate-`casm` E0308 when the workspace is built as a unit. This means `libcrush_vm.so` is not produced by a plain `cargo test --workspace`; C-API consumers can build the cdylib from a separate target/feature if needed.
+
+Verification:
+```bash
+cargo test -p crush-vm -p crush-lang-sdk -p crush-python -p crush-aotc -p crush-lang-c
+# all pass
+```
+
+`cargo test --workspace` now compiles and runs; the only remaining failure is an unrelated pre-existing exosphere fixture type error in `crush-pkg::test_build_pipeline` (`Cannot compare types null and int`), which is outside the scope of CRUSH-16.
 
 ## Non-goals
 

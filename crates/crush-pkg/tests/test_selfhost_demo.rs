@@ -200,6 +200,7 @@ fn test_sno_execution() {
             map.insert("main".to_string(), Function {
                 params: vec![],
                 locals: vec![],
+                type_hints: None,
                 body: vec![
                     Instruction {
                         op: "push_int".to_string(),

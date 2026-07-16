@@ -8,7 +8,7 @@ repository.workspace = true
 
 [lib]
 name = "crush_python"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 crush-cast.workspace = true

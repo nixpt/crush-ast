@@ -1,0 +1,195 @@
+CRUSH-M1-CORRECTNESS — crush-ast M1 correctness sweep (multi-milestone campaign)
+
+**Branch (starting point):** agent/buffy/CRUSH-M1-CORRECTNESS
+**Repo:** crush-ast
+**Worktree:** /home/nixp/worktrees/buffy/crush-ast (already provisioned, on this branch, `cargo check --workspace` verified clean)
+**Runner:** buffy (freebuff/Codebuff, interactive — captain pastes this into a fresh session)
+**Turns:** open-ended (interactive session, not a headless dispatch)
+**Sync channel:** `crush-m1-correctness` (live, foreman is following it — see below)
+
+---
+
+## Sync channel — use this, not just the bridge
+
+Being interactive/non-headless doesn't mean one-way. There's a live shared
+channel for exactly this campaign:
+
+```bash
+export AGENT_NAME=buffy   # do this once at the start of the session
+
+# post an update (foreman reads/follows this channel):
+agent-sync --name crush-m1-correctness post "starting milestone A: CRUSH-16+12+14"
+
+# check for replies from foreman before/between milestones:
+agent-sync --name crush-m1-correctness read
+
+# or block and watch it live in a spare terminal:
+agent-sync --name crush-m1-correctness follow
+```
+
+Post here at the start of the session, at every milestone boundary
+(start AND done — see "Sequencing" below), and any time you hit a Halt +
+escalate condition. This is lower-latency than the `#general` bridge (still
+post the milestone-done summary to `#general` too, per Definition of Done —
+the sync channel is for back-and-forth, the bridge is the durable fleet-wide
+record). If you ask a question on the sync channel and don't see a reply
+within your session, don't block on it indefinitely — note it as an open
+question in your milestone-done post and keep going if the answer isn't
+gating.
+
+---
+
+## Read this first
+
+This is NOT a single-ticket dispatch. It's a campaign brief for working
+through crush-ast's `.jagent/planning/` backlog milestone by milestone.
+Before doing anything else:
+
+1. Read `/home/nixp/worktrees/buffy/crush-ast/.jagent/planning/RULES.md` in
+   full. It has two rules that override your normal instincts:
+   - **Verify before you fix.** A ticket's `Backlog` status is a claim, not
+     a fact. This session already found 2 "P0-critical" tickets in this
+     exact folder that were already fixed by unrelated work — re-run each
+     ticket's own `## Reproduction` section against current `main` before
+     spending any effort on it.
+   - **One worktree + branch per milestone**, commit + push at every
+     milestone boundary — not one giant branch held until the whole
+     backlog is done. Full mechanics in RULES.md §2-3.
+2. Read `.jagent/planning/TASKS.md` (the current backlog, organized by
+   milestone) and `.jagent/planning/ROADMAP.md` (the milestone sequence).
+3. Read `.dejavue/context.md` (`dejavue context` if the CLI is on PATH) for
+   the architectural why behind this codebase.
+
+## Scope — the M1 correctness sweep (TASKS.md's "M1" section)
+
+Nine real bugs, all found by actually running programs against the
+toolchain (not source-diving), all still needing work as of this writing
+except where noted below as already-closed:
+
+1. **CRUSH-12** (M) — any `struct` declaration silently kills `main`. Zero
+   exit code, zero output, `main` never called. The purest silent-failure
+   bug in the codebase. Start here — it's high-value and the VM's `steps=`
+   counter gives you a free oracle for confirming the fix.
+2. **CRUSH-13** (L) — five independent arithmetic implementations
+   (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero
+   (loud error vs. silent 0). The differential-testing flagship target;
+   `crush-diff` harness already exists but doesn't cover the AOT backends.
+3. **CRUSH-7** (M) — array mutation effectively unusable: index-assignment
+   is a parse error, chained `.push()` breaks with stack underflow, nested
+   array-literal indexing is broken, no slicing.
+4. **CRUSH-9** (L) — JS-walked CAST hits severe, non-local type-inference
+   bugs (an unrelated, never-called function's shape flips whether a
+   totally different function type-checks). Primary suspect:
+   `crush-frontend/src/semantics.rs`'s return-type unification state.
+5. **CRUSH-11** (M) — **re-verify first, per RULES.md §1.** The ticket's
+   real repro (`examples/js-walked/turtle_runner.js`, now in-repo since the
+   SNAKE-1 merge) has NOT been re-tested this session — only a simpler
+   literal-string case was checked, and that no longer reproduces. Don't
+   assume the real bug is fixed just because the simple case is.
+6. **CRUSH-8** (S) — two shipped example files (`fibonacci.crush`,
+   `arrays_and_loops.crush`) fail against current toolchain.
+7. **CRUSH-1** (L) — wire 10 AI-native opcodes + spawn/await/yield to real
+   VM execution (currently all NOP). Largest single item; do it last in
+   this sweep or as its own follow-on milestone — see "Sequencing" below.
+8. **CRUSH-14** (S) — `io.print` emits no trailing newline.
+9. **CRUSH-15** (S) — `crushc --emit casm` text output and `crush-run`'s
+   CASM assembler are two incompatible dialects; fix the mismatch or the
+   misleading docs.
+
+Also open, smaller, in the same backlog: **CRUSH-16** (P1, S) — `cargo test
+--workspace` fails to link (AOT bins under fat-LTO + crush-python
+cdylib/rlib dup-compile). Known, scoped fix (lto="thin" or exclude AOT
+bins from fat-LTO; single crate-type for crush-python's test build). Good
+warm-up ticket if you want something small and mechanical first.
+
+## Sequencing
+
+Work roughly in the numbered order above (severity/impact-weighted, not
+strictly the ticket-file numbers) but use your judgment — if verifying
+CRUSH-11 surfaces that it shares a root cause with CRUSH-13's C-backend
+arithmetic divergence, sequence around that discovery rather than
+mechanically going in order. CRUSH-1 (AI opcodes) is the largest single
+item (L effort, whole subsystem) — if the smaller items (2 through 9
+above) fill a productive session on their own, treat CRUSH-1 as its own
+follow-on milestone/campaign rather than cramming it in.
+
+**Per milestone** (RULES.md §2-3, the short version):
+- Start a new worktree+branch from the current tip of `main` (pull first —
+  a prior milestone in this campaign may already be merged).
+- Do the work, verifying against the ticket's own success criteria plus
+  `cargo check`/`cargo test -p <touched-crate>` at minimum.
+- Update the ticket file's `Status` + add a `## Resolution` section, and
+  tick the `TASKS.md` checkbox.
+- Commit, push the branch, post to the bridge (see below).
+- Only then start the next milestone's fresh worktree+branch.
+
+A reasonable milestone grouping for this campaign (not mandatory, just a
+sane split): milestone A = CRUSH-16 (warm-up) + CRUSH-12 + CRUSH-14 (small,
+independent, quick wins); milestone B = CRUSH-13 (arithmetic divergence,
+touches all 5 backends, substantial); milestone C = CRUSH-7 (array
+mutation); milestone D = CRUSH-9 + CRUSH-11-reverify + CRUSH-8 (the
+"examples don't run" cluster — likely share investigation context since
+all three were found the same way); milestone E = CRUSH-15 (docs/dialect);
+milestone F (separate follow-on) = CRUSH-1.
+
+## Definition of done (per milestone, not the whole campaign)
+
+- [ ] The milestone's ticket(s) re-verified against their own repro first
+- [ ] Fix applied (or ticket closed as already-fixed, with resolution notes)
+- [ ] `cargo check -p <touched-crate(s)>` clean (no new errors/warnings you introduced)
+- [ ] Relevant `cargo test -p <crate>` passes
+- [ ] Ticket file(s) updated: Status + `## Resolution`
+- [ ] `TASKS.md` checkbox(es) ticked
+- [ ] Branch pushed: `agent/buffy/<milestone-name>`
+- [ ] Bridge post naming what shipped + what's next
+
+## Files in scope
+
+- /home/nixp/worktrees/buffy/crush-ast/crates/ (all crates, per-ticket "Files to modify" sections name the specific ones)
+- /home/nixp/worktrees/buffy/crush-ast/.jagent/planning/ (TASKS.md, tickets/, ROADMAP.md, STATE.md — update as you close things)
+- /home/nixp/worktrees/buffy/crush-ast/examples/ (CRUSH-8, CRUSH-9's example files)
+
+## Files NOT in scope
+
+- Anything outside `/home/nixp/worktrees/buffy/crush-ast/` — this campaign is scoped to crush-ast only, not exosphere/surfer-browser/squeeze/etc even where they consume crush-ast crates.
+- `crates/crush-web/` — deliberately workspace-excluded (wasm32 feature-isolation reasons, see root Cargo.toml comment); don't pull it back into the main workspace resolve.
+
+## Bridge / inbox
+
+- Sync channel (`crush-m1-correctness`, see above) for live back-and-forth —
+  use it at every milestone start/done, not just the two checkpoints below.
+- Post a check-in to the fleet-wide bridge when you start:
+  `agent-msg "#general" "→ foreman: buffy starting CRUSH-M1-CORRECTNESS campaign, milestone A (CRUSH-16+12+14)"`
+- Post at EVERY milestone boundary (not just at the end) — this is the whole point of the per-milestone push discipline: `agent-msg "#general" "✅ buffy CRUSH-M1 milestone A done — <branch>, <commit>, verified: <what you ran>"`
+- If you hit something in RULES.md §1's "already fixed" territory (a ticket that no longer reproduces), say so explicitly in both the sync channel and the bridge post — that's a real, useful finding, not a no-op.
+
+## Verification expected
+
+For each closed ticket: the actual command(s) run and their actual output
+(not "tests pass" — paste the real terminal output or the specific
+assertion), matching the ticket's own `## Reproduction` section so foreman
+can re-run the same thing and get the same answer.
+
+## Halt + escalate criteria
+
+Stop and post to the bridge if:
+- A ticket's fix requires touching `crates/crush-web/`'s excluded-from-workspace
+  boundary, or crush-ast's relationship to a sibling repo (surfer-browser,
+  exo-light, openko) — that's cross-repo scope, needs foreman/captain's call.
+- You find a NEW bug while working a ticket — file it (RULES.md §1's
+  recursive rule) but don't let it block or expand the current ticket's
+  scope without flagging it first.
+- `/build` disk space gets tight (foreman hit `/build` at 9.3MB free this
+  session doing similar verification work) — check `df -h /build` if
+  cargo starts failing with confusing link/archive errors; that's very
+  likely ENOSPC, not a real compile bug (see the tmpfs-enospc-fake-compile-
+  error pattern) before you start debugging a "compiler bug" that isn't one.
+- You're deep into CRUSH-1 (AI opcodes) and it's clearly a multi-session
+  effort — that's expected (L effort), just checkpoint cleanly per RULES.md
+  rather than trying to finish it in one sitting.
+
+## 🔁 Recursive foreman doctrine
+
+If you spawn sub-agents during this campaign, you become a mini-foreman for
+them — same discipline applies one level down (focused prompts, capture
+findings before redirecting, clean report-up).

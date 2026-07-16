@@ -1225,11 +1225,12 @@ fn dispatch_cap(
         return match cap {
             "io.print" => {
                 let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
-                *out_len += s.len();
+                let line = format!("{s}\n");
+                *out_len += line.len();
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(s);
+                out_parts.push(line);
                 Ok(None)
             }
             "str.concat" => {

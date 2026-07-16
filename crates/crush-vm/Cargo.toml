@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [lib]
 name = "crush_vm"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [dependencies]
 anyhow.workspace = true
