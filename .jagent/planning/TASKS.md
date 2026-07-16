@@ -38,7 +38,7 @@ reproduces.
 - [ ] **CRUSH-13** (L): Five independent arithmetic implementations (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero (loud error vs. silent 0) and likely other operators. The bugarium flagship differential-testing target; `crush-diff` harness exists but doesn't yet cover the AOT backends.
 - [ ] **CRUSH-14** (S): `io.print` emits no trailing newline — cosmetic but visible in every multi-line example, including the website demo.
 - [ ] **CRUSH-15** (S): `crushc --emit casm`'s text output and `crush-run`'s CASM assembler are two incompatible dialects; docs imply a round-trip that doesn't work (`--emit vm` binary round-trip works fine, this is text-format only).
-- [ ] **CRUSH-17** (S): Parser error messages leak `Token`'s Debug format (`Assign(SourceLocation { line: 3, col: 11 })` instead of `` `=` ``) — 30 call sites, one root cause (no human-readable `Token` formatter exists). The diagnostic's file:line:col + source-snippet rendering is already good (`crush-lang-sdk::theme::render_parse_error`) — this is about the message text only.
+- [x] **CRUSH-17** (S): Parser error messages leaked `Token`'s Debug format — fixed s388, added `Token::describe()`/`Display`, 30 call sites updated, verified live + 91 tests green.
 
 ## M2 — JIT completion
 

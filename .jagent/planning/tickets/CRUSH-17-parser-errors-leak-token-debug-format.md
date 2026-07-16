@@ -4,11 +4,46 @@
 |-------|-------|
 | **ID** | CRUSH-17 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | **Done** — fixed s388 (2026-07-16) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | foreman/Kai, fixed same-session as filed |
 | **Dependencies** | none |
 | **Estimated effort** | S |
+
+## Resolution (s388, 2026-07-16)
+
+Added `Token::describe(&self) -> String` (and a `Display` impl forwarding to
+it) in `crates/crush-frontend/src/parser/lexer.rs`, covering all 69 variants
+with a clean human-readable form (`` `=` ``, `` `foo` ``, `"end of input"`,
+etc.). Replaced all 30 call sites across `parser/mod.rs` — 28 in the
+per-construct `ParseError::UnexpectedToken`/`Expected` sites, plus the
+shared `expect()` helper's `expected`/`found` fields (2 more, found on a
+final sweep — the original count of "30" undercounted by missing this
+shared site).
+
+Re-ran both this ticket's own repro AND a second `Expected`-path repro to
+confirm both error constructors are fixed:
+
+```
+$ crushc /tmp/idx_assign.crush -o /tmp/idx_assign.cvm1
+[E-PP01] /tmp/idx_assign.crush:3:11: unexpected token in expression: `=`
+--> /tmp/idx_assign.crush
+  1 | fn main() {
+  2 |     let xs = [5, 5, 5];
+> 3 |     xs[0] = 9;
+  4 | }
+    |           ^
+
+$ crushc /tmp/missing_paren.crush -o /tmp/mp.cvm1   # print("hi"; -- missing )
+[E-PP02] /tmp/missing_paren.crush:2:15: expected `)`, found `;`
+```
+
+No more Debug-leaked `Assign(SourceLocation { line: 3, col: 11 })` text.
+`cargo test -p crush-frontend --lib` (78 tests) and `cargo test -p
+crush-lang-sdk --lib theme` (13 tests, including the existing
+`parse_error_triple_canonical_codes` lockdown) both green — the theme
+tests construct `ParseError` variants directly with fixed strings, so none
+depended on the old Debug-formatted text.
 
 ## Problem
 
