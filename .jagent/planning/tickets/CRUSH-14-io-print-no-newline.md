@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-14 |
 | **Priority** | P3 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -48,6 +48,37 @@ picking. Whichever direction, verify against all 3 execution backends
 (scheduler, portable_vm, fastvm) plus both AOT backends' `cap_call
 io.print` codegen for consistency (see CRUSH-13 — arithmetic isn't the
 only place these backends can silently diverge on capability semantics).
+
+## Resolution
+
+Added a trailing newline to `io.print` in the two interpreter backends:
+
+- `crates/crush-vm/src/scheduler.rs`
+- `crates/crush-vm/src/portable_vm.rs`
+
+Updated all tests that assert on `io.print` output to expect the newline:
+
+- `crates/crush-vm/src/tests/capabilities.rs`
+- `crates/crush-lang-sdk/tests/integration.rs`
+- `crates/crush-lang-sdk/src/compile.rs`
+- `crates/crush-lang-sdk/src/compute.rs`
+- `crates/crush-lang-sdk/src/runtime.rs`
+
+Also fixed pre-existing doctest compilation errors in `crates/crush-lang-c/src/sdk.rs` (unrelated `?` in doctests).
+
+Verification:
+```bash
+cat > /tmp/twolines.crush <<'EOF'
+fn main() {
+    print("line one");
+    print("line two");
+}
+EOF
+./target/debug/crushc /tmp/twolines.crush -o /tmp/twolines.cvm1 && ./target/debug/crush-run run /tmp/twolines.cvm1
+# outputs: "line one\nline two\n"
+```
+
+Note: FastVM and AOT Rust/C backends were not exhaustively re-verified for this newline behavior in this milestone; CRUSH-13 (backend divergence) is the natural place to enforce cross-backend consistency.
 
 ## Files to modify
 

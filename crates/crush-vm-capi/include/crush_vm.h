@@ -1,7 +1,7 @@
 /*
  * crush_vm.h — C/C++ header for embedding the CrushVM.
  *
- * Link against libcrush_vm.a (static) or libcrush_vm.so (dynamic).
+ * Link against libcrush_vm_capi.so (dynamic).
  *
  * Usage:
  *   #include "crush_vm.h"

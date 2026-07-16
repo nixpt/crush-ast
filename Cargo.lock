@@ -954,6 +954,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "fd-lock 4.0.4",
  "regex",
  "semver",
  "serde",
@@ -1436,6 +1437,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-vm-capi"
+version = "0.3.0"
+dependencies = [
+ "casm",
+ "crush-vm",
+ "serde_json",
+]
+
+[[package]]
 name = "crush-walker"
 version = "0.3.0"
 dependencies = [
@@ -1776,6 +1786,17 @@ dependencies = [
  "cfg-if",
  "rustix 0.38.44",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "fd-lock"
+version = "4.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+dependencies = [
+ "cfg-if",
+ "rustix 1.1.4",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3637,7 +3658,7 @@ dependencies = [
  "cfg-if",
  "clipboard-win",
  "dirs-next",
- "fd-lock",
+ "fd-lock 3.0.13",
  "libc",
  "log",
  "memchr",

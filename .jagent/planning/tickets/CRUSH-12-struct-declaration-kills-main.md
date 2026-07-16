@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-12 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -64,6 +64,22 @@ Not investigated — found via black-box testing. Likely starting points:
   failure class: top-level items interfering with `main` dispatch).
 - Check whether struct *type registration* happens in a pass that
   overwrites or skips the function table instead of appending to it.
+
+## Resolution
+
+Re-verified against current `main` before doing any work. The repro no longer reproduces:
+
+```bash
+cat > /tmp/struct_kills_main.crush <<'EOF'
+struct P { x }
+fn main() { print("hi") }
+EOF
+./target/debug/crushc /tmp/struct_kills_main.crush -o /tmp/skm.cvm1
+./target/debug/crush-run run /tmp/skm.cvm1
+# prints "hi" and exits 0
+```
+
+The struct-declaration-silently-killing-`main` bug was already fixed by unrelated prior work (likely the parser/compiler work that landed before s388). No code changes were required; the ticket is closed as already-fixed.
 
 ## Files to modify
 

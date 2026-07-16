@@ -19,7 +19,7 @@ working this backlog must follow.
 - [x] **LTO enabled**: 3-layer (Rust fat LTO + gcc -flto + CFLAGS -flto). Binary size 64-80% reduction (53-142MB → 19-30MB)
 - [x] **CRUSH-2** (polyglot capability bypass) — verified fixed s388, `polyglot_gate()` gates `EXEC_LANG` in both scheduler.rs and portable_vm.rs
 - [x] **CRUSH-10** (AOT Rust backend can't compile anything) — verified fixed s388, compiles + executes correctly
-- [ ] **CRUSH-16** (P1): `cargo test --workspace` link failure — AOT bins under fat-LTO + crush-python cdylib/rlib dup-compile. Scoped fix known, not yet applied.
+- [x] **CRUSH-16** (P1): `cargo test --workspace` link failure — fixed by `lto = "thin"` and single crate-type for crush-python.
 
 ## M1 — Correctness sweep (black-box bugs found porting real examples)
 
@@ -34,9 +34,9 @@ reproduces.
 - [ ] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) fail against current `crushc`/`crush-run` — typed-recursive-function type error, and a stack-quota crash on array-to-string concat.
 - [ ] **CRUSH-9** (L): JS-walked CAST hits severe, non-local type-inference bugs — an unrelated, uncalled function's shape (even a no-op `console.log("")`) can flip whether a totally different function type-checks. Primary suspect: `crush-frontend/src/semantics.rs` return-type unification state not properly scoped per-function.
 - [ ] **CRUSH-11** (M): AOT C backend's string-output garbling — **needs re-verification first** (simple literal-print case no longer reproduces as of s388; the ticket's actual repro via `examples/js-walked/turtle_runner.js`, recursively-built strings, was not re-tested — that file now exists in-repo, run it before doing anything else).
-- [ ] **CRUSH-12** (M): Any `struct` declaration silently kills `main` — zero exit code, zero output, `main` never called. The purest silent-failure bug in the codebase; `steps=` VM instruction counter is a free oracle for catching it.
+- [x] **CRUSH-12** (M): Any `struct` declaration silently kills `main` — re-verified; already fixed by unrelated prior work.
 - [ ] **CRUSH-13** (L): Five independent arithmetic implementations (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero (loud error vs. silent 0) and likely other operators. The bugarium flagship differential-testing target; `crush-diff` harness exists but doesn't yet cover the AOT backends.
-- [ ] **CRUSH-14** (S): `io.print` emits no trailing newline — cosmetic but visible in every multi-line example, including the website demo.
+- [x] **CRUSH-14** (S): `io.print` emits no trailing newline — fixed in scheduler.rs and portable_vm.rs; test expectations updated.
 - [ ] **CRUSH-15** (S): `crushc --emit casm`'s text output and `crush-run`'s CASM assembler are two incompatible dialects; docs imply a round-trip that doesn't work (`--emit vm` binary round-trip works fine, this is text-format only).
 - [x] **CRUSH-17** (S): Parser error messages leaked `Token`'s Debug format — fixed s388, added `Token::describe()`/`Display`, 30 call sites updated, verified live + 91 tests green.
 - [ ] **CRUSH-18** (M): Polyglot block runtime errors (`@python`/`@javascript`/`@bash` guest exceptions) aren't mapped into crush's diagnostic system — mislabeled `VmError::UnknownCap` (same variant as "capability not granted"), raw foreign-language traceback dumped verbatim, zero crush-side location. Verified live for both Python (`ZeroDivisionError`) and JS (Node stack trace + version banner).

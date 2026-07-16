@@ -3,7 +3,7 @@
 //! Provides the complete bridge: walk → CAST → CASM → CVM1 execution.
 //!
 //! ```rust,no_run
-//! let result = crush_lang_c::sdk::run_c("int main() { return 42; }", "test.c")?;
+//! let result = crush_lang_c::sdk::run_c("int main() { return 42; }", "test.c").unwrap();
 //! assert_eq!(result, "42");
 //! ```
 
@@ -57,7 +57,7 @@ pub fn casm_to_vm(program: &casm::Program) -> Result<crush_vm::Program> {
 /// Full pipeline: C source → CVM1 execution → result string.
 ///
 /// ```rust,no_run
-/// let output = crush_lang_c::sdk::run_c("int main() { return 2 + 3 * 4; }", "test.c")?;
+/// let output = crush_lang_c::sdk::run_c("int main() { return 2 + 3 * 4; }", "test.c").unwrap();
 /// assert_eq!(output, "14");
 /// ```
 pub fn run_c(source: &str, filename: &str) -> Result<String> {

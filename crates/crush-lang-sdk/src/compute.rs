@@ -185,7 +185,7 @@ mod tests {
     fn engine_runs_job() {
         let outcome = CrushEngine::new().run(&hello_job());
         assert!(outcome.success);
-        assert_eq!(outcome.stdout, "hello, job");
+        assert_eq!(outcome.stdout, "hello, job\n");
         assert!(outcome.error.is_none());
         assert!(outcome.steps > 0);
     }

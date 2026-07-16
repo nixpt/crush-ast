@@ -7,6 +7,10 @@ description = "Crush language package manager — cargo-like build tool for Crus
 readme = "../../README.md"
 license.workspace = true
 
+[lib]
+name = "crush_pkg"
+path = "src/lib.rs"
+
 [[bin]]
 name = "crush-pkg"
 path = "src/main.rs"

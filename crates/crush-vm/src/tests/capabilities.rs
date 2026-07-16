@@ -18,7 +18,7 @@ fn cap_io_print() {
         "PUSH_STR \"hello\"\nCAP_CALL \"io.print\" 1\nHALT",
         &["io.print"],
     );
-    assert_eq!(r.output, "hello");
+    assert_eq!(r.output, "hello\n");
 }
 
 #[test]

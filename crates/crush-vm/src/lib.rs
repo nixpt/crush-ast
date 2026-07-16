@@ -35,11 +35,6 @@ pub mod plugin;
 // no wasm32 story either way, folded into the same native-only gate.
 #[cfg(feature = "native-plugins")]
 pub mod cargo_cap;
-// C-ABI embedding runs on the FastVM hot path (run_fastvm) — native-only,
-// same gate.
-#[cfg(feature = "native-plugins")]
-pub mod c_api;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("bad magic — not a CVM1 program")]

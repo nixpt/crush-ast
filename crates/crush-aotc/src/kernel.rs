@@ -262,6 +262,7 @@ mod tests {
         Function {
             params: vec!["in".to_string()],
             locals: vec![],
+            type_hints: None,
             body: body_ops.into_iter().map(|(op, args)| casm::Instruction {
                 op: op.into(),
                 lang: None,
