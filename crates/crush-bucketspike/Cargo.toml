@@ -38,4 +38,4 @@ anyhow = "1.0"
 # crates/crush-pkg has its own, separate, already-tracked broken `buckets`
 # path dependency in nested-worktree layouts — this crate does not touch
 # crush-pkg and is unaffected by (and does not fix) that issue.
-buckets = { path = "/home/nixp/WORKSPACE/projects/buckets" }
+buckets = { path = "/home/nixp/WORKSPACE/projects/buckets", package = "crush-buckets" }
