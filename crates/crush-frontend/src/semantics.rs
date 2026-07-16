@@ -490,6 +490,7 @@ impl SemanticAnalyzer {
     fn capability_return_type(&self, name: &str) -> Type {
         match name {
             "io.print" | "array.push" => Type::Null,
+            "arr_slice" => Type::Array(Box::new(Type::Any)),
             "str.contains" => Type::Bool,
             "str.split" => Type::Array(Box::new(Type::String)),
             "str.replace" | "str.join" => Type::String,
