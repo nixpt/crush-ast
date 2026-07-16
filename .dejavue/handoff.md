@@ -1,17 +1,12 @@
 # Handoff
 
-Updated: 2026-07-13T03:20:00-05:00
+Updated: 2026-07-15T23:50:23-05:00
 
 ## Summary
-Full-session audit completed. crush-ast is a **substantial, well-structured compiler toolchain**: 35 crates, 874 tests, 1 known failure (FFI plugin test requires external .so). Core pipeline (parser → CAST → CASM → CVM1/FastVM) fully functional. 7 walker frontends ship. 10 AI opcodes parsed but compile to NOP at runtime.
+Verified crush-aotc's benchmark + LTO claims empirically for nixpt/bozo's design work; fixed one real, 100%-reproducible AOT-Rust codegen bug (RuntimeValue::Str vs the enum's actual String variant, commit 5f30520 / c27601e on origin/main).
 
 ## Next Steps
-1. Wire AI-native opcodes in crush-vm (unblocks crush-notebook M2 AI cells)
-2. Wire spawn/await/yield (unblocks concurrent execution)
-3. Complete debugger variable inspection
-4. Advance JIT to Phase 2 (function calls, cap calls)
-5. Fill 18 zero-coverage error paths in VM tests
-6. Migrate surfer's in-tree crush runtime → crush-ast (Tier-3 cross-project)
+Fix the Math.floor (and likely Math.max/min/pow/etc) case-mismatch between lower_swc.rs's JS-style capitalized names and compiler.rs's lowercase math.* builtin table -- silently miscompiles today (165 instead of 465 on docs/benchmarks/compute.js). Audit lower_swc.rs<->compiler.rs and codegen.rs<->codegen_c.rs for the same double-maintained-table bug class.
 
 ## Boot Instructions
-Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, `.dejavue/timeline.jsonl`, and `.jagent/planning/STATE.md` before making changes.
+Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.
