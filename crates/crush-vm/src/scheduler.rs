@@ -649,11 +649,21 @@ fn execute_one(
             let idx_v = pop!();
             let arr_v = pop!();
             let idx = need_array_index(&idx_v)?;
-            let arr_rc = need_array(arr_v)?;
-            let arr = arr_rc.borrow();
-            let len = arr.len();
-            let actual = wrap_index(idx, len)?;
-            push!(arr[actual].clone());
+            match arr_v {
+                Value::Array(arr_rc) => {
+                    let arr = arr_rc.borrow();
+                    let len = arr.len();
+                    let actual = wrap_index(idx, len)?;
+                    push!(arr[actual].clone());
+                }
+                Value::Str(s) => {
+                    let len = s.chars().count();
+                    let actual = wrap_index(idx, len)?;
+                    let ch = s.chars().nth(actual).map(|c| c.to_string()).unwrap_or_default();
+                    push!(Value::Str(ch));
+                }
+                _ => return Err(VmError::TypeError { expected: "array or string", got: arr_v.type_name() }),
+            }
         }
         ARR_SET => {
             let val = pop!();
@@ -1243,6 +1253,34 @@ fn dispatch_cap(
                         Ok(Some(Value::Str(parts.join(&delim))))
                     }
                     other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+                }
+            }
+            "arr_slice" => {
+                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        let arr = elems.borrow();
+                        let len = arr.len() as i64;
+                        let start = match &args[1] {
+                            Value::Int(i) => *i,
+                            Value::Null => 0i64,
+                            _ => return Err(VmError::TypeError { expected: "int or null", got: args[1].type_name() }),
+                        };
+                        let end = if args.len() > 2 {
+                            match &args[2] {
+                                Value::Int(i) => *i,
+                                Value::Null => len,
+                                _ => return Err(VmError::TypeError { expected: "int or null", got: args[2].type_name() }),
+                            }
+                        } else {
+                            len
+                        };
+                        let start = start.max(0).min(len);
+                        let end = end.max(start).min(len);
+                        let sliced: Vec<Value> = arr[start as usize..end as usize].to_vec();
+                        Ok(Some(Value::new_array(sliced)))
+                    }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                 }
             }
             "make_range" => {

@@ -310,6 +310,19 @@ impl SemanticAnalyzer {
                             Ok(Type::String)
                         } else if l_type == Type::Any || r_type == Type::Any {
                             Ok(Type::Any)
+                        } else if l_type == Type::Null || r_type == Type::Null {
+                            // During return-type inference, a `Null` type means "not yet
+                            // inferred" (placeholder for recursive/forward calls). Allow the
+                            // fixed-point iteration to converge by returning the non-null type
+                            // when one side is known and the other is Null, or Any when both
+                            // are Null.
+                            Ok(if l_type == Type::Null && r_type == Type::Null {
+                                Type::Any
+                            } else if l_type == Type::Null {
+                                r_type
+                            } else {
+                                l_type
+                            })
                         } else {
                             bail!("Invalid binary op + for types {} and {}", l_type, r_type)
                         }
@@ -319,6 +332,15 @@ impl SemanticAnalyzer {
                             Ok(self.numeric_result_type(&l_type, &r_type))
                         } else if l_type == Type::Any || r_type == Type::Any {
                             Ok(Type::Any)
+                        } else if l_type == Type::Null || r_type == Type::Null {
+                            // Lenient Null handling during return-type inference.
+                            Ok(if l_type == Type::Null && r_type == Type::Null {
+                                Type::Any
+                            } else if l_type == Type::Null {
+                                r_type
+                            } else {
+                                l_type
+                            })
                         } else {
                             bail!(
                                 "Invalid binary op {} for types {} and {}",
@@ -468,6 +490,7 @@ impl SemanticAnalyzer {
     fn capability_return_type(&self, name: &str) -> Type {
         match name {
             "io.print" | "array.push" => Type::Null,
+            "arr_slice" => Type::Array(Box::new(Type::Any)),
             "str.contains" => Type::Bool,
             "str.split" => Type::Array(Box::new(Type::String)),
             "str.replace" | "str.join" => Type::String,
@@ -541,6 +564,9 @@ impl SemanticAnalyzer {
             (Type::Null, other) | (other, Type::Null) => {
                 Some(Type::Optional(Box::new(other.clone())))
             }
+            // Any is compatible with everything — merge to the concrete type
+            // (or keep Any if both are Any, already handled by the top eq check).
+            (Type::Any, concrete) | (concrete, Type::Any) => Some(concrete.clone()),
             _ => None,
         }
     }

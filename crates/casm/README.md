@@ -42,23 +42,46 @@ Source Code (Crush/Python/JS/etc.)
 ### Capability System
 - `cap_call` - Invoke external capabilities
 
-## Format
+## Formats
 
-Programs are serialized as JSON or MessagePack for portability:
+CASM has two representations:
+
+### 1. JSON / MessagePack (this crate)
+
+Programs are serialized as JSON or MessagePack for portability — the `casm::Program`
+struct serializes to/from this format. Used by `crushc`'s default `--emit vm` output
+(in a `.cvm1` binary wrapper) and by `casm::Program::serialize` / `deserialize`.
 
 ```json
 {
-  "functions": [
-    {
-      "name": "main",
-      "instructions": [
-        {"op": "push_str", "value": "Hello"},
-        {"op": "cap_call", "name": "io.print"}
+  "functions": {
+    "main": {
+      "params": [],
+      "body": [
+        {"op": "push_str", "args": {"value": "Hello"}},
+        {"op": "cap_call", "args": {"name": "io.print", "argc": 1}}
       ]
     }
-  ]
+  }
 }
 ```
+
+### 2. Text Assembly (crushc --emit casm / crush-run)
+
+`crushc --emit casm` produces a human-readable text assembly format with mnemonics,
+which `crush-run run` accepts as input (via its built-in assembler). This is the same
+instruction set, transcribed to a line-oriented text form:
+
+```asm
+.func main
+    PUSH_STR "Hello"
+    CAP_CALL "io.print" 1
+    RET
+```
+
+Both formats represent the same CASM program; the JSON form is the canonical
+serialization for storage/transmission, while the text form is convenient for
+ad-hoc inspection and debugging.
 
 ## Dependencies
 

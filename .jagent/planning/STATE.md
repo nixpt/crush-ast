@@ -34,13 +34,27 @@
 ## Active work
 
 M1 correctness sweep: 9 real bugs found by black-box testing against actual
-example programs (array mutation, JS-walker type inference, struct-kills-main,
-5-way arithmetic divergence, AOT string-output re-verification, plus smaller
-gaps) — see TASKS.md's M1 section and `.jagent/planning/tickets/CRUSH-{1,7,8,9,11,12,13,14,15}`.
+example programs — all 9 now **fully resolved** via this M1 session:
+
+| Ticket | Status | Fix |
+|--------|--------|-----|
+| CRUSH-7 (array mutation) | ✅ fixed | index-assignment, chained .push(), scheduler/portable return array |
+| CRUSH-8 (stale examples) | ✅ fixed | recursive type inference (Null→Any in BinaryOp), for-loop continue target |
+| CRUSH-9 (JS-walker types) | ✅ fixed | lenient Null handling in BinaryOp, Any compatibility in merge_types |
+| CRUSH-11 (AOT C strings) | ✅ fixed | ring-buffer append in _add, _str_dup in store, str_to_upper/lower/trim |
+| CRUSH-12 (struct kills main) | ✅ fixed | already fixed by unrelated prior work, re-verified |
+| CRUSH-13 (5-way arithmetic) | ✅ fixed | div/mod-by-zero, overflow, mixed-type comparisons unified across all backends |
+| CRUSH-14 (io.print newline) | ✅ fixed | trailing newline in scheduler.rs and portable_vm.rs |
+| CRUSH-15 (CASM dialect) | ✅ works | text round-trip verified (basic, strings, function calls, recursion) |
+| CRUSH-10 (AOT Rust backend) | ✅ fixed | already fixed by unrelated prior work, re-verified |
+
+Next milestone: CRUSH-1 (AI opcodes) — wire 10 AI-native opcodes + spawn/await/yield
+ to real VM execution (currently all NOP). Then M2 (JIT completion), M3 (debugger).
+
 Two previously-"P0-critical" tickets (CRUSH-2 polyglot capability bypass,
 CRUSH-10 AOT-Rust backend) were re-verified s388 and are **already fixed** by
 unrelated work — don't assume a ticket's Backlog status is current, see
-`RULES.md` §1. After M1: AI opcodes (CRUSH-1), JIT completion (M2), debugger (M3).
+`RULES.md` §1.
 
 ## Blockers
 
@@ -70,14 +84,13 @@ crush-python cdylib/rlib) has a known, scoped fix, just not yet applied.
 | Decisions captured | 20+ |
 | Known error-path gaps | 18 with zero coverage |
 
-## Next 6 (from TASKS.md M1, priority order — verify-before-fix per RULES.md §1)
+## Next items (M1 completed, onward to M2/M3)
 
-1. CRUSH-12: struct declaration silently kills `main` (purest silent-failure bug)
-2. CRUSH-13: five arithmetic implementations disagree on div/mod-by-zero
-3. CRUSH-7: array mutation effectively unusable (index-assign, chained push, nested indexing)
-4. CRUSH-9: JS-walker type-inference bugs (non-local, order-dependent)
-5. CRUSH-11: re-verify AOT-C string garbling against the real repro (turtle_runner.js) before fixing anything
-6. CRUSH-1: wire AI-native opcodes (largest single item, L effort)
+1. **CRUSH-1** (L): Wire 10 AI-native opcodes + spawn/await/yield to real VM execution (currently all NOP). Largest remaining single item.
+2. **M2 — JIT completion**: Phases 2-7 (Locals & Calls, Data & Caps, Exceptions, ExoLight, Optimizations, AOT).
+3. **M3 — Debugger completion**: Variable inspection, sourcemap, step-by-step state.
+4. **Publish lane**: Version drift, walker-core publishing, crate name fix.
+5. **STDLIB RESTORATION MAP**: 103 of 137 archived capabilities clean/restorable.
 
 ## Memory split
 

@@ -7,7 +7,7 @@
 //! VM, and FastVM backends.
 
 use crush_aot::{AotCompiler, Module};
-use crush_lang_sdk::differential::{DiffReport, FastOutcome, Norm};
+use crush_lang_sdk::differential::{DiffReport, FastOutcome, Norm, StackOutcome};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -255,6 +255,154 @@ fn aot_rust_and_c_agree_on_division_by_zero() {
 fn aot_cross_type_equality_returns_false() {
     let source = "fn eq_any(a: any, b: any) { return a == b; }\nfn main() { return eq_any(1, \"1\"); }";
     assert_all_backends_agree(source);
+}
+
+// ── CRUSH-11 recursive string concatenation (turtle_runner-style) ────────
+// The original CRUSH-11 bug: `_add` in the C backend overwrites `_strbuf`
+// before reading the second operand when recursive string building stores
+// intermediate results in `_strbuf`. This test exercises that exact pattern.
+
+/// Basic hash string handling across all backends.
+#[test]
+fn aot_hash_string_basics_agree() {
+    // Level 1: literal "#" alone
+    assert_all_backends_agree("fn main() { return \"#\"; }");
+    // Level 2: "#" + "#"
+    assert_all_backends_agree("fn main() { return \"#\" + \"#\"; }");
+    // Level 3: "#" + "." + "#"
+    assert_all_backends_agree("fn main() { return \"#\" + \".\" + \"#\"; }");
+}
+
+/// Single recursive function using "#" — verifies the CRUSH-11 strbuf fix works
+/// for hash characters (not just dots).
+#[test]
+fn aot_hash_recursive_isolated() {
+    // NOTE: r##"..."## is required because the source contains `"#` which would
+    // close a r#"..."# delimiter early.
+    assert_all_backends_agree(r##"
+        fn build_row(n: Int) {
+            if n >= 5 {
+                return ""
+            }
+            return "#" + build_row(n + 1)
+        }
+        fn main() {
+            return build_row(0)
+        }
+    "##);
+}
+
+/// Single recursive function using "." — original CRUSH-11 verification.
+#[test]
+fn aot_recursive_string_concat_agrees() {
+    let source = r#"
+        fn build_row(n: Int) {
+            if n >= 5 {
+                return ""
+            }
+            return "." + build_row(n + 1)
+        }
+        fn main() {
+            return build_row(0)
+        }
+    "#;
+    assert_all_backends_agree(source);
+}
+
+/// Basic multi-function dispatch (non-recursive, different chars) — PASSES.
+#[test]
+fn aot_dual_nonrecursive_diff_char_agree() {
+    assert_all_backends_agree("fn dot() { return \".\"; }\nfn hash() { return \"#\"; }\nfn main() { return dot() + \"|\" + hash(); }");
+}
+
+/// Helper: compare FastVM against interpreter and portable VM only (skips AOT
+/// backends). Useful for testing fixes in the FastVM's own lowering/execution
+/// path when AOT backends have pre-existing bugs.
+fn assert_fastvm_agrees(source: &str) {
+    let report = crush_lang_sdk::differential::differential_run(source)
+        .unwrap_or_else(|e| panic!("differential_run failed for {source:?}: {e}"));
+
+    let vm_ok = matches!(report.fastvm, FastOutcome::Finished(_));
+    let interp_ok = matches!(report.interpreter, StackOutcome::Ok { .. });
+    let port_ok = matches!(report.portable, StackOutcome::Ok { .. });
+
+    assert_eq!(vm_ok, interp_ok,
+        "FastVM vs interpreter outcome divergence for {source:?}\n  fastvm={:?}\n  interp={:?}",
+        report.fastvm, report.interpreter);
+    assert_eq!(vm_ok, port_ok,
+        "FastVM vs portable outcome divergence for {source:?}\n  fastvm={:?}\n  portable={:?}",
+        report.fastvm, report.portable);
+
+    if !vm_ok {
+        return;
+    }
+
+    let fv = report.fastvm_return();
+    let iv = report.interpreter_return();
+    let pv = report.portable_return();
+
+    if let (Some(fv), Some(iv)) = (fv, iv) {
+        assert_eq!(fv, iv,
+            "FastVM vs interpreter return value divergence for {source:?}\n  fastvm={:?}\n  interp={:?}",
+            fv, iv);
+    }
+    if let (Some(fv), Some(pv)) = (fv, pv) {
+        assert_eq!(fv, pv,
+            "FastVM vs portable return value divergence for {source:?}\n  fastvm={:?}\n  portable={:?}",
+            fv, pv);
+    }
+}
+
+/// Turtle-runner-style render — two recursive string-building functions
+/// (build_air_row, build_ground_row) that build rows from cell helpers,
+/// then render_frame concatenates them. All 5 backends now agree.
+#[test]
+fn aot_turtle_runner_render_agrees() {
+    assert_all_backends_agree(r##"
+        fn cell_a(x: Int) {
+            if x == 3 { return "T" }
+            return "."
+        }
+        fn cell_b(x: Int) {
+            if x == 3 { return "#" }
+            return "_"
+        }
+        fn build_a(x: Int) {
+            if x >= 8 { return "" }
+            return cell_a(x) + build_a(x + 1)
+        }
+        fn build_b(x: Int) {
+            if x >= 8 { return "" }
+            return cell_b(x) + build_b(x + 1)
+        }
+        fn main() {
+            let row_a = build_a(0)
+            let row_b = build_b(0)
+            return row_a + "|" + row_b
+        }
+    "##);
+}
+
+/// Multi-function recursive string concat — ALL five backends now agree.
+/// Fixed: FastVM lower_jump used relative jump targets (instructions.rs),
+/// AOT C _add reset _strbuf_idx to 0 overwriting stored strings (codegen_c.rs).
+#[test]
+fn aot_multi_recursive_all_backends_agree() {
+    assert_all_backends_agree(r##"
+        fn build_a(n: Int) {
+            if n >= 3 { return "" }
+            return "." + build_a(n + 1)
+        }
+        fn build_b(n: Int) {
+            if n >= 3 { return "" }
+            return "#" + build_b(n + 1)
+        }
+        fn main() {
+            let a = build_a(0)
+            let b = build_b(0)
+            return a + "|" + b
+        }
+    "##);
 }
 
 // ── CRUSH-13 ordered comparison edge cases ────────────────────────────────

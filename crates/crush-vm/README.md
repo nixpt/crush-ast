@@ -17,8 +17,11 @@ CASM bytecode → crush-vm (CVM1) → execution
 
 - **VM** — `run` / `run_with_caps` execute a program under `Quotas`; `VmError` /
   `VmResult` report faults.
-- **Assembler** — `assemble` / `disassemble` between CVM1 binary bytecode and a
-  textual form (`AssemblyError`); `Program` is the loaded bytecode.
+- **Assembler** — `assemble` converts text assembly mnemonics (the same format
+  produced by `crushc --emit casm`) into CVM1 binary bytecode; `disassemble`
+  reverses it (`AssemblyError`). The text assembly format differs from the
+  `casm::Program` JSON serialization — see the `casm` crate README for a
+  comparison of the two representations.
 - **Capabilities** — `HostCap` / `HostCaps` / `CapabilitySpec` describe and gate
   the host functions a program may call; `capabilities()` enumerates them.
 - **Portable VM** — `PortableVm` with `Frame` / `VmYield` for embedding and

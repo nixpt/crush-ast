@@ -235,6 +235,10 @@ static inline void _crush_arith_error(const char *msg) {
     exit(1);
 }
 
+static inline int _str_contains_ptr(const char* p) {
+    return p >= _strbuf && p < _strbuf + STRBUF_SIZE;
+}
+
 static Value _add(Value a, Value b) {
     // String concatenation when either operand is a string
     if (a.tag == TAG_STRING || b.tag == TAG_STRING) {
@@ -242,17 +246,34 @@ static Value _add(Value a, Value b) {
         const char* sa = _to_text_buf(a, _ta, STRBUF_SIZE);
         const char* sb = _to_text_buf(b, _tb, STRBUF_SIZE);
         int slen = (int)(strlen(sa) + strlen(sb));
-        if (slen < STRBUF_SIZE) {
-            _strbuf_idx = 0; // reset ring buffer to start
-            char* buf = _strbuf;
+        if (slen >= STRBUF_SIZE) return mk_null();            // Allocate at the current ring-buffer position so multiple string
+            // results can coexist at different positions in _strbuf.
+            int start = _strbuf_idx;
+            // CRITICAL: sa or sb may point into _strbuf at positions BEFORE `start`.
+            // Writing the concatenated result at `start` would overwrite the trailing
+            // portion of the source data before it's been read (if slen > start - src_pos).
+            // Save _strbuf to a local buffer when either source is in _strbuf.
+            char _strbuf_save[STRBUF_SIZE];
+            int need_save = _str_contains_ptr(sa) || _str_contains_ptr(sb);
+            if (need_save) {
+                memcpy(_strbuf_save, _strbuf, STRBUF_SIZE);
+                if (_str_contains_ptr(sa)) sa = _strbuf_save + (sa - _strbuf);
+                if (_str_contains_ptr(sb)) sb = _strbuf_save + (sb - _strbuf);
+            }
+            if (start + slen >= STRBUF_SIZE) {
+                // The result doesn't fit at the current position; wrap to 0.
+                // This may overwrite older data but is the ring-buffer contract.
+                // Sources are already in _strbuf_save so there's no overlap.
+                start = 0;
+            }
+            char* buf = &_strbuf[start];
             int pos = 0;
-            while (*sa) buf[pos++] = *sa++;
-            while (*sb) buf[pos++] = *sb++;
-            // _strbuf is now owned by the pushed Value — save via _str_alloc
-            _strbuf[pos] = '\0';
+            while (*sa && start + pos < STRBUF_SIZE - 1) { buf[pos++] = *sa++; }
+            while (*sb && start + pos < STRBUF_SIZE - 1) { buf[pos++] = *sb++; }
+            buf[pos] = '\0';
+            _strbuf_idx = start + pos + 1;
+            if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
             return mk_string(buf);
-        }
-        return mk_null();
     }
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         int64_t out;
@@ -610,7 +631,14 @@ fn emit_c_instr(
                 match meta.ty {
                     LocalType::F64 => out.push_str(&format!("                {} = _to_float(_pop()); _pc={next_pc}; break;\n", meta.c_name)),
                     LocalType::I64 => out.push_str(&format!("                {} = _to_int(_pop()); _pc={next_pc}; break;\n", meta.c_name)),
-                    LocalType::Value => out.push_str(&format!("                {} = _pop(); _pc={next_pc}; break;\n", meta.c_name)),
+                    LocalType::Value => {
+                        // Pin strings that live in _strbuf so they survive subsequent
+                        // function calls that reuse the ring buffer.
+                        out.push_str(&format!(
+                            "                {{ Value __sv = _pop(); if (__sv.tag == TAG_STRING && _str_contains_ptr(__sv.s)) {{ __sv.s = _str_dup(__sv.s); }} {} = __sv; }} _pc={next_pc}; break;\n",
+                            meta.c_name
+                        ));
+                    }
                 }
             } else {
                 out.push_str(&format!("                _pop(); _pc={next_pc}; break;\n"));
@@ -791,6 +819,31 @@ fn emit_c_instr(
                 out.push_str(&format!("                _pop(); _pc = {next_pc}; break;\n"));
             }
         }
+        // ── Async / AI opcodes ──
+        // AOT backends can't spawn OS threads or yield at the instruction level;
+        // these are stubbed to the minimum safe behavior.
+        "spawn" => {
+            // Pop function name + argc args (left on stack), push null.
+            // AOT can't spawn green threads, but we must keep the stack balanced.
+            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+            out.push_str(&format!("                _pop(); // fn name\n"));
+            for _ in 0..argc {
+                out.push_str(&format!("                _pop(); // arg\n"));
+            }
+            out.push_str(&format!("                _push(mk_null());\n"));
+            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+        }
+        "yield" => {
+            // Cooperative yield is a no-op in sequential AOT execution.
+            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+        }
+        "await" => {
+            // Pop handle, push null
+            out.push_str(&format!("                _pop(); // handle\n"));
+            out.push_str(&format!("                _push(mk_null());\n"));
+            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+        }
+
         "ret" | "halt" => {
             out.push_str("                return _pop();\n");
         }
@@ -886,13 +939,15 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ Value __sfx = _pop(); Value __s = _pop(); bool __r = false; if (__s.tag == TAG_STRING && __sfx.tag == TAG_STRING) {{ size_t __sl = strlen(__s.s); size_t __xl = strlen(__sfx.s); __r = (__sl >= __xl && strcmp(__s.s + __sl - __xl, __sfx.s) == 0); }} _push(mk_bool(__r)); }} _pc={next_pc}; break;\n"));
         }}
         "str_to_upper" => {{
-            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; char* __dst = _strbuf; int __i = 0; while (__src[__i] && __i < STRBUF_SIZE-1) {{ __dst[__i] = (char)toupper((unsigned char)__src[__i]); __i++; }} __dst[__i] = '\\0'; _strbuf_idx = 0; _push(mk_string(__dst)); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+            // Use ring-buffer append to avoid overwriting other strings in _strbuf.
+            // Source may also be in _strbuf — save/restore to local buffer first.
+            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; int __start = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__src)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __src = _sv + (__src - _strbuf); }} int __i = 0; while (__src[__i] && __start + __i < STRBUF_SIZE-1) {{ _strbuf[__start + __i] = (char)toupper((unsigned char)__src[__i]); __i++; }} _strbuf[__start + __i] = '\\0'; _strbuf_idx = __start + __i + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__start])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
         }}
         "str_to_lower" => {{
-            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; char* __dst = _strbuf; int __i = 0; while (__src[__i] && __i < STRBUF_SIZE-1) {{ __dst[__i] = (char)tolower((unsigned char)__src[__i]); __i++; }} __dst[__i] = '\\0'; _strbuf_idx = 0; _push(mk_string(__dst)); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; int __start = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__src)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __src = _sv + (__src - _strbuf); }} int __i = 0; while (__src[__i] && __start + __i < STRBUF_SIZE-1) {{ _strbuf[__start + __i] = (char)tolower((unsigned char)__src[__i]); __i++; }} _strbuf[__start + __i] = '\\0'; _strbuf_idx = __start + __i + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__start])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
         }}
         "str_trim" => {{
-            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; const char* __start = __src; while (*__start && isspace((unsigned char)*__start)) __start++; const char* __end = __src + strlen(__src); while (__end > __start && isspace((unsigned char)*(__end-1))) __end--; size_t __len = (size_t)(__end - __start); memcpy(_strbuf, __start, __len); _strbuf[__len] = '\\0'; _push(mk_string(_strbuf)); _strbuf_idx = 0; }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; const char* __start = __src; while (*__start && isspace((unsigned char)*__start)) __start++; const char* __end = __src + strlen(__src); while (__end > __start && isspace((unsigned char)*(__end-1))) __end--; size_t __len = (size_t)(__end - __start); int __pos = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__start)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __start = _sv + (__start - _strbuf); }} if (__len >= (size_t)(STRBUF_SIZE - __pos)) {{ __pos = 0; }} memcpy(&_strbuf[__pos], __start, __len); _strbuf[__pos + __len] = '\\0'; _strbuf_idx = __pos + (int)__len + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__pos])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
         }}
         // Complex string ops: emit as cap_call stubs (need dynamic allocation)
         "str_split" | "str_replace" | "str_join" => {{

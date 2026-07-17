@@ -111,6 +111,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "get an array element at index",
         });
         reg(CapabilitySpec {
+            name: "arr_slice",
+            argc: Some(3),
+            returns: true,
+            privileged: false,
+            summary: "slice an array [start..end) — null start=0, null end=len",
+        });
+        reg(CapabilitySpec {
             name: "make_range",
             argc: None,  // variadic: 0, 1, or 2 args
             returns: true,

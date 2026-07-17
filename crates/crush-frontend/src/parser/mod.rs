@@ -1279,14 +1279,58 @@ impl Parser {
                     meta: HashMap::new(),
                 }
             } else if op == "[]" {
-                // Index access
-                let index = self.parse_expression()?;
-                self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
+                // Check for slice syntax: xs[start:end] or xs[start:] or xs[:end]
+                // First check if it's xs[:end] (no start expression)
+                if matches!(self.peek(), Token::Colon(_)) {
+                    self.advance(); // consume ':'
+                    let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
+                        Expression::NullLiteral { meta: HashMap::new() }
+                    } else {
+                        self.parse_expression()?
+                    };
+                    self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
 
-                Expression::Index {
-                    target: Box::new(left),
-                    index: Box::new(index),
-                    meta: HashMap::new(),
+                    Expression::CapabilityCall {
+                        name: "arr_slice".to_string(),
+                        args: vec![
+                            left,
+                            Expression::NullLiteral { meta: HashMap::new() },
+                            end_expr,
+                        ],
+                        meta: HashMap::new(),
+                    }
+                } else {
+                    // Parse the start expression
+                    let index = self.parse_expression()?;
+                    if matches!(self.peek(), Token::Colon(_)) {
+                        // xs[start:end] — slice with start and optional end
+                        self.advance(); // consume ':'
+                        let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
+                            Expression::NullLiteral { meta: HashMap::new() }
+                        } else {
+                            self.parse_expression()?
+                        };
+                        self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
+
+                        Expression::CapabilityCall {
+                            name: "arr_slice".to_string(),
+                            args: vec![
+                                left,
+                                index,
+                                end_expr,
+                            ],
+                            meta: HashMap::new(),
+                        }
+                    } else {
+                        // Regular index access: xs[i]
+                        self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
+
+                        Expression::Index {
+                            target: Box::new(left),
+                            index: Box::new(index),
+                            meta: HashMap::new(),
+                        }
+                    }
                 }
             } else if op == "()" {
                 // Function call
