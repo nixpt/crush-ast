@@ -147,9 +147,24 @@ impl PtxCompiler {
                 "store" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let val = self.stack.pop().ok_or("Stack underflow on store")?;
-                    let r = self.next_reg(val.ty.clone());
+                    // Locals are MUTABLE registers: a repeated `store` to the same name must
+                    // reuse the SAME virtual register, not mint a fresh one. The compiler emits
+                    // each instruction once, so a loop body's `load name` is emitted before its
+                    // `store name`; if the store minted a new reg, the value updated inside the
+                    // loop would land in a register the body never reads back across the branch
+                    // — the accumulator/loop-counter would never carry (ptxas then peels one
+                    // iteration → a wrong partial result). PTX permits multiple defs of a virtual
+                    // register (ptxas does the SSA/phi conversion), so reusing it is correct and
+                    // is what gives a named local its mutable-variable / loop-carried semantics.
+                    let r = match self.locals.get(name) {
+                        Some(existing) if existing.ty == val.ty => existing.clone(),
+                        _ => {
+                            let nr = self.next_reg(val.ty.clone());
+                            self.locals.insert(name.to_string(), nr.clone());
+                            nr
+                        }
+                    };
                     instrs.push(format!("\tmov{} {}, {};", r.ty.to_str(), r.name(), val.name()));
-                    self.locals.insert(name.to_string(), r);
                 }
                 "ptx_block_idx_x" => {
                     let r = self.next_reg(PtxType::U32);
