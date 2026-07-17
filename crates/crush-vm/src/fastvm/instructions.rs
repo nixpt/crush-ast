@@ -759,9 +759,21 @@ fn lower_instruction(
             Ok(FastInstr::new(FastOp::Roll, n, 0))
         }
 
-        // Loop control — these are typically patched by the compiler to jump targets
-        "break" => Ok(FastInstr::simple(FastOp::Break)),
-        "continue" => Ok(FastInstr::simple(FastOp::Continue)),
+        // Loop control — patched by the compiler with function-relative integer targets.
+        // Convert to absolute PC (same as jump handling) so Break/Continue execution
+        // can use instr.arg directly.
+        "break" => {
+            let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
+            let target = instr.args.get("target").and_then(|v| v.as_u64()).unwrap_or(0);
+            let absolute_pc = func_start + target as usize;
+            Ok(FastInstr::new(FastOp::Break, absolute_pc as u64, 0))
+        }
+        "continue" => {
+            let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
+            let target = instr.args.get("target").and_then(|v| v.as_u64()).unwrap_or(0);
+            let absolute_pc = func_start + target as usize;
+            Ok(FastInstr::new(FastOp::Continue, absolute_pc as u64, 0))
+        }
 
         // Type operations
         "type_of" => Ok(FastInstr::simple(FastOp::TypeOf)),
