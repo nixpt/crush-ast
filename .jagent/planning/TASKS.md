@@ -33,11 +33,11 @@ reproduces.
 - [x] **CRUSH-7** (M): Array mutation effectively unusable — index-assignment fixed, chained `.push()` fixed (scheduler/portable return array). Nested indexing and slicing still open per ticket Resolution.
 - [x] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) — fixed: recursive type inference (Null→Any in BinaryOp + merge_types Any compatibility), for-loop continue target (continue_indices patching), ARR_GET string indexing support
 - [x] **CRUSH-9** (L): JS-walked CAST type-inference bugs — root cause was same as CRUSH-8: recursive/forward function calls returned Null placeholder types during inference, causing spurious type errors. Fixed by lenient Null handling in BinaryOp and Any compatibility in merge_types.
-- [ ] **CRUSH-11** (M): AOT C backend's string-output garbling — **needs re-verification first** (simple literal-print case no longer reproduces as of s388; the ticket's actual repro via `examples/js-walked/turtle_runner.js`, recursively-built strings, was not re-tested — that file now exists in-repo, run it before doing anything else).
+- [x] **CRUSH-11** (M): AOT C backend's string-output garbling — **fixed in M1 session**. Root cause: `_add` reset `_strbuf_idx=0` overwriting previously stored strings. Fix: ring-buffer append in `_add`, `_str_dup` in `store`, plus `str_to_upper/lower/trim`. Verified: all 5 backends agree on recursive multi-function string concat (turtle_runner-style).
 - [x] **CRUSH-12** (M): Any `struct` declaration silently kills `main` — re-verified; already fixed by unrelated prior work.
 - [x] **CRUSH-13** (L): Five independent arithmetic implementations (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero (loud error vs. silent 0) and likely other operators. The bugarium flagship differential-testing target; `crush-diff` harness exists but doesn't yet cover the AOT backends.
 - [x] **CRUSH-14** (S): `io.print` emits no trailing newline — fixed in scheduler.rs and portable_vm.rs; test expectations updated.
-- [ ] **CRUSH-15** (S): `crushc --emit casm`'s text output and `crush-run`'s CASM assembler are two incompatible dialects; docs imply a round-trip that doesn't work (`--emit vm` binary round-trip works fine, this is text-format only).
+- [x] **CRUSH-15** (S): `crushc --emit casm` text + `crush-run` CASM assembler — **verified working M1 session**. Round-trip tested successfully: basic arithmetic, strings, function calls, recursive functions with conditionals all produce correct output via `crush-run run <file.casm>`. The text format and the assembler accept the same dialect.
 
 ## M2 — JIT completion
 
