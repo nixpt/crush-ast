@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[project]
+name = "crush-vm"
+version = "0.3.0"
+description = "Canonical CVM1 VM (crush bytecode) as a Python extension"
+requires-python = ">=3.9"
+
+[tool.maturin]
+features = ["python"]
+no-default-features = true
+module-name = "crush_vm"
