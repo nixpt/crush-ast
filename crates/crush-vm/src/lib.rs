@@ -1,3 +1,6 @@
+#[cfg(feature = "python")]
+mod python;
+
 #[cfg(test)]
 mod tests;
 

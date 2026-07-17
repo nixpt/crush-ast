@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [lib]
 name = "crush_vm"
-crate-type = ["lib"]
+crate-type = ["lib", "cdylib"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +32,7 @@ thiserror.workspace = true
 # format lockdown lives in `crates/crush-diagnostics/tests/wire_format.rs`.
 crush-diagnostics.workspace = true
 parking_lot = "0.12.5"
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 
 # Native-only: ONNX inference (ai_optimizer), dynamic plugin loading (plugin,
 # via crush-ffi's C-ABI contract), and the `os.cargo` subprocess capability
@@ -45,6 +46,7 @@ crush-ffi = { version = "0.3.0", path = "../crush-ffi", optional = true }
 
 [features]
 default = ["native-plugins"]
+python = ["dep:pyo3"]
 native-plugins = ["dep:ort", "dep:libloading", "dep:crush-ffi"]
 
 # `EXEC_LANG`'s wall-clock timeout must kill a polyglot subprocess's whole
