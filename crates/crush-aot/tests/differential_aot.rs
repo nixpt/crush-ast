@@ -355,11 +355,10 @@ fn assert_fastvm_agrees(source: &str) {
 
 /// Turtle-runner-style render — two recursive string-building functions
 /// (build_air_row, build_ground_row) that build rows from cell helpers,
-/// then render_frame concatenates them. Uses assert_fastvm_agrees because
-/// AOT C still has a multi-function string preservation issue.
+/// then render_frame concatenates them. All 5 backends now agree.
 #[test]
 fn aot_turtle_runner_render_agrees() {
-    assert_fastvm_agrees(r##"
+    assert_all_backends_agree(r##"
         fn cell_a(x: Int) {
             if x == 3 { return "T" }
             return "."
