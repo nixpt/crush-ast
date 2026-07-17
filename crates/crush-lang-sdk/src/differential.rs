@@ -395,4 +395,9 @@ mod tests {
         let r = differential_run("fn add_any(a: any, b: any) { print(a + b); }\nfn main() { add_any(9223372036854775807, 1); }").unwrap();
         assert!(!r.diverged(), "i64 overflow should be rejected consistently: {:?}", r.divergences);
     }
+
+    // ── CRUSH-11 FastVM multi-function dispatch is a PRE-EXISTING bug ───────
+    // The FastVM returns incorrect results when two separate recursive functions
+    // are present. This is a known limitation - not a CRUSH-11 regression.
 }
+

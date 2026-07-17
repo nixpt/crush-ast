@@ -262,6 +262,37 @@ fn aot_cross_type_equality_returns_false() {
 // before reading the second operand when recursive string building stores
 // intermediate results in `_strbuf`. This test exercises that exact pattern.
 
+/// Basic hash string handling across all backends.
+#[test]
+fn aot_hash_string_basics_agree() {
+    // Level 1: literal "#" alone
+    assert_all_backends_agree("fn main() { return \"#\"; }");
+    // Level 2: "#" + "#"
+    assert_all_backends_agree("fn main() { return \"#\" + \"#\"; }");
+    // Level 3: "#" + "." + "#"
+    assert_all_backends_agree("fn main() { return \"#\" + \".\" + \"#\"; }");
+}
+
+/// Single recursive function using "#" — verifies the CRUSH-11 strbuf fix works
+/// for hash characters (not just dots).
+#[test]
+fn aot_hash_recursive_isolated() {
+    // NOTE: r##"..."## is required because the source contains `"#` which would
+    // close a r#"..."# delimiter early.
+    assert_all_backends_agree(r##"
+        fn build_row(n: Int) {
+            if n >= 5 {
+                return ""
+            }
+            return "#" + build_row(n + 1)
+        }
+        fn main() {
+            return build_row(0)
+        }
+    "##);
+}
+
+/// Single recursive function using "." — original CRUSH-11 verification.
 #[test]
 fn aot_recursive_string_concat_agrees() {
     let source = r#"
@@ -275,9 +306,20 @@ fn aot_recursive_string_concat_agrees() {
             return build_row(0)
         }
     "#;
-    // All five backends must produce the same output for recursive concat.
     assert_all_backends_agree(source);
 }
+
+/// Basic multi-function dispatch (non-recursive, different chars) — PASSES.
+#[test]
+fn aot_dual_nonrecursive_diff_char_agree() {
+    assert_all_backends_agree("fn dot() { return \".\"; }\nfn hash() { return \"#\"; }\nfn main() { return dot() + \"|\" + hash(); }");
+}
+
+// NOTE: Multi-function recursive string concat tests (turtle_runner-style)
+// are disabled because the FastVM has a pre-existing bug with separate
+// recursive functions (it runs the first function for both calls).
+// AOT C also has a trailing-pipe issue in multi-function returns.
+// These are separate from the CRUSH-11 strbuf fix.
 
 // ── CRUSH-13 ordered comparison edge cases ────────────────────────────────
 // Ordered comparisons require numeric operands on every backend. The AOT
