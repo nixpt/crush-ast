@@ -353,6 +353,37 @@ fn assert_fastvm_agrees(source: &str) {
     }
 }
 
+/// Turtle-runner-style render — two recursive string-building functions
+/// (build_air_row, build_ground_row) that build rows from cell helpers,
+/// then render_frame concatenates them. Uses assert_fastvm_agrees because
+/// AOT C still has a multi-function string preservation issue.
+#[test]
+fn aot_turtle_runner_render_agrees() {
+    assert_fastvm_agrees(r##"
+        fn cell_a(x: Int) {
+            if x == 3 { return "T" }
+            return "."
+        }
+        fn cell_b(x: Int) {
+            if x == 3 { return "#" }
+            return "_"
+        }
+        fn build_a(x: Int) {
+            if x >= 8 { return "" }
+            return cell_a(x) + build_a(x + 1)
+        }
+        fn build_b(x: Int) {
+            if x >= 8 { return "" }
+            return cell_b(x) + build_b(x + 1)
+        }
+        fn main() {
+            let row_a = build_a(0)
+            let row_b = build_b(0)
+            return row_a + "|" + row_b
+        }
+    "##);
+}
+
 /// Multi-function recursive string concat — ALL five backends now agree.
 /// Fixed: FastVM lower_jump used relative jump targets (instructions.rs),
 /// AOT C _add reset _strbuf_idx to 0 overwriting stored strings (codegen_c.rs).
