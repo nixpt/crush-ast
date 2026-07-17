@@ -353,16 +353,12 @@ fn assert_fastvm_agrees(source: &str) {
     }
 }
 
-// NOTE: Multi-function recursive string concat tests (turtle_runner-style)
-// had a pre-existing FastVM bug: jump targets used relative indices instead
-// of absolute PCs, causing jumps in non-first functions to go to the wrong
-// function's code. This is now FIXED in lower_jump.
-// AOT C still has a trailing-pipe issue in multi-function returns (separate).
-
+/// Multi-function recursive string concat — ALL five backends now agree.
+/// Fixed: FastVM lower_jump used relative jump targets (instructions.rs),
+/// AOT C _add reset _strbuf_idx to 0 overwriting stored strings (codegen_c.rs).
 #[test]
-fn aot_fastvm_multi_recursive_agrees() {
-    // FastVM now correctly dispatches multi-function recursive calls.
-    assert_fastvm_agrees(r##"
+fn aot_multi_recursive_all_backends_agree() {
+    assert_all_backends_agree(r##"
         fn build_a(n: Int) {
             if n >= 3 { return "" }
             return "." + build_a(n + 1)
