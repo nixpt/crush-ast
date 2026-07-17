@@ -531,6 +531,31 @@ fn emit_body(
                 out.push_str(&next_pc_str);
             }
         }
+        // ── Async / AI opcodes ──
+        // AOT backends can't spawn OS threads or yield at the instruction level;
+        // these are stubbed to the minimum safe behavior (no crash, no deadlock).
+        "spawn" => {
+            // Pop function name + argc args (left on stack), push null.
+            // AOT can't spawn green threads, but we must keep the stack balanced.
+            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+            out.push_str(&format!("{ind}stack.pop(); // fn name\n"));
+            for _ in 0..argc {
+                out.push_str(&format!("{ind}stack.pop(); // arg\n"));
+            }
+            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
+            out.push_str(&next_pc_str);
+        }
+        "yield" => {
+            // Cooperative yield is a no-op in sequential AOT execution.
+            out.push_str(&next_pc_str);
+        }
+        "await" => {
+            // Pop handle, push null (can't actually await in AOT).
+            out.push_str(&format!("{ind}stack.pop(); // handle\n"));
+            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
+            out.push_str(&next_pc_str);
+        }
+
         "ret" | "halt" => {
             out.push_str(&format!("{ind}return stack.pop().unwrap_or(RuntimeValue::Null);\n"));
         }
