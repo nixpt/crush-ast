@@ -527,10 +527,12 @@ fn lower_instruction(
         }
 
         "jump" | "jmp" => {
-            return lower_jump(instr, current_func, labels, pending_jumps, pc, FastOp::Jump);
+            let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
+            return lower_jump(instr, current_func, labels, pending_jumps, pc, FastOp::Jump, func_start);
         }
 
         "jump_if" | "jmp_if" | "branch_if" => {
+            let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
             return lower_jump(
                 instr,
                 current_func,
@@ -538,10 +540,12 @@ fn lower_instruction(
                 pending_jumps,
                 pc,
                 FastOp::JumpIf,
+                func_start,
             );
         }
 
         "jump_if_not" | "jmp_if_not" | "branch_if_not" => {
+            let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
             return lower_jump(
                 instr,
                 current_func,
@@ -549,6 +553,7 @@ fn lower_instruction(
                 pending_jumps,
                 pc,
                 FastOp::JumpIfNot,
+                func_start,
             );
         }
 
@@ -906,17 +911,14 @@ fn lower_instruction(
             let target = instr
                 .args
                 .get("target")
-                .and_then(|v| v.as_u64()) // In CASM enter_try might use label or absolute?
-                // VM impl says: `target` as u64.
-                // Wait, VM impl uses `instr.args.get("target")... as usize`.
-                // Usually labels are resolved. But `enter_try` in VM looks like it expects an absolute PC or resolved label.
-                // In CASM, if it's a label name, we need to resolve it.
-                // If it's "enter_try target:label", we treat it like jump.
+                .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
 
             if let Some(t) = target {
-                // Absolute? Unlikely in CASM.
-                Ok(FastInstr::new(FastOp::EnterTry, t as u64, 0))
+                // Integer target: relative to function body start (same as jump).
+                let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
+                let absolute_pc = func_start + t;
+                Ok(FastInstr::new(FastOp::EnterTry, absolute_pc as u64, 0))
             } else {
                 // Try as string label
                 let target_str = instr
@@ -928,8 +930,6 @@ fn lower_instruction(
                 if let Some(&target_pc) = labels.get(&label) {
                     Ok(FastInstr::new(FastOp::EnterTry, target_pc as u64, 0))
                 } else {
-                    // Pending jump resolution for try?
-                    // Yes, logic is same as jump.
                     pending_jumps.push((pc, label));
                     Ok(FastInstr::new(FastOp::EnterTry, 0, 0))
                 }
@@ -967,15 +967,19 @@ fn lower_jump(
     pending_jumps: &mut Vec<(usize, String)>,
     pc: usize,
     op: FastOp,
+    func_start_pc: usize,
 ) -> Result<FastInstr, LowerError> {
     let target_val = instr
         .args
         .get("target")
         .ok_or_else(|| LowerError::MissingArgument(format!("{:?} target", op)))?;
 
-    // Integer target: absolute PC offset
+    // Integer target: relative to the function body's start PC.
+    // The compiler emits instruction indices within the function body (e.g. `loop_end`).
+    // We must convert to absolute PC by adding the function's start position.
     if let Some(n) = target_val.as_u64() {
-        return Ok(FastInstr::new(op, n, 0));
+        let absolute_pc = func_start_pc + n as usize;
+        return Ok(FastInstr::new(op, absolute_pc as u64, 0));
     }
 
     // String target: label name to resolve

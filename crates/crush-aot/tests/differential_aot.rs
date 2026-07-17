@@ -7,7 +7,7 @@
 //! VM, and FastVM backends.
 
 use crush_aot::{AotCompiler, Module};
-use crush_lang_sdk::differential::{DiffReport, FastOutcome, Norm};
+use crush_lang_sdk::differential::{DiffReport, FastOutcome, Norm, StackOutcome};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -315,11 +315,69 @@ fn aot_dual_nonrecursive_diff_char_agree() {
     assert_all_backends_agree("fn dot() { return \".\"; }\nfn hash() { return \"#\"; }\nfn main() { return dot() + \"|\" + hash(); }");
 }
 
+/// Helper: compare FastVM against interpreter and portable VM only (skips AOT
+/// backends). Useful for testing fixes in the FastVM's own lowering/execution
+/// path when AOT backends have pre-existing bugs.
+fn assert_fastvm_agrees(source: &str) {
+    let report = crush_lang_sdk::differential::differential_run(source)
+        .unwrap_or_else(|e| panic!("differential_run failed for {source:?}: {e}"));
+
+    let vm_ok = matches!(report.fastvm, FastOutcome::Finished(_));
+    let interp_ok = matches!(report.interpreter, StackOutcome::Ok { .. });
+    let port_ok = matches!(report.portable, StackOutcome::Ok { .. });
+
+    assert_eq!(vm_ok, interp_ok,
+        "FastVM vs interpreter outcome divergence for {source:?}\n  fastvm={:?}\n  interp={:?}",
+        report.fastvm, report.interpreter);
+    assert_eq!(vm_ok, port_ok,
+        "FastVM vs portable outcome divergence for {source:?}\n  fastvm={:?}\n  portable={:?}",
+        report.fastvm, report.portable);
+
+    if !vm_ok {
+        return;
+    }
+
+    let fv = report.fastvm_return();
+    let iv = report.interpreter_return();
+    let pv = report.portable_return();
+
+    if let (Some(fv), Some(iv)) = (fv, iv) {
+        assert_eq!(fv, iv,
+            "FastVM vs interpreter return value divergence for {source:?}\n  fastvm={:?}\n  interp={:?}",
+            fv, iv);
+    }
+    if let (Some(fv), Some(pv)) = (fv, pv) {
+        assert_eq!(fv, pv,
+            "FastVM vs portable return value divergence for {source:?}\n  fastvm={:?}\n  portable={:?}",
+            fv, pv);
+    }
+}
+
 // NOTE: Multi-function recursive string concat tests (turtle_runner-style)
-// are disabled because the FastVM has a pre-existing bug with separate
-// recursive functions (it runs the first function for both calls).
-// AOT C also has a trailing-pipe issue in multi-function returns.
-// These are separate from the CRUSH-11 strbuf fix.
+// had a pre-existing FastVM bug: jump targets used relative indices instead
+// of absolute PCs, causing jumps in non-first functions to go to the wrong
+// function's code. This is now FIXED in lower_jump.
+// AOT C still has a trailing-pipe issue in multi-function returns (separate).
+
+#[test]
+fn aot_fastvm_multi_recursive_agrees() {
+    // FastVM now correctly dispatches multi-function recursive calls.
+    assert_fastvm_agrees(r##"
+        fn build_a(n: Int) {
+            if n >= 3 { return "" }
+            return "." + build_a(n + 1)
+        }
+        fn build_b(n: Int) {
+            if n >= 3 { return "" }
+            return "#" + build_b(n + 1)
+        }
+        fn main() {
+            let a = build_a(0)
+            let b = build_b(0)
+            return a + "|" + b
+        }
+    "##);
+}
 
 // ── CRUSH-13 ordered comparison edge cases ────────────────────────────────
 // Ordered comparisons require numeric operands on every backend. The AOT
