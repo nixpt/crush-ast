@@ -57,3 +57,25 @@ native-plugins = ["dep:ort", "dep:libloading", "dep:crush-ffi"]
 libc = "0.2"
 
 [dev-dependencies]
+
+# ── standalone-build workspace (CRUSHVM-PYO3): detaches crush-vm from the crush-ast
+# workspace so it compiles WITHOUT the buckets-dependent siblings (crush-pkg,
+# crush-bucketspike) that aren't present on this box. No logic change; build-only.
+[workspace]
+
+[workspace.package]
+version      = "0.3.0"
+edition      = "2024"
+license      = "MIT OR Apache-2.0"
+homepage     = "https://github.com/nixpt/crush-ast"
+repository   = "https://github.com/nixpt/crush-ast"
+rust-version = "1.95.0"
+
+[workspace.dependencies]
+anyhow            = "1.0"
+serde             = { version = "1.0", features = ["derive"] }
+serde_json        = "1.0"
+thiserror         = "1.0"
+casm              = { path = "../casm",              version = "0.3.0" }
+crush-errors      = { path = "../crush-errors",      version = "0.3.0" }
+crush-diagnostics = { path = "../crush-diagnostics", version = "0.3.0" }
