@@ -158,3 +158,56 @@ fn test_float_div_has_rounding_modifier() {
     let ptx = compile_program(&program).expect("Failed to compile");
     assert!(ptx.contains("div.rn.f64"), "float div must carry a PTX rounding modifier:\n{ptx}");
 }
+
+// ── Way-3 spike (ZORRO-CRUSH-PTX-1): a real Q6_K dequant→GEMV kernel ────────────
+// Proves the crush→PTX emitter can express a load-bearing quant kernel (Tiers 0-4:
+// SIMT ids, typed sub-word loads, 6-bit unpack, fma accumulate, warp-shuffle reduce)
+// and that the emitted text is a *ptxas-valid* sm_120 kernel — not just a Rust-level
+// string. Correctness vs the byte-exact `dequantize_q6_k` oracle is gated in zorro
+// (Phase 2), where the emitted PTX is executed on the GPU.
+#[test]
+fn test_q6k_gemv_emits_ptxas_valid_kernel() {
+    let prog = crush_ptx::q6k_gemv_program();
+    let ptx = compile_program(&prog).expect("Q6_K GEMV must compile to PTX");
+
+    // Shape: the load-bearing subset must be present.
+    assert!(ptx.contains(".visible .entry gemv_q6k_crush"), "entry point:\n{ptx}");
+    assert!(ptx.contains("%tid.x") && ptx.contains("%ctaid.x") && ptx.contains("%ntid.x"), "SIMT ids");
+    assert!(ptx.contains("ld.global.u8"), "Q6_K quant bytes are u8 sub-word loads");
+    // f16 super-block scale: loaded as raw b16 then widened (ptxas rejects ld.global.f16).
+    assert!(ptx.contains("ld.global.b16") && ptx.contains("cvt.f32.f16"), "f16 scale idiom");
+    assert!(ptx.contains("mul.lo.s64"), "integer mul needs .lo");
+    assert!(ptx.contains("and.b64") && ptx.contains("shl.b64"), "bitwise ops are width-typed");
+    assert!(ptx.contains("shr.s64"), "arithmetic shift for the 6-bit unpack / sign-extend");
+    assert!(ptx.contains("cvt.rn.f32.s64"), "int->float needs a rounding modifier");
+    assert!(ptx.contains("fma.rn.f32"), "dequant·activation accumulate");
+    assert!(ptx.contains("shfl.sync.bfly.b32"), "warp reduction");
+    assert!(ptx.contains("st.global.f32"), "y[row] store");
+    assert!(ptx.contains("bra L_"), "the strided column loop back-edge");
+
+    // Real gate: if a ptxas is reachable, the emitted text must assemble for sm_120.
+    let ptxas = ["/opt/cuda/bin/ptxas", "/usr/local/cuda/bin/ptxas", "ptxas"]
+        .into_iter()
+        .find(|p| std::process::Command::new(p).arg("--version").output().map(|o| o.status.success()).unwrap_or(false));
+    match ptxas {
+        None => eprintln!("(skip) no ptxas on this box — shape asserts only"),
+        Some(ptxas) => {
+            let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+            let src = format!("{dir}/target-crush-q6k.ptx");
+            let out = format!("{dir}/target-crush-q6k.cubin");
+            std::fs::write(&src, &ptx).unwrap();
+            let res = std::process::Command::new(ptxas)
+                .args(["-arch=sm_120", &src, "-o", &out])
+                .output()
+                .expect("run ptxas");
+            let _ = std::fs::remove_file(&src);
+            let _ = std::fs::remove_file(&out);
+            assert!(
+                res.status.success(),
+                "ptxas -arch=sm_120 rejected the crush-emitted Q6_K GEMV:\n{}",
+                String::from_utf8_lossy(&res.stderr)
+            );
+            eprintln!("crush-ptx OK: Q6_K GEMV assembles for sm_120 (ptxas exit 0)");
+        }
+    }
+}
