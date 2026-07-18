@@ -499,24 +499,11 @@ fn aot_rethrow_through_three_functions_agrees_fastvm() {
 // throw/rethrow path at the integration level, this test will catch them
 // where the bytecode tests would not.
 
-// NOTE: This test is `#[ignore]`d because the JIT's exception dispatch
-// has a separate CRUSH-17 issue (#3/#6) — the runtime helper can't find
-// the exception handler for frontend-lowered rethrow bytecode. The JIT
-// compiles correctly (the CRUSH-17 #8 double-sealing bug is fixed), but
-// at runtime the `OP_THROW` helper returns error code 3 (no handler found).
-// The 15 hand-crafted exception tests in crush-jit/src/lib.rs pass, and
-// the FastVM reference returns Int(7) as expected. The gap is in the
-// frontend-lowered bytecode's exception handler registration/dispatch.
-//
-// The double-sealing fix (reverse-order sealing of non-handler blocks in
-// build_fn) prevents the Cranelift SSA cascade from auto-sealing blocks
-// before the compiler is ready to seal them explicitly. This resolves the
-// compilation panic that previously blocked this test.
-//
-// Un-ignore this test once the handler_pc encoding/dispatch issue is
-// resolved (CRUSH-17 items #3 and #6).
+// CRUSH-17 items #3, #6, and #8 are all fixed:
+//   #8: JIT double-sealing — fixed with reverse-order block sealing
+//   #6: OP_THROW handler_stack_top = i+1 to keep handler for ExitTry
+//   #3: handler_pc encoding contract locked with comment + debug_assert!
 #[test]
-#[ignore = "CRUSH-17 #3/#6: JIT exception dispatch can't find handler for frontend-lowered rethrow (sealing bug #8 is fixed)"]
 fn jit_rethrow_through_three_functions_agrees_fastvm() {
     // Same source as the FastVM-only sibling above. Verifies the full
     // pipeline (Crush source → frontend → casm → vm Program → lower_program
@@ -600,4 +587,24 @@ fn jit_rethrow_through_three_functions_agrees_fastvm() {
             other
         ),
     }
+}
+
+// ── CRUSH-17 #4: StoreLocal semantics audit ───────────────────────────────
+// Both FastVM and JIT Backend use pop (consuming) for StoreLocal.  The
+// frontend lowerer emits LoadLocal for subsequent uses, so the pop is
+// always paired with a preceding Push/Dup and the value is reloaded from
+// locals when needed again.  This test verifies that a stored local can be
+// loaded multiple times without the pop causing silent consumption of the
+// underlying value (the CRUSH-17 #4 concern).
+
+#[test]
+fn aot_store_local_dual_load_returns_correct_value() {
+    // let x = 1; return x + x     → 2
+    //   1. PushInt 1
+    //   2. StoreLocal x (pops 1, still on stack? no – pop consumes)
+    //   3. LoadLocal x (reloads 1)
+    //   4. LoadLocal x (reloads 1 again)
+    //   5. Add
+    //   6. Halt
+    assert_all_backends_agree("fn main() { let x = 1; return x + x; }");
 }

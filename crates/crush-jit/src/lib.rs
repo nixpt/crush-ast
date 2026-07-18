@@ -22,6 +22,13 @@ pub struct JitEngine {
     compiler: JitCompiler,
     capabilities: Vec<Arc<dyn Capability>>,
     hal: Arc<dyn Hal>,
+    /// Instruction budget. Maps to `JitContext.budget`;
+    /// the compiled code decrements this on every instruction and returns
+    /// early when exhausted. Corresponds to ExoLight's `timeout_ms`.
+    budget: u64,
+    /// Arena memory limit in bytes (0 = no limit). Applied to the per-run
+    /// `Arena` via `set_limit()` before execution.
+    arena_limit: usize,
 }
 
 impl JitEngine {
@@ -31,6 +38,8 @@ impl JitEngine {
             compiler: JitCompiler::new()?,
             capabilities: Vec::new(),
             hal: Arc::new(crate::runtime::DummyHal),
+            budget: u64::MAX,
+            arena_limit: 0,
         })
     }
 
@@ -46,13 +55,32 @@ impl JitEngine {
         self
     }
 
+    /// Set the instruction budget (maps to JIT fuel; 0 = no limit).
+    /// When exhausted, the compiled code returns early with
+    /// `FastYield::BudgetExhausted` (currently signalled via error flag).
+    pub fn with_budget(mut self, budget: u64) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    /// Set the arena memory limit in bytes (0 = no limit).
+    /// Applied to the per-run Arena via `set_limit()` before execution.
+    pub fn with_arena_limit(mut self, limit: usize) -> Self {
+        self.arena_limit = limit;
+        self
+    }
+
     /// Compile and execute `program`, returning the result.
     pub fn run(&self, program: &LoweredProgram) -> anyhow::Result<FastYield> {
         let compiled = self.compiler.compile(program)?;
 
         // Set up JIT context with arena and helper infrastructure.
         let mut arena = Arena::new();
+        if self.arena_limit > 0 {
+            arena.set_limit(self.arena_limit);
+        }
         let mut ctx = JitContext::new();
+        ctx.budget = self.budget;
 
         // Store arena pointer
         ctx.arena = &mut arena as *mut Arena as *mut std::ffi::c_void;

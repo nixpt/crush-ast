@@ -163,7 +163,7 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     bld.switch_to_block(entry);
     let ctx = bld.block_params(entry)[0];
 
-    if let Some(&first) = map.get(&0) {
+    if let Some(&first) = map.get(&program.entry_point) {
         dec_budget(bld, ctx);
         bld.ins().jump(first, &[] as &[BlockArg]);
     } else {
@@ -545,8 +545,12 @@ fn emit_helper_call_checked(
     emit_helper_call(b, ctx, opcode, arg, ptr_ty, helper_sig);
 
     // Load error flag and branch.
+    // NOTE: error is i32, but we load I64 (8 bytes). Mask to low 32 bits
+    // since the adjacent throw_consumed_handler field may be non-zero.
     let err_addr = iadd_imm(b, ctx, OFF_ERROR);
-    let err_val = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+    let err_val_raw = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+    let err_mask = iconst(b, 0xFFFF_FFFFi64);
+    let err_val = band(b, err_val_raw, err_mask);
     let zero = iconst(b, 0);
     let has_err = icmp_ne(b, err_val, zero);
     let ok_bb = b.create_block();
@@ -950,8 +954,14 @@ fn emit_one(
             //    reordering this load before the call_indirect.
             //    (trusted() loads can be hoisted past calls; we MUST see the
             //     value written by the helper.)
+            //
+            //    NOTE: error is i32 at OFF_ERROR, but we load I64 (8 bytes).
+            //    The adjacent 4 bytes at OFF_ERROR+4 is throw_consumed_handler.
+            //    Mask the low 32 bits to isolate the error value (CRUSH-17 #6).
             let err_addr = iadd_imm(b, ctx, OFF_ERROR);
-            let err_val = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+            let err_val_raw = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+            let err_mask = iconst(b, 0xFFFF_FFFFi64);
+            let err_val = band(b, err_val_raw, err_mask);
             let found = iconst(b, 2);
             let handler_found = icmp_eq(b, err_val, found);
 
@@ -959,11 +969,12 @@ fn emit_one(
             let return_bb = b.create_block();
             b.ins().brif(handler_found, dispatch_bb, &[] as &[BlockArg], return_bb, &[] as &[BlockArg]);
 
-            // 3. Handler found — clear error flag, read handler_pc, dispatch to handler block
+            // 3. Handler found — clear ONLY error flag (i32, 4 bytes),
+            //    preserving throw_consumed_handler (offset OFF_ERROR+4) for ExitTry.
             b.switch_to_block(dispatch_bb);
             let err_addr2 = iadd_imm(b, ctx, OFF_ERROR);
-            let zero_val = iconst(b, 0);
-            store(b, err_addr2, zero_val);
+            let zero_i32 = b.ins().iconst(types::I32, 0);
+            b.ins().store(MemFlagsData::trusted(), zero_i32, err_addr2, 0);
             let hp_addr = iadd_imm(b, ctx, OFF_HANDLER_PC);
             let hp_val = b.ins().load(types::I64, MemFlagsData::new(), hp_addr, 0);
             emit_handler_dispatch(b, hp_val, handler_entries);

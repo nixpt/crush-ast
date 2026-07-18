@@ -980,7 +980,11 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         // OP_EXIT_TRY (36): pop from handler stack
         // ════════════════════════════════════════════════════════════════════
         OP_EXIT_TRY => {
-            if ctx.handler_stack_top > 0 {
+            if ctx.throw_consumed_handler != 0 {
+                // CRUSH-17 #6: OP_THROW already consumed this handler.
+                // Skip the decrement — the handler stack is already correct.
+                ctx.throw_consumed_handler = 0;
+            } else if ctx.handler_stack_top > 0 {
                 ctx.handler_stack_top -= 1;
             }
         }
@@ -1010,8 +1014,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     // Unwind call stack to handler's level
                     ctx.call_stack_top = frame.call_stack_top as usize;
 
-                    // Pop this handler and all above it
+                    // Pop this handler and all above it (handlers from deeper
+                    // call frames being unwound). The handler at index i is consumed
+                    // here; the handler block's ExitTry will be skipped via the
+                    // throw_consumed_handler flag (CRUSH-17 #6).
                     ctx.handler_stack_top = i;
+                    ctx.throw_consumed_handler = 1;
                     break;
                 }
             }
@@ -1101,8 +1109,10 @@ pub struct JitContext {
     pub budget: u64,
     /// Error flag (non-zero = error).
     pub error: i32,
-    /// Alignment padding.
-    _pad: i32,
+    /// CRUSH-17 #6: set to true by OP_THROW when it consumes a handler.
+    /// OP_EXIT_TRY checks this flag and skips the decrement if set,
+    /// preventing double-consumption of the handler stack.
+    pub throw_consumed_handler: u32,
     /// Heap arena (opaque pointer to `crush_vm::memory::Arena`).
     pub arena: *mut c_void,
     /// Capability table (opaque pointer).
@@ -1165,7 +1175,7 @@ impl JitContext {
             result: JitValue(TAG_NULL),
             budget: 1_000_000,
             error: 0,
-            _pad: 0,
+            throw_consumed_handler: 0,
             arena: std::ptr::null_mut(),
             capabilities: std::ptr::null_mut(),
             hal: std::ptr::null_mut(),

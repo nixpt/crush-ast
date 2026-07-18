@@ -4,14 +4,20 @@
 |-------|-------|
 | **ID** | CRUSH-17 |
 | **Priority** | P1 |
-| **Status** | In Progress (items 1,2,3,5,8 closed) |
+| **Status** | Closed (1,2,3,4,5,6,8 closed; 7 minor) |
 | **Phase** | M2 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (gate for M2 Phases 5-7) |
 | **Estimated effort** | M |
 | **Origin** | code-reviewer-glm review of commit `fe9a60a` on `agent/buffy/M2-JIT-PHASES-2-4` (2026-07-18) |
 
-> **Updated 2026-07-18**: Items 1, 2, 3, 5, and 8 are FIXED. Remaining blockers: #4 (StoreLocal audit). Minor items: #6, #7.
+> **Updated 2026-07-18**: Items 1-6 and 8 are FIXED. Remaining minor item: #7.
+>
+> **#4 StoreLocal audit**: Confirmed both FastVM (execution.rs:68) and JIT (compiler.rs:850)
+> use `pop` (consuming) for StoreLocal — correct and consistent. The Crush frontend
+> handles value liveness: `let x = expr` compiles to `Push expr; StoreLocal(x)` and
+> subsequent uses emit `LoadLocal(x)`. No lowerer fix needed. Added regression test
+> `aot_store_local_dual_load_returns_correct_value` (differential_aot.rs).
 
 The M2 JIT Phases 2-4 commit (`fe9a60a`) landed 3,610 lines of new JIT
 code (CALL/RETURN, exceptions, ~40 runtime-helper ops, bitwise, math,
@@ -59,16 +65,11 @@ is FastVM-only and bypasses the JIT entirely).
    `debug_assert!(handler_pc >= 0)` in `OP_THROW` handler to lock
    the contract.
 
-4. **`StoreLocal` peek→pop is a silent semantic flip** (`emit_one`,
-   `StoreLocal` arm): previously `peek` (value stays on stack), now
-   `pop` (value consumed). The commit message says "match FastVM stack
-   discipline." Every existing lowered program that emits
-   `Push X; StoreLocal 0` *and then reuses X* now double-consumes.
-   **Verify the lowerer was audited** to emit a duplicate `Push`/`Pick`
-   when the value is still needed, or this regresses working programs
-   silently. At minimum add a differential test:
-   `fn main() { let x = 1; print(x); print(x); }` — if `x` is
-   consumed by StoreLocal, the second `print(x)` gets null.
+4. **`StoreLocal` peek→pop** ✅ VERIFIED (2026-07-18)
+   (`emit_one`, `StoreLocal` arm): confirmed both backends use `pop` and the
+   frontend lowerer emits `LoadLocal` for subsequent variable accesses.
+   Added `aot_store_local_dual_load_returns_correct_value` regression test.
+   No code changes needed.
 
 5. **JIT call stack has no overflow guard** ✅ FIXED (2026-07-18)
    (`push_frame`): `OFF_CALL_STACK` (8768) → `OFF_CALL_STACK_TOP` (9792)
@@ -89,12 +90,17 @@ is FastVM-only and bypasses the JIT entirely).
 
 ### 🟢 Minor / hygiene
 
-6. **`Throw` arm must `return true`** after `emit_handler_dispatch`
-   (which emits a `brif`/`jump` terminator). If it doesn't, the
-   non-terminator fallthrough path in `build_fn` appends a second
-   terminator → CLIF panic. **Confirm the arm returns `true`** (the
-   14 passing exception tests suggest it does, but the exact tail
-   wasn't visible in the diff).
+6. **`Throw` arm must `return true`** ✅ FIXED (2026-07-18)
+   The `Throw` arm already returns `true`. The actual bug was twofold:
+   (a) JIT started at offset 0 instead of `program.entry_point` — when
+   functions sort alphabetically, "a" executes before "main", so main's
+   `EnterTry` never registers its handler. Fix: `map.get(&0)` →
+   `map.get(&program.entry_point)`. (b) JIT's flat `handler_stack`
+   caused ExitTry to double-consume handlers after Throw dispatch.
+   Fix: added `throw_consumed_handler: u32` flag — OP_THROW sets it,
+   OP_EXIT_TRY checks it and skips decrement. Added I32 store and I64
+   load-masking in compiler.rs to prevent the flag from corrupting the
+   error comparison.
 
 7. **Duplicate brif-cascade functions** — `emit_return_dispatch` and
    `emit_handler_dispatch` are near-identical; unify into one
@@ -108,9 +114,9 @@ is FastVM-only and bypasses the JIT entirely).
 - [x] Float `Mod` on negative dividends matches FastVM
 - [x] Runtime helper calls check `OFF_ERROR` after `call_indirect`
 - [x] `handler_pc` encoding contract locked with comment + `debug_assert!`
-- [ ] `StoreLocal` peek→pop audit
+- [x] `StoreLocal` peek→pop audit ✅ VERIFIED (no fix needed; added regression test)
 - [x] JIT call-stack overflow guard
-- [ ] Confirm `Throw` arm returns `true` after dispatch
+- [x] Confirm `Throw` arm returns `true` after dispatch ✅ FIXED (entry point + handler double-consumption)
 - [x] **New frontend-source JIT rethrow integration test** lands (see
       below) — exercises the full pipeline
       (source → frontend → lowering → JIT) for the throw/rethrow path,
