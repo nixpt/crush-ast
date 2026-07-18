@@ -25,7 +25,10 @@
 //! | 9816   | 8    | handler_pc (resolved handler PC for throw dispatch) |
 //! | 9824   | 8    | handler_stack_top |
 //! | 9832   | 256  | handler_stack[16] (JitHandlerFrame × 16) |
-//! | 10088  | —    | total |
+//! | 10088  | 8    | saved_pc (resume PC after host request yield) |
+//! | 10096  | 4    | host_request_tag (which HostRequest variant) |
+//! | 10100  | 4    | _pad3 |
+//! | 10104  | —    | total |
 
 use crate::value::{JitValue, TAG_NULL, TAG_FALSE};
 use crush_vm::fastvm::similarity::calculate_similarity;
@@ -1143,13 +1146,20 @@ pub struct JitContext {
     pub handler_stack_top: usize,
     /// Exception handler stack (max 16 nested try blocks).
     pub handler_stack: [JitHandlerFrame; 16],
+    /// Saved PC for resume after a host-request yield (CallHost, ExecLang, Spawn, etc.).
+    /// Zero means "initial entry" (no resume). Non-zero means "resume at this block offset".
+    pub saved_pc: usize,
+    /// Which HostRequest variant was issued (0 = none, 1 = CallHost, 2 = ExecLang, 3 = Spawn, …).
+    pub host_request_tag: u32,
+    /// Padding for 8-byte alignment.
+    _pad3: u32,
 }
 
 // ── Ensure layout is as expected ────────────────────────────────────────────
 
 const _: () = {
-    assert!(core::mem::size_of::<JitContext>() >= 10088);
-    assert!(core::mem::size_of::<JitContext>() <= 10112);
+    assert!(core::mem::size_of::<JitContext>() >= 10104);
+    assert!(core::mem::size_of::<JitContext>() <= 10128);
     assert!(core::mem::align_of::<JitContext>() == 8);
     assert!(core::mem::offset_of!(JitContext, stack) == 0);
     assert!(core::mem::offset_of!(JitContext, stack_top) == 8192);
@@ -1164,6 +1174,8 @@ const _: () = {
     assert!(core::mem::offset_of!(JitContext, handler_pc) == 9816);
     assert!(core::mem::offset_of!(JitContext, handler_stack_top) == 9824);
     assert!(core::mem::offset_of!(JitContext, handler_stack) == 9832);
+    assert!(core::mem::offset_of!(JitContext, saved_pc) == 10088);
+    assert!(core::mem::offset_of!(JitContext, host_request_tag) == 10096);
 };
 
 impl JitContext {
@@ -1188,6 +1200,9 @@ impl JitContext {
             handler_pc: 0,
             handler_stack_top: 0,
             handler_stack: [JitHandlerFrame { handler_pc: 0, call_stack_top: 0 }; 16],
+            saved_pc: 0,
+            host_request_tag: 0,
+            _pad3: 0,
         }
     }
 

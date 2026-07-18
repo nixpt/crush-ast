@@ -70,20 +70,26 @@ impl JitEngine {
         self
     }
 
-    /// Compile and execute `program`, returning the result.
-    pub fn run(&self, program: &LoweredProgram) -> anyhow::Result<FastYield> {
+    /// Compile and execute `program` using the provided context and arena.
+    ///
+    /// The caller owns `ctx` and `arena` — this allows state to be carried
+    /// forward across yield/resume boundaries (M2 Phase 5 Tier 2).
+    ///
+    /// If the program yields via a host-request opcode (CallHost, ExecLang,
+    /// Spawn, etc.), returns `FastYield::Yielded` with `ctx.saved_pc` set
+    /// to the resume point and `ctx.host_request_tag` indicating which
+    /// request was made. The caller should process the request, then call
+    /// `resume()` with the same `ctx` and `arena` to continue.
+    pub fn run_with_ctx(
+        &self,
+        program: &LoweredProgram,
+        ctx: &mut JitContext,
+        arena: &mut Arena,
+    ) -> anyhow::Result<FastYield> {
         let compiled = self.compiler.compile(program)?;
 
-        // Set up JIT context with arena and helper infrastructure.
-        let mut arena = Arena::new();
-        if self.arena_limit > 0 {
-            arena.set_limit(self.arena_limit);
-        }
-        let mut ctx = JitContext::new();
-        ctx.budget = self.budget;
-
         // Store arena pointer
-        ctx.arena = &mut arena as *mut Arena as *mut std::ffi::c_void;
+        ctx.arena = arena as *mut Arena as *mut std::ffi::c_void;
 
         // Store pointer to program's symbol table strings (alive for duration of run())
         ctx.strings_ptr = &program.symbols.strings as *const Vec<String> as *const std::ffi::c_void;
@@ -95,7 +101,13 @@ impl JitEngine {
         // Set the runtime helper dispatch function
         ctx.helper_fn = jit_runtime_helper as *mut std::ffi::c_void;
 
-        compiled.execute(&mut ctx);
+        compiled.execute(ctx);
+
+        // M2 Phase 5 Tier 2: detect host-request yield before error/budget checks.
+        // Check saved_pc (not host_request_tag) because CallHost uses tag 0.
+        if ctx.saved_pc != 0 {
+            return Ok(FastYield::Yielded);
+        }
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
@@ -109,9 +121,87 @@ impl JitEngine {
             return Ok(FastYield::Error(FastError::ExecutionError(msg)));
         }
 
-        // ExoLight Tier 1 fuel metering: budget saturates at 0.
-        // After confirming no error, report exhaustion so ExoLight
-        // can refuel and resume the capsule.
+        if ctx.budget == 0 {
+            return Ok(FastYield::BudgetExhausted);
+        }
+
+        let val = jit_to_runtime(ctx.result());
+        Ok(FastYield::Finished(Some(val)))
+    }
+
+    /// Convenience wrapper: create a fresh context and arena, then run.
+    ///
+    /// **Note:** If the program yields via a host-request opcode, the context
+    /// is dropped on return and resume is impossible — use [`run_with_ctx`]
+    /// and [`resume`] for yielding programs instead.
+    pub fn run(&self, program: &LoweredProgram) -> anyhow::Result<FastYield> {
+        let mut arena = Arena::new();
+        if self.arena_limit > 0 {
+            arena.set_limit(self.arena_limit);
+        }
+        let mut ctx = JitContext::new();
+        ctx.budget = self.budget;
+        self.run_with_ctx(program, &mut ctx, &mut arena)
+    }
+
+    /// Resume execution after a host-request yield.
+    ///
+    /// `ctx` must be the **same** `JitContext` that was used in the previous
+    /// `run_with_ctx()` call — it carries the saved PC, stack, locals, call
+    /// stack, and handler stack from before the yield.
+    ///
+    /// `host_result` is the result of the host call, pushed onto the JIT
+    /// stack before resuming (pass `None` to push Null).
+    ///
+    /// `budget` is the fresh fuel allocation for this continuation.
+    pub fn resume(
+        &self,
+        program: &LoweredProgram,
+        ctx: &mut JitContext,
+        arena: &mut Arena,
+        host_result: Option<RuntimeValue>,
+        budget: u64,
+    ) -> anyhow::Result<FastYield> {
+        let compiled = self.compiler.compile(program)?;
+
+        ctx.budget = budget;
+        ctx.arena = arena as *mut Arena as *mut std::ffi::c_void;
+        ctx.strings_ptr = &program.symbols.strings as *const Vec<String> as *const std::ffi::c_void;
+        ctx.capabilities = &self.capabilities as *const Vec<Arc<dyn Capability>> as *mut std::ffi::c_void;
+        ctx.hal = &self.hal as *const Arc<dyn Hal> as *mut std::ffi::c_void;
+        ctx.helper_fn = jit_runtime_helper as *mut std::ffi::c_void;
+
+        // Push the host result onto the JIT stack so the resumed code
+        // can consume it (e.g., CallHost return value, ExecLang output).
+        let jit_val = match host_result {
+            Some(RuntimeValue::Int(i)) => JitValue::int(i),
+            Some(RuntimeValue::Float(f)) => JitValue::float(f),
+            Some(RuntimeValue::Bool(b)) => JitValue::bool(b),
+            Some(RuntimeValue::Null) => JitValue::null(),
+            Some(RuntimeValue::Ref(idx)) => JitValue::from_ref(idx),
+            Some(RuntimeValue::String(_)) => JitValue::null(),
+            None => JitValue::null(),
+        };
+        ctx.push(jit_val);
+
+        compiled.execute(ctx);
+
+        if ctx.saved_pc != 0 {
+            return Ok(FastYield::Yielded);
+        }
+
+        if ctx.error != 0 {
+            use crush_vm::fastvm::FastError;
+            let msg = if ctx.error == 3 {
+                "Uncaught exception (no handler)".to_string()
+            } else if ctx.error == 4 {
+                "Capability call failed".to_string()
+            } else {
+                format!("JIT execution error (flag={})", ctx.error)
+            };
+            return Ok(FastYield::Error(FastError::ExecutionError(msg)));
+        }
+
         if ctx.budget == 0 {
             return Ok(FastYield::BudgetExhausted);
         }
@@ -1630,5 +1720,115 @@ mod tests {
         assert_eq!(fastvm, jit,
             "Rethrow through 3 functions: JIT ({:?}) should match FastVM ({:?})",
             jit, fastvm);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // M2 Phase 5 Tier 1: Budget exhaustion (fuel metering)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Run a program through the JIT with a specific budget.
+    fn run_jit_with_budget(prog: &LoweredProgram, budget: u64) -> FastYield {
+        let engine = JitEngine::new()
+            .expect("JitEngine::new")
+            .with_budget(budget);
+        engine.run(prog).expect("JIT execution should not fail")
+    }
+
+    #[test]
+    fn test_budget_exhaustion_chain_of_jumps() {
+        // Chain of 3 jumps, each calling dec_budget, plus 1 from entry = 4 total.
+        // Budget = 3: exhausted before Halt in the final block.
+        //
+        // PC 0: Jump(2)          block A — terminator → block B
+        // PC 1: Nop              (unreachable, block boundary)
+        // PC 2: Jump(4)          block B — terminator → block C
+        // PC 3: Nop              (unreachable, block boundary)
+        // PC 4: Jump(6)          block C — terminator → block D
+        // PC 5: Nop              (unreachable, block boundary)
+        // PC 6: PushInt(42)      block D — final block
+        // PC 7: Halt             terminator
+        //
+        // dec_budget calls: Entry(1) + Jump@0(1) + Jump@2(1) + Jump@4(1) = 4 > budget(3).
+        // Budget: 3→2→1→0→0 (saturated), Halt finishes, engine detects budget==0.
+        let prog = make_prog(vec![
+            (FastOp::Jump, 2, 0),
+            (FastOp::Nop, 0, 0),
+            (FastOp::Jump, 4, 0),
+            (FastOp::Nop, 0, 0),
+            (FastOp::Jump, 6, 0),
+            (FastOp::Nop, 0, 0),
+            (FastOp::PushInt, 42, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let result = run_jit_with_budget(&prog, 3);
+        assert_eq!(result, FastYield::BudgetExhausted,
+            "Budget(3) should exhaust after 4 dec_budget calls, got {:?}", result);
+    }
+
+    #[test]
+    fn test_budget_sufficient_chain_of_jumps_returns_result() {
+        // Same chain as above, but with ample budget (100 >> 4 dec calls).
+        // Should return the normal result Int(42).
+        let prog = make_prog(vec![
+            (FastOp::Jump, 2, 0),
+            (FastOp::Nop, 0, 0),
+            (FastOp::Jump, 4, 0),
+            (FastOp::Nop, 0, 0),
+            (FastOp::Jump, 6, 0),
+            (FastOp::Nop, 0, 0),
+            (FastOp::PushInt, 42, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let result = run_jit_with_budget(&prog, 100);
+        assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Int(42))),
+            "Budget(100) should allow normal completion, got {:?}", result);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // M2 Phase 5 Tier 2: Host-request yield + resume round-trip
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_yield_spawn_and_resume_round_trip() {
+        // Verifies the full yield → resume cycle:
+        // 1. Program executes PushInt(10), then Spawn (yields)
+        // 2. Engine returns Yielded — caller processes the "spawn" request
+        // 3. Caller calls resume() with host_result = Int(5)
+        // 4. Program continues: PushInt(20), Add (20+5=25), Halt → Int(25)
+        //
+        // PC 0: PushInt(10)     stack: [10]
+        // PC 1: Spawn           yield — saved_pc=2, tag=HOST_REQ_SPAWN
+        // --- resume with host_result=Int(5) ---
+        // PC 2: PushInt(20)     stack: [10, 5, 20]
+        // PC 3: Add             stack: [10, 25]
+        // PC 4: Halt            pops 25 → Finished(Int(25))
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 10, 0),
+            (FastOp::Spawn, 0, 0),
+            (FastOp::PushInt, 20, 0),
+            (FastOp::Add, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+
+        let engine = JitEngine::new().expect("JitEngine::new");
+        let mut arena = Arena::new();
+        let mut ctx = JitContext::new();
+        ctx.budget = 1000;
+
+        // First run: should yield at Spawn
+        let yield_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+            .expect("first run should not error");
+        assert_eq!(yield_result, FastYield::Yielded,
+            "Spawn should cause a yield, got {:?}", yield_result);
+        assert_eq!(ctx.saved_pc, 2, "saved_pc should be 2 (next instruction after Spawn)");
+        assert_eq!(ctx.host_request_tag, 2, "host_request_tag should be 2 (HOST_REQ_SPAWN)");
+
+        // Simulate host processing: push result and resume
+        let final_result = engine.resume(&prog, &mut ctx, &mut arena,
+            Some(RuntimeValue::Int(5)), 1000)
+            .expect("resume should not error");
+
+        assert_eq!(final_result, FastYield::Finished(Some(RuntimeValue::Int(25))),
+            "After resume, 20 + 5 should = 25, got {:?}", final_result);
     }
 }

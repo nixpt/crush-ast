@@ -29,6 +29,8 @@ const OFF_CALL_STACK: i64 = 8768;
 const OFF_CALL_STACK_TOP: i64 = 9792;
 const OFF_HELPER_FN: i64 = 9800;
 const OFF_HANDLER_PC: i64 = 9816;
+const OFF_SAVED_PC: i64 = 10088;
+const OFF_HOST_REQUEST_TAG: i64 = 10096;
 
 const TAG_NULL: i64 = 0x7FFC_0000_0000_0000i64;
 const TAG_TRUE: i64 = 0x7FFC_0000_0000_0001i64;
@@ -122,6 +124,13 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
             FastOp::Throw => {
                 starts.insert(i + 1);
             }
+            // M2 Phase 5 Tier 2: yield ops create block boundaries so the next
+            // instruction is a valid resume point.
+            FastOp::CallHost | FastOp::ExecLang | FastOp::Spawn
+            | FastOp::Gc | FastOp::ImportVar | FastOp::Await
+            | FastOp::CrossLangCall => {
+                starts.insert(i + 1);
+            }
             _ => {}
         }
     }
@@ -163,15 +172,52 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     bld.switch_to_block(entry);
     let ctx = bld.block_params(entry)[0];
 
-    if let Some(&first) = map.get(&program.entry_point) {
+    // M2 Phase 5 Tier 2: trampoline entry with resume support.
+    // On initial entry: saved_pc == 0 → jump to program.entry_point.
+    // On resume: saved_pc != 0 → jump to the saved block, then clear saved_pc.
+    let saved_pc_addr = iadd_imm(bld, ctx, OFF_SAVED_PC);
+    let saved_pc = load(bld, saved_pc_addr);
+    let zero = iconst(bld, 0);
+    let is_resume = icmp_ne(bld, saved_pc, zero);
+
+    let resume_bb = bld.create_block();
+    let init_bb = bld.create_block();
+    let merge_bb = bld.create_block();
+    bld.append_block_param(merge_bb, ir::types::I64); // target block offset
+    bld.ins().brif(is_resume, resume_bb, &[] as &[BlockArg], init_bb, &[] as &[BlockArg]);
+
+    // Resume path: jump to saved_pc, then clear it.
+    bld.switch_to_block(resume_bb);
+    // Clear saved_pc so subsequent resumes don't loop.
+    let zero2 = iconst(bld, 0);
+    store(bld, saved_pc_addr, zero2);
+    bld.ins().jump(merge_bb, &[BlockArg::Value(saved_pc)]);
+
+    // Initial path: jump to entry_point.
+    bld.switch_to_block(init_bb);
+    let entry_pc = iconst(bld, program.entry_point as i64);
+    bld.ins().jump(merge_bb, &[BlockArg::Value(entry_pc)]);
+
+    // Merge: dispatch to the target block.
+    bld.switch_to_block(merge_bb);
+    let target_pc_val = bld.block_params(merge_bb)[0];
+    // Build a dispatch cascade from PC offsets → CLIF blocks.
+    let dispatch_targets: Vec<(i64, ir::Block)> = blocks.iter()
+        .map(|&(off, _)| (off as i64, map[&off]))
+        .collect();
+    // If the target is in our map, jump there. Otherwise return null (safety net).
+    if !dispatch_targets.is_empty() {
         dec_budget(bld, ctx);
-        bld.ins().jump(first, &[] as &[BlockArg]);
+        dispatch_by_eq(bld, target_pc_val, &dispatch_targets);
     } else {
         let n = iconst(bld, TAG_NULL);
         sres(bld, ctx, n);
         bld.ins().return_(&[] as &[ir::Value]);
     }
     bld.seal_block(entry);
+    bld.seal_block(resume_bb);
+    bld.seal_block(init_bb);
+    bld.seal_block(merge_bb);
 
     // Create return blocks (one per CALL site).
     let mut return_blocks: Vec<ir::Block> = Vec::new();
@@ -508,6 +554,38 @@ fn emit_handler_dispatch(b: &mut FunctionBuilder, hp_val: ir::Value, entries: &[
 fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::Block]) {
     let targets: Vec<(i64, ir::Block)> = targets.iter().enumerate().map(|(i, &blk)| (i as i64, blk)).collect();
     dispatch_by_eq(b, idx, &targets);
+}
+
+// ── M2 Phase 5 Tier 2: Host-request yield (trampoline escape) ──────────────
+
+/// Tag values for `host_request_tag` in JitContext.
+/// Must match the variant ordering in `HostRequest` enum.
+const HOST_REQ_CALL_HOST: i64 = 0;
+const HOST_REQ_EXEC_LANG: i64 = 1;
+const HOST_REQ_SPAWN: i64 = 2;
+const HOST_REQ_GC: i64 = 3;
+const HOST_REQ_IMPORT_VAR: i64 = 4;
+const HOST_REQ_AWAIT: i64 = 5;
+
+/// Emit a host-request yield: save `next_pc` so the trampoline can resume
+/// after the host processes the request, set `host_request_tag`, store null
+/// result, and `return_()` to the host.
+fn emit_host_yield(b: &mut FunctionBuilder, ctx: ir::Value, next_pc: usize, request_tag: i64) {
+    // Save next_pc (the block offset to resume at)
+    let spc_addr = iadd_imm(b, ctx, OFF_SAVED_PC);
+    let spc_val = iconst(b, next_pc as i64);
+    store(b, spc_addr, spc_val);
+
+    // Set host_request_tag so the host knows which request variant to handle
+    let req_addr = iadd_imm(b, ctx, OFF_HOST_REQUEST_TAG);
+    let req_val = b.ins().iconst(ir::types::I32, request_tag);
+    b.ins().store(MemFlagsData::trusted(), req_val, req_addr, 0);
+
+    // Store null result (the host will populate result before resume)
+    let null_val = iconst(b, TAG_NULL);
+    sres(b, ctx, null_val);
+
+    b.ins().return_(&[] as &[ir::Value]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -992,6 +1070,34 @@ fn emit_one(
             let cv = iconst(b, (TAG_INT as u64 | argc_val) as i64);
             push(b, ctx, cv);
             emit_helper_call_checked(b, ctx, OP_CAP_CALL, instr.arg as i64, _ptr_ty, helper_sig);
+        }
+
+        // ── M2 Phase 5 Tier 2: Host-request yield ops (trampoline escape) ──
+        // These opcodes save the resume PC, signal the host via host_request_tag,
+        // and return. The host processes the request and calls resume() to continue.
+        CallHost => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_CALL_HOST);
+            return true;
+        }
+        ExecLang => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_EXEC_LANG);
+            return true;
+        }
+        Spawn => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_SPAWN);
+            return true;
+        }
+        Gc => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_GC);
+            return true;
+        }
+        ImportVar => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_IMPORT_VAR);
+            return true;
+        }
+        Await => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_AWAIT);
+            return true;
         }
 
         // Remaining unimplemented ops fall through to push null.
