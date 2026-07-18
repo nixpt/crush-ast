@@ -428,6 +428,13 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
             };
             lines.push(format!("    {op}"));
         }
+
+        // Emit label for one-past-the-end targets (used by try/catch's jmp with
+        // an end_label = instrs.len()). The instruction loop above only visits
+        // indices 0..len-1, so labels targeting index `len` would never be emitted.
+        if let Some(label) = target_labels.get(&func.body.len()) {
+            lines.push(format!("{label}:"));
+        }
     }
 
     // Post-process: suppress POP after non-returning CAP_CALL
