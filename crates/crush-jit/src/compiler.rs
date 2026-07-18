@@ -315,7 +315,18 @@ fn fcmp(b: &mut FunctionBuilder, cc: FloatCC, a: ir::Value, b2: ir::Value) -> ir
 fn dec_budget(b: &mut FunctionBuilder, ctx: ir::Value) {
     let a = iadd_imm(b, ctx, OFF_BUDGET);
     let cur = load(b, a);
-    let nv = iadd_imm(b, cur, -1);
+    // Decrement, but saturate at 0 (don't wrap).
+    // When budget reaches 0, all subsequent dec_budget calls keep it at 0.
+    // The host detects exhaustion after execution via ctx.budget == 0.
+    // This is ExoLight Tier 1 fuel metering.
+    //
+    // Use icmp_eq(cur, 0) rather than icmp_slt on the decremented value
+    // because u64::MAX ("no limit") is -1 as I64, which icmp_slt would
+    // incorrectly treat as wrapped.
+    let zero = iconst(b, 0);
+    let is_zero = icmp_eq(b, cur, zero);
+    let dec = iadd_imm(b, cur, -1);
+    let nv = select(b, is_zero, zero, dec);
     store(b, a, nv);
 }
 fn sres(b: &mut FunctionBuilder, ctx: ir::Value, val: ir::Value) {
@@ -444,76 +455,59 @@ fn pop_frame(b: &mut FunctionBuilder, ctx: ir::Value) -> ir::Value {
     load(b, entry)
 }
 
-/// Dispatch to the handler block by comparing runtime `hp_val` to each known
-/// handler PC (brif cascade — avoids complex JumpTableData API).
+/// Dispatch to one of `targets` by comparing `val` to each target's key
+/// using a brif cascade (avoids complex JumpTableData API).
 ///
-/// Intermediate blocks are NOT sealed inside this function — the caller
-/// must seal `dispatch_bb` afterwards (which is already done by emit_one).
-fn emit_handler_dispatch(b: &mut FunctionBuilder, hp_val: ir::Value, entries: &[(usize, ir::Block)]) {
-    if entries.is_empty() {
-        // Safety net — should not happen (handler_found implies >=1 entry).
-        // The function returns `()`, so return with an empty argument list.
+/// For targets [(k0, b0), ..., (kn, bn)], builds:
+///   brif(val == k0, b0, chain_0)
+///   chain_0: brif(val == k1, b1, chain_1)
+///   ...
+///   chain_{n-2}: jump bn
+///
+/// All intermediate chain blocks are created and sealed here.
+/// If `targets` is empty, emits an immediate return (safety net —
+/// should not occur in practice, but retained for defense-in-depth).
+fn dispatch_by_eq(b: &mut FunctionBuilder, val: ir::Value, targets: &[(i64, ir::Block)]) {
+    if targets.is_empty() {
         b.ins().return_(&[] as &[ir::Value]);
         return;
     }
-    if entries.len() == 1 {
-        b.ins().jump(entries[0].1, &[] as &[BlockArg]);
+    if targets.len() == 1 {
+        b.ins().jump(targets[0].1, &[] as &[BlockArg]);
         return;
     }
-    // Pre-create all intermediate blocks so they are available as brif targets.
-    let chain: Vec<ir::Block> = (0..entries.len() - 1).map(|_| b.create_block()).collect();
-
-    // Build chained brif cascade. Each chain[i] contains:
-    //   brif(hp == entries[i].0, entries[i].1, chain[i+1])
-    // The last chain block jumps unconditionally to entries[N-1].
-    for (i, (pc, blk)) in entries[..entries.len() - 1].iter().enumerate() {
+    // Pre-create all intermediate chain blocks so they are available as brif targets.
+    let chain: Vec<ir::Block> = (0..targets.len() - 1).map(|_| b.create_block()).collect();
+    for (i, (key, blk)) in targets[..targets.len() - 1].iter().enumerate() {
         if i > 0 {
             b.switch_to_block(chain[i - 1]);
         }
         let next_bb = chain[i];
-        let const_pc = iconst(b, *pc as i64);
-        let cmp = icmp_eq(b, hp_val, const_pc);
+        let const_key = iconst(b, *key);
+        let cmp = icmp_eq(b, val, const_key);
         b.ins().brif(cmp, *blk, &[] as &[BlockArg], next_bb, &[] as &[BlockArg]);
     }
-
-    // Final chain block: unconditional jump to last handler entry
+    // Final chain block: unconditional jump to last target
     b.switch_to_block(*chain.last().unwrap());
-    b.ins().jump(entries[entries.len() - 1].1, &[] as &[BlockArg]);
-
+    b.ins().jump(targets[targets.len() - 1].1, &[] as &[BlockArg]);
     // Seal all chain blocks now that they have terminators
     for &cb in &chain {
         b.seal_block(cb);
     }
 }
 
-/// Dispatch to one of `targets` by comparing `idx` to each target index
-/// (brif cascade — avoids complex JumpTableData API).
+/// Thin wrapper: converts handler entries (usize PC → Block) to the
+/// unified dispatch format.
+fn emit_handler_dispatch(b: &mut FunctionBuilder, hp_val: ir::Value, entries: &[(usize, ir::Block)]) {
+    let targets: Vec<(i64, ir::Block)> = entries.iter().map(|(pc, blk)| (*pc as i64, *blk)).collect();
+    dispatch_by_eq(b, hp_val, &targets);
+}
+
+/// Thin wrapper: converts sequential return blocks (0..N → Block) to the
+/// unified dispatch format.
 fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::Block]) {
-    if targets.is_empty() {
-        return;
-    }
-    if targets.len() == 1 {
-        b.ins().jump(targets[0], &[] as &[BlockArg]);
-        return;
-    }
-    // Chain: brif(idx == 0, targets[0], fallthrough) → brif(idx == 1, targets[1], fallthrough) → ... → jump(last)
-    let mut prev_block: Option<ir::Block> = None;
-    for (i, &tgt) in targets[..targets.len() - 1].iter().enumerate() {
-        let next_bb = b.create_block();
-        if let Some(pb) = prev_block {
-            b.switch_to_block(pb);
-        }
-        let const_idx = iconst(b, i as i64);
-        let cmp = icmp_eq(b, idx, const_idx);
-        b.ins().brif(cmp, tgt, &[] as &[BlockArg], next_bb, &[] as &[BlockArg]);
-        b.seal_block(next_bb);
-        prev_block = Some(next_bb);
-    }
-    // Last target (default)
-    if let Some(pb) = prev_block {
-        b.switch_to_block(pb);
-    }
-    b.ins().jump(targets[targets.len() - 1], &[] as &[BlockArg]);
+    let targets: Vec<(i64, ir::Block)> = targets.iter().enumerate().map(|(i, &blk)| (i as i64, blk)).collect();
+    dispatch_by_eq(b, idx, &targets);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -786,10 +786,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     Ok(result) => {
                         ctx.push(rtv_to_jit(&result));
                     }
-                    Err(e) => {
-                        // On error, push error string as Ref
-                        let err_str = arena.alloc(Object::Str(e.to_string()));
-                        ctx.push(JitValue::from_ref(err_str));
+                    Err(_) => {
+                        // ExoLight Tier 1 capability bridge: propagate errors
+                        // to ctx.error so the engine can surface them.
+                        // Also push null so the JIT stack stays balanced.
+                        ctx.error = 4; // CAP_ERROR
+                        ctx.push(JitValue::null());
                     }
                 }
             } else {

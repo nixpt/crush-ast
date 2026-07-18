@@ -55,9 +55,9 @@ impl JitEngine {
         self
     }
 
-    /// Set the instruction budget (maps to JIT fuel; 0 = no limit).
-    /// When exhausted, the compiled code returns early with
-    /// `FastYield::BudgetExhausted` (currently signalled via error flag).
+    /// Set the instruction budget. Default: `u64::MAX` (no limit).
+    /// When exhausted, the compiled code returns
+    /// `FastYield::BudgetExhausted` so ExoLight can refuel and resume.
     pub fn with_budget(mut self, budget: u64) -> Self {
         self.budget = budget;
         self
@@ -101,10 +101,19 @@ impl JitEngine {
             use crush_vm::fastvm::FastError;
             let msg = if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
+            } else if ctx.error == 4 {
+                "Capability call failed".to_string()
             } else {
                 format!("JIT execution error (flag={})", ctx.error)
             };
             return Ok(FastYield::Error(FastError::ExecutionError(msg)));
+        }
+
+        // ExoLight Tier 1 fuel metering: budget saturates at 0.
+        // After confirming no error, report exhaustion so ExoLight
+        // can refuel and resume the capsule.
+        if ctx.budget == 0 {
+            return Ok(FastYield::BudgetExhausted);
         }
 
         let val = jit_to_runtime(ctx.result());
