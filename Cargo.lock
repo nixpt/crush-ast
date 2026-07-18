@@ -909,6 +909,7 @@ dependencies = [
  "clap",
  "crush-cast",
  "crush-frontend",
+ "crush-jit",
  "crush-lang-bash",
  "crush-lang-c",
  "crush-lang-custom",

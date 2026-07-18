@@ -44,6 +44,9 @@ tree-sitter.workspace = true
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 
+[dev-dependencies]
+crush-jit = { workspace = true }
+
 [[bin]]
 name = "crush-aotc"
 path = "src/bin/aotc.rs"

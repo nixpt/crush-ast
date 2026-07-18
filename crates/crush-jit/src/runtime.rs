@@ -1019,7 +1019,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             if found {
                 // Push error value back onto the JIT stack for the handler
                 ctx.push(err_val);
-                // Store handler PC and set error flag to 2 (HANDLER_FOUND)
+                // Store handler PC and set error flag to 2 (HANDLER_FOUND).
+                // CONTRACT: handler_pc is an instruction index (set by
+                // OP_ENTER_TRY from the CASM EnterTry's instr.arg). The CLIF
+                // emit_handler_dispatch compares against the same unit.
+                // debug_assert: PC must be non-negative (i64 → usize safe).
+                debug_assert!(handler_pc >= 0, "handler_pc must be non-negative (instruction index)");
                 ctx.handler_pc = handler_pc as usize;
                 ctx.error = 2;
             } else {
@@ -1113,6 +1118,14 @@ pub struct JitContext {
     /// Non-null pointer to the program's `Vec<String>` symbol table (raw, used by helpers).
     pub strings_ptr: *const c_void,
     /// Resolved handler PC for Throw block dispatch (set by OP_THROW helper).
+    ///
+    /// CONTRACT (CRUSH-17 #3): The unit is an **instruction index** into the
+    /// `LoweredProgram.instructions` array — the same unit used by `EnterTry`'s
+    /// `instr.arg` and by `compiler.rs`'s `handler_entries` map. The CLIF
+    /// `emit_handler_dispatch` brif cascade compares this value against
+    /// `iconst(b, *pc as i64)` where `pc` is the EnterTry `instr.arg`.
+    /// Changing the unit on either side (e.g. to a byte offset) without updating
+    /// the other will silently make ALL throw dispatches uncatchable.
     pub handler_pc: usize,
     /// Exception handler stack pointer.
     pub handler_stack_top: usize,

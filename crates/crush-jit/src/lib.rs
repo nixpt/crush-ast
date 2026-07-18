@@ -294,6 +294,45 @@ mod tests {
     }
 
     #[test]
+    fn test_mod_float_negative() {
+        // -7.5 % 2.0 == -1.5 (trunc-division fmod — same as C/C++ remainder)
+        let a = f64::to_bits(-7.5);
+        let b = f64::to_bits(2.0);
+        let prog = make_prog(vec![
+            (FastOp::PushFloat, a, 0),
+            (FastOp::PushFloat, b, 0),
+            (FastOp::Mod, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_fastvm(&prog), run_jit(&prog),
+            "(-7.5) % 2.0 should match FastVM (trunc fmod)");
+
+        // -7.5 % -2.0 == -1.5
+        let a = f64::to_bits(-7.5);
+        let b = f64::to_bits(-2.0);
+        let prog = make_prog(vec![
+            (FastOp::PushFloat, a, 0),
+            (FastOp::PushFloat, b, 0),
+            (FastOp::Mod, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_fastvm(&prog), run_jit(&prog),
+            "(-7.5) % (-2.0) should match FastVM");
+
+        // 7.5 % -2.0 == 1.5
+        let a = f64::to_bits(7.5);
+        let b = f64::to_bits(-2.0);
+        let prog = make_prog(vec![
+            (FastOp::PushFloat, a, 0),
+            (FastOp::PushFloat, b, 0),
+            (FastOp::Mod, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_fastvm(&prog), run_jit(&prog),
+            "7.5 % (-2.0) should match FastVM");
+    }
+
+    #[test]
     fn test_neg_int() {
         let prog = make_prog(vec![(FastOp::PushInt, 7, 0), (FastOp::Neg, 0, 0), (FastOp::Halt, 0, 0)]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));

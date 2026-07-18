@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_CALL_DEPTH, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -215,13 +215,18 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
         }
     }
 
-    // Collect handler block offsets so we can defer sealing. Handler blocks
-    // may receive additional predecessors from Throw dispatch (which happens
-    // in a later block), so they must be sealed AFTER all main blocks are
-    // processed.
+    // Collect handler block offsets for deferred sealing.
     let handler_offs: BTreeSet<usize> = handler_entries.iter().map(|(pc, _)| *pc).collect();
 
-    // Process main blocks.
+    // Process main blocks — fill with instructions but do NOT seal yet.
+    // Sealing is deferred to a separate pass. Cranelift's seal_block can
+    // recursively seal successor blocks through the SSA state machine
+    // when all their predecessors are sealed. To prevent double-seals:
+    // 1. Non-handler blocks are sealed in REVERSE order — successors get
+    //    sealed first, so later predecessor seals won't cascade.
+    // 2. Handler blocks are sealed last, after all Throw dispatch
+    //    predecessors have been established.
+    let mut non_handler_offs: Vec<usize> = Vec::new();
     for &(off, ref instrs) in blocks {
         let block = map[&off];
         bld.switch_to_block(block);
@@ -230,33 +235,40 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
             term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig);
         }
         if !term {
-            // Non-terminator block — jump to the next sequential block if there is one
             if let Some(&next_block) = next_off_map.get(&off) {
                 dec_budget(bld, ctx);
                 bld.ins().jump(next_block, &[] as &[BlockArg]);
             } else {
-                // Last block — return null
                 let n = iconst(bld, TAG_NULL);
                 sres(bld, ctx, n);
                 bld.ins().return_(&[] as &[ir::Value]);
             }
         }
-        // Defer sealing for handler blocks — they may get extra predecessors
-        // from Throw dispatch in later blocks.
         if !handler_offs.contains(&off) {
+            non_handler_offs.push(off);
+        }
+    }
+
+    // Seal non-handler blocks in REVERSE order — successors before
+    // predecessors — to prevent SSA cascade double-seals.
+    for off in non_handler_offs.iter().rev() {
+        if let Some(&block) = map.get(off) {
             bld.seal_block(block);
         }
     }
 
-    // Seal deferred handler blocks now that all blocks have been processed
-    // and any Throw-dispatch predecessors have been registered.
+    // Seal handler blocks after all Throw dispatch sites have been filled.
+    // CONTRACT: handler blocks must contain a terminator (Throw, Return,
+    // or Halt). The reverse-order non-handler sealing pass above may
+    // cascade-seal a handler block if it is reachable via normal
+    // fallthrough from a non-handler block. The terminator prevents this.
     for &off in &handler_offs {
         if let Some(&block) = map.get(&off) {
             bld.seal_block(block);
         }
     }
 
-    // Seal return blocks now that all predecessors are established.
+    // Seal return blocks.
     for &rb in &ret_blocks {
         bld.seal_block(rb);
     }
@@ -509,6 +521,8 @@ fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Emit a call to the runtime helper function via `call_indirect`.
+/// Does NOT check for errors — use `emit_helper_call_checked` for
+/// helpers that can set `OFF_ERROR`.
 fn emit_helper_call(b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i64, ptr_ty: types::Type, helper_sig: ir::SigRef) {
     let off_addr = iadd_imm(b, ctx, OFF_HELPER_FN);
     let helper_addr = load(b, off_addr);
@@ -516,6 +530,40 @@ fn emit_helper_call(b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i
     let op_val = iconst(b, opcode);
     let arg_val = iconst(b, arg);
     b.ins().call_indirect(helper_sig, callee, &[ctx, op_val, arg_val]);
+}
+
+/// Emit a checked call to the runtime helper. After `call_indirect`,
+/// loads `OFF_ERROR` and branches to a trap path if the helper set
+/// the error flag (CRUSH-17 #2). Switches to the success block so
+/// the caller continues naturally. The trap path stores null result
+/// and returns.
+fn emit_helper_call_checked(
+    b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i64,
+    ptr_ty: types::Type, helper_sig: ir::SigRef,
+) {
+    // Emit the call_indirect (same as emit_helper_call).
+    emit_helper_call(b, ctx, opcode, arg, ptr_ty, helper_sig);
+
+    // Load error flag and branch.
+    let err_addr = iadd_imm(b, ctx, OFF_ERROR);
+    let err_val = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+    let zero = iconst(b, 0);
+    let has_err = icmp_ne(b, err_val, zero);
+    let ok_bb = b.create_block();
+    let err_bb = b.create_block();
+    b.ins().brif(has_err, err_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+
+    // Error path: null result, halt.
+    b.switch_to_block(err_bb);
+    let null_val = iconst(b, TAG_NULL);
+    sres(b, ctx, null_val);
+    b.ins().return_(&[] as &[ir::Value]);
+    b.seal_block(err_bb);
+
+    // Success path: seal ok_bb before returning (matches do_cmp/math_unary
+    // pattern — cranelift allows adding terminators after sealing).
+    b.switch_to_block(ok_bb);
+    b.seal_block(ok_bb);
 }
 
 fn emit_one(
@@ -589,10 +637,14 @@ fn emit_one(
             let af = bf64(b, a);
             let bf2 = bf64(b, bv);
             let div = fdiv(b, af, bf2);
-            // Compute trunc(div) via floor/ceil
+            // Compute trunc(div) via floor/ceil.
+            // Band with sign_mask gives 0 or 0x8000...; select tests the LOW bit,
+            // so we must icmp_ne to produce a proper bool before selecting.
             let div_bits = bi64(b, div);
             let sign_mask = iconst(b, (1u64 << 63) as i64);
-            let is_neg = band(b, div_bits, sign_mask);
+            let is_neg_raw = band(b, div_bits, sign_mask);
+            let zero = iconst(b, 0);
+            let is_neg = icmp_ne(b, is_neg_raw, zero);
             let floor_v = b.ins().floor(div);
             let ceil_v = b.ins().ceil(div);
             let trunc_v = select(b, is_neg, ceil_v, floor_v);
@@ -722,7 +774,27 @@ fn emit_one(
                     for &arg in &args { push(b, ctx, arg); }
                 }
 
-                // Push return frame onto call stack
+                // Guard: check call-stack depth (max 64 frames) before pushing.
+                // Overflow overwrites adjacent context (OFF_HELPER_FN, OFF_HANDLER_PC).
+                let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
+                let cst = load(b, cst_addr);
+                let limit = iconst(b, JIT_MAX_CALL_DEPTH as i64);
+                let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
+                let ok_bb = b.create_block();
+                let overflow_bb = b.create_block();
+                b.ins().brif(overflow, overflow_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+
+                // Overflow path: set error, store null result, halt
+                b.switch_to_block(overflow_bb);
+                serr(b, ctx);
+                let null_val = iconst(b, TAG_NULL);
+                sres(b, ctx, null_val);
+                b.ins().return_(&[] as &[ir::Value]);
+                b.seal_block(overflow_bb);
+
+                // Normal path: push frame and jump to callee
+                b.switch_to_block(ok_bb);
+                b.seal_block(ok_bb);
                 let ret_idx = call_idx_to_ret.get(&global_idx).copied().unwrap_or(0);
                 push_frame(b, ctx, ret_idx as i64);
 
@@ -815,7 +887,7 @@ fn emit_one(
         MathPow   => { let cv = iconst(b, TAG_NULL); push(b, ctx, cv); }, // TODO: runtime pow(f64, f64) helper
 
         // ── Arena-dependent ops (Phase 3b: runtime helpers) ─────────────────
-        PushStr => emit_helper_call(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig),
+        PushStr => emit_helper_call_checked(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig),
 
         Roll => {
             let n = instr.arg as u32;
@@ -829,42 +901,42 @@ fn emit_one(
             push(b, ctx, v);
         }
 
-        MakeList => emit_helper_call(b, ctx, OP_MAKE_LIST, instr.arg as i64, _ptr_ty, helper_sig),
-        MakeMap  => emit_helper_call(b, ctx, OP_MAKE_MAP, instr.arg as i64, _ptr_ty, helper_sig),
-        Index    => emit_helper_call(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
-        Len      => emit_helper_call(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
-        TypeOf   => emit_helper_call(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
-        NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig),
-        ArrayPush => emit_helper_call(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
-        ArrayPop  => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
-        ArrSet    => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
+        MakeList => emit_helper_call_checked(b, ctx, OP_MAKE_LIST, instr.arg as i64, _ptr_ty, helper_sig),
+        MakeMap  => emit_helper_call_checked(b, ctx, OP_MAKE_MAP, instr.arg as i64, _ptr_ty, helper_sig),
+        Index    => emit_helper_call_checked(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
+        Len      => emit_helper_call_checked(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
+        TypeOf   => emit_helper_call_checked(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
+        NewArray => emit_helper_call_checked(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig),
+        ArrayPush => emit_helper_call_checked(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
+        ArrayPop  => emit_helper_call_checked(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
+        ArrSet    => emit_helper_call_checked(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
 
-        StrContains   => emit_helper_call(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),
-        StrStartsWith => emit_helper_call(b, ctx, OP_STR_STARTS_WITH, 0, _ptr_ty, helper_sig),
-        StrEndsWith   => emit_helper_call(b, ctx, OP_STR_ENDS_WITH, 0, _ptr_ty, helper_sig),
-        StrToUpper    => emit_helper_call(b, ctx, OP_STR_TO_UPPER, 0, _ptr_ty, helper_sig),
-        StrToLower    => emit_helper_call(b, ctx, OP_STR_TO_LOWER, 0, _ptr_ty, helper_sig),
-        StrTrim       => emit_helper_call(b, ctx, OP_STR_TRIM, 0, _ptr_ty, helper_sig),
-        StrSplit      => emit_helper_call(b, ctx, OP_STR_SPLIT, 0, _ptr_ty, helper_sig),
-        StrReplace    => emit_helper_call(b, ctx, OP_STR_REPLACE, 0, _ptr_ty, helper_sig),
-        StrJoin       => emit_helper_call(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
+        StrContains   => emit_helper_call_checked(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),
+        StrStartsWith => emit_helper_call_checked(b, ctx, OP_STR_STARTS_WITH, 0, _ptr_ty, helper_sig),
+        StrEndsWith   => emit_helper_call_checked(b, ctx, OP_STR_ENDS_WITH, 0, _ptr_ty, helper_sig),
+        StrToUpper    => emit_helper_call_checked(b, ctx, OP_STR_TO_UPPER, 0, _ptr_ty, helper_sig),
+        StrToLower    => emit_helper_call_checked(b, ctx, OP_STR_TO_LOWER, 0, _ptr_ty, helper_sig),
+        StrTrim       => emit_helper_call_checked(b, ctx, OP_STR_TRIM, 0, _ptr_ty, helper_sig),
+        StrSplit      => emit_helper_call_checked(b, ctx, OP_STR_SPLIT, 0, _ptr_ty, helper_sig),
+        StrReplace    => emit_helper_call_checked(b, ctx, OP_STR_REPLACE, 0, _ptr_ty, helper_sig),
+        StrJoin       => emit_helper_call_checked(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
 
-        Cast    => emit_helper_call(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
-        NewTuple  => emit_helper_call(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig),
-        NewList   => emit_helper_call(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig),
-        NewVector => emit_helper_call(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig),
-        NewSet    => emit_helper_call(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig),
-        MakeRange => emit_helper_call(b, ctx, OP_MAKE_RANGE, 0, _ptr_ty, helper_sig),
+        Cast    => emit_helper_call_checked(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
+        NewTuple  => emit_helper_call_checked(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig),
+        NewList   => emit_helper_call_checked(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig),
+        NewVector => emit_helper_call_checked(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig),
+        NewSet    => emit_helper_call_checked(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig),
+        MakeRange => emit_helper_call_checked(b, ctx, OP_MAKE_RANGE, 0, _ptr_ty, helper_sig),
 
-        TuplePush  => emit_helper_call(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
-        ListPush   => emit_helper_call(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
-        VectorPush => emit_helper_call(b, ctx, OP_VECTOR_PUSH, 0, _ptr_ty, helper_sig),
-        SetPush    => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
-        GetField   => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        SetField   => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        NewObj     => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig),
-        NewStruct  => emit_helper_call(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig),
-        StrSim     => emit_helper_call(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
+        TuplePush  => emit_helper_call_checked(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
+        ListPush   => emit_helper_call_checked(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
+        VectorPush => emit_helper_call_checked(b, ctx, OP_VECTOR_PUSH, 0, _ptr_ty, helper_sig),
+        SetPush    => emit_helper_call_checked(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
+        GetField   => emit_helper_call_checked(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        SetField   => emit_helper_call_checked(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        NewObj     => emit_helper_call_checked(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig),
+        NewStruct  => emit_helper_call_checked(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig),
+        StrSim     => emit_helper_call_checked(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
 
         EnterTry  => emit_helper_call(b, ctx, OP_ENTER_TRY, instr.arg as i64, _ptr_ty, helper_sig),
         ExitTry   => emit_helper_call(b, ctx, OP_EXIT_TRY, 0, _ptr_ty, helper_sig),
@@ -914,7 +986,7 @@ fn emit_one(
             let argc_val = (instr.arg2 as u64) & 0xFFFF;
             let cv = iconst(b, (TAG_INT as u64 | argc_val) as i64);
             push(b, ctx, cv);
-            emit_helper_call(b, ctx, OP_CAP_CALL, instr.arg as i64, _ptr_ty, helper_sig);
+            emit_helper_call_checked(b, ctx, OP_CAP_CALL, instr.arg as i64, _ptr_ty, helper_sig);
         }
 
         // Remaining unimplemented ops fall through to push null.

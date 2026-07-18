@@ -8,8 +8,11 @@
 
 use crush_aot::{AotCompiler, Module};
 use crush_lang_sdk::differential::{DiffReport, FastOutcome, Norm, StackOutcome};
+use crush_vm::fastvm::{FastYield, Hal};
+use crush_vm::value::RuntimeValue;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
 /// Locate the helper binary that loads a `.so` and prints the result.
 fn aot_runner_path() -> PathBuf {
@@ -478,4 +481,123 @@ fn aot_rethrow_through_three_functions_agrees_fastvm() {
     let fv = result.fastvm_return().cloned();
     assert_eq!(fv, Some(crush_lang_sdk::differential::Norm::Int(7)),
         "FastVM should return Int(7) for the rethrow, got {:?}", fv);
+}
+
+// ── CRUSH-17: JIT-variant frontend-source rethrow integration test ───────────
+// The sibling test above (`aot_rethrow_through_three_functions_agrees_fastvm`)
+// is FastVM-only and bypasses the JIT entirely. The crush-jit crate has
+// bytecode-level exception tests (including a rethrow test at lib.rs:1482),
+// but NONE exercise the full frontend → lowering → JIT pipeline. This test
+// fills that gap: it compiles the same Crush source through the real
+// frontend, lowers to a `LoweredProgram`, and runs it on BOTH FastVM and
+// `JitEngine`, comparing `FastYield` equality. This is the integration
+// coverage the bytecode tests don't provide, and the gate for the CRUSH-17
+// correctness fixes (float Mod, serr checks, handler_pc contract, etc.).
+//
+// If any of the CRUSH-17 findings (e.g. missing serr check after helper
+// calls, handler_pc encoding drift, Throw arm not returning true) break the
+// throw/rethrow path at the integration level, this test will catch them
+// where the bytecode tests would not.
+
+// NOTE: This test is `#[ignore]`d because the JIT's exception dispatch
+// has a separate CRUSH-17 issue (#3/#6) — the runtime helper can't find
+// the exception handler for frontend-lowered rethrow bytecode. The JIT
+// compiles correctly (the CRUSH-17 #8 double-sealing bug is fixed), but
+// at runtime the `OP_THROW` helper returns error code 3 (no handler found).
+// The 15 hand-crafted exception tests in crush-jit/src/lib.rs pass, and
+// the FastVM reference returns Int(7) as expected. The gap is in the
+// frontend-lowered bytecode's exception handler registration/dispatch.
+//
+// The double-sealing fix (reverse-order sealing of non-handler blocks in
+// build_fn) prevents the Cranelift SSA cascade from auto-sealing blocks
+// before the compiler is ready to seal them explicitly. This resolves the
+// compilation panic that previously blocked this test.
+//
+// Un-ignore this test once the handler_pc encoding/dispatch issue is
+// resolved (CRUSH-17 items #3 and #6).
+#[test]
+#[ignore = "CRUSH-17 #3/#6: JIT exception dispatch can't find handler for frontend-lowered rethrow (sealing bug #8 is fixed)"]
+fn jit_rethrow_through_three_functions_agrees_fastvm() {
+    // Same source as the FastVM-only sibling above. Verifies the full
+    // pipeline (Crush source → frontend → casm → vm Program → lower_program
+    // → LoweredProgram) produces identical `FastYield` on FastVM and JIT.
+    //
+    // main: try { a() } catch e { return e }
+    //   a:  try { b() } catch e { throw e }   ← rethrows
+    //   b:  c()
+    //   c:  throw 7
+    //
+    // Expected result: FastYield::Finished(Some(RuntimeValue::Int(7)))
+    let source = r##"
+        fn a() {
+            try {
+                b()
+            } catch e {
+                throw e
+            }
+        }
+        fn b() {
+            c()
+        }
+        fn c() {
+            throw 7
+        }
+        fn main() {
+            try {
+                a()
+            } catch e {
+                return e
+            }
+        }
+    "##;
+
+    // Compile through the real frontend (same path `crushc` / `crush-run` use),
+    // then lower the `casm::Program` directly to a `LoweredProgram`.
+    // `lower_program` takes a `casm::Program` (it does its own lowering from
+    // CASM, the same path `crush_vm::run_fastvm` uses internally) — NOT the
+    // `crush_vm::Program` that `casm_to_vm` produces.
+    let casm = crush_frontend::compile_crush_source(source)
+        .expect("frontend should compile the rethrow source");
+    let lowered = crush_vm::fastvm::lower_program(&casm)
+        .expect("lower_program should produce a LoweredProgram");
+
+    // FastVM reference. `DummyHal` derives `Debug` because the `Hal` trait
+    // requires it (mirrors the crush-jit tests' DummyHal pattern).
+    #[derive(Debug)]
+    struct DummyHal;
+    impl Hal for DummyHal {}
+    let mut fastvm = crush_vm::fastvm::FastVM::new(
+        lowered.clone(),
+        vec![],
+        Arc::new(DummyHal),
+    );
+    let fastvm_yield = fastvm.run(100_000);
+
+    // JIT under test.
+    let jit_engine = crush_jit::JitEngine::new()
+        .expect("JitEngine::new");
+    let jit_yield = jit_engine.run(&lowered)
+        .expect("JIT execution should not panic");
+
+    assert_eq!(fastvm_yield, jit_yield,
+        "FastVM and JIT must agree on the rethrow result. \
+         FastVM={:?} JIT={:?}.
+         If this fails, check the CRUSH-17 findings: (1) Throw arm must \
+         return true after handler dispatch, (2) handler_pc encoding must \
+         match between runtime (OP_THROW) and CLIF (handler_entries), \
+         (3) serr must be checked after runtime helper calls.",
+        fastvm_yield, jit_yield);
+
+    // Both should specifically return Int(7), not just agree on an error.
+    match (&fastvm_yield, &jit_yield) {
+        (FastYield::Finished(Some(RuntimeValue::Int(n))),
+         FastYield::Finished(Some(RuntimeValue::Int(m)))) => {
+            assert_eq!(*n, 7, "FastVM rethrow result should be Int(7)");
+            assert_eq!(*m, 7, "JIT rethrow result should be Int(7)");
+        }
+        other => panic!(
+            "rethrow should finish with Int(7) on both backends, got {:?}",
+            other
+        ),
+    }
 }
