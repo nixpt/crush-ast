@@ -25,13 +25,21 @@ fn value_to_py(py: Python<'_>, v: &Value) -> PyObject {
 /// {output, result, stack, steps, halted}. `result` = top of the value stack
 /// (a function's return value is left there), so e.g. `fib(10)` → result 55.
 /// This is the reference VM — a program from any crush toolchain runs identically.
+///
+/// Quotas: `max_steps`/`max_output`/`max_stack`/`max_call_depth` map 1:1 onto
+/// `Quotas` (unset = `Quotas::default()` for that field). `max_frames` is a
+/// python-VM-only visual-frames concept (chroma's `vm.py`) with no Rust
+/// counterpart — it is NOT accepted here and stays enforced only by the
+/// python fallback path.
 #[pyfunction]
-#[pyo3(signature = (blob, max_steps=None, max_output=None))]
+#[pyo3(signature = (blob, max_steps=None, max_output=None, max_stack=None, max_call_depth=None))]
 fn run_blob<'py>(
     py: Python<'py>,
     blob: &[u8],
     max_steps: Option<usize>,
     max_output: Option<usize>,
+    max_stack: Option<usize>,
+    max_call_depth: Option<usize>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let program = Program::from_blob(blob)
         .map_err(|e| PyValueError::new_err(format!("CVM1 load error: {e:?}")))?;
@@ -41,6 +49,12 @@ fn run_blob<'py>(
     }
     if let Some(mo) = max_output {
         q.max_output = mo;
+    }
+    if let Some(ms) = max_stack {
+        q.max_stack = ms;
+    }
+    if let Some(mcd) = max_call_depth {
+        q.max_call_depth = mcd;
     }
     let res = run(&program, &q).map_err(|e| PyRuntimeError::new_err(format!("CVM1 trap: {e:?}")))?;
     let stack: Vec<PyObject> = res.stack.iter().map(|v| value_to_py(py, v)).collect();
