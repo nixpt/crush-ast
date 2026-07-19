@@ -5,7 +5,7 @@ use super::instructions::{FastInstr, FastOp};
 use super::operations::{compare_op, current_locals_base, is_truthy};
 use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_rtv};
 use super::similarity::calculate_similarity;
-use super::types::{FastError, FastFrame, FastYield, HostRequest};
+use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
 use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
 use super::Capability;
@@ -133,11 +133,16 @@ pub fn execute_one(
 
         FastOp::Return => {
             if let Some(frame) = call_stack.pop() {
-                // Truncate locals to caller's frame
+                if frame.return_pc == ROOT_FRAME_PC {
+                    // Root frame: return from main (value was left on stack by handler)
+                    let result = stack.pop();
+                    return Ok(Some(FastYield::Finished(result)));
+                }
+                // Normal return: pop frame, restore locals, jump back
                 locals.truncate(frame.locals_base);
                 *pc = frame.return_pc;
             } else {
-                // Return from main
+                // No frame at all (shouldn't happen with root frame, but safety net)
                 let result = stack.pop();
                 return Ok(Some(FastYield::Finished(result)));
             }
@@ -913,6 +918,22 @@ pub fn execute_one(
         }
 
         // ===== Exceptions =====
+        //
+        // EnterTry registers the handler PC on the *current frame's* handler stack
+        // (call_stack.last_mut().handlers). A root frame is always present on the
+        // call stack (pushed by FastVM::new() with return_pc == ROOT_FRAME_PC), so
+        // EnterTry at the top level always finds a frame and registers correctly.
+        //
+        //   • Handlers are scoped to their call frame — when the frame is popped
+        //     (Return), its handlers vanish with it. This provides correct exception
+        //     semantics for function-scoped try blocks.
+        //
+        //   • OP_Throw (below) walks call_stack from top to bottom looking for any
+        //     frame with non-empty handlers, which correctly implements cross-function
+        //     unwind. The root frame's handlers are reachable via this walk.
+        //
+        // See also: JIT tests in crates/crush-jit/src/lib.rs for extended exception
+        // handling coverage that exercises both FastVM and JIT backends.
         FastOp::EnterTry => {
             let target_pc = instr.arg as usize;
             if let Some(frame) = call_stack.last_mut() {
