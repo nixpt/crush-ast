@@ -54,6 +54,25 @@ pub(crate) fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static 
     }
 }
 
+/// Build a `VmError::LangRuntimeError` for an `EXEC_LANG` guest failure
+/// (non-zero subprocess exit). SHARED between scheduler.rs and
+/// portable_vm.rs so the two backends can't drift on how a guest exception
+/// is classified — before CRUSH-18 both independently misclassified this
+/// as `VmError::UnknownCap`, the same variant used for actual
+/// capability-grant failures.
+pub(crate) fn lang_runtime_error(lang: &str, stderr: &[u8], crush_line: Option<u32>) -> VmError {
+    let guest_message = String::from_utf8_lossy(stderr).trim().to_string();
+    let message = match crush_line {
+        Some(l) => format!("(at .crush line {l}) {guest_message}"),
+        None => guest_message,
+    };
+    VmError::LangRuntimeError {
+        lang: lang.to_string(),
+        message,
+        crush_line,
+    }
+}
+
 /// Outcome of a wall-clock-bounded subprocess run.
 pub(crate) enum CommandOutcome {
     Output(std::process::Output),
@@ -860,6 +879,7 @@ fn execute_one(
                 .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
             let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
             let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
             let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let mut var_names: Vec<String> = Vec::with_capacity(var_count);
             let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
@@ -938,8 +958,7 @@ fn execute_one(
                     };
                     push!(result_value);
                 } else {
-                    let err = String::from_utf8_lossy(&output.stderr);
-                    return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
+                    return Err(lang_runtime_error(lang, &output.stderr, crush_line));
                 }
             }
         }
@@ -1511,5 +1530,45 @@ mod wall_clock_limit_tests {
             }
         }
         assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    // CRUSH-18 regression (green-thread scheduler side — see
+    // portable_vm.rs's parallel test for the other backend, both sharing
+    // `lang_runtime_error` so they can't drift on this classification).
+    // Before this fix, a guest program's own non-zero exit was folded into
+    // `VmError::UnknownCap`, the same variant used for "the capability
+    // doesn't exist"/"wasn't granted" — a category error.
+    #[test]
+    fn exec_lang_guest_failure_maps_to_lang_runtime_error_not_unknown_cap() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::run_with_caps;
+
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n 'boom' >&2; exit 1",
+            "var_count": 0,
+            "crush_line": 7,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["bash"]);
+
+        match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
+            Err(VmError::LangRuntimeError { lang, message, crush_line }) => {
+                assert_eq!(lang, "bash");
+                assert!(
+                    message.contains("boom"),
+                    "message should carry the guest's stderr, got: {message}"
+                );
+                assert_eq!(crush_line, Some(7), "should surface the .crush-source line");
+            }
+            other => panic!("expected VmError::LangRuntimeError, got {other:?}"),
+        }
     }
 }

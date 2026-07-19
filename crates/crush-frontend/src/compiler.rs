@@ -808,6 +808,13 @@ impl Compiler {
                     for (i, var_name) in variables.iter().enumerate() {
                         map.insert(format!("var_{}", i), serde_json::json!(var_name));
                     }
+                    // CRUSH-18: carry the `.crush`-source line of this
+                    // `@lang { ... }` block into the compiled spec so a
+                    // guest runtime error can be tied back to it (see
+                    // `VmError::LangRuntimeError`, `parse_lang_block`).
+                    if let Some(line) = meta.get("line").and_then(|v| v.as_u64()) {
+                        map.insert("crush_line".to_string(), serde_json::json!(line));
+                    }
                 }
 
                 instrs.push(self.create_instr("exec_lang", var_args, meta));

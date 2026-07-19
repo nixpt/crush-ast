@@ -1036,6 +1036,7 @@ impl PortableVm {
                         .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
                 let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
                 let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let mut var_names: Vec<String> = Vec::with_capacity(var_count);
                 let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
@@ -1103,8 +1104,11 @@ impl PortableVm {
                         self.out_parts.push(s.clone());
                         self.push(Value::Str(s));
                     } else {
-                        let err = String::from_utf8_lossy(&output.stderr);
-                        return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
+                        return Err(crate::scheduler::lang_runtime_error(
+                            lang,
+                            &output.stderr,
+                            crush_line,
+                        ));
                     }
                 }
             }
@@ -1947,5 +1951,42 @@ HALT"#;
         let result = vm.run().unwrap();
         assert_eq!(result.output, "abAB");
         assert!(result.halted);
+    }
+
+    // CRUSH-18 regression: before this fix, EVERY non-zero EXEC_LANG exit —
+    // a real guest exception, not just a missing capability — was folded
+    // into `VmError::UnknownCap`, the same variant used for "the
+    // capability doesn't exist"/"the capability wasn't granted". A guest
+    // failure must surface as its own `VmError::LangRuntimeError`,
+    // carrying the `.crush`-source line of the `@lang { ... }` block
+    // (from the compiler's `crush_line` spec field).
+    #[test]
+    fn test_portable_exec_lang_guest_failure_maps_to_lang_runtime_error_not_unknown_cap() {
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n 'boom' >&2; exit 1",
+            "var_count": 0,
+            "crush_line": 7,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let program = assemble(&src, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let mut caps = crate::HostCaps::new();
+        caps.grant_polyglot(&["bash"]);
+        vm.set_host_caps(caps);
+        match vm.run() {
+            Err(VmError::LangRuntimeError { lang, message, crush_line }) => {
+                assert_eq!(lang, "bash");
+                assert!(
+                    message.contains("boom"),
+                    "message should carry the guest's stderr, got: {message}"
+                );
+                assert_eq!(crush_line, Some(7), "should surface the .crush-source line");
+            }
+            other => panic!("expected VmError::LangRuntimeError, got {other:?}"),
+        }
     }
 }

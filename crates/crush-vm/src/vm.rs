@@ -69,6 +69,22 @@ pub enum VmError {
     /// cap so a hang is diagnosable, not a silent freeze.
     #[error("'{cap}' exceeded its {limit_ms}ms wall-clock quota and was killed")]
     CapTimeout { cap: String, limit_ms: u64 },
+    /// A `@python`/`@javascript`/`@bash` polyglot block's **guest program**
+    /// raised its own runtime exception (non-zero exit, e.g. a Python
+    /// `ZeroDivisionError` or a Node `TypeError`). Distinct from
+    /// `UnknownCap`: a guest exception is not a missing-capability
+    /// problem, and it is not a crush-side VM bug either — reserve those
+    /// two for their own failure classes (see CRUSH-18). `crush_line` is
+    /// the `.crush`-source line of the `@lang { ... }` block itself, when
+    /// the compiler had one to attach; the guest's own internal line
+    /// numbers (e.g. Python's `line 1` in a `-c` string) are a separate,
+    /// unmapped coordinate space and are not translated here.
+    #[error("@{lang} block raised a runtime error: {message}")]
+    LangRuntimeError {
+        lang: String,
+        message: String,
+        crush_line: Option<u32>,
+    },
 }
 
 /// Stack value — the types the CVM1 supports.

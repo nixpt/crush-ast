@@ -2119,11 +2119,12 @@ impl Parser {
     /// token using string-aware brace counting, so the parser just stitches
     /// the language name and body together into a `Statement::LangBlock`.
     fn parse_lang_block(&mut self) -> Result<Statement, ()> {
-        let lang = match self.peek() {
-            Token::AtIdent(id, _) => {
+        let (lang, line) = match self.peek() {
+            Token::AtIdent(id, loc) => {
                 let id = id.clone();
+                let line = loc.line;
                 self.advance();
-                id
+                (id, line)
             }
             _ => {
                 let (line, col) = self.get_location(self.peek());
@@ -2155,12 +2156,19 @@ impl Parser {
             }
         };
 
+        let mut meta = HashMap::new();
+        // CRUSH-18: the `.crush`-source line of the `@lang { ... }` block
+        // itself, threaded through to EXEC_LANG's compiled spec so a guest
+        // runtime error can be tied back to which polyglot block produced
+        // it (not the guest's own internal line numbers — a separate,
+        // unmapped coordinate space; see VmError::LangRuntimeError).
+        meta.insert("line".to_string(), serde_json::json!(line));
         Ok(Statement::LangBlock {
             lang,
             code,
             variables: Vec::new(),
             imports: Vec::new(),
-            meta: HashMap::new(),
+            meta,
         })
     }
 
