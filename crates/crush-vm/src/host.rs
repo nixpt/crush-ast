@@ -18,6 +18,23 @@ pub struct HostCapSpec {
     pub returns: bool,
 }
 
+/// Error from [`HostCap::call_with_deadline`] — distinguishes "self-enforced
+/// wall-clock timeout" from an ordinary capability failure so `dispatch_cap`
+/// can map it to `VmError::CapTimeout` instead of `VmError::CapDenied`.
+pub enum HostCapError {
+    /// An ordinary failure message (same shape `call()` has always returned).
+    Message(String),
+    /// The capability self-enforced `deadline_ms` from
+    /// [`HostCap::call_with_deadline`] and gave up before completing.
+    Timeout,
+}
+
+impl From<String> for HostCapError {
+    fn from(msg: String) -> Self {
+        HostCapError::Message(msg)
+    }
+}
+
 /// Trait for host-provided capabilities.
 pub trait HostCap: Send + Sync {
     /// Return this capability's metadata.
@@ -28,6 +45,31 @@ pub trait HostCap: Send + Sync {
     /// Returns `Ok(Some(value))` to push a result, `Ok(None)` for no result,
     /// or `Err(message)` to raise a VM error.
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String>;
+
+    /// Like `call`, but the capability is told the wall-clock budget
+    /// (milliseconds, from `Quotas::max_wall_time_ms`) it should self-enforce
+    /// if it can legitimately block (network I/O, cold resource
+    /// provisioning, ...).
+    ///
+    /// `CAP_CALL`'s generic dispatch cannot preempt an arbitrary
+    /// `HostCap::call()` from the *outside*: `Value` carries
+    /// `Rc<RefCell<...>>` fields that aren't `Send`, so the call can't
+    /// safely be moved onto a watchdog thread and killed on timeout the way
+    /// `EXEC_LANG`'s OS subprocess can (see
+    /// `scheduler::run_with_wall_clock_limit`). Bounding is therefore
+    /// cooperative: a `HostCap` that can block overrides this method and
+    /// enforces `deadline_ms` internally (e.g. a bucket-provisioning cap
+    /// wrapping a subprocess reuses `run_with_wall_clock_limit`'s own
+    /// poll-against-a-deadline shape). The default delegates straight to
+    /// `call()` — existing capabilities that can't block need no change.
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        deadline_ms: u64,
+    ) -> Result<Option<Value>, HostCapError> {
+        let _ = deadline_ms;
+        self.call(args).map_err(HostCapError::Message)
+    }
 }
 
 /// Registry of host-provided capabilities.

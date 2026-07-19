@@ -1342,7 +1342,16 @@ fn dispatch_cap(
         {
             return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
         }
-        return handler.call(args).map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
+        return match handler.call_with_deadline(args, quotas.max_wall_time_ms) {
+            Ok(v) => Ok(v),
+            Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
+                cap: cap.to_string(),
+                limit_ms: quotas.max_wall_time_ms,
+            }),
+            Err(crate::host::HostCapError::Message(msg)) => {
+                Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+            }
+        };
     }
 
     Err(VmError::UnknownCap(cap.to_string()))
@@ -1351,6 +1360,90 @@ fn dispatch_cap(
 #[cfg(test)]
 mod wall_clock_limit_tests {
     use super::*;
+
+    /// CRUSH-19 regression fixture: a `HostCap` that self-enforces a
+    /// wall-clock deadline via `call_with_deadline` — it genuinely blocks
+    /// (polls in a sleep loop) past the deadline it's given, then returns
+    /// `HostCapError::Timeout` rather than completing. This is the shape a
+    /// blocking `HostCap` (network, cold provisioning) is expected to use
+    /// per CRUSH-19's chosen design (cooperative timeout, not generic
+    /// `CAP_CALL` preemption — `Value` isn't `Send`).
+    struct SelfEnforcingBlockingCap;
+
+    impl crate::host::HostCap for SelfEnforcingBlockingCap {
+        fn spec(&self) -> crate::host::HostCapSpec {
+            crate::host::HostCapSpec {
+                name: "test.slow_blocking_cap".to_string(),
+                argc: Some(0),
+                returns: true,
+            }
+        }
+
+        fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+            // A HostCap that never overrides call_with_deadline would land
+            // here with no bound at all — this impl deliberately overrides
+            // call_with_deadline below instead, so this arm should never
+            // execute in the regression test.
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            Ok(Some(Value::Null))
+        }
+
+        fn call_with_deadline(
+            &self,
+            _args: Vec<Value>,
+            deadline_ms: u64,
+        ) -> Result<Option<Value>, crate::host::HostCapError> {
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms);
+            loop {
+                if std::time::Instant::now() >= deadline {
+                    return Err(crate::host::HostCapError::Timeout);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+
+    #[test]
+    fn cap_call_returns_a_named_timeout_error_instead_of_hanging() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::{Quotas, VmError, run_with_caps};
+
+        let mut host_caps = HostCaps::new();
+        host_caps.register(Box::new(SelfEnforcingBlockingCap));
+
+        let prog = assemble(
+            "CAP_CALL \"test.slow_blocking_cap\" 0\nHALT",
+            Some(&["test.slow_blocking_cap"]),
+            None,
+        )
+        .unwrap();
+
+        let quotas = Quotas {
+            max_wall_time_ms: 100,
+            ..Default::default()
+        };
+
+        let start = std::time::Instant::now();
+        let result = run_with_caps(&prog, &quotas, Some(&host_caps));
+        let elapsed = start.elapsed();
+
+        match result {
+            Err(VmError::CapTimeout { cap, limit_ms }) => {
+                assert_eq!(cap, "test.slow_blocking_cap");
+                assert_eq!(limit_ms, 100);
+            }
+            other => panic!("expected VmError::CapTimeout, got {other:?}"),
+        }
+        // The real proof: this returned near the 100ms deadline, not after
+        // the cap's own 30s `call()` sleep (which call_with_deadline's
+        // override preempts before ever reaching).
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "should return promptly at the deadline, took {elapsed:?}"
+        );
+    }
 
     #[test]
     fn fast_command_returns_its_real_output_within_the_limit() {

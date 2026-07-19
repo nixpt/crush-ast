@@ -1335,9 +1335,16 @@ impl PortableVm {
                     got: args.len(),
                 });
             }
-            return handler
-                .call(args)
-                .map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
+            return match handler.call_with_deadline(args, self.quotas.max_wall_time_ms) {
+                Ok(v) => Ok(v),
+                Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
+                    cap: cap.to_string(),
+                    limit_ms: self.quotas.max_wall_time_ms,
+                }),
+                Err(crate::host::HostCapError::Message(msg)) => {
+                    Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+                }
+            };
         }
 
         Err(VmError::UnknownCap(cap.to_string()))

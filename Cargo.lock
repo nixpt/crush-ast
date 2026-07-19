@@ -955,6 +955,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fd-lock 4.0.4",
+ "libc",
  "regex",
  "semver",
  "serde",

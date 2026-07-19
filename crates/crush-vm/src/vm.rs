@@ -627,15 +627,18 @@ pub struct Quotas {
     /// trip that quota, so it was previously unbounded. See
     /// `scheduler::run_with_wall_clock_limit` for the enforcement.
     ///
-    /// Only covers `EXEC_LANG` today, not `CAP_CALL`'s generic
-    /// `HostCap::call()` dispatch — `Value`'s `Rc<RefCell<...>>` fields
-    /// aren't `Send`, so an arbitrary `HostCap::call()` can't safely be
-    /// preempted from another thread without a much larger refactor
-    /// (`Value` would need to become `Send`). A `HostCap` implementation
-    /// that does its own I/O (subprocess, network) must self-enforce a
-    /// bound; the VM can't do it on the implementation's behalf. `EXEC_LANG`
-    /// can be bounded because it owns a killable OS process, not an
-    /// opaque trait call.
+    /// `EXEC_LANG` enforces this by killing an OS subprocess at the deadline
+    /// (see `scheduler::run_with_wall_clock_limit`) — true external
+    /// preemption, possible because it owns a killable process.
+    ///
+    /// `CAP_CALL`'s generic `HostCap::call()` dispatch cannot be preempted
+    /// the same way: `Value`'s `Rc<RefCell<...>>` fields aren't `Send`, so an
+    /// arbitrary trait call can't safely be moved onto a watchdog thread
+    /// without a much larger refactor (`Value` would need to become
+    /// `Send`). Instead it is passed to `HostCap::call_with_deadline` so a
+    /// capability that can legitimately block (network, provisioning)
+    /// self-enforces this budget internally; a `HostCap` that never
+    /// overrides `call_with_deadline` gets no bound at all (see CRUSH-19).
     pub max_wall_time_ms: u64,
 }
 
