@@ -3,6 +3,17 @@
 use crate::value::RuntimeValue;
 use std::collections::HashMap;
 
+/// Sentinel return_pc value for the root frame pushed at VM startup.
+///
+/// When `Return` pops a frame with `return_pc == ROOT_FRAME_PC`, it knows
+/// the call stack is exhausted and treats the return as "return from main" —
+/// popping the value stack and yielding `Finished(result)`.
+///
+/// This root frame ensures that top-level `EnterTry` instructions have a
+/// frame on which to register handlers, making FastVM's exception handling
+/// consistent with the JIT backend.
+pub const ROOT_FRAME_PC: usize = usize::MAX;
+
 /// Execution result from FastVM
 #[derive(Debug, Clone, PartialEq)]
 pub enum FastYield {
