@@ -6,10 +6,11 @@
 //! (success vs rejection) and the returned scalar against the interpreter, portable
 //! VM, and FastVM backends.
 
-use crush_aot::{AotCompiler, Module};
+use crush_aot::AotCompiler;
 use crush_lang_sdk::differential::{DiffReport, FastOutcome, Norm, StackOutcome};
 use crush_vm::fastvm::{FastYield, Hal};
 use crush_vm::value::RuntimeValue;
+use std::panic;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -74,6 +75,49 @@ fn aot_c_outcome(source: &str, cc: &str) -> FastOutcome {
     run_aot_subprocess(&so_path)
 }
 
+/// Compile `source` through the Crush frontend, lower to a LoweredProgram,
+/// and execute via the JIT engine. Returns the normalized outcome.
+fn jit_outcome(source: &str) -> FastOutcome {
+    let casm = match crush_frontend::compile_crush_source(source) {
+        Ok(p) => p,
+        Err(e) => return FastOutcome::Err(format!("frontend: {e}")),
+    };
+    let lowered = match crush_vm::fastvm::lower_program(&casm) {
+        Ok(lp) => lp,
+        Err(e) => return FastOutcome::Err(format!("lower_program: {e}")),
+    };
+    // JitEngine::new() takes no program — it compiles on demand in run_with_ctx.
+    let engine = match crush_jit::JitEngine::new() {
+        Ok(e) => e,
+        Err(e) => return FastOutcome::Err(format!("JitEngine::new: {e}")),
+    };
+    // Wrap JIT execution in catch_unwind. The JIT may panic (e.g. cranelift
+    // assertion failures, null-pointer dereferences caught by Rust) for
+    // unsupported operations. Note: catch_unwind does NOT catch SIGILL from
+    // invalid JIT-generated machine code — those would still crash the
+    // process. Treat panics as Err outcomes.
+    let run_result = panic::catch_unwind(panic::AssertUnwindSafe(|| engine.run(&lowered)));
+    match run_result {
+        Ok(Ok(FastYield::Finished(v))) => FastOutcome::Finished(v.as_ref().map(Norm::from_rtv)),
+        Ok(Ok(FastYield::Yielded)) => FastOutcome::Yielded,
+        Ok(Ok(FastYield::BudgetExhausted)) => FastOutcome::BudgetExhausted,
+        Ok(Ok(FastYield::Value(v))) => FastOutcome::Finished(Some(Norm::from_rtv(&v))),
+        Ok(Ok(FastYield::Error(e))) => FastOutcome::Err(format!("{e:?}")),
+        Ok(Ok(FastYield::Request(_))) => FastOutcome::Err("host-request (unserviced by harness)".into()),
+        Ok(Err(e)) => FastOutcome::Err(format!("JIT: {e}")),
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown JIT panic".to_string()
+            };
+            FastOutcome::Err(format!("JIT panic: {msg}"))
+        }
+    }
+}
+
 /// Return true if the given C compiler is available on PATH.
 fn cc_available(cc: &str) -> bool {
     Command::new(cc).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
@@ -90,7 +134,14 @@ fn pick_c_compiler() -> Option<&'static str> {
     }
 }
 
-/// Compare all five backends for a program that returns a scalar from `main`.
+/// Compare all five backends (interpreter, portable, fastvm, AOT Rust, AOT C)
+/// for a program that returns a scalar from `main`.
+///
+/// The JIT backend is wired into `DiffReport` (M2 Phase 7) but NOT compiled or
+/// compared here. Running the JIT for every test would risk SIGILL crashes from
+/// JIT-generated invalid machine code (which `catch_unwind` cannot intercept).
+/// Dedicated JIT tests (e.g. `jit_rethrow_through_three_functions_agrees_fastvm`)
+/// use `jit_outcome()` directly with programs known to compile safely.
 fn assert_all_backends_agree(source: &str) {
     let cc = pick_c_compiler().expect("no C compiler (gcc or clang) available on PATH");
 
@@ -607,4 +658,39 @@ fn aot_store_local_dual_load_returns_correct_value() {
     //   5. Add
     //   6. Halt
     assert_all_backends_agree("fn main() { let x = 1; return x + x; }");
+}
+
+// ── M2 Phase 7: JIT smoke test ────────────────────────────────────────────
+// Proves the jit_outcome() helper works for a trivial program. The full
+// assert_all_backends_agree() does NOT compile JIT (SIGILL risk from invalid
+// JIT-generated code), so this dedicated test is the canary for JIT wiring.
+
+#[test]
+fn jit_smoke_return_int_agrees_fastvm() {
+    let jit = jit_outcome("fn main() { return 42; }");
+    assert_eq!(
+        jit,
+        FastOutcome::Finished(Some(Norm::Int(42))),
+        "JIT should return Int(42) for a trivial program"
+    );
+}
+
+#[test]
+fn jit_smoke_return_bool_agrees_fastvm() {
+    let jit = jit_outcome("fn main() { return true; }");
+    assert_eq!(
+        jit,
+        FastOutcome::Finished(Some(Norm::Bool(true))),
+        "JIT should return Bool(true)"
+    );
+}
+
+#[test]
+fn jit_smoke_return_float_agrees_fastvm() {
+    let jit = jit_outcome("fn main() { return 3.14; }");
+    assert_eq!(
+        jit,
+        FastOutcome::Finished(Some(Norm::Float("3.14".to_string()))),
+        "JIT should return Float(3.14)"
+    );
 }

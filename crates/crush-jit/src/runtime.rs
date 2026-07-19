@@ -98,6 +98,7 @@ pub(crate) const OP_STR_SIM: i64 = 34;
 pub(crate) const OP_ENTER_TRY: i64 = 35;
 pub(crate) const OP_EXIT_TRY: i64 = 36;
 pub(crate) const OP_THROW: i64 = 37;
+pub(crate) const OP_ADD_STR: i64 = 38;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -127,7 +128,7 @@ fn rtv_to_jit(v: &RuntimeValue) -> JitValue {
         RuntimeValue::Bool(b) => JitValue::bool(*b),
         RuntimeValue::Null => JitValue::null(),
         RuntimeValue::Ref(idx) => JitValue::from_ref(*idx),
-        RuntimeValue::String(s) => {
+        RuntimeValue::String(_s) => {
             // Direct string values should not appear in JIT context;
             // if they do, fall back to null.
             JitValue::null()
@@ -1043,6 +1044,57 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             } else {
                 // No handler found — set error flag to 3 (UNCAUGHT)
                 ctx.error = 3;
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_ADD_STR (38): full add_rtv semantics — string concat, overflow-
+        // checked int add, float add with int→float promotion. Pops two values
+        // from the shadow stack, pushes the result.
+        // ════════════════════════════════════════════════════════════════════
+        OP_ADD_STR => {
+            let b_val = ctx.pop().unwrap_or(JitValue::null());
+            let a_val = ctx.pop().unwrap_or(JitValue::null());
+
+            // Check for string concatenation (either operand is a string ref).
+            let a_is_str = a_val.to_ref().map_or(false, |idx| {
+                arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
+            });
+            let b_is_str = b_val.to_ref().map_or(false, |idx| {
+                arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
+            });
+
+            if a_is_str || b_is_str {
+                // String concatenation: get text for each operand.
+                let arena = match arena_mut(ctx.arena) {
+                    Some(a) => a,
+                    None => { ctx.push(JitValue::null()); return; }
+                };
+                let text_a = jit_val_to_string(a_val, arena)
+                    .unwrap_or_else(|| format!("{}", a_val));
+                let text_b = jit_val_to_string(b_val, arena)
+                    .unwrap_or_else(|| format!("{}", b_val));
+                let result = format!("{}{}", text_a, text_b);
+                let ptr = arena.alloc(Object::Str(result));
+                ctx.push(JitValue::from_ref(ptr));
+            } else if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
+                // Both ints: checked add with overflow detection.
+                match ai.checked_add(bi) {
+                    Some(sum) => ctx.push(JitValue::int(sum)),
+                    None => {
+                        ctx.error = 1;
+                        ctx.push(JitValue::null());
+                    }
+                }
+            } else {
+                // Float or mixed: promote both to f64.
+                let af = a_val.to_float()
+                    .or_else(|| a_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let bf = b_val.to_float()
+                    .or_else(|| b_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                ctx.push(JitValue::float(af + bf));
             }
         }
 

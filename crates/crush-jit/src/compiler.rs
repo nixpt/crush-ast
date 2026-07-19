@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_CALL_DEPTH, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_CALL_DEPTH, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -674,10 +674,10 @@ fn emit_one(
             poke(b, ctx, 0, bv);
         }
 
-        Add => arith(b, ctx, true, false, false),
-        Sub => arith(b, ctx, false, true, false),
-        Mul => arith(b, ctx, false, false, true),
-        Div => arith(b, ctx, false, false, false),
+        Add => arith(b, ctx, true, false, false, _ptr_ty, helper_sig),
+        Sub => arith(b, ctx, false, true, false, _ptr_ty, helper_sig),
+        Mul => arith(b, ctx, false, false, true, _ptr_ty, helper_sig),
+        Div => arith(b, ctx, false, false, false, _ptr_ty, helper_sig),
         Mod => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
@@ -1108,7 +1108,8 @@ fn emit_one(
 
 // ── Arithmetic dispatch ─────────────────────────────────────────────────────
 
-fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: bool) {
+fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: bool,
+          _ptr_ty: types::Type, helper_sig: ir::SigRef) {
     let bv = pop(b, ctx);
     let a = pop(b, ctx);
     let ia = is_int(b, a);
@@ -1120,32 +1121,75 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: boo
     b.append_block_param(mb, types::I64);
     b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
+    // ── Integer path with overflow checking (Bug 3) ────────────────────
     b.switch_to_block(ibb);
     let av = eint(b, a);
     let bv2 = eint(b, bv);
+    // Compute the full i64 result, then check if it fits in 16 bits.
+    // Crush ints are 16-bit sign-extended; overflow = result != sign_extend(low16).
+    // This works for add, sub, mul, and div uniformly.
+    // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
     let ri = if add { iadd2(b, av, bv2) } else if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
+    let shifted = ishl_imm(b, ri, 48);
+    let low16 = sshr_imm(b, shifted, 48);
+    let of_cond = icmp(b, IntCC::NotEqual, ri, low16);
+    let iok = b.create_block();
+    let ierr = b.create_block();
+    b.ins().brif(of_cond, ierr, &[] as &[BlockArg], iok, &[] as &[BlockArg]);
+
+    b.switch_to_block(iok);
     let rti = tint(b, ri);
     b.ins().jump(mb, &[BlockArg::Value(rti)]);
+    b.seal_block(iok);
 
+    b.switch_to_block(ierr);
+    serr(b, ctx);
+    let nv = iconst(b, TAG_NULL);
+    b.ins().jump(mb, &[BlockArg::Value(nv)]);
+    b.seal_block(ierr);
+
+    // ── Float / mixed int+float path (Bug 2: int→float promotion) ─────
     b.switch_to_block(fbb);
     let fa = is_float(b, a);
     let fb = is_float(b, bv);
-    let bf = band(b, fa, fb);
+    // Accept if both are numeric (int or float). Mixed int+float promotes
+    // int to float (FastVM parity).
+    let a_num = bor(b, ia, fa);
+    let b_num = bor(b, ib, fb);
+    let both_numeric = band(b, a_num, b_num);
     let ok = b.create_block();
     let err = b.create_block();
-    b.ins().brif(bf, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
+    b.ins().brif(both_numeric, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
 
     b.switch_to_block(ok);
-    let af = bf64(b, a);
-    let bf2 = bf64(b, bv);
+    // Convert each operand to f64: float → bitcast, int → extract+fcvt.
+    let a_int2 = eint(b, a);
+    let a_fcvt = b.ins().fcvt_from_sint(types::F64, a_int2);
+    let a_bits = bf64(b, a);
+    let af = select(b, fa, a_bits, a_fcvt);
+    let b_int2 = eint(b, bv);
+    let b_fcvt = b.ins().fcvt_from_sint(types::F64, b_int2);
+    let b_bits = bf64(b, bv);
+    let bf2 = select(b, fb, b_bits, b_fcvt);
     let rf = if add { fadd(b, af, bf2) } else if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
     let rfb = bi64(b, rf);
     b.ins().jump(mb, &[BlockArg::Value(rfb)]);
 
+    // ── Non-numeric fallback (Bug 4: string concat via helper) ─────────
     b.switch_to_block(err);
-    serr(b, ctx);
-    let nv = iconst(b, TAG_NULL);
-    b.ins().jump(mb, &[BlockArg::Value(nv)]);
+    if add {
+        // Push operands back for the runtime helper (which pops them).
+        push(b, ctx, a);
+        push(b, ctx, bv);
+        emit_helper_call(b, ctx, OP_ADD_STR, 0, _ptr_ty, helper_sig);
+        // Helper pushed result onto shadow stack; pop for merge block.
+        let result = pop(b, ctx);
+        b.ins().jump(mb, &[BlockArg::Value(result)]);
+    } else {
+        serr(b, ctx);
+        let nv = iconst(b, TAG_NULL);
+        b.ins().jump(mb, &[BlockArg::Value(nv)]);
+    }
 
     b.switch_to_block(mb);
     push(b, ctx, b.block_params(mb)[0]);
@@ -1299,7 +1343,19 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     b.ins().jump(mb2, &[BlockArg::Value(r2)]);
 
     b.switch_to_block(mb2);
-    push(b, ctx, b.block_params(mb2)[0]);
+    let raw_result = b.block_params(mb2)[0];
+    // Null/bool identity override: if both operands have identical raw bits,
+    // they are the same runtime value (null, bool, or identical tagged int).
+    // The float path treats null/bool NaN-boxes as IEEE NaN which returns
+    // false for equality comparisons. Override with the identity-correct result.
+    let bits_eq = icmp_eq(b, a, bv);
+    let identity_result = if icc == IntCC::Equal {
+        iconst(b, TAG_TRUE)
+    } else {
+        iconst(b, TAG_FALSE)
+    };
+    let result = select(b, bits_eq, identity_result, raw_result);
+    push(b, ctx, result);
 
     b.seal_block(ibb);
     b.seal_block(fbb);

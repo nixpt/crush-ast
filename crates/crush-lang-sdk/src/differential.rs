@@ -5,9 +5,9 @@
 //! ```text
 //! A  interpreter   crush_vm::run           (what crush-run uses)
 //! B  portable       PortableVm::run
-//! C  fastvm         crush_vm::run_fastvm   (its OWN lowering — crush-python uses this)
-//! D  aot / rust     crush_aot::codegen     (does not link today — pre-existing)
-//! E  aot / c        crush_aot::codegen_c   (does not link today — pre-existing)
+//! C  fastvm         crush_vm::run_fastvm   (its OWN lowering — crush-python uses this)//! D  aot / rust     crush_aot::codegen     (does not link today — pre-existing)
+//! E  aot / c         crush_aot::codegen_c   (does not link today — pre-existing)
+//! F  jit             crush_jit::JitEngine   (M2 Phase 7 — integrated here)
 //! ```
 //!
 //! They have already been caught disagreeing. This session:
@@ -69,7 +69,7 @@ impl Norm {
             other => Norm::Other(format!("{other:?}")),
         }
     }
-    fn from_rtv(v: &RuntimeValue) -> Norm {
+    pub fn from_rtv(v: &RuntimeValue) -> Norm {
         match v {
             RuntimeValue::Null => Norm::Null,
             RuntimeValue::Bool(b) => Norm::Bool(*b),
@@ -109,6 +109,9 @@ pub struct DiffReport {
     /// Optional AOT C outcome. Populated by callers that compile the same source with the
     /// AOT C backend and run it in a subprocess.
     pub aot_c: Option<FastOutcome>,
+    /// Optional JIT outcome (M2 Phase 7). Populated by callers that compile through the
+    /// Crush frontend, lower to a LoweredProgram, and run via crush_jit::JitEngine.
+    pub jit: Option<FastOutcome>,
     /// Divergences between backends. Empty == all agree at the granularity each pair supports.
     /// A divergence is an OBSERVABLE difference: stdout, or accept-vs-reject. This is what caught
     /// every real bug this session (1/0 = different error status; "a"+"b" = different stdout).
@@ -254,6 +257,7 @@ pub fn differential_run(source: &str) -> Result<DiffReport, String> {
         fastvm,
         aot_rust: None,
         aot_c: None,
+        jit: None,
         divergences,
         notes,
     })
