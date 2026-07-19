@@ -1622,6 +1622,40 @@ mod tests {
     }
 
     #[test]
+    fn test_portable_vm_eq_cross_type_int_float() {
+        // CRUSHVM-EQ-1: portable_vm shares crate::vm::Value's PartialEq
+        // with the scheduler, so `2 == 2.0` must also be `true` here.
+        let source = r#"
+            .func main
+            PUSH 2
+            PUSH_F64 2.0
+            EQ
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "true\n");
+    }
+
+    #[test]
+    fn test_portable_vm_ne_cross_type_int_float() {
+        let source = r#"
+            .func main
+            PUSH 2
+            PUSH_F64 2.1
+            NE
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "true\n");
+    }
+
+    #[test]
     fn test_portable_vm_function_call() {
         let source = r#"
             .func add

@@ -132,6 +132,54 @@ fn extended_comparisons() {
 }
 
 #[test]
+fn eq_ne_cross_type_int_float() {
+    // CRUSHVM-EQ-1: `2 == 2.0` is `true`, matching chroma's Python VM
+    // (Python's `2 == 2.0` is `True`). Canonical fix lives in
+    // `Value`'s `PartialEq` impl (crates/crush-vm/src/vm.rs).
+    let r = run_src("PUSH 2\nPUSH_F64 2.0\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH_F64 2.0\nPUSH 2\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+
+    // NE flows through the same comparison (NE = !EQ) -- 2 != 2.1 is true.
+    let r = run_src("PUSH 2\nPUSH_F64 2.1\nNE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    // ... and 2 != 2.0 is false, mirroring the EQ case above.
+    let r = run_src("PUSH 2\nPUSH_F64 2.0\nNE\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+
+    // Negative case: cross-type but NOT numerically equal.
+    let r = run_src("PUSH 2\nPUSH_F64 3.0\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+
+    // Same-type float/float and int/int EQ are unaffected (sanity).
+    let r = run_src("PUSH_F64 2.0\nPUSH_F64 2.0\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+    let r = run_src("PUSH 2\nPUSH 2\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn eq_nan_never_equal() {
+    // NaN must never compare equal to anything, including itself --
+    // the numeric int/float EQ widening must not disturb this.
+    let r = run_src("PUSH_F64 NaN\nPUSH_F64 NaN\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+    let r = run_src("PUSH 2\nPUSH_F64 NaN\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+}
+
+#[test]
+fn eq_bool_int_not_coerced() {
+    // Only (Int, Float) / (Float, Int) are coerced -- Bool vs Int stays
+    // unequal even when the underlying "truthiness" would line up.
+    let r = run_src("PUSH_BOOL 1\nPUSH 1\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+    let r = run_src("PUSH_BOOL 0\nPUSH 0\nEQ\nHALT");
+    assert_eq!(r.stack, vec![Value::Bool(false)]);
+}
+
+#[test]
 fn logical_and_or() {
     let r = run_src("PUSH 1\nPUSH 42\nAND\nHALT");
     assert_eq!(r.stack, vec![Value::Bool(true)]);

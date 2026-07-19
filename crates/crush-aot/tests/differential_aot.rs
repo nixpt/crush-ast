@@ -225,6 +225,21 @@ fn aot_equality_remains_permissive_across_types() {
     assert_all_backends_agree("fn main() { return true == true; }");
 }
 
+// CRUSHVM-EQ-1: `2 == 2.0` is numeric-`true` in every backend (interpreter,
+// portable_vm, FastVM, AOT Rust, AOT C) -- matching chroma's Python VM,
+// where `2 == 2.0` is `True`. Before this fix, the interpreter/portable_vm
+// tier fell through `Value::PartialEq`'s catch-all `_ => false` arm for any
+// (Int, Float) pairing (no explicit arm existed) while FastVM/AOT Rust/AOT C
+// already coerced correctly -- this test pins all five backends together so
+// that divergence can't silently reappear.
+#[test]
+fn aot_equality_int_float_cross_type_numeric() {
+    assert_all_backends_agree("fn main() { return 2 == 2.0; }");
+    assert_all_backends_agree("fn main() { return 2.0 == 2; }");
+    assert_all_backends_agree("fn main() { return 2 != 2.1; }");
+    assert_all_backends_agree("fn main() { return 2 == 3.0; }");
+}
+
 #[test]
 fn aot_arithmetic_overflow_rejected_consistently() {
     assert_all_backends_agree("fn add_any(a: any, b: any) { return a + b; }\nfn main() { return add_any(9223372036854775807, 1); }");

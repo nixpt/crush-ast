@@ -324,6 +324,141 @@ mod tests {
     }
 
     #[test]
+    fn test_cmp_eq_int_float_cross_type_true() {
+        // CRUSHVM-EQ-1: `2 == 2.0` is `true` in the JIT too. Before the
+        // fix, `do_cmp`'s mixed-type branch bitcast BOTH operands as if
+        // they were already float bit patterns, so an int-tagged operand
+        // produced garbage instead of a real conversion -- this diverged
+        // from FastVM (which already coerced correctly via `compare_op`).
+        let a = f64::to_bits(2.0);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, a, 0),
+            (FastOp::Eq, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog), "JIT must agree with FastVM");
+    }
+
+    #[test]
+    fn test_cmp_eq_float_int_cross_type_true_operand_order_reversed() {
+        // Same as above with operand order swapped -- `do_cmp` promotes
+        // each operand independently, so this must also hold.
+        let a = f64::to_bits(2.0);
+        let prog = make_prog(vec![
+            (FastOp::PushFloat, a, 0),
+            (FastOp::PushInt, 2, 0),
+            (FastOp::Eq, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog));
+    }
+
+    #[test]
+    fn test_cmp_ne_int_float_cross_type() {
+        // NE flows through the same comparison family: 2 != 2.1 is true,
+        // 2 != 2.0 is false.
+        let a = f64::to_bits(2.1);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, a, 0),
+            (FastOp::Ne, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog));
+
+        let b = f64::to_bits(2.0);
+        let prog2 = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, b, 0),
+            (FastOp::Ne, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
+    }
+
+    #[test]
+    fn test_cmp_eq_int_float_cross_type_false() {
+        // Negative case: cross-type but not numerically equal.
+        let a = f64::to_bits(3.0);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, a, 0),
+            (FastOp::Eq, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog));
+    }
+
+    #[test]
+    fn test_cmp_lt_gt_int_float_cross_type_agree() {
+        // LT/GT/LE/GE share `do_cmp` with EQ/NE in the JIT -- the same fix
+        // that corrects EQ's mixed-type branch also corrects these, since
+        // they were broken by the identical naive-bitcast bug (pre-existing,
+        // not previously covered by a differential test). Verify agreement
+        // with FastVM (which already coerced these correctly).
+        let two_five = f64::to_bits(2.5);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, two_five, 0),
+            (FastOp::Lt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog));
+
+        let prog2 = make_prog(vec![
+            (FastOp::PushFloat, two_five, 0),
+            (FastOp::PushInt, 2, 0),
+            (FastOp::Gt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
+    }
+
+    #[test]
+    fn test_cmp_eq_nan_never_equal_jit() {
+        let nan_bits = f64::to_bits(f64::NAN);
+        let prog = make_prog(vec![
+            (FastOp::PushFloat, nan_bits, 0),
+            (FastOp::PushFloat, nan_bits, 0),
+            (FastOp::Eq, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog));
+
+        let prog2 = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, nan_bits, 0),
+            (FastOp::Eq, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
+    }
+
+    #[test]
+    fn test_cmp_eq_bool_int_not_coerced_jit() {
+        // Only (Int, Float) is coerced -- Bool must NOT compare equal to
+        // an Int/Float with the same "truthiness".
+        let prog = make_prog(vec![
+            (FastOp::PushBool, 1, 0),
+            (FastOp::PushInt, 1, 0),
+            (FastOp::Eq, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(run_fastvm(&prog), run_jit(&prog));
+    }
+
+    #[test]
     fn test_cmp_lt_ints() {
         let prog = make_prog(vec![
             (FastOp::PushInt, 3, 0),

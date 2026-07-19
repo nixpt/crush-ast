@@ -124,6 +124,20 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
+            // Cross-type numeric equality: `2 == 2.0` is `true`, matching
+            // chroma's Python VM (Python's `2 == 2.0` is `True`). Bool is
+            // deliberately NOT coerced here -- only Int<->Float. `Value`
+            // does not implement `Eq`/`Hash` (see the `Set` variant's doc
+            // comment: it uses a linear-scan `Vec` for uniqueness precisely
+            // because `Value` isn't hash-keyed), so widening `PartialEq`
+            // does not violate the Eq/Hash consistency contract anywhere in
+            // this crate. Precision note: for `|i| > 2^53`, `i as f64` is
+            // not exact, so this comparison can disagree with true integer
+            // equality at the extremes of i64's range -- same caveat as
+            // Python's `int == float`.
+            (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
+                *i as f64 == *f
+            }
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
