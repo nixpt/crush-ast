@@ -963,7 +963,7 @@ fn emit_one(
         MathPow   => { let cv = iconst(b, TAG_NULL); push(b, ctx, cv); }, // TODO: runtime pow(f64, f64) helper
 
         // ── Arena-dependent ops (Phase 3b: runtime helpers) ─────────────────
-        PushStr => emit_helper_call_checked(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig),
+        PushStr => emit_helper_call(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible — arena alloc never errors
 
         Roll => {
             let n = instr.arg as u32;
@@ -977,42 +977,42 @@ fn emit_one(
             push(b, ctx, v);
         }
 
-        MakeList => emit_helper_call_checked(b, ctx, OP_MAKE_LIST, instr.arg as i64, _ptr_ty, helper_sig),
-        MakeMap  => emit_helper_call_checked(b, ctx, OP_MAKE_MAP, instr.arg as i64, _ptr_ty, helper_sig),
-        Index    => emit_helper_call_checked(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
-        Len      => emit_helper_call_checked(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
-        TypeOf   => emit_helper_call_checked(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
-        NewArray => emit_helper_call_checked(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig),
-        ArrayPush => emit_helper_call_checked(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
-        ArrayPop  => emit_helper_call_checked(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
-        ArrSet    => emit_helper_call_checked(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
+        MakeList => emit_helper_call(b, ctx, OP_MAKE_LIST, instr.arg as i64, _ptr_ty, helper_sig),
+        MakeMap  => emit_helper_call(b, ctx, OP_MAKE_MAP, instr.arg as i64, _ptr_ty, helper_sig),
+        Index    => emit_helper_call(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
+        Len      => emit_helper_call(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
+        TypeOf   => emit_helper_call(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
+        NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        ArrayPush => emit_helper_call(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
+        ArrayPop  => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
+        ArrSet    => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
 
-        StrContains   => emit_helper_call_checked(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),
-        StrStartsWith => emit_helper_call_checked(b, ctx, OP_STR_STARTS_WITH, 0, _ptr_ty, helper_sig),
-        StrEndsWith   => emit_helper_call_checked(b, ctx, OP_STR_ENDS_WITH, 0, _ptr_ty, helper_sig),
-        StrToUpper    => emit_helper_call_checked(b, ctx, OP_STR_TO_UPPER, 0, _ptr_ty, helper_sig),
-        StrToLower    => emit_helper_call_checked(b, ctx, OP_STR_TO_LOWER, 0, _ptr_ty, helper_sig),
-        StrTrim       => emit_helper_call_checked(b, ctx, OP_STR_TRIM, 0, _ptr_ty, helper_sig),
-        StrSplit      => emit_helper_call_checked(b, ctx, OP_STR_SPLIT, 0, _ptr_ty, helper_sig),
-        StrReplace    => emit_helper_call_checked(b, ctx, OP_STR_REPLACE, 0, _ptr_ty, helper_sig),
-        StrJoin       => emit_helper_call_checked(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
+        StrContains   => emit_helper_call(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),
+        StrStartsWith => emit_helper_call(b, ctx, OP_STR_STARTS_WITH, 0, _ptr_ty, helper_sig),
+        StrEndsWith   => emit_helper_call(b, ctx, OP_STR_ENDS_WITH, 0, _ptr_ty, helper_sig),
+        StrToUpper    => emit_helper_call(b, ctx, OP_STR_TO_UPPER, 0, _ptr_ty, helper_sig),
+        StrToLower    => emit_helper_call(b, ctx, OP_STR_TO_LOWER, 0, _ptr_ty, helper_sig),
+        StrTrim       => emit_helper_call(b, ctx, OP_STR_TRIM, 0, _ptr_ty, helper_sig),
+        StrSplit      => emit_helper_call(b, ctx, OP_STR_SPLIT, 0, _ptr_ty, helper_sig),
+        StrReplace    => emit_helper_call(b, ctx, OP_STR_REPLACE, 0, _ptr_ty, helper_sig),
+        StrJoin       => emit_helper_call(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
 
-        Cast    => emit_helper_call_checked(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
-        NewTuple  => emit_helper_call_checked(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig),
-        NewList   => emit_helper_call_checked(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig),
-        NewVector => emit_helper_call_checked(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig),
-        NewSet    => emit_helper_call_checked(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig),
-        MakeRange => emit_helper_call_checked(b, ctx, OP_MAKE_RANGE, 0, _ptr_ty, helper_sig),
+        Cast    => emit_helper_call(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
+        NewTuple => emit_helper_call(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewList => emit_helper_call(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewVector => emit_helper_call(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewSet => emit_helper_call(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        MakeRange => emit_helper_call(b, ctx, OP_MAKE_RANGE, 0, _ptr_ty, helper_sig),
 
-        TuplePush  => emit_helper_call_checked(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
-        ListPush   => emit_helper_call_checked(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
-        VectorPush => emit_helper_call_checked(b, ctx, OP_VECTOR_PUSH, 0, _ptr_ty, helper_sig),
-        SetPush    => emit_helper_call_checked(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
-        GetField   => emit_helper_call_checked(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        SetField   => emit_helper_call_checked(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        NewObj     => emit_helper_call_checked(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig),
-        NewStruct  => emit_helper_call_checked(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig),
-        StrSim     => emit_helper_call_checked(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
+        TuplePush  => emit_helper_call(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
+        ListPush   => emit_helper_call(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
+        VectorPush => emit_helper_call(b, ctx, OP_VECTOR_PUSH, 0, _ptr_ty, helper_sig),
+        SetPush    => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
+        GetField   => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        SetField   => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        NewObj => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewStruct => emit_helper_call(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        StrSim     => emit_helper_call(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
 
         EnterTry  => emit_helper_call(b, ctx, OP_ENTER_TRY, instr.arg as i64, _ptr_ty, helper_sig),
         ExitTry   => emit_helper_call(b, ctx, OP_EXIT_TRY, 0, _ptr_ty, helper_sig),

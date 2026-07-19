@@ -34,6 +34,9 @@ pub struct JitEngine {
     /// across yield/resume cycles. Uses `RefCell` because `JitCompiler::compile`
     /// takes `&self`.
     cached: RefCell<Option<JitProgram>>,
+    /// Compilation counter — incremented each time `self.compiler.compile()`
+    /// is called. Exposed via `compilation_count()` for cache-reuse testing.
+    compilation_count: std::cell::Cell<u64>,
 }
 
 impl JitEngine {
@@ -46,6 +49,7 @@ impl JitEngine {
             budget: u64::MAX,
             arena_limit: 0,
             cached: RefCell::new(None),
+            compilation_count: std::cell::Cell::new(0),
         })
     }
 
@@ -86,9 +90,16 @@ impl JitEngine {
     ) -> anyhow::Result<std::cell::Ref<'_, JitProgram>> {
         if self.cached.borrow().is_none() {
             let compiled = self.compiler.compile(program)?;
+            self.compilation_count.set(self.compilation_count.get() + 1);
             *self.cached.borrow_mut() = Some(compiled);
         }
         Ok(std::cell::Ref::map(self.cached.borrow(), |c| c.as_ref().unwrap()))
+    }
+
+    /// Number of times `self.compiler.compile()` has been called.
+    /// Useful for verifying cache reuse in tests.
+    pub fn compilation_count(&self) -> u64 {
+        self.compilation_count.get()
     }
 
     /// Compile and execute `program` using the provided context and arena.
@@ -110,6 +121,7 @@ impl JitEngine {
         // M2 Phase 5 Tier 3: always compile fresh on initial entry — this
         // populates the cache so subsequent resume() calls can reuse it.
         let compiled = self.compiler.compile(program)?;
+        self.compilation_count.set(self.compilation_count.get() + 1);
 
         // Store arena pointer
         ctx.arena = arena as *mut Arena as *mut std::ffi::c_void;
@@ -2002,5 +2014,67 @@ mod tests {
         // host_request_tag carries the LAST yield tag, which was CallHost.
         // (The budget-exhausted resume didn't change it since no new yield occurred.)
         assert_eq!(ctx.host_request_tag, 0, "tag unchanged (no second yield)");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // M2 Phase 5 Tier 3: Cache reuse verification
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cache_reused_across_double_yield() {
+        // Verifies that the JIT program cache is actually reused across
+        // multiple yield/resume cycles without recompilation.
+        //
+        // Program yields twice (CallHost then Spawn), resuming each time.
+        // compilation_count should stay at 1 — the first `run_with_ctx`
+        // compiles fresh, both resume() calls reuse the cached program.
+        //
+        // PC 0: PushInt(10)     stack: [10]
+        // PC 1: CallHost        yield #1 — saved_pc=2
+        // --- resume Int(5) ---
+        // PC 2: PushInt(20)     stack: [10, 5, 20]
+        // PC 3: Spawn           yield #2 — saved_pc=4
+        // --- resume Int(3) ---
+        // PC 4: PushInt(30)     stack: [10, 5, 20, 3, 30]
+        // PC 5: Add             stack: [10, 5, 20, 33]
+        // PC 6: Halt            pops 33 → Finished(Int(33))
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 10, 0),
+            (FastOp::CallHost, 0, 0),
+            (FastOp::PushInt, 20, 0),
+            (FastOp::Spawn, 0, 0),
+            (FastOp::PushInt, 30, 0),
+            (FastOp::Add, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+
+        let engine = JitEngine::new().expect("JitEngine::new");
+        let mut arena = Arena::new();
+        let mut ctx = JitContext::new();
+        ctx.budget = 1000;
+
+        // Initial run: compiles fresh, yields at CallHost
+        let y1 = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+            .expect("first run");
+        assert_eq!(y1, FastYield::Yielded, "first yield");
+        assert_eq!(engine.compilation_count(), 1,
+            "run_with_ctx should trigger exactly 1 compilation");
+
+        // First resume: should reuse cache (no recompile), yields at Spawn
+        let y2 = engine.resume(&prog, &mut ctx, &mut arena,
+            Some(RuntimeValue::Int(5)), 1000)
+            .expect("first resume");
+        assert_eq!(y2, FastYield::Yielded, "second yield");
+        assert_eq!(engine.compilation_count(), 1,
+            "resume #1 should reuse cache, compilation_count still 1");
+
+        // Second resume: should reuse cache, finishes normally
+        let final_result = engine.resume(&prog, &mut ctx, &mut arena,
+            Some(RuntimeValue::Int(3)), 1000)
+            .expect("second resume");
+        assert_eq!(final_result, FastYield::Finished(Some(RuntimeValue::Int(33))),
+            "20 + 3 should = 33 after double yield");
+        assert_eq!(engine.compilation_count(), 1,
+            "resume #2 should reuse cache, compilation_count still 1");
     }
 }
