@@ -32,7 +32,7 @@ thiserror.workspace = true
 # format lockdown lives in `crates/crush-diagnostics/tests/wire_format.rs`.
 crush-diagnostics.workspace = true
 parking_lot = "0.12.5"
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
 # Native-only: ONNX inference (ai_optimizer), dynamic plugin loading (plugin,
 # via crush-ffi's C-ABI contract), and the `os.cargo` subprocess capability
