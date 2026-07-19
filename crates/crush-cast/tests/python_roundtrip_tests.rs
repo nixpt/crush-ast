@@ -153,6 +153,7 @@ print(json_str)
                             code: "print('hello')".to_string(),
                             variables: vec![],
                             imports: vec![],
+                            deps: vec![],
                             meta: HashMap::new(),
                         },
                         crush_cast::Statement::Return {

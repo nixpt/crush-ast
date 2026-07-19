@@ -44,10 +44,25 @@ ort = { version = "2.0.0-rc.12", optional = true }
 libloading = { version = "0.9.0", optional = true }
 crush-ffi = { version = "0.3.0", path = "../crush-ffi", optional = true }
 
+# CRUSH-20: the 4th, sandboxed `EXEC_LANG` execution path. Optional + off by
+# default (same pattern as `python`/`native-plugins` above) so crush-vm stays
+# dep-light for consumers who don't want it. Path is relative to a sibling
+# `buckets` checkout at the worktrees root (same convention already used by
+# crush-pkg's own `buckets` dep, see that crate's Cargo.toml) — NOT the
+# absolute path the CRUSHAST-BUCKETSPIKE-1/2 spike used, which was
+# deliberately throwaway-only. Package is published as `crush-buckets`
+# ("buckets" was already taken on crates.io); the CLI binary/repo name stays
+# "buckets".
+buckets = { package = "crush-buckets", path = "../../../buckets", version = "0.1.0", optional = true }
+
 [features]
 default = ["native-plugins"]
 python = ["dep:pyo3"]
 native-plugins = ["dep:ort", "dep:libloading", "dep:crush-ffi"]
+# See CRUSH-20 dejavue decision: crush-vm (not crush-lang-sdk) owns the
+# buckets dependency directly, because EXEC_LANG's actual spawn point lives
+# here and crush-lang-sdk depends on crush-vm, not the reverse.
+sandboxed-polyglot = ["dep:buckets"]
 
 # `EXEC_LANG`'s wall-clock timeout must kill a polyglot subprocess's whole
 # process GROUP, not just the single tracked PID: `bash -c "sleep 30"`

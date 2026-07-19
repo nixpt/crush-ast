@@ -164,6 +164,14 @@ pub enum Statement {
         /// Import statements within the block
         #[serde(default)]
         imports: Vec<ImportStatement>,
+        /// `@lang[dep1, dep2]` annotation: additional bare-runtime `buckets`
+        /// package specs to provision alongside the language itself (CRUSH-20).
+        /// NOT PyPI/npm packages — buckets has no package-manager-level
+        /// dependency resolution, so e.g. `@python[numpy]` fails loudly at
+        /// provisioning time ("unknown package") rather than silently
+        /// succeeding without numpy. See CRUSH-20 ticket's "numpy reframe".
+        #[serde(default)]
+        deps: Vec<String>,
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },

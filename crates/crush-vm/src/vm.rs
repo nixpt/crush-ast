@@ -71,20 +71,50 @@ pub enum VmError {
     CapTimeout { cap: String, limit_ms: u64 },
     /// A `@python`/`@javascript`/`@bash` polyglot block's **guest program**
     /// raised its own runtime exception (non-zero exit, e.g. a Python
-    /// `ZeroDivisionError` or a Node `TypeError`). Distinct from
-    /// `UnknownCap`: a guest exception is not a missing-capability
-    /// problem, and it is not a crush-side VM bug either — reserve those
-    /// two for their own failure classes (see CRUSH-18). `crush_line` is
-    /// the `.crush`-source line of the `@lang { ... }` block itself, when
-    /// the compiler had one to attach; the guest's own internal line
-    /// numbers (e.g. Python's `line 1` in a `-c` string) are a separate,
+    /// `ZeroDivisionError` or a Node `TypeError`) — or, distinctly (CRUSH-20),
+    /// the buckets-sandboxed provisioning/spawn step itself failed before the
+    /// guest ever ran. `phase` tells the two apart: see [`LangFailurePhase`].
+    /// Neither is a missing-capability problem (`UnknownCap`) or a crush-side
+    /// VM bug — reserve those for their own failure classes (see CRUSH-18).
+    /// `crush_line` is the `.crush`-source line of the `@lang { ... }` block
+    /// itself, when the compiler had one to attach; the guest's own internal
+    /// line numbers (e.g. Python's `line 1` in a `-c` string) are a separate,
     /// unmapped coordinate space and are not translated here.
-    #[error("@{lang} block raised a runtime error: {message}")]
+    #[error("@{lang} block {phase}: {message}")]
     LangRuntimeError {
         lang: String,
         message: String,
         crush_line: Option<u32>,
+        phase: LangFailurePhase,
     },
+}
+
+/// Distinguishes the two ways an `EXEC_LANG` polyglot block can fail at
+/// runtime (CRUSH-20). Both surface as `VmError::LangRuntimeError` — the
+/// ticket's own guidance was to extend that variant rather than invent a
+/// parallel error type, since both are "the polyglot block didn't complete
+/// successfully," just at different stages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LangFailurePhase {
+    /// The guest program actually ran (in a real or sandboxed interpreter)
+    /// and exited non-zero on its own — a bug in the guest's own code.
+    GuestException,
+    /// The buckets-sandboxed provisioning/spawn step (CRUSH-20's 4th
+    /// execution path) failed before the guest program ever started:
+    /// dependency resolution/fetch failed (network, unknown package —
+    /// buckets has no PyPI/npm resolution, see the ticket's "numpy
+    /// reframe"), or the sandboxed command itself could not be built or
+    /// spawned. Not the guest's fault.
+    SandboxSetup,
+}
+
+impl std::fmt::Display for LangFailurePhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LangFailurePhase::GuestException => write!(f, "raised a runtime error"),
+            LangFailurePhase::SandboxSetup => write!(f, "sandbox setup failed"),
+        }
+    }
 }
 
 /// Stack value — the types the CVM1 supports.
