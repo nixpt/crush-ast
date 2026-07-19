@@ -548,3 +548,11 @@ will take real wall-clock time (likely days for a full backlog this size), by de
 
 Artifacts: crates/crush-ptx/Cargo.toml, crates/crush-aotc/Cargo.toml, crates/crush-lang-bash/Cargo.toml, crates/crush-lang-js/Cargo.toml, crates/crush-lang-python/Cargo.toml, crates/crush-lang-rust/Cargo.toml, crates/crush-lang-zsh/Cargo.toml
 
+
+## 2026-07-19T01:01:18-05:00 — [ADOPTED] [ARCHITECTURAL] CRUSH-19: CAP_CALL wall-clock timeout via cooperative HostCap::call_with_deadline
+
+Reason:
+Value's Rc<RefCell<...>> isn't Send, so an arbitrary HostCap::call() can't be moved to a watchdog thread and preempted on timeout (Option 1 from the ticket, ruled out as too invasive for this pass). Chose Option 2: added HostCap::call_with_deadline(args, deadline_ms) -> Result<Option<Value>, HostCapError> with a default that delegates straight to call() (zero-touch for the 60+ existing HostCap impls in the workspace). A HostCap that can legitimately block (network, cold bucket provisioning per CRUSH-20) overrides it and self-enforces the deadline, returning HostCapError::Timeout, which both scheduler.rs and portable_vm.rs dispatch_cap map to VmError::CapTimeout. Regression test scheduler.rs::wall_clock_limit_tests::cap_call_returns_a_named_timeout_error_instead_of_hanging constructs a HostCap that genuinely blocks past its deadline and asserts a prompt CapTimeout rather than a hang.
+
+Artifacts: crates/crush-vm/src/host.rs, crates/crush-vm/src/scheduler.rs, crates/crush-vm/src/portable_vm.rs
+
