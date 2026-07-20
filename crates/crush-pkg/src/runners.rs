@@ -154,7 +154,9 @@ impl ScriptRunner {
         let profile = buckets::sandbox::SandboxProfile {
             project_dir: Some(cwd.to_path_buf()),
             extra_ro_binds: resolved.installations.iter().map(|i| i.path.clone()).collect(),
+            extra_rw_binds: vec![],
             allow_network: false,
+            net_ns: None,
         };
         Some(buckets::sandbox::sandboxed_command(
             runtime_bin,
