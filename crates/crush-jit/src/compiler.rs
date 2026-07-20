@@ -674,10 +674,19 @@ fn emit_one(
             poke(b, ctx, 0, bv);
         }
 
-        Add => arith(b, ctx, true, false, false, _ptr_ty, helper_sig),
-        Sub => arith(b, ctx, false, true, false, _ptr_ty, helper_sig),
-        Mul => arith(b, ctx, false, false, true, _ptr_ty, helper_sig),
-        Div => arith(b, ctx, false, false, false, _ptr_ty, helper_sig),
+        Add => {
+            // Route directly to OP_ADD_STR which handles all cases:
+            // string concat, int add with overflow, float promotion.
+            // This bypasses arith's broken block dispatch for non-numeric ops.
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_ADD_STR, 0, _ptr_ty, helper_sig);
+        },
+        Sub => arith(b, ctx, true, false, _ptr_ty, helper_sig),
+        Mul => arith(b, ctx, false, true, _ptr_ty, helper_sig),
+        Div => arith(b, ctx, false, false, _ptr_ty, helper_sig),
         Mod => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
@@ -1108,7 +1117,7 @@ fn emit_one(
 
 // ── Arithmetic dispatch ─────────────────────────────────────────────────────
 
-fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: bool,
+fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
           _ptr_ty: types::Type, helper_sig: ir::SigRef) {
     let bv = pop(b, ctx);
     let a = pop(b, ctx);
@@ -1119,6 +1128,9 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: boo
     let fbb = b.create_block();
     let mb = b.create_block();
     b.append_block_param(mb, types::I64);
+
+    // Sub/Mul/Div: 2-way branch (int vs float).
+    // Add is handled directly in emit_one via OP_ADD_STR.
     b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
     // ── Integer path with overflow checking (Bug 3) ────────────────────
@@ -1129,7 +1141,7 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: boo
     // Crush ints are 16-bit sign-extended; overflow = result != sign_extend(low16).
     // This works for add, sub, mul, and div uniformly.
     // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
-    let ri = if add { iadd2(b, av, bv2) } else if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
+    let ri = if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
     let shifted = ishl_imm(b, ri, 48);
     let low16 = sshr_imm(b, shifted, 48);
     let of_cond = icmp(b, IntCC::NotEqual, ri, low16);
@@ -1171,25 +1183,15 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: boo
     let b_fcvt = b.ins().fcvt_from_sint(types::F64, b_int2);
     let b_bits = bf64(b, bv);
     let bf2 = select(b, fb, b_bits, b_fcvt);
-    let rf = if add { fadd(b, af, bf2) } else if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
+    let rf = if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
     let rfb = bi64(b, rf);
     b.ins().jump(mb, &[BlockArg::Value(rfb)]);
 
     // ── Non-numeric fallback (Bug 4: string concat via helper) ─────────
     b.switch_to_block(err);
-    if add {
-        // Push operands back for the runtime helper (which pops them).
-        push(b, ctx, a);
-        push(b, ctx, bv);
-        emit_helper_call(b, ctx, OP_ADD_STR, 0, _ptr_ty, helper_sig);
-        // Helper pushed result onto shadow stack; pop for merge block.
-        let result = pop(b, ctx);
-        b.ins().jump(mb, &[BlockArg::Value(result)]);
-    } else {
-        serr(b, ctx);
-        let nv = iconst(b, TAG_NULL);
-        b.ins().jump(mb, &[BlockArg::Value(nv)]);
-    }
+    serr(b, ctx);
+    let nv = iconst(b, TAG_NULL);
+    b.ins().jump(mb, &[BlockArg::Value(nv)]);
 
     b.switch_to_block(mb);
     push(b, ctx, b.block_params(mb)[0]);

@@ -2084,7 +2084,6 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════════
 
     #[test]
-    #[ignore = "pre-existing: JIT arith error path does not reach OP_ADD_STR for string+int (CRUSH-XX)"]
     fn test_add_str_string_concat_int() {
         // "x: " + 5 should produce "x: 5" in the arena
         let mut prog = make_prog(vec![
@@ -2116,7 +2115,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pre-existing: JIT arith error path does not reach OP_ADD_STR for string+str (CRUSH-XX)"]
     fn test_add_str_string_concat_strings() {
         // "a" + "b" should produce "ab"
         let mut prog = make_prog(vec![

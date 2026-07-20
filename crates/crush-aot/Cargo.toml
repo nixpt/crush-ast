@@ -44,7 +44,6 @@ tree-sitter.workspace = true
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 
-[dev-dependencies]
 crush-jit = { workspace = true }
 
 [[bin]]
@@ -58,3 +57,7 @@ path = "src/bin/walk_run.rs"
 [[bin]]
 name = "crush-aot-runner"
 path = "src/bin/aot_runner.rs"
+
+[[bin]]
+name = "jit-runner"
+path = "../crush-jit/src/bin/jit_runner.rs"
