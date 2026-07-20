@@ -1378,6 +1378,19 @@ fn math_apply_f64_bin(b: &mut FunctionBuilder, a: ir::Value, e: ir::Value, _op: 
 
 // ── Comparison dispatch ────────────────────────────────────────────────────
 
+/// Comparison family (EQ/NE/LT/LE/GT/GE) share this lowering. Both operands
+/// int-tagged -> integer compare. Otherwise -> float compare, with each
+/// operand independently promoted: an int-tagged operand is converted via
+/// `fcvt_from_sint` (matching `math_binary`'s mixed-type promotion), a
+/// float-tagged operand is reinterpreted via `bf64` bitcast (it already IS
+/// an f64 bit pattern), and any other tag (bool/null/ref) falls through to
+/// the bitcast path unchanged -- preserving the pre-existing "never equal
+/// to a real number" behavior for non-numeric operands (their NaN-boxed
+/// bits bitcast to a NaN, and IEEE-754 NaN never compares equal). This is
+/// what keeps `2 == 2.0` numerically true while `true == 1` and `2 == "2"`
+/// stay unequal: only the (Int, Float) / (Float, Int) pairing is coerced,
+/// not (Bool, Int) or anything else. Precision note: ints with |i| > 2^53
+/// lose exactness under `i as f64`, same caveat as the interpreter tiers.
 fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     let bv = pop(b, ctx);
     let a = pop(b, ctx);
@@ -1398,8 +1411,16 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     b.ins().jump(mb2, &[BlockArg::Value(r1)]);
 
     b.switch_to_block(fbb);
-    let af = bf64(b, a);
-    let bf2 = bf64(b, bv);
+    // Promote per-operand: int-tagged -> real float conversion; anything else
+    // (including a genuine float operand) -> bitcast reinterpretation.
+    let raw_a = bf64(b, a);
+    let conv_a = { let iv = eint(b, a); b.ins().fcvt_from_sint(types::F64, iv) };
+    let af = select(b, ia, conv_a, raw_a);
+
+    let raw_b = bf64(b, bv);
+    let conv_b = { let iv = eint(b, bv); b.ins().fcvt_from_sint(types::F64, iv) };
+    let bf2 = select(b, ib, conv_b, raw_b);
+
     let cmp = fcmp(b, fcc, af, bf2);
     let r2 = tbool(b, cmp);
     b.ins().jump(mb2, &[BlockArg::Value(r2)]);

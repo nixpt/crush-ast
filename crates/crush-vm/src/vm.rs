@@ -69,6 +69,52 @@ pub enum VmError {
     /// cap so a hang is diagnosable, not a silent freeze.
     #[error("'{cap}' exceeded its {limit_ms}ms wall-clock quota and was killed")]
     CapTimeout { cap: String, limit_ms: u64 },
+    /// A `@python`/`@javascript`/`@bash` polyglot block's **guest program**
+    /// raised its own runtime exception (non-zero exit, e.g. a Python
+    /// `ZeroDivisionError` or a Node `TypeError`) — or, distinctly (CRUSH-20),
+    /// the buckets-sandboxed provisioning/spawn step itself failed before the
+    /// guest ever ran. `phase` tells the two apart: see [`LangFailurePhase`].
+    /// Neither is a missing-capability problem (`UnknownCap`) or a crush-side
+    /// VM bug — reserve those for their own failure classes (see CRUSH-18).
+    /// `crush_line` is the `.crush`-source line of the `@lang { ... }` block
+    /// itself, when the compiler had one to attach; the guest's own internal
+    /// line numbers (e.g. Python's `line 1` in a `-c` string) are a separate,
+    /// unmapped coordinate space and are not translated here.
+    #[error("@{lang} block {phase}: {message}")]
+    LangRuntimeError {
+        lang: String,
+        message: String,
+        crush_line: Option<u32>,
+        phase: LangFailurePhase,
+    },
+}
+
+/// Distinguishes the two ways an `EXEC_LANG` polyglot block can fail at
+/// runtime (CRUSH-20). Both surface as `VmError::LangRuntimeError` — the
+/// ticket's own guidance was to extend that variant rather than invent a
+/// parallel error type, since both are "the polyglot block didn't complete
+/// successfully," just at different stages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LangFailurePhase {
+    /// The guest program actually ran (in a real or sandboxed interpreter)
+    /// and exited non-zero on its own — a bug in the guest's own code.
+    GuestException,
+    /// The buckets-sandboxed provisioning/spawn step (CRUSH-20's 4th
+    /// execution path) failed before the guest program ever started:
+    /// dependency resolution/fetch failed (network, unknown package —
+    /// buckets has no PyPI/npm resolution, see the ticket's "numpy
+    /// reframe"), or the sandboxed command itself could not be built or
+    /// spawned. Not the guest's fault.
+    SandboxSetup,
+}
+
+impl std::fmt::Display for LangFailurePhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LangFailurePhase::GuestException => write!(f, "raised a runtime error"),
+            LangFailurePhase::SandboxSetup => write!(f, "sandbox setup failed"),
+        }
+    }
 }
 
 /// Stack value — the types the CVM1 supports.
@@ -108,6 +154,20 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
+            // Cross-type numeric equality: `2 == 2.0` is `true`, matching
+            // chroma's Python VM (Python's `2 == 2.0` is `True`). Bool is
+            // deliberately NOT coerced here -- only Int<->Float. `Value`
+            // does not implement `Eq`/`Hash` (see the `Set` variant's doc
+            // comment: it uses a linear-scan `Vec` for uniqueness precisely
+            // because `Value` isn't hash-keyed), so widening `PartialEq`
+            // does not violate the Eq/Hash consistency contract anywhere in
+            // this crate. Precision note: for `|i| > 2^53`, `i as f64` is
+            // not exact, so this comparison can disagree with true integer
+            // equality at the extremes of i64's range -- same caveat as
+            // Python's `int == float`.
+            (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
+                *i as f64 == *f
+            }
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
@@ -627,15 +687,18 @@ pub struct Quotas {
     /// trip that quota, so it was previously unbounded. See
     /// `scheduler::run_with_wall_clock_limit` for the enforcement.
     ///
-    /// Only covers `EXEC_LANG` today, not `CAP_CALL`'s generic
-    /// `HostCap::call()` dispatch — `Value`'s `Rc<RefCell<...>>` fields
-    /// aren't `Send`, so an arbitrary `HostCap::call()` can't safely be
-    /// preempted from another thread without a much larger refactor
-    /// (`Value` would need to become `Send`). A `HostCap` implementation
-    /// that does its own I/O (subprocess, network) must self-enforce a
-    /// bound; the VM can't do it on the implementation's behalf. `EXEC_LANG`
-    /// can be bounded because it owns a killable OS process, not an
-    /// opaque trait call.
+    /// `EXEC_LANG` enforces this by killing an OS subprocess at the deadline
+    /// (see `scheduler::run_with_wall_clock_limit`) — true external
+    /// preemption, possible because it owns a killable process.
+    ///
+    /// `CAP_CALL`'s generic `HostCap::call()` dispatch cannot be preempted
+    /// the same way: `Value`'s `Rc<RefCell<...>>` fields aren't `Send`, so an
+    /// arbitrary trait call can't safely be moved onto a watchdog thread
+    /// without a much larger refactor (`Value` would need to become
+    /// `Send`). Instead it is passed to `HostCap::call_with_deadline` so a
+    /// capability that can legitimately block (network, provisioning)
+    /// self-enforces this budget internally; a `HostCap` that never
+    /// overrides `call_with_deadline` gets no bound at all (see CRUSH-19).
     pub max_wall_time_ms: u64,
 }
 

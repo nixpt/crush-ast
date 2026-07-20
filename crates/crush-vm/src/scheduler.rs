@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::bytecode::{self, *};
 use crate::caps::capabilities;
 use crate::host::HostCaps;
-use crate::vm::{Frame, GreenThread, Quotas, Value, VmError, VmResult};
+use crate::vm::{Frame, GreenThread, LangFailurePhase, Quotas, Value, VmError, VmResult};
 
 const SLICE_SIZE: usize = 50;
 
@@ -51,6 +51,39 @@ pub(crate) fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static 
         "javascript" | "js" | "es6" | "ecmascript" | "node" => Some(("node", "-e")),
         "bash" | "sh" => Some(("bash", "-c")),
         _ => None,
+    }
+}
+
+/// Build a `VmError::LangRuntimeError` for an `EXEC_LANG` guest failure
+/// (non-zero subprocess exit). SHARED between scheduler.rs and
+/// portable_vm.rs so the two backends can't drift on how a guest exception
+/// is classified — before CRUSH-18 both independently misclassified this
+/// as `VmError::UnknownCap`, the same variant used for actual
+/// capability-grant failures.
+pub(crate) fn lang_runtime_error(lang: &str, stderr: &[u8], crush_line: Option<u32>) -> VmError {
+    let guest_message = String::from_utf8_lossy(stderr).trim().to_string();
+    let message = match crush_line {
+        Some(l) => format!("(at .crush line {l}) {guest_message}"),
+        None => guest_message,
+    };
+    VmError::LangRuntimeError {
+        lang: lang.to_string(),
+        message,
+        crush_line,
+        phase: LangFailurePhase::GuestException,
+    }
+}
+
+/// Build a `VmError::LangRuntimeError` for a CRUSH-20 sandboxed-provisioning
+/// failure (dependency resolve/fetch failed, or the sandboxed command itself
+/// could not be built/spawned) — distinct from [`lang_runtime_error`]'s guest
+/// exception: the guest program never got a chance to run at all here.
+pub(crate) fn sandbox_setup_error(lang: &str, message: impl Into<String>, crush_line: Option<u32>) -> VmError {
+    VmError::LangRuntimeError {
+        lang: lang.to_string(),
+        message: message.into(),
+        crush_line,
+        phase: LangFailurePhase::SandboxSetup,
     }
 }
 
@@ -159,6 +192,116 @@ pub(crate) fn run_with_wall_clock_limit(
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
             Ok(CommandOutcome::TimedOut)
+        }
+    }
+}
+
+/// Outcome of successfully running an `EXEC_LANG` polyglot block to
+/// completion: the "visible" program output (its own prints, with the
+/// `CRUSH_RESULT_SENTINEL` line stripped out) and the decoded marshaled
+/// result value.
+pub(crate) struct ExecLangOutcome {
+    pub(crate) visible: String,
+    pub(crate) result_value: Value,
+}
+
+/// Build + run the subprocess for an `EXEC_LANG` polyglot block. SHARED
+/// between scheduler.rs and portable_vm.rs (CRUSH-20) — before this, each
+/// backend inlined its own `Command::new(binary)` plus a copy of the
+/// stdout-scanning logic, and portable_vm's copy had already drifted: it
+/// never scanned for `CRUSH_RESULT_SENTINEL`, so a `@python` block's
+/// marshaled `result` never survived the portable backend, only the raw
+/// trimmed stdout text did. Fixed here as a side effect of the
+/// consolidation this ticket's buckets wiring required anyway (same
+/// "shared helper, no drift" precedent as `resolve_lang_binary`/
+/// `lang_runtime_error` above — CRUSH-18 found the two backends had already
+/// drifted once on the capability-error mapping).
+///
+/// When the `sandboxed-polyglot` feature is enabled, `binary` is provisioned
+/// via `buckets` and run inside a bwrap sandbox (see `crate::bucket_exec`)
+/// instead of the host's own interpreter; `deps` are additional bare-runtime
+/// `buckets` package specs (NOT PyPI/npm packages — see
+/// `Statement::LangBlock::deps`'s doc comment for why). When the feature is
+/// disabled (the default), behavior is byte-for-byte unchanged from before
+/// this ticket: a plain `Command::new(binary)` with the host's full
+/// authority, `deps` silently unused.
+pub(crate) fn run_exec_lang(
+    lang: &str,
+    code_str: &str,
+    deps: &[String],
+    env_vars: &[(String, String)],
+    crush_line: Option<u32>,
+    gate: &str,
+    max_wall_time_ms: u64,
+) -> Result<ExecLangOutcome, VmError> {
+    let (binary, exec_flag) = resolve_lang_binary(lang).ok_or_else(|| {
+        VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
+    })?;
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (binary, exec_flag, code_str, deps, env_vars, crush_line, gate, max_wall_time_ms);
+        return Err(VmError::UnknownCap(format!(
+            "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
+        )));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        #[cfg(feature = "sandboxed-polyglot")]
+        let (cmd, remaining_ms) = crate::bucket_exec::build_sandboxed_command(
+            lang, binary, exec_flag, code_str, deps, env_vars, max_wall_time_ms,
+        )
+        .map_err(|msg| sandbox_setup_error(lang, msg, crush_line))?;
+
+        #[cfg(not(feature = "sandboxed-polyglot"))]
+        let (cmd, remaining_ms) = {
+            // `deps` is a CRUSH-20 sandboxed-only concept (bare-runtime
+            // buckets package specs) — a no-op on the unsandboxed path,
+            // same as before this field existed.
+            let _ = deps;
+            let mut cmd = std::process::Command::new(binary);
+            cmd.arg(exec_flag).arg(code_str);
+            for (name, val) in env_vars {
+                cmd.env(name, val);
+            }
+            (cmd, max_wall_time_ms)
+        };
+
+        let output = match run_with_wall_clock_limit(cmd, remaining_ms)
+            .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?
+        {
+            CommandOutcome::Output(output) => output,
+            CommandOutcome::TimedOut => {
+                return Err(VmError::CapTimeout {
+                    cap: gate.to_string(),
+                    limit_ms: max_wall_time_ms,
+                });
+            }
+        };
+
+        if output.status.success() {
+            let raw = String::from_utf8_lossy(&output.stdout);
+            let mut visible_lines: Vec<&str> = Vec::new();
+            let mut result_payload: Option<&str> = None;
+            for line in raw.lines() {
+                match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
+                    // Last one wins, matching "the block's final bound
+                    // output" if it somehow printed the sentinel more than
+                    // once.
+                    Some(payload) => result_payload = Some(payload),
+                    None => visible_lines.push(line),
+                }
+            }
+            let visible = visible_lines.join("\n").trim().to_string();
+            let result_value = match result_payload {
+                Some(payload) => serde_json::from_str::<Value>(payload)
+                    .unwrap_or_else(|_| Value::Str(payload.to_string())),
+                None => Value::Str(visible.clone()),
+            };
+            Ok(ExecLangOutcome { visible, result_value })
+        } else {
+            Err(lang_runtime_error(lang, &output.stderr, crush_line))
         }
     }
 }
@@ -860,6 +1003,7 @@ fn execute_one(
                 .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
             let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
             let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
             let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let mut var_names: Vec<String> = Vec::with_capacity(var_count);
             let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
@@ -871,7 +1015,16 @@ fn execute_one(
                 }
             }
             var_values.reverse();
-            let (binary, exec_flag) = resolve_lang_binary(lang).ok_or_else(|| {
+            let deps: Vec<String> = spec
+                .get("deps")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            // Validate the language is registered BEFORE the capability gate below — an unknown
+            // language should fail with "no executor registered", not a confusing "missing
+            // capability for a language that doesn't exist" (preserves pre-CRUSH-20 error
+            // ordering; `run_exec_lang` re-checks this internally too, cheaply).
+            resolve_lang_binary(lang).ok_or_else(|| {
                 VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
             })?;
             // CAPABILITY GATE. A polyglot block spawns a real interpreter with the host process's
@@ -887,61 +1040,26 @@ fn execute_one(
                     "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
                 )));
             }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = (binary, exec_flag, code_str, &var_names, &var_values);
-                return Err(VmError::UnknownCap(format!(
-                    "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
-                )));
+            let env_vars: Vec<(String, String)> = var_names
+                .iter()
+                .zip(var_values.iter())
+                .map(|(name, val)| (name.clone(), val.as_text()))
+                .collect();
+            let outcome = run_exec_lang(
+                lang,
+                code_str,
+                &deps,
+                &env_vars,
+                crush_line,
+                &gate,
+                quotas.max_wall_time_ms,
+            )?;
+            *out_len += outcome.visible.len();
+            if *out_len > quotas.max_output {
+                return Err(VmError::OutputQuota(quotas.max_output));
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let mut cmd = std::process::Command::new(binary);
-                cmd.arg(exec_flag).arg(code_str);
-                for (name, val) in var_names.iter().zip(var_values.iter()) {
-                    cmd.env(name, val.as_text());
-                }
-                let output = match run_with_wall_clock_limit(cmd, quotas.max_wall_time_ms)
-                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?
-                {
-                    CommandOutcome::Output(output) => output,
-                    CommandOutcome::TimedOut => {
-                        return Err(VmError::CapTimeout {
-                            cap: gate,
-                            limit_ms: quotas.max_wall_time_ms,
-                        });
-                    }
-                };
-                if output.status.success() {
-                    let raw = String::from_utf8_lossy(&output.stdout);
-                    let mut visible_lines: Vec<&str> = Vec::new();
-                    let mut result_payload: Option<&str> = None;
-                    for line in raw.lines() {
-                        match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
-                            // Last one wins, matching "the block's final bound
-                            // output" if it somehow printed the sentinel more
-                            // than once.
-                            Some(payload) => result_payload = Some(payload),
-                            None => visible_lines.push(line),
-                        }
-                    }
-                    let visible = visible_lines.join("\n").trim().to_string();
-                    *out_len += visible.len();
-                    if *out_len > quotas.max_output {
-                        return Err(VmError::OutputQuota(quotas.max_output));
-                    }
-                    out_parts.push(visible.clone());
-                    let result_value = match result_payload {
-                        Some(payload) => serde_json::from_str::<Value>(payload)
-                            .unwrap_or_else(|_| Value::Str(payload.to_string())),
-                        None => Value::Str(visible),
-                    };
-                    push!(result_value);
-                } else {
-                    let err = String::from_utf8_lossy(&output.stderr);
-                    return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
-                }
-            }
+            out_parts.push(outcome.visible);
+            push!(outcome.result_value);
         }
         AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
             // Scheduler VM does not support async AI opcodes natively yet. Stub to Null.
@@ -1342,7 +1460,16 @@ fn dispatch_cap(
         {
             return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
         }
-        return handler.call(args).map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
+        return match handler.call_with_deadline(args, quotas.max_wall_time_ms) {
+            Ok(v) => Ok(v),
+            Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
+                cap: cap.to_string(),
+                limit_ms: quotas.max_wall_time_ms,
+            }),
+            Err(crate::host::HostCapError::Message(msg)) => {
+                Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+            }
+        };
     }
 
     Err(VmError::UnknownCap(cap.to_string()))
@@ -1351,6 +1478,90 @@ fn dispatch_cap(
 #[cfg(test)]
 mod wall_clock_limit_tests {
     use super::*;
+
+    /// CRUSH-19 regression fixture: a `HostCap` that self-enforces a
+    /// wall-clock deadline via `call_with_deadline` — it genuinely blocks
+    /// (polls in a sleep loop) past the deadline it's given, then returns
+    /// `HostCapError::Timeout` rather than completing. This is the shape a
+    /// blocking `HostCap` (network, cold provisioning) is expected to use
+    /// per CRUSH-19's chosen design (cooperative timeout, not generic
+    /// `CAP_CALL` preemption — `Value` isn't `Send`).
+    struct SelfEnforcingBlockingCap;
+
+    impl crate::host::HostCap for SelfEnforcingBlockingCap {
+        fn spec(&self) -> crate::host::HostCapSpec {
+            crate::host::HostCapSpec {
+                name: "test.slow_blocking_cap".to_string(),
+                argc: Some(0),
+                returns: true,
+            }
+        }
+
+        fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+            // A HostCap that never overrides call_with_deadline would land
+            // here with no bound at all — this impl deliberately overrides
+            // call_with_deadline below instead, so this arm should never
+            // execute in the regression test.
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            Ok(Some(Value::Null))
+        }
+
+        fn call_with_deadline(
+            &self,
+            _args: Vec<Value>,
+            deadline_ms: u64,
+        ) -> Result<Option<Value>, crate::host::HostCapError> {
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms);
+            loop {
+                if std::time::Instant::now() >= deadline {
+                    return Err(crate::host::HostCapError::Timeout);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+
+    #[test]
+    fn cap_call_returns_a_named_timeout_error_instead_of_hanging() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::{Quotas, VmError, run_with_caps};
+
+        let mut host_caps = HostCaps::new();
+        host_caps.register(Box::new(SelfEnforcingBlockingCap));
+
+        let prog = assemble(
+            "CAP_CALL \"test.slow_blocking_cap\" 0\nHALT",
+            Some(&["test.slow_blocking_cap"]),
+            None,
+        )
+        .unwrap();
+
+        let quotas = Quotas {
+            max_wall_time_ms: 100,
+            ..Default::default()
+        };
+
+        let start = std::time::Instant::now();
+        let result = run_with_caps(&prog, &quotas, Some(&host_caps));
+        let elapsed = start.elapsed();
+
+        match result {
+            Err(VmError::CapTimeout { cap, limit_ms }) => {
+                assert_eq!(cap, "test.slow_blocking_cap");
+                assert_eq!(limit_ms, 100);
+            }
+            other => panic!("expected VmError::CapTimeout, got {other:?}"),
+        }
+        // The real proof: this returned near the 100ms deadline, not after
+        // the cap's own 30s `call()` sleep (which call_with_deadline's
+        // override preempts before ever reaching).
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "should return promptly at the deadline, took {elapsed:?}"
+        );
+    }
 
     #[test]
     fn fast_command_returns_its_real_output_within_the_limit() {
@@ -1418,5 +1629,152 @@ mod wall_clock_limit_tests {
             }
         }
         assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    // CRUSH-18 regression (green-thread scheduler side — see
+    // portable_vm.rs's parallel test for the other backend, both sharing
+    // `lang_runtime_error` so they can't drift on this classification).
+    // Before this fix, a guest program's own non-zero exit was folded into
+    // `VmError::UnknownCap`, the same variant used for "the capability
+    // doesn't exist"/"wasn't granted" — a category error.
+    #[test]
+    fn exec_lang_guest_failure_maps_to_lang_runtime_error_not_unknown_cap() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::run_with_caps;
+
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n 'boom' >&2; exit 1",
+            "var_count": 0,
+            "crush_line": 7,
+        });
+        // CASM's own string-literal escapes are a narrower set than JSON's
+        // (only \n \t \" \\ ; anything else silently drops the backslash —
+        // see `assembler::parse_string`). A JSON string containing a real
+        // backslash round-trips through CASM's parser corrupted unless the
+        // backslashes are escaped for CASM FIRST, then the quotes — doing
+        // only the quotes works when the JSON has no backslashes (as in the
+        // simpler tests above) but silently mangles ones that do.
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["bash"]);
+
+        match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
+            Err(VmError::LangRuntimeError { lang, message, crush_line, .. }) => {
+                assert_eq!(lang, "bash");
+                assert!(
+                    message.contains("boom"),
+                    "message should carry the guest's stderr, got: {message}"
+                );
+                assert_eq!(crush_line, Some(7), "should surface the .crush-source line");
+            }
+            other => panic!("expected VmError::LangRuntimeError, got {other:?}"),
+        }
+    }
+
+    // CRUSH-20 live end-to-end proof: an `@bash` polyglot block actually
+    // runs through `buckets`-provisioned, bwrap-sandboxed `bash`, not the
+    // host's own `bash` — same evidentiary bar as CRUSHAST-BUCKETSPIKE-1/2's
+    // `SPIKE_RESULTS.md`/`SPIKE_RESULTS_2.md`. Feature-gated (needs the real
+    // `buckets` crate + network egress to fetch bash's bottle on a cold
+    // cache) and marked `#[ignore]` so it doesn't run in an offline default
+    // `cargo test` — run explicitly with `--features sandboxed-polyglot
+    // --ignored`. A fresh, unique `BUCKETS_CACHE_DIR` forces a genuine cold
+    // provision (not a cache hit from some other test/session), matching
+    // the spike's own "fresh cache dir per run" methodology.
+    #[cfg(feature = "sandboxed-polyglot")]
+    #[test]
+    #[ignore = "needs network egress to dist.pkgx.dev + real bwrap; run explicitly"]
+    fn exec_lang_runs_through_a_real_buckets_sandbox_not_the_host_bash() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::{Value, run_with_caps};
+
+        let cache_dir = std::env::temp_dir().join(format!(
+            "crush20-live-verify-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        // SAFETY: this test is single-threaded w.r.t. this env var (no other
+        // test in this crate reads/writes BUCKETS_CACHE_DIR), and buckets'
+        // own `Config::new()` reads it fresh inside `resolve_with_deadline`'s
+        // spawned thread for every call — see `bucket_exec.rs`'s doc comment
+        // on why the spike originally got this wrong.
+        unsafe {
+            std::env::set_var("BUCKETS_CACHE_DIR", &cache_dir);
+        }
+
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n 'hello from a live CRUSH-20 sandbox'",
+            "var_count": 0,
+        });
+        // CASM's own string-literal escapes are a narrower set than JSON's
+        // (only \n \t \" \\ ; anything else silently drops the backslash —
+        // see `assembler::parse_string`). A JSON string containing a real
+        // backslash round-trips through CASM's parser corrupted unless the
+        // backslashes are escaped for CASM FIRST, then the quotes — doing
+        // only the quotes works when the JSON has no backslashes (as in the
+        // simpler tests above) but silently mangles ones that do.
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["bash"]);
+        // Cold provisioning measured up to ~380ms for bash in the spike;
+        // give real headroom for CI/box variance without masking a genuine
+        // hang.
+        let quotas = Quotas {
+            max_wall_time_ms: 30_000,
+            ..Default::default()
+        };
+
+        let result = run_with_caps(&prog, &quotas, Some(&host_caps));
+        // The real proof this went through buckets, not a bare host
+        // `Command::new("bash")`: the resolved installation path buckets
+        // just populated must exist under OUR fresh, unique cache dir.
+        let populated = std::fs::read_dir(&cache_dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
+        assert!(
+            populated,
+            "buckets should have installed bash's bottle under the fresh \
+             BUCKETS_CACHE_DIR ({cache_dir:?}) — an empty cache dir would mean \
+             this ran the host's bash directly, not a buckets-provisioned one"
+        );
+
+        // Matches what today's (unsandboxed) EXEC_LANG success path already
+        // does — pushes raw stdout as `Value::Str`, no sentinel/typed-value
+        // marshaling. The buckets spike proved that marshaling protocol
+        // survives the sandbox boundary intact (SPIKE_RESULTS.md), but it
+        // was never wired into scheduler.rs's actual stdout handling for
+        // either the sandboxed or unsandboxed path — out of this ticket's
+        // scope (swap the spawn path, not add typed marshaling). Assert
+        // against what the feature actually does today.
+        match result {
+            Ok(vm_result) => match vm_result.stack.last() {
+                Some(Value::Str(s)) => assert!(
+                    s.contains("hello from a live CRUSH-20 sandbox"),
+                    "unexpected sandboxed stdout: {s:?}"
+                ),
+                other => panic!("expected Value::Str with sandboxed stdout, got {other:?}"),
+            },
+            other => panic!("expected the sandboxed bash block to succeed, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
     }
 }

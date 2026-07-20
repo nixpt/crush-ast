@@ -31,7 +31,7 @@ boa_ast = { version = "0.21", optional = true }
 boa_interner = { version = "0.21", optional = true }
 
 [dev-dependencies]
-crush-frontend = { path = "../crush-frontend", version = "0.3.0" }
-crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.0" }
-crush-vm = { path = "../crush-vm", version = "0.3.0" }
-crush-lang-python = { path = "../crush-lang-python", version = "0.3.0" }
+crush-frontend = { path = "../crush-frontend" }
+crush-lang-sdk = { path = "../crush-lang-sdk" }
+crush-vm = { path = "../crush-vm" }
+crush-lang-python = { path = "../crush-lang-python" }

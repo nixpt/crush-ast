@@ -30,7 +30,7 @@ by unrelated work; don't assume a ticket's Backlog status means the bug still
 reproduces.
 
 - [ ] **CRUSH-1** (L): Wire 10 AI-native opcodes + spawn/await/yield to real VM execution (currently all NOP). Blocks crush-notebook's AI-native cells.
-- [x] **CRUSH-7** (M): Array mutation effectively unusable — index-assignment fixed, chained `.push()` fixed (scheduler/portable return array). Nested indexing and slicing still open per ticket Resolution.
+- [x] **CRUSH-7** (M): Array mutation effectively unusable — index-assignment fixed, chained `.push()` fixed (scheduler/portable return array), array slice syntax (`xs[1:]`, `xs[1:3]`) implemented. Nested indexing still open per ticket Resolution.
 - [x] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) — fixed: recursive type inference (Null→Any in BinaryOp + merge_types Any compatibility), for-loop continue target (continue_indices patching), ARR_GET string indexing support
 - [x] **CRUSH-9** (L): JS-walked CAST type-inference bugs — root cause was same as CRUSH-8: recursive/forward function calls returned Null placeholder types during inference, causing spurious type errors. Fixed by lenient Null handling in BinaryOp and Any compatibility in merge_types.
 - [x] **CRUSH-11** (M): AOT C backend's string-output garbling — **fixed in M1 session**. Root cause: `_add` reset `_strbuf_idx=0` overwriting previously stored strings. Fix: ring-buffer append in `_add`, `_str_dup` in `store`, plus `str_to_upper/lower/trim`. Verified: all 5 backends agree on recursive multi-function string concat (turtle_runner-style).
@@ -38,11 +38,23 @@ reproduces.
 - [x] **CRUSH-13** (L): Five independent arithmetic implementations (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero (loud error vs. silent 0) and likely other operators. The bugarium flagship differential-testing target; `crush-diff` harness exists but doesn't yet cover the AOT backends.
 - [x] **CRUSH-14** (S): `io.print` emits no trailing newline — fixed in scheduler.rs and portable_vm.rs; test expectations updated.
 - [x] **CRUSH-15** (S): `crushc --emit casm` text + `crush-run` CASM assembler — **verified working M1 session**. Round-trip tested successfully: basic arithmetic, strings, function calls, recursive functions with conditionals all produce correct output via `crush-run run <file.casm>`. The text format and the assembler accept the same dialect.
+- [x] **CRUSH-17** (S): Parser error messages leaked `Token`'s Debug format — fixed s388, added `Token::describe()`/`Display`, 30 call sites updated, verified live + 91 tests green.
+- [x] **CRUSH-18** (M): Polyglot block runtime errors (`@python`/`@javascript`/`@bash` guest exceptions) aren't mapped into crush's diagnostic system — **fixed s390** (panini-crush dispatch, foreman-finished after the horse died at max-turns). New `VmError::LangRuntimeError { lang, message, crush_line }` via a shared `lang_runtime_error()` helper in `scheduler.rs`, applied to both `scheduler.rs` and `portable_vm.rs`'s `EXEC_LANG` handlers. `crush_line` threaded from the parser (`parse_lang_block`) through the compiler's spec. Verified against the ticket's own repro end-to-end: `@python { 1/0 }` now renders `"@python block raised a runtime error: (at .crush line 2) ... ZeroDivisionError"` instead of `"unknown capability"`. `crush-ast` `89620e4`.
+- [x] **CRUSH-19** (M): `CAP_CALL` has no wall-clock timeout — **fixed s390** (panini-crush dispatch, foreman-finished). Added `HostCap::call_with_deadline()` (cooperative timeout — Option 2 from the ticket; Option 1's `Value: Send` refactor was ruled too invasive for this pass) with a zero-touch default delegating to `call()`. A blocking `HostCap` overrides it and self-enforces `Quotas::max_wall_time_ms`, returning `HostCapError::Timeout` → `VmError::CapTimeout`. Regression test constructs a genuinely-blocking `HostCap` and asserts a prompt timeout, not a hang. `crush-ast` `89620e4`.
+- [x] **CRUSH-20** (L, mini-milestone): Wire `buckets` as a sandboxed 4th polyglot execution path — **fixed s390** (panini-crush's 2nd dispatch, foreman-verified after it died silently mid-run to box-wide memory pressure). New `crates/crush-vm/src/bucket_exec.rs`: `lang_to_bucket_spec` (allowlist mirror of `resolve_lang_binary`), `resolve_with_deadline` (reuses CRUSH-19's cooperative-deadline shape for the provisioning step), `build_sandboxed_command` (provisions via `buckets::resolve_multi` + builds a `bwrap` sandbox via `buckets::sandbox::sandboxed_command`). Wired into both `scheduler.rs` and `portable_vm.rs`'s `EXEC_LANG` handlers behind a new `sandboxed-polyglot` feature (off by default). `@lang[deps]` annotation syntax added (parser + `LangBlock`'s new `deps` field). Sandbox-setup failures map through CRUSH-18's `VmError::LangRuntimeError`, extended with a `LangFailurePhase` (`SandboxSetup` vs. guest exception) to distinguish "bwrap couldn't start" from "the guest program raised inside a working sandbox," per the ticket's own note. Layer-ownership decision (crush-vm owns `buckets` directly, not `crush-lang-sdk`) recorded via `dejavue decision` — the dispatch referenced it in a `Cargo.toml` comment but died before actually writing it. **foreman-verify found and fixed one real bug**: the ignored live-sandbox proof test failed with "invalid args JSON" — root-caused to CASM's string-escape set (`\n \t \" \\` only) being narrower than JSON's, corrupting the sentinel-line marshaling escapes on a JSON→CASM→JSON round trip; fixed the test's escaping and simplified its final assertion (the sentinel→typed-value marshaling it originally asserted was never wired into production `EXEC_LANG` stdout handling on EITHER path, sandboxed or not — a separate, real gap beyond this ticket's stated scope, not chased here). Live-verified after the fix: real network fetch, real bash bottle cached, real `bwrap` sandbox spawn, real captured stdout. `cargo test -p crush-vm`: 128/0/1-ignored (default), 128/0 + the now-passing live test (`--features sandboxed-polyglot`). `crush-ast` `main` `c69d76c`.
 
 ## M2 — JIT completion
 
 - [x] Phase 1: Skeleton (stack ops, arithmetic, logic, jumps, locals, 21 tests)
 - [ ] Phase 2: Locals & Calls (function calls, store/load, CapCall, CallHost)
+  - [ ] **CRUSH-24**: JIT `CALL`/`RETURN` dispatch cascade panics on Cranelift's
+    `!self.is_sealed(block)` SSA invariant — `build_fn` seals each block
+    immediately after emitting it, but a function's entry block can receive
+    a `Call` edge from a call site processed later in the same pass. 5/44
+    `crush-jit` tests fail identically (all CALL-exercising tests, none
+    else). Found reviewing `agent/buffy/CRUSHAST-CRUSH-1` for merge (s391,
+    foreman) — branch stays unmerged until fixed. See ticket for root cause
+    + fix sketch.
 - [ ] Phase 3: Data & Caps (MakeList, MakeMap, Index, Len, arena)
 - [ ] Phase 4: Exceptions (EnterTry, ExitTry, Throw)
 - [ ] Phase 5: ExoLight integration
@@ -62,6 +74,7 @@ reproduces.
 - [x] **C↔Crush FFI bridge**: plugin auto-build, test_ffi_gateway_cap passing, libcrush_vm.so
 - [ ] Tier-3: Migrate surfer's in-tree Crush runtime → crush-ast
 - [ ] Reconcile divergence with exosphere's in-tree crush
+- [ ] **CRUSH-23**: Crush embedded in exosphere/nakshatra — exosphere half already mapped by `EXO-194` (DECIDED, passive convergence); nakshatra half is new: it has no engine of its own, but its one real Crush artifact (`tools/build.crush`) already runs on exosphere's frozen in-tree path. Captured, not designed — see ticket.
 
 ## Publish lane (blocks crates.io release of the walker family)
 
@@ -90,10 +103,13 @@ reproduces.
 - [ ] `exo.*` capability modules
 - [ ] Import firewall, fuel budgets, deterministic mode, snapshot/replay
 - [ ] Unified capsule-aware GC + ML "GC policy brain"
-- [ ] Polyglot-via-buckets (sandboxed 4th execution path) — scoped design exists at `workspace-meta/plans/2026-07-14-crush-polyglot-via-buckets.md`, viable, not started
 - [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs`
 - [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue.
+- [ ] **CRUSH-21**: Java/Kotlin language family — new `crush-lang-java`/`crush-lang-kotlin` walkers (same tree-sitter-based shape as `crush-lang-go`) plus, separately, a JVM/Android-API capability bridge for crush capsules on mobile. Captured, not designed — see ticket for the open questions.
+- [ ] **CRUSH-22**: Build platforms & architectures (Windows/macOS/Android/RISC-V/Pi, Intel/AMD CPU-or-GPU ambiguity) — CI is `ubuntu-latest`-only today, two AOT backends disagree on OS-cfg coverage, zero arch-specific (`aarch64`/`riscv`) code anywhere. Captured, not designed — see ticket.
 
 ## Done this session (s388, for context — see FOREMAN_SESSIONS.md s388 for the full merge-wave writeup)
 
 - 8 branches merged: CRUSHAST-CAPTIMEOUT-1 (EXEC_LANG wall-clock timeout), EXECLANG-PLUGGABLE-1, BUCKETSPIKE-1/2 (buckets sandbox proof), PTX-REBASE-1 (crush-ptx + crush-aotc PTX backend scaffold), WEB-1 (crush-web wasm32 target), COLLECTIONS-RECOVER (Tuple/List/Vector/Set types), PYLOWER-1 (Tier 1 Python try/except/match/comprehension lowering), SNAKE-1 (Snake+Turtle Runner examples, filed CRUSH-7..11)
+- [x] **issue** — pyo3 version conflict on main — **fixed s390** (`7d8c0d4`): bumped crush-vm's `python` feature to pyo3^0.23 to match crush-python (already ^0.23). `cargo check -p crush-vm -p crush-python` now resolves clean; `cargo check --workspace` (default features) unaffected either way, confirmed green before and after.
+- [ ] **issue** — pyo3 0.23.5 doesn't support this box's Python 3.14 at all: building crush-vm's `python` feature for real (`cargo test -p crush-vm --features python`) fails at pyo3's own build-script version gate ("configured Python interpreter version (3.14) is newer than PyO3's maximum supported version (3.13)"). Only surfaced once the version-conflict above was fixed — was masked before because dependency resolution failed first. `python.rs` (CRUSHVM-PYO3 — the chroma-VM↔crush bridge via `run_blob`, the seam Vega's cross-box chroma work depends on) doesn't use pyo3's `abi3` feature, so the usual `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` escape hatch isn't a clean fit without further changes to that module. Not fixed here — touches actively-developed bridge code on the [zorro] side, needs its owner's call (newer pyo3 release, abi3 adoption, or a pinned-down Python 3.13 toolchain for this feature specifically).  _(foreman, 2026-07-19)_

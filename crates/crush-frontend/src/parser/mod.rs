@@ -168,7 +168,7 @@ impl Parser {
             Token::EOF(loc) => (loc.line, loc.col),
             Token::Comment(_, loc) => (loc.line, loc.col),
             Token::AtIdent(_, loc) => (loc.line, loc.col),
-            Token::LangBody(_, loc) => (loc.line, loc.col),
+            Token::LangBody(_, loc, _) => (loc.line, loc.col),
         }
     }
 
@@ -183,8 +183,8 @@ impl Parser {
             self.errors.push(ParseError::Expected {
                 line,
                 col,
-                expected: format!("{:?}", expected),
-                found: format!("{:?}", actual),
+                expected: expected.describe(),
+                found: actual.describe(),
             });
             Err(())
         }
@@ -279,7 +279,7 @@ impl Parser {
             if let Token::AtIdent(id, _) = self.peek().clone() {
                 // Skip if followed by LangBody — that's a polyglot block, handled below
                 let next_is_lang_body =
-                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _)));
+                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _)));
                 if !next_is_lang_body {
                     match id.as_str() {
                         "module" => {
@@ -544,7 +544,7 @@ impl Parser {
                     line,
                     col,
                     expected: "fn keyword".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -562,7 +562,7 @@ impl Parser {
                     line,
                     col,
                     expected: "function name".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -578,7 +578,7 @@ impl Parser {
                     line,
                     col,
                     expected: "(".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -596,7 +596,7 @@ impl Parser {
                     line,
                     col,
                     expected: ")".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -620,7 +620,7 @@ impl Parser {
                     line,
                     col,
                     expected: "{".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -640,7 +640,7 @@ impl Parser {
                     line,
                     col,
                     expected: "}".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -780,7 +780,7 @@ impl Parser {
             Token::Import(_) | Token::Use(_) => self.parse_import_statement(),
             Token::Export(_) => self.parse_export_statement(),
             Token::AtIdent(_, _)
-                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _))) =>
+                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _))) =>
             {
                 self.parse_lang_block()
             }
@@ -804,7 +804,7 @@ impl Parser {
                     line,
                     col,
                     expected: "variable name".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -906,7 +906,7 @@ impl Parser {
                     line,
                     col,
                     expected: "variable name".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -1008,7 +1008,7 @@ impl Parser {
                     line,
                     col,
                     expected: "struct name".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -1068,7 +1068,7 @@ impl Parser {
                     line,
                     col,
                     expected: "name to export".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -1267,7 +1267,7 @@ impl Parser {
                             line,
                             col,
                             expected: "field name".to_string(),
-                            found: format!("{:?}", self.peek()),
+                            found: self.peek().describe(),
                         });
                         return Err(());
                     }
@@ -1405,7 +1405,7 @@ impl Parser {
                             line,
                             col,
                             expected: "struct name after `new`".to_string(),
-                            found: format!("{:?}", self.peek()),
+                            found: self.peek().describe(),
                         });
                         return Err(());
                     }
@@ -1541,7 +1541,7 @@ impl Parser {
                             line,
                             col,
                             expected: "function name".to_string(),
-                            found: format!("{:?}", self.peek()),
+                            found: self.peek().describe(),
                         });
                         return Err(());
                     }
@@ -1562,7 +1562,7 @@ impl Parser {
                 self.errors.push(ParseError::UnexpectedToken {
                     line,
                     col,
-                    msg: format!("Unexpected token in expression: {:?}", self.peek()),
+                    msg: format!("unexpected token in expression: {}", self.peek()),
                 });
                 Err(())
             }
@@ -1616,7 +1616,7 @@ impl Parser {
                         line,
                         col,
                         expected: "property name".to_string(),
-                        found: format!("{:?}", self.peek()),
+                        found: self.peek().describe(),
                     });
                     return Err(());
                 }
@@ -1667,7 +1667,7 @@ impl Parser {
                         line,
                         col,
                         expected: "parameter name".to_string(),
-                        found: format!("{:?}", self.peek()),
+                        found: self.peek().describe(),
                     });
                     return Err(());
                 }
@@ -1735,7 +1735,7 @@ impl Parser {
                 self.errors.push(ParseError::Expected {
                     line, col,
                     expected: "=> or ->".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -1852,7 +1852,7 @@ impl Parser {
                     line,
                     col,
                     expected: "pattern".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 Err(())
             }
@@ -1889,7 +1889,7 @@ impl Parser {
                         line,
                         col,
                         expected: "identifier after 'use'".to_string(),
-                        found: format!("{:?}", self.peek()),
+                        found: self.peek().describe(),
                     });
                     return Err(());
                 }
@@ -1928,7 +1928,7 @@ impl Parser {
                     line,
                     col,
                     expected: "module path".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -1962,7 +1962,7 @@ impl Parser {
                         line,
                         col,
                         expected: "alias name".to_string(),
-                        found: format!("{:?}", self.peek()),
+                        found: self.peek().describe(),
                     });
                     return Err(());
                 }
@@ -2010,7 +2010,7 @@ impl Parser {
                     line,
                     col,
                     expected: "server URL string".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -2068,7 +2068,7 @@ impl Parser {
                     line,
                     col,
                     expected: "capability path string".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -2119,11 +2119,12 @@ impl Parser {
     /// token using string-aware brace counting, so the parser just stitches
     /// the language name and body together into a `Statement::LangBlock`.
     fn parse_lang_block(&mut self) -> Result<Statement, ()> {
-        let lang = match self.peek() {
-            Token::AtIdent(id, _) => {
+        let (lang, line) = match self.peek() {
+            Token::AtIdent(id, loc) => {
                 let id = id.clone();
+                let line = loc.line;
                 self.advance();
-                id
+                (id, line)
             }
             _ => {
                 let (line, col) = self.get_location(self.peek());
@@ -2131,17 +2132,18 @@ impl Parser {
                     line,
                     col,
                     expected: "@<language>".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
         };
 
-        let code = match self.peek() {
-            Token::LangBody(body, _) => {
+        let (code, deps) = match self.peek() {
+            Token::LangBody(body, _, deps) => {
                 let body = body.clone();
+                let deps = deps.clone();
                 self.advance();
-                body
+                (body, deps)
             }
             _ => {
                 let (line, col) = self.get_location(self.peek());
@@ -2149,18 +2151,26 @@ impl Parser {
                     line,
                     col,
                     expected: "polyglot block body".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
         };
 
+        let mut meta = HashMap::new();
+        // CRUSH-18: the `.crush`-source line of the `@lang { ... }` block
+        // itself, threaded through to EXEC_LANG's compiled spec so a guest
+        // runtime error can be tied back to which polyglot block produced
+        // it (not the guest's own internal line numbers — a separate,
+        // unmapped coordinate space; see VmError::LangRuntimeError).
+        meta.insert("line".to_string(), serde_json::json!(line));
         Ok(Statement::LangBlock {
             lang,
             code,
             variables: Vec::new(),
+            deps,
             imports: Vec::new(),
-            meta: HashMap::new(),
+            meta,
         })
     }
 
@@ -2177,7 +2187,7 @@ impl Parser {
                     line,
                     col,
                     expected: "language identifier".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -2195,7 +2205,7 @@ impl Parser {
                     line,
                     col,
                     expected: "module path string".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -2269,7 +2279,7 @@ impl Parser {
                     line,
                     col,
                     expected: "URI string".to_string(),
-                    found: format!("{:?}", self.peek()),
+                    found: self.peek().describe(),
                 });
                 return Err(());
             }
@@ -2322,7 +2332,7 @@ impl Parser {
                 line,
                 col,
                 expected: "{ after @module".to_string(),
-                found: format!("{:?}", self.peek()),
+                found: self.peek().describe(),
             });
             return Err(());
         }

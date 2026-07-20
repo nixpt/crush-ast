@@ -510,3 +510,57 @@ Rejected alternatives:
 Outcome:
 Quotas.max_wall_time_ms (default 30s) enforced via scheduler::run_with_wall_clock_limit, shared by both scheduler.rs and portable_vm.rs's EXEC_LANG handlers (crush-diff confirms no divergence). Spawns the child into its own process group (Command::process_group(0)) and kills the WHOLE GROUP on timeout (libc::kill(-pgid, SIGKILL)), not just the tracked child PID — std has no process-group-kill primitive of its own. Stdout/stderr are drained on dedicated reader threads from the moment of spawn, before any polling begins.
 
+
+## 2026-07-16T00:00:00-05:00 — [TACTICAL] [RESOLVED] crates-publish-sync's 10-min cron was completely stalled 24+ hours on two manifest bugs
+
+Reason:
+Captain asked to check on the workspace's `crates-publish-sync` systemd timer (setup to publish all
+39 workspace members over time, respecting crates.io's rate limits). Live investigation (journalctl
++ the tool's own log + reading `crates-publish-sync`'s topo-sort source directly) found the cron had
+made zero progress for 24+ hours: it walks a strict topological "first not-yet-published crate"
+order with no ability to skip a permanently-broken one and try the next in line, so it just retried
+the same blocked crate every 10-minute tick indefinitely.
+
+Two distinct, unrelated root causes, both real crates.io publish-verification failures (not local
+build problems — `cargo check` was fine either way):
+1. `crush-ptx`/`crush-aotc` (both newly added to the workspace this session, PTX-REBASE-1) have
+   path-only deps (`casm`, `crush-errors`, `crush-frontend`) with no `version =`. crates.io's publish
+   verification requires a version on every dependency even though a bare path resolves fine
+   locally. Fixed: added `version = "0.3.0"` alongside each path (both already published at 0.3.0).
+2. `crush-lang-bash`/`js`/`python`/`rust`/`zsh` pin dev-dependencies (`crush-frontend`/
+   `crush-lang-sdk`/`crush-vm`/`crush-lang-python`) to exact versions. crates.io still resolves
+   dev-dep versions during publish verification even though bare path-only dev-deps don't block
+   publish (the tool's own already-established doctrine, from an earlier crush-lang-sdk↔
+   crush-lang-python cycle fix) — and `crush-lang-sdk` itself isn't live at 0.3.0 on crates.io yet
+   (blocked on ITS OWN dependency, `crush-lang-python`, not yet published — a real, correct
+   topological ordering, not a bug), so every crate in the family failed identically the moment the
+   walk reached it. Fixed: dropped the explicit version, kept the bare path.
+
+Verified each of the 7 fixed crates individually with a real `cargo publish --dry-run` (exercises
+crates.io's actual manifest verification without uploading) plus a full `cargo check --workspace`.
+Did NOT force-publish anything — crates.io publishes are irreversible, and forcing one bypasses the
+exact rate-limit safety the existing tool exists to provide. The cron continues on its own schedule.
+
+State at fix time: 17 of 38 publishable workspace members (39 members minus `xtask`, `publish =
+false`) confirmed live on crates.io matching local version. ~20 more still queued behind natural
+topological order + crates.io's own rate limit (5 new-crate publishes/10min, 30 updates/min) — this
+will take real wall-clock time (likely days for a full backlog this size), by design, not a bug.
+
+Artifacts: crates/crush-ptx/Cargo.toml, crates/crush-aotc/Cargo.toml, crates/crush-lang-bash/Cargo.toml, crates/crush-lang-js/Cargo.toml, crates/crush-lang-python/Cargo.toml, crates/crush-lang-rust/Cargo.toml, crates/crush-lang-zsh/Cargo.toml
+
+
+## 2026-07-19T01:01:18-05:00 — [ADOPTED] [ARCHITECTURAL] CRUSH-19: CAP_CALL wall-clock timeout via cooperative HostCap::call_with_deadline
+
+Reason:
+Value's Rc<RefCell<...>> isn't Send, so an arbitrary HostCap::call() can't be moved to a watchdog thread and preempted on timeout (Option 1 from the ticket, ruled out as too invasive for this pass). Chose Option 2: added HostCap::call_with_deadline(args, deadline_ms) -> Result<Option<Value>, HostCapError> with a default that delegates straight to call() (zero-touch for the 60+ existing HostCap impls in the workspace). A HostCap that can legitimately block (network, cold bucket provisioning per CRUSH-20) overrides it and self-enforces the deadline, returning HostCapError::Timeout, which both scheduler.rs and portable_vm.rs dispatch_cap map to VmError::CapTimeout. Regression test scheduler.rs::wall_clock_limit_tests::cap_call_returns_a_named_timeout_error_instead_of_hanging constructs a HostCap that genuinely blocks past its deadline and asserts a prompt CapTimeout rather than a hang.
+
+Artifacts: crates/crush-vm/src/host.rs, crates/crush-vm/src/scheduler.rs, crates/crush-vm/src/portable_vm.rs
+
+
+## 2026-07-19T19:20:26-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] CRUSH-20: crush-vm owns the buckets dependency directly (not crush-lang-sdk)
+
+Reason:
+The design doc leaned toward crush-lang-sdk owning buckets provisioning (keeps crush-vm dep-light; exo-light already mediates capsule provisioning separately via exo-hydra, and the two provisioning paths shouldn't compete). Decided the other way: crush-vm takes buckets as a direct optional dependency (feature sandboxed-polyglot = ["dep:buckets"]), because EXEC_LANG's actual spawn point (scheduler.rs's run_exec_lang, portable_vm.rs's mirror) lives in crush-vm itself, and crush-lang-sdk depends on crush-vm (not the reverse) — routing provisioning through crush-lang-sdk would mean crush-vm calling upward into its own dependent, an inversion. Path dep is relative (../../../buckets, matching crush-pkg's existing convention) not the absolute path CRUSHAST-BUCKETSPIKE-1/2's spike used (deliberately throwaway-only).
+
+Artifacts: crates/crush-vm/Cargo.toml,crates/crush-vm/src/bucket_exec.rs
+

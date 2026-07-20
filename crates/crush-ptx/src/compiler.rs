@@ -22,6 +22,18 @@ impl PtxType {
     }
 }
 
+/// PTX bitwise/shl ops are typed by operand *width* only (`.b16/.b32/.b64`), not by
+/// signedness — `and.s64` is not a legal instruction, `and.b64` is.
+fn bitwise_ty(t: &PtxType) -> Result<&'static str, String> {
+    Ok(match t {
+        PtxType::B64 | PtxType::U64 | PtxType::S64 | PtxType::F64 => ".b64",
+        PtxType::B32 | PtxType::U32 | PtxType::S32 | PtxType::F32 => ".b32",
+        PtxType::B16 | PtxType::U16 | PtxType::S16 | PtxType::F16 => ".b16",
+        PtxType::B8 | PtxType::U8 | PtxType::S8 => ".b8",
+        PtxType::Pred => return Err("bitwise op not valid on a predicate".into()),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct Reg {
     pub id: usize,
@@ -135,9 +147,24 @@ impl PtxCompiler {
                 "store" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let val = self.stack.pop().ok_or("Stack underflow on store")?;
-                    let r = self.next_reg(val.ty.clone());
+                    // Locals are MUTABLE registers: a repeated `store` to the same name must
+                    // reuse the SAME virtual register, not mint a fresh one. The compiler emits
+                    // each instruction once, so a loop body's `load name` is emitted before its
+                    // `store name`; if the store minted a new reg, the value updated inside the
+                    // loop would land in a register the body never reads back across the branch
+                    // — the accumulator/loop-counter would never carry (ptxas then peels one
+                    // iteration → a wrong partial result). PTX permits multiple defs of a virtual
+                    // register (ptxas does the SSA/phi conversion), so reusing it is correct and
+                    // is what gives a named local its mutable-variable / loop-carried semantics.
+                    let r = match self.locals.get(name) {
+                        Some(existing) if existing.ty == val.ty => existing.clone(),
+                        _ => {
+                            let nr = self.next_reg(val.ty.clone());
+                            self.locals.insert(name.to_string(), nr.clone());
+                            nr
+                        }
+                    };
                     instrs.push(format!("\tmov{} {}, {};", r.ty.to_str(), r.name(), val.name()));
-                    self.locals.insert(name.to_string(), r);
                 }
                 "ptx_block_idx_x" => {
                     let r = self.next_reg(PtxType::U32);
@@ -154,7 +181,7 @@ impl PtxCompiler {
                     instrs.push(format!("\tmov.u32 {}, %laneid;", r.name()));
                     self.stack.push(r);
                 }
-                "add" | "sub" | "mul" | "div" | "and" | "or" | "xor" | "shl" | "shr" => {
+                "add" | "sub" | "div" => {
                     let b = self.stack.pop().ok_or("Stack underflow on arith")?;
                     let a = self.stack.pop().ok_or("Stack underflow on arith")?;
                     if a.ty != b.ty {
@@ -164,13 +191,60 @@ impl PtxCompiler {
                     let op_str = instr.op.as_str();
                     // PTX ISA requires a rounding modifier on floating-point `div` (ptxas:
                     // "Rounding modifier required for instruction 'div'") — integer div and
-                    // every other op in this bundle (add/sub/mul/bitwise/shift) don't take one.
+                    // add/sub don't take one.
                     let rnd = if op_str == "div" && matches!(a.ty, PtxType::F32 | PtxType::F64) {
                         ".rn"
                     } else {
                         ""
                     };
                     instrs.push(format!("\t{}{}{} {}, {}, {};", op_str, rnd, r.ty.to_str(), r.name(), a.name(), b.name()));
+                    self.stack.push(r);
+                }
+                "mul" => {
+                    let b = self.stack.pop().ok_or("Stack underflow on mul")?;
+                    let a = self.stack.pop().ok_or("Stack underflow on mul")?;
+                    if a.ty != b.ty {
+                        return Err(format!("Type mismatch: {:?} != {:?}", a.ty, b.ty));
+                    }
+                    let r = self.next_reg(a.ty.clone());
+                    // Integer `mul` needs a half-selector (.lo keeps the low N bits) — ptxas rejects
+                    // a bare `mul.s64`. Float `mul` needs a rounding modifier (.rn).
+                    let modf = if matches!(a.ty, PtxType::F32 | PtxType::F64 | PtxType::F16) {
+                        ".rn"
+                    } else {
+                        ".lo"
+                    };
+                    instrs.push(format!("\tmul{}{} {}, {}, {};", modf, r.ty.to_str(), r.name(), a.name(), b.name()));
+                    self.stack.push(r);
+                }
+                "and" | "or" | "xor" => {
+                    let b = self.stack.pop().ok_or("Stack underflow on bitwise")?;
+                    let a = self.stack.pop().ok_or("Stack underflow on bitwise")?;
+                    if a.ty != b.ty {
+                        return Err(format!("Type mismatch: {:?} != {:?}", a.ty, b.ty));
+                    }
+                    let r = self.next_reg(a.ty.clone());
+                    // Bitwise ops are typed by *width* only in PTX (.b16/.b32/.b64), never .s*/.u*.
+                    let bt = bitwise_ty(&a.ty)?;
+                    instrs.push(format!("\t{}{} {}, {}, {};", instr.op.as_str(), bt, r.name(), a.name(), b.name()));
+                    self.stack.push(r);
+                }
+                "shl" | "shr" => {
+                    let b = self.stack.pop().ok_or("Stack underflow on shift")?;
+                    let a = self.stack.pop().ok_or("Stack underflow on shift")?;
+                    // The PTX shift amount must be a 32-bit value; a 64-bit shift-count register is
+                    // rejected ("Arguments mismatch for instruction 'shr'"). Narrow it if needed.
+                    let cnt = if matches!(b.ty, PtxType::U32 | PtxType::S32 | PtxType::B32) {
+                        b.name()
+                    } else {
+                        let t = self.next_reg(PtxType::U32);
+                        instrs.push(format!("\tcvt.u32{} {}, {};", b.ty.to_str(), t.name(), b.name()));
+                        t.name()
+                    };
+                    let r = self.next_reg(a.ty.clone());
+                    // shl is width-typed (.b*); shr keeps signedness (.s* = arithmetic).
+                    let sty = if instr.op == "shl" { bitwise_ty(&a.ty)?.to_string() } else { a.ty.to_str().to_string() };
+                    instrs.push(format!("\t{}{} {}, {}, {};", instr.op.as_str(), sty, r.name(), a.name(), cnt));
                     self.stack.push(r);
                 }
                 "fma" => {
@@ -212,6 +286,11 @@ impl PtxCompiler {
                     };
                     let rnd = if is_float(&a.ty) && !is_float(&r.ty) {
                         ".rni"
+                    } else if !is_float(&a.ty) && is_float(&r.ty) {
+                        // int -> float: ptxas *requires* a rounding modifier here too, e.g.
+                        // `cvt.f32.s64` is rejected ("Rounding modifier required for instruction
+                        // 'cvt'"; verified on ptxas 13.3). Round-to-nearest-even.
+                        ".rn"
                     } else if is_float(&a.ty) && is_float(&r.ty) && float_width(&r.ty) < float_width(&a.ty) {
                         ".rn"
                     } else {
@@ -267,18 +346,41 @@ impl PtxCompiler {
                     instrs.push("\tret;".to_string());
                 }
                 "ptx_ld_global" => {
-                    // Custom intrinsic for testing PTX: pop ptr, push value
+                    // Custom intrinsic: pop ptr, push loaded value.
                     let ty_str = instr.args.get("type").and_then(|v| v.as_str()).unwrap_or("f32");
-                    let ty = match ty_str {
-                        "f32" => PtxType::F32,
-                        "f64" => PtxType::F64,
-                        "u32" => PtxType::U32,
-                        _ => return Err(format!("Unsupported ld.global type: {}", ty_str)),
-                    };
                     let ptr = self.stack.pop().ok_or("Stack underflow on ld.global")?;
-                    let r = self.next_reg(ty.clone());
-                    instrs.push(format!("\tld.global{} {}, [{}];", ty.to_str(), r.name(), ptr.name()));
-                    self.stack.push(r);
+                    match ty_str {
+                        // f16: ptxas rejects `ld.global.f16` into an .f16 register ("Unexpected
+                        // instruction types specified for 'ld'"; verified on ptxas 13.3). Load the
+                        // raw 16 bits into a .b16 register then widen to f32 — the only way Q6_K's
+                        // super-block scale (a single f16) is consumed. Result on the stack is f32.
+                        "f16" => {
+                            let raw = self.next_reg(PtxType::B16);
+                            instrs.push(format!("\tld.global.b16 {}, [{}];", raw.name(), ptr.name()));
+                            let f = self.next_reg(PtxType::F32);
+                            instrs.push(format!("\tcvt.f32.f16 {}, {};", f.name(), raw.name()));
+                            self.stack.push(f);
+                        }
+                        // u8: PTX has no <=16-bit general-purpose register usable in the ALU, so a
+                        // sub-word load zero-extends straight into a 32-bit register. (Q6_K packs its
+                        // quants + int8 scales as bytes; the caller sign-extends the scale itself.)
+                        "u8" => {
+                            let r = self.next_reg(PtxType::U32);
+                            instrs.push(format!("\tld.global.u8 {}, [{}];", r.name(), ptr.name()));
+                            self.stack.push(r);
+                        }
+                        _ => {
+                            let ty = match ty_str {
+                                "f32" => PtxType::F32,
+                                "f64" => PtxType::F64,
+                                "u32" => PtxType::U32,
+                                _ => return Err(format!("Unsupported ld.global type: {}", ty_str)),
+                            };
+                            let r = self.next_reg(ty.clone());
+                            instrs.push(format!("\tld.global{} {}, [{}];", ty.to_str(), r.name(), ptr.name()));
+                            self.stack.push(r);
+                        }
+                    }
                 }
                 "ptx_st_global" => {
                     // Custom intrinsic: pop value, pop ptr, store

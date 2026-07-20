@@ -124,7 +124,104 @@ pub enum Token {
     EOF(SourceLocation),
     Comment(String, SourceLocation),
     AtIdent(String, SourceLocation),  // @mcp, @cap, @lang, etc
-    LangBody(String, SourceLocation), // Raw body of @python { ... }, @javascript { ... }, etc
+    /// Raw body of `@python { ... }`, `@javascript { ... }`, etc, plus the
+    /// optional `@lang[dep1, dep2]` dependency list (CRUSH-20) — empty if
+    /// the block had no bracketed annotation.
+    LangBody(String, SourceLocation, Vec<String>),
+}
+
+impl Token {
+    /// Human-readable description for error messages — e.g. `` `=` `` for
+    /// `Assign`, `` `foo` `` for `Ident("foo", _)`, `"end of input"` for
+    /// `EOF`. Every parser error site should use this (or `Display`, which
+    /// forwards here) instead of `{:?}` — the derived `Debug` impl embeds
+    /// each variant's `SourceLocation`, which leaks internal struct syntax
+    /// (e.g. `Assign(SourceLocation { line: 3, col: 11 })`) into
+    /// user-facing diagnostics and duplicates the location the diagnostic
+    /// renderer already shows in its `file:line:col` header (CRUSH-17).
+    pub fn describe(&self) -> String {
+        match self {
+            Token::Int(n, _) => format!("`{n}`"),
+            Token::Float(n, _) => format!("`{n}`"),
+            Token::String(s, _) => format!("string {s:?}"),
+            Token::Bool(b, _) => format!("`{b}`"),
+            Token::Null(_) => "`null`".to_string(),
+
+            Token::Let(_) => "`let`".to_string(),
+            Token::Mut(_) => "`mut`".to_string(),
+            Token::Fn(_) => "`fn`".to_string(),
+            Token::If(_) => "`if`".to_string(),
+            Token::Else(_) => "`else`".to_string(),
+            Token::While(_) => "`while`".to_string(),
+            Token::For(_) => "`for`".to_string(),
+            Token::In(_) => "`in`".to_string(),
+            Token::Return(_) => "`return`".to_string(),
+            Token::Try(_) => "`try`".to_string(),
+            Token::Catch(_) => "`catch`".to_string(),
+            Token::Throw(_) => "`throw`".to_string(),
+            Token::Break(_) => "`break`".to_string(),
+            Token::Continue(_) => "`continue`".to_string(),
+            Token::Struct(_) => "`struct`".to_string(),
+            Token::Use(_) => "`use`".to_string(),
+            Token::Capability(_) => "`capability`".to_string(),
+            Token::Async(_) => "`async`".to_string(),
+            Token::Await(_) => "`await`".to_string(),
+            Token::Spawn(_) => "`spawn`".to_string(),
+            Token::Yield(_) => "`yield`".to_string(),
+            Token::New(_) => "`new`".to_string(),
+            Token::Export(_) => "`export`".to_string(),
+            Token::Lang(_) => "`lang`".to_string(),
+            Token::Import(_) => "`import`".to_string(),
+            Token::Match(_) => "`match`".to_string(),
+
+            Token::Ident(name, _) => format!("`{name}`"),
+
+            Token::Plus(_) => "`+`".to_string(),
+            Token::Minus(_) => "`-`".to_string(),
+            Token::Star(_) => "`*`".to_string(),
+            Token::Slash(_) => "`/`".to_string(),
+            Token::Percent(_) => "`%`".to_string(),
+            Token::Eq(_) => "`==`".to_string(),
+            Token::Neq(_) => "`!=`".to_string(),
+            Token::Lt(_) => "`<`".to_string(),
+            Token::Gt(_) => "`>`".to_string(),
+            Token::Lte(_) => "`<=`".to_string(),
+            Token::Gte(_) => "`>=`".to_string(),
+            Token::And(_) => "`&&`".to_string(),
+            Token::Or(_) => "`||`".to_string(),
+            Token::Not(_) => "`!`".to_string(),
+            Token::Assign(_) => "`=`".to_string(),
+            Token::Pipe(_) => "`|>`".to_string(),
+            Token::Arrow(_) => "`->`".to_string(),
+            Token::FatArrow(_) => "`=>`".to_string(),
+            Token::DoubleColon(_) => "`::`".to_string(),
+
+            Token::LParen(_) => "`(`".to_string(),
+            Token::RParen(_) => "`)`".to_string(),
+            Token::LBrace(_) => "`{`".to_string(),
+            Token::RBrace(_) => "`}`".to_string(),
+            Token::LBracket(_) => "`[`".to_string(),
+            Token::RBracket(_) => "`]`".to_string(),
+            Token::Comma(_) => "`,`".to_string(),
+            Token::Colon(_) => "`:`".to_string(),
+            Token::Semicolon(_) => "`;`".to_string(),
+            Token::Dot(_) => "`.`".to_string(),
+            Token::DotDot(_) => "`..`".to_string(),
+            Token::Question(_) => "`?`".to_string(),
+
+            Token::Newline(_) => "newline".to_string(),
+            Token::EOF(_) => "end of input".to_string(),
+            Token::Comment(_, _) => "comment".to_string(),
+            Token::AtIdent(name, _) => format!("`@{name}`"),
+            Token::LangBody(_, _, _) => "language block body".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.describe())
+    }
 }
 
 /// Lexer for Crush language
@@ -422,6 +519,36 @@ impl Lexer {
             }
         }
 
+        // Optional `[dep1, dep2]` dependency-annotation list (CRUSH-20):
+        // `@python[numpy, scipy] { ... }`. Bare-runtime `buckets` package
+        // specs, NOT PyPI/npm packages — see `Statement::LangBlock::deps`'s
+        // doc comment for why.
+        let deps = if self.peek() == Some('[') {
+            match self.read_dep_list() {
+                Some(deps) => deps,
+                None => {
+                    // Malformed bracket list — bail to plain AtIdent and let
+                    // the normal token stream surface a parse error on the
+                    // stray `[`, same as any other unexpected-token case
+                    // this function already defers.
+                    self.pos = saved.0;
+                    self.line = saved.1;
+                    self.col = saved.2;
+                    return Ok(Token::AtIdent(id, at_location));
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        while let Some(ch) = self.peek() {
+            if ch.is_whitespace() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
         if self.peek() != Some('{') {
             self.pos = saved.0;
             self.line = saved.1;
@@ -435,8 +562,63 @@ impl Lexer {
         };
         self.advance(); // consume opening '{'
         let body = self.read_lang_body(brace_loc)?;
-        self.pending = Some(Token::LangBody(body, brace_loc));
+        self.pending = Some(Token::LangBody(body, brace_loc, deps));
         Ok(Token::AtIdent(id, at_location))
+    }
+
+    /// Read a `[dep1, dep2, ...]` bracketed dependency list starting at the
+    /// opening `[` (not yet consumed). Returns `None` on any malformed list
+    /// (no closing `]`, empty entry from a stray comma, unexpected char) —
+    /// caller is responsible for restoring its own saved checkpoint in that
+    /// case, same convention as the rest of this speculative-lookahead code.
+    fn read_dep_list(&mut self) -> Option<Vec<String>> {
+        self.advance(); // consume '['
+        let mut deps = Vec::new();
+        loop {
+            while let Some(ch) = self.peek() {
+                if ch.is_whitespace() {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            match self.peek() {
+                Some(']') => {
+                    self.advance();
+                    return Some(deps);
+                }
+                Some(ch) if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' => {
+                    let mut name = String::new();
+                    while let Some(ch) = self.peek() {
+                        if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
+                            name.push(ch);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    deps.push(name);
+                    while let Some(ch) = self.peek() {
+                        if ch.is_whitespace() {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    match self.peek() {
+                        Some(',') => {
+                            self.advance();
+                        }
+                        Some(']') => {
+                            self.advance();
+                            return Some(deps);
+                        }
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
     }
 
     /// Read the raw body of a polyglot block starting at depth 1 (caller

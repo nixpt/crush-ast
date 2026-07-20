@@ -225,6 +225,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                 code: "// export — not lowered".to_string(),
                 variables: vec![],
                 imports: vec![],
+                deps: vec![],
                 meta: meta(&export.span, ctx),
             })),
         },
@@ -267,6 +268,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                 code: "// export default — not lowered".to_string(),
                 variables: vec![],
                 imports: vec![],
+                deps: vec![],
                 meta: meta(&export_default.span, ctx),
             })),
         },
@@ -346,6 +348,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                 code: format!("// ts import equals: {}", mod_name),
                 variables: vec![],
                 imports: vec![],
+                deps: vec![],
                 meta: meta(&ts.span, ctx),
             }))
         }
@@ -362,6 +365,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
             code: format!("// ts namespace export: {}", ts.id.sym),
             variables: vec![],
             imports: vec![],
+                deps: vec![],
             meta: meta(&ts.span, ctx),
         })),
     }

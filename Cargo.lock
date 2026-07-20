@@ -1426,6 +1426,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "casm",
+ "crush-buckets",
  "crush-diagnostics",
  "crush-errors",
  "crush-ffi",
@@ -1434,6 +1435,7 @@ dependencies = [
  "libloading 0.9.0",
  "ort",
  "parking_lot",
+ "pyo3",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

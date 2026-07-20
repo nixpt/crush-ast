@@ -1036,6 +1036,7 @@ impl PortableVm {
                         .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
                 let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
                 let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let mut var_names: Vec<String> = Vec::with_capacity(var_count);
                 let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
@@ -1047,11 +1048,17 @@ impl PortableVm {
                     }
                 }
                 var_values.reverse();
+                let deps: Vec<String> = spec
+                    .get("deps")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
                 // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
                 // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
                 // named "javascript" with `-c`. An unknown language is a loud error, never a
-                // silent spawn attempt.
-                let (binary, exec_flag) = crate::scheduler::resolve_lang_binary(lang)
+                // silent spawn attempt. (Re-checked inside `run_exec_lang` too, cheaply — kept
+                // here so an unknown language fails before the capability gate, not after.)
+                crate::scheduler::resolve_lang_binary(lang)
                     .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
                 // CAPABILITY GATE — must match scheduler.rs exactly (crush-diff would catch drift).
                 // A @lang block spawns an interpreter with full host authority; require polyglot.<lang>.
@@ -1063,50 +1070,29 @@ impl PortableVm {
                         "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
                     )));
                 }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = (binary, exec_flag, code_str, &var_names, &var_values);
-                    return Err(VmError::UnknownCap(format!(
-                        "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
-                    )));
+                let env_vars: Vec<(String, String)> = var_names
+                    .iter()
+                    .zip(var_values.iter())
+                    .map(|(name, val)| (name.clone(), value_to_text(val)))
+                    .collect();
+                // SHARED with scheduler.rs's EXEC_LANG handler (crate::scheduler::run_exec_lang)
+                // — see that function's doc comment for the CRUSH-20 buckets-sandboxing wiring
+                // and the sentinel-scan bug this consolidation fixed in this backend.
+                let outcome = crate::scheduler::run_exec_lang(
+                    lang,
+                    code_str,
+                    &deps,
+                    &env_vars,
+                    crush_line,
+                    &gate,
+                    self.quotas.max_wall_time_ms,
+                )?;
+                self.out_len += outcome.visible.len();
+                if self.out_len > self.quotas.max_output {
+                    return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let mut cmd = std::process::Command::new(binary);
-                    cmd.arg(exec_flag).arg(code_str);
-                    for (name, val) in var_names.iter().zip(var_values.iter()) {
-                        cmd.env(name, value_to_text(val));
-                    }
-                    // Same wall-clock bound as scheduler.rs — see
-                    // `run_with_wall_clock_limit`'s doc comment for why this
-                    // covers EXEC_LANG specifically and not CAP_CALL generically.
-                    let output = match crate::scheduler::run_with_wall_clock_limit(
-                        cmd,
-                        self.quotas.max_wall_time_ms,
-                    )
-                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?
-                    {
-                        crate::scheduler::CommandOutcome::Output(output) => output,
-                        crate::scheduler::CommandOutcome::TimedOut => {
-                            return Err(VmError::CapTimeout {
-                                cap: gate,
-                                limit_ms: self.quotas.max_wall_time_ms,
-                            });
-                        }
-                    };
-                    if output.status.success() {
-                        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        self.out_len += s.len();
-                        if self.out_len > self.quotas.max_output {
-                            return Err(VmError::OutputQuota(self.quotas.max_output));
-                        }
-                        self.out_parts.push(s.clone());
-                        self.push(Value::Str(s));
-                    } else {
-                        let err = String::from_utf8_lossy(&output.stderr);
-                        return Err(VmError::UnknownCap(format!("exec_lang({lang}): {err}")));
-                    }
-                }
+                self.out_parts.push(outcome.visible);
+                self.push(outcome.result_value);
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
                 // Portable VM does not support async AI opcodes. Stub to Null.
@@ -1335,9 +1321,16 @@ impl PortableVm {
                     got: args.len(),
                 });
             }
-            return handler
-                .call(args)
-                .map_err(|msg| VmError::UnknownCap(format!("{cap}: {msg}")));
+            return match handler.call_with_deadline(args, self.quotas.max_wall_time_ms) {
+                Ok(v) => Ok(v),
+                Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
+                    cap: cap.to_string(),
+                    limit_ms: self.quotas.max_wall_time_ms,
+                }),
+                Err(crate::host::HostCapError::Message(msg)) => {
+                    Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+                }
+            };
         }
 
         Err(VmError::UnknownCap(cap.to_string()))
@@ -1608,6 +1601,40 @@ mod tests {
         let mut vm = PortableVm::new(program);
         let result = vm.run().unwrap();
         assert_eq!(result.output, "15\n");
+    }
+
+    #[test]
+    fn test_portable_vm_eq_cross_type_int_float() {
+        // CRUSHVM-EQ-1: portable_vm shares crate::vm::Value's PartialEq
+        // with the scheduler, so `2 == 2.0` must also be `true` here.
+        let source = r#"
+            .func main
+            PUSH 2
+            PUSH_F64 2.0
+            EQ
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "true\n");
+    }
+
+    #[test]
+    fn test_portable_vm_ne_cross_type_int_float() {
+        let source = r#"
+            .func main
+            PUSH 2
+            PUSH_F64 2.1
+            NE
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.output, "true\n");
     }
 
     #[test]
@@ -1940,5 +1967,42 @@ HALT"#;
         let result = vm.run().unwrap();
         assert_eq!(result.output, "abAB");
         assert!(result.halted);
+    }
+
+    // CRUSH-18 regression: before this fix, EVERY non-zero EXEC_LANG exit —
+    // a real guest exception, not just a missing capability — was folded
+    // into `VmError::UnknownCap`, the same variant used for "the
+    // capability doesn't exist"/"the capability wasn't granted". A guest
+    // failure must surface as its own `VmError::LangRuntimeError`,
+    // carrying the `.crush`-source line of the `@lang { ... }` block
+    // (from the compiler's `crush_line` spec field).
+    #[test]
+    fn test_portable_exec_lang_guest_failure_maps_to_lang_runtime_error_not_unknown_cap() {
+        let spec = serde_json::json!({
+            "lang": "bash",
+            "code": "echo -n 'boom' >&2; exit 1",
+            "var_count": 0,
+            "crush_line": 7,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
+        let program = assemble(&src, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let mut caps = crate::HostCaps::new();
+        caps.grant_polyglot(&["bash"]);
+        vm.set_host_caps(caps);
+        match vm.run() {
+            Err(VmError::LangRuntimeError { lang, message, crush_line, .. }) => {
+                assert_eq!(lang, "bash");
+                assert!(
+                    message.contains("boom"),
+                    "message should carry the guest's stderr, got: {message}"
+                );
+                assert_eq!(crush_line, Some(7), "should surface the .crush-source line");
+            }
+            other => panic!("expected VmError::LangRuntimeError, got {other:?}"),
+        }
     }
 }
