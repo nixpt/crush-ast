@@ -13,6 +13,14 @@ working this backlog must follow.
 
 ## P0 — Build & Core Health ✅
 
+- [ ] **CRUSH-26**: `Build (release)` CI job fails workspace-wide on every
+  `main` push for 24+ hours (last 10 consecutive runs, since ≥2026-07-19T22:16)
+  — `ort-sys` can't find a native `onnxruntime` static lib on CI's clean
+  runners (`ort` is a default feature of `crush-vm` via `native-plugins`).
+  Local builds pass silently because a system `onnxruntime` happens to be
+  present here — that's why it went unnoticed. Not caused by any recent PR;
+  pre-existing. See ticket for fix options (likely: enable `ort`'s
+  `download-binaries` feature).
 - [x] `--all-features` build fixed (rustls dep:)
 - [x] `--no-default-features` build (crush-net needs cfg gates)
 - [x] Core crates published (casm, crush-cast, crush-errors, crush-vm, crush-frontend, crush-lang-sdk)
