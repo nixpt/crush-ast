@@ -2145,4 +2145,87 @@ mod tests {
             other => panic!("JIT should return Finished(Some(Ref)), got {:?}", other),
         }
     }
+
+    // ── Ordered comparison with non-numeric types (CRUSH-17 gap fix) ──────
+
+    #[test]
+    fn test_lt_null_and_int_should_error() {
+        // null < 1 → FastVM returns TypeMismatch error, JIT should too.
+        let prog = make_prog(vec![
+            (FastOp::PushNull, 0, 0),
+            (FastOp::PushInt, 1, 0),
+            (FastOp::Lt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        // Both should be errors — FastVM returns TypeMismatch, JIT returns
+        // ExecutionError(flag=1). We check for error-ness, not exact match.
+        assert!(expected.is_err(), "FastVM should return error for null < 1, got {:?}", expected);
+        assert!(actual.is_err(), "JIT should return error for null < 1, got {:?}", actual);
+    }
+
+    #[test]
+    fn test_lt_string_and_string_should_error() {
+        // "a" < "b" → FastVM returns TypeMismatch error, JIT should too.
+        let mut prog = make_prog(vec![
+            (FastOp::PushStr, 0, 0),
+            (FastOp::PushStr, 1, 0),
+            (FastOp::Lt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        prog.symbols.intern_string("a");
+        prog.symbols.intern_string("b");
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        assert!(expected.is_err(), "FastVM should return error for 'a' < 'b', got {:?}", expected);
+        assert!(actual.is_err(), "JIT should return error for 'a' < 'b', got {:?}", actual);
+    }
+
+    #[test]
+    fn test_lt_bool_and_bool_should_error() {
+        // true < false → FastVM returns TypeMismatch error, JIT should too.
+        let prog = make_prog(vec![
+            (FastOp::PushBool, 1, 0),
+            (FastOp::PushBool, 0, 0),
+            (FastOp::Lt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        assert!(expected.is_err(), "FastVM should return error for true < false, got {:?}", expected);
+        assert!(actual.is_err(), "JIT should return error for true < false, got {:?}", actual);
+    }
+
+    #[test]
+    fn test_lt_mixed_int_float_promotes() {
+        // 2 < 3.0 → should promote int to float, return true.
+        let a = f64::to_bits(3.0);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 2, 0),
+            (FastOp::PushFloat, a, 0),
+            (FastOp::Lt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        assert_eq!(expected, actual,
+            "2 < 3.0: JIT ({:?}) should match FastVM ({:?})", actual, expected);
+    }
+
+    #[test]
+    fn test_le_mixed_int_float_promotes() {
+        // 3 <= 3.0 → should promote int to float, return true.
+        let a = f64::to_bits(3.0);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 3, 0),
+            (FastOp::PushFloat, a, 0),
+            (FastOp::Le, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        assert_eq!(expected, actual,
+            "3 <= 3.0: JIT ({:?}) should match FastVM ({:?})", actual, expected);
+    }
 }

@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_CALL_DEPTH, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_CALL_DEPTH, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -784,10 +784,10 @@ fn emit_one(
 
         Eq => do_cmp(b, ctx, IntCC::Equal, FloatCC::Equal),
         Ne => do_cmp(b, ctx, IntCC::NotEqual, FloatCC::NotEqual),
-        Lt => do_cmp(b, ctx, IntCC::SignedLessThan, FloatCC::LessThan),
-        Le => do_cmp(b, ctx, IntCC::SignedLessThanOrEqual, FloatCC::LessThanOrEqual),
-        Gt => do_cmp(b, ctx, IntCC::SignedGreaterThan, FloatCC::GreaterThan),
-        Ge => do_cmp(b, ctx, IntCC::SignedGreaterThanOrEqual, FloatCC::GreaterThanOrEqual),
+        Lt => emit_helper_call(b, ctx, OP_CMP_ORDERED, 0, _ptr_ty, helper_sig),
+        Le => emit_helper_call(b, ctx, OP_CMP_ORDERED, 1, _ptr_ty, helper_sig),
+        Gt => emit_helper_call(b, ctx, OP_CMP_ORDERED, 2, _ptr_ty, helper_sig),
+        Ge => emit_helper_call(b, ctx, OP_CMP_ORDERED, 3, _ptr_ty, helper_sig),
 
         And => {
             let bv = pop(b, ctx);

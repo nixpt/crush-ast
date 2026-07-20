@@ -99,6 +99,7 @@ pub(crate) const OP_ENTER_TRY: i64 = 35;
 pub(crate) const OP_EXIT_TRY: i64 = 36;
 pub(crate) const OP_THROW: i64 = 37;
 pub(crate) const OP_ADD_STR: i64 = 38;
+pub(crate) const OP_CMP_ORDERED: i64 = 39;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -1103,6 +1104,53 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     .or_else(|| b_val.to_int().map(|i| i as f64))
                     .unwrap_or(0.0);
                 ctx.push(JitValue::float(af + bf));
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_CMP_ORDERED (39): ordered comparison (<, <=, >, >=) with type
+        // checking. Pops two values, compares using the comparator encoded
+        // in `arg` (0=LT, 1=LE, 2=GT, 3=GE). Rejects non-numeric types
+        // with error flag 1, matching FastVM's TypeMismatch behaviour.
+        // ════════════════════════════════════════════════════════════════════
+        OP_CMP_ORDERED => {
+            let b_val = ctx.pop().unwrap_or(JitValue::null());
+            let a_val = ctx.pop().unwrap_or(JitValue::null());
+
+            // Both ints: int comparison.
+            if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
+                let result = match arg {
+                    0 => ai < bi,   // LT
+                    1 => ai <= bi,  // LE
+                    2 => ai > bi,   // GT
+                    _ => ai >= bi,  // GE
+                };
+                ctx.push(JitValue::bool(result));
+                return;
+            }
+
+            // Both numeric (int or float): float comparison with promotion.
+            let a_numeric = a_val.to_int().is_some() || a_val.to_float().is_some();
+            let b_numeric = b_val.to_int().is_some() || b_val.to_float().is_some();
+
+            if a_numeric && b_numeric {
+                let af = a_val.to_float()
+                    .or_else(|| a_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let bf = b_val.to_float()
+                    .or_else(|| b_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let result = match arg {
+                    0 => af < bf,
+                    1 => af <= bf,
+                    2 => af > bf,
+                    _ => af >= bf,
+                };
+                ctx.push(JitValue::bool(result));
+            } else {
+                // Non-numeric: set error (matching FastVM's TypeMismatch).
+                ctx.error = 1;
+                ctx.push(JitValue::null());
             }
         }
 
