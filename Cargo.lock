@@ -1315,7 +1315,6 @@ dependencies = [
 name = "crush-lint"
 version = "0.3.0"
 dependencies = [
- "casm",
  "crush-diagnostics",
  "ort",
  "parking_lot",
