@@ -1064,8 +1064,6 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let b_val = ctx.pop().unwrap_or(JitValue::null());
             let a_val = ctx.pop().unwrap_or(JitValue::null());
 
-
-            // Check for string concatenation (either operand is a string ref).
             let a_is_str = a_val.to_ref().map_or(false, |idx| {
                 arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
             });

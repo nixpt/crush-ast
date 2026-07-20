@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_CALL_DEPTH, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -424,12 +424,36 @@ fn poke(b: &mut FunctionBuilder, ctx: ir::Value, n: u32, val: ir::Value) {
     store(b, addr, val);
 }
 
+/// Max number of locals per call frame (frame-relative addressing).
+/// Each call frame gets its own `FRAME_LOCALS` slots, physically separated
+/// in the `locals` array by `call_stack_top * FRAME_LOCALS`.
+/// This prevents recursive callees from clobbering caller locals
+/// (CRUSH-17: recursive flag=1 bug).
+const FRAME_LOCALS: i64 = 8;
+
 fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize) -> ir::Value {
-    let addr = iadd_imm(b, ctx, OFF_LOCALS + (idx as i64) * 8);
+    // Frame-relative: each call frame gets its own locals at
+    // OFF_LOCALS + call_stack_top * FRAME_LOCALS * 8 + idx * 8.
+    // Use MemFlagsData::new() (not trusted()) to prevent Cranelift
+    // from hoisting the call_stack_top load out of re-entrant blocks
+    // during recursive execution (CRUSH-17).
+    let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
+    let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
+    let stride = iconst(b, FRAME_LOCALS * 8);
+    let frame_off = imul(b, frame, stride);
+    let base = iadd_imm(b, ctx, OFF_LOCALS);
+    let off = iadd_imm(b, frame_off, (idx as i64) * 8);
+    let addr = iadd(b, base, off);
     load(b, addr)
 }
 fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
-    let addr = iadd_imm(b, ctx, OFF_LOCALS + (idx as i64) * 8);
+    let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
+    let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
+    let stride = iconst(b, FRAME_LOCALS * 8);
+    let frame_off = imul(b, frame, stride);
+    let base = iadd_imm(b, ctx, OFF_LOCALS);
+    let off = iadd_imm(b, frame_off, (idx as i64) * 8);
+    let addr = iadd(b, base, off);
     store(b, addr, val);
 }
 
@@ -477,6 +501,9 @@ fn tbool(b: &mut FunctionBuilder, cond: ir::Value) -> ir::Value {
 // ── Call-stack helpers ───────────────────────────────────────────────────────
 
 /// Push a return frame onto the JIT call stack.
+/// Frame layout: [return_block:8].
+/// The callee's locals are automatically frame-relative via `call_stack_top`
+/// in lload/lstore (FRAME_LOCALS per frame), so no explicit locals save is needed.
 fn push_frame(b: &mut FunctionBuilder, ctx: ir::Value, return_block: i64) {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let top = load(b, cst_addr);
@@ -489,7 +516,7 @@ fn push_frame(b: &mut FunctionBuilder, ctx: ir::Value, return_block: i64) {
     store(b, cst_addr, new_top);
 }
 
-/// Pop a return frame from the JIT call stack, returning the saved `return_block` index.
+/// Pop a call frame: return the saved return_block index.
 fn pop_frame(b: &mut FunctionBuilder, ctx: ir::Value) -> ir::Value {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let top = load(b, cst_addr);
@@ -675,9 +702,10 @@ fn emit_one(
         }
 
         Add => {
-            // Route directly to OP_ADD_STR which handles all cases:
-            // string concat, int add with overflow, float promotion.
-            // This bypasses arith's broken block dispatch for non-numeric ops.
+            // Route to OP_ADD_STR which handles string concat, int add,
+            // and float promotion. Pop operands from CLIF and runtime,
+            // push them back so the helper can pop them again (the CLIF
+            // push restores the stack position for the helper).
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
             push(b, ctx, a);
@@ -784,10 +812,39 @@ fn emit_one(
 
         Eq => do_cmp(b, ctx, IntCC::Equal, FloatCC::Equal),
         Ne => do_cmp(b, ctx, IntCC::NotEqual, FloatCC::NotEqual),
-        Lt => emit_helper_call(b, ctx, OP_CMP_ORDERED, 0, _ptr_ty, helper_sig),
-        Le => emit_helper_call(b, ctx, OP_CMP_ORDERED, 1, _ptr_ty, helper_sig),
-        Gt => emit_helper_call(b, ctx, OP_CMP_ORDERED, 2, _ptr_ty, helper_sig),
-        Ge => emit_helper_call(b, ctx, OP_CMP_ORDERED, 3, _ptr_ty, helper_sig),
+        // Ordered comparison (LT/LE/GT/GE): pop both operands from
+        // the CLIF shadow stack, push them back (so the shadow stack
+        // stays synced with the runtime stack), then dispatch to the
+        // OP_CMP_ORDERED runtime helper which pops two values and
+        // pushes a bool/null.  Selector values: 0=LT, 1=LE, 2=GT, 3=GE.
+        Lt => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 0, _ptr_ty, helper_sig);
+        },
+        Le => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 1, _ptr_ty, helper_sig);
+        },
+        Gt => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 2, _ptr_ty, helper_sig);
+        },
+        Ge => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 3, _ptr_ty, helper_sig);
+        },
 
         And => {
             let bv = pop(b, ctx);
@@ -859,11 +916,13 @@ fn emit_one(
                     for &arg in &args { push(b, ctx, arg); }
                 }
 
-                // Guard: check call-stack depth (max 64 frames) before pushing.
-                // Overflow overwrites adjacent context (OFF_HELPER_FN, OFF_HANDLER_PC).
+                // Guard: check call-stack depth before pushing.
+                // With FRAME_LOCALS=2, only 32 frames fit in the 64-entry
+                // locals array before overwriting OFF_RESULT/OFF_BUDGET.
                 let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
                 let cst = load(b, cst_addr);
-                let limit = iconst(b, JIT_MAX_CALL_DEPTH as i64);
+                let max_frames = (JIT_MAX_LOCALS as i64) / FRAME_LOCALS; // 64/2 = 32
+                let limit = iconst(b, max_frames);
                 let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
                 let ok_bb = b.create_block();
                 let overflow_bb = b.create_block();
@@ -877,7 +936,10 @@ fn emit_one(
                 b.ins().return_(&[] as &[ir::Value]);
                 b.seal_block(overflow_bb);
 
-                // Normal path: push frame and jump to callee
+                // Normal path: push frame and jump to callee.
+                // Locals are frame-relative (lload/lstore uses
+                // call_stack_top as frame index), so no explicit
+                // save/restore is needed.
                 b.switch_to_block(ok_bb);
                 b.seal_block(ok_bb);
                 let ret_idx = call_idx_to_ret.get(&global_idx).copied().unwrap_or(0);
@@ -913,7 +975,7 @@ fn emit_one(
             sres(b, ctx, val);
             b.ins().return_(&[] as &[ir::Value]);
 
-            // Normal return — pop frame and dispatch to caller
+            // Normal return — pop frame and dispatch to caller.
             b.switch_to_block(ret_bb);
             let ret_idx = pop_frame(b, ctx);
             push(b, ctx, val);

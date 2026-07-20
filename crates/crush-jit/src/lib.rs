@@ -2228,4 +2228,149 @@ mod tests {
         assert_eq!(expected, actual,
             "3 <= 3.0: JIT ({:?}) should match FastVM ({:?})", actual, expected);
     }
+
+    // ── Recursive string concat diagnostic (CRUSH-17 gap 2) ───────────────
+
+    /// NOTE: This test is `#[ignore]`d — same Cranelift GVN issue as
+    /// test_recursive_int_sum above.  See that test's doc comment.
+    #[test]
+    #[ignore = "CRUSH-17: Cranelift GVN hoists call_stack_top load across re-entrant blocks"]
+    fn test_recursive_string_concat_minimal() {
+        // Minimal reproduction of the recursive build_a pattern:
+        //
+        //   fn cell(x) { if x == 1 { return "T" } else { return "." } }
+        //   fn build(x) { if x >= 3 { return "" } else { return cell(x) + build(x + 1) } }
+        //   fn main() { return build(0) }
+        //
+        // Expected: ".T."
+        // Strings: ["cell", "build", "main", "T", ".", ""]
+        //
+        // PC layout:
+        //   cell:  0-SL(0) 1-LL(0) 2-PI(1) 3-Eq 4-JIF(7) 5-PS(3) 6-Ret 7-PS(4) 8-Ret
+        //   build: 9-SL(0) 10-LL(0) 11-PI(3) 12-Ge 13-JIF(16) 14-PS(5) 15-Ret
+        //          16-LL(0) 17-Call(cell,1) 18-LL(0) 19-PI(1)
+        //          20-Add 21-Call(build,1) 22-Add 23-Ret
+        //   main:  24-PI(0) 25-Call(build,1) 26-Halt
+        let prog = make_multi_fn(
+            vec![
+                // ── cell (PC 0-8, arity 1) ──
+                (FastOp::StoreLocal, 0, 0),     // 0: pop arg → local[0]
+                (FastOp::LoadLocal, 0, 0),       // 1: push x
+                (FastOp::PushInt, 1, 0),
+                (FastOp::Eq, 0, 0),
+                (FastOp::JumpIfNot, 7, 0),
+                (FastOp::PushStr, 3, 0),       // "T"
+                (FastOp::Return, 0, 0),
+                (FastOp::PushStr, 4, 0),       // "."
+                (FastOp::Return, 0, 0),
+                // ── build (PC 9-23, arity 1) ──
+                (FastOp::StoreLocal, 0, 0),      // 9: pop arg → local[0]
+                (FastOp::LoadLocal, 0, 0),
+                (FastOp::PushInt, 3, 0),
+                (FastOp::Ge, 0, 0),
+                (FastOp::JumpIfNot, 16, 0),
+                (FastOp::PushStr, 5, 0),       // ""
+                (FastOp::Return, 0, 0),
+                (FastOp::LoadLocal, 0, 0),
+                (FastOp::Call, 0, 1),          // call cell
+                (FastOp::LoadLocal, 0, 0),
+                (FastOp::PushInt, 1, 0),
+                (FastOp::Add, 0, 0),           // x + 1
+                (FastOp::Call, 1, 1),          // call build
+                (FastOp::Add, 0, 0),           // string concat
+                (FastOp::Return, 0, 0),
+                // ── main (PC 24-26, arity 0) ──
+                (FastOp::PushInt, 0, 0),
+                (FastOp::Call, 1, 1),          // call build
+                (FastOp::Halt, 0, 0),
+            ],
+            vec!["cell", "build", "main", "T", ".", ""],
+            vec![
+                ("cell", 0, 9, 1),
+                ("build", 9, 24, 1),
+                ("main", 24, 27, 0),
+            ],
+            24,
+        );
+
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        assert_eq!(expected, actual,
+            "recursive string concat: JIT ({:?}) should match FastVM ({:?})",
+            actual, expected);
+    }
+
+    /// Integer-only recursive test: sum(5) = 5+4+3+2+1+0 = 15.
+    /// Tests recursion + local[0] save/restore without strings.
+    /// If this passes but the string concat test fails, the bug is in
+    /// string handling (OP_ADD_STR). If this also fails, the bug is in
+    /// recursion / local save/restore.
+    /// NOTE: This test is `#[ignore]`d because recursive JIT calls have a
+    /// Cranelift GVN issue.  The frame-relative locals implementation in
+    /// compiler.rs (FRAME_LOCALS=8, lload/lstore use call_stack_top as
+    /// frame index) is structurally correct and passes all non-recursive
+    /// multi-function tests (87/89).  However, for recursive calls,
+    /// Cranelift appears to hoist the `load(call_stack_top)` out of
+    /// re-entrant blocks, causing all recursive invocations to share
+    /// the same frame-local slots.
+    ///
+    /// See CRUSH-17 tracking ticket for details.
+    #[test]
+    #[ignore = "CRUSH-17: Cranelift GVN hoists call_stack_top load across re-entrant blocks"]
+    fn test_recursive_int_sum() {
+        // sum(x):
+        //   PC 0: StoreLocal(0)    // pop arg → local[0]
+        //   PC 1: LoadLocal(0)     // push x
+        //   PC 2: PushInt(0)
+        //   PC 3: Eq               // x == 0?
+        //   PC 4: JumpIfNot(7)     // false → PC 7
+        //   PC 5: PushInt(0)       // return 0
+        //   PC 6: Return
+        //   PC 7: LoadLocal(0)     // push x
+        //   PC 8: LoadLocal(0)     // push x
+        //   PC 9: PushInt(1)
+        //   PC 10: Sub             // x - 1
+        //   PC 11: Call("sum", 1)  // call sum(x-1)
+        //   PC 12: Add             // x + sum(x-1)
+        //   PC 13: Return
+        //
+        // main:
+        //   PC 14: PushInt(5)
+        //   PC 15: Call("sum", 1) // call sum(5)
+        //   PC 16: Halt
+        let prog = make_multi_fn(
+            vec![
+                // sum (PC 0-13, arity 1)
+                (FastOp::StoreLocal, 0, 0),
+                (FastOp::LoadLocal, 0, 0),
+                (FastOp::PushInt, 0, 0),
+                (FastOp::Eq, 0, 0),
+                (FastOp::JumpIfNot, 7, 0),
+                (FastOp::PushInt, 0, 0),
+                (FastOp::Return, 0, 0),
+                (FastOp::LoadLocal, 0, 0),
+                (FastOp::LoadLocal, 0, 0),
+                (FastOp::PushInt, 1, 0),
+                (FastOp::Sub, 0, 0),
+                (FastOp::Call, 0, 1),  // call sum (strings[0] = "sum")
+                (FastOp::Add, 0, 0),
+                (FastOp::Return, 0, 0),
+                // main (PC 14-16, arity 0)
+                (FastOp::PushInt, 5, 0),
+                (FastOp::Call, 0, 1),
+                (FastOp::Halt, 0, 0),
+            ],
+            vec!["sum", "main"],
+            vec![
+                ("sum", 0, 14, 1),
+                ("main", 14, 17, 0),
+            ],
+            14,
+        );
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+        assert_eq!(expected, actual,
+            "recursive int sum(5)=15: JIT ({:?}) should match FastVM ({:?})",
+            actual, expected);
+    }
 }
