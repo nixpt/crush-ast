@@ -1,24 +1,26 @@
-//! Parse the `emit_post_dispatch_lint` NDJSON stream emitted by
-//! `crush-pkg::emit_post_dispatch_lint` (MessageFormat::Json) into owned
-//! records surfacable from a long-running debugger session.
+//! Parse the NDJSON diagnostic stream emitted by `diag_line` /
+//! `diag_line_from` back into owned records.
 //!
-//! `crush_diagnostics::DiagRecord<'a>` is `Serialize`-only (zero-copy on
-//! emit). On the consume side we need owned `String` fields, so we map
-//! each line to [`OwnedDiagRecord`] — same field order, same JSON
-//! shape, but owned.
+//! [`crate::DiagRecord<'a>`] is `Serialize`-only (zero-copy on emit).
+//! On the consume side callers need owned `String` fields, so each
+//! NDJSON line is mapped to [`OwnedDiagRecord`] — same field order,
+//! same JSON shape, but owned.
 //!
-//! The round-trip test below pins the parser against the canonical
-//! emitter in `crush-pkg::handle_lint_with_byte_exact_three_rule_fedpath`
-//! so a wire-shape change must touch both crates together.
+//! This module is the canonical home for the parser: it was previously
+//! inlined in `crush-debugger/src/wire_consumer.rs`. `crush-debugger`
+//! now re-exports it from here so a wire-shape change touches one crate,
+//! not two. The round-trip tests below pin the parser against the
+//! canonical emitter (`diag_line`) so a wire-shape change must touch
+//! both the serializer and the deserializer together.
 
 use std::io::{BufRead, Read};
 
-use crush_diagnostics::DiagRecord;
+use crate::DiagRecord;
 use serde_json::Value;
 
 /// Owned, parsed NDJSON diagnostic record. Field order mirrors
 /// `DiagRecord::serialize` — do NOT reshuffle without updating the
-/// wire-format lockdown tests in `crush-pkg::main::tests`.
+/// wire-format lockdown tests in `tests/wire_format.rs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedDiagRecord {
     pub code: String,
@@ -150,7 +152,7 @@ pub fn consume_stream<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crush_diagnostics::DiagRecord;
+    use crate::DiagRecord;
 
     /// Round-trip a hand-authored `DiagRecord` through `diag_line` and
     /// back via `parse_record`. Mirrors the byte-exact fedpath lockdown
@@ -166,7 +168,7 @@ mod tests {
             message: "placeholder value `TEMP` must be filled in",
             hint: Some("set TEMP in your shell before running"),
         };
-        let text = crush_diagnostics::diag_line(&rec);
+        let text = crate::diag_line(&rec);
         let parsed = parse_record(&text).expect("must parse a canonical emitter line");
         let expected = OwnedDiagRecord::from(&rec);
         assert_eq!(parsed, expected);

@@ -53,6 +53,29 @@
 //!
 //! Pinning the stream at the crate level would break one class or
 //! the other; the call site is the right place for that decision.
+//!
+//! # Deserialization (consumer side)
+//!
+//! The [`wire_consumer`] submodule mirrors the emit shape with owned
+//! `String` fields: [`wire_consumer::OwnedDiagRecord`],
+//! [`wire_consumer::parse_record`], and
+//! [`wire_consumer::consume_stream`] parse the NDJSON lines produced
+//! by [`diag_line`] back into records. This makes the crate
+//! bidirectional — serialize on the emitter side, deserialize on the
+//! consumer side — so a wire-shape change touches one crate, not N.
+//! Previously this parser lived inlined in `crush-debugger`;
+//! consolidating it here eliminates that duplicate wire-shape copy.
+
+pub mod wire_consumer;
+
+// Re-export the deserialization surface at the crate root so callers
+// can `use crush_diagnostics::{OwnedDiagRecord, parse_record, ...}`
+// without drilling into the submodule. `crush-debugger` re-exports
+// these same names from its own root for back-compat with its existing
+// call sites.
+pub use wire_consumer::{
+    consume_stream, parse_record, OwnedDiagRecord, ParseRecordError,
+};
 
 /// Seven-field wire-shape mirror of
 /// `crush_lang_sdk::theme::JsonDiagnostic`. The field ORDER is the
@@ -137,12 +160,11 @@ pub fn wants_json(args: &[String]) -> bool {
         if a == "--message-format=json" || a == "--message-format-json" {
             return true;
         }
-        if a == "--message-format" {
-            if let Some(next) = iter.peek() {
-                if next.as_str() == "json" {
-                    return true;
-                }
-            }
+        if a == "--message-format"
+            && let Some(next) = iter.peek()
+            && next.as_str() == "json"
+        {
+            return true;
         }
     }
     false

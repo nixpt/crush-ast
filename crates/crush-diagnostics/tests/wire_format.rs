@@ -16,7 +16,10 @@
 //! depend on `crush-lang-sdk` (the four quarantined binaries
 //! referenced above). Together they cover the entire CLI surface.
 
-use crush_diagnostics::{DiagRecord, diag_line, diag_line_from, strict_downgrade, wants_json};
+use crush_diagnostics::{
+    DiagRecord, OwnedDiagRecord, consume_stream, diag_line, diag_line_from, parse_record,
+    strict_downgrade, wants_json,
+};
 
 // ----------------------------------------------------------------
 // diag_line — byte-exact field order
@@ -414,6 +417,71 @@ fn strict_downgrade_note_lifts_to_error_under_strict() {
         "error",
         "note under strict MUST lift to error (CI gate)"
     );
+}
+
+// ----------------------------------------------------------------
+// wire_consumer — round-trip parity between the emitter (`diag_line`)
+// and the canonical parser (`parse_record`). The deserialize arm of
+// the wire contract lives in `src/wire_consumer.rs` (with its own
+// in-crate tests); the test below locks the round-trip in THIS file
+// so the byte-exact wire shape — both directions — is pinned in the
+// canonical lockdown file, matching this crate's stated philosophy.
+// ----------------------------------------------------------------
+
+#[test]
+fn parse_record_roundtrips_diag_line_emitted_canonical_note_record() {
+    // The bidirectional wire contract: a `DiagRecord` emitted by
+    // `diag_line` MUST parse back into an equivalent `OwnedDiagRecord`.
+    // If the emitter or parser field order drifts, this breaks.
+    let rec = DiagRecord {
+        code: "E-BUILDER",
+        level: "note",
+        file: Some("capsule.toml"),
+        line: Some(7),
+        col: None,
+        message: "placeholder value `TEMP` must be filled in",
+        hint: Some("set TEMP in your shell before running"),
+    };
+    let text = diag_line(&rec);
+    let parsed = parse_record(&text).expect("must parse a canonical emitter line");
+    let expected = OwnedDiagRecord::from(&rec);
+    assert_eq!(parsed, expected);
+}
+
+#[test]
+fn consume_stream_roundtrips_multiple_diag_lines() {
+    // Stream-level parity: two emitted lines, separated by a blank
+    // line (common in piped CI output), both round-trip via
+    // `consume_stream`.
+    let rec1 = DiagRecord {
+        code: "E-LINT",
+        level: "error",
+        file: None,
+        line: None,
+        col: None,
+        message: "first",
+        hint: None,
+    };
+    let rec2 = DiagRecord {
+        code: "E-LINT",
+        level: "error",
+        file: Some("x.crush"),
+        line: Some(1),
+        col: Some(2),
+        message: "second",
+        hint: None,
+    };
+    let stream = format!(
+        "\n{}\n\n{}\n",
+        diag_line(&rec1).trim_end(),
+        diag_line(&rec2).trim_end(),
+    );
+    let records: Vec<OwnedDiagRecord> = consume_stream(stream.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("all non-blank lines must parse");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0], OwnedDiagRecord::from(&rec1));
+    assert_eq!(records[1], OwnedDiagRecord::from(&rec2));
 }
 
 #[test]
