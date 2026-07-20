@@ -1048,11 +1048,17 @@ impl PortableVm {
                     }
                 }
                 var_values.reverse();
+                let deps: Vec<String> = spec
+                    .get("deps")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
                 // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
                 // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
                 // named "javascript" with `-c`. An unknown language is a loud error, never a
-                // silent spawn attempt.
-                let (binary, exec_flag) = crate::scheduler::resolve_lang_binary(lang)
+                // silent spawn attempt. (Re-checked inside `run_exec_lang` too, cheaply — kept
+                // here so an unknown language fails before the capability gate, not after.)
+                crate::scheduler::resolve_lang_binary(lang)
                     .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
                 // CAPABILITY GATE — must match scheduler.rs exactly (crush-diff would catch drift).
                 // A @lang block spawns an interpreter with full host authority; require polyglot.<lang>.
@@ -1064,53 +1070,29 @@ impl PortableVm {
                         "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
                     )));
                 }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = (binary, exec_flag, code_str, &var_names, &var_values);
-                    return Err(VmError::UnknownCap(format!(
-                        "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
-                    )));
+                let env_vars: Vec<(String, String)> = var_names
+                    .iter()
+                    .zip(var_values.iter())
+                    .map(|(name, val)| (name.clone(), value_to_text(val)))
+                    .collect();
+                // SHARED with scheduler.rs's EXEC_LANG handler (crate::scheduler::run_exec_lang)
+                // — see that function's doc comment for the CRUSH-20 buckets-sandboxing wiring
+                // and the sentinel-scan bug this consolidation fixed in this backend.
+                let outcome = crate::scheduler::run_exec_lang(
+                    lang,
+                    code_str,
+                    &deps,
+                    &env_vars,
+                    crush_line,
+                    &gate,
+                    self.quotas.max_wall_time_ms,
+                )?;
+                self.out_len += outcome.visible.len();
+                if self.out_len > self.quotas.max_output {
+                    return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let mut cmd = std::process::Command::new(binary);
-                    cmd.arg(exec_flag).arg(code_str);
-                    for (name, val) in var_names.iter().zip(var_values.iter()) {
-                        cmd.env(name, value_to_text(val));
-                    }
-                    // Same wall-clock bound as scheduler.rs — see
-                    // `run_with_wall_clock_limit`'s doc comment for why this
-                    // covers EXEC_LANG specifically and not CAP_CALL generically.
-                    let output = match crate::scheduler::run_with_wall_clock_limit(
-                        cmd,
-                        self.quotas.max_wall_time_ms,
-                    )
-                    .map_err(|e| VmError::UnknownCap(format!("exec_lang({lang}): {e}")))?
-                    {
-                        crate::scheduler::CommandOutcome::Output(output) => output,
-                        crate::scheduler::CommandOutcome::TimedOut => {
-                            return Err(VmError::CapTimeout {
-                                cap: gate,
-                                limit_ms: self.quotas.max_wall_time_ms,
-                            });
-                        }
-                    };
-                    if output.status.success() {
-                        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        self.out_len += s.len();
-                        if self.out_len > self.quotas.max_output {
-                            return Err(VmError::OutputQuota(self.quotas.max_output));
-                        }
-                        self.out_parts.push(s.clone());
-                        self.push(Value::Str(s));
-                    } else {
-                        return Err(crate::scheduler::lang_runtime_error(
-                            lang,
-                            &output.stderr,
-                            crush_line,
-                        ));
-                    }
-                }
+                self.out_parts.push(outcome.visible);
+                self.push(outcome.result_value);
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
                 // Portable VM does not support async AI opcodes. Stub to Null.
@@ -2012,7 +1994,7 @@ HALT"#;
         caps.grant_polyglot(&["bash"]);
         vm.set_host_caps(caps);
         match vm.run() {
-            Err(VmError::LangRuntimeError { lang, message, crush_line }) => {
+            Err(VmError::LangRuntimeError { lang, message, crush_line, .. }) => {
                 assert_eq!(lang, "bash");
                 assert!(
                     message.contains("boom"),

@@ -1,6 +1,10 @@
 #[cfg(feature = "python")]
 mod python;
 
+// CRUSH-20: the 4th, buckets-sandboxed EXEC_LANG execution path.
+#[cfg(feature = "sandboxed-polyglot")]
+mod bucket_exec;
+
 #[cfg(test)]
 mod tests;
 
@@ -25,7 +29,7 @@ pub use bytecode::Program;
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
-pub use vm::{Quotas, VmError, VmResult, run, run_with_caps};
+pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 #[cfg(feature = "native-plugins")]
 pub use vm::{run_fastvm, run_fastvm_with_caps, run_casm_json, CrushResultExt};
 

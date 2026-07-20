@@ -124,7 +124,10 @@ pub enum Token {
     EOF(SourceLocation),
     Comment(String, SourceLocation),
     AtIdent(String, SourceLocation),  // @mcp, @cap, @lang, etc
-    LangBody(String, SourceLocation), // Raw body of @python { ... }, @javascript { ... }, etc
+    /// Raw body of `@python { ... }`, `@javascript { ... }`, etc, plus the
+    /// optional `@lang[dep1, dep2]` dependency list (CRUSH-20) — empty if
+    /// the block had no bracketed annotation.
+    LangBody(String, SourceLocation, Vec<String>),
 }
 
 impl Token {
@@ -210,7 +213,7 @@ impl Token {
             Token::EOF(_) => "end of input".to_string(),
             Token::Comment(_, _) => "comment".to_string(),
             Token::AtIdent(name, _) => format!("`@{name}`"),
-            Token::LangBody(_, _) => "language block body".to_string(),
+            Token::LangBody(_, _, _) => "language block body".to_string(),
         }
     }
 }
@@ -516,6 +519,36 @@ impl Lexer {
             }
         }
 
+        // Optional `[dep1, dep2]` dependency-annotation list (CRUSH-20):
+        // `@python[numpy, scipy] { ... }`. Bare-runtime `buckets` package
+        // specs, NOT PyPI/npm packages — see `Statement::LangBlock::deps`'s
+        // doc comment for why.
+        let deps = if self.peek() == Some('[') {
+            match self.read_dep_list() {
+                Some(deps) => deps,
+                None => {
+                    // Malformed bracket list — bail to plain AtIdent and let
+                    // the normal token stream surface a parse error on the
+                    // stray `[`, same as any other unexpected-token case
+                    // this function already defers.
+                    self.pos = saved.0;
+                    self.line = saved.1;
+                    self.col = saved.2;
+                    return Ok(Token::AtIdent(id, at_location));
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        while let Some(ch) = self.peek() {
+            if ch.is_whitespace() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
         if self.peek() != Some('{') {
             self.pos = saved.0;
             self.line = saved.1;
@@ -529,8 +562,63 @@ impl Lexer {
         };
         self.advance(); // consume opening '{'
         let body = self.read_lang_body(brace_loc)?;
-        self.pending = Some(Token::LangBody(body, brace_loc));
+        self.pending = Some(Token::LangBody(body, brace_loc, deps));
         Ok(Token::AtIdent(id, at_location))
+    }
+
+    /// Read a `[dep1, dep2, ...]` bracketed dependency list starting at the
+    /// opening `[` (not yet consumed). Returns `None` on any malformed list
+    /// (no closing `]`, empty entry from a stray comma, unexpected char) —
+    /// caller is responsible for restoring its own saved checkpoint in that
+    /// case, same convention as the rest of this speculative-lookahead code.
+    fn read_dep_list(&mut self) -> Option<Vec<String>> {
+        self.advance(); // consume '['
+        let mut deps = Vec::new();
+        loop {
+            while let Some(ch) = self.peek() {
+                if ch.is_whitespace() {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            match self.peek() {
+                Some(']') => {
+                    self.advance();
+                    return Some(deps);
+                }
+                Some(ch) if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' => {
+                    let mut name = String::new();
+                    while let Some(ch) = self.peek() {
+                        if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
+                            name.push(ch);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    deps.push(name);
+                    while let Some(ch) = self.peek() {
+                        if ch.is_whitespace() {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    match self.peek() {
+                        Some(',') => {
+                            self.advance();
+                        }
+                        Some(']') => {
+                            self.advance();
+                            return Some(deps);
+                        }
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
     }
 
     /// Read the raw body of a polyglot block starting at depth 1 (caller

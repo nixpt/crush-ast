@@ -1425,6 +1425,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "casm",
+ "crush-buckets",
  "crush-diagnostics",
  "crush-errors",
  "crush-ffi",

@@ -785,6 +785,7 @@ impl Compiler {
                 code,
                 variables,
                 imports: _, // Ignore for now
+                deps,
                 meta,
             } => {
                 // Push variables onto stack for injection into the sandbox
@@ -814,6 +815,15 @@ impl Compiler {
                     // `VmError::LangRuntimeError`, `parse_lang_block`).
                     if let Some(line) = meta.get("line").and_then(|v| v.as_u64()) {
                         map.insert("crush_line".to_string(), serde_json::json!(line));
+                    }
+                    // CRUSH-20: `@lang[dep1, dep2]` bare-runtime buckets
+                    // package specs, threaded through to EXEC_LANG's
+                    // sandboxed-provisioning path. Omitted entirely (not an
+                    // empty array) when there are none, so the unsandboxed
+                    // opcode handler's `unwrap_or_default` reads identically
+                    // to before this field existed.
+                    if !deps.is_empty() {
+                        map.insert("deps".to_string(), serde_json::json!(deps));
                     }
                 }
 
