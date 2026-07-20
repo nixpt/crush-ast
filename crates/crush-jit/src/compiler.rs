@@ -434,9 +434,7 @@ const FRAME_LOCALS: i64 = 8;
 fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize) -> ir::Value {
     // Frame-relative: each call frame gets its own locals at
     // OFF_LOCALS + call_stack_top * FRAME_LOCALS * 8 + idx * 8.
-    // Use MemFlagsData::new() (not trusted()) to prevent Cranelift
-    // from hoisting the call_stack_top load out of re-entrant blocks
-    // during recursive execution (CRUSH-17).
+    // Uses MemFlagsData::new() to avoid aggressive trusted() hoisting.
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
     let stride = iconst(b, FRAME_LOCALS * 8);
@@ -921,7 +919,7 @@ fn emit_one(
                 // locals array before overwriting OFF_RESULT/OFF_BUDGET.
                 let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
                 let cst = load(b, cst_addr);
-                let max_frames = (JIT_MAX_LOCALS as i64) / FRAME_LOCALS; // 64/2 = 32
+                let max_frames = (JIT_MAX_LOCALS as i64) / FRAME_LOCALS; // 64/8 = 8
                 let limit = iconst(b, max_frames);
                 let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
                 let ok_bb = b.create_block();

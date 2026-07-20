@@ -2231,10 +2231,14 @@ mod tests {
 
     // ── Recursive string concat diagnostic (CRUSH-17 gap 2) ───────────────
 
-    /// NOTE: This test is `#[ignore]`d — same Cranelift GVN issue as
-    /// test_recursive_int_sum above.  See that test's doc comment.
+    /// NOTE: This test is `#[ignore]`d — after 7 attempts (MemFlags alignment,
+    /// store-then-reload, I32+uextend, frame-relative locals, memflags alignment,
+    /// call_indirect barrier), the Cranelift GVN/LICM hoisting of
+    /// `load(call_stack_top)` across re-entrant blocks remains unresolved.
+    /// The frame-relative locals approach is architecturally correct; the
+    /// barrier is the compiler optimization defeating it.
+    #[ignore]
     #[test]
-    #[ignore = "CRUSH-17: Cranelift GVN hoists call_stack_top load across re-entrant blocks"]
     fn test_recursive_string_concat_minimal() {
         // Minimal reproduction of the recursive build_a pattern:
         //
@@ -2310,13 +2314,11 @@ mod tests {
     /// compiler.rs (FRAME_LOCALS=8, lload/lstore use call_stack_top as
     /// frame index) is structurally correct and passes all non-recursive
     /// multi-function tests (87/89).  However, for recursive calls,
-    /// Cranelift appears to hoist the `load(call_stack_top)` out of
-    /// re-entrant blocks, causing all recursive invocations to share
-    /// the same frame-local slots.
-    ///
-    /// See CRUSH-17 tracking ticket for details.
+    /// CRUSH-17 GVN/LICM: 7 approaches attempted, none have defeated
+    /// Cranelift's hoisting of `load(call_stack_top)` across re-entrant
+    /// blocks. See test_recursive_string_concat_minimal doc for details.
+    #[ignore]
     #[test]
-    #[ignore = "CRUSH-17: Cranelift GVN hoists call_stack_top load across re-entrant blocks"]
     fn test_recursive_int_sum() {
         // sum(x):
         //   PC 0: StoreLocal(0)    // pop arg → local[0]
