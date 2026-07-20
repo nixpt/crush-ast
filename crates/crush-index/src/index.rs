@@ -57,12 +57,12 @@ pub struct CrushIndex {
     /// (module_path, @decision node) pairs across all programs
     decisions: Vec<(String, crush_cast::manifest::DecisionNode)>,
     
-    /// CSON configurations indexed by file path
-    pub cson_configs: HashMap<String, crush_cson::CsonDocument>,
-    /// Flattened semantic keys (intent) -> (cson_file_path, Confidence)
-    pub semantic_keys: Vec<(String, String, Option<f64>)>,
-    /// Dejavue project timeline events
-    pub dejavue_timeline: Vec<String>,
+    /// CSON configurations indexed by file path (private; see `cson_configs()` and `cson_doc()`)
+    cson_configs: HashMap<String, crush_cson::CsonDocument>,
+    /// Flattened semantic keys `(intent, cson_file_path, confidence)` (private; see `semantic_keys()`)
+    semantic_keys: Vec<(String, String, Option<f64>)>,
+    /// Dejavue project timeline events (private; see `dejavue_timeline()`)
+    dejavue_timeline: Vec<String>,
 }
 
 impl CrushIndex {
@@ -300,6 +300,40 @@ impl CrushIndex {
                 }
             }
         }
+    }
+
+    // ── cson / dejavue accessors ──────────────────────────────────────────────
+    //
+    // These three fields (`cson_configs`, `semantic_keys`, `dejavue_timeline`)
+    // used to be `pub` — an inconsistency vs the rest of the struct's
+    // encapsulation. Privatizing and adding these accessor methods keeps
+    // the API uniform: every piece of state is reached through a named
+    // method whose doc comment names the producer (`add_cson`,
+    // `load_dejavue`).
+
+    /// All CSON configurations indexed by file path. Read-only view so
+    /// callers cannot bypass the [`add_cson`](Self::add_cson) ingestion
+    /// path. For a single document, prefer [`cson_doc`](Self::cson_doc).
+    pub fn cson_configs(&self) -> &HashMap<String, crush_cson::CsonDocument> {
+        &self.cson_configs
+    }
+
+    /// Single CSON document by file path, if any was ingested.
+    pub fn cson_doc(&self, path: &str) -> Option<&crush_cson::CsonDocument> {
+        self.cson_configs.get(path)
+    }
+
+    /// Flattened semantic keys `(intent_key, cson_file_path, confidence)`
+    /// extracted from ingested CSON documents.
+    pub fn semantic_keys(&self) -> &[(String, String, Option<f64>)] {
+        &self.semantic_keys
+    }
+
+    /// Dejavue project timeline events loaded by
+    /// [`load_dejavue`](Self::load_dejavue). Each entry is one non-empty
+    /// line of the `.dejavue/timeline.jsonl` NDJSON stream.
+    pub fn dejavue_timeline(&self) -> &[String] {
+        &self.dejavue_timeline
     }
 }
 

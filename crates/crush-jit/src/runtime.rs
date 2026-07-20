@@ -25,7 +25,10 @@
 //! | 9816   | 8    | handler_pc (resolved handler PC for throw dispatch) |
 //! | 9824   | 8    | handler_stack_top |
 //! | 9832   | 256  | handler_stack[16] (JitHandlerFrame × 16) |
-//! | 10088  | —    | total |
+//! | 10088  | 8    | saved_pc (resume PC after host request yield) |
+//! | 10096  | 4    | host_request_tag (which HostRequest variant) |
+//! | 10100  | 4    | _pad3 |
+//! | 10104  | —    | total |
 
 use crate::value::{JitValue, TAG_NULL, TAG_FALSE};
 use crush_vm::fastvm::similarity::calculate_similarity;
@@ -95,6 +98,8 @@ pub(crate) const OP_STR_SIM: i64 = 34;
 pub(crate) const OP_ENTER_TRY: i64 = 35;
 pub(crate) const OP_EXIT_TRY: i64 = 36;
 pub(crate) const OP_THROW: i64 = 37;
+pub(crate) const OP_ADD_STR: i64 = 38;
+pub(crate) const OP_CMP_ORDERED: i64 = 39;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -124,7 +129,7 @@ fn rtv_to_jit(v: &RuntimeValue) -> JitValue {
         RuntimeValue::Bool(b) => JitValue::bool(*b),
         RuntimeValue::Null => JitValue::null(),
         RuntimeValue::Ref(idx) => JitValue::from_ref(*idx),
-        RuntimeValue::String(s) => {
+        RuntimeValue::String(_s) => {
             // Direct string values should not appear in JIT context;
             // if they do, fall back to null.
             JitValue::null()
@@ -158,6 +163,13 @@ fn jit_val_to_string(v: JitValue, arena: &Arena) -> Option<String> {
         }
     }
     None
+}
+
+/// Fallback: convert a non-string JitValue to its text representation.
+/// Used by `OP_ADD_STR` when `jit_val_to_string` returns `None` (e.g. int,
+/// float, bool, null, or non-string ref). Delegates to `Display`.
+fn jit_value_to_text(v: JitValue) -> String {
+    v.to_string()
 }
 
 /// Helper: convert a Vec<JitValue> to Vec<RuntimeValue>.
@@ -786,10 +798,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     Ok(result) => {
                         ctx.push(rtv_to_jit(&result));
                     }
-                    Err(e) => {
-                        // On error, push error string as Ref
-                        let err_str = arena.alloc(Object::Str(e.to_string()));
-                        ctx.push(JitValue::from_ref(err_str));
+                    Err(_) => {
+                        // ExoLight Tier 1 capability bridge: propagate errors
+                        // to ctx.error so the engine can surface them.
+                        // Also push null so the JIT stack stays balanced.
+                        ctx.error = 4; // CAP_ERROR
+                        ctx.push(JitValue::null());
                     }
                 }
             } else {
@@ -980,7 +994,11 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         // OP_EXIT_TRY (36): pop from handler stack
         // ════════════════════════════════════════════════════════════════════
         OP_EXIT_TRY => {
-            if ctx.handler_stack_top > 0 {
+            if ctx.throw_consumed_handler != 0 {
+                // CRUSH-17 #6: OP_THROW already consumed this handler.
+                // Skip the decrement — the handler stack is already correct.
+                ctx.throw_consumed_handler = 0;
+            } else if ctx.handler_stack_top > 0 {
                 ctx.handler_stack_top -= 1;
             }
         }
@@ -1010,8 +1028,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     // Unwind call stack to handler's level
                     ctx.call_stack_top = frame.call_stack_top as usize;
 
-                    // Pop this handler and all above it
+                    // Pop this handler and all above it (handlers from deeper
+                    // call frames being unwound). The handler at index i is consumed
+                    // here; the handler block's ExitTry will be skipped via the
+                    // throw_consumed_handler flag (CRUSH-17 #6).
                     ctx.handler_stack_top = i;
+                    ctx.throw_consumed_handler = 1;
                     break;
                 }
             }
@@ -1019,12 +1041,114 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             if found {
                 // Push error value back onto the JIT stack for the handler
                 ctx.push(err_val);
-                // Store handler PC and set error flag to 2 (HANDLER_FOUND)
+                // Store handler PC and set error flag to 2 (HANDLER_FOUND).
+                // CONTRACT: handler_pc is an instruction index (set by
+                // OP_ENTER_TRY from the CASM EnterTry's instr.arg). The CLIF
+                // emit_handler_dispatch compares against the same unit.
+                // debug_assert: PC must be non-negative (i64 → usize safe).
+                debug_assert!(handler_pc >= 0, "handler_pc must be non-negative (instruction index)");
                 ctx.handler_pc = handler_pc as usize;
                 ctx.error = 2;
             } else {
                 // No handler found — set error flag to 3 (UNCAUGHT)
                 ctx.error = 3;
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_ADD_STR (38): full add_rtv semantics — string concat, overflow-
+        // checked int add, float add with int→float promotion. Pops two values
+        // from the shadow stack, pushes the result.
+        // ════════════════════════════════════════════════════════════════════
+        OP_ADD_STR => {
+            let b_val = ctx.pop().unwrap_or(JitValue::null());
+            let a_val = ctx.pop().unwrap_or(JitValue::null());
+
+            let a_is_str = a_val.to_ref().map_or(false, |idx| {
+                arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
+            });
+            let b_is_str = b_val.to_ref().map_or(false, |idx| {
+                arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
+            });
+
+            if a_is_str || b_is_str {
+                // String concatenation: get text for each operand.
+                let arena = match arena_mut(ctx.arena) {
+                    Some(a) => a,
+                    None => { ctx.push(JitValue::null()); return; }
+                };
+                let text_a = jit_val_to_string(a_val, arena)
+                    .unwrap_or_else(|| jit_value_to_text(a_val));
+                let text_b = jit_val_to_string(b_val, arena)
+                    .unwrap_or_else(|| jit_value_to_text(b_val));
+                let result = format!("{}{}", text_a, text_b);
+                let ptr = arena.alloc(Object::Str(result));
+                ctx.push(JitValue::from_ref(ptr));
+            } else if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
+                // Both ints: checked add with overflow detection.
+                match ai.checked_add(bi) {
+                    Some(sum) => ctx.push(JitValue::int(sum)),
+                    None => {
+                        ctx.error = 1;
+                        ctx.push(JitValue::null());
+                    }
+                }
+            } else {
+                // Float or mixed: promote both to f64.
+                let af = a_val.to_float()
+                    .or_else(|| a_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let bf = b_val.to_float()
+                    .or_else(|| b_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                ctx.push(JitValue::float(af + bf));
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_CMP_ORDERED (39): ordered comparison (<, <=, >, >=) with type
+        // checking. Pops two values, compares using the comparator encoded
+        // in `arg` (0=LT, 1=LE, 2=GT, 3=GE). Rejects non-numeric types
+        // with error flag 1, matching FastVM's TypeMismatch behaviour.
+        // ════════════════════════════════════════════════════════════════════
+        OP_CMP_ORDERED => {
+            let b_val = ctx.pop().unwrap_or(JitValue::null());
+            let a_val = ctx.pop().unwrap_or(JitValue::null());
+
+            // Both ints: int comparison.
+            if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
+                let result = match arg {
+                    0 => ai < bi,   // LT
+                    1 => ai <= bi,  // LE
+                    2 => ai > bi,   // GT
+                    _ => ai >= bi,  // GE
+                };
+                ctx.push(JitValue::bool(result));
+                return;
+            }
+
+            // Both numeric (int or float): float comparison with promotion.
+            let a_numeric = a_val.to_int().is_some() || a_val.to_float().is_some();
+            let b_numeric = b_val.to_int().is_some() || b_val.to_float().is_some();
+
+            if a_numeric && b_numeric {
+                let af = a_val.to_float()
+                    .or_else(|| a_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let bf = b_val.to_float()
+                    .or_else(|| b_val.to_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let result = match arg {
+                    0 => af < bf,
+                    1 => af <= bf,
+                    2 => af > bf,
+                    _ => af >= bf,
+                };
+                ctx.push(JitValue::bool(result));
+            } else {
+                // Non-numeric: set error (matching FastVM's TypeMismatch).
+                ctx.error = 1;
+                ctx.push(JitValue::null());
             }
         }
 
@@ -1096,8 +1220,10 @@ pub struct JitContext {
     pub budget: u64,
     /// Error flag (non-zero = error).
     pub error: i32,
-    /// Alignment padding.
-    _pad: i32,
+    /// CRUSH-17 #6: set to true by OP_THROW when it consumes a handler.
+    /// OP_EXIT_TRY checks this flag and skips the decrement if set,
+    /// preventing double-consumption of the handler stack.
+    pub throw_consumed_handler: u32,
     /// Heap arena (opaque pointer to `crush_vm::memory::Arena`).
     pub arena: *mut c_void,
     /// Capability table (opaque pointer).
@@ -1113,18 +1239,33 @@ pub struct JitContext {
     /// Non-null pointer to the program's `Vec<String>` symbol table (raw, used by helpers).
     pub strings_ptr: *const c_void,
     /// Resolved handler PC for Throw block dispatch (set by OP_THROW helper).
+    ///
+    /// CONTRACT (CRUSH-17 #3): The unit is an **instruction index** into the
+    /// `LoweredProgram.instructions` array — the same unit used by `EnterTry`'s
+    /// `instr.arg` and by `compiler.rs`'s `handler_entries` map. The CLIF
+    /// `emit_handler_dispatch` brif cascade compares this value against
+    /// `iconst(b, *pc as i64)` where `pc` is the EnterTry `instr.arg`.
+    /// Changing the unit on either side (e.g. to a byte offset) without updating
+    /// the other will silently make ALL throw dispatches uncatchable.
     pub handler_pc: usize,
     /// Exception handler stack pointer.
     pub handler_stack_top: usize,
     /// Exception handler stack (max 16 nested try blocks).
     pub handler_stack: [JitHandlerFrame; 16],
+    /// Saved PC for resume after a host-request yield (CallHost, ExecLang, Spawn, etc.).
+    /// Zero means "initial entry" (no resume). Non-zero means "resume at this block offset".
+    pub saved_pc: usize,
+    /// Which HostRequest variant was issued (0 = none, 1 = CallHost, 2 = ExecLang, 3 = Spawn, …).
+    pub host_request_tag: u32,
+    /// Padding for 8-byte alignment.
+    _pad3: u32,
 }
 
 // ── Ensure layout is as expected ────────────────────────────────────────────
 
 const _: () = {
-    assert!(core::mem::size_of::<JitContext>() >= 10088);
-    assert!(core::mem::size_of::<JitContext>() <= 10112);
+    assert!(core::mem::size_of::<JitContext>() >= 10104);
+    assert!(core::mem::size_of::<JitContext>() <= 10128);
     assert!(core::mem::align_of::<JitContext>() == 8);
     assert!(core::mem::offset_of!(JitContext, stack) == 0);
     assert!(core::mem::offset_of!(JitContext, stack_top) == 8192);
@@ -1139,6 +1280,8 @@ const _: () = {
     assert!(core::mem::offset_of!(JitContext, handler_pc) == 9816);
     assert!(core::mem::offset_of!(JitContext, handler_stack_top) == 9824);
     assert!(core::mem::offset_of!(JitContext, handler_stack) == 9832);
+    assert!(core::mem::offset_of!(JitContext, saved_pc) == 10088);
+    assert!(core::mem::offset_of!(JitContext, host_request_tag) == 10096);
 };
 
 impl JitContext {
@@ -1152,7 +1295,7 @@ impl JitContext {
             result: JitValue(TAG_NULL),
             budget: 1_000_000,
             error: 0,
-            _pad: 0,
+            throw_consumed_handler: 0,
             arena: std::ptr::null_mut(),
             capabilities: std::ptr::null_mut(),
             hal: std::ptr::null_mut(),
@@ -1163,6 +1306,9 @@ impl JitContext {
             handler_pc: 0,
             handler_stack_top: 0,
             handler_stack: [JitHandlerFrame { handler_pc: 0, call_stack_top: 0 }; 16],
+            saved_pc: 0,
+            host_request_tag: 0,
+            _pad3: 0,
         }
     }
 

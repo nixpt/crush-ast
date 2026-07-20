@@ -6,14 +6,14 @@ use crush_lint::AiLinter;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let json_mode = wants_json(&args);
-    
+
     // We expect `crush-lint <file.cr>` or `crush-lint <file.casm>`
     let path = match args.iter().find(|arg| !arg.starts_with("-") && **arg != args[0]) {
         Some(p) => PathBuf::from(p),
         None => {
             if json_mode {
                 eprint!("{}", diag_line_from(
-                    "E-USAGE", "error", "Missing file argument", 
+                    "E-USAGE", "error", "Missing file argument",
                     Some("Usage: crush-lint [--message-format=json] <file.cr>"), None
                 ));
             } else {
@@ -47,7 +47,7 @@ fn main() -> ExitCode {
         
         let error_msg = if line.contains("def ") {
             Some("Unexpected token: 'def'. Did you mean 'fn'?")
-        } else if line.contains(";") == false && line.contains("let ") {
+        } else if !line.contains(";") && line.contains("let ") {
             // Very naive check for missing semicolon
             Some("Missing semicolon")
         } else {

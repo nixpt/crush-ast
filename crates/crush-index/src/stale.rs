@@ -13,11 +13,11 @@
 //! `TemporaryNode.added` is `Option<String>`. When `added` is `None` or
 //! fails to parse as `%Y-%m-%d`:
 //!
-//! - [`TempStaleChecker::is_stale`] returns `false`  
-//!   (a malformed `added` is treated as "not stale" rather than a noisy
-//!    false-positive — see `crush_frontend::wip_check` history).
-//! - [`TempStaleChecker::days_old`] returns `None`  
-//!   (consumers map `None → Value::Null` at the host-cap layer).
+//! - [`TempStaleChecker::is_stale`] returns `false`. A malformed `added`
+//!   is treated as "not stale" rather than a noisy false-positive; see
+//!   `crush_frontend::wip_check` history for the rationale.
+//! - [`TempStaleChecker::days_old`] returns `None`. Consumers map the
+//!   `None` to `Value::Null` at the host-cap layer.
 //!
 //! The asymmetry vs the unfiltered `codebase.temporaries()` cap, which
 //! serialises whatever's in the `added` field even when it's empty, is

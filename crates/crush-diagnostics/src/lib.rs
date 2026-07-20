@@ -53,6 +53,43 @@
 //!
 //! Pinning the stream at the crate level would break one class or
 //! the other; the call site is the right place for that decision.
+//!
+//! # Deserialization (consumer side)
+//!
+//! The [`wire_consumer`] submodule offers two deserialization paths:
+//!
+//! - **Owned** (default): [`wire_consumer::OwnedDiagRecord`],
+//!   [`wire_consumer::parse_record`], [`wire_consumer::consume_stream`]
+//!   — always allocates `String` per field; records outlive the input
+//!   buffer. Use for streaming from pipes/sockets where each line is
+//!   transient.
+//! - **Borrowed** (zero-copy hot path):
+//!   [`wire_consumer::BorrowedDiagRecord`],
+//!   [`wire_consumer::parse_record_borrowed`],
+//!   [`wire_consumer::consume_stream_borrowed`] — uses `Cow<'a, str>`
+//!   with `#[serde(borrow)]` so unescaped JSON strings borrow directly
+//!   from the input (zero allocation); escaped strings fall back to
+//!   `Cow::Owned` (one allocation, same as owned). Use when the caller
+//!   owns a long-lived buffer (e.g. `mmap`ed file, cached response).
+//!
+//! Both paths share the same seven-field wire shape and round-trip
+//! with [`diag_line`]. This makes the crate bidirectional — serialize
+//! on the emitter side, deserialize on the consumer side — so a
+//! wire-shape change touches one crate, not N. Previously this parser
+//! lived inlined in `crush-debugger`; consolidating it here eliminates
+//! that duplicate wire-shape copy.
+
+pub mod wire_consumer;
+
+// Re-export the deserialization surface at the crate root so callers
+// can `use crush_diagnostics::{OwnedDiagRecord, parse_record, ...}`
+// without drilling into the submodule. `crush-debugger` re-exports
+// these same names from its own root for back-compat with its existing
+// call sites.
+pub use wire_consumer::{
+    consume_stream, consume_stream_borrowed, parse_record, parse_record_borrowed,
+    BorrowedDiagRecord, OwnedDiagRecord, ParseRecordError,
+};
 
 /// Seven-field wire-shape mirror of
 /// `crush_lang_sdk::theme::JsonDiagnostic`. The field ORDER is the
@@ -137,12 +174,11 @@ pub fn wants_json(args: &[String]) -> bool {
         if a == "--message-format=json" || a == "--message-format-json" {
             return true;
         }
-        if a == "--message-format" {
-            if let Some(next) = iter.peek() {
-                if next.as_str() == "json" {
-                    return true;
-                }
-            }
+        if a == "--message-format"
+            && let Some(next) = iter.peek()
+            && next.as_str() == "json"
+        {
+            return true;
         }
     }
     false

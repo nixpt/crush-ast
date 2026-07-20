@@ -88,10 +88,6 @@ pub trait ErrorContext<T> {
         S: Into<String>;
 }
 
-pub trait ResultExt<T, E> {
-    fn into_crush(self) -> Result<T, CrushError>;
-}
-
 impl<T, E> ErrorContext<T> for Result<T, E>
 where
     E: std::error::Error + Send + Sync + 'static,

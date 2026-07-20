@@ -909,6 +909,7 @@ dependencies = [
  "clap",
  "crush-cast",
  "crush-frontend",
+ "crush-jit",
  "crush-lang-bash",
  "crush-lang-c",
  "crush-lang-custom",
@@ -1081,6 +1082,7 @@ dependencies = [
  "cranelift-native",
  "crush-vm",
  "region",
+ "serde_json",
  "target-lexicon 0.13.5",
 ]
 
@@ -1313,7 +1315,6 @@ dependencies = [
 name = "crush-lint"
 version = "0.3.0"
 dependencies = [
- "casm",
  "crush-diagnostics",
  "ort",
  "parking_lot",
