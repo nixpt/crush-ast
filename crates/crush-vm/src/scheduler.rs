@@ -1649,9 +1649,16 @@ mod wall_clock_limit_tests {
             "var_count": 0,
             "crush_line": 7,
         });
+        // CASM's own string-literal escapes are a narrower set than JSON's
+        // (only \n \t \" \\ ; anything else silently drops the backslash —
+        // see `assembler::parse_string`). A JSON string containing a real
+        // backslash round-trips through CASM's parser corrupted unless the
+        // backslashes are escaped for CASM FIRST, then the quotes — doing
+        // only the quotes works when the JSON has no backslashes (as in the
+        // simpler tests above) but silently mangles ones that do.
         let src = format!(
             "EXEC_LANG \"{}\"\nHALT",
-            spec.to_string().replace('"', "\\\"")
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
         let prog = assemble(&src, None, None).unwrap();
 
@@ -1709,12 +1716,19 @@ mod wall_clock_limit_tests {
 
         let spec = serde_json::json!({
             "lang": "bash",
-            "code": "echo -n 'hello from a live CRUSH-20 sandbox'; printf '\\0CRUSH_RESULT\\06\\n'",
+            "code": "echo -n 'hello from a live CRUSH-20 sandbox'",
             "var_count": 0,
         });
+        // CASM's own string-literal escapes are a narrower set than JSON's
+        // (only \n \t \" \\ ; anything else silently drops the backslash —
+        // see `assembler::parse_string`). A JSON string containing a real
+        // backslash round-trips through CASM's parser corrupted unless the
+        // backslashes are escaped for CASM FIRST, then the quotes — doing
+        // only the quotes works when the JSON has no backslashes (as in the
+        // simpler tests above) but silently mangles ones that do.
         let src = format!(
             "EXEC_LANG \"{}\"\nHALT",
-            spec.to_string().replace('"', "\\\"")
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
         let prog = assemble(&src, None, None).unwrap();
 
@@ -1742,10 +1756,22 @@ mod wall_clock_limit_tests {
              this ran the host's bash directly, not a buckets-provisioned one"
         );
 
+        // Matches what today's (unsandboxed) EXEC_LANG success path already
+        // does — pushes raw stdout as `Value::Str`, no sentinel/typed-value
+        // marshaling. The buckets spike proved that marshaling protocol
+        // survives the sandbox boundary intact (SPIKE_RESULTS.md), but it
+        // was never wired into scheduler.rs's actual stdout handling for
+        // either the sandboxed or unsandboxed path — out of this ticket's
+        // scope (swap the spawn path, not add typed marshaling). Assert
+        // against what the feature actually does today.
         match result {
-            Ok(vm_result) => {
-                assert_eq!(vm_result.stack.last(), Some(&Value::Int(6)));
-            }
+            Ok(vm_result) => match vm_result.stack.last() {
+                Some(Value::Str(s)) => assert!(
+                    s.contains("hello from a live CRUSH-20 sandbox"),
+                    "unexpected sandboxed stdout: {s:?}"
+                ),
+                other => panic!("expected Value::Str with sandboxed stdout, got {other:?}"),
+            },
             other => panic!("expected the sandboxed bash block to succeed, got {other:?}"),
         }
 
