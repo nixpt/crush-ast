@@ -394,6 +394,18 @@ pub fn run_scheduled(
 
         // --- run one instruction on the current thread ---
         let ip = threads[current].ip;
+        // Guard BEFORE indexing `code[ip]` — a thread's ip can run past the end of
+        // the code buffer (e.g. THROW jumping to a try-handler while the call_stack
+        // still carries stale frames from callee functions invoked inside the try
+        // block — see CRUSH-AOT-RETHROW-1). Without this check, `code[ip]` panics
+        // with a raw index-out-of-bounds instead of surfacing a normal VmError,
+        // which crashes the whole test process rather than letting the caller
+        // observe a failed run. portable_vm.rs already guards this identically
+        // (see `Vm::step`, `if ip >= code.len() { return Err(TruncatedInstruction) }`);
+        // scheduler.rs was missing it.
+        if ip >= n {
+            return Err(VmError::TruncatedInstruction(ip));
+        }
         let isize = bytecode::instruction_size(code[ip]).ok_or(VmError::UnknownOpcode(code[ip], ip))?;
         if ip + isize > n {
             return Err(VmError::TruncatedInstruction(ip));
