@@ -26,6 +26,10 @@ path = "src/bin/crush-repl.rs"
 name = "crushc"
 path = "src/bin/crushc.rs"
 
+[[bin]]
+name = "crush"
+path = "src/bin/crush.rs"
+
 [features]
 default = ["native-plugins", "polyglot-python"]
 net = ["dep:ureq"]
