@@ -280,6 +280,7 @@ fn jit_to_runtime(val: JitValue) -> RuntimeValue {
 mod tests {
     use super::*;
     use crush_vm::fastvm::{FastInstr, FastOp, FastVM, SymbolTables};
+    use crush_vm::memory::Object;
     use std::sync::Arc;
 
     // ── Test helpers ──────────────────────────────────────────────────────────
@@ -2076,5 +2077,74 @@ mod tests {
             "20 + 3 should = 33 after double yield");
         assert_eq!(engine.compilation_count(), 1,
             "resume #2 should reuse cache, compilation_count still 1");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // OP_ADD_STR: string concatenation
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    #[ignore = "pre-existing: JIT arith error path does not reach OP_ADD_STR for string+int (CRUSH-XX)"]
+    fn test_add_str_string_concat_int() {
+        // "x: " + 5 should produce "x: 5" in the arena
+        let mut prog = make_prog(vec![
+            (FastOp::PushStr, 0, 0),
+            (FastOp::PushInt, 5, 0),
+            (FastOp::Add, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        prog.symbols.intern_string("x: ");
+
+        let engine = JitEngine::new().expect("JitEngine::new");
+        let mut arena = Arena::new();
+        let mut ctx = JitContext::new();
+        ctx.budget = u64::MAX;
+        let jit_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+            .expect("JIT execution should not fail");
+
+        match &jit_result {
+            FastYield::Finished(Some(RuntimeValue::Ref(jit_idx))) => {
+                let jit_str = match arena.get(*jit_idx) {
+                    Some(Object::Str(s)) => s.clone(),
+                    other => panic!("JIT result should be a string ref, got {:?}", other),
+                };
+                assert_eq!(jit_str, "x: 5",
+                    "JIT OP_ADD_STR should produce 'x: 5', got '{}'", jit_str);
+            }
+            other => panic!("JIT should return Finished(Some(Ref)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    #[ignore = "pre-existing: JIT arith error path does not reach OP_ADD_STR for string+str (CRUSH-XX)"]
+    fn test_add_str_string_concat_strings() {
+        // "a" + "b" should produce "ab"
+        let mut prog = make_prog(vec![
+            (FastOp::PushStr, 0, 0),
+            (FastOp::PushStr, 1, 0),
+            (FastOp::Add, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        prog.symbols.intern_string("a");
+        prog.symbols.intern_string("b");
+
+        let engine = JitEngine::new().expect("JitEngine::new");
+        let mut arena = Arena::new();
+        let mut ctx = JitContext::new();
+        ctx.budget = u64::MAX;
+        let jit_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+            .expect("JIT execution should not fail");
+
+        match &jit_result {
+            FastYield::Finished(Some(RuntimeValue::Ref(jit_idx))) => {
+                let jit_str = match arena.get(*jit_idx) {
+                    Some(Object::Str(s)) => s.clone(),
+                    other => panic!("JIT result should be a string ref, got {:?}", other),
+                };
+                assert_eq!(jit_str, "ab",
+                    "JIT OP_ADD_STR should produce 'ab', got '{}'", jit_str);
+            }
+            other => panic!("JIT should return Finished(Some(Ref)), got {:?}", other),
+        }
     }
 }

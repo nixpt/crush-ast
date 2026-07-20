@@ -1082,6 +1082,7 @@ dependencies = [
  "cranelift-native",
  "crush-vm",
  "region",
+ "serde_json",
  "target-lexicon 0.13.5",
 ]
 

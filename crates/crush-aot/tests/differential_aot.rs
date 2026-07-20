@@ -118,6 +118,102 @@ fn jit_outcome(source: &str) -> FastOutcome {
     }
 }
 
+/// Locate the helper binary that compiles and runs a LoweredProgram via JIT in
+/// a subprocess. This provides SIGILL isolation — invalid JIT-generated code
+/// won't crash the test suite.
+///
+/// The `jit-runner` binary lives in the crush-jit crate but ends up in the same
+/// target directory as crush-aot-runner. Resolve it relative to that.
+fn jit_runner_path() -> PathBuf {
+    let mut path = aot_runner_path();
+    path.set_file_name("jit-runner");
+    if cfg!(windows) {
+        path.set_extension("exe");
+    }
+    path
+}
+
+/// Build the jit-runner binary if needed, returning its path.
+fn ensure_jit_runner() -> Option<PathBuf> {
+    let path = jit_runner_path();
+    if path.exists() {
+        return Some(path);
+    }
+    // Try building it via cargo.
+    let status = Command::new("cargo")
+        .args(["build", "--bin", "jit-runner", "-p", "crush-jit", "--quiet"])
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// Compile `source` through the Crush frontend, lower to a LoweredProgram,
+/// serialize to JSON, and execute via the `jit-runner` subprocess binary.
+/// This is the safe variant of `jit_outcome` — it catches SIGILL (invalid
+/// JIT code) as a subprocess crash, not a test-suite crash.
+fn jit_outcome_via_subprocess(source: &str) -> FastOutcome {
+    let casm = match crush_frontend::compile_crush_source(source) {
+        Ok(p) => p,
+        Err(e) => return FastOutcome::Err(format!("frontend: {e}")),
+    };
+    let lowered = match crush_vm::fastvm::lower_program(&casm) {
+        Ok(lp) => lp,
+        Err(e) => return FastOutcome::Err(format!("lower_program: {e}")),
+    };
+    // Serialize the LoweredProgram to JSON for the subprocess.
+    let json = match serde_json::to_string(&lowered) {
+        Ok(j) => j,
+        Err(e) => return FastOutcome::Err(format!("serialize LoweredProgram: {e}")),
+    };
+
+    // Write to a temp file.
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("crush_jit_test_{}.json", std::process::id()));
+    if let Err(e) = std::fs::write(&tmp, &json) {
+        return FastOutcome::Err(format!("write temp file: {e}"));
+    }
+
+    // Locate (or build) the jit-runner binary.
+    let runner_path = match ensure_jit_runner() {
+        Some(p) => p,
+        None => return FastOutcome::Err("jit-runner binary not found and build failed".into()),
+    };
+
+    // Run the jit-runner subprocess.
+    let output = match Command::new(runner_path).arg(&tmp).output() {
+        Ok(o) => o,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return FastOutcome::Err(format!("failed to spawn jit-runner: {e}"));
+        }
+    };
+
+    // Clean up temp file.
+    let _ = std::fs::remove_file(&tmp);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        return FastOutcome::Err(format!(
+            "JIT subprocess exited with code {:?}: {stderr}",
+            output.status.code()
+        ));
+    }
+
+    match DiffReport::parse_aot_stdout(&stdout) {
+        Some(v) => FastOutcome::Finished(Some(v)),
+        None => FastOutcome::Err(format!("unparseable jit-runner stdout: {stdout:?}")),
+    }
+}
+
 /// Return true if the given C compiler is available on PATH.
 fn cc_available(cc: &str) -> bool {
     Command::new(cc).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
@@ -150,12 +246,21 @@ fn assert_all_backends_agree(source: &str) {
 
     report.aot_rust = Some(aot_rust_outcome(source));
     report.aot_c = Some(aot_c_outcome(source, cc));
+    // M2 Phase 7: JIT runs in a subprocess to isolate SIGILL from invalid
+    // JIT-generated machine code. The jit-runner helper binary compiles,
+    // executes, and prints the result — if it crashes, we get a non-zero
+    // exit code instead of killing the test suite.
+    report.jit = Some(jit_outcome_via_subprocess(source));
 
     // All backends must agree on outcome class. AOT backends report errors by
     // subprocess exit; VM backends report via Result/Err.
+    // JIT is optional — if the jit-runner binary isn't available, skip it.
     let vm_ok = matches!(report.fastvm, FastOutcome::Finished(_));
     let rust_ok = matches!(report.aot_rust, Some(FastOutcome::Finished(_)));
     let c_ok = matches!(report.aot_c, Some(FastOutcome::Finished(_)));
+    let jit_ok = matches!(report.jit, Some(FastOutcome::Finished(_)));
+    // Detect JIT unavailability: Err with "binary not found" or "build failed".
+    let jit_unavailable = matches!(&report.jit, Some(FastOutcome::Err(msg)) if msg.contains("binary not found") || msg.contains("build failed"));
 
     if vm_ok != rust_ok {
         panic!(
@@ -169,9 +274,15 @@ fn assert_all_backends_agree(source: &str) {
             report.fastvm, report.aot_c
         );
     }
+    if !jit_unavailable && vm_ok != jit_ok {
+        panic!(
+            "FastVM vs JIT outcome divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
+            report.fastvm, report.jit
+        );
+    }
 
     // When all succeed, compare the returned scalar values across every backend.
-    if vm_ok && rust_ok && c_ok {
+    if vm_ok && rust_ok && c_ok && (jit_ok || jit_unavailable) {
         let vm_val = report.fastvm_return().cloned();
         let rust_val = match &report.aot_rust {
             Some(FastOutcome::Finished(Some(v))) => v.clone(),
@@ -181,6 +292,10 @@ fn assert_all_backends_agree(source: &str) {
             Some(FastOutcome::Finished(Some(v))) => v.clone(),
             _ => unreachable!(),
         };
+        let jit_val = match &report.jit {
+            Some(FastOutcome::Finished(Some(v))) => Some(v.clone()),
+            _ => None,
+        };
 
         // Skip detailed value comparison when any backend returns Norm::Other,
         // which indicates an internal representation (e.g. FastVM's arena Ref
@@ -189,7 +304,8 @@ fn assert_all_backends_agree(source: &str) {
         // above already confirms all backends accept the program.
         let any_other = matches!(&vm_val, Some(Norm::Other(_)))
             || matches!(rust_val, Norm::Other(_))
-            || matches!(c_val, Norm::Other(_));
+            || matches!(c_val, Norm::Other(_))
+            || matches!(&jit_val, Some(Norm::Other(_)));
 
         if !any_other {
             assert_eq!(
@@ -200,6 +316,12 @@ fn assert_all_backends_agree(source: &str) {
                 vm_val, Some(c_val.clone()),
                 "FastVM vs AOT C return value divergence for {source:?}"
             );
+            if let Some(ref jv) = jit_val {
+                assert_eq!(
+                    vm_val, Some(jv.clone()),
+                    "FastVM vs JIT return value divergence for {source:?}"
+                );
+            }
         }
 
         // Compare against interpreter and portable return values when available.

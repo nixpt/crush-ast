@@ -15,6 +15,11 @@ cranelift-control = "0.133.1"
 target-lexicon = "0.13"
 anyhow = "1.0"
 region = "3.0"
+serde_json = "1.0"
+
+[[bin]]
+name = "jit-runner"
+path = "src/bin/jit_runner.rs"
 
 [lib]
 name = "crush_jit"

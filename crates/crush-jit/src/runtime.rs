@@ -164,6 +164,13 @@ fn jit_val_to_string(v: JitValue, arena: &Arena) -> Option<String> {
     None
 }
 
+/// Fallback: convert a non-string JitValue to its text representation.
+/// Used by `OP_ADD_STR` when `jit_val_to_string` returns `None` (e.g. int,
+/// float, bool, null, or non-string ref). Delegates to `Display`.
+fn jit_value_to_text(v: JitValue) -> String {
+    v.to_string()
+}
+
 /// Helper: convert a Vec<JitValue> to Vec<RuntimeValue>.
 fn jit_vec_to_rtv(items: Vec<JitValue>) -> Vec<RuntimeValue> {
     items.into_iter().map(jit_to_rtv).collect()
@@ -1056,6 +1063,7 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let b_val = ctx.pop().unwrap_or(JitValue::null());
             let a_val = ctx.pop().unwrap_or(JitValue::null());
 
+
             // Check for string concatenation (either operand is a string ref).
             let a_is_str = a_val.to_ref().map_or(false, |idx| {
                 arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
@@ -1071,9 +1079,9 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     None => { ctx.push(JitValue::null()); return; }
                 };
                 let text_a = jit_val_to_string(a_val, arena)
-                    .unwrap_or_else(|| format!("{}", a_val));
+                    .unwrap_or_else(|| jit_value_to_text(a_val));
                 let text_b = jit_val_to_string(b_val, arena)
-                    .unwrap_or_else(|| format!("{}", b_val));
+                    .unwrap_or_else(|| jit_value_to_text(b_val));
                 let result = format!("{}{}", text_a, text_b);
                 let ptr = arena.alloc(Object::Str(result));
                 ctx.push(JitValue::from_ref(ptr));
