@@ -556,3 +556,11 @@ Value's Rc<RefCell<...>> isn't Send, so an arbitrary HostCap::call() can't be mo
 
 Artifacts: crates/crush-vm/src/host.rs, crates/crush-vm/src/scheduler.rs, crates/crush-vm/src/portable_vm.rs
 
+
+## 2026-07-19T19:20:26-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] CRUSH-20: crush-vm owns the buckets dependency directly (not crush-lang-sdk)
+
+Reason:
+The design doc leaned toward crush-lang-sdk owning buckets provisioning (keeps crush-vm dep-light; exo-light already mediates capsule provisioning separately via exo-hydra, and the two provisioning paths shouldn't compete). Decided the other way: crush-vm takes buckets as a direct optional dependency (feature sandboxed-polyglot = ["dep:buckets"]), because EXEC_LANG's actual spawn point (scheduler.rs's run_exec_lang, portable_vm.rs's mirror) lives in crush-vm itself, and crush-lang-sdk depends on crush-vm (not the reverse) — routing provisioning through crush-lang-sdk would mean crush-vm calling upward into its own dependent, an inversion. Path dep is relative (../../../buckets, matching crush-pkg's existing convention) not the absolute path CRUSHAST-BUCKETSPIKE-1/2's spike used (deliberately throwaway-only).
+
+Artifacts: crates/crush-vm/Cargo.toml,crates/crush-vm/src/bucket_exec.rs
+
