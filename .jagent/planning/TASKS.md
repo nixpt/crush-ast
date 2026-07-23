@@ -11,6 +11,13 @@ See `.jagent/planning/tickets/` for full detail on every `CRUSH-N` ID referenced
 here. See `RULES.md` for the worktree/branch/commit discipline every agent
 working this backlog must follow.
 
+For the next-arc milestones **M5–M11**, this file tracks only milestone-level
+status (one short paragraph per milestone). For full ticket-level detail,
+see `.jagent/planning/ROADMAP.md` (the canonical milestone specifications)
+and `.jagent/planning/tickets/CRUSH-NN-*.md` (individual ticket files) —
+per the ROADMAP's own instructions: don't duplicate ticket content here,
+milestone tracking only.
+
 ## P0 — Build & Core Health ✅
 
 - [ ] **CRUSH-26**: `Build (release)` CI job fails workspace-wide on every
@@ -85,6 +92,34 @@ reproduces.
 - [ ] Reconcile divergence with exosphere's in-tree crush
 - [ ] **CRUSH-23**: Crush embedded in exosphere/nakshatra — exosphere half already mapped by `EXO-194` (DECIDED, passive convergence); nakshatra half is new: it has no engine of its own, but its one real Crush artifact (`tools/build.crush`) already runs on exosphere's frozen in-tree path. Captured, not designed — see ticket.
 
+## M5 — AI-native compiler layer
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M5 spec — annotations as CAST node types; `crush-index` v0; AI opcodes VM-execute; agent `codebase.*` host caps wired; `@exhaustive-match-sites` lint; dejavue ↔ crush-index integration. **8 tickets filed** (CRUSH-27 through CRUSH-34) under `.jagent/planning/tickets/CRUSH-27..34-*.md`. See ROADMAP M5 for full spec.
+
+## M6 — Walker parity & multi-language completeness
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M6 spec — close 7 remaining walker-lowering gaps from VISION.md; unify the split `Frontend`/`LanguageAdapter` trait families (6-crate migration including the `crates/cli`'s `py`/`pyw` → `python_walker` non-existent-crate mapping bug); Java + Kotlin walkers (CRUSH-21 family); walker→AOT pipeline for all 12+ walkers. **5 ticket stubs proposed** (CRUSH-35–CRUSH-39, not yet filed). See ROADMAP M6 for full spec.
+
+## M7 — Runtime hardening & ops tooling
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M7 spec — cooperative wall-clock timeout extended to **all** blocking caps (extension of CRUSH-19 — `IO_READ`, `IO_WRITE`, `NET_CONNECT`, `PROCESS_WAIT`, `HOST_REQUEST`, and any future blocking host cap, in addition to `CAP_CALL`); fuel budgets (default 1B instructions per program); deterministic mode (`HashMap`/`HashSet` → `BTreeMap`/`BTreeSet` behind `deterministic` cfg); `crush-pkg` import firewall (`Import firewall placement — spec early` risk flagged, see ROADMAP risks); snapshot/replay (PortableVM + FastVM, `.cvm-snapshot`); V8 fallback feature (`v8-fallback`); Node.js API compat shim (`require('http')` subset); Embedded RustPython VM lane (`crush-lang-python runtime = "rustpython"`); `exo.*` capability module layer (pass-through mediation). **9 ticket stubs proposed** (CRUSH-40–CRUSH-48, not yet filed). See ROADMAP M7 for full spec.
+
+## M8 — Platform & architecture maturation (CRUSH-22 evolved)
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M8 spec — multi-OS + multi-arch CI matrix (`ubuntu-latest` + `macos-latest` + `windows-latest` + `aarch64-ubuntu` + `riscv64-ubuntu` via `cross`); `crush-aot` + `crush-aotc` + `crush-installer` reached consensus on `target_os` cfg coverage (3 OS-cfg sites reconciled, expanding on CRUSH-22's "two AOT backends" framing); Android API host cap shard (`crush-lang-android`); `wasm32-unknown-unknown` first-class (verify `crush-web` lane, not rebuild); Pi-class default install (`crush-installer`). **⚠ Precondition: CRUSH-26 (CI release build) fixed first** — adding new matrix lanes onto a still-red matrix produces no signal; CRUSH-26 must be resolved before CRUSH-49/50. **5 ticket stubs proposed** (CRUSH-49–CRUSH-53, not yet filed). See ROADMAP M8 for full spec.
+
+## M9 — Cross-project convergence & STDLIB restoration
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); STDLIB clean-restore of **103** capabilities from `exosphere-1.0.zip` with zero mock markers (each gated by an M5 `@covers` test, not hand-verified); STDLIB mock-rewrite of **46** mock-tainted capabilities from spec (one CRUSH ticket per cap, because rewrites touch behavior). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.
+
+## M10 — Performance ceiling & optimization
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M10 spec — `crush-jit` 55/86 FastOps miscompile audit closure (per the panini 2026-07-14 finding — needs its own ticket before work starts, scope unclear from the one-line finding alone); JIT Phase 6 (Optimization passes: constant folding, dead-code elimination, inlining of small functions); JIT Phase 7 (AOT compilation from JIT — dump compiled native code back as `.so`); conservative→precise GC cutover (shadow stack → real stack maps, eliminates GC pauses for long-lived programs); ML "GC policy brain" PoC (small on-device ML model proposing heuristic GC selection). **5 ticket stubs proposed** (CRUSH-59–CRUSH-63, not yet filed). See ROADMAP M10 for full spec.
+
+## M11 — Universal native & WASM catalyst
+
+**Proposed**, `.jagent/planning/ROADMAP.md` M11 spec — `wasm_walker` migrates into new `crush-lang-wasm` crate with full walker→AOT path; cross-language inlining across **two distinct** walker inputs verified end-to-end (Python → inlined JS function inside a C-codegen `.so`); Universal native compile CLI mode (`crush compile *.crush hello.py lib.rs build.sh main.zig --emit native`); self-hosting walker pipeline in `crush-notebook` (cells in any of 12+ languages execute through walker→AOT path **inside** the notebook kernel, no subprocess); `crush-notebook` integration tests confirming state-sharing between cells of different languages (the "Jupyter-killer" claim verifiable in CI). **⚠ Precondition: M5+M6+M10+M8 stable** (M11's WASM walker→AOT requires M8's `wasm32-unknown-unknown` lane first-class). **Ticket numbers assigned** during M6→M7→M10 in flight (will land in CRUSH-64+ range). See ROADMAP M11 for full spec.
+
 ## Publish lane (blocks crates.io release of the walker family)
 
 - [ ] Version drift: only 9/35 crates use `version.workspace = true`; 6 crates
@@ -106,16 +141,27 @@ reproduces.
 
 ## 💡 Aspirational / research (not scheduled)
 
-- [ ] V8 fallback for dynamic JS (feature-gated, snapshot-based, DevTools)
-- [ ] Node.js API compatibility shim (require('http') → CAP_CALL)
-- [ ] Embedded RustPython VM lane
-- [ ] `exo.*` capability modules
-- [ ] Import firewall, fuel budgets, deterministic mode, snapshot/replay
-- [ ] Unified capsule-aware GC + ML "GC policy brain"
-- [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs`
-- [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue.
-- [ ] **CRUSH-21**: Java/Kotlin language family — new `crush-lang-java`/`crush-lang-kotlin` walkers (same tree-sitter-based shape as `crush-lang-go`) plus, separately, a JVM/Android-API capability bridge for crush capsules on mobile. Captured, not designed — see ticket for the open questions.
-- [ ] **CRUSH-22**: Build platforms & architectures (Windows/macOS/Android/RISC-V/Pi, Intel/AMD CPU-or-GPU ambiguity) — CI is `ubuntu-latest`-only today, two AOT backends disagree on OS-cfg coverage, zero arch-specific (`aarch64`/`riscv`) code anywhere. Captured, not designed — see ticket.
+> **Section status** (s394, 2026-07-23): Most items below now have formal
+> homes under the new **M5–M11** milestones defined in
+> `.jagent/planning/ROADMAP.md` and tracked in the M5–M11 sections above
+> (V8 fallback / Node.js shim / RustPython lane / exo.* caps / import
+> firewall / fuel / deterministic / snapshot → M7; capsule-aware GC + GC
+> policy brain → M10; STDLIB restoration map → M9; **CRUSH-21**
+> Java/Kotlin family → M6; **CRUSH-22** build platforms → M8). Items
+> remaining here are small backlog (not milestone-class): the
+> `Program::serialize(Format::Binary)` rmp-serde bug (binary-only,
+> 2 `#[ignore]`'d tests in `casm/src/ecasm.rs`).
+
+- [ ] V8 fallback for dynamic JS (feature-gated, snapshot-based, DevTools) — *now: M7 / [CRUSH-45]*
+- [ ] Node.js API compatibility shim (require('http') → CAP_CALL) — *now: M7 / [CRUSH-46]*
+- [ ] Embedded RustPython VM lane — *now: M7 / [CRUSH-47]*
+- [ ] `exo.*` capability modules — *now: M7 / [CRUSH-48]*
+- [ ] Import firewall (now: M7 / CRUSH-43), fuel budgets (now: M7 / CRUSH-41), deterministic mode (now: M7 / CRUSH-42), snapshot/replay (now: M7 / CRUSH-44)
+- [ ] Unified capsule-aware GC + ML "GC policy brain" — *now: M10 / [CRUSH-62]+[CRUSH-63]*
+- [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs` — *still small backlog, post-M11*
+- [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue. — *now: M9 / [CRUSH-56]+[CRUSH-57]*
+- [ ] **CRUSH-21**: Java/Kotlin language family — *now: M6 / [CRUSH-37]+[CRUSH-38] for the Java/Kotlin walkers; ticket kept for the JVM/Android-API bridge sub-shard (deferred; M8 / [CRUSH-52] covers Android host-cap surface but the JVM-guest bridge itself is a separate post-M5 ticket)*
+- [ ] **CRUSH-22**: Build platforms & architectures — *now: M8 / [CRUSH-49]+[CRUSH-50]+[CRUSH-51]+[CRUSH-52]+[CRUSH-53]*
 
 ## Done this session (s388, for context — see FOREMAN_SESSIONS.md s388 for the full merge-wave writeup)
 

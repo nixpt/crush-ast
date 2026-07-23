@@ -564,3 +564,13 @@ The design doc leaned toward crush-lang-sdk owning buckets provisioning (keeps c
 
 Artifacts: crates/crush-vm/Cargo.toml,crates/crush-vm/src/bucket_exec.rs
 
+
+## 2026-07-20T15:56:29-05:00 — [TACTICAL] [ADOPTED] [ARCHITECTURAL] CRUSH-DISTRIB: add crush umbrella binary as a thin subprocess dispatcher over crush-repl/crush-run/crushc
+
+Reason:
+Arc's own audit (s382/s383) found the capability already exists and is already published (crush-lang-sdk@0.2.0) — the only gap was the missing 'crush' command name. Chose a zero-dependency std::process::Command dispatcher over re-implementing arg parsing in a new binary, since cargo places every [[bin]] of a package in the same install dir, so current_exe().parent() reliably finds the sibling tools in both a dev build and a real 'cargo install crush-lang-sdk'. Kept each subcommand's own clap parser as the source of truth (crush --help is minimal; crush run --help / crush build --help show the real flags) instead of duplicating flag definitions.
+
+Artifacts: crates/crush-lang-sdk/src/bin/crush.rs,crates/crush-lang-sdk/Cargo.toml,crates/crush-lang-sdk/tests/crush_test.rs
+
+Author type: agent
+
