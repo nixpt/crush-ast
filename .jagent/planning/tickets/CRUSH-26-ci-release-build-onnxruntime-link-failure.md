@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-26 |
 | **Priority** | P0 — every push to `main` has failed CI for 24+ hours |
-| **Status** | Backlog |
+| **Status** | Done (Approach 1: `features = ["download-binaries"]` additive on both `ort` deps — `crush-vm`'s `2.0.0-rc.12` and `crush-lint`'s `2.0.0-rc.2`). Both files use `features = [...]` without `default-features = false`, so the addition is additive on top of `ort`'s own defaults (download-binaries is already in `ort` 2.0.0-rc.12's default list per `~/.cargo/registry/.../ort-2.0.0-rc.12/Cargo.toml`, so on rc.12 this is defensive-on-top; on rc.2 it's the actual fix). Version alignment of `crush-lint` to rc.12 deferred — that's a houseclean ticket, not a time-sensitive build fix. |
 | **Phase** | Build health |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
