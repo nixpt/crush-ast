@@ -4,11 +4,40 @@
 |-------|-------|
 | **ID** | CRUSH-24 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | **Superseded — not fixed, closed by a different branch** (s391, 2026-07-20) |
 | **Phase** | M2 (JIT backend) |
 | **Assignee** | unassigned |
-| **Dependencies** | none (blocks `agent/buffy/CRUSHAST-CRUSH-1` — the whole branch is unmerged pending this) |
+| **Dependencies** | none |
 | **Estimated effort** | M |
+
+## Resolution (superseded, not fixed)
+
+`agent/buffy/CRUSHAST-CRUSH-1` — the branch this bug lived on — has been retired
+(worktree removed, local + remote branch deleted). It is **not** the branch
+that ends up fixing this.
+
+`main` already carries an independent, further-developed JIT calls/exceptions
+implementation (`fe9a60a`, captain-directed merge predating CRUSHAST-CRUSH-1's
+own attempt), continued today by PR #21 (`agent/buffy/M2-JIT-PHASES-2-4`,
+"M2 JIT Phases 2-7"). That implementation solved the exact block-sealing
+problem this ticket describes via a different design — "frame-relative
+locals" (see that branch's commit `5d46e20`) — rather than deferred block
+sealing. Its own non-recursive CALL/RETURN tests all pass (87 passed / 2
+ignored, the 2 ignores being a separate, harder recursive-call Cranelift
+GVN/LICM hoisting bug, unrelated to block-sealing). Confirmed by attempting to
+merge `main` into `CRUSHAST-CRUSH-1`: real content conflicts in
+`compiler.rs`/`runtime.rs` from the two independent implementations, not a
+mechanical merge — that conflict is what surfaced this in the first place.
+
+**If a future JIT `CALL`/`RETURN` regression resembling this one appears, look
+at PR #21 / its "frame-relative locals" design first** — this ticket's own
+"defer sealing until all edges known" fix sketch below was never implemented
+and shouldn't be, now that a working alternative exists on `main`.
+
+One real thing *was* salvaged off `CRUSHAST-CRUSH-1` before retiring it: its
+other, unrelated commit (`20ddcaf`, wiring the 7 AI opcodes into the AOT
+Rust/C backends as stubs) was independently valid and not superseded by
+anything on `main` — cherry-picked separately to `main` `f49ece5`.
 
 ## Problem
 

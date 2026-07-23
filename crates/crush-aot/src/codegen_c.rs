@@ -844,6 +844,15 @@ fn emit_c_instr(
             out.push_str(&format!("                _pc={next_pc}; break;\n"));
         }
 
+        // ── AI opcodes ──
+        // AOT C can't perform AI queries. The JSON config is in the instruction args,
+        // NOT on the stack. Push null (matching scheduler/portable VM behavior).
+        "ai_query" | "ai_synthesize" | "ai_agent_delegation" | "ai_semantic_match"
+        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain" => {
+            out.push_str(&format!("                _push(mk_null());\n"));
+            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+        }
+
         "ret" | "halt" => {
             out.push_str("                return _pop();\n");
         }

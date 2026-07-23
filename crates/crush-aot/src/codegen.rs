@@ -556,6 +556,16 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
 
+        // ── AI opcodes ──
+        // AOT backends can't perform AI queries or agent delegation. The JSON config
+        // is in the instruction args, NOT on the stack. Push Null (matching the
+        // scheduler and portable VM which also just push Null for AI opcodes).
+        "ai_query" | "ai_synthesize" | "ai_agent_delegation" | "ai_semantic_match"
+        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain" => {
+            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
+            out.push_str(&next_pc_str);
+        }
+
         "ret" | "halt" => {
             out.push_str(&format!("{ind}return stack.pop().unwrap_or(RuntimeValue::Null);\n"));
         }

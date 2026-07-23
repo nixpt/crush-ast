@@ -56,14 +56,14 @@ reproduces.
 
 - [x] Phase 1: Skeleton (stack ops, arithmetic, logic, jumps, locals, 21 tests)
 - [ ] Phase 2: Locals & Calls (function calls, store/load, CapCall, CallHost)
-  - [ ] **CRUSH-24**: JIT `CALL`/`RETURN` dispatch cascade panics on Cranelift's
-    `!self.is_sealed(block)` SSA invariant — `build_fn` seals each block
-    immediately after emitting it, but a function's entry block can receive
-    a `Call` edge from a call site processed later in the same pass. 5/44
-    `crush-jit` tests fail identically (all CALL-exercising tests, none
-    else). Found reviewing `agent/buffy/CRUSHAST-CRUSH-1` for merge (s391,
-    foreman) — branch stays unmerged until fixed. See ticket for root cause
-    + fix sketch.
+  - [x] **CRUSH-24**: JIT `CALL`/`RETURN` dispatch cascade panics on Cranelift's
+    `!self.is_sealed(block)` SSA invariant, found on `agent/buffy/CRUSHAST-CRUSH-1`
+    (s391, foreman). **Superseded, not fixed (s391)** — that branch is retired
+    (worktree removed, local+remote deleted). `main`'s independent, already-merged
+    JIT calls implementation (continued by PR #21) solves the same problem via a
+    different "frame-relative locals" design; non-recursive CALL/RETURN already
+    works there. `CRUSHAST-CRUSH-1`'s other commit (AI-opcode AOT stubs) was
+    salvaged separately, cherry-picked to `main` `f49ece5`. See ticket for detail.
 - [ ] Phase 3: Data & Caps (MakeList, MakeMap, Index, Len, arena)
 - [ ] Phase 4: Exceptions (EnterTry, ExitTry, Throw)
 - [ ] Phase 5: ExoLight integration
