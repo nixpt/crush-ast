@@ -5,7 +5,7 @@
 | **ID** | CRUSH-36 |
 | **Title** | LanguageAdapter trait unification + 6-crate migration (M6) |
 | **Hash** | `a41b81f` (feat: CRUSH-36 Commit 1 -- regression-resistance for the 4 ROADMAP-named stuck-FE walker crates) |
-| **Status** | In Progress (Commit 1 landed `a41b81f`; Sub-Commit 1 landed `9d3c6f0`; Sub-Commit 2 + Sub-Commit 3 + Commit 3 pending) |
+| **Status** | In Progress (Commit 1 landed `a41b81f`; Sub-Commit 1 landed `9d3c6f0`; Sub-Commit 2 landed `9593da6`; Sub-Commit 3 + Commit 3 pending) |
 | **Phase** | M6 — Walker parity & multi-language completeness |
 | **Assignee** | Buffy |
 | **Dependencies** | M5 partial (M5 per ROADMAP dependency: partial for `@exhaustive-match-sites` lint; this ticket is independent since it touches trait surface, not walker lowering). |
@@ -276,3 +276,71 @@ F4: subsequent supertrait-tie work MUST include the blanket impl as part of the 
 F5: per-FE regression — 6 existing Frontend impls auto-derive LanguageAdapter via the blanket; closure is uniform with no per-crate boilerplate.
 
 This pattern will be referenced from CRUSH-37 (Java), CRUSH-38 (Kotlin), CRUSH-43+ future walkers, plus Sub-Commit 2 (the `Walker + LanguageWalker` unification which will hit analogous cascades if the blanket impl is forgotten in Fix #1).
+## Status row update for Sub-Commit 2
+
+**Sub-Commit 2 landed at `9593da6`** (Option D: `impl_both_for_walker!` macro + cascade closure UP FRONT). The architectural decision between Cascade (Sub-Commit 1's supertrait-tie + blanket) and Closure (Sub-Commit 2's macro-generated concrete impls) is now a documented pattern for future trait-unification work.
+
+## Notes from CRUSH-36 Commit 2 Sub-Commit 2 review
+
+**Reviewer verdict** (Nit Pick Nick, final-final): LAND-AS-IS after addressing all 4 actionable items (G deprecation, B filename-loss doc promotion, F forward-flag renumber, D runtime parse() test) + the F5 numbering gap closure.
+
+### The Option D architecture (closure UP FRONT)
+
+The 4th-trait unification work uses architecture Option D -- the `impl_both_for_walker!` macro that generates BOTH `impl Walker for X` AND `impl LanguageWalker for X` from a single source-of-truth invocation. Option D was chosen over Option A (supertrait tie `Walker: LanguageWalker`) for two reasons:
+
+1. **Cross-crate coupling**: `Walker` lives in walker-core; `LanguageWalker` lives in crush-frontend. Supertrait tie would force cross-crate dep inversion.
+2. **Method-signature conflict**: `Walker::language()` returns `tree_sitter::Language` (grammar-bound, opaque); `LanguageWalker::language()` returns `&'static str` (UI-bound, polyglot-frontend-legal). Structural types don't unify cleanly.
+
+Option D sidesteps both by generating concrete impls on a ZST. The cascade closure is **UP FRONT** -- no supertrait, no blanket, no E0119, no 6-fix cascade. This is the Sub-Commit 1 Lesson 4 application:
+
+> Supertrait-tie without immediate blanket impl is incomplete -- write the closure structurally in Fix #1, not as a later discovered-need.
+
+### Cascade closure trajectory (vs Sub-Commit 1's 7-fix cascade)
+
+| Sub-Commit | Cascade | Closure pattern |
+|------------|---------|-----------------|
+| 1 (Frontend: LanguageAdapter) | 7 fixes | Subtrait-tie + blanket (Fix #6 in the 6th iteration) |
+| 2 (Walker + LanguageWalker) | 1 fix (`#[derive(Clone, Copy)]` for E0382) | Macro with concrete impls + ZST (closure UP FRONT) |
+
+The 1 fix in Sub-Commit 2 was the E0382 "use of moved value" error when the macro-generated ZST was moved into TWO `Box<dyn>` instances in the test. The fix: `#[derive(Clone, Copy)]` on the macro-generated struct. ZSTs are trivially copy + clone (no field to copy), so the derive is zero-cost + zero-risk.
+
+The structural difference: Sub-Commit 1's supertrait-tie was a Cascade Architecture pattern (constraint + blanket closure); Sub-Commit 2's macro is a Closure Architecture pattern (concrete impls on ZST, no abstraction layer above the concrete impls). The Closure Architecture is structurally cascade-resilient because there's no abstraction layer to cascade through.
+
+### Forward flags F1..F8 (consolidated)
+
+The macro's rustdoc has F1..F8 forward flags covered. Key items:
+
+- **F5** (no per-FE regression): the macro is OPT-IN; existing `impl Walker for X` impls in tree-sitter walkers (Go/C/Zig/Dart) continue to compile unchanged. Migration is the Sub-Commit 2 Commit B follow-up.
+- **F6** (filename-loss caveat): `Walker::walk(&Tree, &[u8])` path uses empty filename (the trait signature has no filename parameter); the canonical filename-preserving flow is the `LanguageWalker::parse`/`walk` round-trip.
+- **F7** (no migration in this commit): Go as the canonical exemplar is the Sub-Commit 2 Commit B follow-up.
+- **F8** (test limitation): the test uses `unreachable!()` for `$ts_lang` as a test-side dummy; DO NOT call `.parse()` on the test's `MacroGenAdapter` in production code.
+
+### Deprecation
+
+The existing `impl_adapter_from_walker!` macro is now marked `#[deprecated(note = "use impl_both_for_walker! instead")]`. The macro predates the Sub-Commit 2 unification and is dead code (no callers in the post-Sub-Commit-1 landscape). The deprecation signalizes the migration path for any external users.
+
+### Cross-crate dep
+
+Added `crush-frontend` as a dev-dependency to walker-core's Cargo.toml so the test can import `crush_frontend::language_walkers`. Production builds of walker-core are NOT affected (dev-dep only). The macro itself uses `$crate::Walker` (always resolves to walker-core) and `crush_frontend::language_walkers::LanguageWalker` (resolved at call-site scope).
+
+## Process notes -- Closure Architecture pattern (subtrait-tie without blanket)
+
+This commit established the Closure Architecture pattern as a structural alternative to Sub-Commit 1's Cascade Architecture pattern. The 2 patterns differ in cascade-resilience:
+
+| Pattern | Subtrait-tie | Closure | Cascade risk |
+|---------|--------------|---------|--------------|
+| Cascade (Sub-Commit 1) | yes (`Frontend: LanguageAdapter`) | trait blanket (`impl<T: Frontend> LanguageAdapter for T`) | 6-fix cascade if blanket is added late |
+| Closure (Sub-Commit 2) | no (concrete impls) | structural (ZST + macro) | 1-fix cascade (E0382 for ZST Clone/Copy) |
+
+The Closure Architecture is the preferred pattern for future trait-unification work in the M6 arc. Specifically:
+
+- When 2 traits are in DIFFERENT crates (cross-crate): prefer Closure (macro) over Cascade (supertrait-tie + blanket). Avoids cross-crate dep inversion.
+- When 2 traits are in the SAME crate (intra-crate): either pattern works; Cascade is more idiomatic for single-crate trait families.
+- When the trait methods have STRUCTURAL conflicts (different return types for same-named methods): Closure is the only option; Cascade can't unify the methods.
+
+The Closure Architecture's macro-generated concrete impls also enable compile-time validation via the structural-coercion test pattern (proves the SAME ZST coerces to BOTH trait-object boxes). This is the active-test pattern for trait-unification closure.
+
+### Future work
+
+- CRUSH-36 Sub-Commit 2 Commit B: migrate GoWalker (canonical exemplar) to use `impl_both_for_walker!`. This will replace the hand-rolled `impl Walker for GoWalker` with the macro invocation AND add the `impl LanguageWalker for GoAdapter` (the new ZST). After Commit B, Go will be in BOTH `AdapterRegistry` and `WalkerRegistry`.
+- CRUSH-36 Sub-Commit 3: CLI binary-name mapping fix. The CLI's `walker_binary()` function in `crates/cli/src/main.rs:11-30` currently maps extensions to subprocess binary names (broken). Sub-Commit 3 will route via `AdapterRegistry::walk` instead, collapsing the 6 broken string mappings into 1 registry call.
