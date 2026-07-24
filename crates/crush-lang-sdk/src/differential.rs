@@ -489,6 +489,10 @@ mod tests {
     }
 
     // ── DEFERRED until Crush frontend exposes `dom_<kind>(...)` syntax ──
+    // OPEN (mirrors AI deferred ambiguity): `dom_<kind>(...)` builtin
+    // vs `dom_native.<kind>(...)` member-call -- both are equivalent at
+    // the cap-call gate, so this is a frontend design choice, not a
+    // VM/cap-call one.
     // Same mirror of the AI deferred parametric block above: the Crush
     // frontend does not yet recognize `dom_<kind>(args)` as a builtin
     // call (the wiring is at the cap-call VM-side level per CRUSH-33

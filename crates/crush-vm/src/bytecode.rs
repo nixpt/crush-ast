@@ -170,6 +170,9 @@ pub fn ai_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
 /// already matched into the combined DOM match arm wired in Commit 2).
 /// Drives the host_caps cap-call dispatch from `crush-vm::scheduler`
 /// and `crush-vm::portable_vm` (Commit 2).
+///
+/// Complexity: O(1) per slot byte — a match on a constant byte with at
+/// most 10 arms, same micro-cost as the AI bridge; no perf concern.
 pub fn dom_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
     match opcode {
         DOM_QUERY => Some("query"),
