@@ -26,6 +26,7 @@
 pub mod akg;
 pub mod ai_native;
 pub mod builder;
+pub mod dom_native;
 pub mod bus;
 pub mod caps;
 pub mod cli;
