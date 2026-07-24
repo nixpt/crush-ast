@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-28 |
 | **Priority** | P1 — depends on CRUSH-27 (annotations must exist in CASM before index can ingest them); blocks CRUSH-29 (caps over the index) and CRUSH-31 (dejavue integration) |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-27 (annotation CAST node types must exist before the index can ingest them) |

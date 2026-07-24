@@ -2,7 +2,7 @@
 
 use crate::query::{CallSite, CoverageGap};
 use crush_cast::manifest::{ExhaustiveMatchSite, FunctionAnnotations, Invariant};
-use crush_cast::{Expression, Program, Statement};
+use crush_cast::{Annotation, Expression, Program, Statement};
 use std::collections::HashMap;
 
 /// Per-module entry in the index.
@@ -63,6 +63,13 @@ pub struct CrushIndex {
     semantic_keys: Vec<(String, String, Option<f64>)>,
     /// Dejavue project timeline events (private; see `dejavue_timeline()`)
     dejavue_timeline: Vec<String>,
+
+    /// CRUSH-28: flat annotation ladders per module, one entry per
+    /// `add_program()` call (ladders stack up so cross-module joins
+    /// like `@covers` in tests closing `@errors` in impl still work
+    /// when a caller adds the same `module_path` more than once).
+    /// Private; see [`annotations`](Self::annotations).
+    flat_annotations: HashMap<String, Vec<Vec<Annotation>>>,
 }
 
 impl CrushIndex {
@@ -79,6 +86,7 @@ impl CrushIndex {
             cson_configs: HashMap::new(),
             semantic_keys: Vec::new(),
             dejavue_timeline: Vec::new(),
+            flat_annotations: HashMap::new(),
         }
     }
 
@@ -151,6 +159,16 @@ impl CrushIndex {
         for dec in &program.decisions {
             self.decisions.push((module_path.to_string(), dec.clone()));
         }
+
+        // CRUSH-28: cache the flat annotation ladder for this module.
+        // Append (not overwrite) so two `add_program()` calls with the
+        // same `module_path` accumulate ladders — needed for tests that
+        // add a "do_thing" program and then a "test_foo" program under
+        // the same module so `uncovered_paths()` can detect the gap.
+        self.flat_annotations
+            .entry(module_path.to_string())
+            .or_default()
+            .push(program.flatten_annotations());
     }
 
     // ── query API ────────────────────────────────────────────────────────────
@@ -204,37 +222,112 @@ impl CrushIndex {
 
     /// Error paths (from `@errors`) that have no corresponding `@covers` test.
     ///
-    /// Returns one `CoverageGap` per uncovered error variant.  An agent checks
-    /// this before shipping so it knows which paths are untested.
+    /// Returns one `CoverageGap` per uncovered error variant. An agent
+    /// checks this before shipping so it knows which paths are untested.
+    ///
+    /// CRUSH-28: now consumes the flat annotation ladder instead of
+    /// iterating `Function.annotations` directly, so `module_path` is
+    /// tracked on each gap and a `@covers` Oracle in module `tests`
+    /// correctly closes an `@errors` variant declared in module `impl`.
     pub fn uncovered_paths(&self) -> Vec<CoverageGap> {
-        // Collect all error variants claimed by @errors annotations
-        let mut errors: Vec<(String, String)> = Vec::new(); // (fn_name, error_variant)
-        for entry in self.functions.values() {
-            if let Some(ann) = &entry.annotations {
-                for e in &ann.errors {
-                    errors.push((entry.name.clone(), e.clone()));
+        // Errors: from `Annotation::Error` in the flat ladder — preserves
+        // module context per-ladder (one ladder per add_program call).
+        let mut errors: Vec<(String, String, String)> =
+            Vec::new(); // (module_path, fn_name, variant)
+        for (mod_path, ladders) in &self.flat_annotations {
+            for ladder in ladders {
+                for ann in ladder {
+                    if let Annotation::Error(e) = ann {
+                        for variant in &e.variants {
+                            errors.push((
+                                mod_path.clone(),
+                                e.function_name.clone(),
+                                variant.clone(),
+                            ));
+                        }
+                    }
                 }
             }
         }
 
-        // Collect all error variants covered by @covers in test functions
-        let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for entry in self.functions.values() {
-            if let Some(ann) = &entry.annotations {
-                for c in &ann.covers {
-                    covered.insert(c.clone());
+        // Coverage: from `Annotation::Coverage` in the flat ladder. Coverage
+        // is module-agnostic (an Oracle name closes a variant regardless
+        // of which module declared the @errors), so keep a flat set keyed
+        // by variant string.
+        let mut covered: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for ladders in self.flat_annotations.values() {
+            for ladder in ladders {
+                for ann in ladder {
+                    if let Annotation::Coverage(c) = ann {
+                        for path in &c.paths {
+                            covered.insert(path.clone());
+                        }
+                    }
                 }
             }
         }
 
         errors
             .into_iter()
-            .filter(|(_, variant)| !covered.contains(variant))
-            .map(|(fn_name, error_variant)| CoverageGap {
-                fn_name,
-                error_variant,
-            })
+            .filter(|(_, _, variant)| !covered.contains(variant))
+            .map(
+                |(module_path, fn_name, error_variant)| CoverageGap {
+                    fn_name,
+                    error_variant,
+                    module_path,
+                },
+            )
             .collect()
+    }
+
+    /// CRUSH-28: flat annotation ladder for a module — the unifying
+    /// primitive that downstream `codebase.*` caps (CRUSH-29) and the
+    /// dejavue integration (CRUSH-31) iterate over.
+    ///
+    /// Returns `Annotation::Module`, `Annotation::Invariant`,
+    /// function-scoped `Error` / `Read` / `Write` / `Coverage`, and
+    /// compiler-populated `ExhaustiveMatchSites` in a single list.
+    ///
+    /// Multiple `add_program()` calls for the same `module_path` are
+    /// flattened across the stacked ladders and sorted by a stable
+    /// `(kind, target_resource)` key, so the returned ordering is
+    /// reproducible across runs — important for deterministic JSON
+    /// export (HashMap iteration order is not).
+    ///
+    /// **Dedup semantics**: `Annotation::Module` is a singleton per
+    /// module_path — re-ingesting the same `module_path` keeps the
+    /// first written Module (other Modules are dropped on read); this
+    /// is the "first-write-wins" semantic. Other variants stack
+    /// freely; an `Annotation::Invariant` dedup by `.name` is a known
+    /// gap (filed for the next turn).
+    ///
+    /// The legacy `Function.annotations` field stays populated for
+    /// callers that reach it via `definition(fn_name)`; this method
+    /// gives you the LIVING flat view instead.
+    pub fn annotations(&self, module_path: &str) -> Vec<&Annotation> {
+        match self.flat_annotations.get(module_path) {
+            None => Vec::new(),
+            Some(ladders) => {
+                let mut out: Vec<&Annotation> = ladders.iter().flatten().collect();
+                out.sort_by(|a, b| annotation_sort_key(a).cmp(&annotation_sort_key(b)));
+                // CRUSH-28 review (Nit Pick Nick): dedup `Annotation::Module`
+                // — it's a singleton per module_path. Multiple ladders may
+                // carry a Module entry (one per `add_program()` call); only
+                // the first survives so downstream `codebase.modules()`
+                // (CRUSH-29) doesn't emit duplicate module rows.
+                let mut seen_module = false;
+                out.retain(|ann| match ann {
+                    Annotation::Module(_) if seen_module => false,
+                    Annotation::Module(_) => {
+                        seen_module = true;
+                        true
+                    }
+                    _ => true,
+                });
+                out
+            }
+        }
     }
 
     /// Number of functions in the index.
@@ -340,6 +433,34 @@ impl CrushIndex {
 impl Default for CrushIndex {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── annotation sort helper ───────────────────────────────────────────────────
+
+/// Stable sort key for [`Annotation`]. Used by
+/// [`CrushIndex::annotations`] to produce a deterministic order for JSON
+/// export (HashMap iteration order is non-deterministic across runs).
+///
+/// The first tuple element is the variant ordinal (`Module`=0, `Invariant`=1,
+/// `Error`=2, `Read`=3, `Write`=4, `Coverage`=5,
+/// `ExhaustiveMatchSites`=6) — tied to the 7-variant enum declared in
+/// `crush_cast::manifest::Annotation`. The second element is the
+/// `target_resource` key (`function_name` for function-level variants,
+/// `invariant.name` for Invariant, `""` for Module) so ties resolve
+/// uniformly across runs.
+///
+/// If `Annotation` gains a variant, extend this match — missing arms
+/// will be caught by the compiler.
+fn annotation_sort_key(a: &Annotation) -> (u8, String) {
+    match a {
+        Annotation::Module(_) => (0, String::new()),
+        Annotation::Invariant(i) => (1, i.name.clone()),
+        Annotation::Error(e) => (2, e.function_name.clone()),
+        Annotation::Read(r) => (3, r.function_name.clone()),
+        Annotation::Write(w) => (4, w.function_name.clone()),
+        Annotation::Coverage(c) => (5, c.function_name.clone()),
+        Annotation::ExhaustiveMatchSites(s) => (6, s.function_name.clone()),
     }
 }
 
