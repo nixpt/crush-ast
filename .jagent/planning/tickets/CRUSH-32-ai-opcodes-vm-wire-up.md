@@ -4,9 +4,11 @@
 |-------|-------|
 | **ID** | CRUSH-32 |
 | **Priority** | P0 — very high. Unblocks `crush-notebook` AI-native cells. AOT-side stubs already merged to `main` (`f49ece5`); this ticket closes the VM-side gap. |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
+| **Closed by** | `07f64ee` (feat: CRUSH-32 -- AI opcodes VM-side wire-up) |
+
 | **Dependencies** | Existing AOT stubs at `f49ece5` 2026-07-20 (salvaged from retired `agent/buffy/CRUSHAST-CRUSH-1`); no upstream CRUSH-NN blocker |
 | **Estimated effort** | L |
 
