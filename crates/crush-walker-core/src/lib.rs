@@ -110,7 +110,22 @@ impl FeatureReport {
 ///     // ... lower with ctx, using ctx.meta_at(offset) for position metadata
 /// }
 /// ```
-pub trait Frontend {
+// CRUSH-36 Commit 2 Sub-Commit 1 (A->B):
+// Supertrait tie `Frontend: LanguageAdapter` enables every `impl Frontend
+// for X` to register in `AdapterRegistry` directly without a separate
+// adapter wrapper struct (the macro `impl_adapter_from_frontend!` is no
+// longer required for FE-side walker crates to participate in the unified
+// registry). The default `walk` body wraps the existing `frontend_pipeline`
+// so existing Frontend impls do NOT need a `walk` body -- they inherit this
+// default. The 6 Frontend impls (bash, custom, nepali, python, rust, js)
+// continue to compile unchanged: language_name + file_extensions + parse +
+// analyze + lower are still declared here, walk is inherited from the default
+// below (and that default satisfies `LanguageAdapter::walk` via the
+// supertrait tie), and can_handle is inherited from `LanguageAdapter`'s own
+// default. The `Send + Sync` bound propagates from `LanguageAdapter: Send +
+// Sync`; all 6 existing impls are simple structs (unit or struct-of-strings)
+// and auto-derive Send + Sync.
+pub trait Frontend: LanguageAdapter {
     fn language_name(&self) -> &'static str;
     fn file_extensions(&self) -> &[&'static str];
 
@@ -122,6 +137,80 @@ pub trait Frontend {
 
     /// Lower the parsed AST to a CAST Program.
     fn lower(&self, ast: Box<dyn std::any::Any>) -> Result<Program>;
+
+    /// Default walk for any Frontend: parse -> analyze -> lower inline.
+    /// Override only if a custom filename transformation is needed (e.g.
+    /// CLI path-aware lowering).
+    ///
+    /// ## Why inlined (and not calling `frontend_pipeline(self, source)`)
+    ///
+    /// The free function `frontend_pipeline(frontend: &dyn Frontend, ...)`
+    /// takes `&dyn Frontend` -- at the trait-body default-implementation site
+    /// this would force a `&Self -> &dyn Frontend` coercion, which only
+    /// succeeds when `Self: Sized` is in scope. Adding `where Self: Sized`
+    /// would remove `walk` from the trait-object vtable, breaking every
+    /// `Box<dyn LanguageAdapter>::walk(...)` call path (including
+    /// `AdapterRegistry::walk`). The inlined body is functionally equivalent
+    /// to `frontend_pipeline(self, source)` but coerces via Self-sized
+    /// method calls instead. Future reviewers: this inlining is intentional,
+    /// not a missed abstraction.
+    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        let ast = self.parse(source)?;
+        let report = self.analyze(&ast)?;
+        let program = self.lower(ast)?;
+        Ok((report, program))
+    }
+}
+
+// CRUSH-36 Commit 2 Sub-Commit 1: this blanket impl is the architectural
+// closure of the supertrait-tie. Without it, the `: LanguageAdapter`
+// supertrait clause on `pub trait Frontend: LanguageAdapter` would require
+// EVERY `impl Frontend for X` to ALSO have an explicit per-type
+// `impl LanguageAdapter for X`. Without that per-type LanguageAdapter
+// impl, the `impl Frontend for X` block fails the impl-site supertrait
+// bound check (Rust verifies at impl site that the target type satisfies
+// the supertrait bound).
+//
+// The blanket `impl<T: Frontend + Send + Sync> LanguageAdapter for T`
+// covers all concrete Frontend impls, so a separate per-type LanguageAdapter
+// impl is NOT needed. The blanket dispatches to Frontend's required methods
+// `language_name` + `file_extensions` via UFCS (`<Self as Frontend>::...`)
+// and Frontend's inlined default `walk` body -- which delegates to
+// parse/analyze/lower via `self.method()` dispatch -- satisfies
+// `LanguageAdapter::walk` end-to-end.
+//
+// Coherence: the blanket applies ONLY to T: Frontend + Send + Sync. The 6
+// existing Frontend impls (`BashFrontend`, `CustomFrontend`,
+// `NepaliFrontend`, `PythonFrontend`, `RustFrontend`, `JsFrontend`) are
+// simple structs of `{ ... }` that auto-implement Send + Sync, so the
+// blanket covers them. Macro-generated wrapper adapters (`PythonAdapter`,
+// `RustAdapter`, etc.) are SEPARATE types that already have explicit
+// `impl LanguageAdapter for <Adapter>` -- they are NOT Frontend impls, so
+// the blanket does NOT apply to them. No coherence conflict.
+//
+// Send + Sync propagation: `LanguageAdapter: Send + Sync` requires
+// `T: Send + Sync` in the blanket bound. For a Frontend type to satisfy
+// this via the blanket, the concrete Frontend type itself must be Send +
+// Sync (auto via struct-of-strings for all 6 existing impls; the blanket
+// itself propagates the Send + Sync requirement to all future Frontend
+// impls and is the canonical closure of the cascade).
+//
+// Future crates (CRUSH-37 Java, CRUSH-38 Kotlin, CRUSH-43+) need
+// `use anyhow::Result;` at file scope (per the cross-scope alias-discipline
+// diagnostic note) AND should NOT need to write any per-type LanguageAdapter
+// impl -- the blanket handles it.
+impl<T: Frontend + Send + Sync> LanguageAdapter for T {
+    fn language_name(&self) -> &'static str {
+        <Self as Frontend>::language_name(self)
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        <Self as Frontend>::file_extensions(self)
+    }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        <Self as Frontend>::walk(self, source, filename)
+    }
+    // can_handle inherits the default from the LanguageAdapter trait body
+    // (extends on file_extensions()); no need to override here.
 }
 
 /// Run the full frontend pipeline: parse → analyze → lower.
@@ -198,7 +287,16 @@ impl<W: Walker> TreeSitterFrontend<W> {
     }
 }
 
-impl<W: Walker> Frontend for TreeSitterFrontend<W> {
+// CRUSH-36 Commit 2 Sub-Commit 1: this existing impl<W: Walker> Frontend for
+// TreeSitterFrontend<W> must add `+ Send + Sync` because Frontend:
+// LanguageAdapter (subtrait tie added in this commit) propagates the Send +
+// Sync bound from LanguageAdapter. Without `+ Send + Sync`, no concrete W
+// can satisfy Frontend, and the existing call sites that construct
+// TreeSitterFrontend<{XWalker}> would break at the trait-resolution step.
+// All existing Walker types (GoWalker, CWalker, ZigWalker, DartWalker) are
+// simple structs of `{ file_name: String, ... }` and auto-implement Send +
+// Sync, so adding the bound is non-breaking at the call-site level.
+impl<W: Walker + Send + Sync> Frontend for TreeSitterFrontend<W> {
     fn language_name(&self) -> &'static str {
         self.language_name
     }
@@ -233,6 +331,25 @@ impl<W: Walker> Frontend for TreeSitterFrontend<W> {
     }
 }
 
+// CRUSH-36 Commit 2 Sub-Commit 1 (Fix #7 truncation): the prior
+// `impl<W: Walker + Send + Sync> LanguageAdapter for TreeSitterFrontend<W>`
+// block (added earlier in this commit as the Fix #2 supplementary bridge)
+// was REDUNDANT after the Fix #6 blanket impl was added -- both impls
+// applied to `TreeSitterFrontend<W>` and would have triggered Rust
+// coherence error E0119 "conflicting implementations of trait
+// `LanguageAdapter` for type `TreeSitterFrontend<_>`". With Fix #6's
+// blanket `impl<T: Frontend + Send + Sync> LanguageAdapter for T` in
+// place, any concrete T: Frontend + Send + Sync (including
+// TreeSitterFrontend<W> via the existing
+// `impl<W: Walker + Send + Sync> Frontend for TreeSitterFrontend<W>` block)
+// automatically satisfies LanguageAdapter -- no per-type bridge needed.
+//
+// This truncation prefers the blanket-only pattern over a mixed
+// blanket+per-type pattern: the blanket is the uniform architectural
+// closure of `Frontend: LanguageAdapter`, and any future concrete type
+// implementing Frontend gains LanguageAdapter via the blanket without
+// needing to write a per-type impl.
+
 /// Run a tree-sitter walker as a subprocess binary.
 ///
 /// Reads source from `input_path`, parses with `walker`, and prints CAST JSON
@@ -257,7 +374,17 @@ impl<W: Walker> Frontend for TreeSitterFrontend<W> {
 ///     )
 /// }
 /// ```
-pub fn run_walker_binary<W: Walker>(
+// CRUSH-36 Commit 2 Sub-Commit 1: this existing run_walker_binary<W: Walker>
+// function must add `+ Send + Sync` because it constructs a
+// TreeSitterFrontend<W> internally and forwards `&frontend` to
+// `frontend_pipeline(&dyn Frontend, ...)`. Since Frontend: LanguageAdapter
+// supertrait tie propagates Send + Sync, `&TreeSitterFrontend<W> ->
+// &dyn Frontend` cast requires `TreeSitterFrontend<W>: Send + Sync`, which
+// in turn requires `W: Send + Sync` (W is the held field). All existing
+// Walker types (GoWalker, CWalker, ZigWalker, DartWalker) are simple structs
+// of `{ file_name: String, ... }` and auto-implement Send + Sync, so adding
+// the bound is non-breaking at existing call sites.
+pub fn run_walker_binary<W: Walker + Send + Sync>(
     walker: W,
     language_name: &'static str,
     extensions: &'static [&'static str],
