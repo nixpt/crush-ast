@@ -72,6 +72,9 @@ pub fn register_at(
         Arc::clone(&index),
         today,
     )));
+    // CRUSH-31: dejavue decision_events → annotation_name join
+    // (`@invariant "use-workspace"` ↔ `decision.decision_title == "use-workspace"`).
+    caps.register(Box::new(CodebaseAnnotationHistoryCap(Arc::clone(&index))));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -586,6 +589,77 @@ impl HostCap for CodebaseDecisionsCap {
                     ("because", Value::Str(dec.because.clone())),
                     ("revisit_if", str_list(&dec.revisit_if)),
                 ])
+            })
+            .collect();
+        Ok(Some(Value::new_array(rows)))
+    }
+}
+
+// ── codebase.annotation_history(name) ────────────────────────────────────────
+
+/// CRUSH-31: ordered chain of dejavue `decision` events whose
+/// `decision_title` equals the supplied annotation name. Ordered
+/// chronologically (ascending `ts`) so an agent reading the result
+/// sees the progression of decisions that shaped the annotation.
+///
+/// Currently scoped to `Annotation::Invariant.name` (the natural
+/// CRUSH-29 join key); future extension to function-level events
+/// (e.g. matching events by `function_name`) is a follow-up ticket.
+struct CodebaseAnnotationHistoryCap(Arc<CrushIndex>);
+
+impl HostCap for CodebaseAnnotationHistoryCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "codebase.annotation_history".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let name = match &args[0] {
+            Value::Str(s) => s.clone(),
+            _ => {
+                return Err(
+                    "codebase.annotation_history: arg must be a string".to_string(),
+                );
+            }
+        };
+
+        let rows: Vec<Value> = self
+            .0
+            .annotation_history(&name)
+            .into_iter()
+            .map(|ev| {
+                // Build the row map incrementally so absent Option
+                // fields DON'T surface as `null` — keeping the wire
+                // shape compact. An event without a `decision_title`
+                // couldn't have surfaced via the strict-equality
+                // join, so listing it again here would be silent
+                // noise; same for branch/commit etc.
+                let mut entries: Vec<(&'static str, Value)> = vec![
+                    ("ts", Value::Str(ev.ts.to_rfc3339())),
+                    ("event", Value::Str(ev.event.clone())),
+                ];
+                if let Some(branch) = &ev.branch {
+                    entries.push(("branch", Value::Str(branch.clone())));
+                }
+                if let Some(commit) = &ev.commit {
+                    entries.push(("commit", Value::Str(commit.clone())));
+                }
+                if let Some(agent) = &ev.agent {
+                    entries.push(("agent", Value::Str(agent.clone())));
+                }
+                if let Some(title) = &ev.decision_title {
+                    entries.push(("decision_title", Value::Str(title.clone())));
+                }
+                if let Some(reason) = &ev.decision_reason {
+                    entries.push(("decision_reason", Value::Str(reason.clone())));
+                }
+                if let Some(summary) = &ev.summary {
+                    entries.push(("summary", Value::Str(summary.clone())));
+                }
+                make_map(entries)
             })
             .collect();
         Ok(Some(Value::new_array(rows)))

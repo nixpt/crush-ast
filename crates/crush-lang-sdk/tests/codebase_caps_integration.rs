@@ -346,3 +346,114 @@ fn integration_all_five_ticket_caps_registered_via_runtime() {
         }
     }
 }
+
+// ── CRUSH-31 integration ───────────────────────────────────────────────────
+
+#[test]
+fn integration_annotation_history_cap_via_runtime() {
+    // Mirror the codebase_stale_e2e.rs manual-caps-build pattern:
+    // because `Runtime::with_codebase_at` doesn't accept dejavue yet
+    // (the builder stays scoped to source-only ingestion for now),
+    // this test wires a shared `CrushIndex` (containing both code +
+    // typed timeline events) directly through `register_at`.
+    use crush_index::dejavue::parse_timeline_str;
+    use crush_lang_sdk::codebase;
+    use crush_lang_sdk::{HostCaps, Runtime};
+    use std::sync::Arc;
+
+    // 1: parsed Crush source containing the @invariant "use-workspace-deps"
+    // the timeline below targets.
+    let src = r#"@module { purpose: "annotation_history fixture" }
+@invariant "use-workspace-deps" {
+    description: "Use workspace = true"
+    applies_to: ["f"]
+    consequence: "publishing path broken"
+}
+fn f() { }
+"#;
+
+    // 2: timeline with TWO decision events for the same invariant
+    // (intentionally out of chronological order in the corpus) + 1
+    // unrelated file_changed event that should NEVER land in the
+    // history.
+    let timeline = r#"{"ts":"2026-05-01T00:00:00-05:00","branch":"main","event":"decision","decision_title":"use-workspace-deps","decision_reason":"SECOND decision","summary":"later"}
+{"ts":"2026-04-01T00:00:00-05:00","branch":"main","event":"decision","decision_title":"use-workspace-deps","decision_reason":"FIRST decision","summary":"earlier"}
+{"ts":"2026-03-01T00:00:00-05:00","branch":"main","event":"file_changed","path":"x.crush","summary":"unrelated file change - should not surface"}
+"#;
+
+    // 3: build a shared CrushIndex and wire both sides via the
+    //    codebase_stale_e2e.rs manual-caps-build pattern (Runtime
+    //    builder stays source-only for this turn — `with_dejavue`
+    //    builder is a follow-up).
+    let mut xml_idx = crush_index::CrushIndex::new();
+    let prog = crush_frontend::parse_source(src).expect("parse source");
+    xml_idx.add_program("hist_fixture", &prog);
+    let (events, _skipped) = parse_timeline_str(timeline);
+    xml_idx.set_dejavue_events(events);
+    let shared_idx = Arc::new(xml_idx);
+    let mut caps = HostCaps::new();
+    codebase::register_at(
+        &mut caps,
+        Arc::clone(&shared_idx),
+        pin_today(),
+    );
+    // 4: CASM probe — pass the annotation name, capture output
+    let casm = r#"
+        .func main
+        PUSH_STR "use-workspace-deps"
+        CAP_CALL "codebase.annotation_history" 1
+        CAP_CALL "io.print" 1
+        HALT
+    "#;
+    let rt = Runtime::new().with_host_caps(caps);
+    let result = rt
+        .run_casm(
+            casm,
+            &["codebase.annotation_history", "io.print"],
+            Some("hist-test"),
+        )
+        .expect("run");
+    assert!(result.halted, "the CASM program should halt cleanly");
+
+    // 5: both decision events present,
+    assert!(
+        result.output.contains("FIRST decision"),
+        "expected earlier decision in output:\n{}",
+        result.output
+    );
+    assert!(
+        result.output.contains("SECOND decision"),
+        "expected later decision in output:\n{}",
+        result.output
+    );
+    assert!(
+        result.output.contains("decision_title: use-workspace-deps"),
+        "expected decision_title field on every row:\n{}",
+        result.output
+    );
+    // 6: file_changed event MUST NOT surface (CRUSH-31 linking is
+    // strict-equality on `decision_title` AND `event == "decision"`
+    // discriminator).
+    assert!(
+        !result.output.contains("unrelated file change"),
+        "file_changed event must NOT surface through annotation_history:\n{}",
+        result.output
+    );
+    // 7: chronological order, irrespective of corpus insertion order
+    // (corpus listed SECOND first; output must surface FIRST first).
+    let first_pos = result
+        .output
+        .find("FIRST decision")
+        .expect("FIRST decision present");
+    let second_pos = result
+        .output
+        .find("SECOND decision")
+        .expect("SECOND decision present");
+    assert!(
+        first_pos < second_pos,
+        "annotation_history must be ts-ascending; FIRST at {}, SECOND at {}:\n{}",
+        first_pos,
+        second_pos,
+        result.output
+    );
+}

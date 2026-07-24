@@ -1,5 +1,6 @@
 //! Core index data structures and ingestion.
 
+use crate::dejavue::{build_annotation_links, parse_timeline_str, DejavueEvent};
 use crate::query::{CallSite, CoverageGap};
 use crush_cast::manifest::{ExhaustiveMatchSite, FunctionAnnotations, Invariant};
 use crush_cast::{Annotation, Expression, Program, Statement};
@@ -70,6 +71,20 @@ pub struct CrushIndex {
     /// when a caller adds the same `module_path` more than once).
     /// Private; see [`annotations`](Self::annotations).
     flat_annotations: HashMap<String, Vec<Vec<Annotation>>>,
+
+    /// CRUSH-31: typed timeline events parsed from
+    /// `.dejavue/timeline.jsonl`. Replaces the raw NDJSON-line buffer
+    /// `load_dejavue()` previously populated as `dejavue_timeline`;
+    /// raw buffer is retained for back-compat (existing callers
+    /// reading `dejavue_timeline()` get the same shape).
+    dejavue_events: Vec<DejavueEvent>,
+
+    /// CRUSH-31: `annotation_name -> [event_idx, ...]`. Built from
+    /// `dejavue_events` by [`crate::dejavue::build_annotation_links`]
+    /// in `load_dejavue` / `set_dejavue_events`. Indexes are
+    /// positions into `dejavue_events`. Empty for programs whose
+    /// timeline has no decision events or no `decision_title` populated.
+    annotation_event_links: HashMap<String, Vec<usize>>,
 }
 
 impl CrushIndex {
@@ -86,6 +101,8 @@ impl CrushIndex {
             cson_configs: HashMap::new(),
             semantic_keys: Vec::new(),
             dejavue_timeline: Vec::new(),
+            dejavue_events: Vec::new(),
+            annotation_event_links: HashMap::new(),
             flat_annotations: HashMap::new(),
         }
     }
@@ -385,6 +402,10 @@ impl CrushIndex {
     }
 
     /// Load the timeline from `.dejavue/timeline.jsonl` if it exists.
+    ///
+    /// CRUSH-31: populates BOTH the legacy `dejavue_timeline` (raw
+    /// NDJSON strings, retained for back-compat) AND the new typed
+    /// `dejavue_events` + `annotation_event_links` storage.
     pub fn load_dejavue(&mut self) {
         if let Ok(content) = std::fs::read_to_string(".dejavue/timeline.jsonl") {
             for line in content.lines() {
@@ -392,7 +413,22 @@ impl CrushIndex {
                     self.dejavue_timeline.push(line.to_string());
                 }
             }
+            let (events, _skipped) = parse_timeline_str(&content);
+            self.dejavue_events = events;
+            self.annotation_event_links =
+                build_annotation_links(&self.dejavue_events);
         }
+    }
+
+    /// CRUSH-31: replace the typed event vector AND rebuild
+    /// annotation-event links in lockstep. Useful for hosts that want
+    /// to inject events programmatically without round-tripping
+    /// through `.dejavue/timeline.jsonl` (test fixtures, synthetic
+    /// event producers). Does NOT touch the `dejavue_timeline` raw
+    /// buffer — call [`Self::load_dejavue`] to populate both.
+    pub fn set_dejavue_events(&mut self, events: Vec<DejavueEvent>) {
+        self.dejavue_events = events;
+        self.annotation_event_links = build_annotation_links(&self.dejavue_events);
     }
 
     // ── cson / dejavue accessors ──────────────────────────────────────────────
@@ -427,6 +463,43 @@ impl CrushIndex {
     /// line of the `.dejavue/timeline.jsonl` NDJSON stream.
     pub fn dejavue_timeline(&self) -> &[String] {
         &self.dejavue_timeline
+    }
+
+    /// CRUSH-31: typed timeline events parsed from
+    /// `.dejavue/timeline.jsonl`. Each event carries RFC 3339
+    /// timestamp + event discriminator + per-event-type fields. For
+    /// the decision-event join key see
+    /// [`annotation_history`](Self::annotation_history).
+    pub fn dejavue_events(&self) -> &[DejavueEvent] {
+        &self.dejavue_events
+    }
+
+    /// CRUSH-31: ordered chain of `decision` events whose
+    /// `decision_title` equals `annotation_name`. Sorted by `ts`
+    /// ascending so agents reading the result see the chronological
+    /// progression of decisions affecting the annotation. Returns an
+    /// empty `Vec` for unknown names.
+    ///
+    /// Non-decision events (`file_changed`, `init`, etc.) are NOT
+    /// included — agents querying for "what decided this annotation"
+    /// don't want file changes interspersed.
+    pub fn annotation_history(&self, annotation_name: &str) -> Vec<&DejavueEvent> {
+        match self.annotation_event_links.get(annotation_name) {
+            None => Vec::new(),
+            Some(idxs) => {
+                let mut out: Vec<&DejavueEvent> = idxs
+                    .iter()
+                    .filter_map(|&idx| self.dejavue_events.get(idx))
+                    .collect();
+                // Re-sort by ts ascending — links are built in
+                // insertion order but the developer-facing historical
+                // view should be chronological even if insertion
+                // order diverges (test fixtures, future SQLite
+                // migration returning events by id, etc).
+                out.sort_by(|a, b| a.ts.cmp(&b.ts));
+                out
+            }
+        }
     }
 }
 
