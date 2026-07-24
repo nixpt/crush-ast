@@ -507,6 +507,20 @@ pub fn parse_error_triple(err: &ParseError) -> (usize, usize, String, &'static s
             "unterminated string literal".to_string(),
             "E-PP05",
         ),
+        // CRUSH-27 added `UnknownAnnotation` to the ParseError enum
+        // (emitted by the parser when it sees a bare `@<unknown>` form).
+        // Render it with `E-PP06` so downstream consumers (CLI
+        // diagnostics, vscode extension squiggles) can target it
+        // alongside the existing `E-PP01..05`. Update the canonical
+        // code-table comment at the top of `theme.rs` (and extend
+        // `parse_error_triple_canonical_codes` tests below) when more
+        // variants land.
+        ParseError::UnknownAnnotation { name, line, col } => (
+            *line,
+            *col,
+            format!("unknown annotation @{name}"),
+            "E-PP06",
+        ),
     }
 }
 

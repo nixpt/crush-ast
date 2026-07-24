@@ -136,6 +136,14 @@ impl HostCap for CodebaseModulesCap {
                 make_map([
                     ("name", Value::Str(m.module_path.clone())),
                     ("purpose", Value::Str(m.purpose.clone())),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for a
+                    // `file` field per module. The current `ModuleEntry`
+                    // doesn't carry a source-file path — that's slated
+                    // for the CRUSH-29-EXTEND-LOCS follow-up ticket
+                    // (source-loc plumbing on the AST side). Empty string
+                    // default so consumers can `result.file || "?"` for
+                    // now without breaking the schema.
+                    ("file", Value::Str(String::new())),
                     ("exports", str_list(&m.exports)),
                     ("related", str_list(&m.related)),
                     (
@@ -238,6 +246,17 @@ impl HostCap for CodebaseCallersCap {
                     ("caller_module", Value::Str(site.caller_module.clone())),
                     ("caller_fn", Value::Str(site.caller_fn.clone())),
                     ("arg_count", Value::Int(site.arg_count as i64)),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for
+                    // `file` / `line` / `context` per call site. The
+                    // `CallSite` struct currently has no source-loc
+                    // fields — that's slated for the
+                    // CRUSH-29-EXTEND-LOCS follow-up (extends the call
+                    // graph walker to capture Statement source
+                    // positions). Empty / 0 / "" defaults today keep
+                    // the schema stable.
+                    ("file", Value::Str(String::new())),
+                    ("line", Value::Int(0)),
+                    ("context", Value::Str(String::new())),
                 ])
             })
             .collect();
@@ -268,6 +287,15 @@ impl HostCap for CodebaseInvariantsCap {
                 make_map([
                     ("name", Value::Str(inv.name.clone())),
                     ("description", Value::Str(inv.description.clone())),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for a
+                    // `reason` field. We add it as an alias to
+                    // `description` (same payload) so the ticket-spec
+                    // field is present WITHOUT breaking existing agents
+                    // that read `description`. Long-term, the two fields
+                    // should diverge semantically (description = prose,
+                    // reason = short trigger explanation); filed under
+                    // CRUSH-29-INVARIANT-TERM-SPLIT follow-up.
+                    ("reason", Value::Str(inv.description.clone())),
                     ("applies_to", str_list(&inv.applies_to)),
                     (
                         "consequence",
@@ -343,6 +371,17 @@ impl HostCap for CodebaseUncoveredPathsCap {
                 make_map([
                     ("fn_name", Value::Str(gap.fn_name.clone())),
                     ("error_variant", Value::Str(gap.error_variant.clone())),
+                    // CRUSH-28 already populates `module_path`; keep it
+                    // exposed.
+                    ("module_path", Value::Str(gap.module_path.clone())),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for
+                    // `file` / `line` per gap. `CoverageGap` currently
+                    // has no source-loc fields. Empty / 0 stub defaults
+                    // today; the follow-up ticket CRUSH-29-EXTEND-LOCS
+                    // adds real source-loc capture when @errors sites
+                    // get annotated with their declaration position.
+                    ("file", Value::Str(String::new())),
+                    ("line", Value::Int(0)),
                 ])
             })
             .collect();
