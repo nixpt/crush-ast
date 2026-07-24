@@ -344,3 +344,98 @@ The Closure Architecture's macro-generated concrete impls also enable compile-ti
 
 - CRUSH-36 Sub-Commit 2 Commit B: migrate GoWalker (canonical exemplar) to use `impl_both_for_walker!`. This will replace the hand-rolled `impl Walker for GoWalker` with the macro invocation AND add the `impl LanguageWalker for GoAdapter` (the new ZST). After Commit B, Go will be in BOTH `AdapterRegistry` and `WalkerRegistry`.
 - CRUSH-36 Sub-Commit 3: CLI binary-name mapping fix. The CLI's `walker_binary()` function in `crates/cli/src/main.rs:11-30` currently maps extensions to subprocess binary names (broken). Sub-Commit 3 will route via `AdapterRegistry::walk` instead, collapsing the 6 broken string mappings into 1 registry call.
+## Migration guide for Sub-Commit 2 Commit B (GoWalker as canonical exemplar)
+
+This section is the forward-flag for the next agent picking up Sub-Commit 2 Commit B. The goal: migrate `GoWalker` (canonical exemplar among the 4 tree-sitter walkers: Go/C/Zig/Dart) to use the new `impl_both_for_walker!` macro, so Go appears in BOTH `AdapterRegistry` (the unified registry from Sub-Commit 1) AND `WalkerRegistry` (the legacy but-still-used registry from `crush-frontend`).
+
+### Step 1: Locate the existing `impl Walker for GoWalker` in `crates/crush-lang-go/src/lib.rs`
+
+The existing `GoWalker` struct + `impl Walker for GoWalker` block is the canonical hand-rolled impl. Confirm the current state:
+- `pub struct GoWalker { file_name: String }` (or similar — depends on the per-walker pattern)
+- `impl Walker for GoWalker { fn language(&self) -> tree_sitter::Language { ... } fn walk(&self, tree, source) -> anyhow::Result<Program> { ... } }`
+
+Do NOT remove this impl. The macro's signature is **ADDITIVE** — it adds a new ZST `GoAdapter` with both `impl Walker` AND `impl LanguageWalker` ALONGSIDE the existing `GoWalker` impl. The existing `GoWalker` continues to be used as the inner walker type by the macro.
+
+### Step 2: Add the macro invocation AFTER the existing `impl Walker for GoWalker` block
+
+```rust
+use crush_walker_core::impl_both_for_walker;
+use crush_frontend::language_walkers::{LanguageWalker, WalkerRegistry};
+
+impl_both_for_walker!(
+    GoAdapter,
+    "go",                                     // LanguageWalker::language()
+    &["go"],                                  // LanguageWalker::extensions()
+    tree_sitter_go::LANGUAGE.into(),          // Walker::language()
+    go_walker::GoWalker,                      // inner walker type
+    |fname| go_walker::GoWalker { file_name: fname }  // walker ctor
+);
+```
+
+This macro expands to:
+- `#[derive(Clone, Copy)] pub struct GoAdapter;` (ZST)
+- `impl $crate::Walker for GoAdapter` (delegates to inner GoWalker)
+- `impl crush_frontend::language_walkers::LanguageWalker for GoAdapter` (with parse/walk bridge)
+
+### Step 3: Register `GoAdapter` in BOTH registries
+
+In `crates/crush-walker-core/src/lib.rs` `AdapterRegistry::with_defaults()`:
+```rust
+registry.register(Box::new(GoAdapter));
+```
+
+In `crates/crush-frontend/src/lib.rs` `WalkerRegistry::default()` (or wherever the default registry is constructed):
+```rust
+registry.register_walker(Box::new(GoAdapter));
+```
+
+After Step 3, `GoAdapter` appears in BOTH `AdapterRegistry::languages()` AND `WalkerRegistry::supported_languages()`.
+
+### Step 4: Add active tests in `crates/crush-walker-core/src/adapter.rs` (or `crates/crush-lang-go/src/lib.rs`)
+
+The active test pattern from Sub-Commit 2 (in `crates/crush-walker-core/src/adapter.rs`) demonstrates the structural-coercion invariant. For Go, add a similar test:
+
+```rust
+#[test]
+fn go_adapter_dual_coercion_round_trip() {
+    use crush_walker_core::{Walker, impl_both_for_walker};
+    use crush_frontend::language_walkers::{LanguageWalker, WalkerRegistry};
+
+    let walker_box: Box<dyn Walker> = Box::new(GoAdapter);
+    let lang_box: Box<dyn LanguageWalker> = Box::new(GoAdapter);
+
+    let mut registry = WalkerRegistry::new();
+    registry.register_walker(lang_box);
+    assert!(registry.supported_languages().contains(&"go".to_string()));
+}
+```
+
+The actual `walk()` end-to-end test (real Go source → CAST) is best placed in `crates/crush-lang-go/src/lib.rs` since it requires the live `tree_sitter_go::LANGUAGE`.
+
+### Step 5: Verify no other walker crate is affected
+
+The macro is OPT-IN. Existing `impl Walker for X` impls in C/Zig/Dart are unaffected. After Commit B:
+- Go: registered in both registries (via macro)
+- C/Zig/Dart: NOT registered in either registry (still hand-rolled, not migrated)
+
+The next follow-up commits (CRUSH-36-SUB-COMMIT-2-COMMIT-B-FOLLOW-UP-1, -2, -3) would migrate C, Zig, Dart in the same pattern.
+
+### Step 6: Validate
+
+```bash
+cargo check -p crush-walker-core --all-targets
+cargo test -p crush-walker-core --lib
+cargo check -p crush-lang-go --all-targets
+cargo test -p crush-lang-go --lib
+cargo check -p crush-frontend --all-targets
+cargo test -p crush-frontend --lib
+cargo check --workspace --tests
+```
+
+All GREEN. The Commit B commit is ready.
+
+### Forward flags
+
+- **F9**: After Commit B, `GoAdapter` is registered in both registries. The `AdapterRegistry::walk("foo.go")` path now produces a real CAST (via the macro's `walk()` delegation). The CLI's `walker_binary("go")` mapping (in `crates/cli/src/main.rs:11-30`) still returns `"crush_lang_go"` (subprocess binary) — this is Sub-Commit 3's job to fix.
+- **F10**: The 3 remaining walker crates (C/Zig/Dart) follow the same pattern. Each is a separate Commit (e.g., `CRUSH-36-SUB-COMMIT-2-COMMIT-B-FOLLOW-UP-1` for C, etc.).
+- **F11**: After all 4 tree-sitter walkers are migrated, the `impl_adapter_from_walker!` macro (now `#[deprecated]`) can be REMOVED entirely (Phase 2 of the M6 trait-surface cleanup).
