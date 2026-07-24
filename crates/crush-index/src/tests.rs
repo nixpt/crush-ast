@@ -406,3 +406,181 @@ fn test_annotations_module_dedup_across_add_program_calls() {
         "Annotation::Module must be deduplicated to a singleton per module_path"
     );
 }
+
+#[test]
+fn test_annotations_invariant_dedup_across_add_program_calls() {
+    // CRUSH-INDEX-INVARIANT-DEDUP: re-ingesting the same `@invariant`
+    // name stacks a duplicate row that — before this fix — propagated
+    // to dejavue-join code as duplicate history. First-write-wins by
+    // `Invariant.name` keeps the lifecycle stable. Lower blast radius
+    // than the Module dedup (only one variant + name-based), so
+    // mechanically parallel: extend the `seen_*` accumulator set in
+    // `annotations()` and add one new clause to the retain match.
+    let mut prog_a = program_with_manifest("scheduler", &[]);
+    prog_a.manifest.as_mut().unwrap().invariants = vec![Invariant {
+        name: "no-reenter".to_string(),
+        description: "first description (must win)".to_string(),
+        applies_to: vec!["execute_one".to_string()],
+        consequence: Some("deadlock".to_string()),
+        check_source: None,
+    }];
+
+    let mut prog_b = program_with_manifest("scheduler", &[]);
+    prog_b.manifest.as_mut().unwrap().invariants = vec![Invariant {
+        name: "no-reenter".to_string(),
+        description: "second description (must be dropped)".to_string(),
+        applies_to: vec!["execute_one".to_string()],
+        consequence: Some("deadlock".to_string()),
+        check_source: None,
+    }];
+
+    let mut idx = CrushIndex::new();
+    idx.add_program("scheduler", &prog_a);
+    idx.add_program("scheduler", &prog_b);
+
+    let ladder = idx.annotations("scheduler");
+    let invariant_rows: Vec<&Invariant> = ladder
+        .iter()
+        .filter_map(|a| match a {
+            crush_cast::Annotation::Invariant(i) => Some(i),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        invariant_rows.len(),
+        1,
+        "Annotation::Invariant must be deduplicated by .name (first-write-wins)"
+    );
+    // First-write-wins — the second `add_program()` must NOT have
+    // overwritten or appended the first invariant. The description
+    // assertion locks in WHICH write wins (the first).
+    assert_eq!(
+        invariant_rows[0].description, "first description (must win)",
+        "re-ingest under first-write-wins must keep the first invariant"
+    );
+}
+
+#[test]
+fn test_annotations_invariant_different_names_both_survive() {
+    // Counter-test for the dedup: two distinct `@invariant` names
+    // across re-ingests must BOTH surface (dedup is by name, not
+    // "all invariants are singletons"). A regression that conflates
+    // the Module dedup shape with an "all invariants dedup to 1"
+    // would fail this test.
+    let mut prog_a = program_with_manifest("scheduler", &[]);
+    prog_a.manifest.as_mut().unwrap().invariants = vec![Invariant {
+        name: "no-reenter".to_string(),
+        description: "first".to_string(),
+        applies_to: vec![],
+        consequence: None,
+        check_source: None,
+    }];
+
+    let mut prog_b = program_with_manifest("scheduler", &[]);
+    prog_b.manifest.as_mut().unwrap().invariants = vec![Invariant {
+        name: "use-workspace".to_string(),
+        description: "second (different name)".to_string(),
+        applies_to: vec![],
+        consequence: None,
+        check_source: None,
+    }];
+
+    let mut idx = CrushIndex::new();
+    idx.add_program("scheduler", &prog_a);
+    idx.add_program("scheduler", &prog_b);
+
+    let ladder = idx.annotations("scheduler");
+    let mut invariant_names: Vec<&str> = ladder
+        .iter()
+        .filter_map(|a| match a {
+            crush_cast::Annotation::Invariant(i) => Some(i.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    invariant_names.sort();
+    assert_eq!(
+        invariant_names,
+        vec!["no-reenter", "use-workspace"],
+        "two distinct invariant names across re-ingests both survive dedup"
+    );
+}
+
+#[test]
+fn test_annotations_invariant_dedup_preserves_other_variants() {
+    // Lock: the new invariant dedup clause must NOT drop non-invariant
+    // variants. If a future refactor accidentally adds `_ =>
+    // seen_invariant_names.insert(...)` or similar mistake, Error /
+    // Read / Write / Coverage rows would also be filtered out. This
+    // test bleeds invariant re-ingest + function-level re-ingest
+    // together and asserts the function-level variants ALL survive.
+    let mut ann_a = FunctionAnnotations::default();
+    ann_a.errors = vec!["VmError::Foo".to_string()];
+    let mut prog_a = program_with_manifest("scheduler", &[]);
+    prog_a.manifest.as_mut().unwrap().invariants = vec![Invariant {
+        name: "no-reenter".to_string(),
+        description: "first".to_string(),
+        applies_to: vec![],
+        consequence: None,
+        check_source: None,
+    }];
+    let mut fns = std::collections::HashMap::new();
+    fns.insert(
+        "main".to_string(),
+        Function {
+            params: Vec::new(),
+            body: Vec::new(),
+            meta: HashMap::new(),
+            annotations: Some(ann_a.clone()),
+            ..Default::default()
+        },
+    );
+    prog_a.functions = fns;
+
+    let mut ann_b = FunctionAnnotations::default();
+    ann_b.errors = vec!["VmError::Foo".to_string()];
+    let mut prog_b = program_with_manifest("scheduler", &[]);
+    prog_b.manifest.as_mut().unwrap().invariants = vec![Invariant {
+        name: "no-reenter".to_string(), // dedup'd by name
+        description: "second (dropped)".to_string(),
+        applies_to: vec![],
+        consequence: None,
+        check_source: None,
+    }];
+    let mut fns2 = std::collections::HashMap::new();
+    fns2.insert(
+        "helper".to_string(),
+        Function {
+            params: Vec::new(),
+            body: Vec::new(),
+            meta: HashMap::new(),
+            annotations: Some(ann_b),
+            ..Default::default()
+        },
+    );
+    prog_b.functions = fns2;
+
+    let mut idx = CrushIndex::new();
+    idx.add_program("scheduler", &prog_a);
+    idx.add_program("scheduler", &prog_b);
+
+    let ladder = idx.annotations("scheduler");
+    // Both Error rows survive (function-level re-ingest stacks;
+    // dedup is namespaced to Invariant, not all variants).
+    let error_count = ladder
+        .iter()
+        .filter(|a| matches!(a, crush_cast::Annotation::Error(_)))
+        .count();
+    assert_eq!(
+        error_count, 2,
+        "function-level Error rows must NOT be subject to invariant dedup"
+    );
+    // And the invariant dedups as expected — only ONE Invariant.
+    let invariant_count = ladder
+        .iter()
+        .filter(|a| matches!(a, crush_cast::Annotation::Invariant(_)))
+        .count();
+    assert_eq!(
+        invariant_count, 1,
+        "invariant dedup must not extend to function-level variants"
+    );
+}

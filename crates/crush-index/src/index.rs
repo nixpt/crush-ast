@@ -321,12 +321,29 @@ impl CrushIndex {
     /// reproducible across runs — important for deterministic JSON
     /// export (HashMap iteration order is not).
     ///
-    /// **Dedup semantics**: `Annotation::Module` is a singleton per
-    /// module_path — re-ingesting the same `module_path` keeps the
-    /// first written Module (other Modules are dropped on read); this
-    /// is the "first-write-wins" semantic. Other variants stack
-    /// freely; an `Annotation::Invariant` dedup by `.name` is a known
-    /// gap (filed for the next turn).
+    /// **Dedup semantics**: a handful of annotation variants are
+    /// singletons per their identifying key. Re-ingesting a module
+    /// that stacks a fresh ladder would otherwise double-count those
+    /// rows. First-write-wins applies:
+    ///
+    /// - `Annotation::Module` — singleton per `module_path`. Multiple
+    ///   ladders may carry a Module entry (one per `add_program()`
+    ///   call); only the first survives so downstream
+    ///   `codebase.modules()` (CRUSH-29) doesn't emit duplicate
+    ///   module rows.
+    /// - `Annotation::Invariant` — singleton per `.name`
+    ///   (CRUSH-INDEX-INVARIANT-DEDUP). Same shape as the Module
+    ///   dedup but keyed by `Invariant.name`. Critical because
+    ///   `Invariant.name` is the join key against dejavue's
+    ///   `@decision.decision_title` (see `annotation_history`),
+    ///   and duplicate invariant-name rows would propagate as
+    ///   duplicate history rows.
+    ///
+    /// Other variants (`Error` / `Read` / `Write` / `Coverage` /
+    /// `ExhaustiveMatchSites`) stack freely — they're keyed by
+    /// `function_name` and a `Coverage` Oracle in `tests` SHOULD
+    /// accumulate against `@errors` declared in `impl`. Removing
+    /// rows from the union would break cross-module coverage closure.
     ///
     /// The legacy `Function.annotations` field stays populated for
     /// callers that reach it via `definition(fn_name)`; this method
@@ -337,18 +354,35 @@ impl CrushIndex {
             Some(ladders) => {
                 let mut out: Vec<&Annotation> = ladders.iter().flatten().collect();
                 out.sort_by(|a, b| annotation_sort_key(a).cmp(&annotation_sort_key(b)));
-                // CRUSH-28 review (Nit Pick Nick): dedup `Annotation::Module`
-                // — it's a singleton per module_path. Multiple ladders may
-                // carry a Module entry (one per `add_program()` call); only
-                // the first survives so downstream `codebase.modules()`
-                // (CRUSH-29) doesn't emit duplicate module rows.
+                // Singleton dedups: some annotation variants are
+                // singletons per-dedupe-key, so re-ingests that stack
+                // ladders would double-count those rows. Each variant
+                // gets its own first-write-wins filter.
+                //
+                //   Annotation::Module      → singleton per module_path (CRUSH-28)
+                //   Annotation::Invariant   → singleton per .name     (CRUSH-INDEX-INVARIANT-DEDUP)
+                //
+                // A future variant requiring its own dedup just adds
+                // a clause here; missing arms would surface at
+                // compile time via the new wildcard arm `_ => true`.
                 let mut seen_module = false;
+                // Owning `HashSet<String>` here is intentional, mirroring
+                // the `covered: HashSet<String>` accumulator already in
+                // `uncovered_paths()` above. The borrow-of-`&str` form
+                // would also compile (and skip the `i.name.clone()`'s
+                // allocation), but the local idiom is owning and the
+                // cardinality at this code path is single-digit per call,
+                // so the clone cost is irrelevant and the type reads
+                // more uniformly.
+                let mut seen_invariant_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 out.retain(|ann| match ann {
                     Annotation::Module(_) if seen_module => false,
                     Annotation::Module(_) => {
                         seen_module = true;
                         true
                     }
+                    Annotation::Invariant(i) => seen_invariant_names.insert(i.name.clone()),
                     _ => true,
                 });
                 out
