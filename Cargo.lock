@@ -1168,6 +1168,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-lang-java"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "crush-walker-core",
+ "serde",
+ "serde_json",
+ "tree-sitter",
+]
+
+[[package]]
 name = "crush-lang-js"
 version = "0.3.0"
 dependencies = [
