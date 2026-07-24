@@ -27,7 +27,7 @@
 //!  "diff_stat":"...","summary":"..."}
 //! ```
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -122,6 +122,53 @@ pub fn parse_timeline_str(content: &str) -> (Vec<DejavueEvent>, usize) {
         }
     }
     (events, skipped)
+}
+
+impl Default for DejavueEvent {
+    /// Returns a zeroed event — the UNIX epoch at offset `+00:00`,
+    /// with every Option field `None` and `event` as the empty
+    /// string.
+    ///
+    /// Production code SHOULD NOT use `DejavueEvent::default()` —
+    /// events always carry a real RFC 3339 timestamp from a parser
+    /// (sanity-checked via `RawEvent::into_typed`). This impl
+    /// exists to support `..Default::default()` ergonomics in
+    /// doctests and test fixtures that want partial-struct syntax
+    /// when the doctest or test only cares about a handful of
+    /// fields.
+    fn default() -> Self {
+        // `DateTime<FixedOffset>` has no `Default` impl in chrono
+        // (the natural choice — epoch — depends on the offset).
+        // We construct it explicitly: a 0-offset fixed timezone +
+        // unix epoch seconds = a sentinel "no real ts" value.
+        let zero_offset = FixedOffset::west_opt(0).expect("0 is a valid fixed offset");
+        // chrono's `DateTime::from_timestamp` is an inherent method on
+        // `DateTime<Utc>` ONLY. Using chrono's `UNIX_EPOCH` constant
+        // (`DateTime<Utc>`) sidesteps the type mismatch and gives
+        // us a `DateTime<FixedOffset>` via `with_timezone`. The const
+        // is statically known so no `expect` / `unwrap` needed.
+        let epoch_fixed = DateTime::<Utc>::UNIX_EPOCH.with_timezone(&zero_offset);
+        Self {
+            ts: epoch_fixed,
+            event: String::new(),
+            agent: None,
+            branch: None,
+            commit: None,
+            summary: None,
+            decision_title: None,
+            decision_reason: None,
+            rejected_alternatives: None,
+            outcome: None,
+            supersedes: None,
+            durability: None,
+            confidence: None,
+            entities: None,
+            artifacts: None,
+            path: None,
+            diff_stat: None,
+            event_type: None,
+        }
+    }
 }
 
 /// Build `annotation_name -> [event_idx, ...]` for an `events: &[DejavueEvent]`

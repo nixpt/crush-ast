@@ -42,6 +42,15 @@ pub struct FunctionEntry {
 ///
 /// Built by calling `index.add_program(module_path, &program)` for each
 /// compilation unit.  Queried via the methods on this struct.
+///
+/// CRUSH-31 review followup: `Clone` is needed because
+/// `Arc::make_mut` triggers COW when strong_count > 1 (the runtime
+/// builder shares the registered-cap `Arc<CrushIndex>` with the
+/// cached handle and `with_dejavue` mutates a COW clone). `Debug` is
+/// derived so `Runtime` (the cached-Arc owner) keeps its derive;
+/// every contained type already implements both, so the recursive
+/// derive bottoms out cleanly.
+#[derive(Debug, Clone)]
 pub struct CrushIndex {
     /// module_path → module entry
     modules: HashMap<String, ModuleEntry>,
@@ -401,31 +410,68 @@ impl CrushIndex {
         }
     }
 
-    /// Load the timeline from `.dejavue/timeline.jsonl` if it exists.
+    /// Same as [`load_dejavue_verbose`](Self::load_dejavue_verbose) but
+    /// discards the skipped-line count. Use [`Self::load_dejavue_verbose`]
+    /// when you need to surface how many lines silently dropped
+    /// (CLI diagnostics, schema-evolution sanity checks, agent
+    /// observability).
     ///
     /// CRUSH-31: populates BOTH the legacy `dejavue_timeline` (raw
     /// NDJSON strings, retained for back-compat) AND the new typed
     /// `dejavue_events` + `annotation_event_links` storage.
     pub fn load_dejavue(&mut self) {
-        if let Ok(content) = std::fs::read_to_string(".dejavue/timeline.jsonl") {
-            for line in content.lines() {
-                if !line.trim().is_empty() {
-                    self.dejavue_timeline.push(line.to_string());
-                }
+        let _ = self.load_dejavue_verbose();
+    }
+
+    /// Load the timeline from `.dejavue/timeline.jsonl` if it exists,
+    /// returning the number of non-empty lines that were silently
+    /// skipped (malformed JSON or unparseable RFC 3339 timestamp).
+    /// Empty lines are NOT counted as skipped (they're trivial
+    /// whitespace).
+    ///
+    /// Returns `0` when `.dejavue/timeline.jsonl` doesn't exist —
+    /// the "no timeline yet" state. The `skipped` count is the
+    /// diagnostic for hosts that want to surface "we ingested
+    /// timeline.jsonl but N lines were too malformed to parse"
+    /// without forcing the host to re-read the file.
+    ///
+    /// CRUSH-31: populates BOTH the legacy `dejavue_timeline` (raw
+    /// NDJSON strings, retained for back-compat) AND the new typed
+    /// `dejavue_events` + `annotation_event_links` storage in lockstep.
+    pub fn load_dejavue_verbose(&mut self) -> usize {
+        let Ok(content) = std::fs::read_to_string(".dejavue/timeline.jsonl") else {
+            return 0;
+        };
+        for line in content.lines() {
+            if !line.trim().is_empty() {
+                self.dejavue_timeline.push(line.to_string());
             }
-            let (events, _skipped) = parse_timeline_str(&content);
-            self.dejavue_events = events;
-            self.annotation_event_links =
-                build_annotation_links(&self.dejavue_events);
         }
+        let (events, skipped) = parse_timeline_str(&content);
+        self.dejavue_events = events;
+        self.annotation_event_links =
+            build_annotation_links(&self.dejavue_events);
+        skipped
     }
 
     /// CRUSH-31: replace the typed event vector AND rebuild
     /// annotation-event links in lockstep. Useful for hosts that want
     /// to inject events programmatically without round-tripping
     /// through `.dejavue/timeline.jsonl` (test fixtures, synthetic
-    /// event producers). Does NOT touch the `dejavue_timeline` raw
-    /// buffer — call [`Self::load_dejavue`] to populate both.
+    /// event producers).
+    ///
+    /// **Asymmetry with the raw buffer**: `set_dejavue_events(vec![])`
+    /// clears `dejavue_events` + `annotation_event_links` but does NOT
+    /// clear `dejavue_timeline` — that buffer is the *filesystem*
+    /// view (populated by [`Self::load_dejavue`], which ingests both
+    /// in one pass). The two views are intentionally NOT synchronized
+    /// through this setter: tests that call `set_dejavue_events`
+    /// repeatedly with fresh fixtures don't want the on-disk timeline
+    /// lines to vanish, and production code reading via
+    /// `dejavue_timeline()` continues to see the filesystem-populated
+    /// state. To clear both views in lockstep, follow
+    /// `set_dejavue_events(vec![])` with `self.dejavue_timeline.clear()`
+    /// — explicit-by-design.
     pub fn set_dejavue_events(&mut self, events: Vec<DejavueEvent>) {
         self.dejavue_events = events;
         self.annotation_event_links = build_annotation_links(&self.dejavue_events);
