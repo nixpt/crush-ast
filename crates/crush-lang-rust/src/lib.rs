@@ -200,13 +200,13 @@ mod tests {
     /// would still compile against `Frontend` alone, silently losing
     /// its unified-registry registration.
     ///
-    /// Note: this test scopes `use super::RustAdapter;` (paralleling the
-    /// existing `use crush_walker_core::{AdapterRegistry, LanguageAdapter};`)
-    /// because the `mod tests`'s top-level use statement is
-    /// `use super::{rust_to_cast, RustFrontend};` (specific imports, not glob)
-    /// -- unlike nepali/bash which use `use super::*;`. The scoped-add is
-    /// minimal: only one struct name + the trait import are added inside
-    /// this fn body, leaving the existing test mod's import list untouched.
+    /// Note: this test scopes `use super::RustAdapter;` because rust's
+    /// existing `mod tests` top-level use statement is specific imports
+    /// (`use super::{rust_to_cast, RustFrontend};`), not glob -- unlike
+    /// nepali/bash/custom which all use `use super::*;` (auto-resolves
+    /// the macro-generated adapter without a scoped fn-body import).
+    /// `rust` is the lone fn-body-scoped exception; the scoped-add is
+    /// minimal: one struct-name addition inside this fn body.
     #[test]
     fn rust_adapter_registers_in_unified_registry() {
         use super::RustAdapter;
