@@ -457,5 +457,58 @@ mod tests {
     //             assert!(a_b_diff.is_empty(), "ai_{kind} A vs B diverged: {a_b_diff:?}");
     //         }
     //     }
+    //
+    // ── CRUSH-33 follow-up: DOM opcodes surface parity ────────────────────
+    // Mirror of the AI block above: dom_native is the next opcode family
+    // to land (CRUSH-33 Commit 2 wires the cap-call gates; this Commit 3
+    // locks the surface). Tests below assert that `dom_native::KINDS`
+    // stays size == 10 + dedup. The parametric TIGHT-pair loop (mirror
+    // of the AI deferred above) is parked below as a future fixture for
+    // when the Crush frontend exposes `dom_<kind>(...)` as a syntax-
+    // level builtin (the wiring is currently cap-call VM-side only).
+
+    #[test]
+    fn dom_native_kinds_constant_is_size_ten_and_sorted_unique() {
+        // dom_native::KINDS is the single source of truth for the 10 DOM
+        // opcodes (slots 0x9A-0x9F + 0xB5-0xB8 per CRUSH-33 Commit 1).
+        // Add a new kind here and `register()` + the bytecode slot table
+        // both auto-route through the macro. Failure here = someone
+        // reordered or duplicated KINDS; fix the KINDS const, not the
+        // test.
+        use crate::dom_native::KINDS;
+        assert_eq!(KINDS.len(), 10, "KINDS size changed - update HARD-CODED list and this test");
+        let mut sorted: Vec<&str> = KINDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            KINDS.len(),
+            "KINDS contains duplicates: {:?}",
+            KINDS
+        );
+    }
+
+    // ── DEFERRED until Crush frontend exposes `dom_<kind>(...)` syntax ──
+    // Same mirror of the AI deferred parametric block above: the Crush
+    // frontend does not yet recognize `dom_<kind>(args)` as a builtin
+    // call (the wiring is at the cap-call VM-side level per CRUSH-33
+    // Commit 2). When the frontend syntax-level support lands,
+    // REPLACE the size-only `dom_native_kinds_constant_is_size_ten_and_
+    // sorted_unique` test above with the parametric TIGHT-pair loop:
+
+    //     #[test]
+    //     fn dom_opcodes_a_b_pair_agrees_for_all_ten_kinds() {
+    //         use crate::dom_native::KINDS;
+    //         for kind in KINDS {
+    //             let source = format!("fn main() {{ dom_{kind}(\"div.user\"); print(\"done\"); }}");
+    //             let r = differential_run(&source).expect("compile");
+    //             let a_b_diff: Vec<_> = r
+    //                 .divergences
+    //                 .iter()
+    //                 .filter(|d| d.contains("interpreter vs portable"))
+    //                 .collect();
+    //             assert!(a_b_diff.is_empty(), "dom_{kind} A vs B diverged: {a_b_diff:?}");
+    //         }
+    //     }
 }
 
