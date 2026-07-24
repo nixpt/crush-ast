@@ -26,6 +26,7 @@
 pub mod akg;
 pub mod ai_native;
 pub mod builder;
+pub mod concurrency_native;
 pub mod dom_native;
 pub mod bus;
 pub mod caps;

@@ -189,6 +189,34 @@ pub fn dom_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
     }
 }
 
+/// CRUSH-34: map a concurrency-opcode byte (SPAWN=0x80, YIELD=0x81,
+/// AWAIT=0x82; PRE-EXISTING slots in `bytecode.rs:95-97` -- NOT new
+/// per CRUSH-34) to its `concurrency_native.<kind>` gate suffix.
+/// Returns `None` for any non-concurrency opcode (defensive --
+/// callers should only invoke this on bytes they already matched
+/// into the combined concurrency match arm wired in Commit 2).
+/// Drives the host_caps cap-call dispatch from
+/// `crush-vm::scheduler` and `crush-vm::portable_vm` (Commit 2).
+///
+/// Complexity: O(1) per slot byte -- a match on a constant byte with
+/// at most 3 arms (smaller than AI's 10 / DOM's 10), same micro-cost
+/// as the AI bridge; no perf concern.
+///
+/// CRITICAL DIFFERENCE FROM ai/dom: concurrency ops carry ASYNC
+/// semantics (cooperative scheduling, event-loop yield,
+/// await-on-handle). The current stubs in `concurrency_native`
+/// ignore per-opcode operands (task_id for SPAWN, event_id for
+/// AWAIT, yield-count/duration for YIELD) -- revisit when the real
+/// async backend lands.
+pub fn concurrency_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
+    match opcode {
+        SPAWN => Some("spawn"),
+        YIELD => Some("yield"),
+        AWAIT => Some("await"),
+        _ => None,
+    }
+}
+
 /// How an opcode's operand bytes are interpreted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperandKind {
