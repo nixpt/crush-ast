@@ -8,6 +8,7 @@ pub fn gen_rust_source(program: &casm::Program) -> String {
     emit_runtime_value(&mut out);
     emit_helpers(&mut out);
     emit_ai_stub(&mut out);
+    emit_dom_stub(&mut out);
 
     for (name, func) in &program.functions {
         emit_function(&mut out, name, func, program);
@@ -583,6 +584,32 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
 
+        // ── DOM opcodes ──
+        // CRUSH-33 Commit 2: each DOM opcode now emits a per-opcode inline stub
+        // Object ({ok: true, kind, echo: ([])}) via `make_dom_stub`, so the 5
+        // tiers (scheduler, portable_vm, fastvm, AOT-Rust, AOT-C) agree at
+        // differential-cmp time — mirror of the AI combined arm above.
+        // Args ride on instruction args, NOT the VM stack; echo is always an
+        // empty Array.
+        "dom_query" | "dom_get" | "dom_set" | "dom_create" | "dom_remove"
+        | "dom_child" | "dom_parent" | "dom_attr" | "dom_text" | "dom_event" => {
+            let kind = match instr.op.as_str() {
+                "dom_query" => "query",
+                "dom_get" => "get",
+                "dom_set" => "set",
+                "dom_create" => "create",
+                "dom_remove" => "remove",
+                "dom_child" => "child",
+                "dom_parent" => "parent",
+                "dom_attr" => "attr",
+                "dom_text" => "text",
+                "dom_event" => "event",
+                _ => "unknown",
+            };
+            out.push_str(&format!("{ind}stack.push(make_dom_stub(\"{kind}\"));\n"));
+            out.push_str(&next_pc_str);
+        }
+
         "ret" | "halt" => {
             out.push_str(&format!("{ind}return stack.pop().unwrap_or(RuntimeValue::Null);\n"));
         }
@@ -703,6 +730,27 @@ fn emit_ai_stub(out: &mut String) {
     out.push_str(r#"
 #[inline(always)]
 fn make_ai_stub(kind: &str) -> RuntimeValue {
+    let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
+    obj.insert("ok".to_string(), RuntimeValue::Bool(true));
+    obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));
+    obj.insert("echo".to_string(), RuntimeValue::Array(Rc::new(RefCell::new(Vec::new()))));
+    RuntimeValue::Object(Rc::new(RefCell::new(obj)))
+}
+"#);
+}
+
+// CRUSH-33 Commit 2: mirror of `emit_ai_stub` above for the DOM opcode
+// family. Emitted Rust programs construct the DOM cap-call stub Object
+// inline so all 5 execution tiers (scheduler, portable_vm, fastvm,
+// AOT-Rust, AOT-C) agree at differential-cmp time. Mirrors the
+// {ok: true, kind, echo: ([])} shape used by `crush_lang_sdk::dom_native`
+// so the differential harness compares values consistently. Args ride
+// on instruction args (NOT on the VM stack), so `echo` is always an
+// empty Array here.
+fn emit_dom_stub(out: &mut String) {
+    out.push_str(r#"
+#[inline(always)]
+fn make_dom_stub(kind: &str) -> RuntimeValue {
     let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
     obj.insert("ok".to_string(), RuntimeValue::Bool(true));
     obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));

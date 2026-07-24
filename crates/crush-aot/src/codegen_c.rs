@@ -16,6 +16,7 @@ pub fn gen_c_source(program: &casm::Program) -> String {
     emit_c_value(&mut out);
     emit_c_helpers(&mut out);
     emit_c_ai_stub(&mut out);
+    emit_c_dom_stub(&mut out);
 
     // Forward declarations (needed because CASM functions may call each other)
     for (name, _func) in &program.functions {
@@ -168,6 +169,28 @@ static Value mk_ai_stub(const char* kind) {
     }
     return mk_object(__oi);
 }
+
+// ---- DOM stub helper (CRUSH-33 Commit 2) ----
+// Mirror of `mk_ai_stub` above for the DOM opcode family. Mirrors the
+// {ok, kind, echo} shape used by `crush_lang_sdk::dom_native` so emitted C
+// programs agree with the 5 VM tiers at differential-cmp time. Args ride
+// on instruction args (not on the VM stack); echo is always an empty
+// Array here.
+static Value mk_dom_stub(const char* kind) {
+    int __oi = _alloc_object();
+    if (__oi < 0) return mk_null();
+    _obj_set(&_objects[__oi], "ok", mk_bool(true));
+    _obj_set(&_objects[__oi], "kind", mk_string(kind));
+    int __ai = _alloc_array();
+    if (__ai >= 0) {
+        _arrays[__ai].len = 0;
+        _obj_set(&_objects[__oi], "echo", mk_array(__ai));
+    } else {
+        _obj_set(&_objects[__oi], "echo", mk_null());
+    }
+    return mk_object(__oi);
+}
+
 
 // ── String buffer (for to_upper / to_lower / trim) ────────────────────
 #define STRBUF_SIZE 256
@@ -904,6 +927,42 @@ fn emit_c_instr(
             out.push_str(&format!("                _push(mk_ai_stub(\"knowledge_sharing\")); _pc={next_pc}; break;\n"));
         }
 
+        // ── DOM opcodes (CRUSH-33 Commit 2) ─────────────────────────────────
+        // Per-opcode inline stub emit (`mk_dom_stub`), so all 5 execution
+        // tiers agree at differential-cmp time. Mirror of the AI per-opcode
+        // arms above. Slots are 0x9A-0x9F (CRUD/nav) and 0xB5-0xB8
+        // (parent/attr/text/event) per CRUSH-33 Commit 1.
+        "dom_query" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"query\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_get" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"get\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_set" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"set\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_create" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"create\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_remove" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"remove\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_child" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"child\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_parent" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"parent\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_attr" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"attr\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_text" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"text\")); _pc={next_pc}; break;\n"));
+        }
+        "dom_event" => {
+            out.push_str(&format!("                _push(mk_dom_stub(\"event\")); _pc={next_pc}; break;\n"));
+        }
+
         "ret" | "halt" => {
             out.push_str("                return _pop();\n");
         }
@@ -1072,3 +1131,13 @@ void crush_run_free(const char* s) {
 // (earlier fetch where these helpers were placed inside the prelude
 // raw-string caused a structural parse error).
 fn emit_c_ai_stub(_out: &mut String) {}
+
+// CRUSH-33 Commit 2: DOM stub emitter (no-op marker). The `mk_dom_stub` C
+// function above lives inside the `r#"..."#` prelude emitted by
+// `emit_c_value`; this Rust-side emitter exists so `gen_c_source` can
+// call `emit_c_dom_stub(&mut out)` symmetrically with the AOT-Rust
+// `codegen.rs::emit_dom_stub`. Real C-only helpers, if ever needed, get
+// added here at module scope -- never inside the `r#"..."#` prelude
+// (an earlier fetch had these helpers inside the prelude raw-string and
+// caused a structural parse error).
+fn emit_c_dom_stub(_out: &mut String) {}

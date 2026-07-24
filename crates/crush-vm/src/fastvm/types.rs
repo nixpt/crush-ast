@@ -67,6 +67,16 @@ pub enum HostRequest {
     AiGoalDeclaration { args: serde_json::Value },
     AiProgressUpdate { args: serde_json::Value },
     AiKnowledgeSharing { args: serde_json::Value },
+    DomQuery { args: serde_json::Value },
+    DomGet { args: serde_json::Value },
+    DomSet { args: serde_json::Value },
+    DomCreate { args: serde_json::Value },
+    DomRemove { args: serde_json::Value },
+    DomChild { args: serde_json::Value },
+    DomParent { args: serde_json::Value },
+    DomAttr { args: serde_json::Value },
+    DomText { args: serde_json::Value },
+    DomEvent { args: serde_json::Value },
 }
 
 impl FastYield {

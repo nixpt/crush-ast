@@ -227,6 +227,16 @@ pub fn resolve_host_request(
         HostRequest::AiGoalDeclaration  { .. } => ("ai_native.goal_declaration",  "goal_declaration"),
         HostRequest::AiProgressUpdate   { .. } => ("ai_native.progress_update",   "progress_update"),
         HostRequest::AiKnowledgeSharing { .. } => ("ai_native.knowledge_sharing", "knowledge_sharing"),
+        HostRequest::DomQuery            { .. } => ("dom_native.query",            "query"),
+        HostRequest::DomGet              { .. } => ("dom_native.get",              "get"),
+        HostRequest::DomSet              { .. } => ("dom_native.set",              "set"),
+        HostRequest::DomCreate           { .. } => ("dom_native.create",           "create"),
+        HostRequest::DomRemove           { .. } => ("dom_native.remove",           "remove"),
+        HostRequest::DomChild            { .. } => ("dom_native.child",            "child"),
+        HostRequest::DomParent           { .. } => ("dom_native.parent",           "parent"),
+        HostRequest::DomAttr             { .. } => ("dom_native.attr",             "attr"),
+        HostRequest::DomText             { .. } => ("dom_native.text",             "text"),
+        HostRequest::DomEvent            { .. } => ("dom_native.event",            "event"),
         _ => return None,
     };
     let caps = host_caps?;
