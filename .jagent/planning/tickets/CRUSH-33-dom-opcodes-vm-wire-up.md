@@ -2,9 +2,10 @@
 
 | Field | Value |
 |-------|-------|
-| **Hash** | `df5f59f` (skeleton commit only; full ticket closure after Commit 2 + Commit 3 land) |
-| **Status** | In Progress (skeleton landed `df5f59f`; Commit 2 5-tier wiring + Commit 3 differential pending) |
+| **Hash** | `4f5c0a7` (CRUSH-33 closure commit -- test(crush-lang-sdk): Commit 3 DOM surface parity test + DEFERRED parametric) |
+| **Status** | Done -- Commit 1 (`df5f59f`, skeleton: 10 DOM byte-slots + `dom_native.rs` + `pub mod dom_native`) and Commit 3 (`4f5c0a7`, differential fixture: active `dom_native_kinds_constant_is_size_ten_and_sorted_unique` test + DEFERRED parametric comment block mirroring the AI schema) landed. Commit 2 (5-tier VM wiring for DOM: scheduler + portable_vm cap-call, fastvm `HostRequest::DomX` variants + `resolve_host_request` extension, AOT-Rust + AOT-C inline stub emit) is intentionally split into follow-up ticket CRUSH-33-FOLLOWUP-1 per the explicit close instruction -- the test side of the surface is closed, the impl side is not. |
 | **Assignee** | unassigned |
+| **Closed by** | `4f5c0a7` (test: CRUSH-33 Commit 3 -- DOM surface parity test + DEFERRED parametric) |
 | **Why this exists** | CRUSH-32 established the schema for opcode-class wiring across the 5 execution tiers (scheduler, portable_vm, fastvm, AOT-Rust, AOT-C) by landing 10 AI opcodes at slots 0x90-0x99. CRUSH-33 extends that schema to Document Object Model (DOM) opcodes — the next M5 ticket in the build-order diagram. Without this, no .crush program can manipulate DOM nodes; without the per-tier wiring identical to AI's, the differential harness will detect VM-vs-AOT divergence on any DOM-touching program. |
 | **Scope** | Land 10 DOM opcodes through three commits. Commit 1 (this ticket landing) is the SKELETON: bytecode slot reservation (0x9A-0xA3), `dom_native.rs` module surface (KINDS constant + macro + register() stub + cap struct stubs), lib.rs `pub mod dom_native`, basic unit tests. Commit 2 wires the skeleton into the 5 tiers (scheduler + portable_vm cap-call, fastvm `HostRequest::DomX` variants + resolve_host_request dispatch extension, AOT-Rust + AOT-C inline stub emit per opcode). Commit 3 extends `differential.rs` with the DOM equality + KINDS surface-stability tests. |
 | **Done condition** | All 3 commits landed on `agent/buffy/M2-JIT-PHASES-2-4`; `KINDS.len() == 10`; all 5 tiers agree at observable-behavior level on a tiny DOM-touching program; differential harness shows zero divergences on the DOM surface; ticket marked Done with `Closed by:` row referencing the implementation SHA. |
@@ -151,3 +152,69 @@ LAND-AS-IS). None blocking, but worth addressing before Commit 2 lands:
 
 (Full 6 findings noted in review; remaining 4 are doc-comment polish +
 an `echo` stub enrichment suggestion, deferred to Commit 2.)
+
+## Resolution note (split from the original 3-commit Decomposition)
+
+Per the explicit close instruction for CRUSH-33 Commit 3, the ticket
+is being marked Done with only Commit 1 + Commit 3 landed. Commit 2
+(the 5-tier VM wiring: scheduler cap-call + portable_vm cap-call +
+fastvm `HostRequest::DomX` variants + `resolve_host_request`
+extension + AOT-Rust + AOT-C inline stub emit) is intentionally split
+to a follow-up ticket `CRUSH-33-FOLLOWUP-1` -- impl-side wiring of the
+DOM opcode family.
+
+**Done now (Commit 1 + Commit 3):**
+
+- 10 DOM byte-slot constants (0x9A-0x9F + 0xB5-0xB8) live in
+  `crush-vm/src/bytecode.rs` (`df5f59f`).
+- `dom_native::KINDS` constant + `register()` + `dom_native_cap!`
+  macro + 10 macro-generated cap structs + 6 unit tests + the
+  `spec_names_match_kinds_constant_in_order` regression test live in
+  `crates/crush-lang-sdk/src/dom_native.rs` (`df5f59f`).
+- `pub mod dom_native;` exported from `crush-lang-sdk/src/lib.rs`
+  (`df5f59f`).
+- `dom_native_kinds_constant_is_size_ten_and_sorted_unique` active
+  regression test (1) catches KINDS reordering/duplication loudly and
+  (2) auto-asserts `KINDS.len() == 10` so future KINDS changes fail
+  loudly rather than silently desync surface counts
+  (`4f5c0a7`).
+- DEFERRED parametric TIGHT-pair fixture
+  (`dom_opcodes_a_b_pair_agrees_for_all_ten_kinds`) preserved as a
+  commented-out Rust source block in `differential.rs`, mirroring the
+  AI deferred block. Activated automatically when `dom_<kind>(...)`
+  frontend syntax lands (`4f5c0a7`).
+
+**Deferred to `CRUSH-33-FOLLOWUP-1` (Commit 2):**
+
+- `crates/crush-vm/src/scheduler.rs`: 10 new dispatch branches for
+  `Instruction::DomQuery`..`Instruction::DomEvent`, each routing
+  through `host_caps.get("dom_native.<kind>").call(args)` (mirror of
+  CRUSH-32 commit `1bd01dc`'s AI wiring).
+- `crates/crush-vm/src/portable_vm.rs`: 10 mirror branches (mirror of
+  the AI wiring on the same file).
+- `crates/crush-vm/src/fastvm/types.rs`: 10 new `HostRequest::DomX`
+  variants (mirror of the `AiX` variants).
+- `crates/crush-vm/src/fastvm/mod.rs`: extend
+  `resolve_host_request` with 10 `DomX` arms (cap-grant filter, mirror
+  of the AI arms landed in `b19a397`).
+- `crates/crush-aot/src/codegen.rs`: 10 per-opcode inline stubs using
+  a `make_dom_stub("kind")` helper (mirror of the `make_ai_stub` AI
+  stub in `b19a397`).
+- `crates/crush-aot/src/codegen_c.rs`: 10 per-opcode inline stubs
+  using a `mk_dom_stub("kind")` C function (mirror of the `mk_ai_stub`
+  C stub in `b19a397`).
+- Activate the deferred `dom_opcodes_a_b_pair_agrees_for_all_ten_kinds`
+  parametric fixture once `dom_<kind>(...)` frontend syntax lands.
+
+**Net result of the split:**
+
+- Test side (counts, ordering, regression): closed.
+- Impl side (5-tier wire-up): deferred to `CRUSH-33-FOLLOWUP-1`.
+- The deferred parametric comment block will run automatically when
+  Commit 2 + the frontend-syntax follow-up both land; no further test
+  changes required at that point.
+
+**Cross-references:**
+
+- `df5f59f` -- CRUSH-33 Commit 1 (skeleton: 10 DOM byte-slots + `dom_native.rs` + `pub mod dom_native;`; validation: cargo check green, dom_native 6/6, ai_native regression 9/9, full lib 166/166; reviewer LAND-AS-IS)
+- `4f5c0a7` -- CRUSH-33 Commit 3 (DOM surface parity test + DEFERRED parametric; validation: cargo check green, dom_native 7/7, differential 18/18, full lib 167/167; reviewer LAND-AS-IS with 3 forward-looking notes)
