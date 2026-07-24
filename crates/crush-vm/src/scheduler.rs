@@ -1073,9 +1073,26 @@ fn execute_one(
             out_parts.push(outcome.visible);
             push!(outcome.result_value);
         }
-        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
-            // Scheduler VM does not support async AI opcodes natively yet. Stub to Null.
-            push!(Value::Null);
+        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
+        | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
+            // CRUSH-32: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`.
+            // Callers who grant `ai_native(true)` in their HostCapsBuilder get
+            // the stub `Value::Map({ok, kind, echo})` produced by
+            // `crush-lang-sdk::ai_native`. Callers that DON'T grant it (the
+            // default — pre-CRUSH-32 callers preserved) fall through to a
+            // `Value::Null` stub, matching the f49ece5 behavior.
+            let kind = bytecode::ai_native_kind_for_opcode(opcode)
+                .expect("AI opcode byte in combined match arm must map to a known kind");
+            let gate = format!("ai_native.{kind}");
+            let value = match host_caps.and_then(|h| h.get(&gate)) {
+                Some(handler) => handler
+                    .call(vec![])
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null),
+                None => Value::Null,
+            };
+            push!(value);
         }
         ENTER_TRY => {
             let target = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap()) as usize;

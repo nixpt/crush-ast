@@ -64,6 +64,9 @@ pub enum HostRequest {
     AiContextAware { args: serde_json::Value },
     AiSemanticMatch { args: serde_json::Value },
     AiSynthesize { args: serde_json::Value },
+    AiGoalDeclaration { args: serde_json::Value },
+    AiProgressUpdate { args: serde_json::Value },
+    AiKnowledgeSharing { args: serde_json::Value },
 }
 
 impl FastYield {

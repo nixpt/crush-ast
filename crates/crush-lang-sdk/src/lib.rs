@@ -24,6 +24,7 @@
 //! ```
 
 pub mod akg;
+pub mod ai_native;
 pub mod builder;
 pub mod bus;
 pub mod caps;

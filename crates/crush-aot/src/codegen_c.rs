@@ -848,7 +848,10 @@ fn emit_c_instr(
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).
         "ai_query" | "ai_synthesize" | "ai_agent_delegation" | "ai_semantic_match"
-        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain" => {
+        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain"
+        | "ai_goal_declaration" | "ai_progress_update" | "ai_knowledge_sharing" => {
+            // CRUSH-32: byte constant slots 0x97-0x99 added in bytecode.rs;
+            // emit the same `_push(mk_null())` stub as the existing 7.
             out.push_str(&format!("                _push(mk_null());\n"));
             out.push_str(&format!("                _pc={next_pc}; break;\n"));
         }

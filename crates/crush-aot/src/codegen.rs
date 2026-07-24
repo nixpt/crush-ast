@@ -561,7 +561,11 @@ fn emit_body(
         // is in the instruction args, NOT on the stack. Push Null (matching the
         // scheduler and portable VM which also just push Null for AI opcodes).
         "ai_query" | "ai_synthesize" | "ai_agent_delegation" | "ai_semantic_match"
-        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain" => {
+        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain"
+        | "ai_goal_declaration" | "ai_progress_update" | "ai_knowledge_sharing" => {
+            // CRUSH-32: byte constant slots 0x97-0x99 added in bytecode.rs;
+            // emit the same Null stub as the existing 7. Real AI backends
+            // are out-of-scope for this ticket.
             out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
             out.push_str(&next_pc_str);
         }

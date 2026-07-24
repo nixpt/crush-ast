@@ -93,6 +93,9 @@ pub enum FastOp {
     AiContextAware,
     AiSemanticMatch,
     AiSynthesize,
+    AiGoalDeclaration,
+    AiProgressUpdate,
+    AiKnowledgeSharing,
 
     // Object/Struct
     NewObj,
@@ -1022,6 +1025,21 @@ fn lower_instruction(
             let json_str = serde_json::to_string(&instr.args).unwrap();
             let idx = symbols.intern_string(&json_str);
             Ok(FastInstr::new(FastOp::AiSynthesize, idx as u64, 0))
+        }
+        "ai_goal_declaration" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiGoalDeclaration, idx as u64, 0))
+        }
+        "ai_progress_update" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiProgressUpdate, idx as u64, 0))
+        }
+        "ai_knowledge_sharing" => {
+            let json_str = serde_json::to_string(&instr.args).unwrap();
+            let idx = symbols.intern_string(&json_str);
+            Ok(FastInstr::new(FastOp::AiKnowledgeSharing, idx as u64, 0))
         }
 
         "cross_lang_call" => {

@@ -102,6 +102,9 @@ pub const AI_SEMANTIC_MATCH: u8 = 0x93;
 pub const AI_LEARNING_LOOP: u8 = 0x94;
 pub const AI_CONTEXT_AWARE: u8 = 0x95;
 pub const AI_TOOLCHAIN: u8 = 0x96;
+pub const AI_GOAL_DECLARATION: u8 = 0x97;
+pub const AI_PROGRESS_UPDATE: u8 = 0x98;
+pub const AI_KNOWLEDGE_SHARING: u8 = 0x99;
 
 pub const MATH_POW: u8 = 0xA0;
 pub const MATH_SQRT: u8 = 0xA1;
@@ -121,6 +124,27 @@ pub const STR_TO_LOWER: u8 = 0xB3;
 pub const STR_TRIM: u8 = 0xB4;
 
 pub const HALT: u8 = 0xFF;
+
+/// CRUSH-32: map an AI-opcode byte (0x90-0x99) to its `ai_native.<kind>`
+/// gate suffix. Returns `None` for any non-AI opcode (defensive — callers
+/// should only invoke this on bytes they already matched into the combined
+/// AI match arm). Drives the host_caps.cap-call dispatch from
+/// `crush-vm::scheduler` and `crush-vm::portable_vm`.
+pub fn ai_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
+    match opcode {
+        AI_QUERY => Some("query"),
+        AI_SYNTHESIZE => Some("synthesize"),
+        AI_AGENT_DELEGATION => Some("agent_delegation"),
+        AI_SEMANTIC_MATCH => Some("semantic_match"),
+        AI_LEARNING_LOOP => Some("learning_loop"),
+        AI_CONTEXT_AWARE => Some("context_aware"),
+        AI_TOOLCHAIN => Some("toolchain"),
+        AI_GOAL_DECLARATION => Some("goal_declaration"),
+        AI_PROGRESS_UPDATE => Some("progress_update"),
+        AI_KNOWLEDGE_SHARING => Some("knowledge_sharing"),
+        _ => None,
+    }
+}
 
 /// How an opcode's operand bytes are interpreted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
