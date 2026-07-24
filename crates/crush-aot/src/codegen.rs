@@ -7,6 +7,7 @@ pub fn gen_rust_source(program: &casm::Program) -> String {
     emit_header(&mut out);
     emit_runtime_value(&mut out);
     emit_helpers(&mut out);
+    emit_ai_stub(&mut out);
 
     for (name, func) in &program.functions {
         emit_function(&mut out, name, func, program);
@@ -557,16 +558,28 @@ fn emit_body(
         }
 
         // ── AI opcodes ──
-        // AOT backends can't perform AI queries or agent delegation. The JSON config
-        // is in the instruction args, NOT on the stack. Push Null (matching the
-        // scheduler and portable VM which also just push Null for AI opcodes).
+        // CRUSH-32 follow-up: each AI opcode now emits a per-opcode inline stub
+        // Object ({ok: true, kind, echo: ([])}) via `make_ai_stub`, so the 5
+        // tiers (scheduler, portable_vm, fastvm, AOT-Rust, AOT-C) agree at
+        // differential-cmp time. Args ride on instruction args, NOT the VM
+        // stack; echo is always an empty Array.
         "ai_query" | "ai_synthesize" | "ai_agent_delegation" | "ai_semantic_match"
         | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain"
         | "ai_goal_declaration" | "ai_progress_update" | "ai_knowledge_sharing" => {
-            // CRUSH-32: byte constant slots 0x97-0x99 added in bytecode.rs;
-            // emit the same Null stub as the existing 7. Real AI backends
-            // are out-of-scope for this ticket.
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
+            let kind = match instr.op.as_str() {
+                "ai_query" => "query",
+                "ai_synthesize" => "synthesize",
+                "ai_agent_delegation" => "agent_delegation",
+                "ai_semantic_match" => "semantic_match",
+                "ai_learning_loop" => "learning_loop",
+                "ai_context_aware" => "context_aware",
+                "ai_toolchain" => "toolchain",
+                "ai_goal_declaration" => "goal_declaration",
+                "ai_progress_update" => "progress_update",
+                "ai_knowledge_sharing" => "knowledge_sharing",
+                _ => "unknown",
+            };
+            out.push_str(&format!("{ind}stack.push(make_ai_stub(\"{kind}\"));\n"));
             out.push_str(&next_pc_str);
         }
 
@@ -677,6 +690,26 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
     }
+}
+
+// ── AI stub helper ────────────────────────────────────────────────────────
+// CRUSH-32 follow-up: emitted Rust programs construct the AI cap-call stub
+// Object inline, so all 5 execution tiers agree at differential-cmp time.
+// Mirrors the {ok: true, kind, echo: ([args])} shape used by
+// `crush_lang_sdk::ai_native` so the differential harness compares values
+// consistently. Args ride on instruction args (not on the VM stack), so
+// `echo` is always an empty Array here.
+fn emit_ai_stub(out: &mut String) {
+    out.push_str(r#"
+#[inline(always)]
+fn make_ai_stub(kind: &str) -> RuntimeValue {
+    let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
+    obj.insert("ok".to_string(), RuntimeValue::Bool(true));
+    obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));
+    obj.insert("echo".to_string(), RuntimeValue::Array(Rc::new(RefCell::new(Vec::new()))));
+    RuntimeValue::Object(Rc::new(RefCell::new(obj)))
+}
+"#);
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────

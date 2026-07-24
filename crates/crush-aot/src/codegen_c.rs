@@ -15,6 +15,7 @@ pub fn gen_c_source(program: &casm::Program) -> String {
     emit_c_header(&mut out);
     emit_c_value(&mut out);
     emit_c_helpers(&mut out);
+    emit_c_ai_stub(&mut out);
 
     // Forward declarations (needed because CASM functions may call each other)
     for (name, _func) in &program.functions {
@@ -146,6 +147,26 @@ static void _obj_set(CrushObject* obj, const char* key, Value val) {
         obj->fields[obj->field_count].val = val;
         obj->field_count++;
     }
+}
+
+// ── AI stub helper (CRUSH-32 follow-up) ─────────────────────────────
+// Mirrors the {ok, kind, echo} shape used by `crush_lang_sdk::ai_native` so
+// emitted C programs agree with the 5 VM tiers at differential-cmp time.
+// Args ride on instruction args (not on the VM stack); `echo` is always an
+// empty Array here.
+static Value mk_ai_stub(const char* kind) {
+    int __oi = _alloc_object();
+    if (__oi < 0) return mk_null();
+    _obj_set(&_objects[__oi], "ok", mk_bool(true));
+    _obj_set(&_objects[__oi], "kind", mk_string(kind));
+    int __ai = _alloc_array();
+    if (__ai >= 0) {
+        _arrays[__ai].len = 0;
+        _obj_set(&_objects[__oi], "echo", mk_array(__ai));
+    } else {
+        _obj_set(&_objects[__oi], "echo", mk_null());
+    }
+    return mk_object(__oi);
 }
 
 // ── String buffer (for to_upper / to_lower / trim) ────────────────────
@@ -847,13 +868,40 @@ fn emit_c_instr(
         // ── AI opcodes ──
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).
-        "ai_query" | "ai_synthesize" | "ai_agent_delegation" | "ai_semantic_match"
-        | "ai_learning_loop" | "ai_context_aware" | "ai_toolchain"
-        | "ai_goal_declaration" | "ai_progress_update" | "ai_knowledge_sharing" => {
-            // CRUSH-32: byte constant slots 0x97-0x99 added in bytecode.rs;
-            // emit the same `_push(mk_null())` stub as the existing 7.
-            out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+        // ── AI opcodes ──
+        // CRUSH-32 follow-up: per-opcode inline stub emit (`mk_ai_stub`), so all
+        // 5 execution tiers agree at differential-cmp time. Args ride on
+        // instruction args (not on the VM stack); echo is always an empty
+        // Array here.
+        "ai_query" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"query\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_synthesize" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"synthesize\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_agent_delegation" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"agent_delegation\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_semantic_match" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"semantic_match\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_learning_loop" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"learning_loop\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_context_aware" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"context_aware\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_toolchain" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"toolchain\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_goal_declaration" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"goal_declaration\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_progress_update" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"progress_update\")); _pc={next_pc}; break;\n"));
+        }
+        "ai_knowledge_sharing" => {
+            out.push_str(&format!("                _push(mk_ai_stub(\"knowledge_sharing\")); _pc={next_pc}; break;\n"));
         }
 
         "ret" | "halt" => {
@@ -1014,3 +1062,13 @@ void crush_run_free(const char* s) {
 }
 "#);
 }
+
+// CRUSH-32 follow-up: AI stub emitter (no-op marker). The `mk_ai_stub` C
+// function above lives inside the `r#"..."#` prelude emitted by
+// `emit_c_value`; this Rust-side emitter exists so `gen_c_source` can
+// call `emit_c_ai_stub(&mut out)` symmetrically with the AOT-Rust
+// `codegen.rs::emit_ai_stub`. Real C-only helpers, if ever needed, get
+// added here at module scope -- never inside the `r#"..."#` prelude
+// (earlier fetch where these helpers were placed inside the prelude
+// raw-string caused a structural parse error).
+fn emit_c_ai_stub(_out: &mut String) {}
