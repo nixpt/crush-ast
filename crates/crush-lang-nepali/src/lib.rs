@@ -57,4 +57,28 @@ impl_adapter_from_frontend!(
     &["np", "nepali"],
     crate::nepali_to_cast
 );
+
+#[cfg(test)]
+mod tests {
+    //! CRUSH-36 Commit 1: regression-resistance for the Frontend ->
+    //! LanguageAdapter migration (already landed via the macro above).
+    //! Without this test, the `impl_adapter_from_frontend!` line could be
+    //! deleted and the crate would still compile against `Frontend` alone,
+    //! silently losing its unified-registry registration.
+    use super::*;
+    use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+
+    #[test]
+    fn nepcode_adapter_registers_in_unified_registry() {
+        let mut registry = AdapterRegistry::new();
+        registry.register(Box::new(NepcodeAdapter));
+        let langs = registry.languages();
+        assert!(
+            langs.contains(&"nepcode"),
+            "NepcodeAdapter must register with name 'nepcode', got: {:?}",
+            langs
+        );
+    }
+}
+
 pub mod sdk;
