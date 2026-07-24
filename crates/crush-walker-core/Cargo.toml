@@ -13,3 +13,15 @@ crush-cast.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
+
+# CRUSH-36 Commit 2 Sub-Commit 2: dev-dep on crush-frontend so that the
+# `impl_both_for_walker!` macro (defined in `src/lib.rs`) can be exercised
+# against the real `crush_frontend::language_walkers::LanguageWalker`
+# trait and `WalkerError` enum in the active dual-coercion test in
+# `src/adapter.rs`. The macro itself uses `$crate::Walker` for the
+# walker-core Walker trait and references LanguageWalker at call-site
+# scope, but the TEST invokes the macro in walker-core and needs the
+# cross-crate trait in scope. Dev-dep only (test-only build path);
+# production builds of walker-core are NOT affected.
+[dev-dependencies]
+crush-frontend.workspace = true

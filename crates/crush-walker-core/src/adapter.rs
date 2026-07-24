@@ -150,4 +150,166 @@ mod adapter_tests {
         let (report, _program) = registry.walk("unused", "hello.mockfe").unwrap();
         assert_eq!(report.lang, "mock_frontend");
     }
+
+    // ── CRUSH-36 Commit 2 Sub-Commit 2 (A->D) tests ──────────────────
+    //
+    // Macro-generated dual-impl gating test. The new
+    // `impl_both_for_walker!` macro (defined in
+    // `crates/crush-walker-core/src/lib.rs`) must produce BOTH
+    // (1) `impl Walker for <Name>` AND (2) `impl LanguageWalker for
+    // <Name>` — from a single macro invocation. This test exercises
+    // the macro with a synthesized NoopWalker + dummy
+    // `tree_sitter::Language` and verifies that the resulting ZST
+    // can be coerced into both `Box<dyn Walker>` AND
+    // `Box<dyn LanguageWalker>` simultaneously.
+    //
+    // The structural-coercion test is the architectural proof that
+    // the macro is the cascade-closure-up-front pattern (per
+    // Sub-Commit 1 Lesson 4): 1 macro expansion → 2 trait impls on
+    // a ZST → auto-Send+Sync → no supertrait tie → no blanket → no
+    // E0119 risk → no 6-fix cascade. If this test fails to compile,
+    // the macro's dual-impl invariant is broken.
+
+    struct NoopWalker;
+
+    impl crate::Walker for NoopWalker {
+        fn language(&self) -> tree_sitter::Language {
+            // Test-side dummy: unreachable!() coerces to any return
+            // type via Rust's !-type mechanics. This test does NOT
+            // exercise the parse() path end-to-end (that would
+            // require a valid TSLanguage* and a real grammar); it
+            // only verifies that the macro GENERATES both impls on
+            // the same ZST.
+            unreachable!()
+        }
+        fn walk(
+            &self,
+            _tree: &tree_sitter::Tree,
+            _source: &[u8],
+        ) -> anyhow::Result<crush_cast::Program> {
+            Ok(crush_cast::Program::default())
+        }
+    }
+
+    // Invoke the macro. Per Sub-Commit 1 Lesson 4 forward-flag F1:
+    // this generates one ZST with both `impl Walker` and `impl
+    // LanguageWalker`. No supertrait tie, no blanket impl.
+    //
+    // Sub-Commit 2 forward-flag F7 (explicit migration note):
+    // this commit does NOT migrate GoWalker (or any other walker
+    // crate) to use the new macro. Migration of Go as the canonical
+    // exemplar is the Sub-Commit 2 Commit B follow-up. The macro +
+    // active test establish the architectural pattern; the migration
+    // is a separate reviewable diff.
+    //
+    // Sub-Commit 2 forward-flag F8 (test limitation): the
+    // `unreachable!()` token for `$ts_lang` is a test-side dummy.
+    // The test exercises ONLY the `language()` + `extensions()` paths
+    // on the macro-generated ZST. DO NOT call `.parse()` on
+    // `MacroGenAdapter` in production code -- it would attempt to
+    // construct a `tree_sitter::Parser` with the unreachable
+    // language, which would panic at runtime. The `parse()` path is
+    // end-to-end validated by the canonic pedestrian flow (`impl
+    // Frontend` => `frontend_pipeline`) and by the legacy `impl
+    // AdapterFromWalker` macro's test path; the new macro's parse
+    // path is exercised when GoWalker is migrated in Sub-Commit 2
+    // Commit B.
+    crate::impl_both_for_walker!(
+        MacroGenAdapter,
+        "test_lang",      // LanguageWalker::language() return
+        &["testl"],        // LanguageWalker::extensions() return
+        unreachable!(),    // Walker::language() return -- test-side dummy
+        NoopWalker,        // walker type (must impl crate::Walker)
+        |_fname| NoopWalker // walker constructor (filename ignored in test)
+    );
+
+    #[test]
+    fn impl_both_for_walker_macro_produces_dual_impls_on_zst() {
+        use crush_frontend::language_walkers::{LanguageWalker, WalkerRegistry};
+
+        // A single macro-generated ZST instance. The macro produces
+        // BOTH `impl Walker for MacroGenAdapter` AND `impl
+        // LanguageWalker for MacroGenAdapter`, so the SAME value
+        // coerces to either trait-object box.
+        let adapter = MacroGenAdapter;
+
+        // Proof 1: Box<dyn Walker> coerces. Compile-time check that
+        // `impl $crate::Walker for MacroGenAdapter` was generated.
+        let walker_box: Box<dyn crate::Walker> = Box::new(adapter);
+
+        // Proof 2: Box<dyn LanguageWalker> coerces. Compile-time
+        // check that `impl crush_frontend::language_walkers::LanguageWalker
+        // for MacroGenAdapter` was generated. This is the cascade-
+        // closure-up-front proof: the macro produces BOTH impls on
+        // the SAME struct -- no supertrait tie, no blanket, no
+        // E0119 (per Sub-Commit 1 Lesson 4).
+        let lang_box: Box<dyn LanguageWalker> = Box::new(adapter);
+
+        // Proof 3: LanguageWalker's methods (via macro args) work.
+        assert_eq!(lang_box.language(), "test_lang");
+        assert_eq!(lang_box.extensions(), &["testl"]);
+
+        // Proof 4: register in WalkerRegistry (the legacy registry
+        // for LanguageWalker). MacroGenAdapter should appear in the
+        // languages list as "test_lang".
+        let mut registry = WalkerRegistry::new();
+        registry.register_walker(lang_box);
+        let languages = registry.supported_languages();
+        assert!(
+            languages.contains(&"test_lang".to_string()),
+            "MacroGenAdapter must register as LanguageWalker; got: {:?}",
+            languages
+        );
+
+        // Proof 5: SAME ZST is ALSO a Box<dyn Walker>-coercible type
+        // (already proven via walker_box above). Drop here for
+        // completeness -- if coercion's structural failure occurred,
+        // this asserts clean drop.
+        drop(walker_box);
+    }
+
+    #[test]
+    fn impl_both_for_walker_macro_zst_auto_send_sync() {
+        // Sanity-check the macro's const assertion: the generated
+        // ZST must be Send + Sync. The macro's
+        // `const _: fn() = || { fn assert_send_sync<T: Send + Sync>() {}
+        // assert_send_sync::<$name>(); }` block fails to compile if
+        // the generated struct isn't Send + Sync. This test verifies
+        // it at runtime (the const block already enforced it at
+        // compile time).
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<MacroGenAdapter>();
+        // NoopWalker is also Send+Sync via unit-struct inheritance.
+        assert_send_sync::<NoopWalker>();
+    }
+
+    #[test]
+    fn impl_both_for_walker_macro_parse_panics_on_unreachable_dummy_lang() {
+        // Per F8: the macro's test-side `$ts_lang` token is
+        // `unreachable!()`. Calling `parse()` on the macro-generated
+        // ZST would attempt to evaluate `unreachable!()` inside the
+        // parse body, which panics at runtime. This test verifies
+        // the panic via `catch_unwind` -- the structural assertion
+        // that the macro was generated with the `unreachable!()`
+        // token, NOT a real `tree_sitter::Language`. If a future
+        // refactor swaps the `unreachable!()` for a stub Language,
+        // this test would fail (good -- the contract is "test
+        // panics on parse()", which documents the test-side
+        // dummy).
+        use crush_frontend::language_walkers::LanguageWalker;
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let adapter = MacroGenAdapter;
+        let lang: Box<dyn LanguageWalker> = Box::new(adapter);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            lang.parse("dummy source", Some("test.testl"))
+        }));
+
+        assert!(
+            result.is_err(),
+            "expected parse() to panic on unreachable!() tree_sitter::Language; got: {:?}",
+            result
+        );
+    }
 }
