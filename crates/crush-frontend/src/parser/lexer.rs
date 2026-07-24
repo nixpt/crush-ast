@@ -34,6 +34,17 @@ pub enum ParseError {
 
     #[error("Unterminated string at line {line}, column {col}")]
     UnterminatedString { line: usize, col: usize },
+
+    /// CRUSH-27: an `@<name>` token whose name is not in the recognised
+    /// annotation set (`module`, `invariant`, `errors`, `reads`,
+    /// `writes`, `covers`, `does-not-write`, `relies-on`, `complexity`,
+    /// `wip`, `temporary`, `decision`, `exhaustive-match-sites`,
+    /// `invalidates`, `must-call-before`, `must-call-after`, or any of
+    /// the polyglot-block-start keywords). Layout mirrors the other
+    /// variants — flat `(name, line, col)` rather than a `SourceLocation`
+    /// struct — so destructuring patterns stay consistent.
+    #[error("Unknown annotation: @{name} at line {line}, column {col}")]
+    UnknownAnnotation { name: String, line: usize, col: usize },
 }
 
 /// Source location information

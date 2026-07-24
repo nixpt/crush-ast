@@ -325,7 +325,24 @@ impl Parser {
                             pending_decisions.push(self.parse_decision_block());
                             continue;
                         }
-                        _ => {}
+                        _ => {
+                            // CRUSH-27: any other `@`-AtIdent at top
+                            // level is an unknown annotation — record
+                            // the dedicated error variant (the previous
+                            // `_ => {}` silently swallowed malformed
+                            // forms like `@nonsense { ... }`, making
+                            // them invisible to callers). Advance past
+                            // the token so the parser makes progress
+                            // instead of looping on it.
+                            let (line, col) = self.get_location(self.peek());
+                            self.errors.push(ParseError::UnknownAnnotation {
+                                name: id,
+                                line,
+                                col,
+                            });
+                            self.advance();
+                            continue;
+                        }
                     }
                 }
             }

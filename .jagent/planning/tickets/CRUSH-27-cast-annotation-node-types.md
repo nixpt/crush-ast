@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-27 |
 | **Priority** | P1 — foundational for M5; blocks CRUSH-28, CRUSH-29, CRUSH-30, CRUSH-31 directly |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | `.jagent/planning/ROADMAP.md` M5 section; `docs/design/ai-native-roadmap.md` Steps 1-3 |
