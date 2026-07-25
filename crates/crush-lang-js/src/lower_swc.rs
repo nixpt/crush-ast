@@ -1214,6 +1214,22 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
     }
 }
 
+/// Map a JS-side `Math.*` name to the `math.*` builtin name every consumer
+/// actually dispatches on (CRUSH-65).
+///
+/// The JS spelling is capitalized (`Math.floor`); `crush-frontend`'s builtin
+/// table and `crush-lang-sdk`'s host caps are both lowercase (`math.floor`).
+/// Passing the JS spelling straight through matched no arm at all and fell into
+/// the generic dotted method-call path, which produced a **wrong number with no
+/// error** — `docs/benchmarks/compute.js` printed 165 instead of 465.
+///
+/// This is the same translate-at-lowering-time shape `Array.isArray` →
+/// `is_array` and `JSON.parse` → `json_parse` already use in `lower_call_expr`.
+fn math_builtin(js_name: &str) -> String {
+    debug_assert!(js_name.starts_with("Math."));
+    format!("math.{}", &js_name["Math.".len()..])
+}
+
 fn lower_call_expr(
     callee: &Callee,
     args: &[ExprOrSpread],
@@ -1269,8 +1285,31 @@ fn lower_call_expr(
                     args: lowered_args,
                     meta: m,
                 }),
-                "Math.max" | "Math.min" | "Math.abs" | "Math.floor" | "Math.ceil"
-                | "Math.round" | "Math.sqrt" | "Math.pow" | "Math.random" => Ok(Expression::Call {
+                // CRUSH-65: lower to the lowercase `math.*` name as a CAPABILITY
+                // call — the same shape `fetch` → `net.http_get` uses above.
+                //
+                // Not a plain `Expression::Call`: crush-frontend's semantic pass
+                // (semantics.rs:412-418) resolves a Call's name against
+                // user-defined functions and variables only — it has no builtin
+                // registry — so ANY dotted name is rejected as "Undefined function"
+                // before the compiler's `math.floor`/`math.pow` opcode arms
+                // (compiler.rs:1416+) are ever consulted. Those arms are
+                // unreachable from this path; the capability route is the one that
+                // actually executes. All eight names below are registered host caps
+                // (crush-lang-sdk/src/stdlib.rs:32-42), so callers need the
+                // `stdlib` caps granted.
+                "Math.abs" | "Math.floor" | "Math.ceil" | "Math.round" | "Math.sqrt"
+                | "Math.pow" | "Math.min" | "Math.max" => Ok(Expression::CapabilityCall {
+                    name: math_builtin(&func_name),
+                    args: lowered_args,
+                    meta: m,
+                }),
+                // NOTE (CRUSH-65): `Math.random` is deliberately NOT mapped — it has
+                // no counterpart anywhere in the workspace (no `math.random` opcode
+                // arm, no stdlib host cap). Mapping it would invent a builtin that
+                // does not exist. Left on the pre-existing passthrough path with its
+                // behaviour unchanged; tracked as a gap in .jagent/planning/TASKS.md.
+                "Math.random" => Ok(Expression::Call {
                     function: func_name,
                     args: lowered_args,
                     meta: m,
