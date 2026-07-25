@@ -1214,6 +1214,22 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
     }
 }
 
+/// Translate a JS-side `Math.<op>` callee name into the `math.<op>` builtin
+/// name that crush's consumers dispatch on (crush-frontend's compiler.rs
+/// opcode table, crush-aotc's cap table, crush-lang-sdk's stdlib caps).
+///
+/// The two sides of this boundary are independently maintained tables, and the
+/// mismatch between them was a silent wrong-answer bug (CRUSH-39): `"Math.floor"`
+/// never equals `"math.floor"`, so the call missed every builtin arm. Callers
+/// must only pass names they have already matched against a known `Math.*` arm —
+/// a name without the `Math.` prefix is returned unchanged rather than mangled.
+fn math_builtin(js_name: &str) -> String {
+    match js_name.strip_prefix("Math.") {
+        Some(op) => format!("math.{op}"),
+        None => js_name.to_string(),
+    }
+}
+
 fn lower_call_expr(
     callee: &Callee,
     args: &[ExprOrSpread],
@@ -1269,12 +1285,41 @@ fn lower_call_expr(
                     args: lowered_args,
                     meta: m,
                 }),
-                "Math.max" | "Math.min" | "Math.abs" | "Math.floor" | "Math.ceil"
-                | "Math.round" | "Math.sqrt" | "Math.pow" | "Math.random" => Ok(Expression::Call {
-                    function: func_name,
+                // CRUSH-39: translate the JS-side capitalized name to the
+                // lowercase `math.*` name the consumers actually dispatch on,
+                // AND emit it as a CapabilityCall rather than a Call.
+                //
+                // Two separate mistakes were compounding here. Passing
+                // `"Math.floor"` through unmapped matched no builtin arm, so it
+                // fell into crush-frontend compiler.rs's dotted method-call path
+                // (`load Math` + `cap_call floor`) and silently produced a wrong
+                // number with no error. But merely lowercasing it is not enough:
+                // `Expression::Call { function: "math.floor" }` is rejected
+                // outright by semantics.rs ("Undefined function: math.floor"),
+                // whose builtin-function table knows only `len` and `print`.
+                //
+                // CapabilityCall is the canonical shape for a dotted builtin —
+                // it is exactly what crush's own parser emits for `math.floor(x)`
+                // in native source (parser/mod.rs:1364), and what the registered
+                // `math.*` host caps (crush-lang-sdk stdlib.rs:339-350) and
+                // crush-aotc's `cap_call` arms both dispatch on.
+                //
+                // NB: the `math.*` arms in compiler.rs's `Expression::Call`
+                // branch look like the natural target but are unreachable dead
+                // code — semantics.rs rejects every caller before they run. See
+                // the CRUSH-39 ticket's Findings.
+                "Math.abs" | "Math.ceil" | "Math.floor" | "Math.max" | "Math.min"
+                | "Math.pow" | "Math.round" | "Math.sqrt" => Ok(Expression::CapabilityCall {
+                    name: math_builtin(&func_name),
                     args: lowered_args,
                     meta: m,
                 }),
+                // Math.random is deliberately NOT mapped: there is no
+                // `math.random` counterpart anywhere in the workspace (no
+                // builtin arm, no opcode, no host cap — CryptoRandomCap yields
+                // random *bytes*, not a float in [0,1)). Inventing a builtin is
+                // out of scope for CRUSH-39; it falls through to the default
+                // arm below, unchanged. Tracked in .jagent/planning/TASKS.md.
                 "JSON.parse" => Ok(Expression::Call {
                     function: "json_parse".to_string(),
                     args: lowered_args,
