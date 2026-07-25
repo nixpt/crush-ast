@@ -1,5 +1,10 @@
 # TASKS — crush-ast
 
+Refreshed 2026-07-25 (docs + CRUSH-66 filing): `main` @ `5fb5bff` includes M2
+JIT Phases 2–7 (PR #21). CRUSH-20 ticket status corrected to **Done**. New
+Ready item **CRUSH-66** (pypi/npm `@lang[deps]` via BUCKETS-15). Prior
+s388 refresh note below still applies for M1 ticket hygiene.
+
 Refreshed s388 (2026-07-16): every open item below was either re-verified against
 current `main`, or is a genuinely-still-open ticket. Previously this file had ~60
 lines of unstructured findings dumped under "Aspirational" that were neither
@@ -10,6 +15,12 @@ aspirational nor current — several described bugs already fixed by unrelated w
 See `.jagent/planning/tickets/` for full detail on every `CRUSH-N` ID referenced
 here. See `RULES.md` for the worktree/branch/commit discipline every agent
 working this backlog must follow.
+
+## Ready
+
+| ID | Task | Notes |
+|----|------|-------|
+| [CRUSH-66](./tickets/CRUSH-66-lang-deps-pypi-npm.md) | `@lang[pypi:/npm:]` deps via buckets | Design: `docs/design/lang-deps-pypi-npm.md`. Blocked on buckets#4 (BUCKETS-15). |
 
 For the next-arc milestones **M5–M11**, this file tracks only milestone-level
 status (one short paragraph per milestone). For full ticket-level detail,
