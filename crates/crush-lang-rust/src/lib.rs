@@ -193,6 +193,34 @@ mod tests {
         assert!(!report.uses_ffi);
     }
 
+    /// CRUSH-36 Commit 1: regression-resistance for the Frontend ->
+    /// LanguageAdapter migration (already landed via the macro at the
+    /// bottom of this file). Without this test, the
+    /// `impl_adapter_from_frontend!` line could be deleted and the crate
+    /// would still compile against `Frontend` alone, silently losing
+    /// its unified-registry registration.
+    ///
+    /// Note: this test scopes `use super::RustAdapter;` because rust's
+    /// existing `mod tests` top-level use statement is specific imports
+    /// (`use super::{rust_to_cast, RustFrontend};`), not glob -- unlike
+    /// nepali/bash/custom which all use `use super::*;` (auto-resolves
+    /// the macro-generated adapter without a scoped fn-body import).
+    /// `rust` is the lone fn-body-scoped exception; the scoped-add is
+    /// minimal: one struct-name addition inside this fn body.
+    #[test]
+    fn rust_adapter_registers_in_unified_registry() {
+        use super::RustAdapter;
+        use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+        let mut registry = AdapterRegistry::new();
+        registry.register(Box::new(RustAdapter));
+        let langs = registry.languages();
+        assert!(
+            langs.contains(&"rust"),
+            "RustAdapter must register with name 'rust', got: {:?}",
+            langs
+        );
+    }
+
     /// Test 3 (mirrors python's `test_python_frontend_safe_code`):
     /// a small Rust program parses + lowers to a CAST Program whose
     /// `functions` map contains `main`. The main body holds exactly

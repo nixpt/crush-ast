@@ -22,5 +22,12 @@ pub struct CoverageGap {
     pub fn_name: String,
     /// The error variant that is not covered.
     pub error_variant: String,
+    /// Module that declared the `@errors` annotation (CRUSH-28).
+    ///
+    /// Defaults to `""` for ingestion paths that predate module-aware
+    /// coverage tracking; `#[serde(default)]` keeps the JSON stable
+    /// across older snapshots that don't carry this field.
+    #[serde(default)]
+    pub module_path: String,
 }
 

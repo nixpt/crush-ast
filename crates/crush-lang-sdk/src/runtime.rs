@@ -12,7 +12,7 @@
 
 use chrono::{NaiveDate, Utc};
 use crush_frontend::parse_source;
-use crush_index::CrushIndex;
+use crush_index::{CrushIndex, DejavueEvent};
 use crush_vm::{HostCaps, Program, Quotas, VmError, VmResult, assemble, run_with_caps};
 use std::sync::Arc;
 
@@ -44,6 +44,19 @@ pub enum RuntimeError {
 pub struct Runtime {
     quotas: Quotas,
     host_caps: Option<HostCaps>,
+    /// Cache of the `Arc<CrushIndex>` passed to the last `register*`
+    /// call. `with_dejavue` uses this to update the inner state via
+    /// `Arc::make_mut` and re-register every codebase cap so events
+    /// propagate to the live cap fleet. `None` when no codebase caps
+    /// have been registered yet — `with_dejavue` then builds a fresh
+    /// empty index.
+    codebase_index: Option<Arc<CrushIndex>>,
+    /// Cache of the `today` value used by the last `register*` call.
+    /// `with_dejavue` re-registers the temporaries caps with the SAME
+    /// pinned date so the staleness boundary doesn't silently rotate
+    /// between calls. `None` means no prior `with_codebase_at`; the
+    /// first `with_dejavue` falls back to `Utc::now().date_naive()`.
+    today: Option<NaiveDate>,
 }
 
 impl Default for Runtime {
@@ -58,6 +71,8 @@ impl Runtime {
         Self {
             quotas: Quotas::default(),
             host_caps: None,
+            codebase_index: None,
+            today: None,
         }
     }
 
@@ -66,6 +81,8 @@ impl Runtime {
         Self {
             quotas,
             host_caps: None,
+            codebase_index: None,
+            today: None,
         }
     }
 
@@ -123,8 +140,15 @@ impl Runtime {
             })?;
             index.add_program(module_name, &program);
         }
+        let arc = Arc::new(index);
         let caps = self.host_caps.get_or_insert_with(HostCaps::new);
-        crate::codebase::register_at(caps, Arc::new(index), today);
+        crate::codebase::register_at(caps, Arc::clone(&arc), today);
+        // Cache the Arc + today so `with_dejavue` can update the
+        // inner state via `Arc::make_mut(reuse)` and re-register the
+        // 11 codebase caps with the today the caller pinned (so the
+        // staleness boundary doesn't silently rotate).
+        self.codebase_index = Some(arc);
+        self.today = Some(today);
         Ok(self)
     }
 
@@ -158,7 +182,9 @@ impl Runtime {
     }
 
     /// Read Crush source files from disk, build a [`CrushIndex`], and register
-    /// the six `codebase.*` host capabilities.
+    /// all `codebase.*` host capabilities (the post-CRUSH-31 superset is
+    /// eleven: six core caps + `decisions`, `temporaries`,
+    /// `stale_temporaries`, `annotation_history`).
     ///
     /// Each file's stem (filename without extension) is used as the module name.
     /// Existing capabilities are preserved.
@@ -192,9 +218,86 @@ impl Runtime {
             })?;
             index.add_program(module_name, &program);
         }
+        let now = Utc::now().date_naive();
+        let arc = Arc::new(index);
         let caps = self.host_caps.get_or_insert_with(HostCaps::new);
-        crate::codebase::register(caps, Arc::new(index));
+        crate::codebase::register_at(caps, Arc::clone(&arc), now);
+        self.codebase_index = Some(arc);
+        self.today = Some(now);
         Ok(self)
+    }
+
+    /// Inject typed dejavue events into the codebase index, taking or
+    /// building an `Arc<CrushIndex>` and registering all 11 `codebase.*`
+    /// caps over it. Composes after [`Self::with_codebase`] or
+    /// [`Self::with_codebase_at`] (which cache the existing `Arc` so
+    /// `Arc::make_mut` can clone the inner state and re-register the
+    /// caps in lockstep).
+    ///
+    /// `Arc::make_mut` triggers a COW clone when `strong_count > 1`
+    /// (which it is — the 11 registered caps each hold an `Arc::clone`).
+    /// Because the new Arc is FRESH, the registered caps still point
+    /// to the pre-events state. Re-registering the caps via
+    /// `crush_lang_sdk::codebase::register_at` then DROPS the stale
+    /// caps (UPSERT via `HostCaps::register`'s `HashMap::insert`)
+    /// and replaces them with caps pointing at the new Arc — so cap
+    /// dispatch observes the events.
+    ///
+    /// When called before any `with_codebase*`, the cache is empty and
+    /// a fresh `CrushIndex::new()` is constructed (the events live
+    /// alone — no source-parsed modules). If you want both, call
+    /// `with_codebase*` first, then `with_dejavue`; otherwise
+    /// `with_codebase*` constructs a fresh index and you'd lose the
+    /// events.
+    ///
+    /// Composition order matters — see `[Self::with_codebase_at]` for
+    /// the reproduction contract: the `today` pinned by
+    /// `with_codebase_at` is preserved across the chain.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use crush_index::{CrushIndex, DejavueEvent};
+    /// use crush_lang_sdk::Runtime;
+    /// use chrono::DateTime;
+    /// use std::str::FromStr;
+    ///
+    /// let event = DejavueEvent {
+    ///     ts: DateTime::from_str("2026-05-01T00:00:00-05:00").unwrap(),
+    ///     event: "decision".into(),
+    ///     decision_title: Some("inv-x".into()),
+    ///     ..Default::default()
+    /// };
+    /// let rt = Runtime::new()
+    ///     .with_codebase(&[("mod", "fn f() { }")])
+    ///     .unwrap()
+    ///     .with_dejavue(vec![event]);
+    /// ```
+    pub fn with_dejavue(mut self, events: Vec<DejavueEvent>) -> Self {
+        let today = self.today.unwrap_or_else(|| Utc::now().date_naive());
+        let arc = match self.codebase_index.take() {
+            Some(existing) => {
+                // The cached Arc is the master. `Arc::make_mut` returns
+                // a `&mut CrushIndex`, cloning the inner allocation
+                // when strong_count > 1 (the 11 caps each hold an
+                // Arc::clone), so we mutate the CLONE and re-register
+                // the caps with the new Arc. The registered caps'
+                // pre-mutation Arcs are dropped along with the old
+                // caps on UPSERT.
+                let mut draft = existing;
+                Arc::make_mut(&mut draft).set_dejavue_events(events);
+                draft
+            }
+            None => {
+                let mut fresh = CrushIndex::new();
+                fresh.set_dejavue_events(events);
+                Arc::new(fresh)
+            }
+        };
+        let caps = self.host_caps.get_or_insert_with(HostCaps::new);
+        crate::codebase::register_at(caps, Arc::clone(&arc), today);
+        self.codebase_index = Some(arc);
+        self.today = Some(today);
+        self
     }
 
     /// Return the quotas used by this runtime.
@@ -412,5 +515,172 @@ fn navigate(url) {
                 );
             }
         }
+    }
+
+    // ── CRUSH-31 review followup: `with_dejavue` builder tests ────────────
+    //
+    // Each test exercises a different composition path through
+    // `Runtime::with_dejavue`. Together they lock the four scenarios:
+    //  (A) chained after `with_codebase_at` — verifies the cached Arc
+    //      gets `Arc::make_mut`-cloned and the events surface in the
+    //      `codebase.annotation_history` cap output.
+    //  (B) chained alone (no prior `with_codebase*`) — verifies the
+    //      builder still installs the 11 `codebase.*` caps (gated by
+    //      `HostCaps::register`'s UPSERT semantics) and emits the
+    //      events as well.
+
+    #[test]
+    fn with_dejavue_after_codebase_injects_events() {
+        // Scenario A: with_codebase_at → with_dejavue → CASM probe of
+        // codebase.annotation_history.
+        //
+        // Distinct from the same-named integration test in
+        // `codebase_caps_integration.rs`: this one lives next to
+        // Runtime, uses `parse_timeline_str` directly (no
+        // filesystem), and locks TWO contracts:
+        //   (a) the chained `with_dejavue` propagates the events into
+        //       the cap's view of the index (must surface both
+        //       decision_reason strings);
+        //   (b) the explicit ts-ascending re-sort in
+        //       `CrushIndex::annotation_history` overrides corpus
+        //       insertion order — we deliberately insert the LATER
+        //       event FIRST in the corpus; if the re-sort is removed,
+        //       this test breaks.
+        use crush_index::dejavue::parse_timeline_str;
+
+        let pin = NaiveDate::from_ymd_opt(2026, 6, 20)
+            .expect("hard-coded test date is valid");
+        // Reverse chronological order in the corpus so ts-ascending
+        // (not insertion order) is the only thing that puts `earlier`
+        // before `later` in the cap output.
+        let (events, _parse_skipped) = parse_timeline_str(
+            r#"{"ts":"2026-05-01T00:00:00-05:00","event":"decision","decision_title":"inv-x","decision_reason":"later"}
+{"ts":"2026-04-01T00:00:00-05:00","event":"decision","decision_title":"inv-x","decision_reason":"earlier"}
+"#,
+        );
+        assert_eq!(events.len(), 2, "fixture: both events parse cleanly");
+
+        let rt = Runtime::new()
+            .with_codebase_at(&[("m", "fn f() { }")], pin)
+            .expect("with_codebase_at succeeds")
+            .with_dejavue(events);
+
+        let casm = r#"
+            .func main
+            PUSH_STR "inv-x"
+            CAP_CALL "codebase.annotation_history" 1
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let result = rt
+            .run_casm(
+                casm,
+                &["codebase.annotation_history", "io.print"],
+                Some("hist-after-codebase"),
+            )
+            .expect("run");
+        assert!(result.halted, "the CASM program should halt cleanly");
+        assert!(
+            result.output.contains("earlier"),
+            "earlier decision_reason missing — with_dejavue didn't update the registered index:\n{}",
+            result.output
+        );
+        assert!(
+            result.output.contains("later"),
+            "later decision_reason missing — with_dejavue didn't update the registered index:\n{}",
+            result.output
+        );
+        // ts-ascending in the output — corpus inserted LATER first
+        // (insertion index 0 = 2026-05); ts-ascending re-sort must
+        // surface EARLIER first.
+        let earlier_pos = result
+            .output
+            .find("earlier")
+            .expect("earlier present");
+        let later_pos = result
+            .output
+            .find("later")
+            .expect("later present");
+        assert!(
+            earlier_pos < later_pos,
+            "annotation_history must be ts-ascending; earlier at {earlier_pos}, later at {later_pos}:\n{}",
+            result.output
+        );
+    }
+
+    #[test]
+    fn with_dejavue_alone_creates_codebase_caps() {
+        // Scenario B: with_dejavue on a fresh Runtime (no
+        // with_codebase* before it). The builder should install all
+        // 11 codebase caps + register the events into a fresh
+        // empty CrushIndex. Any caller of `codebase.annotation_history`
+        // gets the events; callers of `codebase.modules()` get an empty
+        // array (no source-parsed modules).
+        use crush_index::dejavue::parse_timeline_str;
+
+        let (events, _parse_skipped) = parse_timeline_str(
+            r#"{"ts":"2026-05-01T00:00:00-05:00","event":"decision","decision_title":"inv-y","decision_reason":"solo"}
+"#,
+        );
+        assert_eq!(events.len(), 1);
+
+        let rt = Runtime::new().with_dejavue(events);
+
+        // 1: codebase.annotation_history("inv-y") emits the event.
+        let casm_history = r#"
+            .func main
+            PUSH_STR "inv-y"
+            CAP_CALL "codebase.annotation_history" 1
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let result = rt
+            .run_casm(
+                casm_history,
+                &["codebase.annotation_history", "io.print"],
+                Some("annotation-history-probe"),
+            )
+            .expect("history cap should be callable after with_dejavue alone");
+        assert!(result.halted);
+        assert!(
+            result.output.contains("solo"),
+            "expected injected decision_reason to surface: \n{}",
+            result.output
+        );
+
+        // 2: codebase.modules returns an empty array (no source
+        // parsed) — proves the cap is REGISTERED rather than
+        // silently not-installed (which would error "capability not
+        // declared" on the call below).
+        let casm_modules = r#"
+            .func main
+            CAP_CALL "codebase.modules" 0
+            CAP_CALL "io.print" 1
+            HALT
+        "#;
+        let result = rt
+            .run_casm(
+                casm_modules,
+                &["codebase.modules", "io.print"],
+                Some("modules-probe"),
+            )
+            .expect("modules cap should be callable after with_dejavue alone");
+        assert!(result.halted);
+        // Empty array — accept either `[]` literal OR empty-between-brackets
+        // form (`[ ]`, `[   ]`) so a future `io.print` formatter that
+        // adds intra-bracket whitespace doesn't regress this test. A
+        // populated row (e.g. `[{fn_name: ...}]`) still fails: `inner`
+        // is non-empty. Same shape as
+        // `integration_uncovered_paths_cap_returns_empty_array_via_runtime`
+        // — the CRUSH-29 reviewer relaxed the strict `[]` match there
+        // for the same reason.
+        let trimmed = result.output.trim();
+        let inner = trimmed.trim_matches(|c| c == '[' || c == ']').trim();
+        assert!(
+            trimmed.contains("[]") || inner.is_empty(),
+            "expected empty modules() output (no source parsed), got:\n{}\ninner=[{}]",
+            result.output,
+            inner
+        );
     }
 }

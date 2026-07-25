@@ -53,4 +53,28 @@ impl_adapter_from_frontend!(
     &["sh", "bash"],
     crate::bash_to_cast
 );
+
+#[cfg(test)]
+mod tests {
+    //! CRUSH-36 Commit 1: regression-resistance for the Frontend ->
+    //! LanguageAdapter migration (already landed via the macro above).
+    //! Without this test, the `impl_adapter_from_frontend!` line could be
+    //! deleted and the crate would still compile against `Frontend` alone,
+    //! silently losing its unified-registry registration.
+    use super::*;
+    use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+
+    #[test]
+    fn bash_adapter_registers_in_unified_registry() {
+        let mut registry = AdapterRegistry::new();
+        registry.register(Box::new(BashAdapter));
+        let langs = registry.languages();
+        assert!(
+            langs.contains(&"bash"),
+            "BashAdapter must register with name 'bash', got: {:?}",
+            langs
+        );
+    }
+}
+
 pub mod sdk;

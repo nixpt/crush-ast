@@ -14,10 +14,12 @@
 //! Storage: in-memory `HashMap` for now.  A SQLite persistence layer (planned)
 //! will be added in a later step without changing the query API.
 
+pub mod dejavue;
 pub mod index;
 pub mod query;
 pub mod stale;
 
+pub use dejavue::DejavueEvent;
 pub use index::{CrushIndex, FunctionEntry, ModuleEntry};
 pub use query::{CallSite, CoverageGap};
 

@@ -5,9 +5,9 @@
 //! ```text
 //! A  interpreter   crush_vm::run           (what crush-run uses)
 //! B  portable       PortableVm::run
-//! C  fastvm         crush_vm::run_fastvm   (its OWN lowering — crush-python uses this)
-//! D  aot / rust     crush_aot::codegen     (does not link today — pre-existing)
-//! E  aot / c        crush_aot::codegen_c   (does not link today — pre-existing)
+//! C  fastvm         crush_vm::run_fastvm   (its OWN lowering — crush-python uses this)//! D  aot / rust     crush_aot::codegen     (does not link today — pre-existing)
+//! E  aot / c         crush_aot::codegen_c   (does not link today — pre-existing)
+//! F  jit             crush_jit::JitEngine   (M2 Phase 7 — integrated here)
 //! ```
 //!
 //! They have already been caught disagreeing. This session:
@@ -69,7 +69,7 @@ impl Norm {
             other => Norm::Other(format!("{other:?}")),
         }
     }
-    fn from_rtv(v: &RuntimeValue) -> Norm {
+    pub fn from_rtv(v: &RuntimeValue) -> Norm {
         match v {
             RuntimeValue::Null => Norm::Null,
             RuntimeValue::Bool(b) => Norm::Bool(*b),
@@ -109,6 +109,9 @@ pub struct DiffReport {
     /// Optional AOT C outcome. Populated by callers that compile the same source with the
     /// AOT C backend and run it in a subprocess.
     pub aot_c: Option<FastOutcome>,
+    /// Optional JIT outcome (M2 Phase 7). Populated by callers that compile through the
+    /// Crush frontend, lower to a LoweredProgram, and run via crush_jit::JitEngine.
+    pub jit: Option<FastOutcome>,
     /// Divergences between backends. Empty == all agree at the granularity each pair supports.
     /// A divergence is an OBSERVABLE difference: stdout, or accept-vs-reject. This is what caught
     /// every real bug this session (1/0 = different error status; "a"+"b" = different stdout).
@@ -234,7 +237,7 @@ pub fn differential_run(source: &str) -> Result<DiffReport, String> {
     // A vs C — fastvm. It ABSTAINS when it rejected the program for a capability the harness did
     // not provide (io.print etc.): the harness cannot yet drive fastvm WITH caps, so a
     // capability rejection is a harness limitation, not a language divergence. Do not cry wolf.
-    let fastvm_abstains = matches!(&fastvm, FastOutcome::Err(e) if e.contains("Capability"));
+    let fastvm_abstains = matches!(&fastvm, FastOutcome::Err(e) if e.contains("Capability") || e.contains("host-request"));
     if fastvm_abstains {
         notes.push(format!("fastvm ABSTAINED (needs capabilities wired into the harness): {fastvm:?}"));
     } else {
@@ -254,6 +257,7 @@ pub fn differential_run(source: &str) -> Result<DiffReport, String> {
         fastvm,
         aot_rust: None,
         aot_c: None,
+        jit: None,
         divergences,
         notes,
     })
@@ -399,5 +403,116 @@ mod tests {
     // ── CRUSH-11 FastVM multi-function dispatch is a PRE-EXISTING bug ───────
     // The FastVM returns incorrect results when two separate recursive functions
     // are present. This is a known limitation - not a CRUSH-11 regression.
+
+    // ── CRUSH-32 follow-up: AI opcodes agree across the TIGHT (A/B) pair ────
+    // The scheduler and portable tiers both wire `ai_native.<kind>` to the
+    // deterministic-stub cap landed in commit `07f64ee` (CRUSH-32). They must
+    // therefore agree at observable-behavior level for every AI opcode.  The
+    // fastvm + AOT backends are covered by separate tests that the future
+    // `resolve_host_request` (fastvm) / AOT inline stub emit will exercise.
+    //
+    // Looping the 10 `ai_native::KINDS` (rather than per-kind tests) keeps the
+    // surface in lockstep: adding a new kind auto-asserts agreement here.
+
+    #[test]
+    fn ai_native_kinds_constant_is_size_ten_and_sorted_unique() {
+        // CRUSH-32 follow-up: KINDS is the single source of truth for the
+        // `ai_native.<kind>` surface. Adding a new kind here auto-propagates
+        // through `register(caps)` (lands a new HostCap), the bytecode-table
+        // slot, and (eventually) the differential fixture once the frontend
+        // exposes `ai_<kind>(...)` as syntax-level builtin (see deferred
+        // note below).
+        use crate::ai_native::KINDS;
+        assert_eq!(KINDS.len(), 10, "KINDS size changed - update HARD-CODED list and this test");
+        let mut sorted: Vec<&str> = KINDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            KINDS.len(),
+            "KINDS contains duplicates: {:?}",
+            KINDS
+        );
+    }
+
+    // ── DEFERRED until Crush frontend exposes `ai_<kind>(...)` syntax ──────
+    // The CRUSH-32 follow-up commit deferred this test because the Crush
+    // frontend does not yet recognize `ai_<kind>(args)` as a builtin call
+    // (currently the wiring is at the cap-call VM-side level only - commit
+    // `07f64ee`). When the frontend syntax-level support lands, replace the
+    // size-only `ai_native_kinds_constant_is_size_ten_and_sorted_unique`
+    // test above with the parametric TIGHT-pair loop:
+
+    //     #[test]
+    //     fn ai_opcodes_a_b_pair_agrees_for_all_ten_kinds() {
+    //         use crate::ai_native::KINDS;
+    //         for kind in KINDS {
+    //             let source = format!("fn main() {{ ai_{kind}(\"x\"); print(\"done\"); }}");
+    //             let r = differential_run(&source).expect("compile");
+    //             let a_b_diff: Vec<_> = r
+    //                 .divergences
+    //                 .iter()
+    //                 .filter(|d| d.contains("interpreter vs portable"))
+    //                 .collect();
+    //             assert!(a_b_diff.is_empty(), "ai_{kind} A vs B diverged: {a_b_diff:?}");
+    //         }
+    //     }
+    //
+    // ── CRUSH-33 follow-up: DOM opcodes surface parity ────────────────────
+    // Mirror of the AI block above: dom_native is the next opcode family
+    // to land (CRUSH-33 Commit 2 wires the cap-call gates; this Commit 3
+    // locks the surface). Tests below assert that `dom_native::KINDS`
+    // stays size == 10 + dedup. The parametric TIGHT-pair loop (mirror
+    // of the AI deferred above) is parked below as a future fixture for
+    // when the Crush frontend exposes `dom_<kind>(...)` as a syntax-
+    // level builtin (the wiring is currently cap-call VM-side only).
+
+    #[test]
+    fn dom_native_kinds_constant_is_size_ten_and_sorted_unique() {
+        // dom_native::KINDS is the single source of truth for the 10 DOM
+        // opcodes (slots 0x9A-0x9F + 0xB5-0xB8 per CRUSH-33 Commit 1).
+        // Add a new kind here and `register()` + the bytecode slot table
+        // both auto-route through the macro. Failure here = someone
+        // reordered or duplicated KINDS; fix the KINDS const, not the
+        // test.
+        use crate::dom_native::KINDS;
+        assert_eq!(KINDS.len(), 10, "KINDS size changed - update HARD-CODED list and this test");
+        let mut sorted: Vec<&str> = KINDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            KINDS.len(),
+            "KINDS contains duplicates: {:?}",
+            KINDS
+        );
+    }
+
+    // ── DEFERRED until Crush frontend exposes `dom_<kind>(...)` syntax ──
+    // OPEN (mirrors AI deferred ambiguity): `dom_<kind>(...)` builtin
+    // vs `dom_native.<kind>(...)` member-call -- both are equivalent at
+    // the cap-call gate, so this is a frontend design choice, not a
+    // VM/cap-call one.
+    // Same mirror of the AI deferred parametric block above: the Crush
+    // frontend does not yet recognize `dom_<kind>(args)` as a builtin
+    // call (the wiring is at the cap-call VM-side level per CRUSH-33
+    // Commit 2). When the frontend syntax-level support lands,
+    // REPLACE the size-only `dom_native_kinds_constant_is_size_ten_and_
+    // sorted_unique` test above with the parametric TIGHT-pair loop:
+
+    //     #[test]
+    //     fn dom_opcodes_a_b_pair_agrees_for_all_ten_kinds() {
+    //         use crate::dom_native::KINDS;
+    //         for kind in KINDS {
+    //             let source = format!("fn main() {{ dom_{kind}(\"div.user\"); print(\"done\"); }}");
+    //             let r = differential_run(&source).expect("compile");
+    //             let a_b_diff: Vec<_> = r
+    //                 .divergences
+    //                 .iter()
+    //                 .filter(|d| d.contains("interpreter vs portable"))
+    //                 .collect();
+    //             assert!(a_b_diff.is_empty(), "dom_{kind} A vs B diverged: {a_b_diff:?}");
+    //         }
+    //     }
 }
 

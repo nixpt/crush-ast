@@ -909,6 +909,7 @@ dependencies = [
  "clap",
  "crush-cast",
  "crush-frontend",
+ "crush-jit",
  "crush-lang-bash",
  "crush-lang-c",
  "crush-lang-custom",
@@ -1081,6 +1082,7 @@ dependencies = [
  "cranelift-native",
  "crush-vm",
  "region",
+ "serde_json",
  "target-lexicon 0.13.5",
 ]
 
@@ -1163,6 +1165,22 @@ dependencies = [
  "serde_json",
  "tree-sitter",
  "tree-sitter-go",
+]
+
+[[package]]
+name = "crush-lang-java"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crush-cast",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
+ "crush-walker-core",
+ "serde",
+ "serde_json",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -1313,7 +1331,6 @@ dependencies = [
 name = "crush-lint"
 version = "0.3.0"
 dependencies = [
- "casm",
  "crush-diagnostics",
  "ort",
  "parking_lot",
@@ -1466,6 +1483,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "crush-cast",
+ "crush-frontend",
  "serde_json",
  "thiserror 1.0.69",
  "tree-sitter",

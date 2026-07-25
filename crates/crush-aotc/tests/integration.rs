@@ -159,7 +159,9 @@ fn capability_argument_order() {
         }
     "#;
     let out = compile_and_run(source).expect("compile and run");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["8"], "unexpected output: {out}");
+    // math.pow returns a float (matching FastVM), and io.print formats whole
+    // floats with a trailing ".0" (matching runtime_value_to_text in io_print.rs).
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["8.0"], "unexpected output: {out}");
 }
 
 #[test]

@@ -370,9 +370,10 @@ impl AotcCompiler {
                 "call" => {
                     let func_name = instr.args.get("function").and_then(|v| v.as_str()).unwrap_or("");
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    // pop args (last pushed = first arg)
-                    let mut args: Vec<_> = (0..argc).filter_map(|_| stack.pop()).collect();
-                    args.reverse();
+                    // Pop args: the frontend pushes user-function call args right-to-left
+                    // (first arg ends up on top of stack), so pop gives [first, second, ...]
+                    // in the correct parameter order — no reverse needed.
+                    let args: Vec<_> = (0..argc).filter_map(|_| stack.pop()).collect();
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                     // Box scalar args so every function receives a CrushValue regardless of
                     // the caller's inferred type. The callee unboxes to its own inferred types.

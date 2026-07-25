@@ -27,6 +27,7 @@ members = [
     "crates/crush-lang-js",
     "crates/crush-lang-bash",
     "crates/crush-lang-zsh",
+    "crates/crush-lang-java",
     "crates/crush-net",
     "crates/crush-debugger",
     "crates/crush-jit",

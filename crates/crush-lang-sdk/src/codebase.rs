@@ -72,6 +72,9 @@ pub fn register_at(
         Arc::clone(&index),
         today,
     )));
+    // CRUSH-31: dejavue decision_events → annotation_name join
+    // (`@invariant "use-workspace"` ↔ `decision.decision_title == "use-workspace"`).
+    caps.register(Box::new(CodebaseAnnotationHistoryCap(Arc::clone(&index))));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -136,6 +139,14 @@ impl HostCap for CodebaseModulesCap {
                 make_map([
                     ("name", Value::Str(m.module_path.clone())),
                     ("purpose", Value::Str(m.purpose.clone())),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for a
+                    // `file` field per module. The current `ModuleEntry`
+                    // doesn't carry a source-file path — that's slated
+                    // for the CRUSH-29-EXTEND-LOCS follow-up ticket
+                    // (source-loc plumbing on the AST side). Empty string
+                    // default so consumers can `result.file || "?"` for
+                    // now without breaking the schema.
+                    ("file", Value::Str(String::new())),
                     ("exports", str_list(&m.exports)),
                     ("related", str_list(&m.related)),
                     (
@@ -238,6 +249,17 @@ impl HostCap for CodebaseCallersCap {
                     ("caller_module", Value::Str(site.caller_module.clone())),
                     ("caller_fn", Value::Str(site.caller_fn.clone())),
                     ("arg_count", Value::Int(site.arg_count as i64)),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for
+                    // `file` / `line` / `context` per call site. The
+                    // `CallSite` struct currently has no source-loc
+                    // fields — that's slated for the
+                    // CRUSH-29-EXTEND-LOCS follow-up (extends the call
+                    // graph walker to capture Statement source
+                    // positions). Empty / 0 / "" defaults today keep
+                    // the schema stable.
+                    ("file", Value::Str(String::new())),
+                    ("line", Value::Int(0)),
+                    ("context", Value::Str(String::new())),
                 ])
             })
             .collect();
@@ -268,6 +290,15 @@ impl HostCap for CodebaseInvariantsCap {
                 make_map([
                     ("name", Value::Str(inv.name.clone())),
                     ("description", Value::Str(inv.description.clone())),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for a
+                    // `reason` field. We add it as an alias to
+                    // `description` (same payload) so the ticket-spec
+                    // field is present WITHOUT breaking existing agents
+                    // that read `description`. Long-term, the two fields
+                    // should diverge semantically (description = prose,
+                    // reason = short trigger explanation); filed under
+                    // CRUSH-29-INVARIANT-TERM-SPLIT follow-up.
+                    ("reason", Value::Str(inv.description.clone())),
                     ("applies_to", str_list(&inv.applies_to)),
                     (
                         "consequence",
@@ -343,6 +374,17 @@ impl HostCap for CodebaseUncoveredPathsCap {
                 make_map([
                     ("fn_name", Value::Str(gap.fn_name.clone())),
                     ("error_variant", Value::Str(gap.error_variant.clone())),
+                    // CRUSH-28 already populates `module_path`; keep it
+                    // exposed.
+                    ("module_path", Value::Str(gap.module_path.clone())),
+                    // CRUSH-29 ticket-shape gap-fill: ticket asks for
+                    // `file` / `line` per gap. `CoverageGap` currently
+                    // has no source-loc fields. Empty / 0 stub defaults
+                    // today; the follow-up ticket CRUSH-29-EXTEND-LOCS
+                    // adds real source-loc capture when @errors sites
+                    // get annotated with their declaration position.
+                    ("file", Value::Str(String::new())),
+                    ("line", Value::Int(0)),
                 ])
             })
             .collect();
@@ -547,6 +589,77 @@ impl HostCap for CodebaseDecisionsCap {
                     ("because", Value::Str(dec.because.clone())),
                     ("revisit_if", str_list(&dec.revisit_if)),
                 ])
+            })
+            .collect();
+        Ok(Some(Value::new_array(rows)))
+    }
+}
+
+// ── codebase.annotation_history(name) ────────────────────────────────────────
+
+/// CRUSH-31: ordered chain of dejavue `decision` events whose
+/// `decision_title` equals the supplied annotation name. Ordered
+/// chronologically (ascending `ts`) so an agent reading the result
+/// sees the progression of decisions that shaped the annotation.
+///
+/// Currently scoped to `Annotation::Invariant.name` (the natural
+/// CRUSH-29 join key); future extension to function-level events
+/// (e.g. matching events by `function_name`) is a follow-up ticket.
+struct CodebaseAnnotationHistoryCap(Arc<CrushIndex>);
+
+impl HostCap for CodebaseAnnotationHistoryCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "codebase.annotation_history".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let name = match &args[0] {
+            Value::Str(s) => s.clone(),
+            _ => {
+                return Err(
+                    "codebase.annotation_history: arg must be a string".to_string(),
+                );
+            }
+        };
+
+        let rows: Vec<Value> = self
+            .0
+            .annotation_history(&name)
+            .into_iter()
+            .map(|ev| {
+                // Build the row map incrementally so absent Option
+                // fields DON'T surface as `null` — keeping the wire
+                // shape compact. An event without a `decision_title`
+                // couldn't have surfaced via the strict-equality
+                // join, so listing it again here would be silent
+                // noise; same for branch/commit etc.
+                let mut entries: Vec<(&'static str, Value)> = vec![
+                    ("ts", Value::Str(ev.ts.to_rfc3339())),
+                    ("event", Value::Str(ev.event.clone())),
+                ];
+                if let Some(branch) = &ev.branch {
+                    entries.push(("branch", Value::Str(branch.clone())));
+                }
+                if let Some(commit) = &ev.commit {
+                    entries.push(("commit", Value::Str(commit.clone())));
+                }
+                if let Some(agent) = &ev.agent {
+                    entries.push(("agent", Value::Str(agent.clone())));
+                }
+                if let Some(title) = &ev.decision_title {
+                    entries.push(("decision_title", Value::Str(title.clone())));
+                }
+                if let Some(reason) = &ev.decision_reason {
+                    entries.push(("decision_reason", Value::Str(reason.clone())));
+                }
+                if let Some(summary) = &ev.summary {
+                    entries.push(("summary", Value::Str(summary.clone())));
+                }
+                make_map(entries)
             })
             .collect();
         Ok(Some(Value::new_array(rows)))

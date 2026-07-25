@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -29,6 +29,8 @@ const OFF_CALL_STACK: i64 = 8768;
 const OFF_CALL_STACK_TOP: i64 = 9792;
 const OFF_HELPER_FN: i64 = 9800;
 const OFF_HANDLER_PC: i64 = 9816;
+const OFF_SAVED_PC: i64 = 10088;
+const OFF_HOST_REQUEST_TAG: i64 = 10096;
 
 const TAG_NULL: i64 = 0x7FFC_0000_0000_0000i64;
 const TAG_TRUE: i64 = 0x7FFC_0000_0000_0001i64;
@@ -122,6 +124,13 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
             FastOp::Throw => {
                 starts.insert(i + 1);
             }
+            // M2 Phase 5 Tier 2: yield ops create block boundaries so the next
+            // instruction is a valid resume point.
+            FastOp::CallHost | FastOp::ExecLang | FastOp::Spawn
+            | FastOp::Gc | FastOp::ImportVar | FastOp::Await
+            | FastOp::CrossLangCall => {
+                starts.insert(i + 1);
+            }
             _ => {}
         }
     }
@@ -163,15 +172,52 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     bld.switch_to_block(entry);
     let ctx = bld.block_params(entry)[0];
 
-    if let Some(&first) = map.get(&0) {
+    // M2 Phase 5 Tier 2: trampoline entry with resume support.
+    // On initial entry: saved_pc == 0 → jump to program.entry_point.
+    // On resume: saved_pc != 0 → jump to the saved block, then clear saved_pc.
+    let saved_pc_addr = iadd_imm(bld, ctx, OFF_SAVED_PC);
+    let saved_pc = load(bld, saved_pc_addr);
+    let zero = iconst(bld, 0);
+    let is_resume = icmp_ne(bld, saved_pc, zero);
+
+    let resume_bb = bld.create_block();
+    let init_bb = bld.create_block();
+    let merge_bb = bld.create_block();
+    bld.append_block_param(merge_bb, ir::types::I64); // target block offset
+    bld.ins().brif(is_resume, resume_bb, &[] as &[BlockArg], init_bb, &[] as &[BlockArg]);
+
+    // Resume path: jump to saved_pc, then clear it.
+    bld.switch_to_block(resume_bb);
+    // Clear saved_pc so subsequent resumes don't loop.
+    let zero2 = iconst(bld, 0);
+    store(bld, saved_pc_addr, zero2);
+    bld.ins().jump(merge_bb, &[BlockArg::Value(saved_pc)]);
+
+    // Initial path: jump to entry_point.
+    bld.switch_to_block(init_bb);
+    let entry_pc = iconst(bld, program.entry_point as i64);
+    bld.ins().jump(merge_bb, &[BlockArg::Value(entry_pc)]);
+
+    // Merge: dispatch to the target block.
+    bld.switch_to_block(merge_bb);
+    let target_pc_val = bld.block_params(merge_bb)[0];
+    // Build a dispatch cascade from PC offsets → CLIF blocks.
+    let dispatch_targets: Vec<(i64, ir::Block)> = blocks.iter()
+        .map(|&(off, _)| (off as i64, map[&off]))
+        .collect();
+    // If the target is in our map, jump there. Otherwise return null (safety net).
+    if !dispatch_targets.is_empty() {
         dec_budget(bld, ctx);
-        bld.ins().jump(first, &[] as &[BlockArg]);
+        dispatch_by_eq(bld, target_pc_val, &dispatch_targets);
     } else {
         let n = iconst(bld, TAG_NULL);
         sres(bld, ctx, n);
         bld.ins().return_(&[] as &[ir::Value]);
     }
     bld.seal_block(entry);
+    bld.seal_block(resume_bb);
+    bld.seal_block(init_bb);
+    bld.seal_block(merge_bb);
 
     // Create return blocks (one per CALL site).
     let mut return_blocks: Vec<ir::Block> = Vec::new();
@@ -215,13 +261,18 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
         }
     }
 
-    // Collect handler block offsets so we can defer sealing. Handler blocks
-    // may receive additional predecessors from Throw dispatch (which happens
-    // in a later block), so they must be sealed AFTER all main blocks are
-    // processed.
+    // Collect handler block offsets for deferred sealing.
     let handler_offs: BTreeSet<usize> = handler_entries.iter().map(|(pc, _)| *pc).collect();
 
-    // Process main blocks.
+    // Process main blocks — fill with instructions but do NOT seal yet.
+    // Sealing is deferred to a separate pass. Cranelift's seal_block can
+    // recursively seal successor blocks through the SSA state machine
+    // when all their predecessors are sealed. To prevent double-seals:
+    // 1. Non-handler blocks are sealed in REVERSE order — successors get
+    //    sealed first, so later predecessor seals won't cascade.
+    // 2. Handler blocks are sealed last, after all Throw dispatch
+    //    predecessors have been established.
+    let mut non_handler_offs: Vec<usize> = Vec::new();
     for &(off, ref instrs) in blocks {
         let block = map[&off];
         bld.switch_to_block(block);
@@ -230,33 +281,40 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
             term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig);
         }
         if !term {
-            // Non-terminator block — jump to the next sequential block if there is one
             if let Some(&next_block) = next_off_map.get(&off) {
                 dec_budget(bld, ctx);
                 bld.ins().jump(next_block, &[] as &[BlockArg]);
             } else {
-                // Last block — return null
                 let n = iconst(bld, TAG_NULL);
                 sres(bld, ctx, n);
                 bld.ins().return_(&[] as &[ir::Value]);
             }
         }
-        // Defer sealing for handler blocks — they may get extra predecessors
-        // from Throw dispatch in later blocks.
         if !handler_offs.contains(&off) {
+            non_handler_offs.push(off);
+        }
+    }
+
+    // Seal non-handler blocks in REVERSE order — successors before
+    // predecessors — to prevent SSA cascade double-seals.
+    for off in non_handler_offs.iter().rev() {
+        if let Some(&block) = map.get(off) {
             bld.seal_block(block);
         }
     }
 
-    // Seal deferred handler blocks now that all blocks have been processed
-    // and any Throw-dispatch predecessors have been registered.
+    // Seal handler blocks after all Throw dispatch sites have been filled.
+    // CONTRACT: handler blocks must contain a terminator (Throw, Return,
+    // or Halt). The reverse-order non-handler sealing pass above may
+    // cascade-seal a handler block if it is reachable via normal
+    // fallthrough from a non-handler block. The terminator prevents this.
     for &off in &handler_offs {
         if let Some(&block) = map.get(&off) {
             bld.seal_block(block);
         }
     }
 
-    // Seal return blocks now that all predecessors are established.
+    // Seal return blocks.
     for &rb in &ret_blocks {
         bld.seal_block(rb);
     }
@@ -303,7 +361,18 @@ fn fcmp(b: &mut FunctionBuilder, cc: FloatCC, a: ir::Value, b2: ir::Value) -> ir
 fn dec_budget(b: &mut FunctionBuilder, ctx: ir::Value) {
     let a = iadd_imm(b, ctx, OFF_BUDGET);
     let cur = load(b, a);
-    let nv = iadd_imm(b, cur, -1);
+    // Decrement, but saturate at 0 (don't wrap).
+    // When budget reaches 0, all subsequent dec_budget calls keep it at 0.
+    // The host detects exhaustion after execution via ctx.budget == 0.
+    // This is ExoLight Tier 1 fuel metering.
+    //
+    // Use icmp_eq(cur, 0) rather than icmp_slt on the decremented value
+    // because u64::MAX ("no limit") is -1 as I64, which icmp_slt would
+    // incorrectly treat as wrapped.
+    let zero = iconst(b, 0);
+    let is_zero = icmp_eq(b, cur, zero);
+    let dec = iadd_imm(b, cur, -1);
+    let nv = select(b, is_zero, zero, dec);
     store(b, a, nv);
 }
 fn sres(b: &mut FunctionBuilder, ctx: ir::Value, val: ir::Value) {
@@ -355,12 +424,34 @@ fn poke(b: &mut FunctionBuilder, ctx: ir::Value, n: u32, val: ir::Value) {
     store(b, addr, val);
 }
 
+/// Max number of locals per call frame (frame-relative addressing).
+/// Each call frame gets its own `FRAME_LOCALS` slots, physically separated
+/// in the `locals` array by `call_stack_top * FRAME_LOCALS`.
+/// This prevents recursive callees from clobbering caller locals
+/// (CRUSH-17: recursive flag=1 bug).
+const FRAME_LOCALS: i64 = 8;
+
 fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize) -> ir::Value {
-    let addr = iadd_imm(b, ctx, OFF_LOCALS + (idx as i64) * 8);
+    // Frame-relative: each call frame gets its own locals at
+    // OFF_LOCALS + call_stack_top * FRAME_LOCALS * 8 + idx * 8.
+    // Uses MemFlagsData::new() to avoid aggressive trusted() hoisting.
+    let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
+    let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
+    let stride = iconst(b, FRAME_LOCALS * 8);
+    let frame_off = imul(b, frame, stride);
+    let base = iadd_imm(b, ctx, OFF_LOCALS);
+    let off = iadd_imm(b, frame_off, (idx as i64) * 8);
+    let addr = iadd(b, base, off);
     load(b, addr)
 }
 fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
-    let addr = iadd_imm(b, ctx, OFF_LOCALS + (idx as i64) * 8);
+    let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
+    let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
+    let stride = iconst(b, FRAME_LOCALS * 8);
+    let frame_off = imul(b, frame, stride);
+    let base = iadd_imm(b, ctx, OFF_LOCALS);
+    let off = iadd_imm(b, frame_off, (idx as i64) * 8);
+    let addr = iadd(b, base, off);
     store(b, addr, val);
 }
 
@@ -408,6 +499,9 @@ fn tbool(b: &mut FunctionBuilder, cond: ir::Value) -> ir::Value {
 // ── Call-stack helpers ───────────────────────────────────────────────────────
 
 /// Push a return frame onto the JIT call stack.
+/// Frame layout: [return_block:8].
+/// The callee's locals are automatically frame-relative via `call_stack_top`
+/// in lload/lstore (FRAME_LOCALS per frame), so no explicit locals save is needed.
 fn push_frame(b: &mut FunctionBuilder, ctx: ir::Value, return_block: i64) {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let top = load(b, cst_addr);
@@ -420,7 +514,7 @@ fn push_frame(b: &mut FunctionBuilder, ctx: ir::Value, return_block: i64) {
     store(b, cst_addr, new_top);
 }
 
-/// Pop a return frame from the JIT call stack, returning the saved `return_block` index.
+/// Pop a call frame: return the saved return_block index.
 fn pop_frame(b: &mut FunctionBuilder, ctx: ir::Value) -> ir::Value {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let top = load(b, cst_addr);
@@ -432,76 +526,91 @@ fn pop_frame(b: &mut FunctionBuilder, ctx: ir::Value) -> ir::Value {
     load(b, entry)
 }
 
-/// Dispatch to the handler block by comparing runtime `hp_val` to each known
-/// handler PC (brif cascade — avoids complex JumpTableData API).
+/// Dispatch to one of `targets` by comparing `val` to each target's key
+/// using a brif cascade (avoids complex JumpTableData API).
 ///
-/// Intermediate blocks are NOT sealed inside this function — the caller
-/// must seal `dispatch_bb` afterwards (which is already done by emit_one).
-fn emit_handler_dispatch(b: &mut FunctionBuilder, hp_val: ir::Value, entries: &[(usize, ir::Block)]) {
-    if entries.is_empty() {
-        // Safety net — should not happen (handler_found implies >=1 entry).
-        // The function returns `()`, so return with an empty argument list.
+/// For targets [(k0, b0), ..., (kn, bn)], builds:
+///   brif(val == k0, b0, chain_0)
+///   chain_0: brif(val == k1, b1, chain_1)
+///   ...
+///   chain_{n-2}: jump bn
+///
+/// All intermediate chain blocks are created and sealed here.
+/// If `targets` is empty, emits an immediate return (safety net —
+/// should not occur in practice, but retained for defense-in-depth).
+fn dispatch_by_eq(b: &mut FunctionBuilder, val: ir::Value, targets: &[(i64, ir::Block)]) {
+    if targets.is_empty() {
         b.ins().return_(&[] as &[ir::Value]);
         return;
     }
-    if entries.len() == 1 {
-        b.ins().jump(entries[0].1, &[] as &[BlockArg]);
+    if targets.len() == 1 {
+        b.ins().jump(targets[0].1, &[] as &[BlockArg]);
         return;
     }
-    // Pre-create all intermediate blocks so they are available as brif targets.
-    let chain: Vec<ir::Block> = (0..entries.len() - 1).map(|_| b.create_block()).collect();
-
-    // Build chained brif cascade. Each chain[i] contains:
-    //   brif(hp == entries[i].0, entries[i].1, chain[i+1])
-    // The last chain block jumps unconditionally to entries[N-1].
-    for (i, (pc, blk)) in entries[..entries.len() - 1].iter().enumerate() {
+    // Pre-create all intermediate chain blocks so they are available as brif targets.
+    let chain: Vec<ir::Block> = (0..targets.len() - 1).map(|_| b.create_block()).collect();
+    for (i, (key, blk)) in targets[..targets.len() - 1].iter().enumerate() {
         if i > 0 {
             b.switch_to_block(chain[i - 1]);
         }
         let next_bb = chain[i];
-        let const_pc = iconst(b, *pc as i64);
-        let cmp = icmp_eq(b, hp_val, const_pc);
+        let const_key = iconst(b, *key);
+        let cmp = icmp_eq(b, val, const_key);
         b.ins().brif(cmp, *blk, &[] as &[BlockArg], next_bb, &[] as &[BlockArg]);
     }
-
-    // Final chain block: unconditional jump to last handler entry
+    // Final chain block: unconditional jump to last target
     b.switch_to_block(*chain.last().unwrap());
-    b.ins().jump(entries[entries.len() - 1].1, &[] as &[BlockArg]);
-
+    b.ins().jump(targets[targets.len() - 1].1, &[] as &[BlockArg]);
     // Seal all chain blocks now that they have terminators
     for &cb in &chain {
         b.seal_block(cb);
     }
 }
 
-/// Dispatch to one of `targets` by comparing `idx` to each target index
-/// (brif cascade — avoids complex JumpTableData API).
+/// Thin wrapper: converts handler entries (usize PC → Block) to the
+/// unified dispatch format.
+fn emit_handler_dispatch(b: &mut FunctionBuilder, hp_val: ir::Value, entries: &[(usize, ir::Block)]) {
+    let targets: Vec<(i64, ir::Block)> = entries.iter().map(|(pc, blk)| (*pc as i64, *blk)).collect();
+    dispatch_by_eq(b, hp_val, &targets);
+}
+
+/// Thin wrapper: converts sequential return blocks (0..N → Block) to the
+/// unified dispatch format.
 fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::Block]) {
-    if targets.is_empty() {
-        return;
-    }
-    if targets.len() == 1 {
-        b.ins().jump(targets[0], &[] as &[BlockArg]);
-        return;
-    }
-    // Chain: brif(idx == 0, targets[0], fallthrough) → brif(idx == 1, targets[1], fallthrough) → ... → jump(last)
-    let mut prev_block: Option<ir::Block> = None;
-    for (i, &tgt) in targets[..targets.len() - 1].iter().enumerate() {
-        let next_bb = b.create_block();
-        if let Some(pb) = prev_block {
-            b.switch_to_block(pb);
-        }
-        let const_idx = iconst(b, i as i64);
-        let cmp = icmp_eq(b, idx, const_idx);
-        b.ins().brif(cmp, tgt, &[] as &[BlockArg], next_bb, &[] as &[BlockArg]);
-        b.seal_block(next_bb);
-        prev_block = Some(next_bb);
-    }
-    // Last target (default)
-    if let Some(pb) = prev_block {
-        b.switch_to_block(pb);
-    }
-    b.ins().jump(targets[targets.len() - 1], &[] as &[BlockArg]);
+    let targets: Vec<(i64, ir::Block)> = targets.iter().enumerate().map(|(i, &blk)| (i as i64, blk)).collect();
+    dispatch_by_eq(b, idx, &targets);
+}
+
+// ── M2 Phase 5 Tier 2: Host-request yield (trampoline escape) ──────────────
+
+/// Tag values for `host_request_tag` in JitContext.
+/// Must match the variant ordering in `HostRequest` enum.
+const HOST_REQ_CALL_HOST: i64 = 0;
+const HOST_REQ_EXEC_LANG: i64 = 1;
+const HOST_REQ_SPAWN: i64 = 2;
+const HOST_REQ_GC: i64 = 3;
+const HOST_REQ_IMPORT_VAR: i64 = 4;
+const HOST_REQ_AWAIT: i64 = 5;
+
+/// Emit a host-request yield: save `next_pc` so the trampoline can resume
+/// after the host processes the request, set `host_request_tag`, store null
+/// result, and `return_()` to the host.
+fn emit_host_yield(b: &mut FunctionBuilder, ctx: ir::Value, next_pc: usize, request_tag: i64) {
+    // Save next_pc (the block offset to resume at)
+    let spc_addr = iadd_imm(b, ctx, OFF_SAVED_PC);
+    let spc_val = iconst(b, next_pc as i64);
+    store(b, spc_addr, spc_val);
+
+    // Set host_request_tag so the host knows which request variant to handle
+    let req_addr = iadd_imm(b, ctx, OFF_HOST_REQUEST_TAG);
+    let req_val = b.ins().iconst(ir::types::I32, request_tag);
+    b.ins().store(MemFlagsData::trusted(), req_val, req_addr, 0);
+
+    // Store null result (the host will populate result before resume)
+    let null_val = iconst(b, TAG_NULL);
+    sres(b, ctx, null_val);
+
+    b.ins().return_(&[] as &[ir::Value]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -509,6 +618,8 @@ fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Emit a call to the runtime helper function via `call_indirect`.
+/// Does NOT check for errors — use `emit_helper_call_checked` for
+/// helpers that can set `OFF_ERROR`.
 fn emit_helper_call(b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i64, ptr_ty: types::Type, helper_sig: ir::SigRef) {
     let off_addr = iadd_imm(b, ctx, OFF_HELPER_FN);
     let helper_addr = load(b, off_addr);
@@ -516,6 +627,44 @@ fn emit_helper_call(b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i
     let op_val = iconst(b, opcode);
     let arg_val = iconst(b, arg);
     b.ins().call_indirect(helper_sig, callee, &[ctx, op_val, arg_val]);
+}
+
+/// Emit a checked call to the runtime helper. After `call_indirect`,
+/// loads `OFF_ERROR` and branches to a trap path if the helper set
+/// the error flag (CRUSH-17 #2). Switches to the success block so
+/// the caller continues naturally. The trap path stores null result
+/// and returns.
+fn emit_helper_call_checked(
+    b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i64,
+    ptr_ty: types::Type, helper_sig: ir::SigRef,
+) {
+    // Emit the call_indirect (same as emit_helper_call).
+    emit_helper_call(b, ctx, opcode, arg, ptr_ty, helper_sig);
+
+    // Load error flag and branch.
+    // NOTE: error is i32, but we load I64 (8 bytes). Mask to low 32 bits
+    // since the adjacent throw_consumed_handler field may be non-zero.
+    let err_addr = iadd_imm(b, ctx, OFF_ERROR);
+    let err_val_raw = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+    let err_mask = iconst(b, 0xFFFF_FFFFi64);
+    let err_val = band(b, err_val_raw, err_mask);
+    let zero = iconst(b, 0);
+    let has_err = icmp_ne(b, err_val, zero);
+    let ok_bb = b.create_block();
+    let err_bb = b.create_block();
+    b.ins().brif(has_err, err_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+
+    // Error path: null result, halt.
+    b.switch_to_block(err_bb);
+    let null_val = iconst(b, TAG_NULL);
+    sres(b, ctx, null_val);
+    b.ins().return_(&[] as &[ir::Value]);
+    b.seal_block(err_bb);
+
+    // Success path: seal ok_bb before returning (matches do_cmp/math_unary
+    // pattern — cranelift allows adding terminators after sealing).
+    b.switch_to_block(ok_bb);
+    b.seal_block(ok_bb);
 }
 
 fn emit_one(
@@ -550,10 +699,20 @@ fn emit_one(
             poke(b, ctx, 0, bv);
         }
 
-        Add => arith(b, ctx, true, false, false),
-        Sub => arith(b, ctx, false, true, false),
-        Mul => arith(b, ctx, false, false, true),
-        Div => arith(b, ctx, false, false, false),
+        Add => {
+            // Route to OP_ADD_STR which handles string concat, int add,
+            // and float promotion. Pop operands from CLIF and runtime,
+            // push them back so the helper can pop them again (the CLIF
+            // push restores the stack position for the helper).
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_ADD_STR, 0, _ptr_ty, helper_sig);
+        },
+        Sub => arith(b, ctx, true, false, _ptr_ty, helper_sig),
+        Mul => arith(b, ctx, false, true, _ptr_ty, helper_sig),
+        Div => arith(b, ctx, false, false, _ptr_ty, helper_sig),
         Mod => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
@@ -589,10 +748,14 @@ fn emit_one(
             let af = bf64(b, a);
             let bf2 = bf64(b, bv);
             let div = fdiv(b, af, bf2);
-            // Compute trunc(div) via floor/ceil
+            // Compute trunc(div) via floor/ceil.
+            // Band with sign_mask gives 0 or 0x8000...; select tests the LOW bit,
+            // so we must icmp_ne to produce a proper bool before selecting.
             let div_bits = bi64(b, div);
             let sign_mask = iconst(b, (1u64 << 63) as i64);
-            let is_neg = band(b, div_bits, sign_mask);
+            let is_neg_raw = band(b, div_bits, sign_mask);
+            let zero = iconst(b, 0);
+            let is_neg = icmp_ne(b, is_neg_raw, zero);
             let floor_v = b.ins().floor(div);
             let ceil_v = b.ins().ceil(div);
             let trunc_v = select(b, is_neg, ceil_v, floor_v);
@@ -647,10 +810,39 @@ fn emit_one(
 
         Eq => do_cmp(b, ctx, IntCC::Equal, FloatCC::Equal),
         Ne => do_cmp(b, ctx, IntCC::NotEqual, FloatCC::NotEqual),
-        Lt => do_cmp(b, ctx, IntCC::SignedLessThan, FloatCC::LessThan),
-        Le => do_cmp(b, ctx, IntCC::SignedLessThanOrEqual, FloatCC::LessThanOrEqual),
-        Gt => do_cmp(b, ctx, IntCC::SignedGreaterThan, FloatCC::GreaterThan),
-        Ge => do_cmp(b, ctx, IntCC::SignedGreaterThanOrEqual, FloatCC::GreaterThanOrEqual),
+        // Ordered comparison (LT/LE/GT/GE): pop both operands from
+        // the CLIF shadow stack, push them back (so the shadow stack
+        // stays synced with the runtime stack), then dispatch to the
+        // OP_CMP_ORDERED runtime helper which pops two values and
+        // pushes a bool/null.  Selector values: 0=LT, 1=LE, 2=GT, 3=GE.
+        Lt => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 0, _ptr_ty, helper_sig);
+        },
+        Le => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 1, _ptr_ty, helper_sig);
+        },
+        Gt => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 2, _ptr_ty, helper_sig);
+        },
+        Ge => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_ORDERED, 3, _ptr_ty, helper_sig);
+        },
 
         And => {
             let bv = pop(b, ctx);
@@ -722,7 +914,32 @@ fn emit_one(
                     for &arg in &args { push(b, ctx, arg); }
                 }
 
-                // Push return frame onto call stack
+                // Guard: check call-stack depth before pushing.
+                // With FRAME_LOCALS=2, only 32 frames fit in the 64-entry
+                // locals array before overwriting OFF_RESULT/OFF_BUDGET.
+                let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
+                let cst = load(b, cst_addr);
+                let max_frames = (JIT_MAX_LOCALS as i64) / FRAME_LOCALS; // 64/8 = 8
+                let limit = iconst(b, max_frames);
+                let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
+                let ok_bb = b.create_block();
+                let overflow_bb = b.create_block();
+                b.ins().brif(overflow, overflow_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+
+                // Overflow path: set error, store null result, halt
+                b.switch_to_block(overflow_bb);
+                serr(b, ctx);
+                let null_val = iconst(b, TAG_NULL);
+                sres(b, ctx, null_val);
+                b.ins().return_(&[] as &[ir::Value]);
+                b.seal_block(overflow_bb);
+
+                // Normal path: push frame and jump to callee.
+                // Locals are frame-relative (lload/lstore uses
+                // call_stack_top as frame index), so no explicit
+                // save/restore is needed.
+                b.switch_to_block(ok_bb);
+                b.seal_block(ok_bb);
                 let ret_idx = call_idx_to_ret.get(&global_idx).copied().unwrap_or(0);
                 push_frame(b, ctx, ret_idx as i64);
 
@@ -756,7 +973,7 @@ fn emit_one(
             sres(b, ctx, val);
             b.ins().return_(&[] as &[ir::Value]);
 
-            // Normal return — pop frame and dispatch to caller
+            // Normal return — pop frame and dispatch to caller.
             b.switch_to_block(ret_bb);
             let ret_idx = pop_frame(b, ctx);
             push(b, ctx, val);
@@ -815,7 +1032,7 @@ fn emit_one(
         MathPow   => { let cv = iconst(b, TAG_NULL); push(b, ctx, cv); }, // TODO: runtime pow(f64, f64) helper
 
         // ── Arena-dependent ops (Phase 3b: runtime helpers) ─────────────────
-        PushStr => emit_helper_call(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig),
+        PushStr => emit_helper_call(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible — arena alloc never errors
 
         Roll => {
             let n = instr.arg as u32;
@@ -834,7 +1051,7 @@ fn emit_one(
         Index    => emit_helper_call(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
         Len      => emit_helper_call(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
         TypeOf   => emit_helper_call(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
-        NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig),
+        NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         ArrayPush => emit_helper_call(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
         ArrayPop  => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
         ArrSet    => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
@@ -850,10 +1067,10 @@ fn emit_one(
         StrJoin       => emit_helper_call(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
 
         Cast    => emit_helper_call(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
-        NewTuple  => emit_helper_call(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig),
-        NewList   => emit_helper_call(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig),
-        NewVector => emit_helper_call(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig),
-        NewSet    => emit_helper_call(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig),
+        NewTuple => emit_helper_call(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewList => emit_helper_call(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewVector => emit_helper_call(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewSet => emit_helper_call(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         MakeRange => emit_helper_call(b, ctx, OP_MAKE_RANGE, 0, _ptr_ty, helper_sig),
 
         TuplePush  => emit_helper_call(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
@@ -862,8 +1079,8 @@ fn emit_one(
         SetPush    => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
         GetField   => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
         SetField   => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        NewObj     => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig),
-        NewStruct  => emit_helper_call(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig),
+        NewObj => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig), // M2 Phase 6: infallible
+        NewStruct => emit_helper_call(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         StrSim     => emit_helper_call(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
 
         EnterTry  => emit_helper_call(b, ctx, OP_ENTER_TRY, instr.arg as i64, _ptr_ty, helper_sig),
@@ -878,8 +1095,14 @@ fn emit_one(
             //    reordering this load before the call_indirect.
             //    (trusted() loads can be hoisted past calls; we MUST see the
             //     value written by the helper.)
+            //
+            //    NOTE: error is i32 at OFF_ERROR, but we load I64 (8 bytes).
+            //    The adjacent 4 bytes at OFF_ERROR+4 is throw_consumed_handler.
+            //    Mask the low 32 bits to isolate the error value (CRUSH-17 #6).
             let err_addr = iadd_imm(b, ctx, OFF_ERROR);
-            let err_val = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+            let err_val_raw = b.ins().load(types::I64, MemFlagsData::new(), err_addr, 0);
+            let err_mask = iconst(b, 0xFFFF_FFFFi64);
+            let err_val = band(b, err_val_raw, err_mask);
             let found = iconst(b, 2);
             let handler_found = icmp_eq(b, err_val, found);
 
@@ -887,11 +1110,12 @@ fn emit_one(
             let return_bb = b.create_block();
             b.ins().brif(handler_found, dispatch_bb, &[] as &[BlockArg], return_bb, &[] as &[BlockArg]);
 
-            // 3. Handler found — clear error flag, read handler_pc, dispatch to handler block
+            // 3. Handler found — clear ONLY error flag (i32, 4 bytes),
+            //    preserving throw_consumed_handler (offset OFF_ERROR+4) for ExitTry.
             b.switch_to_block(dispatch_bb);
             let err_addr2 = iadd_imm(b, ctx, OFF_ERROR);
-            let zero_val = iconst(b, 0);
-            store(b, err_addr2, zero_val);
+            let zero_i32 = b.ins().iconst(types::I32, 0);
+            b.ins().store(MemFlagsData::trusted(), zero_i32, err_addr2, 0);
             let hp_addr = iadd_imm(b, ctx, OFF_HANDLER_PC);
             let hp_val = b.ins().load(types::I64, MemFlagsData::new(), hp_addr, 0);
             emit_handler_dispatch(b, hp_val, handler_entries);
@@ -914,7 +1138,35 @@ fn emit_one(
             let argc_val = (instr.arg2 as u64) & 0xFFFF;
             let cv = iconst(b, (TAG_INT as u64 | argc_val) as i64);
             push(b, ctx, cv);
-            emit_helper_call(b, ctx, OP_CAP_CALL, instr.arg as i64, _ptr_ty, helper_sig);
+            emit_helper_call_checked(b, ctx, OP_CAP_CALL, instr.arg as i64, _ptr_ty, helper_sig);
+        }
+
+        // ── M2 Phase 5 Tier 2: Host-request yield ops (trampoline escape) ──
+        // These opcodes save the resume PC, signal the host via host_request_tag,
+        // and return. The host processes the request and calls resume() to continue.
+        CallHost => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_CALL_HOST);
+            return true;
+        }
+        ExecLang => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_EXEC_LANG);
+            return true;
+        }
+        Spawn => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_SPAWN);
+            return true;
+        }
+        Gc => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_GC);
+            return true;
+        }
+        ImportVar => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_IMPORT_VAR);
+            return true;
+        }
+        Await => {
+            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_AWAIT);
+            return true;
         }
 
         // Remaining unimplemented ops fall through to push null.
@@ -925,7 +1177,8 @@ fn emit_one(
 
 // ── Arithmetic dispatch ─────────────────────────────────────────────────────
 
-fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: bool) {
+fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
+          _ptr_ty: types::Type, helper_sig: ir::SigRef) {
     let bv = pop(b, ctx);
     let a = pop(b, ctx);
     let ia = is_int(b, a);
@@ -935,30 +1188,66 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, add: bool, sub: bool, mul: boo
     let fbb = b.create_block();
     let mb = b.create_block();
     b.append_block_param(mb, types::I64);
+
+    // Sub/Mul/Div: 2-way branch (int vs float).
+    // Add is handled directly in emit_one via OP_ADD_STR.
     b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
+    // ── Integer path with overflow checking (Bug 3) ────────────────────
     b.switch_to_block(ibb);
     let av = eint(b, a);
     let bv2 = eint(b, bv);
-    let ri = if add { iadd2(b, av, bv2) } else if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
+    // Compute the full i64 result, then check if it fits in 16 bits.
+    // Crush ints are 16-bit sign-extended; overflow = result != sign_extend(low16).
+    // This works for add, sub, mul, and div uniformly.
+    // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
+    let ri = if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
+    let shifted = ishl_imm(b, ri, 48);
+    let low16 = sshr_imm(b, shifted, 48);
+    let of_cond = icmp(b, IntCC::NotEqual, ri, low16);
+    let iok = b.create_block();
+    let ierr = b.create_block();
+    b.ins().brif(of_cond, ierr, &[] as &[BlockArg], iok, &[] as &[BlockArg]);
+
+    b.switch_to_block(iok);
     let rti = tint(b, ri);
     b.ins().jump(mb, &[BlockArg::Value(rti)]);
+    b.seal_block(iok);
 
+    b.switch_to_block(ierr);
+    serr(b, ctx);
+    let nv = iconst(b, TAG_NULL);
+    b.ins().jump(mb, &[BlockArg::Value(nv)]);
+    b.seal_block(ierr);
+
+    // ── Float / mixed int+float path (Bug 2: int→float promotion) ─────
     b.switch_to_block(fbb);
     let fa = is_float(b, a);
     let fb = is_float(b, bv);
-    let bf = band(b, fa, fb);
+    // Accept if both are numeric (int or float). Mixed int+float promotes
+    // int to float (FastVM parity).
+    let a_num = bor(b, ia, fa);
+    let b_num = bor(b, ib, fb);
+    let both_numeric = band(b, a_num, b_num);
     let ok = b.create_block();
     let err = b.create_block();
-    b.ins().brif(bf, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
+    b.ins().brif(both_numeric, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
 
     b.switch_to_block(ok);
-    let af = bf64(b, a);
-    let bf2 = bf64(b, bv);
-    let rf = if add { fadd(b, af, bf2) } else if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
+    // Convert each operand to f64: float → bitcast, int → extract+fcvt.
+    let a_int2 = eint(b, a);
+    let a_fcvt = b.ins().fcvt_from_sint(types::F64, a_int2);
+    let a_bits = bf64(b, a);
+    let af = select(b, fa, a_bits, a_fcvt);
+    let b_int2 = eint(b, bv);
+    let b_fcvt = b.ins().fcvt_from_sint(types::F64, b_int2);
+    let b_bits = bf64(b, bv);
+    let bf2 = select(b, fb, b_bits, b_fcvt);
+    let rf = if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
     let rfb = bi64(b, rf);
     b.ins().jump(mb, &[BlockArg::Value(rfb)]);
 
+    // ── Non-numeric fallback (Bug 4: string concat via helper) ─────────
     b.switch_to_block(err);
     serr(b, ctx);
     let nv = iconst(b, TAG_NULL);
@@ -1137,7 +1426,19 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     b.ins().jump(mb2, &[BlockArg::Value(r2)]);
 
     b.switch_to_block(mb2);
-    push(b, ctx, b.block_params(mb2)[0]);
+    let raw_result = b.block_params(mb2)[0];
+    // Null/bool identity override: if both operands have identical raw bits,
+    // they are the same runtime value (null, bool, or identical tagged int).
+    // The float path treats null/bool NaN-boxes as IEEE NaN which returns
+    // false for equality comparisons. Override with the identity-correct result.
+    let bits_eq = icmp_eq(b, a, bv);
+    let identity_result = if icc == IntCC::Equal {
+        iconst(b, TAG_TRUE)
+    } else {
+        iconst(b, TAG_FALSE)
+    };
+    let result = select(b, bits_eq, identity_result, raw_result);
+    push(b, ctx, result);
 
     b.seal_block(ibb);
     b.seal_block(fbb);

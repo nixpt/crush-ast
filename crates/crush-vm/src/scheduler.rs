@@ -1073,9 +1073,49 @@ fn execute_one(
             out_parts.push(outcome.visible);
             push!(outcome.result_value);
         }
-        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
-            // Scheduler VM does not support async AI opcodes natively yet. Stub to Null.
-            push!(Value::Null);
+        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
+        | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
+            // CRUSH-32: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`.
+            // Callers who grant `ai_native(true)` in their HostCapsBuilder get
+            // the stub `Value::Map({ok, kind, echo})` produced by
+            // `crush-lang-sdk::ai_native`. Callers that DON'T grant it (the
+            // default — pre-CRUSH-32 callers preserved) fall through to a
+            // `Value::Null` stub, matching the f49ece5 behavior.
+            let kind = bytecode::ai_native_kind_for_opcode(opcode)
+                .expect("AI opcode byte in combined match arm must map to a known kind");
+            let gate = format!("ai_native.{kind}");
+            let value = match host_caps.and_then(|h| h.get(&gate)) {
+                Some(handler) => handler
+                    .call(vec![])
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null),
+                None => Value::Null,
+            };
+            push!(value);
+        }
+        // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.
+        // Gates DOM opcodes through `host_caps.get("dom_native.<kind>")` and
+        // pushes the `Value::Map({ok, kind, echo})` stub returned by
+        // `crush-lang-sdk::dom_native`. Slots are 0x9A-0x9F (CRUD/nav) and
+        // 0xB5-0xB8 (parent/attr/text/event) per CRUSH-33 Commit 1; the
+        // `dom_native_kind_for_opcode` switch in `crush_vm/src/bytecode.rs`
+        // maps slot -> kind, and `dom_native::KINDS` in `crush-lang-sdk`
+        // is the single source of truth for both surfaces.
+        DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
+        | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
+            let kind = bytecode::dom_native_kind_for_opcode(opcode)
+                .expect("DOM opcode byte in combined match arm must map to a known kind");
+            let gate = format!("dom_native.{kind}");
+            let value = match host_caps.and_then(|h| h.get(&gate)) {
+                Some(handler) => handler
+                    .call(vec![])
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null),
+                None => Value::Null,
+            };
+            push!(value);
         }
         ENTER_TRY => {
             let target = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap()) as usize;

@@ -1,8 +1,9 @@
 //! Core index data structures and ingestion.
 
+use crate::dejavue::{build_annotation_links, parse_timeline_str, DejavueEvent};
 use crate::query::{CallSite, CoverageGap};
 use crush_cast::manifest::{ExhaustiveMatchSite, FunctionAnnotations, Invariant};
-use crush_cast::{Expression, Program, Statement};
+use crush_cast::{Annotation, Expression, Program, Statement};
 use std::collections::HashMap;
 
 /// Per-module entry in the index.
@@ -41,6 +42,15 @@ pub struct FunctionEntry {
 ///
 /// Built by calling `index.add_program(module_path, &program)` for each
 /// compilation unit.  Queried via the methods on this struct.
+///
+/// CRUSH-31 review followup: `Clone` is needed because
+/// `Arc::make_mut` triggers COW when strong_count > 1 (the runtime
+/// builder shares the registered-cap `Arc<CrushIndex>` with the
+/// cached handle and `with_dejavue` mutates a COW clone). `Debug` is
+/// derived so `Runtime` (the cached-Arc owner) keeps its derive;
+/// every contained type already implements both, so the recursive
+/// derive bottoms out cleanly.
+#[derive(Debug, Clone)]
 pub struct CrushIndex {
     /// module_path → module entry
     modules: HashMap<String, ModuleEntry>,
@@ -57,12 +67,33 @@ pub struct CrushIndex {
     /// (module_path, @decision node) pairs across all programs
     decisions: Vec<(String, crush_cast::manifest::DecisionNode)>,
     
-    /// CSON configurations indexed by file path
-    pub cson_configs: HashMap<String, crush_cson::CsonDocument>,
-    /// Flattened semantic keys (intent) -> (cson_file_path, Confidence)
-    pub semantic_keys: Vec<(String, String, Option<f64>)>,
-    /// Dejavue project timeline events
-    pub dejavue_timeline: Vec<String>,
+    /// CSON configurations indexed by file path (private; see `cson_configs()` and `cson_doc()`)
+    cson_configs: HashMap<String, crush_cson::CsonDocument>,
+    /// Flattened semantic keys `(intent, cson_file_path, confidence)` (private; see `semantic_keys()`)
+    semantic_keys: Vec<(String, String, Option<f64>)>,
+    /// Dejavue project timeline events (private; see `dejavue_timeline()`)
+    dejavue_timeline: Vec<String>,
+
+    /// CRUSH-28: flat annotation ladders per module, one entry per
+    /// `add_program()` call (ladders stack up so cross-module joins
+    /// like `@covers` in tests closing `@errors` in impl still work
+    /// when a caller adds the same `module_path` more than once).
+    /// Private; see [`annotations`](Self::annotations).
+    flat_annotations: HashMap<String, Vec<Vec<Annotation>>>,
+
+    /// CRUSH-31: typed timeline events parsed from
+    /// `.dejavue/timeline.jsonl`. Replaces the raw NDJSON-line buffer
+    /// `load_dejavue()` previously populated as `dejavue_timeline`;
+    /// raw buffer is retained for back-compat (existing callers
+    /// reading `dejavue_timeline()` get the same shape).
+    dejavue_events: Vec<DejavueEvent>,
+
+    /// CRUSH-31: `annotation_name -> [event_idx, ...]`. Built from
+    /// `dejavue_events` by [`crate::dejavue::build_annotation_links`]
+    /// in `load_dejavue` / `set_dejavue_events`. Indexes are
+    /// positions into `dejavue_events`. Empty for programs whose
+    /// timeline has no decision events or no `decision_title` populated.
+    annotation_event_links: HashMap<String, Vec<usize>>,
 }
 
 impl CrushIndex {
@@ -79,6 +110,9 @@ impl CrushIndex {
             cson_configs: HashMap::new(),
             semantic_keys: Vec::new(),
             dejavue_timeline: Vec::new(),
+            dejavue_events: Vec::new(),
+            annotation_event_links: HashMap::new(),
+            flat_annotations: HashMap::new(),
         }
     }
 
@@ -151,6 +185,16 @@ impl CrushIndex {
         for dec in &program.decisions {
             self.decisions.push((module_path.to_string(), dec.clone()));
         }
+
+        // CRUSH-28: cache the flat annotation ladder for this module.
+        // Append (not overwrite) so two `add_program()` calls with the
+        // same `module_path` accumulate ladders — needed for tests that
+        // add a "do_thing" program and then a "test_foo" program under
+        // the same module so `uncovered_paths()` can detect the gap.
+        self.flat_annotations
+            .entry(module_path.to_string())
+            .or_default()
+            .push(program.flatten_annotations());
     }
 
     // ── query API ────────────────────────────────────────────────────────────
@@ -204,37 +248,146 @@ impl CrushIndex {
 
     /// Error paths (from `@errors`) that have no corresponding `@covers` test.
     ///
-    /// Returns one `CoverageGap` per uncovered error variant.  An agent checks
-    /// this before shipping so it knows which paths are untested.
+    /// Returns one `CoverageGap` per uncovered error variant. An agent
+    /// checks this before shipping so it knows which paths are untested.
+    ///
+    /// CRUSH-28: now consumes the flat annotation ladder instead of
+    /// iterating `Function.annotations` directly, so `module_path` is
+    /// tracked on each gap and a `@covers` Oracle in module `tests`
+    /// correctly closes an `@errors` variant declared in module `impl`.
     pub fn uncovered_paths(&self) -> Vec<CoverageGap> {
-        // Collect all error variants claimed by @errors annotations
-        let mut errors: Vec<(String, String)> = Vec::new(); // (fn_name, error_variant)
-        for entry in self.functions.values() {
-            if let Some(ann) = &entry.annotations {
-                for e in &ann.errors {
-                    errors.push((entry.name.clone(), e.clone()));
+        // Errors: from `Annotation::Error` in the flat ladder — preserves
+        // module context per-ladder (one ladder per add_program call).
+        let mut errors: Vec<(String, String, String)> =
+            Vec::new(); // (module_path, fn_name, variant)
+        for (mod_path, ladders) in &self.flat_annotations {
+            for ladder in ladders {
+                for ann in ladder {
+                    if let Annotation::Error(e) = ann {
+                        for variant in &e.variants {
+                            errors.push((
+                                mod_path.clone(),
+                                e.function_name.clone(),
+                                variant.clone(),
+                            ));
+                        }
+                    }
                 }
             }
         }
 
-        // Collect all error variants covered by @covers in test functions
-        let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for entry in self.functions.values() {
-            if let Some(ann) = &entry.annotations {
-                for c in &ann.covers {
-                    covered.insert(c.clone());
+        // Coverage: from `Annotation::Coverage` in the flat ladder. Coverage
+        // is module-agnostic (an Oracle name closes a variant regardless
+        // of which module declared the @errors), so keep a flat set keyed
+        // by variant string.
+        let mut covered: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for ladders in self.flat_annotations.values() {
+            for ladder in ladders {
+                for ann in ladder {
+                    if let Annotation::Coverage(c) = ann {
+                        for path in &c.paths {
+                            covered.insert(path.clone());
+                        }
+                    }
                 }
             }
         }
 
         errors
             .into_iter()
-            .filter(|(_, variant)| !covered.contains(variant))
-            .map(|(fn_name, error_variant)| CoverageGap {
-                fn_name,
-                error_variant,
-            })
+            .filter(|(_, _, variant)| !covered.contains(variant))
+            .map(
+                |(module_path, fn_name, error_variant)| CoverageGap {
+                    fn_name,
+                    error_variant,
+                    module_path,
+                },
+            )
             .collect()
+    }
+
+    /// CRUSH-28: flat annotation ladder for a module — the unifying
+    /// primitive that downstream `codebase.*` caps (CRUSH-29) and the
+    /// dejavue integration (CRUSH-31) iterate over.
+    ///
+    /// Returns `Annotation::Module`, `Annotation::Invariant`,
+    /// function-scoped `Error` / `Read` / `Write` / `Coverage`, and
+    /// compiler-populated `ExhaustiveMatchSites` in a single list.
+    ///
+    /// Multiple `add_program()` calls for the same `module_path` are
+    /// flattened across the stacked ladders and sorted by a stable
+    /// `(kind, target_resource)` key, so the returned ordering is
+    /// reproducible across runs — important for deterministic JSON
+    /// export (HashMap iteration order is not).
+    ///
+    /// **Dedup semantics**: a handful of annotation variants are
+    /// singletons per their identifying key. Re-ingesting a module
+    /// that stacks a fresh ladder would otherwise double-count those
+    /// rows. First-write-wins applies:
+    ///
+    /// - `Annotation::Module` — singleton per `module_path`. Multiple
+    ///   ladders may carry a Module entry (one per `add_program()`
+    ///   call); only the first survives so downstream
+    ///   `codebase.modules()` (CRUSH-29) doesn't emit duplicate
+    ///   module rows.
+    /// - `Annotation::Invariant` — singleton per `.name`
+    ///   (CRUSH-INDEX-INVARIANT-DEDUP). Same shape as the Module
+    ///   dedup but keyed by `Invariant.name`. Critical because
+    ///   `Invariant.name` is the join key against dejavue's
+    ///   `@decision.decision_title` (see `annotation_history`),
+    ///   and duplicate invariant-name rows would propagate as
+    ///   duplicate history rows.
+    ///
+    /// Other variants (`Error` / `Read` / `Write` / `Coverage` /
+    /// `ExhaustiveMatchSites`) stack freely — they're keyed by
+    /// `function_name` and a `Coverage` Oracle in `tests` SHOULD
+    /// accumulate against `@errors` declared in `impl`. Removing
+    /// rows from the union would break cross-module coverage closure.
+    ///
+    /// The legacy `Function.annotations` field stays populated for
+    /// callers that reach it via `definition(fn_name)`; this method
+    /// gives you the LIVING flat view instead.
+    pub fn annotations(&self, module_path: &str) -> Vec<&Annotation> {
+        match self.flat_annotations.get(module_path) {
+            None => Vec::new(),
+            Some(ladders) => {
+                let mut out: Vec<&Annotation> = ladders.iter().flatten().collect();
+                out.sort_by(|a, b| annotation_sort_key(a).cmp(&annotation_sort_key(b)));
+                // Singleton dedups: some annotation variants are
+                // singletons per-dedupe-key, so re-ingests that stack
+                // ladders would double-count those rows. Each variant
+                // gets its own first-write-wins filter.
+                //
+                //   Annotation::Module      → singleton per module_path (CRUSH-28)
+                //   Annotation::Invariant   → singleton per .name     (CRUSH-INDEX-INVARIANT-DEDUP)
+                //
+                // A future variant requiring its own dedup just adds
+                // a clause here; missing arms would surface at
+                // compile time via the new wildcard arm `_ => true`.
+                let mut seen_module = false;
+                // Owning `HashSet<String>` here is intentional, mirroring
+                // the `covered: HashSet<String>` accumulator already in
+                // `uncovered_paths()` above. The borrow-of-`&str` form
+                // would also compile (and skip the `i.name.clone()`'s
+                // allocation), but the local idiom is owning and the
+                // cardinality at this code path is single-digit per call,
+                // so the clone cost is irrelevant and the type reads
+                // more uniformly.
+                let mut seen_invariant_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                out.retain(|ann| match ann {
+                    Annotation::Module(_) if seen_module => false,
+                    Annotation::Module(_) => {
+                        seen_module = true;
+                        true
+                    }
+                    Annotation::Invariant(i) => seen_invariant_names.insert(i.name.clone()),
+                    _ => true,
+                });
+                out
+            }
+        }
     }
 
     /// Number of functions in the index.
@@ -291,13 +444,140 @@ impl CrushIndex {
         }
     }
 
-    /// Load the timeline from `.dejavue/timeline.jsonl` if it exists.
+    /// Same as [`load_dejavue_verbose`](Self::load_dejavue_verbose) but
+    /// discards the skipped-line count. Use [`Self::load_dejavue_verbose`]
+    /// when you need to surface how many lines silently dropped
+    /// (CLI diagnostics, schema-evolution sanity checks, agent
+    /// observability).
+    ///
+    /// CRUSH-31: populates BOTH the legacy `dejavue_timeline` (raw
+    /// NDJSON strings, retained for back-compat) AND the new typed
+    /// `dejavue_events` + `annotation_event_links` storage.
     pub fn load_dejavue(&mut self) {
-        if let Ok(content) = std::fs::read_to_string(".dejavue/timeline.jsonl") {
-            for line in content.lines() {
-                if !line.trim().is_empty() {
-                    self.dejavue_timeline.push(line.to_string());
-                }
+        let _ = self.load_dejavue_verbose();
+    }
+
+    /// Load the timeline from `.dejavue/timeline.jsonl` if it exists,
+    /// returning the number of non-empty lines that were silently
+    /// skipped (malformed JSON or unparseable RFC 3339 timestamp).
+    /// Empty lines are NOT counted as skipped (they're trivial
+    /// whitespace).
+    ///
+    /// Returns `0` when `.dejavue/timeline.jsonl` doesn't exist —
+    /// the "no timeline yet" state. The `skipped` count is the
+    /// diagnostic for hosts that want to surface "we ingested
+    /// timeline.jsonl but N lines were too malformed to parse"
+    /// without forcing the host to re-read the file.
+    ///
+    /// CRUSH-31: populates BOTH the legacy `dejavue_timeline` (raw
+    /// NDJSON strings, retained for back-compat) AND the new typed
+    /// `dejavue_events` + `annotation_event_links` storage in lockstep.
+    pub fn load_dejavue_verbose(&mut self) -> usize {
+        let Ok(content) = std::fs::read_to_string(".dejavue/timeline.jsonl") else {
+            return 0;
+        };
+        for line in content.lines() {
+            if !line.trim().is_empty() {
+                self.dejavue_timeline.push(line.to_string());
+            }
+        }
+        let (events, skipped) = parse_timeline_str(&content);
+        self.dejavue_events = events;
+        self.annotation_event_links =
+            build_annotation_links(&self.dejavue_events);
+        skipped
+    }
+
+    /// CRUSH-31: replace the typed event vector AND rebuild
+    /// annotation-event links in lockstep. Useful for hosts that want
+    /// to inject events programmatically without round-tripping
+    /// through `.dejavue/timeline.jsonl` (test fixtures, synthetic
+    /// event producers).
+    ///
+    /// **Asymmetry with the raw buffer**: `set_dejavue_events(vec![])`
+    /// clears `dejavue_events` + `annotation_event_links` but does NOT
+    /// clear `dejavue_timeline` — that buffer is the *filesystem*
+    /// view (populated by [`Self::load_dejavue`], which ingests both
+    /// in one pass). The two views are intentionally NOT synchronized
+    /// through this setter: tests that call `set_dejavue_events`
+    /// repeatedly with fresh fixtures don't want the on-disk timeline
+    /// lines to vanish, and production code reading via
+    /// `dejavue_timeline()` continues to see the filesystem-populated
+    /// state. To clear both views in lockstep, follow
+    /// `set_dejavue_events(vec![])` with `self.dejavue_timeline.clear()`
+    /// — explicit-by-design.
+    pub fn set_dejavue_events(&mut self, events: Vec<DejavueEvent>) {
+        self.dejavue_events = events;
+        self.annotation_event_links = build_annotation_links(&self.dejavue_events);
+    }
+
+    // ── cson / dejavue accessors ──────────────────────────────────────────────
+    //
+    // These three fields (`cson_configs`, `semantic_keys`, `dejavue_timeline`)
+    // used to be `pub` — an inconsistency vs the rest of the struct's
+    // encapsulation. Privatizing and adding these accessor methods keeps
+    // the API uniform: every piece of state is reached through a named
+    // method whose doc comment names the producer (`add_cson`,
+    // `load_dejavue`).
+
+    /// All CSON configurations indexed by file path. Read-only view so
+    /// callers cannot bypass the [`add_cson`](Self::add_cson) ingestion
+    /// path. For a single document, prefer [`cson_doc`](Self::cson_doc).
+    pub fn cson_configs(&self) -> &HashMap<String, crush_cson::CsonDocument> {
+        &self.cson_configs
+    }
+
+    /// Single CSON document by file path, if any was ingested.
+    pub fn cson_doc(&self, path: &str) -> Option<&crush_cson::CsonDocument> {
+        self.cson_configs.get(path)
+    }
+
+    /// Flattened semantic keys `(intent_key, cson_file_path, confidence)`
+    /// extracted from ingested CSON documents.
+    pub fn semantic_keys(&self) -> &[(String, String, Option<f64>)] {
+        &self.semantic_keys
+    }
+
+    /// Dejavue project timeline events loaded by
+    /// [`load_dejavue`](Self::load_dejavue). Each entry is one non-empty
+    /// line of the `.dejavue/timeline.jsonl` NDJSON stream.
+    pub fn dejavue_timeline(&self) -> &[String] {
+        &self.dejavue_timeline
+    }
+
+    /// CRUSH-31: typed timeline events parsed from
+    /// `.dejavue/timeline.jsonl`. Each event carries RFC 3339
+    /// timestamp + event discriminator + per-event-type fields. For
+    /// the decision-event join key see
+    /// [`annotation_history`](Self::annotation_history).
+    pub fn dejavue_events(&self) -> &[DejavueEvent] {
+        &self.dejavue_events
+    }
+
+    /// CRUSH-31: ordered chain of `decision` events whose
+    /// `decision_title` equals `annotation_name`. Sorted by `ts`
+    /// ascending so agents reading the result see the chronological
+    /// progression of decisions affecting the annotation. Returns an
+    /// empty `Vec` for unknown names.
+    ///
+    /// Non-decision events (`file_changed`, `init`, etc.) are NOT
+    /// included — agents querying for "what decided this annotation"
+    /// don't want file changes interspersed.
+    pub fn annotation_history(&self, annotation_name: &str) -> Vec<&DejavueEvent> {
+        match self.annotation_event_links.get(annotation_name) {
+            None => Vec::new(),
+            Some(idxs) => {
+                let mut out: Vec<&DejavueEvent> = idxs
+                    .iter()
+                    .filter_map(|&idx| self.dejavue_events.get(idx))
+                    .collect();
+                // Re-sort by ts ascending — links are built in
+                // insertion order but the developer-facing historical
+                // view should be chronological even if insertion
+                // order diverges (test fixtures, future SQLite
+                // migration returning events by id, etc).
+                out.sort_by(|a, b| a.ts.cmp(&b.ts));
+                out
             }
         }
     }
@@ -306,6 +586,34 @@ impl CrushIndex {
 impl Default for CrushIndex {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── annotation sort helper ───────────────────────────────────────────────────
+
+/// Stable sort key for [`Annotation`]. Used by
+/// [`CrushIndex::annotations`] to produce a deterministic order for JSON
+/// export (HashMap iteration order is non-deterministic across runs).
+///
+/// The first tuple element is the variant ordinal (`Module`=0, `Invariant`=1,
+/// `Error`=2, `Read`=3, `Write`=4, `Coverage`=5,
+/// `ExhaustiveMatchSites`=6) — tied to the 7-variant enum declared in
+/// `crush_cast::manifest::Annotation`. The second element is the
+/// `target_resource` key (`function_name` for function-level variants,
+/// `invariant.name` for Invariant, `""` for Module) so ties resolve
+/// uniformly across runs.
+///
+/// If `Annotation` gains a variant, extend this match — missing arms
+/// will be caught by the compiler.
+fn annotation_sort_key(a: &Annotation) -> (u8, String) {
+    match a {
+        Annotation::Module(_) => (0, String::new()),
+        Annotation::Invariant(i) => (1, i.name.clone()),
+        Annotation::Error(e) => (2, e.function_name.clone()),
+        Annotation::Read(r) => (3, r.function_name.clone()),
+        Annotation::Write(w) => (4, w.function_name.clone()),
+        Annotation::Coverage(c) => (5, c.function_name.clone()),
+        Annotation::ExhaustiveMatchSites(s) => (6, s.function_name.clone()),
     }
 }
 

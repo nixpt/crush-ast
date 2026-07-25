@@ -316,6 +316,28 @@ mod tests {
             } else { panic!(); }
         } else { panic!(); }
     }
+
+    /// CRUSH-36 Commit 1: regression-resistance for the Frontend ->
+    /// LanguageAdapter migration. Custom uses a manual `CustomAdapter`
+    /// struct (not the macro) because `CustomFrontend` carries runtime
+    /// state (loaded grammar); macro-generated empty structs wouldn't
+    /// compose. The active test asserts the manual adapter registers.
+    #[test]
+    fn custom_adapter_registers_in_unified_registry() {
+        use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+        let mut registry = AdapterRegistry::new();
+        registry.register(Box::new(CustomAdapter(CustomFrontend {
+            name: "custom".to_string(),
+            extensions: vec![".custom".to_string()],
+            rules: Vec::new(),
+        })));
+        let langs = registry.languages();
+        assert!(
+            langs.contains(&"custom"),
+            "CustomAdapter must register with name 'custom', got: {:?}",
+            langs
+        );
+    }
 }
 
 // ── Adapter ──────────────────────────────────────────────────────────────────

@@ -110,7 +110,22 @@ impl FeatureReport {
 ///     // ... lower with ctx, using ctx.meta_at(offset) for position metadata
 /// }
 /// ```
-pub trait Frontend {
+// CRUSH-36 Commit 2 Sub-Commit 1 (A->B):
+// Supertrait tie `Frontend: LanguageAdapter` enables every `impl Frontend
+// for X` to register in `AdapterRegistry` directly without a separate
+// adapter wrapper struct (the macro `impl_adapter_from_frontend!` is no
+// longer required for FE-side walker crates to participate in the unified
+// registry). The default `walk` body wraps the existing `frontend_pipeline`
+// so existing Frontend impls do NOT need a `walk` body -- they inherit this
+// default. The 6 Frontend impls (bash, custom, nepali, python, rust, js)
+// continue to compile unchanged: language_name + file_extensions + parse +
+// analyze + lower are still declared here, walk is inherited from the default
+// below (and that default satisfies `LanguageAdapter::walk` via the
+// supertrait tie), and can_handle is inherited from `LanguageAdapter`'s own
+// default. The `Send + Sync` bound propagates from `LanguageAdapter: Send +
+// Sync`; all 6 existing impls are simple structs (unit or struct-of-strings)
+// and auto-derive Send + Sync.
+pub trait Frontend: LanguageAdapter {
     fn language_name(&self) -> &'static str;
     fn file_extensions(&self) -> &[&'static str];
 
@@ -122,6 +137,80 @@ pub trait Frontend {
 
     /// Lower the parsed AST to a CAST Program.
     fn lower(&self, ast: Box<dyn std::any::Any>) -> Result<Program>;
+
+    /// Default walk for any Frontend: parse -> analyze -> lower inline.
+    /// Override only if a custom filename transformation is needed (e.g.
+    /// CLI path-aware lowering).
+    ///
+    /// ## Why inlined (and not calling `frontend_pipeline(self, source)`)
+    ///
+    /// The free function `frontend_pipeline(frontend: &dyn Frontend, ...)`
+    /// takes `&dyn Frontend` -- at the trait-body default-implementation site
+    /// this would force a `&Self -> &dyn Frontend` coercion, which only
+    /// succeeds when `Self: Sized` is in scope. Adding `where Self: Sized`
+    /// would remove `walk` from the trait-object vtable, breaking every
+    /// `Box<dyn LanguageAdapter>::walk(...)` call path (including
+    /// `AdapterRegistry::walk`). The inlined body is functionally equivalent
+    /// to `frontend_pipeline(self, source)` but coerces via Self-sized
+    /// method calls instead. Future reviewers: this inlining is intentional,
+    /// not a missed abstraction.
+    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        let ast = self.parse(source)?;
+        let report = self.analyze(&ast)?;
+        let program = self.lower(ast)?;
+        Ok((report, program))
+    }
+}
+
+// CRUSH-36 Commit 2 Sub-Commit 1: this blanket impl is the architectural
+// closure of the supertrait-tie. Without it, the `: LanguageAdapter`
+// supertrait clause on `pub trait Frontend: LanguageAdapter` would require
+// EVERY `impl Frontend for X` to ALSO have an explicit per-type
+// `impl LanguageAdapter for X`. Without that per-type LanguageAdapter
+// impl, the `impl Frontend for X` block fails the impl-site supertrait
+// bound check (Rust verifies at impl site that the target type satisfies
+// the supertrait bound).
+//
+// The blanket `impl<T: Frontend + Send + Sync> LanguageAdapter for T`
+// covers all concrete Frontend impls, so a separate per-type LanguageAdapter
+// impl is NOT needed. The blanket dispatches to Frontend's required methods
+// `language_name` + `file_extensions` via UFCS (`<Self as Frontend>::...`)
+// and Frontend's inlined default `walk` body -- which delegates to
+// parse/analyze/lower via `self.method()` dispatch -- satisfies
+// `LanguageAdapter::walk` end-to-end.
+//
+// Coherence: the blanket applies ONLY to T: Frontend + Send + Sync. The 6
+// existing Frontend impls (`BashFrontend`, `CustomFrontend`,
+// `NepaliFrontend`, `PythonFrontend`, `RustFrontend`, `JsFrontend`) are
+// simple structs of `{ ... }` that auto-implement Send + Sync, so the
+// blanket covers them. Macro-generated wrapper adapters (`PythonAdapter`,
+// `RustAdapter`, etc.) are SEPARATE types that already have explicit
+// `impl LanguageAdapter for <Adapter>` -- they are NOT Frontend impls, so
+// the blanket does NOT apply to them. No coherence conflict.
+//
+// Send + Sync propagation: `LanguageAdapter: Send + Sync` requires
+// `T: Send + Sync` in the blanket bound. For a Frontend type to satisfy
+// this via the blanket, the concrete Frontend type itself must be Send +
+// Sync (auto via struct-of-strings for all 6 existing impls; the blanket
+// itself propagates the Send + Sync requirement to all future Frontend
+// impls and is the canonical closure of the cascade).
+//
+// Future crates (CRUSH-37 Java, CRUSH-38 Kotlin, CRUSH-43+) need
+// `use anyhow::Result;` at file scope (per the cross-scope alias-discipline
+// diagnostic note) AND should NOT need to write any per-type LanguageAdapter
+// impl -- the blanket handles it.
+impl<T: Frontend + Send + Sync> LanguageAdapter for T {
+    fn language_name(&self) -> &'static str {
+        <Self as Frontend>::language_name(self)
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        <Self as Frontend>::file_extensions(self)
+    }
+    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
+        <Self as Frontend>::walk(self, source, filename)
+    }
+    // can_handle inherits the default from the LanguageAdapter trait body
+    // (extends on file_extensions()); no need to override here.
 }
 
 /// Run the full frontend pipeline: parse → analyze → lower.
@@ -198,7 +287,16 @@ impl<W: Walker> TreeSitterFrontend<W> {
     }
 }
 
-impl<W: Walker> Frontend for TreeSitterFrontend<W> {
+// CRUSH-36 Commit 2 Sub-Commit 1: this existing impl<W: Walker> Frontend for
+// TreeSitterFrontend<W> must add `+ Send + Sync` because Frontend:
+// LanguageAdapter (subtrait tie added in this commit) propagates the Send +
+// Sync bound from LanguageAdapter. Without `+ Send + Sync`, no concrete W
+// can satisfy Frontend, and the existing call sites that construct
+// TreeSitterFrontend<{XWalker}> would break at the trait-resolution step.
+// All existing Walker types (GoWalker, CWalker, ZigWalker, DartWalker) are
+// simple structs of `{ file_name: String, ... }` and auto-implement Send +
+// Sync, so adding the bound is non-breaking at the call-site level.
+impl<W: Walker + Send + Sync> Frontend for TreeSitterFrontend<W> {
     fn language_name(&self) -> &'static str {
         self.language_name
     }
@@ -233,6 +331,25 @@ impl<W: Walker> Frontend for TreeSitterFrontend<W> {
     }
 }
 
+// CRUSH-36 Commit 2 Sub-Commit 1 (Fix #7 truncation): the prior
+// `impl<W: Walker + Send + Sync> LanguageAdapter for TreeSitterFrontend<W>`
+// block (added earlier in this commit as the Fix #2 supplementary bridge)
+// was REDUNDANT after the Fix #6 blanket impl was added -- both impls
+// applied to `TreeSitterFrontend<W>` and would have triggered Rust
+// coherence error E0119 "conflicting implementations of trait
+// `LanguageAdapter` for type `TreeSitterFrontend<_>`". With Fix #6's
+// blanket `impl<T: Frontend + Send + Sync> LanguageAdapter for T` in
+// place, any concrete T: Frontend + Send + Sync (including
+// TreeSitterFrontend<W> via the existing
+// `impl<W: Walker + Send + Sync> Frontend for TreeSitterFrontend<W>` block)
+// automatically satisfies LanguageAdapter -- no per-type bridge needed.
+//
+// This truncation prefers the blanket-only pattern over a mixed
+// blanket+per-type pattern: the blanket is the uniform architectural
+// closure of `Frontend: LanguageAdapter`, and any future concrete type
+// implementing Frontend gains LanguageAdapter via the blanket without
+// needing to write a per-type impl.
+
 /// Run a tree-sitter walker as a subprocess binary.
 ///
 /// Reads source from `input_path`, parses with `walker`, and prints CAST JSON
@@ -257,7 +374,17 @@ impl<W: Walker> Frontend for TreeSitterFrontend<W> {
 ///     )
 /// }
 /// ```
-pub fn run_walker_binary<W: Walker>(
+// CRUSH-36 Commit 2 Sub-Commit 1: this existing run_walker_binary<W: Walker>
+// function must add `+ Send + Sync` because it constructs a
+// TreeSitterFrontend<W> internally and forwards `&frontend` to
+// `frontend_pipeline(&dyn Frontend, ...)`. Since Frontend: LanguageAdapter
+// supertrait tie propagates Send + Sync, `&TreeSitterFrontend<W> ->
+// &dyn Frontend` cast requires `TreeSitterFrontend<W>: Send + Sync`, which
+// in turn requires `W: Send + Sync` (W is the held field). All existing
+// Walker types (GoWalker, CWalker, ZigWalker, DartWalker) are simple structs
+// of `{ file_name: String, ... }` and auto-implement Send + Sync, so adding
+// the bound is non-breaking at existing call sites.
+pub fn run_walker_binary<W: Walker + Send + Sync>(
     walker: W,
     language_name: &'static str,
     extensions: &'static [&'static str],
@@ -678,6 +805,7 @@ macro_rules! impl_adapter_from_frontend {
 /// use crush_walker_core::impl_adapter_from_walker;
 /// impl_adapter_from_walker!(CAdapter, "c", &["c", "h"], CWalker { file_name: String::new() }, tree_sitter_c::LANGUAGE.into());
 /// ```
+#[deprecated(note = "use impl_both_for_walker! instead -- it generates BOTH `impl Walker` and `impl LanguageWalker` from a single source-of-truth invocation (the cascade-closure-up-front pattern from Sub-Commit 1 Lesson 4). impl_adapter_from_walker! predates the Sub-Commit 2 unification and is dead code (no callers in the post-Sub-Commit-1 landscape).")]
 #[macro_export]
 macro_rules! impl_adapter_from_walker {
     ($adapter_name:ident, $lang:expr, $exts:expr, $walker_expr:expr) => {
@@ -705,6 +833,276 @@ macro_rules! impl_adapter_from_walker {
                     ..Default::default()
                 };
                 Ok((report, program))
+            }
+        }
+    };
+}
+
+/// Macro: create a Walker + LanguageWalker pair from one source-of-truth
+/// invocation. Architecture Option D for the 4th-trait unification work
+/// (CRUSH-36 Commit 2 Sub-Commit 2).
+///
+/// Generates a zero-sized type that implements BOTH [`Walker`] (in
+/// walker-core) AND [`LanguageWalker`] (in crush-frontend). The macro is
+/// the **cascade-closure-up-front pattern** -- concrete impls on a
+/// ZST instead of supertrait tie + blanket impl.
+///
+/// # Why a macro (vs `pub trait Walker: LanguageWalker` supertie)
+///
+/// Option A's supertrait tie was rejected because:
+/// 1. Cross-crate coupling: [`Walker`] lives in walker-core;
+///    [`LanguageWalker`] lives in crush-frontend. Supertrait tie
+///    would force cross-crate dep inversion.
+/// 2. Method-signature conflict: [`Walker::language`] returns
+///    `tree_sitter::Language` (grammar-bound, opaque to polyglot
+///    frontend), while [`LanguageWalker::language`] returns
+///    `&'static str` (UI-bound, polyglot-frontend-legal). The
+///    structural types don't unify cleanly.
+///
+/// Option D (this macro) sidesteps both by generating concrete impls
+/// on a ZST. Cascade closure is **UP FRONT** -- no supertrait, no
+/// blanket, no E0119 risk, no 7-fix cascade. This is the
+/// Sub-Commit 1 Lesson 4 application:
+///
+/// > supretrait-tie without immediate blanket impl is incomplete --
+/// > write the closure structurally in Fix #1, not as a later
+/// > discovered-need.
+///
+/// # Architecture
+///
+/// For an invocation
+///
+/// ```rust,ignore
+/// use crush_walker_core::impl_both_for_walker;
+/// use crush_frontend::language_walkers::{LanguageWalker, WalkerError};
+///
+/// impl_both_for_walker!(
+///     GoAdapter,
+///     "go",                                  // LanguageWalker::language
+///     &["go"],                               // LanguageWalker::extensions
+///     tree_sitter_go::LANGUAGE.into(),      // Walker::language
+///     go_walker::GoWalker,                   // walker type (impl Walker)
+///     |fname| go_walker::GoWalker { file_name: fname }  // walker ctor
+/// );
+/// ```
+///
+/// the macro expands to a ZST `pub struct GoAdapter;` plus TWO
+/// `impl` blocks:
+///
+/// - `impl $crate::Walker for GoAdapter` -- `language()` returns the
+///   `$ts_lang` token (typically a const from a tree-sitter grammar
+///   crate); `walk(&Tree, &[u8])` constructs `$wtype` via `$w_init`
+///   with an empty filename and delegates to
+///   `$crate::Walker::walk(&walker, tree, source)`.
+/// - `impl crush_frontend::language_walkers::LanguageWalker for
+///   GoAdapter` -- `language()` returns the `$lang` token;
+///   `extensions()` returns the `$exts` token; `parse(source,
+///   filename)` runs a tree-sitter `Parser` configured with the
+///   `$ts_lang` token and stores `Box::new((tree, source, filename))`;
+///   `walk(Box<dyn Any>)` downcasts the bundle, reconstructs
+///   `$wtype` via `$w_init` with the stored filename, and delegates
+///   to `$crate::Walker::walk`.
+///   Error mapping: `anyhow::Error` -> `WalkerError::SemanticError`
+///   (per the Sub-Commit 1 Lesson 3 cross-scope alias-discipline
+///   pattern: macro is fully-qualified, no `use anyhow::Result;`
+///   alias required at call site).
+///
+/// # Send + Sync
+///
+/// The generated struct is a ZST (zero-sized type). ZSTs are
+/// `Send + Sync` by structural inheritance -- no additional bound
+/// needed. This is the architectural payoff vs Sub-Commit 1's
+/// `Frontend: LanguageAdapter` supertrait-tie: the macro opts OUT
+/// of the propagation cascade entirely.
+///
+/// # Forward flags (per Sub-Commit 1 Lesson cascade closure lens)
+///
+/// F1: the macro generates concrete impls, NOT a blanket. There is
+/// NO E0119 risk because the macro doesn't introduce overlapping
+/// impls. Each ZST has exactly ONE `impl Walker` and ONE `impl
+/// LanguageWalker` from the macro.
+///
+/// F2: the macro uses `$crate::Walker` (always resolves to
+/// walker-core) and `crush_frontend::language_walkers::LanguageWalker`
+/// (resolved at the call-site scope where the macro is invoked).
+/// Callers must have `crush-frontend` reachable directly (via
+/// crate-local dep) or via re-export. The walker-core fixture test
+/// in `src/adapter.rs` exercises this resolution path.
+///
+/// F3: per-parse expression evaluation of `$ts_lang` is intentional
+/// (cheap; `tree_sitter_xxx::LANGUAGE.into()` is a const conversion).
+/// If perf later demands caching, the macro can be extended with a
+/// 7th `ts_lang_expr_for_parse: |&self| tree_sitter::Language`
+/// arg -- but no current caller has this need.
+///
+/// F4: existing walker crates that hand-rolled `impl Walker for X`
+/// continue to compile unchanged. The macro is OPT-IN -- the
+/// tree-sitter walkers (Go/C/Zig/Dart) are NOT migrated in this
+/// commit. Migrating Go as the canonical exemplar is the
+/// Sub-Commit 2 Commit B follow-up.
+///
+/// F5: no per-FE regression for the Sub-Commit 2 macro. Per
+/// Sub-Commit 1's F5 ("per-FE regression — 6 existing Frontend
+/// impls auto-derive LanguageAdapter via the blanket"), the
+/// parallel concern here is: does the macro introduce a per-FE
+/// regression for the 4+ existing tree-sitter walkers (Go/C/Zig/
+/// Dart)? Answer: NO. The macro is OPT-IN (F7); existing
+/// `impl Walker for X` impls in tree-sitter walkers continue to
+/// compile unchanged. The migration is a separate reviewable diff
+/// (Sub-Commit 2 Commit B). Migration to the macro is a
+/// "registration + dispatch" change, not a "remove existing
+/// impl" change; it ADDS a `LanguageWalker` impl alongside the
+/// existing `Walker` impl, leaving the prior impl untouched.
+///
+/// F6: the `Walker::walk(&Tree, &[u8])` path uses empty filename
+/// for the inner walker's `file_name` field (the trait signature
+/// has no filename parameter). The canonical filename-preserving
+/// flow is the `LanguageWalker::parse(source, Some(filename))` +
+/// `LanguageWalker::walk(stored_ast)` round-trip, which carries the
+/// filename through the (Tree, source, filename) bundle in
+/// `Box<dyn Any>`. Production callers should use the
+/// `LanguageWalker` round-trip; `Walker::walk` is for test-binary
+/// and inference paths where filename is not needed. (Renumbered
+/// from inline F* per Sub-Commit 1's F1..F5 consistency.)
+///
+/// F7: this commit does NOT migrate any existing walker crate
+/// (Go/C/Zig/Dart) to use the new macro. Migration of Go as the
+/// canonical exemplar is the Sub-Commit 2 Commit B follow-up. The
+/// macro + active test establish the architectural pattern; the
+/// migration is a separate reviewable diff. (Existing walker
+/// crates that hand-rolled `impl Walker for X` continue to compile
+/// unchanged; the macro is OPT-IN.)
+///
+/// F8: a test in `src/adapter.rs` invokes the macro with
+/// `unreachable!()` as the `$ts_lang` token. The test exercises
+/// ONLY the `language()` + `extensions()` paths on the
+/// macro-generated ZST. DO NOT call `.parse()` on the test's
+/// `MacroGenAdapter` -- it would attempt to construct a
+/// `tree_sitter::Parser` with the unreachable language, which
+/// would panic at runtime. The `parse()` path is end-to-end
+/// validated when GoWalker is migrated in Sub-Commit 2 Commit B.
+/// (Renumbered from inline test-limitation flag C per the
+/// F1..F5 consistency.)
+#[macro_export]
+macro_rules! impl_both_for_walker {
+    (
+        $adapter_name:ident,
+        $lang:expr,
+        $exts:expr,
+        $ts_lang:expr,
+        $wtype:ty,
+        $w_init:expr
+    ) => {
+        // ── Zero-sized adapter struct ──────────────────────────────
+        // Auto-implements Send + Sync (ZST property); the const fn
+        // below is a compile-time check that this holds for
+        // every concrete macro invocation. ZST + macro is
+        // Sub-Commit 1 Lesson 4 applied as 'closure UP FRONT'.
+        //
+        // `Clone` + `Copy` are derived so the same ZST can be
+        // coerced into BOTH `Box<dyn Walker>` AND `Box<dyn
+        // LanguageWalker>` independently without the test/consumer
+        // having to manually clone (Copy is implicit). ZSTs are
+        // trivially copy + clone (no field to copy), so the derive
+        // is zero-cost + zero-risk.
+        #[derive(Clone, Copy)]
+        pub struct $adapter_name;
+
+        const _: fn() = || {
+            fn assert_send_sync<T: Send + Sync>() {}
+            assert_send_sync::<$adapter_name>();
+        };
+
+        // ── Walker (walker-core) impl ───────────────────────────────
+        // $crate::Walker::language is the tree-sitter-bound grammar
+        // accessor; $crate::Walker::walk delegates to the inner walker
+        // type's walk method. Both are concrete property accesses
+        // -- no supertrait tie, no blanket, no E0119.
+        //
+        // Note: the `Walker::walk(&Tree, &[u8])` signature has no
+        // filename parameter, so the macro substitutes an empty
+        // `String::new()` for the inner walker's `file_name` field.
+        // This is a silent semantic loss — the inner walker cannot
+        // report source-position info keyed to a real filename. The
+        // canonical filename-preserving flow is
+        // `LanguageWalker::parse(source, Some(filename))` followed by
+        // `LanguageWalker::walk(stored_ast)`, which DOES carry the
+        // filename through the (Tree, source, filename) bundle in
+        // `Box<dyn Any>`. Per Sub-Commit 2 forward-flag F*: the
+        // `Walker::walk` direct path is for test-binary / inference
+        // paths where filename is not needed; production callers
+        // should use the `LanguageWalker` round-trip.
+        impl $crate::Walker for $adapter_name {
+            fn language(&self) -> tree_sitter::Language {
+                $ts_lang
+            }
+            fn walk(
+                &self,
+                tree: &tree_sitter::Tree,
+                source: &[u8],
+            ) -> anyhow::Result<crush_cast::Program> {
+                let walker: $wtype = $w_init(String::new());
+                $crate::Walker::walk(&walker, tree, source)
+            }
+        }
+
+        // ── LanguageWalker (crush-frontend) impl ────────────────────
+        // Bridge A (parse): tree-sitter parse + bundle (Tree +
+        // source + filename) in Box<dyn Any>. WalkerError::ParseError
+        // carries grammar/setup failures.
+        //
+        // Bridge B (walk): downcast the bundle, reconstruct the
+        // walker_expr with the stored filename, delegate to
+        // $crate::Walker::walk. WalkerError::SemanticError carries
+        // AST->CAST transformation failures.
+        //
+        // Per Sub-Commit 1 Lesson 3 (cross-scope alias discipline):
+        // the macro uses fully-qualified `anyhow::Result<...>` and
+        // explicit `crush_frontend::language_walkers::WalkerError`
+        // -- callers do NOT need `use anyhow::Result;` in scope.
+        impl crush_frontend::language_walkers::LanguageWalker for $adapter_name {
+            fn language(&self) -> &'static str {
+                $lang
+            }
+            fn extensions(&self) -> &'static [&'static str] {
+                $exts
+            }
+            fn parse(
+                &self,
+                source: &str,
+                filename: Option<&str>,
+            ) -> Result<
+                Box<dyn std::any::Any>,
+                crush_frontend::language_walkers::WalkerError,
+            > {
+                let mut parser = tree_sitter::Parser::new();
+                parser
+                    .set_language($ts_lang)
+                    .map_err(|e| crush_frontend::language_walkers::WalkerError::ParseError(e.to_string()))?;
+                let tree = parser
+                    .parse(source, None)
+                    .ok_or_else(|| crush_frontend::language_walkers::WalkerError::ParseError("parse failed".into()))?;
+                Ok(Box::new((
+                    tree,
+                    source.to_string(),
+                    filename.unwrap_or("").to_string(),
+                )))
+            }
+            fn walk(
+                &self,
+                ast: Box<dyn std::any::Any>,
+            ) -> Result<
+                crush_cast::Program,
+                crush_frontend::language_walkers::WalkerError,
+            > {
+                let (tree, source, fname) = *ast
+                    .downcast::<(tree_sitter::Tree, String, String)>()
+                    .map_err(|_| crush_frontend::language_walkers::WalkerError::ParseError(
+                        "impl_both_for_walker: invalid AST bundle (expected (Tree, String, String))".into(),
+                    ))?;
+                let walker: $wtype = $w_init(fname);
+                $crate::Walker::walk(&walker, &tree, source.as_bytes())
+                    .map_err(|e| crush_frontend::language_walkers::WalkerError::SemanticError(e.to_string()))
             }
         }
     };

@@ -1159,6 +1159,21 @@ pub fn execute_one(
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
             return Ok(Some(FastYield::Request(HostRequest::AiSynthesize { args })));
         }
+        FastOp::AiGoalDeclaration => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiGoalDeclaration { args })));
+        }
+        FastOp::AiProgressUpdate => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiProgressUpdate { args })));
+        }
+        FastOp::AiKnowledgeSharing => {
+            let json_str = &symbols.strings[instr.arg as usize];
+            let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
+            return Ok(Some(FastYield::Request(HostRequest::AiKnowledgeSharing { args })));
+        }
 
         FastOp::Await => {
             let event_val = stack.pop().ok_or(FastError::StackUnderflow)?;

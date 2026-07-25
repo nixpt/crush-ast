@@ -60,7 +60,7 @@ pub struct ModuleManifest {
 /// A named, typed contract that must hold for the module to be correct.
 ///
 /// `@invariant "name" { description: "...", applies_to: [...], consequence: "..." }`
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-export", ts(export))]
 pub struct Invariant {
@@ -321,4 +321,155 @@ pub struct SourceLoc {
     pub line: u32,
     /// 1-based column number.
     pub col: u32,
+}
+
+// ─── CRUSH-27: flat annotation ladder ─────────────────────────────────────
+//
+// The structural types above (ModuleManifest, Invariant, FunctionAnnotations,
+// ExhaustiveMatchSite, DecisionNode, WipNode, TemporaryNode) stay as the AST
+// storage; this section adds the flat `Annotation` enum that downstream
+// consumers (CRUSH-28's `crush-index`, CRUSH-29's `codebase.*` host caps)
+// iterate uniformly. Each variant carries the minimum context it needs to be
+// useful (e.g. function-scoped Read/Write/Coverage variants bill
+// `function_name` separately because the flat list loses ownership context).
+
+/// Function-scoped `@errors` annotation — covers both list and weighted forms.
+///
+/// Sources:
+/// - `@errors [VariantA, VariantB]` (`fn.errors` populated)
+/// - `@errors { VariantA: likely, VariantB: rare }` (`fn.errors_weighted`)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct ErrorAnnotation {
+    /// Function this annotation scopes to.
+    pub function_name: String,
+    /// Simple-list form entries (`@errors [a, b]`).
+    #[serde(default)]
+    pub variants: Vec<String>,
+    /// Weighted-form entries (`@errors { a: likely }`). Empty for list form.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants_weighted: Vec<WeightedError>,
+}
+
+/// Function-scoped `@reads [path]` annotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct ReadAnnotation {
+    pub function_name: String,
+    pub paths: Vec<String>,
+}
+
+/// Function-scoped `@writes [path]` annotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct WriteAnnotation {
+    pub function_name: String,
+    pub paths: Vec<String>,
+}
+
+/// Function-scoped `@covers [path]` / `@covers "name"` annotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct CoverageAnnotation {
+    pub function_name: String,
+    pub paths: Vec<String>,
+}
+
+/// Flat annotation ladder — single sequence downstream consumers iterate.
+///
+/// Seven variants, in ticket literal order. Re-exported as
+/// `crush_cast::Annotation` so downstream consumers can `Vec<Annotation>`
+/// uniformly regardless of whether the source annotation was module-level,
+/// function-level, or compiler-populated.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(tag = "kind", content = "node")]
+pub enum Annotation {
+    /// `@module { purpose, exports, invariants, related, exhaustive_types, changelog }`
+    /// Reuses `ModuleManifest` as the payload (carries the full module-level
+    /// surface; downstream `crush-index` reaches in for invariants/related/etc).
+    Module(ModuleManifest),
+    /// `@invariant "name" { description, applies_to, consequence, check_source }`
+    /// Reuses `Invariant` as payload (one per `@invariant` block; can also
+    /// appear inside `ModuleManifest.invariants` if that's where the source
+    /// lives — `From<&Program>` dedupes by checking both roots).
+    Invariant(Invariant),
+    /// `@errors` scoped per function (see [`ErrorAnnotation`]).
+    Error(ErrorAnnotation),
+    /// `@reads` scoped per function (see [`ReadAnnotation`]).
+    Read(ReadAnnotation),
+    /// `@writes` scoped per function (see [`WriteAnnotation`]).
+    Write(WriteAnnotation),
+    /// `@covers` scoped per function (see [`CoverageAnnotation`]).
+    Coverage(CoverageAnnotation),
+    /// Compiler-populated match sites (from `Program.exhaustive_sites`).
+    ExhaustiveMatchSites(ExhaustiveMatchSite),
+}
+
+impl crate::Program {
+    /// Flatten this Program into a `Vec<Annotation>` that downstream
+    /// consumers (e.g. `crush-index` in CRUSH-28) can iterate uniformly.
+    ///
+    /// Intentionally scoped to the **7 declared variants** of [`Annotation`]:
+    /// `DecisionNode`, `WipNode`, `TemporaryNode`, and `ChangelogEntry` are
+    /// NOT promoted into the flat ladder because they are human-coordination
+    /// metadata, not data-level contract annotations, and conflating them
+    /// would muddy the API.
+    ///
+    /// Emits BOTH `Annotation::Module` (if `Program.manifest` is set) AND
+    /// one `Annotation::Invariant(inv)` per invariant in the module's
+    /// `invariants` list — Module and per-invariant variants coexist in
+    /// the flat ladder by design, so `crush-index` can answer queries like
+    /// "show me this module's purpose" and "show me this one invariant"
+    /// from the same iteration without a second pass.
+    pub fn flatten_annotations(&self) -> Vec<Annotation> {
+        let mut out: Vec<Annotation> = Vec::new();
+
+        if let Some(manifest) = &self.manifest {
+            out.push(Annotation::Module(manifest.clone()));
+            for inv in &manifest.invariants {
+                out.push(Annotation::Invariant(inv.clone()));
+            }
+        }
+
+        for site in &self.exhaustive_sites {
+            out.push(Annotation::ExhaustiveMatchSites(site.clone()));
+        }
+
+        for (name, func) in &self.functions {
+            let Some(fa) = &func.annotations else { continue };
+            if !fa.errors.is_empty() || !fa.errors_weighted.is_empty() {
+                out.push(Annotation::Error(ErrorAnnotation {
+                    function_name: name.clone(),
+                    variants: fa.errors.clone(),
+                    variants_weighted: fa.errors_weighted.clone(),
+                }));
+            }
+            if !fa.reads.is_empty() {
+                out.push(Annotation::Read(ReadAnnotation {
+                    function_name: name.clone(),
+                    paths: fa.reads.clone(),
+                }));
+            }
+            if !fa.writes.is_empty() {
+                out.push(Annotation::Write(WriteAnnotation {
+                    function_name: name.clone(),
+                    paths: fa.writes.clone(),
+                }));
+            }
+            if !fa.covers.is_empty() {
+                out.push(Annotation::Coverage(CoverageAnnotation {
+                    function_name: name.clone(),
+                    paths: fa.covers.clone(),
+                }));
+            }
+        }
+
+        out
+    }
 }

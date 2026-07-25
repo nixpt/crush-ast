@@ -64,6 +64,26 @@ pub enum HostRequest {
     AiContextAware { args: serde_json::Value },
     AiSemanticMatch { args: serde_json::Value },
     AiSynthesize { args: serde_json::Value },
+    AiGoalDeclaration { args: serde_json::Value },
+    AiProgressUpdate { args: serde_json::Value },
+    AiKnowledgeSharing { args: serde_json::Value },
+    // CRUSH-33 follow-up: `args` is intentionally DROPPED at the
+    // `resolve_host_request` seam (mirror of `AiX` above) because the
+    // DOM stub returns the same deterministic `{ok, kind, echo}`
+    // shape as AI (see `dom_native::stub_map` in
+    // `crates/crush-lang-sdk/src/dom_native.rs`) and does not yet
+    // consume its args. Revisit once a real DOM backend (browser /
+    // jsdom / webview) needs to thread args through the cap gate.
+    DomQuery { args: serde_json::Value },
+    DomGet { args: serde_json::Value },
+    DomSet { args: serde_json::Value },
+    DomCreate { args: serde_json::Value },
+    DomRemove { args: serde_json::Value },
+    DomChild { args: serde_json::Value },
+    DomParent { args: serde_json::Value },
+    DomAttr { args: serde_json::Value },
+    DomText { args: serde_json::Value },
+    DomEvent { args: serde_json::Value },
 }
 
 impl FastYield {

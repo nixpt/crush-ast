@@ -102,6 +102,27 @@ pub const AI_SEMANTIC_MATCH: u8 = 0x93;
 pub const AI_LEARNING_LOOP: u8 = 0x94;
 pub const AI_CONTEXT_AWARE: u8 = 0x95;
 pub const AI_TOOLCHAIN: u8 = 0x96;
+pub const AI_GOAL_DECLARATION: u8 = 0x97;
+pub const AI_PROGRESS_UPDATE: u8 = 0x98;
+pub const AI_KNOWLEDGE_SHARING: u8 = 0x99;
+
+// CRUSH-33: DOM opcodes — split into two non-colliding byte ranges to
+// avoid the existing MATH/VEC block at 0xA0-0xA8 (MATH_POW..MAT_MUL).
+//   0x9A-0x9F: query/get/set/create/remove/child (CRUD + tree-nav back-half of depth)
+//   0xB5-0xB8: parent/attr/text/event (CRUD back-half + DOM-tree text/event surface)
+// 0x9A lands directly after AI_KNOWLEDGE_SHARING 0x99 (single-byte
+// adjacency). 0xB5 lands directly after STR_TRIM 0xB4 (also single-byte
+// adjacency on the back-half).
+pub const DOM_QUERY: u8 = 0x9A;
+pub const DOM_GET: u8 = 0x9B;
+pub const DOM_SET: u8 = 0x9C;
+pub const DOM_CREATE: u8 = 0x9D;
+pub const DOM_REMOVE: u8 = 0x9E;
+pub const DOM_CHILD: u8 = 0x9F;
+pub const DOM_PARENT: u8 = 0xB5;
+pub const DOM_ATTR: u8 = 0xB6;
+pub const DOM_TEXT: u8 = 0xB7;
+pub const DOM_EVENT: u8 = 0xB8;
 
 pub const MATH_POW: u8 = 0xA0;
 pub const MATH_SQRT: u8 = 0xA1;
@@ -121,6 +142,80 @@ pub const STR_TO_LOWER: u8 = 0xB3;
 pub const STR_TRIM: u8 = 0xB4;
 
 pub const HALT: u8 = 0xFF;
+
+/// CRUSH-32: map an AI-opcode byte (0x90-0x99) to its `ai_native.<kind>`
+/// gate suffix. Returns `None` for any non-AI opcode (defensive — callers
+/// should only invoke this on bytes they already matched into the combined
+/// AI match arm). Drives the host_caps.cap-call dispatch from
+/// `crush-vm::scheduler` and `crush-vm::portable_vm`.
+pub fn ai_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
+    match opcode {
+        AI_QUERY => Some("query"),
+        AI_SYNTHESIZE => Some("synthesize"),
+        AI_AGENT_DELEGATION => Some("agent_delegation"),
+        AI_SEMANTIC_MATCH => Some("semantic_match"),
+        AI_LEARNING_LOOP => Some("learning_loop"),
+        AI_CONTEXT_AWARE => Some("context_aware"),
+        AI_TOOLCHAIN => Some("toolchain"),
+        AI_GOAL_DECLARATION => Some("goal_declaration"),
+        AI_PROGRESS_UPDATE => Some("progress_update"),
+        AI_KNOWLEDGE_SHARING => Some("knowledge_sharing"),
+        _ => None,
+    }
+}
+
+/// CRUSH-33: map a DOM-opcode byte (0x9A-0x9F or 0xB5-0xB8) to its
+/// `dom_native.<kind>` gate suffix. Returns `None` for any non-DOM
+/// opcode (defensive -- callers should only invoke this on bytes they
+/// already matched into the combined DOM match arm wired in Commit 2).
+/// Drives the host_caps cap-call dispatch from `crush-vm::scheduler`
+/// and `crush-vm::portable_vm` (Commit 2).
+///
+/// Complexity: O(1) per slot byte — a match on a constant byte with at
+/// most 10 arms, same micro-cost as the AI bridge; no perf concern.
+pub fn dom_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
+    match opcode {
+        DOM_QUERY => Some("query"),
+        DOM_GET => Some("get"),
+        DOM_SET => Some("set"),
+        DOM_CREATE => Some("create"),
+        DOM_REMOVE => Some("remove"),
+        DOM_CHILD => Some("child"),
+        DOM_PARENT => Some("parent"),
+        DOM_ATTR => Some("attr"),
+        DOM_TEXT => Some("text"),
+        DOM_EVENT => Some("event"),
+        _ => None,
+    }
+}
+
+/// CRUSH-34: map a concurrency-opcode byte (SPAWN=0x80, YIELD=0x81,
+/// AWAIT=0x82; PRE-EXISTING slots in `bytecode.rs:95-97` -- NOT new
+/// per CRUSH-34) to its `concurrency_native.<kind>` gate suffix.
+/// Returns `None` for any non-concurrency opcode (defensive --
+/// callers should only invoke this on bytes they already matched
+/// into the combined concurrency match arm wired in Commit 2).
+/// Drives the host_caps cap-call dispatch from
+/// `crush-vm::scheduler` and `crush-vm::portable_vm` (Commit 2).
+///
+/// Complexity: O(1) per slot byte -- a match on a constant byte with
+/// at most 3 arms (smaller than AI's 10 / DOM's 10), same micro-cost
+/// as the AI bridge; no perf concern.
+///
+/// CRITICAL DIFFERENCE FROM ai/dom: concurrency ops carry ASYNC
+/// semantics (cooperative scheduling, event-loop yield,
+/// await-on-handle). The current stubs in `concurrency_native`
+/// ignore per-opcode operands (task_id for SPAWN, event_id for
+/// AWAIT, yield-count/duration for YIELD) -- revisit when the real
+/// async backend lands.
+pub fn concurrency_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
+    match opcode {
+        SPAWN => Some("spawn"),
+        YIELD => Some("yield"),
+        AWAIT => Some("await"),
+        _ => None,
+    }
+}
 
 /// How an opcode's operand bytes are interpreted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,7 +262,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
-        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => Some(OperandKind::Str),
+        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
         NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
         NEW_ARRAY | NEW_TUPLE | NEW_LIST | NEW_VECTOR | NEW_SET => Some(OperandKind::Count),

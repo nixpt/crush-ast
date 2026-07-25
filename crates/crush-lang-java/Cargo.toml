@@ -1,0 +1,40 @@
+[package]
+license.workspace = true
+description = "Java language walker -- parses Java source code into CAST IR (CRUSH-37 Commit 1 skeleton)"
+name = "crush-lang-java"
+version.workspace = true
+edition = "2021"
+repository.workspace = true
+[lib]
+name = "crush_lang_java"
+
+[[bin]]
+name = "crush-lang-java"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tree-sitter.workspace = true
+# CRUSH-37 Commit 1 (skeleton): tree-sitter-java is NOT yet a workspace dep.
+# The JavaAdapter (via impl_both_for_walker! macro) uses `unreachable!()` as a
+# stub `$ts_lang` token (per Sub-Commit 2's test pattern). Real Java parsing
+# requires adding `tree-sitter-java` to the workspace -- this is the
+# CRUSH-37 Commit 2 follow-up (along with differential fixtures).
+# tree-sitter-java = "0.23"  # (commented out for Commit 1 skeleton)
+crush-walker-core.workspace = true
+crush-cast.workspace = true
+# CRUSH-37 Commit 1: `impl_both_for_walker!` macro (Sub-Commit 2) hard-references
+# `crush_frontend::language_walkers::LanguageWalker` at the macro expansion site.
+# `crush-frontend` must be a REGULAR dep (not dev-dep) so the macro expansion
+# resolves correctly in both production builds AND `cargo test`. The CoW
+# `crush-lang-go` only needs `crush-frontend` as a dev-dep because Go uses
+# the OLD pattern (hand-rolled `impl LanguageAdapter for GoAdapter`) which
+# doesn't reference `crush-frontend` at compile-time.
+crush-frontend.workspace = true
+
+[dev-dependencies]
+crush-lang-sdk.workspace = true
+crush-vm.workspace = true

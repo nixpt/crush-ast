@@ -1094,9 +1094,44 @@ impl PortableVm {
                 self.out_parts.push(outcome.visible);
                 self.push(outcome.result_value);
             }
-            AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN => {
-                // Portable VM does not support async AI opcodes. Stub to Null.
-                self.push(Value::Null);
+            AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
+            | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
+                // CRUSH-32: gate the AI opcodes through `self.host_caps.get("ai_native.<kind>")`
+                // (mirrors scheduler.rs — see that file for the rationale).
+                let kind = crate::bytecode::ai_native_kind_for_opcode(opcode)
+                    .expect("AI opcode byte in combined match arm must map to a known kind");
+                let gate = format!("ai_native.{kind}");
+                let value = match self.host_caps.as_ref().and_then(|h| h.get(&gate)) {
+                    Some(handler) => handler
+                        .call(vec![])
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Value::Null),
+                    None => Value::Null,
+                };
+                self.push(value);
+            }
+            // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.
+            // Gates DOM opcodes through `self.host_caps.get("dom_native.<kind>")`
+            // (uses `call(vec![])` with empty args since the DOM cap stub ignores
+            // VM-stack args today — preserved for parity with the AI bridge).
+            // Slots are 0x9A-0x9F (CRUD/nav) and 0xB5-0xB8
+            // (parent/attr/text/event) per CRUSH-33 Commit 1; the
+            // `dom_native_kind_for_opcode` switch maps slot -> kind.
+            DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
+            | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
+                let kind = crate::bytecode::dom_native_kind_for_opcode(opcode)
+                    .expect("DOM opcode byte in combined match arm must map to a known kind");
+                let gate = format!("dom_native.{kind}");
+                let value = match self.host_caps.as_ref().and_then(|h| h.get(&gate)) {
+                    Some(handler) => handler
+                        .call(vec![])
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Value::Null),
+                    None => Value::Null,
+                };
+                self.push(value);
             }
             SPAWN => {
                 let argc = u16::from_be_bytes(

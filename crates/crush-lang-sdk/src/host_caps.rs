@@ -37,6 +37,8 @@ pub struct HostCapsBuilder {
     env_vars: HashMap<String, String>,
     /// Pre-built codebase index for `codebase.*` caps.
     codebase_index: Option<Arc<CrushIndex>>,
+    /// CRUSH-32: register the `ai_native.*` capability surface (default off).
+    ai_native: bool,
 }
 
 impl HostCapsBuilder {
@@ -159,6 +161,21 @@ impl HostCapsBuilder {
     }
 
     /// Build the [`HostCaps`] registry.
+    /// **CRUSH-32**: register the `ai_native.*` capability surface. All 10
+    /// gates (`ai_native.query`, `ai_native.synthesize`,
+    /// `ai_native.agent_delegation`, `ai_native.semantic_match`,
+    /// `ai_native.learning_loop`, `ai_native.context_aware`,
+    /// `ai_native.toolchain`, `ai_native.goal_declaration`,
+    /// `ai_native.progress_update`, `ai_native.knowledge_sharing`) are
+    /// registered as deterministic stubs returning
+    /// `Value::Map({ok: true, kind: "<name>", echo: <args>})`. Real AI
+    /// backends will replace these stubs in later milestones, but the
+    /// surface shape and gate names are stable.
+    pub fn ai_native(mut self, enable: bool) -> Self {
+        self.ai_native = enable;
+        self
+    }
+
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
         caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
@@ -212,6 +229,9 @@ impl HostCapsBuilder {
         }
         if let Some(idx) = self.codebase_index {
             crate::codebase::register(&mut caps, idx);
+        }
+        if self.ai_native {
+            crate::ai_native::register(&mut caps);
         }
         caps
     }

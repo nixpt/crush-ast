@@ -196,6 +196,69 @@ impl FastVM {
     }
 }
 
+/// Resolve a yielded `HostRequest` into a runtime `RuntimeValue` using the
+/// registered `HostCaps` table. Returns `None` if the request cannot be
+/// serviced (caller should treat as "keep yielding" or fall through to error).
+///
+/// CRUSH-32 follow-up: the seam fastvm callers use to OPTIONALLY resolve
+/// the 10 AI host requests (`AiQuery`/`AiSynthesize`/...) without forcing
+/// every fastvm program to thread `HostCaps` through `run_fastvm`. The
+/// default runner continues to yield; callers that want to honor a
+/// cap-call register their caps via `crush_vm::HostCapsBuilder::ai_native(true)`
+/// (or `crush_lang_sdk::ai_native::register(&mut caps)`) and call this
+/// helper after each `FastYield::Request(_)` yield.
+///
+/// Args ride on `HostRequest::{args}` (a `serde_json::Value`) and are
+/// intentionally DROPPED here -- the AI stub in `crush_lang_sdk::ai_native`
+/// takes no VM-stack args. Real bridges that carry args across the tier
+/// boundary are out of scope for this follow-up.
+pub fn resolve_host_request(
+    req: &HostRequest,
+    host_caps: Option<&crate::HostCaps>,
+) -> Option<RuntimeValue> {
+    let (cap_name, kind) = match req {
+        HostRequest::AiQuery            { .. } => ("ai_native.query",             "query"),
+        HostRequest::AiSynthesize       { .. } => ("ai_native.synthesize",        "synthesize"),
+        HostRequest::AiAgentDelegation  { .. } => ("ai_native.agent_delegation",  "agent_delegation"),
+        HostRequest::AiSemanticMatch    { .. } => ("ai_native.semantic_match",    "semantic_match"),
+        HostRequest::AiLearningLoop     { .. } => ("ai_native.learning_loop",     "learning_loop"),
+        HostRequest::AiContextAware     { .. } => ("ai_native.context_aware",     "context_aware"),
+        HostRequest::AiToolchain        { .. } => ("ai_native.toolchain",         "toolchain"),
+        HostRequest::AiGoalDeclaration  { .. } => ("ai_native.goal_declaration",  "goal_declaration"),
+        HostRequest::AiProgressUpdate   { .. } => ("ai_native.progress_update",   "progress_update"),
+        HostRequest::AiKnowledgeSharing { .. } => ("ai_native.knowledge_sharing", "knowledge_sharing"),
+        HostRequest::DomQuery            { .. } => ("dom_native.query",            "query"),
+        HostRequest::DomGet              { .. } => ("dom_native.get",              "get"),
+        HostRequest::DomSet              { .. } => ("dom_native.set",              "set"),
+        HostRequest::DomCreate           { .. } => ("dom_native.create",           "create"),
+        HostRequest::DomRemove           { .. } => ("dom_native.remove",           "remove"),
+        HostRequest::DomChild            { .. } => ("dom_native.child",            "child"),
+        HostRequest::DomParent           { .. } => ("dom_native.parent",           "parent"),
+        HostRequest::DomAttr             { .. } => ("dom_native.attr",             "attr"),
+        HostRequest::DomText             { .. } => ("dom_native.text",             "text"),
+        HostRequest::DomEvent            { .. } => ("dom_native.event",            "event"),
+        _ => return None,
+    };
+    let caps = host_caps?;
+    if caps.get(cap_name).is_none() {
+        return None;
+    }
+    // `crate::value::RuntimeValue` (the flat value layer used by fastvm dispatch)
+    // does NOT have `Map` / `Object` / `Array` variants -- those live only in the
+    // AOT-emit (codegen.rs inlined) `RuntimeValue` type that lives inside generated
+    // source code, not at runtime in crush-vm.
+    //
+    // Mirror the {ok: true, kind, echo: []} stub shape from
+    // `crush_lang_sdk::ai_native::stub_map` as a deterministic String so callers
+    // can inspect the kind without constructing intermediates the type does not
+    // model. Returning `None` when the cap is not registered preserves the
+    // "keep yielding" semantics for un-honored AI requests.
+    Some(RuntimeValue::String(format!(
+        "{{ok:true,kind:{},echo:[]}}",
+        kind
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

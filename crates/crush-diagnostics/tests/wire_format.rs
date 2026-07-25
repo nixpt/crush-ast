@@ -16,7 +16,13 @@
 //! depend on `crush-lang-sdk` (the four quarantined binaries
 //! referenced above). Together they cover the entire CLI surface.
 
-use crush_diagnostics::{DiagRecord, diag_line, diag_line_from, strict_downgrade, wants_json};
+use std::borrow::Cow;
+
+use crush_diagnostics::{
+    BorrowedDiagRecord, DiagRecord, OwnedDiagRecord, consume_stream, consume_stream_borrowed,
+    diag_line, diag_line_from, parse_record, parse_record_borrowed, strict_downgrade,
+    wants_json,
+};
 
 // ----------------------------------------------------------------
 // diag_line — byte-exact field order
@@ -414,6 +420,171 @@ fn strict_downgrade_note_lifts_to_error_under_strict() {
         "error",
         "note under strict MUST lift to error (CI gate)"
     );
+}
+
+// ----------------------------------------------------------------
+// wire_consumer — round-trip parity between the emitter (`diag_line`)
+// and the canonical parser (`parse_record`). The deserialize arm of
+// the wire contract lives in `src/wire_consumer.rs` (with its own
+// in-crate tests); the test below locks the round-trip in THIS file
+// so the byte-exact wire shape — both directions — is pinned in the
+// canonical lockdown file, matching this crate's stated philosophy.
+// ----------------------------------------------------------------
+
+#[test]
+fn parse_record_roundtrips_diag_line_emitted_canonical_note_record() {
+    // The bidirectional wire contract: a `DiagRecord` emitted by
+    // `diag_line` MUST parse back into an equivalent `OwnedDiagRecord`.
+    // If the emitter or parser field order drifts, this breaks.
+    let rec = DiagRecord {
+        code: "E-BUILDER",
+        level: "note",
+        file: Some("capsule.toml"),
+        line: Some(7),
+        col: None,
+        message: "placeholder value `TEMP` must be filled in",
+        hint: Some("set TEMP in your shell before running"),
+    };
+    let text = diag_line(&rec);
+    let parsed = parse_record(&text).expect("must parse a canonical emitter line");
+    let expected = OwnedDiagRecord::from(&rec);
+    assert_eq!(parsed, expected);
+}
+
+#[test]
+fn consume_stream_roundtrips_multiple_diag_lines() {
+    // Stream-level parity: two emitted lines, separated by a blank
+    // line (common in piped CI output), both round-trip via
+    // `consume_stream`.
+    let rec1 = DiagRecord {
+        code: "E-LINT",
+        level: "error",
+        file: None,
+        line: None,
+        col: None,
+        message: "first",
+        hint: None,
+    };
+    let rec2 = DiagRecord {
+        code: "E-LINT",
+        level: "error",
+        file: Some("x.crush"),
+        line: Some(1),
+        col: Some(2),
+        message: "second",
+        hint: None,
+    };
+    let stream = format!(
+        "\n{}\n\n{}\n",
+        diag_line(&rec1).trim_end(),
+        diag_line(&rec2).trim_end(),
+    );
+    let records: Vec<OwnedDiagRecord> = consume_stream(stream.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("all non-blank lines must parse");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0], OwnedDiagRecord::from(&rec1));
+    assert_eq!(records[1], OwnedDiagRecord::from(&rec2));
+}
+
+// ----------------------------------------------------------------
+// BorrowedDiagRecord — zero-copy deserialization lockdown
+//
+// Pins the zero-copy contract: unescaped JSON strings MUST borrow
+// directly from the input (Cow::Borrowed, pointer equality with the
+// input buffer) on the REQUIRED fields (code, level, message).
+// Escaped strings fall back to Cow::Owned (allocation, but no error).
+// The OPTIONAL fields (file, hint) are wrapped in Option<Cow> and
+// serde_json does not propagate borrows through Option — those always
+// allocate. This is a known serde_json limitation documented on
+// BorrowedDiagRecord.
+// ----------------------------------------------------------------
+
+#[test]
+fn parse_record_borrowed_zero_copy_for_unescaped_strings() {
+    let line = r#"{"code":"E-LINT","level":"error","file":"src/x.rs","line":42,"col":7,"message":"site boundary","hint":"fix it"}"#;
+    let rec = parse_record_borrowed(line).expect("unescaped line must parse");
+
+    // Required fields: must be Borrowed (zero-copy).
+    assert!(matches!(rec.code, Cow::Borrowed(_)), "code must be Borrowed");
+    assert!(matches!(rec.level, Cow::Borrowed(_)), "level must be Borrowed");
+    assert!(matches!(rec.message, Cow::Borrowed(_)), "message must be Borrowed");
+
+    // Optional fields: serde_json doesn't propagate borrows through
+    // Option<Cow>, so these are Owned (allocated). Values are correct.
+    assert_eq!(rec.file.as_deref(), Some("src/x.rs"));
+    assert_eq!(rec.hint.as_deref(), Some("fix it"));
+
+    // Pointer equality: the borrowed slice must point into `line`.
+    let code_ptr = rec.code.as_ptr();
+    let line_code_start = line.find("\"E-LINT\"").unwrap() + 1;
+    assert_eq!(
+        code_ptr, line[line_code_start..].as_ptr(),
+        "code must point into the input buffer (zero-copy)"
+    );
+}
+
+#[test]
+fn parse_record_borrowed_falls_back_to_owned_for_escaped_strings() {
+    // message contains an escaped quote: "has \"quote\""
+    let line = r#"{"code":"E-LINT","level":"error","file":null,"line":null,"col":null,"message":"has \"quote\"","hint":null}"#;
+    let rec = parse_record_borrowed(line).expect("escaped line must parse (not error)");
+
+    assert!(matches!(rec.code, Cow::Borrowed(_)));
+    assert!(matches!(rec.level, Cow::Borrowed(_)));
+    assert!(
+        matches!(rec.message, Cow::Owned(_)),
+        "message with escapes must be Owned (allocated), not Borrowed"
+    );
+    assert_eq!(rec.message, "has \"quote\"");
+}
+
+#[test]
+fn parse_record_borrowed_roundtrips_diag_line() {
+    let rec = DiagRecord {
+        code: "E-BUILDER",
+        level: "note",
+        file: Some("capsule.toml"),
+        line: Some(7),
+        col: None,
+        message: "placeholder value `TEMP` must be filled in",
+        hint: Some("set TEMP in your shell before running"),
+    };
+    let text = diag_line(&rec);
+    let parsed = parse_record_borrowed(&text).expect("must parse a canonical emitter line");
+    assert_eq!(parsed.code, rec.code);
+    assert_eq!(parsed.level, rec.level);
+    assert_eq!(parsed.file.as_deref(), Some("capsule.toml"));
+    assert_eq!(parsed.line, Some(7));
+    assert_eq!(parsed.col, None);
+    assert_eq!(parsed.message, rec.message);
+    assert_eq!(parsed.hint.as_deref(), Some("set TEMP in your shell before running"));
+}
+
+#[test]
+fn consume_stream_borrowed_skips_blanks_and_yields_records() {
+    let rec1 = DiagRecord {
+        code: "E-LINT", level: "error", file: None, line: None, col: None,
+        message: "first", hint: None,
+    };
+    let rec2 = DiagRecord {
+        code: "E-LINT", level: "error", file: Some("x.crush"), line: Some(1), col: Some(2),
+        message: "second", hint: None,
+    };
+    let stream = format!(
+        "\n{}\n\n{}\n",
+        diag_line(&rec1).trim_end(),
+        diag_line(&rec2).trim_end(),
+    );
+    let records: Vec<BorrowedDiagRecord<'_>> = consume_stream_borrowed(stream.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("all non-blank lines must parse");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].code, "E-LINT");
+    assert_eq!(records[0].message, "first");
+    assert_eq!(records[1].file.as_deref(), Some("x.crush"));
+    assert_eq!(records[1].line, Some(1));
+    assert_eq!(records[1].col, Some(2));
 }
 
 #[test]

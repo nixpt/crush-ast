@@ -3,7 +3,7 @@ pub mod convert;
 mod kinds;
 pub mod version;
 
-pub use context::{CrushError, ErrorContext, ResultExt};
+pub use context::{CrushError, ErrorContext};
 pub use kinds::ErrorKind;
 pub use version::{VersionBoundary, VersionMismatch};
 

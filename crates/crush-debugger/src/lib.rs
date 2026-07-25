@@ -7,9 +7,11 @@
 //! real; what is intentionally wired behind `todo!()` (with documented
 //! hook points) is whatever requires a companion change upstream:
 //!
-//! - [`wire_consumer`]: parse the `emit_post_dispatch_lint` NDJSON
-//!   `DiagRecord` stream from any source (stdin, subprocess, file) into
-//!   an owned, round-trip-tested record shape.
+//! - NDJSON diagnostic consume side: [`OwnedDiagRecord`] /
+//!   [`parse_record`] / [`consume_stream`] (re-exported from
+//!   `crush_diagnostics::wire_consumer` — the canonical parser now
+//!   lives in the peer crate so the wire shape is owned bidirectionally
+//!   in one place, not duplicated here).
 //! - [`breakpoint`]: a breakpoint registry keyed by `<file>:<line>`,
 //!   URL-fragment-aware thanks to the upstream `scan_entry_file_references`
 //!   fix (see agent/buffy/network @ 2f2b2f5).
@@ -38,10 +40,15 @@ pub mod breakpoint;
 pub mod repl;
 pub mod session;
 pub mod vm_driver;
-pub mod wire_consumer;
 
 pub use breakpoint::{BreakpointId, BreakpointSet, Location};
 pub use repl::{Command, ParseCommandError, parse_breakpoint_arg, parse_command};
 pub use session::DebugSession;
 pub use vm_driver::{PortableVmDriver, StepOutcome, VmDriver, VmError, VmRunResult, VmState};
-pub use wire_consumer::{OwnedDiagRecord, ParseRecordError, consume_stream, parse_record};
+// The NDJSON consumer (OwnedDiagRecord / parse_record / consume_stream /
+// ParseRecordError) now lives canonically in `crush_diagnostics::wire_consumer`.
+// Re-export from here for back-compat with existing `crush_debugger::*`
+// call sites.
+pub use crush_diagnostics::{
+    consume_stream, parse_record, OwnedDiagRecord, ParseRecordError,
+};
