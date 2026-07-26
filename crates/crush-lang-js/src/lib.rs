@@ -1,5 +1,6 @@
 pub mod analyzer;
 pub mod backend;
+pub mod freevars;
 pub mod lower_swc;
 pub mod sdk;
 

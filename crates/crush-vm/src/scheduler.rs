@@ -23,6 +23,18 @@ const SLICE_SIZE: usize = 50;
 /// appear in ordinary program output, so this cannot collide by accident.
 pub const CRUSH_RESULT_SENTINEL: &str = "\u{0}CRUSH_RESULT\u{0}";
 
+/// Encode a Crush [`Value`] for `EXEC_LANG` env-var inject (CRUSH-68).
+///
+/// Guest rewrites (`rewrite_python_marshaling`, `rewrite_javascript_marshaling`)
+/// do `json.loads` / `JSON.parse` on these strings. Display/`as_text` is
+/// **not** a substitute — it only accidentally works for ints/bools.
+pub(crate) fn value_to_polyglot_env(val: &Value) -> Result<String, VmError> {
+    serde_json::to_string(val).map_err(|_| VmError::TypeError {
+        expected: "JSON-serializable polyglot value",
+        got: val.type_name(),
+    })
+}
+
 /// Map an `@<lang>` polyglot block tag to the interpreter binary and the
 /// flag it uses to execute a code string (this is NOT uniform across
 /// languages — e.g. Node's `-c` means "check syntax only", not "execute";
@@ -1055,8 +1067,8 @@ fn execute_one(
             let env_vars: Vec<(String, String)> = var_names
                 .iter()
                 .zip(var_values.iter())
-                .map(|(name, val)| (name.clone(), val.as_text()))
-                .collect();
+                .map(|(name, val)| Ok((name.clone(), value_to_polyglot_env(val)?)))
+                .collect::<Result<Vec<_>, VmError>>()?;
             let outcome = run_exec_lang(
                 lang,
                 code_str,

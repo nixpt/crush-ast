@@ -69,45 +69,76 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                 variables,
                 meta,
                 ..
-            } if lang == "python" => {
+            } if lang == "python"
+                || lang == "javascript"
+                || lang == "js"
+                || lang == "node" =>
+            {
                 // The lexer captures the `{ ... }` body verbatim, including
                 // whatever leading indentation it happened to sit at inside
-                // `@python { ... }`. `python3 -c` tolerates that on its own
-                // (indentation is only ever relative), but
-                // rustpython-parser's `Suite::parse` here does not — dedent
-                // first so analysis sees the same shape `python3` would
+                // `@python { ... }`. Guest `-c`/`-e` tolerates that on its own
+                // (indentation is only ever relative for Python; JS is
+                // brace-delimited), but analyzers here do not — dedent first
+                // so analysis sees the same shape the subprocess would
                 // execute. The real `code` sent to the subprocess is
                 // dedented too, but only if a prologue/epilogue actually
-                // gets spliced in below (see `rewrite_python_marshaling`);
-                // an unmarshaled block is left completely untouched.
-                #[cfg(feature = "polyglot-python")]
-                if let Ok(free_vars) = crush_lang_python::analyzer::free_variables(&dedent(code)) {
-                    let inputs: Vec<String> = free_vars
-                        .reads
-                        .into_iter()
-                        .filter(|name| known_locals.contains(name))
-                        .collect();
-                    let output_var = free_vars.top_level_bound.last().cloned();
-                    if let Some(output_var) = &output_var {
-                        meta.insert(
-                            "polyglot_output".to_string(),
-                            serde_json::json!(output_var),
-                        );
-                        known_locals.insert(output_var.clone());
+                // gets spliced in below; an unmarshaled block is left
+                // completely untouched.
+                if lang == "python" {
+                    #[cfg(feature = "polyglot-python")]
+                    if let Ok(free_vars) =
+                        crush_lang_python::analyzer::free_variables(&dedent(code))
+                    {
+                        let inputs: Vec<String> = free_vars
+                            .reads
+                            .into_iter()
+                            .filter(|name| known_locals.contains(name))
+                            .collect();
+                        let output_var = free_vars.top_level_bound.last().cloned();
+                        if let Some(output_var) = &output_var {
+                            meta.insert(
+                                "polyglot_output".to_string(),
+                                serde_json::json!(output_var),
+                            );
+                            known_locals.insert(output_var.clone());
+                        }
+                        if !inputs.is_empty() || output_var.is_some() {
+                            *code =
+                                rewrite_python_marshaling(code, &inputs, output_var.as_deref());
+                        }
+                        *variables = inputs;
                     }
-                    if !inputs.is_empty() || output_var.is_some() {
-                        *code = rewrite_python_marshaling(code, &inputs, output_var.as_deref());
+                    #[cfg(not(feature = "polyglot-python"))]
+                    let _ = (lang, code, variables, meta, &known_locals);
+                } else {
+                    // javascript / js / node
+                    #[cfg(feature = "polyglot-javascript")]
+                    if let Ok(free_vars) = crush_lang_js::freevars::free_variables(&dedent(code)) {
+                        let inputs: Vec<String> = free_vars
+                            .reads
+                            .into_iter()
+                            .filter(|name| known_locals.contains(name))
+                            .collect();
+                        let output_var = free_vars.top_level_bound.last().cloned();
+                        if let Some(output_var) = &output_var {
+                            meta.insert(
+                                "polyglot_output".to_string(),
+                                serde_json::json!(output_var),
+                            );
+                            known_locals.insert(output_var.clone());
+                        }
+                        if !inputs.is_empty() || output_var.is_some() {
+                            *code = rewrite_javascript_marshaling(
+                                code,
+                                &inputs,
+                                output_var.as_deref(),
+                            );
+                        }
+                        *variables = inputs;
                     }
-                    *variables = inputs;
+                    #[cfg(not(feature = "polyglot-javascript"))]
+                    let _ = (lang, code, variables, meta, &known_locals);
                 }
-                // Without `polyglot-python` (e.g. crush-web's wasm32 build,
-                // where EXEC_LANG can't spawn a subprocess anyway — see
-                // portable_vm.rs/scheduler.rs), the block is left unmarshaled,
-                // same as any other not-yet-wired language: not a regression,
-                // just not applicable when polyglot execution itself is
-                // unavailable on this target.
-                #[cfg(not(feature = "polyglot-python"))]
-                let _ = (lang, code, variables, meta, &known_locals);
             }
             Statement::If {
                 then_body,
@@ -193,10 +224,45 @@ fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&
     format!("{prologue}\n{}{epilogue}", dedent(code))
 }
 
+/// Rewrite a `@javascript` block for the Crush/Node value boundary (CRUSH-68).
+///
+/// Same protocol as Python: JSON in env vars, sentinel-prefixed JSON out.
+/// Node reads `process.env` (always strings) and `JSON.parse`s them.
+#[cfg(feature = "polyglot-javascript")]
+fn rewrite_javascript_marshaling(
+    code: &str,
+    inputs: &[String],
+    output_var: Option<&str>,
+) -> String {
+    let mut prologue_parts: Vec<String> = Vec::new();
+    for name in inputs {
+        // `name` is an AST identifier — safe to splice as a JS binding.
+        // Env key uses JSON.stringify so quotes/escapes match Node.
+        prologue_parts.push(format!(
+            "var {name} = JSON.parse(process.env[{}]);",
+            serde_json::to_string(name).expect("string name")
+        ));
+    }
+    let prologue = prologue_parts.join("");
+
+    // Hand-synced with `crush_vm::scheduler::CRUSH_RESULT_SENTINEL`
+    // (`\x00CRUSH_RESULT\x00`). JS string uses `\0` / `\x00` equivalently.
+    const JS_SENTINEL_LITERAL: &str = "\"\\x00CRUSH_RESULT\\x00\"";
+
+    let epilogue = match output_var {
+        Some(name) => format!(
+            "\ntry {{\n  console.log({JS_SENTINEL_LITERAL} + JSON.stringify({name}));\n}} catch (__crush_marshal_err) {{\n  console.error(\"cannot marshal output variable '{name}': \" + __crush_marshal_err);\n  process.exit(1);\n}}\n"
+        ),
+        None => String::new(),
+    };
+
+    format!("{prologue}\n{}{epilogue}", dedent(code))
+}
+
 /// Strip the common leading whitespace shared by every non-blank line, so
 /// a block's original relative indentation is preserved but its absolute
 /// column no longer depends on how it happened to sit inside `{ ... }`.
-#[cfg(feature = "polyglot-python")]
+#[cfg(any(feature = "polyglot-python", feature = "polyglot-javascript"))]
 fn dedent(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let common_indent = lines
@@ -663,6 +729,51 @@ mod tests {
             "marshaled result should still appear, got: {}",
             result.output
         );
+    }
+
+    // CRUSH-68: string inject used to be Display (`hello`), which is not
+    // valid JSON — Python's json.loads crashed. Must round-trip as `"hello"`.
+    #[test]
+    fn test_python_polyglot_marshals_string_input() {
+        let source = "fn main() {\n    let msg = \"hello\";\n    @python {\n        result = msg + \"!\"\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        assert_eq!(result.output, "hello!\n");
+    }
+
+    // CRUSH-68: array inject must be JSON, not Display `[1, 2]`.
+    #[test]
+    fn test_python_polyglot_marshals_array_input() {
+        let source = "fn main() {\n    let xs = [1, 2, 3];\n    @python {\n        result = xs[0] + xs[2]\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        assert_eq!(result.output, "4\n");
+    }
+
+    // CRUSH-68: map inject.
+    #[test]
+    fn test_python_polyglot_marshals_map_input() {
+        let source = "fn main() {\n    let obj = {a: 10, b: 20};\n    @python {\n        result = obj[\"a\"] + obj[\"b\"]\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        assert_eq!(result.output, "30\n");
+    }
+
+    // CRUSH-68: JS gets the same typed marshal protocol as Python.
+    #[test]
+    fn test_javascript_polyglot_marshals_string_input() {
+        let source = "fn main() {\n    let msg = \"hello\";\n    @javascript {\n        let result = msg + \"!\";\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile js marshal");
+        let quotas = crush_vm::Quotas::default();
+        let result =
+            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run js marshal");
+        assert_eq!(result.output, "hello!\n");
     }
 
     #[test]

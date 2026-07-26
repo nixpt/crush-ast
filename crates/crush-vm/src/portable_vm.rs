@@ -1073,8 +1073,13 @@ impl PortableVm {
                 let env_vars: Vec<(String, String)> = var_names
                     .iter()
                     .zip(var_values.iter())
-                    .map(|(name, val)| (name.clone(), value_to_text(val)))
-                    .collect();
+                    .map(|(name, val)| {
+                        Ok((
+                            name.clone(),
+                            crate::scheduler::value_to_polyglot_env(val)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, VmError>>()?;
                 // SHARED with scheduler.rs's EXEC_LANG handler (crate::scheduler::run_exec_lang)
                 // — see that function's doc comment for the CRUSH-20 buckets-sandboxing wiring
                 // and the sentinel-scan bug this consolidation fixed in this backend.

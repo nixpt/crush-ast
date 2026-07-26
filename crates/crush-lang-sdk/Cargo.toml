@@ -31,7 +31,7 @@ name = "crush"
 path = "src/bin/crush.rs"
 
 [features]
-default = ["native-plugins", "polyglot-python"]
+default = ["native-plugins", "polyglot-python", "polyglot-javascript"]
 net = ["dep:ureq"]
 db = ["dep:rusqlite"]
 graphics = []
@@ -50,6 +50,9 @@ native-plugins = ["crush-vm/native-plugins"]
 # wasm32 EXEC_LANG can't spawn a subprocess anyway (see portable_vm.rs),
 # so there's nothing for the marshaling prep to prepare for.
 polyglot-python = ["dep:crush-lang-python"]
+# @javascript{} free-variable analysis + guest rewrite (CRUSH-68), via
+# crush-lang-js (swc). Same wasm32 skip rationale as polyglot-python.
+polyglot-javascript = ["dep:crush-lang-js"]
 
 [dependencies]
 crush-vm = { path = "../crush-vm", version = "0.3.0", default-features = false }
@@ -58,6 +61,7 @@ crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
 crush-lang-python = { path = "../crush-lang-python", version = "0.3.0", optional = true }
+crush-lang-js = { path = "../crush-lang-js", version = "0.3.0", optional = true }
 crush-errors.workspace = true
 crush-index.workspace = true
 crush-cson.workspace = true
