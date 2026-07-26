@@ -123,10 +123,35 @@ jobs:
             -- -D clippy::never_loop
 
   # ── Release build compiles (no LTO, just verify release profile works) ────
+  # `cache-targets: false` (CRUSH-CI-CACHE-1) — this job must NOT restore a
+  # `target/` directory. It was passing for the wrong reason.
+  #
+  # `rust-cache` keys on a hash of Cargo.lock and falls back to a restore-key
+  # when that misses. A restored release `target/` then contains `ort-sys`'s
+  # compiled lib from a *different* lock state, while the build-script output
+  # carrying the `-L` search path for the downloaded onnxruntime no longer
+  # lines up — so the relink fails with:
+  #
+  #     error: could not find native static library `onnxruntime`,
+  #            perhaps an -L flag is missing?
+  #
+  # That is not a code fault: a genuinely cold build of the same crates works
+  # (the `Test (workspace)` job, first run of a new job name and therefore
+  # cacheless, compiles `ort-sys` from scratch and passes). The failure only
+  # appears on a PARTIAL restore, which is why `main` looked green — its exact
+  # key kept hitting. An earlier `main` run logging `full match: false` passed
+  # only because it never rebuilt `ort-sys` at all.
+  #
+  # So the green here was reporting "the cache is warm", not "the release
+  # profile builds". Dropping target caching costs wall-clock and buys back the
+  # thing the job exists to prove. The registry/bin caches are still kept, so
+  # dependency *downloads* are not repeated; only compilation is.
   build-release:
     name: Build (release)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Raised from 25: a cold release build of 11 packages has no warm target to
+    # lean on any more.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -138,6 +163,8 @@ jobs:
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
       - run: |
           cargo build --release \
             -p crush-aot \
