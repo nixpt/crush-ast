@@ -65,18 +65,27 @@ impl AotCompiler {
         // Ensure cache dir exists
         std::fs::create_dir_all(&self.cache_dir)?;
 
-        // Write Rust source to temp dir
-        let work_dir = std::env::temp_dir().join(format!("crush-aot-{module_name}-{hash_short}"));
+        // Write Rust source to temp dir (uniquified per-process so
+        // concurrent compiles of the same source don't share a work_dir
+        // — their thin-LTO intermediate objects would collide).
+        let work_dir = std::env::temp_dir()
+            .join(format!("crush-aot-{module_name}-{hash_short}-{}", std::process::id()));
         std::fs::create_dir_all(&work_dir)?;
         let lib_path = work_dir.join("lib.rs");
         std::fs::write(&lib_path, &rust_source)?;
+
+        // Compile to a TEMPORARY output path, then atomically rename to the
+        // cache path. Prevents the TOCTOU race where two concurrent compiles
+        // both miss the cache check and collide on the same `-o` (their
+        // thin-LTO temp objects clobber each other → "cannot open ...rcgu.o").
+        let tmp_path = so_path.with_extension(format!("tmp.{}", std::process::id()));
 
         // Compile with rustc
         let mut cmd = Command::new("rustc");
         cmd.arg("--edition").arg("2024");
         cmd.arg("--crate-type").arg("cdylib");
         cmd.arg("--crate-name").arg(&so_name);
-        cmd.arg("-o").arg(&so_path);
+        cmd.arg("-o").arg(&tmp_path);
 
         if self.optimize {
             cmd.arg("-C").arg("opt-level=3");
@@ -97,6 +106,9 @@ impl AotCompiler {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
 
+            // Clean up the failed temporary output.
+            let _ = std::fs::remove_file(&tmp_path);
+
             // Print the generated source for debugging
             eprintln!("--- Generated Rust source ({module_name}) ---");
             eprintln!("{rust_source}");
@@ -107,6 +119,13 @@ impl AotCompiler {
 
             anyhow::bail!("rustc compilation failed for {module_name}: {stderr}");
         }
+
+        // Atomically rename the temp output to the cache path. On Linux,
+        // `rename` on the same filesystem is atomic: if a concurrent compile
+        // already filled the cache entry, its .so is atomically replaced with
+        // ours (both are bit-identical — same source, same compiler). If the
+        // rename fails (e.g., cross-filesystem), that's an error.
+        std::fs::rename(&tmp_path, &so_path)?;
 
         // Clean up temp work dir
         let _ = std::fs::remove_dir_all(&work_dir);
@@ -149,7 +168,8 @@ impl AotCompiler {
 
         std::fs::create_dir_all(&self.cache_dir)?;
 
-        let work_dir = std::env::temp_dir().join(format!("crush-aot-c-{module_name}-{hash_short}"));
+        let work_dir = std::env::temp_dir()
+            .join(format!("crush-aot-c-{module_name}-{hash_short}-{}", std::process::id()));
         std::fs::create_dir_all(&work_dir)?;
         let c_path = work_dir.join("lib.c");
         std::fs::write(&c_path, &c_source)?;
@@ -161,7 +181,8 @@ impl AotCompiler {
         } else {
             cmd.arg("-O0");
         }
-        cmd.arg("-o").arg(&so_path);
+        let tmp_path = so_path.with_extension(format!("tmp.{}", std::process::id()));
+        cmd.arg("-o").arg(&tmp_path);
         cmd.arg(&c_path);
 
         // Link math library for fmod
@@ -173,6 +194,7 @@ impl AotCompiler {
             .with_context(|| format!("Failed to run {cc} for {module_name}"))?;
 
         if !output.status.success() {
+            let _ = std::fs::remove_file(&tmp_path);
             let stderr = String::from_utf8_lossy(&output.stderr);
             eprintln!("--- Generated C source ({module_name}) ---");
             eprintln!("{c_source}");
@@ -180,6 +202,8 @@ impl AotCompiler {
             eprintln!("{stderr}");
             anyhow::bail!("{cc} compilation failed for {module_name}: {stderr}");
         }
+
+        std::fs::rename(&tmp_path, &so_path)?;
 
         let _ = std::fs::remove_dir_all(&work_dir);
         Ok(so_path)
