@@ -36,15 +36,22 @@ fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
         // has been deleted. `serde_json::to_string(&array)` now invokes the
         // trait impl directly, so nested Array/Map values serialize through
         // the same single source of truth as `json.stringify`.
-        Value::Array(a) => rusqlite::types::Value::Text(
-            serde_json::to_string(&Value::Array(a.clone())).unwrap_or_default(),
-        ),
-        Value::Map(m) => rusqlite::types::Value::Text(
-            serde_json::to_string(&Value::Map(m.clone())).unwrap_or_default(),
-        ),
+        // Every composite binds as its canonical JSON text. Listed one
+        // variant per arm rather than behind a `_` catch-all so that adding
+        // a `Value` variant breaks this build instead of silently binding
+        // the new kind of value as SQL NULL or a Debug string.
+        Value::Array(_)
+        | Value::Tuple(_)
+        | Value::List(_)
+        | Value::Vector(_)
+        | Value::Set(_)
+        | Value::Map(_) => {
+            rusqlite::types::Value::Text(serde_json::to_string(v).unwrap_or_default())
+        }
         Value::Error(e) => rusqlite::types::Value::Text(format!("error({})", e)),
         Value::Bytes(b) => rusqlite::types::Value::Blob(b.clone()),
         Value::Handle(h) => rusqlite::types::Value::Text(format!("<handle {}>", h)),
+        Value::Foreign(id) => rusqlite::types::Value::Text(format!("<foreign {}>", id)),
     }
 }
 

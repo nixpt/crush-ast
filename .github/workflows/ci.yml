@@ -34,10 +34,14 @@ jobs:
             2>&1
 
   # ── Core VM + compiler tests ───────────────────────────────────────────────
-  # NOTE: do NOT pass `--lib` — that skips `tests/*.rs` integration tests.
-  # CRUSH-65's math_builtins_test and crush-cast's format_tests only live there;
-  # `--lib` was why silent-wrong-answer bugs and golden-fixture drift could ship
-  # under a green CI badge (CRUSH-CI-HONESTY-1).
+  # `--lib --tests` (not bare `cargo test`): unit + `tests/*.rs` integration,
+  # but skip doctests. Bare `cargo test` also runs rustdoc, and crush-cast's
+  # `pub use crush_cson::…` re-export hits intermittent E0463 ("can't find
+  # crate for crush_cson") under the multi `-p` invocation on CI runners —
+  # green locally, red here. Integration coverage is the honesty goal
+  # (CRUSH-65 math_builtins_test, crush-cast format_tests); doctests are not.
+  # Prior `--lib`-only skipped those and let silent-wrong-answer bugs ship
+  # under a green badge (CRUSH-CI-HONESTY-1).
   test-core:
     name: Test (core)
     runs-on: ubuntu-latest
@@ -54,7 +58,7 @@ jobs:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo test \
+          cargo test --lib --tests \
             -p crush-walker-core \
             -p crush-vm \
             -p crush-cast \
