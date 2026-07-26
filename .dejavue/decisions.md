@@ -574,3 +574,16 @@ Artifacts: crates/crush-lang-sdk/src/bin/crush.rs,crates/crush-lang-sdk/Cargo.to
 
 Author type: agent
 
+
+## 2026-07-25T03:30:00-05:00 — [ARCHITECTURAL] CRUSH-66: `@lang[deps]` uses buckets `pypi:`/`npm:` host cellar (not in-sandbox pip)
+
+Reason:
+CRUSH-20 deferred PyPI/npm because buckets lacked registry resolvers and assumed the follow-on would be `pip install` inside bwrap with `allow_network: true`. BUCKETS-15 adds `pypi:`/`npm:` to `resolve_multi`, installing into the shared host cellar like bottles. Guest sandboxes can therefore keep `allow_network: false` and RO-bind cellar paths with PYTHONPATH/NODE_PATH from `compose_env` — same shape as CRUSH-20 bare runtimes. Explicit `pypi:`/`npm:` prefixes required in v1 (no auto-prefix of bare `numpy`). Filed as CRUSH-66 Ready; blocked on merging buckets#4.
+
+Rejected alternatives:
+- **In-sandbox pip/npm with allow_network**: duplicates buckets work; mutates guest FS; harder to cache across sparks
+- **Auto-prefix bare names by @lang**: hides mistakes; collides with bottle companion names
+- **Route through crush-lang-sdk**: rejected earlier in CRUSH-20 ownership decision — keep crush-vm path
+
+Artifacts: docs/design/lang-deps-pypi-npm.md, .jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md
+

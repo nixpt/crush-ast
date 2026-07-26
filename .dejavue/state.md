@@ -1,5 +1,15 @@
 # State
 
-Updated: 2026-07-15T23:50:23-05:00
+Updated: 2026-07-25T03:30:00-05:00
 
-AOT pipeline (crush-aot) verified working end-to-end for the first time via bozo's benchmark verification pass: RuntimeValue::Str bug (blocked 100% of AOT-Rust compiles) found+fixed, Math.floor case-mismatch in JS lowering found (lower_swc.rs emits 'Math.floor', compiler.rs only matches lowercase 'math.floor' -- NOT fixed yet). LTO/strip binary-size claim in readiness-matrix.md corrected: measured 33% on crush-aotc itself (stripping accounts for most of it), not the documented 64-80%.
+crush-ast `main` @ `5fb5bff` (= origin): M2 JIT Phases 2–7 merged (PR #21,
+CRUSH-26..38 band). M1 correctness sweep done earlier. Buckets consumers
+healthy — `crush-vm` (`sandboxed-polyglot`, CRUSH-20 ✅) and `crush-pkg` both
+use `package = "crush-buckets"` path-deps and `cargo check` clean against
+current sibling buckets. CRUSH-20’s deferred “numpy reframe” is now
+actionable: BUCKETS-15 adds `pypi:`/`npm:` resolvers; follow-on filed as
+CRUSH-66 (Ready) with design at `docs/design/lang-deps-pypi-npm.md` —
+blocked only on merging buckets#4. Dejavue/planning were stale (handoff
+still on 2026-07-15 Math.floor); refreshed this session. In-flight
+elsewhere: panini Math.* lowering worktree. Next: merge buckets#4 →
+implement CRUSH-66, or M5 AI opcodes / M3 debugger.

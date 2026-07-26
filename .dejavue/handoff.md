@@ -1,12 +1,33 @@
 # Handoff
 
-Updated: 2026-07-15T23:50:23-05:00
+Updated: 2026-07-25T03:30:00-05:00
 
 ## Summary
-Verified crush-aotc's benchmark + LTO claims empirically for nixpt/bozo's design work; fixed one real, 100%-reproducible AOT-Rust codegen bug (RuntimeValue::Str vs the enum's actual String variant, commit 5f30520 / c27601e on origin/main).
+Docs/planning refresh + CRUSH-66 filing (no code). Synced memory to `main`
+`5fb5bff` (M2 JIT merge). Marked CRUSH-20 ticket Done. Designed and filed
+CRUSH-66: wire `@lang[pypi:/npm:]` through existing `bucket_exec` /
+`resolve_multi` once BUCKETS-15 lands on sibling buckets.
 
 ## Next Steps
-Fix the Math.floor (and likely Math.max/min/pow/etc) case-mismatch between lower_swc.rs's JS-style capitalized names and compiler.rs's lowercase math.* builtin table -- silently miscompiles today (165 instead of 465 on docs/benchmarks/compute.js). Audit lower_swc.rs<->compiler.rs and codegen.rs<->codegen_c.rs for the same double-maintained-table bug class.
+1. Merge [nixpt/buckets#4](https://github.com/nixpt/buckets/pull/4) (BUCKETS-15).  
+2. Implement [CRUSH-66](../.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md) per [design](../docs/design/lang-deps-pypi-npm.md) — likely small: deps already pass to `resolve_multi`; verify PYTHONPATH/NODE_PATH + live tests + doc comment fixes.  
+3. Optional: review panini Math.* fix worktree; or start M5 (CRUSH-1 AI opcodes).
 
 ## Boot Instructions
 Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.
+
+```bash
+cd /workspace/projects/crush-ast && dejavue context
+cat .jagent/planning/STATE.md .jagent/planning/TASKS.md
+# buckets consumers
+rg -n 'crush-buckets|sandboxed-polyglot' crates/*/Cargo.toml
+```
+
+## Key paths
+
+| What | Where |
+|------|--------|
+| CRUSH-66 ticket | `.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md` |
+| Design | `docs/design/lang-deps-pypi-npm.md` |
+| Sandbox wiring | `crates/crush-vm/src/bucket_exec.rs` |
+| crush-pkg runners | `crates/crush-pkg/src/runners.rs` |

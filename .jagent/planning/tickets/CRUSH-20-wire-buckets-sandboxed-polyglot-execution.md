@@ -4,10 +4,10 @@
 |-------|-------|
 | **ID** | CRUSH-20 |
 | **Priority** | P2 |
-| **Status** | Backlog |
-| **Phase** | M1 (follow-on; larger than a typical M1 item, treat as its own mini-milestone) |
-| **Assignee** | unassigned |
-| **Dependencies** | CRUSH-19 recommended first (wall-clock timeout safety net); CRUSH-2 (polyglot capability gate) already done, this builds on it |
+| **Status** | Done |
+| **Phase** | M1 (follow-on mini-milestone) — **shipped s390** (`c69d76c`); numpy/PyPI follow-on is [CRUSH-66](./CRUSH-66-lang-deps-pypi-npm.md) |
+| **Assignee** | panini-crush / foreman-verified |
+| **Dependencies** | CRUSH-19 ✅; CRUSH-2 ✅ |
 | **Estimated effort** | L |
 
 ## Problem — and the important context most sessions won't have
@@ -76,6 +76,8 @@ bwrap-sandboxed runtime via `buckets` (already a real, working library in this w
 
 - Full PyPI/npm dependency-graph resolution (the numpy problem above) — start with bare-runtime
   sandboxing; treat `+deps` as an explicit, separately-scoped follow-on once (1)-(5) above are real.
+  **→ Follow-on filed as [CRUSH-66](./CRUSH-66-lang-deps-pypi-npm.md)** now that BUCKETS-15 exists;
+  design: `docs/design/lang-deps-pypi-npm.md`.
 - Porting exosphere's `spawn_native` (namespaces+cgroups+seccomp+GPU, Linux-only, daemon-coupled)
   into this path — that's a heavier, separate isolation tier for untrusted/heavy/GPU workloads per
   the design doc's tier table; this ticket is specifically the buckets/bwrap middle tier.
