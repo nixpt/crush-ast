@@ -210,6 +210,7 @@ const FIXTURE_3_CANONICAL: &str = r#"{
       "body": [
         {
           "code": "print('hello')",
+          "deps": [],
           "lang": "python",
           "type": "LangBlock"
         },

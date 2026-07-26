@@ -50,9 +50,10 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
                 }
             }
             ModuleItem::ModuleDecl(module_decl) => {
-                if let Some(s) = lower_module_decl(module_decl, ctx)? {
-                    main_body.push(s);
-                }
+                // Vec, not Option: `export let a, b` / `export { a, b }` must emit
+                // one Export per name. The old Option path returned after the first
+                // declarator (clippy::never_loop), silently dropping the rest.
+                main_body.extend(lower_module_decl(module_decl, ctx)?);
             }
         }
     }
@@ -154,7 +155,7 @@ fn lower_class_decl(class: &ClassDecl, ctx: &LowerCtx) -> anyhow::Result<Stateme
     })
 }
 
-fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> {
+fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     match decl {
         ModuleDecl::Import(import) => {
             let mut selective = Vec::new();
@@ -172,62 +173,65 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                 }
             }
             let src = wtf8_str(&import.src.value).to_string();
-            Ok(Some(Statement::Import {
+            Ok(vec![Statement::Import {
                 import: ImportStatement::CrushModule {
                     module_path: src,
                     alias: None,
                     selective,
                 },
                 meta: meta(&import.span, ctx),
-            }))
+            }])
         }
         ModuleDecl::ExportDecl(export) => match &export.decl {
             Decl::Fn(fn_decl) => {
                 let name = fn_decl.ident.sym.to_string();
-                Ok(Some(Statement::Export {
+                Ok(vec![Statement::Export {
                     name: name.clone(),
                     value: Expression::Var { name, meta: meta(&fn_decl.function.span, ctx) },
                     meta: meta(&export.span, ctx),
-                }))
+                }])
             }
             Decl::Var(var_decl) => {
+                // One Export per declarator — `export let a, b` must export both.
+                let mut out = Vec::with_capacity(var_decl.decls.len());
                 for d in &var_decl.decls {
                     let name = pat_to_name(&d.name);
-                    return Ok(Some(Statement::Export {
+                    out.push(Statement::Export {
                         name: name.clone(),
                         value: Expression::Var { name, meta: meta(&d.span, ctx) },
                         meta: meta(&export.span, ctx),
-                    }));
+                    });
                 }
-                Ok(None)
+                Ok(out)
             }
             Decl::Class(class) => {
                 let name = class.ident.sym.to_string();
-                Ok(Some(Statement::Export {
+                Ok(vec![Statement::Export {
                     name: name.clone(),
                     value: Expression::Var { name, meta: meta(&class.class.span, ctx) },
                     meta: meta(&export.span, ctx),
-                }))
+                }])
             }
             Decl::Using(using) => {
+                let mut out = Vec::with_capacity(using.decls.len());
                 for d in &using.decls {
                     let name = pat_to_name(&d.name);
-                    return Ok(Some(Statement::Export {
+                    out.push(Statement::Export {
                         name,
                         value: Expression::NullLiteral { meta: meta(&d.span, ctx) },
                         meta: meta(&export.span, ctx),
-                    }));
+                    });
                 }
-                Ok(None)
+                Ok(out)
             }
-            _ => Ok(Some(Statement::LangBlock {
+            _ => Ok(vec![Statement::LangBlock {
                 lang: "javascript".to_string(),
                 code: "// export — not lowered".to_string(),
                 variables: vec![],
                 imports: vec![],
                 deps: vec![],
                 meta: meta(&export.span, ctx),
-            })),
+            }]),
         },
         ModuleDecl::ExportDefaultDecl(export_default) => match &export_default.decl {
             DefaultDecl::Fn(fn_expr) => {
@@ -241,7 +245,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                     Some(b) => stmts_to_vec(&b.stmts, ctx)?,
                     None => vec![],
                 };
-                Ok(Some(Statement::Export {
+                Ok(vec![Statement::Export {
                     name: "default".to_string(),
                     value: Expression::Lambda {
                         params,
@@ -249,7 +253,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                         meta: meta(&fn_expr.function.span, ctx),
                     },
                     meta: meta(&export_default.span, ctx),
-                }))
+                }])
             }
             DefaultDecl::Class(class) => {
                 let name = class
@@ -257,28 +261,28 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                     .as_ref()
                     .map(|id| id.sym.to_string())
                     .unwrap_or_default();
-                Ok(Some(Statement::Export {
+                Ok(vec![Statement::Export {
                     name: "default".to_string(),
                     value: Expression::Var { name, meta: meta(&class.class.span, ctx) },
                     meta: meta(&export_default.span, ctx),
-                }))
+                }])
             }
-            _ => Ok(Some(Statement::LangBlock {
+            _ => Ok(vec![Statement::LangBlock {
                 lang: "javascript".to_string(),
                 code: "// export default — not lowered".to_string(),
                 variables: vec![],
                 imports: vec![],
                 deps: vec![],
                 meta: meta(&export_default.span, ctx),
-            })),
+            }]),
         },
         ModuleDecl::ExportDefaultExpr(expr) => {
             let val = lower_expr(&expr.expr, ctx)?;
-            Ok(Some(Statement::Export {
+            Ok(vec![Statement::Export {
                 name: "default".to_string(),
                 value: val,
                 meta: meta(&expr.span, ctx),
-            }))
+            }])
         }
         ModuleDecl::ExportNamed(named) => {
             let src = named.src.as_ref().map(|s| wtf8_str(&s.value).to_string());
@@ -290,16 +294,17 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                         selective.push(ns.orig.atom().to_string());
                     }
                 }
-                Ok(Some(Statement::Import {
+                Ok(vec![Statement::Import {
                     import: ImportStatement::CrushModule {
                         module_path: module.clone(),
                         alias: None,
                         selective,
                     },
                     meta: meta(&named.span, ctx),
-                }))
+                }])
             } else {
-                // direct named exports
+                // One Export per named specifier — `export { a, b }` must export both.
+                let mut out = Vec::new();
                 for spec in &named.specifiers {
                     if let ExportSpecifier::Named(ns) = spec {
                         let name = ns
@@ -308,29 +313,29 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                             .map(|m| m.atom().to_string())
                             .unwrap_or_else(|| ns.orig.atom().to_string());
                         let orig = ns.orig.atom().to_string();
-                        return Ok(Some(Statement::Export {
+                        out.push(Statement::Export {
                             name,
                             value: Expression::Var {
                                 name: orig,
                                 meta: meta(&named.span, ctx),
                             },
                             meta: meta(&named.span, ctx),
-                        }));
+                        });
                     }
                 }
-                Ok(None)
+                Ok(out)
             }
         }
         ModuleDecl::ExportAll(all) => {
             let src = wtf8_str(&all.src.value).to_string();
-            Ok(Some(Statement::Import {
+            Ok(vec![Statement::Import {
                 import: ImportStatement::CrushModule {
                     module_path: src,
                     alias: None,
                     selective: vec![],
                 },
                 meta: meta(&all.span, ctx),
-            }))
+            }])
         }
         ModuleDecl::TsImportEquals(ts) => {
             let mod_name = match &ts.module_ref {
@@ -343,31 +348,31 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Option
                 },
                 TsModuleRef::TsExternalModuleRef(ext) => wtf8_str(&ext.expr.value).to_string(),
             };
-            Ok(Some(Statement::LangBlock {
+            Ok(vec![Statement::LangBlock {
                 lang: "javascript".to_string(),
                 code: format!("// ts import equals: {}", mod_name),
                 variables: vec![],
                 imports: vec![],
                 deps: vec![],
                 meta: meta(&ts.span, ctx),
-            }))
+            }])
         }
         ModuleDecl::TsExportAssignment(ts) => {
             let val = lower_expr(&ts.expr, ctx)?;
-            Ok(Some(Statement::Export {
+            Ok(vec![Statement::Export {
                 name: "default".to_string(),
                 value: val,
                 meta: meta(&ts.span, ctx),
-            }))
+            }])
         }
-        ModuleDecl::TsNamespaceExport(ts) => Ok(Some(Statement::LangBlock {
+        ModuleDecl::TsNamespaceExport(ts) => Ok(vec![Statement::LangBlock {
             lang: "javascript".to_string(),
             code: format!("// ts namespace export: {}", ts.id.sym),
             variables: vec![],
             imports: vec![],
-                deps: vec![],
+            deps: vec![],
             meta: meta(&ts.span, ctx),
-        })),
+        }]),
     }
 }
 
