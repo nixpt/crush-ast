@@ -1,14 +1,18 @@
+# Append-only files use git's union merge driver.
+#
+# These are logs, not documents: every writer appends, nobody edits earlier
+# entries. A textual 3-way merge treats two branches appending at the same
+# offset as a conflict, which it isn't — union keeps both sides' lines.
+#
+# The dejavue block below was previously present twice, verbatim; deduped
+# 2026-07-24.
+.dejavue/timeline.jsonl   merge=union
+.dejavue/decisions.md     merge=union
+.dejavue/invariants.md    merge=union
+.dejavue/patterns.md      merge=union
 
-# dejavue: append-only files use git's union merge driver
-.dejavue/timeline.jsonl merge=union
-.dejavue/decisions.md   merge=union
-.dejavue/invariants.md  merge=union
-.dejavue/patterns.md    merge=union
-
-
-# dejavue: append-only files use git's union merge driver
-.dejavue/timeline.jsonl merge=union
-.dejavue/decisions.md   merge=union
-.dejavue/invariants.md  merge=union
-.dejavue/patterns.md    merge=union
-
+# The planning backlog is appended to by every agent that runs `dejavue plan`
+# (capture-on-discovery), so it conflicts on exactly the same pattern as the
+# dejavue logs — but was never covered. Added 2026-07-24 after it conflicted
+# on two separate branches in a single cleanup pass.
+.jagent/planning/TASKS.md merge=union
