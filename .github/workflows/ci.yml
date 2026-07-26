@@ -96,6 +96,53 @@ jobs:
             -p crush-lang-dart \
             2>&1
 
+  # ── Whole-workspace test build (blocking) ─────────────────────────────────
+  # The job that did not exist, and whose absence let a fixed bug come back.
+  #
+  # `Test (core)` and `Test (walkers)` run explicit `-p` lists. A `-p` list
+  # never builds the workspace's units together, so it structurally cannot
+  # catch a *cross-crate build-graph* fault — only a whole-workspace resolve
+  # does. That is exactly the class of bug CRUSH-16 fixed (crush-vm was
+  # `crate-type = ["lib", "cdylib"]`, which drops cargo's filename hash, so
+  # two `crush-vm` units raced to write one `deps/libcrush_vm.rlib` and
+  # consumers linked whichever won — surfacing as `E0308 ... found a
+  # different casm::Program`, or intermittently as `E0463: can't find crate`).
+  # The PyO3 wheel commit re-added the cdylib, silently reverting CRUSH-16,
+  # and every green badge on this repo stayed green for months.
+  #
+  # `--no-run` on purpose: this job's job is to prove the workspace *resolves
+  # and builds as one graph*. Actually running the suites is `Test (core)` and
+  # `Test (walkers)`, which are faster and already sharded. Keeping this build
+  # -only also keeps it honest about what it gates — no flaky runtime tests
+  # here, so a red here always means a real graph fault.
+  #
+  # Same excludes as `Check (workspace)` (crush-python needs libpython dev
+  # headers on the runner). `crush-vm-py` needs no exclude at all — it is not
+  # a workspace member, by design: a crate whose whole job is to keep a cdylib
+  # out of this graph should not be in it. That is the invariant this job
+  # gates from the other side, by proving crush-vm still builds as a plain lib
+  # alongside everything that depends on it.
+  test-workspace:
+    name: Test (workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo test --workspace --no-run \
+            --exclude crush-python \
+            --exclude crush-lang-custom \
+            2>&1
+
   # ── Linting (blocking) ────────────────────────────────────────────────────
   # Previously: `continue-on-error: true` AND `|| true` — two independent reasons
   # the job could never go red. Full `-D warnings` is still too much pre-existing

@@ -16,7 +16,21 @@ path = "src/main.rs"
 
 [lib]
 name = "crush_vm"
-crate-type = ["lib", "cdylib"]
+# MUST stay a plain `lib` — do NOT add `cdylib`/`staticlib` here.
+#
+# Cargo drops the `-C extra-filename=-<hash>` suffix for any target whose
+# crate-type includes a non-rlib output, so this crate's rlib would be
+# written to one fixed path (`deps/libcrush_vm.rlib`). The workspace builds
+# two `crush-vm` units — target graph, plus a host-graph one via the
+# proc-macro crate `crush-macros` (its tests depend on crush-vm) — and both
+# would write that same path, last-writer-wins, silently giving consumers a
+# `crush_vm` linked against a different `casm` than their `crush_frontend`
+# (`E0308: ... found a different casm::Program`).
+#
+# This was CRUSH-16; the `cdylib` was re-added by the PyO3 wheel commit
+# `4137646` and regressed it. The bindings now live in `crush-vm-py`, the C
+# ABI in `crush-vm-capi`. CI's `Test (workspace)` job gates this.
+crate-type = ["lib"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,7 +46,8 @@ thiserror.workspace = true
 # format lockdown lives in `crates/crush-diagnostics/tests/wire_format.rs`.
 crush-diagnostics.workspace = true
 parking_lot = "0.12.5"
-pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+# (pyo3 moved to the `crush-vm-py` crate along with the bindings — keeping it
+# here forced this crate to be a cdylib. See the `[lib]` note above.)
 
 # Native-only: ONNX inference (ai_optimizer), dynamic plugin loading (plugin,
 # via crush-ffi's C-ABI contract), and the `os.cargo` subprocess capability
@@ -67,7 +82,11 @@ buckets = { package = "crush-buckets", path = "../../../buckets", version = "0.1
 
 [features]
 default = ["native-plugins"]
-python = ["dep:pyo3"]
+# `python` removed (CRUSH-WORKSPACE-TEST-1) — the PyO3 bindings it gated now
+# live in the `crush-vm-py` crate, which builds the same `crush_vm` wheel.
+# The feature only ever made sense for a cdylib build, and requiring it here
+# is what forced this crate's crate-type. Build the wheel from
+# `crates/crush-vm-py` instead.
 native-plugins = ["dep:ort", "dep:libloading", "dep:crush-ffi"]
 # See CRUSH-20 dejavue decision: crush-vm (not crush-lang-sdk) owns the
 # buckets dependency directly, because EXEC_LANG's actual spawn point lives

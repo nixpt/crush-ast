@@ -1,5 +1,7 @@
-#[cfg(feature = "python")]
-mod python;
+// The PyO3 bindings that used to live here (`mod python`, behind a `python`
+// feature) moved to the `crush-vm-py` crate — gating them here forced this
+// crate to be a cdylib, which broke `cargo test --workspace`. See the `[lib]`
+// note in Cargo.toml and crates/crush-vm-py/README.md.
 
 // CRUSH-20: the 4th, buckets-sandboxed EXEC_LANG execution path.
 #[cfg(feature = "sandboxed-polyglot")]
