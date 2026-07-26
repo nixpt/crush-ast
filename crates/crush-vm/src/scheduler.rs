@@ -23,12 +23,27 @@ const SLICE_SIZE: usize = 50;
 /// appear in ordinary program output, so this cannot collide by accident.
 pub const CRUSH_RESULT_SENTINEL: &str = "\u{0}CRUSH_RESULT\u{0}";
 
+/// Does `@lang`'s guest source get a marshaling rewrite spliced into it by
+/// `crush_lang_sdk::compile`, and therefore expect JSON on the way in?
+///
+/// Only Python and JavaScript have one. A bash block reads `$FOO` raw, so
+/// JSON-encoding its inputs would hand it `"hello"` — quotes and all — where
+/// it used to see `hello` (CRUSH-68 regression, caught by the portable-VM
+/// bash tests). Keep this list in step with `prepare_stmts`' match arm.
+pub(crate) fn lang_expects_json_env(lang: &str) -> bool {
+    matches!(canonical_lang(lang), Some("python") | Some("javascript"))
+}
+
 /// Encode a Crush [`Value`] for `EXEC_LANG` env-var inject (CRUSH-68).
 ///
 /// Guest rewrites (`rewrite_python_marshaling`, `rewrite_javascript_marshaling`)
 /// do `json.loads` / `JSON.parse` on these strings. Display/`as_text` is
 /// **not** a substitute — it only accidentally works for ints/bools.
-pub(crate) fn value_to_polyglot_env(val: &Value) -> Result<String, VmError> {
+/// Languages with no rewrite keep the Display form via `as_text`.
+pub(crate) fn value_to_polyglot_env(lang: &str, val: &Value) -> Result<String, VmError> {
+    if !lang_expects_json_env(lang) {
+        return Ok(val.as_text());
+    }
     serde_json::to_string(val).map_err(|_| VmError::TypeError {
         expected: "JSON-serializable polyglot value",
         got: val.type_name(),
@@ -1067,7 +1082,7 @@ fn execute_one(
             let env_vars: Vec<(String, String)> = var_names
                 .iter()
                 .zip(var_values.iter())
-                .map(|(name, val)| Ok((name.clone(), value_to_polyglot_env(val)?)))
+                .map(|(name, val)| Ok((name.clone(), value_to_polyglot_env(lang, val)?)))
                 .collect::<Result<Vec<_>, VmError>>()?;
             let outcome = run_exec_lang(
                 lang,
@@ -1537,6 +1552,40 @@ fn dispatch_cap(
     }
 
     Err(VmError::UnknownCap(cap.to_string()))
+}
+
+#[cfg(test)]
+mod polyglot_env_tests {
+    use super::*;
+
+    /// CRUSH-68: Python/JS guests get a rewrite that `json.loads` /
+    /// `JSON.parse`es every input, so the env value must be JSON.
+    #[test]
+    fn rewritten_langs_get_json() {
+        let s = Value::Str("hello".to_string());
+        assert_eq!(value_to_polyglot_env("python", &s).unwrap(), "\"hello\"");
+        assert_eq!(value_to_polyglot_env("py", &s).unwrap(), "\"hello\"");
+        assert_eq!(value_to_polyglot_env("node", &s).unwrap(), "\"hello\"");
+
+        let arr = Value::new_array(vec![Value::Int(1), Value::Int(2)]);
+        assert_eq!(value_to_polyglot_env("javascript", &arr).unwrap(), "[1,2]");
+    }
+
+    /// The other half of the same rule: bash has no rewrite and reads `$FOO`
+    /// raw, so JSON-quoting would change what every existing bash block sees.
+    #[test]
+    fn unrewritten_langs_keep_display_text() {
+        let s = Value::Str("hello".to_string());
+        assert_eq!(value_to_polyglot_env("bash", &s).unwrap(), "hello");
+        assert_eq!(value_to_polyglot_env("sh", &s).unwrap(), "hello");
+    }
+
+    #[test]
+    fn ints_agree_across_both_encodings() {
+        let n = Value::Int(42);
+        assert_eq!(value_to_polyglot_env("python", &n).unwrap(), "42");
+        assert_eq!(value_to_polyglot_env("bash", &n).unwrap(), "42");
+    }
 }
 
 #[cfg(test)]

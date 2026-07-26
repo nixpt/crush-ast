@@ -1076,7 +1076,7 @@ impl PortableVm {
                     .map(|(name, val)| {
                         Ok((
                             name.clone(),
-                            crate::scheduler::value_to_polyglot_env(val)?,
+                            crate::scheduler::value_to_polyglot_env(lang, val)?,
                         ))
                     })
                     .collect::<Result<Vec<_>, VmError>>()?;

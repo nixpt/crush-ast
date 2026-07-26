@@ -78,4 +78,9 @@ Shipped on `agent/nixp/CRUSH-68`:
    `polyglot-javascript` (default-on with `polyglot-python`).
 3. E2E: Python string/array/map + JS string round-trips.
 
-Bash remains string-only (no rewrite) — documented non-goal.
+Bash remains string-only (no rewrite) — documented non-goal. The first cut
+JSON-encoded *every* language's env inject, which broke bash blocks (`$FOO`
+became `"hello"`, quotes included) and failed two portable-VM tests in CI.
+Encoding is now gated on `lang_expects_json_env`, which must stay in step with
+`prepare_stmts`' rewrite arm — a coupling worth removing later by carrying the
+marshaling mode in the EXEC_LANG spec the compiler emits.
