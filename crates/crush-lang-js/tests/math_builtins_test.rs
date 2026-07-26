@@ -102,6 +102,32 @@ fn math_max_returns_the_larger_argument() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// sin / cos / tan — CRUSH-69: same CapabilityCall path; were missing from the
+// producer arm and silently miscompiled after CRUSH-65.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn math_sin_of_zero_is_zero() {
+    assert_prints("console.log(Math.sin(0));", 0.0);
+}
+
+#[test]
+fn math_cos_of_zero_is_one() {
+    assert_prints("console.log(Math.cos(0));", 1.0);
+}
+
+#[test]
+fn math_tan_of_zero_is_zero() {
+    assert_prints("console.log(Math.tan(0));", 0.0);
+}
+
+#[test]
+fn math_sin_of_pi_over_two_is_one() {
+    // Closest portable angle without depending on Math.PI (not mapped yet).
+    assert_prints("console.log(Math.sin(1.5707963267948966));", 1.0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The benchmark that surfaced the bug
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -135,6 +161,9 @@ let e = Math.sqrt(1.5);
 let f = Math.pow(1.5, 2);
 let g = Math.min(1, 2);
 let h = Math.max(1, 2);
+let i = Math.sin(0);
+let j = Math.cos(0);
+let k = Math.tan(0);
 ";
     let cast = js_to_cast(source, "js").expect("js to cast");
     let dumped = format!("{cast:?}");
@@ -147,6 +176,9 @@ let h = Math.max(1, 2);
         "math.pow",
         "math.min",
         "math.max",
+        "math.sin",
+        "math.cos",
+        "math.tan",
     ] {
         assert!(
             dumped.contains(name),
