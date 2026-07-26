@@ -33,7 +33,15 @@ jobs:
             --exclude crush-lang-custom \
             2>&1
 
-  # ── Core VM + compiler tests ────────────────────────────────────���─────────
+  # ── Core VM + compiler tests ───────────────────────────────────────────────
+  # `--lib --tests` (not bare `cargo test`): unit + `tests/*.rs` integration,
+  # but skip doctests. Bare `cargo test` also runs rustdoc, and crush-cast's
+  # `pub use crush_cson::…` re-export hits intermittent E0463 ("can't find
+  # crate for crush_cson") under the multi `-p` invocation on CI runners —
+  # green locally, red here. Integration coverage is the honesty goal
+  # (CRUSH-65 math_builtins_test, crush-cast format_tests); doctests are not.
+  # Prior `--lib`-only skipped those and let silent-wrong-answer bugs ship
+  # under a green badge (CRUSH-CI-HONESTY-1).
   test-core:
     name: Test (core)
     runs-on: ubuntu-latest
@@ -50,13 +58,13 @@ jobs:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo test \
+          cargo test --lib --tests \
             -p crush-walker-core \
             -p crush-vm \
             -p crush-cast \
             -p casm \
             -p crush-frontend \
-            --lib 2>&1
+            2>&1
 
   # ── All language SDK tests ────────────────────────────────────────────────
   test-languages:
@@ -86,14 +94,16 @@ jobs:
             -p crush-lang-go \
             -p crush-lang-zig \
             -p crush-lang-dart \
-            --lib 2>&1
+            2>&1
 
-  # ── Linting (non-blocking) ────────────────────────────────────────────────
+  # ── Linting (blocking) ────────────────────────────────────────────────────
+  # Previously: `continue-on-error: true` AND `|| true` — two independent reasons
+  # the job could never go red. Full `-D warnings` is still too much pre-existing
+  # style debt to flip in one PR; deny correctness lints that must stay red-capable.
   lint:
     name: Clippy
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -110,7 +120,7 @@ jobs:
           cargo clippy --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
-            -- -D warnings 2>&1 || true
+            -- -D clippy::never_loop
 
   # ── Release build compiles (no LTO, just verify release profile works) ────
   build-release:
@@ -143,12 +153,13 @@ jobs:
             -p crush-lang-dart \
             2>&1
 
-  # ── Feature-gate smoke tests ──────────────────────────────────────────────
+  # ── Feature-gate smoke tests (blocking) ───────────────────────────────────
+  # Previously muted with continue-on-error + `|| true`. Keep the same excludes
+  # as Check so pyo3/crush-python stays out of the matrix.
   feature-gates:
     name: Feature gates
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     strategy:
       matrix:
         args: ["--no-default-features", "--all-features"]
@@ -167,4 +178,4 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
-            ${{ matrix.args }} 2>&1 || true
+            ${{ matrix.args }} 2>&1
