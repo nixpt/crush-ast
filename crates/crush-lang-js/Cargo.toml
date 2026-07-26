@@ -32,6 +32,8 @@ boa_interner = { version = "0.21", optional = true }
 
 [dev-dependencies]
 crush-frontend = { path = "../crush-frontend" }
-crush-lang-sdk = { path = "../crush-lang-sdk" }
+# "stdlib" registers the math.* host capabilities that JS Math.min/Math.max
+# lower to (see math_builtin in lower_swc.rs / CRUSH-39).
+crush-lang-sdk = { path = "../crush-lang-sdk", features = ["stdlib"] }
 crush-vm = { path = "../crush-vm" }
 crush-lang-python = { path = "../crush-lang-python" }
