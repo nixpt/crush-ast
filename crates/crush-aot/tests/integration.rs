@@ -304,3 +304,35 @@ fn test_aot_cache_hit() {
 
     assert_eq!(path1, path2, "Cache should return same .so path");
 }
+
+#[test]
+fn test_concurrent_compiles_of_same_source_on_cold_cache() {
+    // Threads racing on one cold cache entry used to build straight into the
+    // cache dir, where rustc's thin-LTO intermediates collide by crate name
+    // and the loser fails to link.
+    let cache_dir = std::env::temp_dir()
+        .join(format!("crush-aot-race-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let source = "fn main() { return 4242; }";
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let cache_dir = cache_dir.clone();
+            std::thread::spawn(move || {
+                let compiler = AotCompiler::new().with_cache_dir(cache_dir);
+                let so_path = compiler
+                    .compile_source(source, "race_test")
+                    .expect("concurrent compile failed");
+                let module = Module::load(&so_path).expect("Module::load failed");
+                module.call_main().expect("call_main failed")
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        let result = handle.join().expect("compile thread panicked");
+        assert_eq!(result, RuntimeValue::Int(4242));
+    }
+
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}

@@ -5,8 +5,35 @@
 
 use anyhow::{Context, Result};
 use sha2::{Sha256, Digest};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Distinguishes concurrent compiles of the *same* source within one process:
+/// the pid alone is not enough when several threads race on one cache entry.
+static COMPILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn unique_work_dir(prefix: &str) -> PathBuf {
+    let seq = COMPILE_SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{prefix}-{}-{seq}", std::process::id()))
+}
+
+/// Move a freshly built artifact into the shared cache.
+///
+/// `rename` is atomic within a filesystem, so a concurrent compile that already
+/// filled the entry is replaced by a bit-identical artifact. A custom cache dir
+/// may live on another filesystem, where `rename` fails with `EXDEV`; copy then.
+fn publish_artifact(built: &Path, cached: &Path) -> Result<()> {
+    match std::fs::rename(built, cached) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(built, cached)
+                .with_context(|| format!("failed to install {} into the AOT cache", built.display()))?;
+            let _ = std::fs::remove_file(built);
+            Ok(())
+        }
+    }
+}
 
 /// Configuration for the AOT compiler.
 pub struct AotCompiler {
@@ -65,20 +92,17 @@ impl AotCompiler {
         // Ensure cache dir exists
         std::fs::create_dir_all(&self.cache_dir)?;
 
-        // Write Rust source to temp dir (uniquified per-process so
-        // concurrent compiles of the same source don't share a work_dir
-        // — their thin-LTO intermediate objects would collide).
-        let work_dir = std::env::temp_dir()
-            .join(format!("crush-aot-{module_name}-{hash_short}-{}", std::process::id()));
+        // Every compile gets a private work dir, and the artifact is built
+        // *inside* it. rustc scatters its thin-LTO intermediates next to the
+        // `-o` path under names derived from the crate name, so building
+        // straight into the shared cache dir lets concurrent compiles of the
+        // same source clobber each other's objects ("cannot open ...rcgu.o").
+        let work_dir = unique_work_dir(&format!("crush-aot-{module_name}-{hash_short}"));
         std::fs::create_dir_all(&work_dir)?;
         let lib_path = work_dir.join("lib.rs");
         std::fs::write(&lib_path, &rust_source)?;
 
-        // Compile to a TEMPORARY output path, then atomically rename to the
-        // cache path. Prevents the TOCTOU race where two concurrent compiles
-        // both miss the cache check and collide on the same `-o` (their
-        // thin-LTO temp objects clobber each other → "cannot open ...rcgu.o").
-        let tmp_path = so_path.with_extension(format!("tmp.{}", std::process::id()));
+        let tmp_path = work_dir.join(&so_name).with_extension(so_ext());
 
         // Compile with rustc
         let mut cmd = Command::new("rustc");
@@ -106,8 +130,7 @@ impl AotCompiler {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
 
-            // Clean up the failed temporary output.
-            let _ = std::fs::remove_file(&tmp_path);
+            let _ = std::fs::remove_dir_all(&work_dir);
 
             // Print the generated source for debugging
             eprintln!("--- Generated Rust source ({module_name}) ---");
@@ -120,14 +143,8 @@ impl AotCompiler {
             anyhow::bail!("rustc compilation failed for {module_name}: {stderr}");
         }
 
-        // Atomically rename the temp output to the cache path. On Linux,
-        // `rename` on the same filesystem is atomic: if a concurrent compile
-        // already filled the cache entry, its .so is atomically replaced with
-        // ours (both are bit-identical — same source, same compiler). If the
-        // rename fails (e.g., cross-filesystem), that's an error.
-        std::fs::rename(&tmp_path, &so_path)?;
+        publish_artifact(&tmp_path, &so_path)?;
 
-        // Clean up temp work dir
         let _ = std::fs::remove_dir_all(&work_dir);
 
         Ok(so_path)
@@ -168,8 +185,7 @@ impl AotCompiler {
 
         std::fs::create_dir_all(&self.cache_dir)?;
 
-        let work_dir = std::env::temp_dir()
-            .join(format!("crush-aot-c-{module_name}-{hash_short}-{}", std::process::id()));
+        let work_dir = unique_work_dir(&format!("crush-aot-c-{module_name}-{hash_short}"));
         std::fs::create_dir_all(&work_dir)?;
         let c_path = work_dir.join("lib.c");
         std::fs::write(&c_path, &c_source)?;
@@ -181,7 +197,7 @@ impl AotCompiler {
         } else {
             cmd.arg("-O0");
         }
-        let tmp_path = so_path.with_extension(format!("tmp.{}", std::process::id()));
+        let tmp_path = work_dir.join(&so_name).with_extension(so_ext());
         cmd.arg("-o").arg(&tmp_path);
         cmd.arg(&c_path);
 
@@ -194,7 +210,7 @@ impl AotCompiler {
             .with_context(|| format!("Failed to run {cc} for {module_name}"))?;
 
         if !output.status.success() {
-            let _ = std::fs::remove_file(&tmp_path);
+            let _ = std::fs::remove_dir_all(&work_dir);
             let stderr = String::from_utf8_lossy(&output.stderr);
             eprintln!("--- Generated C source ({module_name}) ---");
             eprintln!("{c_source}");
@@ -203,7 +219,7 @@ impl AotCompiler {
             anyhow::bail!("{cc} compilation failed for {module_name}: {stderr}");
         }
 
-        std::fs::rename(&tmp_path, &so_path)?;
+        publish_artifact(&tmp_path, &so_path)?;
 
         let _ = std::fs::remove_dir_all(&work_dir);
         Ok(so_path)
