@@ -1300,11 +1300,13 @@ fn lower_call_expr(
                 // before the compiler's `math.floor`/`math.pow` opcode arms
                 // (compiler.rs:1416+) are ever consulted. Those arms are
                 // unreachable from this path; the capability route is the one that
-                // actually executes. All eight names below are registered host caps
-                // (crush-lang-sdk/src/stdlib.rs:32-42), so callers need the
-                // `stdlib` caps granted.
+                // actually executes. All eleven names below are registered host caps
+                // (crush-lang-sdk/src/stdlib.rs), so callers need the `stdlib` caps
+                // granted. `sin`/`cos`/`tan` added in CRUSH-69 — they were absent
+                // from CRUSH-65's producer list and still silently miscompiled.
                 "Math.abs" | "Math.floor" | "Math.ceil" | "Math.round" | "Math.sqrt"
-                | "Math.pow" | "Math.min" | "Math.max" => Ok(Expression::CapabilityCall {
+                | "Math.pow" | "Math.min" | "Math.max"
+                | "Math.sin" | "Math.cos" | "Math.tan" => Ok(Expression::CapabilityCall {
                     name: math_builtin(&func_name),
                     args: lowered_args,
                     meta: m,
