@@ -1262,6 +1262,7 @@ dependencies = [
  "crush-errors",
  "crush-frontend",
  "crush-index",
+ "crush-lang-js",
  "crush-lang-python",
  "crush-vm",
  "getrandom 0.2.17",
