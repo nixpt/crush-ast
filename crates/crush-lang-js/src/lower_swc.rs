@@ -1279,6 +1279,11 @@ fn lower_call_expr(
                     args: lowered_args,
                     meta: m,
                 }),
+                "xip.invoke" => Ok(Expression::CapabilityCall {
+                    name: "xip.invoke".to_string(),
+                    args: lowered_args,
+                    meta: m,
+                }),
                 "parseInt" | "parseFloat" | "Number" | "String" | "Boolean" | "Array"
                 | "Object" => Ok(Expression::Call {
                     function: func_name,
