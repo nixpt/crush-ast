@@ -494,6 +494,12 @@ impl<'a> BoaLower<'a> {
                         }],
                         meta: self.meta0(),
                     }
+                } else if name == "xip.invoke" {
+                    CastExpr::CapabilityCall {
+                        name: "xip.invoke".to_string(),
+                        args,
+                        meta: self.meta0(),
+                    }
                 } else {
                     CastExpr::Call {
                         function: name,
