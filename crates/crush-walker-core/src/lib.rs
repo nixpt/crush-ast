@@ -58,6 +58,7 @@ use anyhow::{Context, Result};
 use crush_cast::{self as ast, Program};
 use serde_json::json;
 use std::collections::HashMap;
+#[cfg(feature = "tree-sitter")]
 use tree_sitter::Node;
 
 // ── Frontend trait (replaces Walker for native-parser frontends) ─────────────
@@ -261,12 +262,14 @@ pub fn frontend_for_extension(ext: &str) -> Option<&'static str> {
 /// let frontend = TreeSitterFrontend::new(GoWalker { file_name: "x.go".into() }, "go", &[".go"]);
 /// let (report, program) = frontend_pipeline(&frontend, source)?;
 /// ```
+#[cfg(feature = "tree-sitter")]
 pub struct TreeSitterFrontend<W: Walker> {
     walker: W,
     language_name: &'static str,
     extensions: &'static [&'static str],
 }
 
+#[cfg(feature = "tree-sitter")]
 impl<W: Walker> TreeSitterFrontend<W> {
     /// Create a new `TreeSitterFrontend`.
     ///
@@ -296,6 +299,7 @@ impl<W: Walker> TreeSitterFrontend<W> {
 // All existing Walker types (GoWalker, CWalker, ZigWalker, DartWalker) are
 // simple structs of `{ file_name: String, ... }` and auto-implement Send +
 // Sync, so adding the bound is non-breaking at the call-site level.
+#[cfg(feature = "tree-sitter")]
 impl<W: Walker + Send + Sync> Frontend for TreeSitterFrontend<W> {
     fn language_name(&self) -> &'static str {
         self.language_name
@@ -384,6 +388,7 @@ impl<W: Walker + Send + Sync> Frontend for TreeSitterFrontend<W> {
 // Walker types (GoWalker, CWalker, ZigWalker, DartWalker) are simple structs
 // of `{ file_name: String, ... }` and auto-implement Send + Sync, so adding
 // the bound is non-breaking at existing call sites.
+#[cfg(feature = "tree-sitter")]
 pub fn run_walker_binary<W: Walker + Send + Sync>(
     walker: W,
     language_name: &'static str,
@@ -402,6 +407,7 @@ pub fn run_walker_binary<W: Walker + Send + Sync>(
 
 /// Errors emitted by language walkers.
 #[derive(Debug, thiserror::Error)]
+#[cfg(feature = "tree-sitter")]
 pub enum WalkerError {
     #[error("Unsupported language: {0}")]
     UnsupportedLanguage(String),
@@ -417,15 +423,18 @@ pub enum WalkerError {
     IoError(String),
 }
 
+#[cfg(feature = "tree-sitter")]
 pub trait Walker {
     fn language(&self) -> tree_sitter::Language;
     fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<ast::Program>;
 }
 
+#[cfg(feature = "tree-sitter")]
 pub struct BaseWalker<'a> {
     pub source: &'a [u8],
 }
 
+#[cfg(feature = "tree-sitter")]
 impl<'a> BaseWalker<'a> {
     pub fn new(source: &'a [u8]) -> Self {
         Self { source }
@@ -983,6 +992,7 @@ macro_rules! impl_adapter_from_walker {
 /// validated when GoWalker is migrated in Sub-Commit 2 Commit B.
 /// (Renumbered from inline test-limitation flag C per the
 /// F1..F5 consistency.)
+#[cfg(feature = "tree-sitter")]
 #[macro_export]
 macro_rules! impl_both_for_walker {
     (

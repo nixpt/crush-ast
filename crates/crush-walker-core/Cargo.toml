@@ -8,11 +8,20 @@ edition = "2021"
 repository.workspace = true
 
 [dependencies]
-tree-sitter.workspace = true
+# tree-sitter is optional: the `Walker` trait, `BaseWalker`, and
+# `TreeSitterFrontend` adapter are gated behind this feature (default on).
+# Native-parser frontends (crush-lang-js via swc, crush-lang-python via
+# rustpython, crush-lang-rust via syn) use only the `Frontend` trait +
+# `FeatureReport`, which are always available. Disable for WASM builds
+# (tree-sitter's C sources don't compile for wasm32).
+tree-sitter = { workspace = true, optional = true }
 crush-cast.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
+
+[features]
+default = ["tree-sitter"]
 
 # CRUSH-36 Commit 2 Sub-Commit 2: dev-dep on crush-frontend so that the
 # `impl_both_for_walker!` macro (defined in `src/lib.rs`) can be exercised
