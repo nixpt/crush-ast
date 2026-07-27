@@ -587,3 +587,19 @@ Rejected alternatives:
 
 Artifacts: docs/design/lang-deps-pypi-npm.md, .jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md
 
+
+## 2026-07-26T18:02:05-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] Extract PyO3 bindings to crush-vm-py so crush-vm can go back to crate-type=["lib"] (CRUSH-16 regression fix)
+
+Reason:
+cargo drops '-C extra-filename=-<hash>' for any target whose crate-type includes a non-rlib output. crush-vm was crate-type=["lib","cdylib"], so its rlib went to ONE fixed path: deps/libcrush_vm.rlib. The workspace legitimately builds TWO crush-vm units — the target graph, and a HOST graph unit via crush-macros (a proc-macro crate whose tests depend on crush-vm). Both wrote that same path; last writer won; all 100 consumers link '--extern crush_vm=deps/libcrush_vm.rlib' with no hash to distinguish them. When the host unit won, crush-lang-sdk linked a crush_vm built against the HOST casm while its crush_frontend was built against the TARGET casm, giving E0308 'expected casm::Program, found a different casm::Program' at differential.rs:200. Because it is a race it was order-dependent — which is exactly why 'cargo check --workspace --all-targets' PASSED, 'cargo test -p crush-net' PASSED, and 'cargo test --workspace' failed intermittently: in this one session it failed two DIFFERENT ways, E0308 once and E0463 'can't find crate for crush_lang_sdk' once. Direct evidence from 'cargo test --workspace -v': extra-filename=(NONE) for both lib+cdylib crates (crush_vm, crush_vm_capi) and a real -<hash> for every plain-lib crate (casm, crush_cast, crush_frontend). CRUSH-16 already diagnosed and fixed this (set crush-vm to ["lib"], extracted crush-vm-capi for the C ABI); commit 4137646 'PyO3 wheel — expose CVM1 VM to Python' re-added the cdylib and silently reverted it, and nothing caught the revert because NO CI job ran cargo test --workspace. crush-vm-capi's own doc comment already asserted crush-vm was a plain lib, so the codebase was documenting an invariant it no longer held.
+
+Author type: agent
+
+Rejected alternatives:
+- **Drop crush-vm from crush-macros dev-dependencies to kill the host-graph unit**: smaller and touches no cross-box bridge code, but crush-macros' test is legitimate (the macro expands to ::crush_vm::run_casm_json, so testing it genuinely requires crush-vm) and it leaves the landmine armed for any future host-graph edge — which is precisely how this regressed once already
+- **Feature-gate the cdylib so only wheel builds get it**: not expressible, cargo has no per-feature crate-type
+- **Leave crush-vm as lib+cdylib and document the hazard**: rejected because crush-vm-capi's doc comment ALREADY claimed crush-vm was a plain lib — the docs were right about the invariant and the manifest was wrong
+
+Outcome:
+New leaf crate crates/crush-vm-py (cdylib only) holds the bindings verbatim; crush-vm back to crate-type=["lib"] with pyo3 dep and 'python' feature removed. Python API deliberately unchanged: same wheel name, same module-name crush_vm, same run_blob signature — only the maturin invocation moves (crates/crush-vm-py --features extension-module, was crates/crush-vm --features python). Plus a blocking 'Test (workspace)' CI job AND a deterministic manifest-level regression test (crates/crush-vm/tests/crate_type_invariant.rs), because the CI job alone can go green by winning the race.
+

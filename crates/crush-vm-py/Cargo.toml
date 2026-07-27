@@ -1,0 +1,57 @@
+# Deliberately excluded from the crush-ast workspace (see root Cargo.toml's
+# `exclude`) — same treatment as `crush-web`, and for a stronger reason here:
+# this crate exists precisely to keep a `cdylib` out of the main build graph,
+# so it should not be in that graph at all. Excluding it also means a plain
+# `cargo test --workspace` never builds pyo3, which needs a libpython the
+# runner may not have (and which currently cannot build on a Python 3.14 box
+# at all — pyo3 0.23's max supported is 3.13; pre-existing, see
+# .jagent/planning/TASKS.md).
+#
+# An empty [workspace] table (not just the `exclude` on the crush-ast side) is
+# needed to stop Cargo's ancestor search here — otherwise it walks further up
+# past an excluded package looking for the next workspace root.
+[workspace]
+
+[package]
+name = "crush-vm-py"
+# Literal values, not `.workspace = true`: an excluded package is not a
+# workspace member and cannot inherit. Keep these in step with the root
+# [workspace.package] by hand.
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.95.0"
+description = "Python extension module (PyO3) exposing the canonical CVM1 VM — builds the `crush_vm` wheel"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nixpt/crush-ast"
+homepage = "https://github.com/nixpt/crush-ast"
+readme = "README.md"
+keywords = ["crush", "vm", "python", "pyo3", "bindings"]
+categories = ["compilers"]
+
+# cdylib ONLY — never `["lib", "cdylib"]`.
+#
+# A target whose crate-type includes a non-rlib output loses cargo's
+# `-C extra-filename=-<hash>` suffix, so its rlib is written to ONE fixed
+# path (`deps/libcrush_vm.rlib`). That is harmless for a leaf cdylib, and
+# corrupting for a crate that is also a normal rlib dependency: if two
+# build units of it exist (e.g. host graph + target graph), both write that
+# same path and the last writer wins. See CRUSH-16 and this crate's reason
+# for existing, below.
+[lib]
+name = "crush_vm_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Plain-lib dependency: crush-vm is `crate-type = ["lib"]` and must stay so.
+# `no-default-features` mirrors what crush-vm/pyproject.toml used to pass —
+# the wheel never wanted ort/libloading/crush-ffi.
+crush-vm = { path = "../crush-vm", version = "0.3.0", default-features = false }
+pyo3 = { version = "0.23" }
+
+[features]
+# NOTE: `extension-module` is intentionally NOT in default — same rationale
+# as crush-python. When active, pyo3 skips linking libpython (correct for a
+# .so the interpreter dlopens), but a plain `cargo build`/`cargo test` of
+# this crate then has unresolved symbols. Maturin passes it explicitly; see
+# pyproject.toml's `features = ["extension-module"]`.
+extension-module = ["pyo3/extension-module"]

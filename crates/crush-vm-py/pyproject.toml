@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[project]
+name = "crush-vm"
+version = "0.3.0"
+description = "Canonical CVM1 VM (crush bytecode) as a Python extension"
+requires-python = ">=3.9"
+
+[tool.maturin]
+# Moved here from crates/crush-vm/pyproject.toml (CRUSH-WORKSPACE-TEST-1).
+# The wheel's identity is deliberately UNCHANGED — same distribution name
+# (`crush-vm`), same version, same import name (`crush_vm`), same `run_blob`
+# signature. Only the crate being built moved, so that `crush-vm` itself can
+# go back to `crate-type = ["lib"]`; see src/lib.rs for why that matters.
+#
+# Was: `features = ["python"]` against crates/crush-vm.
+features = ["extension-module"]
+no-default-features = true
+module-name = "crush_vm"

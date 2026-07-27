@@ -43,7 +43,16 @@ members = [
 # override would get silently overridden back on by any sibling's plain
 # `crush-vm.workspace = true`. Excluding it gives it an independent
 # resolution root so its wasm32 build only sees what it actually depends on.
-exclude = ["crates/crush-web"]
+# crush-vm-py is excluded for a related but distinct reason: it is the PyO3
+# `cdylib` that used to live inside crush-vm as a `python` feature, which
+# forced crush-vm to be `crate-type = ["lib", "cdylib"]` and cost it cargo's
+# filename hash — two crush-vm units then raced to write one
+# `deps/libcrush_vm.rlib` and consumers linked whichever won (E0308
+# "a different casm::Program"). A crate whose whole job is to keep a cdylib
+# OUT of the main graph should not be in that graph; excluding it also keeps
+# `cargo test --workspace` free of any libpython requirement. See
+# crates/crush-vm-py/README.md, CRUSH-16, and CRUSH-WORKSPACE-TEST-1.
+exclude = ["crates/crush-web", "crates/crush-vm-py"]
 
 [workspace.package]
 version       = "0.3.0"

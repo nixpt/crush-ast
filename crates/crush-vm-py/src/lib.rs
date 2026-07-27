@@ -2,7 +2,36 @@
 //! PyO3 bindings (CRUSHVM-PYO3): expose the canonical CVM1 VM to Python so
 //! chroma/tessera delegates execution to the SAME Rust VM that crush-ast +
 //! crush-ptx use — CVM1 round-trip becomes correct-by-construction.
-//! Feature-gated behind `python`; built as a cdylib via maturin.
+//! Built as a cdylib via maturin; see this crate's `pyproject.toml`.
+//!
+//! ## Why this is its own crate (CRUSH-WORKSPACE-TEST-1)
+//!
+//! This module used to live at `crush-vm/src/python.rs` behind a `python`
+//! feature, which forced `crush-vm` to declare
+//! `crate-type = ["lib", "cdylib"]`. A target with a non-rlib crate-type
+//! loses cargo's `-C extra-filename=-<hash>` suffix, so `crush-vm`'s rlib
+//! was written to one fixed path — `deps/libcrush_vm.rlib` — while the
+//! workspace legitimately builds *two* `crush-vm` units (a target-graph one
+//! and a host-graph one, the latter pulled in by `crush-macros`, a
+//! proc-macro crate whose tests depend on `crush-vm`). Both units wrote
+//! that same path; the last writer won, and every consumer linked whatever
+//! happened to be there. When the host-graph unit won, `crush-lang-sdk`
+//! linked a `crush_vm` built against the host `casm` while its
+//! `crush_frontend` was built against the target `casm`, producing
+//! `E0308: expected casm::Program, found a different casm::Program`.
+//!
+//! CRUSH-16 already diagnosed this and set `crush-vm` back to
+//! `crate-type = ["lib"]`; the PyO3 wheel commit re-added the `cdylib` and
+//! silently regressed it, because no CI job ran `cargo test --workspace`.
+//! Splitting the bindings into this leaf cdylib restores the invariant that
+//! `crush-vm-capi`'s own docs already assert, and the workspace test job
+//! added alongside it keeps the regression from being silent a third time.
+//!
+//! **The Python API is unchanged**: the module is still imported as
+//! `crush_vm` and still exposes `run_blob` with the same signature. Only
+//! the build invocation moved — maturin now builds
+//! `crates/crush-vm-py` with `--features extension-module` instead of
+//! `crates/crush-vm` with `--features python`.
 //!
 //! CRUSHVM-CAPS-2 (Phase 2): `run_blob` additionally accepts `host_caps` (a
 //! `{name: (callable, argc_or_None, returns)}` dict) and `allowed_caps` (a
@@ -15,9 +44,14 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
 
-use crate::bytecode::Program;
-use crate::host::{HostCap, HostCapSpec, HostCaps};
-use crate::vm::{run_with_caps, Quotas, Value};
+// `::crush_vm` is spelled absolutely: the `#[pymodule]` below must expose the
+// Python module under the name `crush_vm`, which puts an item of that name in
+// this crate root and makes a bare `crush_vm::` path ambiguous with the crate
+// itself (E0659). In the old location this did not arise — the bindings were a
+// submodule of crush-vm and reached the VM through `crate::`.
+use ::crush_vm::bytecode::Program;
+use ::crush_vm::host::{HostCap, HostCapSpec, HostCaps};
+use ::crush_vm::vm::{run_with_caps, Quotas, Value};
 
 fn value_to_py(py: Python<'_>, v: &Value) -> PyObject {
     match v {
@@ -211,8 +245,14 @@ fn run_blob<'py>(
     Ok(d)
 }
 
+// The Python module name stays `crush_vm` so `import crush_vm` in
+// chroma/tessera keeps working unchanged — the *crate* is `crush-vm-py`, the
+// module is not. The Rust fn is deliberately named something else and the
+// Python name pinned via `#[pyo3(name = ...)]`: naming the fn `crush_vm` would
+// shadow the `crush_vm` crate in this root (E0659 on every `use crush_vm::`).
 #[pymodule]
-fn crush_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "crush_vm")]
+fn crush_vm_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_blob, m)?)?;
     Ok(())
 }
