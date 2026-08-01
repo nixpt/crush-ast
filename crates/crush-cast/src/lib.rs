@@ -165,12 +165,18 @@ pub enum Statement {
         /// Import statements within the block
         #[serde(default)]
         imports: Vec<ImportStatement>,
-        /// `@lang[dep1, dep2]` annotation: additional bare-runtime `buckets`
-        /// package specs to provision alongside the language itself (CRUSH-20).
-        /// NOT PyPI/npm packages — buckets has no package-manager-level
-        /// dependency resolution, so e.g. `@python[numpy]` fails loudly at
-        /// provisioning time ("unknown package") rather than silently
-        /// succeeding without numpy. See CRUSH-20 ticket's "numpy reframe".
+        /// `@lang[dep1, dep2]` annotation: additional `buckets` package specs
+        /// to provision alongside the language itself. Each entry is an OPAQUE
+        /// spec string — a bare bottle alias (`openssl@^1.1`, CRUSH-20) or a
+        /// `pypi:`/`npm:` registry spec (`pypi:numpy@1.26`, `npm:is-number@7`,
+        /// CRUSH-66). Registry specs install into buckets' shared cellar
+        /// HOST-side and reach the network-isolated guest via RO-bind +
+        /// `PYTHONPATH`/`NODE_PATH` (no in-sandbox pip/npm). v1 rule: NO silent
+        /// auto-prefix — bare `numpy` stays a bottle lookup and fails loudly if
+        /// unknown; callers must write `pypi:numpy`. Scoped npm
+        /// (`npm:@scope/name`) is rejected up front (buckets v1 is unscoped
+        /// only). Provisioned only under the `sandboxed-polyglot` feature;
+        /// without it, deps are silently unused (CRUSH-20 behavior).
         #[serde(default)]
         deps: Vec<String>,
         #[serde(default)]

@@ -530,10 +530,14 @@ impl Lexer {
             }
         }
 
-        // Optional `[dep1, dep2]` dependency-annotation list (CRUSH-20):
-        // `@python[numpy, scipy] { ... }`. Bare-runtime `buckets` package
-        // specs, NOT PyPI/npm packages — see `Statement::LangBlock::deps`'s
-        // doc comment for why.
+        // Optional `[dep1, dep2]` dependency-annotation list (CRUSH-20,
+        // extended by CRUSH-66): `@python[pypi:numpy@1.26, scipy] { ... }`.
+        // Each entry is an OPAQUE `buckets` package spec — a bare bottle
+        // alias (`openssl@^1.1`) or a registry spec (`pypi:six`,
+        // `npm:is-number@7`). The lexer accepts the full spec character set
+        // (see `is_dep_spec_char`) and passes the string through verbatim;
+        // `bucket_exec` validates and provisions it. See
+        // `Statement::LangBlock::deps`'s doc comment.
         let deps = if self.peek() == Some('[') {
             match self.read_dep_list() {
                 Some(deps) => deps,
@@ -582,6 +586,16 @@ impl Lexer {
     /// (no closing `]`, empty entry from a stray comma, unexpected char) —
     /// caller is responsible for restoring its own saved checkpoint in that
     /// case, same convention as the rest of this speculative-lookahead code.
+    ///
+    /// Each entry is an OPAQUE `buckets` package spec (CRUSH-66): a bare
+    /// bottle alias (`openssl@^1.1`) or a registry spec (`pypi:six`,
+    /// `npm:is-number@7`, scoped `npm:@scope/name`). The accepted character
+    /// set is `is_dep_spec_char` — letters/digits plus `_ - . : @ /` — which
+    /// covers every form `buckets::resolve_multi` understands. The string is
+    /// passed through verbatim; semantic validation (e.g. rejecting scoped
+    /// npm, which BUCKETS-15 v1 cannot resolve) happens in `bucket_exec`,
+    /// which can raise a proper `SandboxSetup` diagnostic rather than
+    /// silently dropping the dep here.
     fn read_dep_list(&mut self) -> Option<Vec<String>> {
         self.advance(); // consume '['
         let mut deps = Vec::new();
@@ -598,10 +612,10 @@ impl Lexer {
                     self.advance();
                     return Some(deps);
                 }
-                Some(ch) if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' => {
+                Some(ch) if Self::is_dep_spec_char(ch) => {
                     let mut name = String::new();
                     while let Some(ch) = self.peek() {
-                        if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
+                        if Self::is_dep_spec_char(ch) {
                             name.push(ch);
                             self.advance();
                         } else {
@@ -630,6 +644,26 @@ impl Lexer {
                 _ => return None,
             }
         }
+    }
+
+    /// Characters legal inside a single `@lang[...]` dependency spec
+    /// (CRUSH-66). Superset of the CRUSH-20 bottle-alias set (alphanumerics
+    /// plus `_ - .`) extended with:
+    /// - `:` — registry scheme (`pypi:`/`npm:`/`cargo:`),
+    /// - `@` — version pin (`pkg@7`) and scoped npm (`@scope/name`),
+    /// - `/` — scoped-package separator,
+    /// - `^ ~ * = < >` — semver version-constraint operators, so a bare
+    ///   bottle spec like `openssl@^1.1` (CRUSH-20's canonical example)
+    ///   lexes intact rather than truncating at the constraint.
+    ///
+    /// Deliberately excludes `,` `[` `]` `{` `}` and whitespace so the
+    /// bracketed list structure stays unambiguous (a `,` ends an entry; a
+    /// `]` ends the list). Multi-range constraints that need spaces or
+    /// commas (`>=1.0 <2.0`, `1.x || 2.x`) are not expressible in a bracket
+    /// list — use a single contiguous constraint.
+    fn is_dep_spec_char(ch: char) -> bool {
+        ch.is_alphanumeric()
+            || matches!(ch, '_' | '-' | '.' | ':' | '@' | '/' | '^' | '~' | '*' | '=' | '<' | '>')
     }
 
     /// Read the raw body of a polyglot block starting at depth 1 (caller
@@ -1099,5 +1133,97 @@ mod tests {
             lexer.next_token().unwrap(),
             Token::Int(42, SourceLocation { line: 2, col: 1 })
         );
+    }
+
+    /// CRUSH-66: a `pypi:` registry spec survives lexing as an opaque dep.
+    #[test]
+    fn test_lex_lang_block_with_pypi_dep() {
+        let mut lexer = Lexer::new("@python[pypi:six] { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(body, _, deps) => {
+                assert_eq!(deps, vec!["pypi:six".to_string()]);
+                assert_eq!(body.trim(), "pass");
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-66: an `npm:` spec with an `@version` pin survives lexing.
+    #[test]
+    fn test_lex_lang_block_with_npm_versioned_dep() {
+        let mut lexer = Lexer::new("@javascript[npm:is-number@7] { x }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("javascript".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps) => {
+                assert_eq!(deps, vec!["npm:is-number@7".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-66: a mixed list (registry + bare bottle + pinned bottle) lexes
+    /// in order, comma-separated.
+    #[test]
+    fn test_lex_lang_block_with_multiple_mixed_deps() {
+        let mut lexer =
+            Lexer::new("@python[pypi:numpy@1.26, scipy, openssl@^1.1] { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps) => {
+                assert_eq!(
+                    deps,
+                    vec![
+                        "pypi:numpy@1.26".to_string(),
+                        "scipy".to_string(),
+                        "openssl@^1.1".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-66: a scoped npm spec (`npm:@scope/name`) is LEXED verbatim —
+    /// the lexer accepts `@`/`/`; rejecting it is `bucket_exec`'s job (it
+    /// raises a clear `SandboxSetup` error, since BUCKETS-15 v1 can't
+    /// resolve scoped packages).
+    #[test]
+    fn test_lex_lang_block_with_scoped_npm_dep_is_passed_through() {
+        let mut lexer = Lexer::new("@javascript[npm:@types/node] { x }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("javascript".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps) => {
+                assert_eq!(deps, vec!["npm:@types/node".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// Regression: a polyglot block with no `[...]` list still yields an
+    /// empty deps vec (CRUSH-20 behavior unchanged).
+    #[test]
+    fn test_lex_lang_block_without_deps_has_empty_deps() {
+        let mut lexer = Lexer::new("@python { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps) => assert!(deps.is_empty()),
+            other => panic!("expected LangBody, got {other:?}"),
+        }
     }
 }

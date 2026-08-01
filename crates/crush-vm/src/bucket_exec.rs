@@ -25,12 +25,14 @@ use buckets::sandbox::{sandboxed_command, SandboxProfile};
 use buckets::types::ResolvedEnvironment;
 
 /// Map a canonical `@lang` tag to the bare-runtime `buckets` spec used to
-/// provision it. Sibling allowlist to `scheduler::resolve_lang_binary` —
-/// buckets provisions bare language runtimes only (no PyPI/npm-level
-/// dependency resolution; see CRUSH-20's "numpy reframe" non-goal), so this
-/// always resolves to a plain `<project>@<constraint>` spec, never a
-/// dependency-set. Version constraints are loose (`^`) to track buckets'
-/// own resolvable range, matching the CRUSHAST-BUCKETSPIKE-1/2 spike specs.
+/// provision the language ITSELF. Sibling allowlist to
+/// `scheduler::resolve_lang_binary`. This always resolves to a plain
+/// `<project>@<constraint>` bottle spec (e.g. `python@3.11`) — the LANGUAGE
+/// runtime only. Additional `@lang[...]` dependencies (bare bottle aliases
+/// OR `pypi:`/`npm:` registry specs — CRUSH-66) are passed separately via
+/// the caller's `deps` and validated by `validate_deps`, not mapped here.
+/// Version constraints are loose (`^`) to track buckets' own resolvable
+/// range, matching the CRUSHAST-BUCKETSPIKE-1/2 spike specs.
 pub(crate) fn lang_to_bucket_spec(lang: &str) -> Option<&'static str> {
     match lang {
         "python" | "python3" | "py" => Some("python@3.11"),
@@ -73,8 +75,14 @@ pub(crate) fn resolve_with_deadline(
 }
 
 /// Build a bwrap-sandboxed `std::process::Command` for `binary`/`exec_flag
-/// code_str`, provisioning `binary` (+ `deps` — additional bare-runtime
-/// buckets specs, see `Statement::LangBlock::deps`) via buckets first.
+/// code_str`, provisioning `binary` plus `deps` via buckets first. `deps`
+/// are OPAQUE buckets package specs (see `Statement::LangBlock::deps`):
+/// bare bottle aliases (`openssl@^1.1`) or `pypi:`/`npm:` registry specs
+/// (`pypi:six`, `npm:is-number@7`) — CRUSH-66. They are validated by
+/// `validate_deps` (empty entries and scoped npm are rejected up front) and
+/// otherwise handed to `resolve_multi` unchanged; `compose_env`'s
+/// `PYTHONPATH`/`NODE_PATH` flow into the guest so the resolved packages are
+/// importable WITHOUT giving the sandbox network access.
 ///
 /// Returns the built command plus how many of `budget_ms` provisioning
 /// consumed, so the caller can bound the actual sandboxed run with what's
@@ -88,6 +96,8 @@ pub(crate) fn build_sandboxed_command(
     env_vars: &[(String, String)],
     budget_ms: u64,
 ) -> Result<(std::process::Command, u64), String> {
+    validate_deps(deps)?;
+
     let bucket_spec = lang_to_bucket_spec(lang).unwrap_or(binary).to_string();
     let mut specs = vec![bucket_spec];
     specs.extend(deps.iter().cloned());
@@ -103,8 +113,11 @@ pub(crate) fn build_sandboxed_command(
         // namespace (see CRUSHAST-BUCKETSPIKE-1's `SPIKE_RESULTS.md`).
         project_dir: Some(cwd.clone()),
         extra_ro_binds: resolved.installations.iter().map(|i| i.path.clone()).collect(),
-        // No PyPI/npm dependency install (CRUSH-20 non-goal) needs no
-        // network; keep the sandbox network-isolated by default.
+        // Registry deps (`pypi:`/`npm:`) are resolved HOST-side by
+        // `resolve_multi` above and RO-bound into the guest via
+        // `extra_ro_binds` + `PYTHONPATH`/`NODE_PATH` — the guest itself
+        // never installs anything, so it needs no network. Keep the sandbox
+        // network-isolated by default (CRUSH-20 / CRUSH-66).
         allow_network: false,
         ..Default::default()
     };
@@ -118,4 +131,85 @@ pub(crate) fn build_sandboxed_command(
     let cmd = sandboxed_command(binary, &args, &cwd, &env, &profile);
     let remaining_ms = budget_ms.saturating_sub(elapsed_ms).max(1);
     Ok((cmd, remaining_ms))
+}
+
+/// Validate a `@lang[...]` dependency spec list before handing it to
+/// `buckets::resolve_multi` (CRUSH-66). Deps are opaque buckets specs —
+/// bare bottle aliases (`openssl@^1.1`) or registry specs (`pypi:six`,
+/// `npm:is-number@7`) — but two shapes are rejected up front so the failure
+/// surfaces as a clear `SandboxSetup` diagnostic (CRUSH-18's phase model)
+/// rather than a confusing resolve error deep in buckets:
+///
+/// - empty entries (a stray `@python[,]` or blank element), and
+/// - scoped npm packages (`npm:@scope/name`): BUCKETS-15 v1 resolves
+///   UNSCOPED registry names only, so a scoped spec can never succeed —
+///   reject it with a message that names the limitation instead of letting
+///   it fail opaquely at inventory time.
+///
+/// Everything else (including genuinely unknown packages) is left to
+/// `resolve_multi`, whose own error is mapped to `SandboxSetup` by the
+/// caller. A leading `@` after the `npm:` scheme marks a scope; an `@`
+/// elsewhere (`npm:is-number@7`) is a version pin and is allowed.
+pub(crate) fn validate_deps(deps: &[String]) -> Result<(), String> {
+    for dep in deps {
+        if dep.trim().is_empty() {
+            return Err("empty dependency spec in @lang[...] list".to_string());
+        }
+        if let Some(rest) = dep.strip_prefix("npm:") {
+            if rest.starts_with('@') {
+                return Err(format!(
+                    "scoped npm package {dep:?} is not supported by buckets v1 \
+                     (unscoped registry names only); use an unscoped package or \
+                     install it into the host cellar manually"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &str) -> String {
+        v.to_string()
+    }
+
+    #[test]
+    fn validate_deps_accepts_bare_and_registry_specs() {
+        assert!(validate_deps(&[
+            s("openssl@^1.1"),
+            s("pypi:six"),
+            s("npm:is-number@7"),
+            s("cargo:ripgrep"),
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_deps_accepts_empty_list() {
+        let deps: Vec<String> = Vec::new();
+        assert!(validate_deps(&deps).is_ok());
+    }
+
+    #[test]
+    fn validate_deps_rejects_empty_entry() {
+        let err = validate_deps(&[s("pypi:six"), s("  ")]).unwrap_err();
+        assert!(err.contains("empty dependency"), "{err}");
+    }
+
+    #[test]
+    fn validate_deps_rejects_scoped_npm() {
+        let err = validate_deps(&[s("npm:@types/node")]).unwrap_err();
+        assert!(err.contains("scoped npm"), "{err}");
+        assert!(err.contains("npm:@types/node"), "{err}");
+    }
+
+    #[test]
+    fn validate_deps_allows_unscoped_npm_with_version_pin() {
+        // `npm:is-number@7` has an `@` but it is a version pin, not a scope —
+        // only a LEADING `@` after `npm:` marks a scoped package.
+        assert!(validate_deps(&[s("npm:is-number@7")]).is_ok());
+    }
 }

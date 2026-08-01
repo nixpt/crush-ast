@@ -1,5 +1,11 @@
 # TASKS — crush-ast
 
+Refreshed 2026-08-01 (cece): **CRUSH-66 Done** — BUCKETS-15 (`pypi:`/`npm:`
+resolvers) merged to buckets `master`, and `@lang[pypi:/npm:]` deps now
+provision through the buckets sandbox (lexer char-set fix + `validate_deps`
++ live bwrap proof for `pypi:six` / `npm:is-number`, network-isolated). See
+`tickets/CRUSH-66-lang-deps-pypi-npm.md` Resolution.
+
 Refreshed 2026-07-25 (docs + CRUSH-66 filing): `main` @ `5fb5bff` includes M2
 JIT Phases 2–7 (PR #21). CRUSH-20 ticket status corrected to **Done**. New
 Ready item **CRUSH-66** (pypi/npm `@lang[deps]` via BUCKETS-15). Prior
@@ -20,7 +26,7 @@ working this backlog must follow.
 
 | ID | Task | Notes |
 |----|------|-------|
-| [CRUSH-66](./tickets/CRUSH-66-lang-deps-pypi-npm.md) | `@lang[pypi:/npm:]` deps via buckets | Design: `docs/design/lang-deps-pypi-npm.md`. Blocked on buckets#4 (BUCKETS-15). |
+| [CRUSH-66](./tickets/CRUSH-66-lang-deps-pypi-npm.md) | `@lang[pypi:/npm:]` deps via buckets | **Done 2026-08-01** — BUCKETS-15 merged; lexer + `validate_deps` + live bwrap proof. Design: `docs/design/lang-deps-pypi-npm.md`. |
 
 For the next-arc milestones **M5–M11**, this file tracks only milestone-level
 status (one short paragraph per milestone). For full ticket-level detail,
