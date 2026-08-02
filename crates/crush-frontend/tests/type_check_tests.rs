@@ -408,3 +408,54 @@ fn test_binary_type_check_logical_ops_require_bool() {
             .contains("requires bool operands")
     );
 }
+
+// ── Return-type inference: call-graph SCC ordering ──────────────────────────
+
+/// A call chain deeper than the old 10-iteration global fixed point could
+/// resolve. Before SCC-ordered inference, chains deeper than ~12 functions
+/// nondeterministically (HashMap iteration order) kept placeholder Null
+/// return types, making `chain39(1) > 0` fail with "Cannot compare types".
+#[test]
+fn deep_call_chain_return_types_resolve() {
+    let mut source = String::from("fn chain00(x: Int) { return x + 42 }\n");
+    for i in 1..40 {
+        source.push_str(&format!(
+            "fn chain{:02}(x: Int) {{ return chain{:02}(x) + 1 }}\n",
+            i,
+            i - 1
+        ));
+    }
+    source.push_str("fn main() {\n    if chain39(1) > 0 {\n        return 1\n    }\n    return 0\n}\n");
+    crush_frontend::compile_crush_source(&source)
+        .expect("deep call chain must type-check deterministically");
+}
+
+/// Mutual recursion forms a genuine SCC; its members must still converge via
+/// the scoped fixed point.
+#[test]
+fn mutual_recursion_return_types_resolve() {
+    let source = r#"
+fn is_even(n: Int) {
+    if n == 0 {
+        return true
+    }
+    return is_odd(n - 1)
+}
+
+fn is_odd(n: Int) {
+    if n == 0 {
+        return false
+    }
+    return is_even(n - 1)
+}
+
+fn main() {
+    if is_even(10) {
+        return 1
+    }
+    return 0
+}
+"#;
+    crush_frontend::compile_crush_source(source)
+        .expect("mutual recursion must type-check");
+}
