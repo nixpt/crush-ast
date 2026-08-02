@@ -1,6 +1,6 @@
-# CRUSH-21 — crush-ast design audit
+# CRUSH-71 — crush-ast design audit
 
-Branch: `agent/panini-crush/CRUSH-21` · Author: panini · Date: 2026-08-02
+Branch: `agent/panini-crush/CRUSH-71` · Author: panini · Date: 2026-08-02
 
 Captain's directive: explore and improve the design by ~3000x (ambition level,
 not a literal gate) — hunt design-level wins across the pipeline
@@ -11,7 +11,7 @@ baseline and a survey of what clients actually consume.
 
 ### 1.1 Compile pipeline (`cargo bench -p crush-frontend --bench cast_compile`)
 
-Full raw output: `docs/design/CRUSH-21/baseline-cast-compile-bench.txt`.
+Full raw output: `docs/design/CRUSH-71/baseline-cast-compile-bench.txt`.
 20 fixtures, two paths each: `text` (source → lex → parse → semantic →
 optimize → compile) and `cast` (CAST JSON → serde decode → semantic →
 optimize → compile). Representative rows (p50/p95 in µs, peak heap in bytes):
