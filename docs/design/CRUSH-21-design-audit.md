@@ -115,7 +115,99 @@ Ripple-risk columns: **casm** = casm instruction set; **cast** =
 
 ## 3. Design findings (ranked)
 
-_(pending — pipeline + VM audit sections land here)_
+### 3.1 Compile pipeline (parser → CAST → semantic → optimizer → compiler → casm)
+
+Ranked by estimated impact on end-to-end compile latency.
+
+1. **Instructions are built out of `serde_json::Value` — 4–6 heap allocations
+   per emitted instruction.** `compiler.rs:2271-2288` (`create_instr`) +
+   `casm/src/lib.rs:236-244`. 201 `create_instr` call sites, 254 `json!`
+   literals. Per instruction: a `String` opcode, a `serde_json::Map` for args
+   (+ `String` key per field), a *second* map for `meta` (empty essentially
+   always), optionally a `lang` String. A 10k-instruction program does 40–60k
+   allocations in codegen alone — and consumers pay again via `to_opcode()`
+   re-parsing JSON at load. Better: emit the typed `casm::OpCode` enum (which
+   already exists, `casm/src/lib.rs:66-222`) directly into `Vec<OpCode>`;
+   keep JSON only as a serialization view.
+2. **Every CAST node carries a `HashMap<String, serde_json::Value>` `meta`
+   that is always empty.** All `Statement`/`Expression` variants
+   (`crush-cast/src/lib.rs:80-405`). Parser writes `meta: HashMap::new()` at
+   54 sites; only ONE site ever inserts anything (`parser/mod.rs:2183`).
+   Costs 48 bytes inline per node (~2× node size), inflates every clone in
+   the pipeline, and forces serde_json into the core type graph. Better: a
+   packed `Span { lo: u32, hi: u32 }` per node + side table for the rare real
+   metadata. Highest-leverage structural change in crush-cast — but it IS the
+   nimbus/client contract shape (crush-visuals matches on these variants), so
+   it needs a coordinated change.
+3. **SemanticAnalyzer runs 4–14 full type-inference walks per program.**
+   `semantics.rs:98-137`: seed pass + authoritative pass + fixed-point loop
+   (≤10 iterations) + final `check_function` walk — the multi-pass structure
+   exists only because `program.functions` is a HashMap with unordered
+   iteration (comment at :92-97 says so). Better: call graph → Tarjan SCC →
+   reverse-topological inference; one pass for non-recursive code, O(N+E).
+4. **Per-node `Type` deep clones inside those passes.** `resolve_var` clones
+   the full recursive `Type` on every variable reference
+   (`semantics.rs:516-523`); every call expression clones `(Vec<Type>, Type)`
+   (`semantics.rs:382`). Multiplied by the 4–14 passes of #3. Better: `&Type`
+   /`Cow`, or intern types to `TypeId(u32)`.
+5. **`compile_cast` deep-clones the entire program per compile.**
+   `lib.rs:65-72` — full AST clone (2× oversized due to #2) purely so the
+   optimizer can mutate; on the critical path of `compile_crush_source` used
+   by sdk/aot/lang-c/js/python/dart. Better: by-value entry point +
+   `compile_cast_ref` for callers that retain the original.
+6. **Optimizer clones the const-propagation map 1–3× per nested block.**
+   `optimizer.rs:115-124` (If ×3), While (:154), For (:172), TryCatch
+   (:207-209) — O(C·N), quadratic in function length when constants
+   accumulate. Values are full `Expression`s (with their meta maps) instead
+   of a small `ConstVal` enum. Better: scoped-shadowing delta stack, O(delta)
+   per block. Also: `While` bodies get an extra full pre-walk
+   (`collect_mutated_vars`) — loop bodies traversed twice.
+7. **Lexer: `Vec<char>` whole-source copy (4 B/char) + fresh `String` per
+   token, comments materialized then discarded.** `lexer.rs:252,293-488`.
+   `Token`'s largest variant makes `Vec<Token>` ~72 B/token. Better: byte-
+   offset spans (`{kind, lo, hi}` = 12 B), interner for identifiers, skip
+   comments at lex time.
+8. **No compilation cache and no incremental unit anywhere.** Only cache in
+   the front-end is import-resolution (`polyglot_imports.rs`). Every entry
+   point (`crush-aot`, sdk, lang-c/js/python/dart) recompiles from source
+   text every call. Better: content-hash-keyed `casm::Program` cache +
+   per-function memoization (the compiler already emits functions
+   independently).
+9. **`mutation_check` is O(F²·C²).** `mutation_check.rs:21-86` — every
+   caller × every other function × linear rescans per annotation match; runs
+   on the `check_source` path. Better: pre-built name→indices maps, O(F+ΣC).
+10. **No constant pool, no local slots, garbage debug info.**
+    `casm::Function` has no constant table (literals inlined per use, paid at
+    compile AND load); locals are name-strings at runtime (`locals` hardcoded
+    `vec![]` at all 4 construction sites — the VM does a string-hash lookup
+    per variable access even though the compiler tracks `declared_vars` and
+    throws the numbering away; `crush-lang-sdk/src/compile.rs:11-20`
+    re-derives slot numbering at a LATER layer from the strings);
+    `record_debug_info_for_function` re-walks every instruction to produce
+    `line 1 col 1` for everything (meta is always empty) with 2 allocations
+    per instruction. Better: `consts: Vec<ConstValue>` + `PushConst(u16)`,
+    slot-numbered `Load/Store(u16)`, RLE source map emitted inline.
+
+Pass-structure summary: between `check_source` and `compile` there are 5+
+independent full walks of every function body (enrich, mutation-check,
+semantic ×4-14, optimizer, compiler pre-passes + emit + `extract_type_hints`
++ `ensure_return`'s per-function string scan) that could be fused into far
+fewer visitors.
+
+Dead/unwired code found: `casm::Program::to_cached`/`CachedProgram`
+(`casm/src/lib.rs:246-610`) — the abstraction whose doc-comment promises
+"10-100x faster execution" by eliminating string dispatch — is entirely
+unreferenced repo-wide (and is itself O(F²) as written + clones the whole
+program). `casm::ecasm` (1,039 lines, ~49% of the casm lib) has zero external
+references. `crush-ptx/src/compiler.rs:111-113` calls `to_opcode()` three
+times per instruction (each re-parses JSON). Adjacent correctness bug:
+`DebugInfo.source_map` mixes per-function pc into one flat vector —
+`source_location_for_pc` returns another function's location once a program
+has >1 function.
+
+### 3.2 Execution tier (VM/JIT)
+
+_(pending — VM audit in flight)_
 
 ## 4. Implemented improvements
 
