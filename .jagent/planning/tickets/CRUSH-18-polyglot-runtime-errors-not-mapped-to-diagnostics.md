@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-18 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (adjacent to CRUSH-17 — same investigation, different error class) |
 | **Estimated effort** | M |
+
+> Status refreshed s412 per triage: 60b7526
 
 ## Problem
 

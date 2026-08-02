@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-29 |
 | **Priority** | P1 — depends on CRUSH-28 (index data layer); unlocks the navigation layer for `crush-notebook` AI cells |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-28 (data layer) — must precede this ticket so caps have something to query |
 | **Estimated effort** | M |
+
+> Status refreshed s412 per triage: e4302ad
 
 ## Origin
 

@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-34 |
 | **Priority** | P2 — depends on M2's steady-state cooperative scheduler (per `.dejavue/decisions.md` 2026-07-19 entry); touches the CVM1 scheduler core; sibling of CRUSH-32/33 |
-| **Status** | Backlog |
+| **Status** | Superseded |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | none on `CRUSH-32`/`CRUSH-33` (parallels — same VM-side dispatch shape; can be developed in either order); requires M2 cooperative scheduler stable per `.dejavue/decisions.md` 2026-07-01 "[ADOPTED] Crush native codegen (JIT) architecture design" entry |
 | **Estimated effort** | L |
+
+> Superseded s412: canonical file is `CRUSH-34-spawn-await-yield-vm-wire-up.md` (Commit 1 79390d7 landed; Commits 2–3 pending).
 
 ## Origin
 

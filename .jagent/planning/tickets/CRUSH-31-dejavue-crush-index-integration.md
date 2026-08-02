@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-31 |
 | **Priority** | P2 — depends on CRUSH-28 (index data layer) + CRUSH-27 (annotation); blocks M9's STDLIB-restoration `@covers` verification gate |
-| **Status** | Backlog |
+| **Status** | Superseded |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-27 (annotation data structures) + CRUSH-28 (index data layer) + CRUSH-29 (caps surface to extend with `codebase.annotation_history`) + existing dejavue timelines (`.dejavue/timeline.jsonl`, `.dejavue/decisions.md`) |
 | **Estimated effort** | M |
+
+> Superseded s412: canonical file is `CRUSH-31-dejavue-integration.md` (work landed: 431a88f + a773c8d).
 
 ## Origin
 
