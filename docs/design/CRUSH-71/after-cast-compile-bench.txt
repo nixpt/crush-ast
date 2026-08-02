@@ -1,0 +1,80 @@
+cast_compile sample fixture=05 p50_us=5 p95_us=5 peak_heap_bytes=10175
+05,text,5,5,10175
+cast_compile sample fixture=05 p50_us=6 p95_us=7 peak_heap_bytes=10175
+05,cast,6,7,10175
+05,breakdown,lex_p50_us=0,parse_p50_us=0,semantic_p50_us=0,optimize_p50_us=0,compile_p50_us=1
+cast_compile sample fixture=06 p50_us=6 p95_us=7 peak_heap_bytes=11934
+06,text,6,7,11934
+cast_compile sample fixture=06 p50_us=8 p95_us=9 peak_heap_bytes=11802
+06,cast,8,9,11802
+06,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=1,optimize_p50_us=0,compile_p50_us=1
+cast_compile sample fixture=07 p50_us=6 p95_us=7 peak_heap_bytes=17016
+07,text,6,7,17016
+cast_compile sample fixture=07 p50_us=9 p95_us=9 peak_heap_bytes=17016
+07,cast,9,9,17016
+07,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=1,optimize_p50_us=0,compile_p50_us=2
+cast_compile sample fixture=08 p50_us=7 p95_us=11 peak_heap_bytes=17887
+08,text,7,11,17887
+cast_compile sample fixture=08 p50_us=10 p95_us=11 peak_heap_bytes=17887
+08,cast,10,11,17887
+08,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=0,optimize_p50_us=0,compile_p50_us=2
+cast_compile sample fixture=09 p50_us=12 p95_us=13 peak_heap_bytes=36729
+09,text,12,13,36729
+cast_compile sample fixture=09 p50_us=15 p95_us=16 peak_heap_bytes=36417
+09,cast,15,16,36417
+09,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=1,optimize_p50_us=0,compile_p50_us=4
+cast_compile sample fixture=10 p50_us=4 p95_us=4 peak_heap_bytes=11868
+10,text,4,4,11868
+cast_compile sample fixture=10 p50_us=5 p95_us=5 peak_heap_bytes=11868
+10,cast,5,5,11868
+10,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=0,optimize_p50_us=0,compile_p50_us=1
+cast_compile sample fixture=11 p50_us=6 p95_us=6 peak_heap_bytes=10175
+11,text,6,6,10175
+cast_compile sample fixture=11 p50_us=9 p95_us=10 peak_heap_bytes=10175
+11,cast,9,10,10175
+11,breakdown,lex_p50_us=0,parse_p50_us=0,semantic_p50_us=1,optimize_p50_us=0,compile_p50_us=1
+cast_compile sample fixture=12 p50_us=6 p95_us=8 peak_heap_bytes=17028
+12,text,6,8,17028
+cast_compile sample fixture=12 p50_us=9 p95_us=9 peak_heap_bytes=17028
+12,cast,9,9,17028
+12,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=0,optimize_p50_us=0,compile_p50_us=1
+cast_compile sample fixture=13 p50_us=13 p95_us=15 peak_heap_bytes=26058
+13,text,13,15,26058
+cast_compile sample fixture=13 p50_us=22 p95_us=22 peak_heap_bytes=26058
+13,cast,22,22,26058
+13,breakdown,lex_p50_us=1,parse_p50_us=1,semantic_p50_us=2,optimize_p50_us=1,compile_p50_us=4
+cast_compile sample fixture=14 p50_us=5 p95_us=6 peak_heap_bytes=10308
+14,text,5,6,10308
+cast_compile sample fixture=14 p50_us=8 p95_us=8 peak_heap_bytes=10308
+14,cast,8,8,10308
+14,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=0,optimize_p50_us=0,compile_p50_us=1
+cast_compile sample fixture=15 p50_us=10 p95_us=11 peak_heap_bytes=17366
+15,text,10,11,17366
+cast_compile sample fixture=15 p50_us=15 p95_us=15 peak_heap_bytes=17366
+15,cast,15,15,17366
+15,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=1,optimize_p50_us=1,compile_p50_us=2
+cast_compile sample fixture=16 p50_us=33 p95_us=40 peak_heap_bytes=48625
+16,text,33,40,48625
+cast_compile sample fixture=16 p50_us=41 p95_us=43 peak_heap_bytes=48625
+16,cast,41,43,48625
+16,breakdown,lex_p50_us=4,parse_p50_us=3,semantic_p50_us=4,optimize_p50_us=1,compile_p50_us=10
+cast_compile sample fixture=17 p50_us=8 p95_us=9 peak_heap_bytes=18314
+17,text,8,9,18314
+cast_compile sample fixture=17 p50_us=13 p95_us=15 peak_heap_bytes=18314
+17,cast,13,15,18314
+17,breakdown,lex_p50_us=1,parse_p50_us=0,semantic_p50_us=1,optimize_p50_us=0,compile_p50_us=2
+cast_compile sample fixture=18 p50_us=20 p95_us=23 peak_heap_bytes=51471
+18,text,20,23,51471
+cast_compile sample fixture=18 p50_us=25 p95_us=26 peak_heap_bytes=51263
+18,cast,25,26,51263
+18,breakdown,lex_p50_us=1,parse_p50_us=1,semantic_p50_us=1,optimize_p50_us=0,compile_p50_us=8
+cast_compile sample fixture=19 p50_us=36 p95_us=60 peak_heap_bytes=46704
+19,text,36,60,46704
+cast_compile sample fixture=19 p50_us=48 p95_us=74 peak_heap_bytes=46704
+19,cast,48,74,46704
+19,breakdown,lex_p50_us=4,parse_p50_us=3,semantic_p50_us=4,optimize_p50_us=2,compile_p50_us=11
+cast_compile sample fixture=20 p50_us=59 p95_us=67 peak_heap_bytes=83880
+20,text,59,67,83880
+cast_compile sample fixture=20 p50_us=77 p95_us=85 peak_heap_bytes=83880
+20,cast,77,85,83880
+20,breakdown,lex_p50_us=8,parse_p50_us=7,semantic_p50_us=9,optimize_p50_us=4,compile_p50_us=19

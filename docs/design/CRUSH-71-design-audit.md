@@ -211,4 +211,76 @@ _(pending — VM audit in flight)_
 
 ## 4. Implemented improvements
 
-_(pending)_
+### 4.1 SCC-ordered return-type inference (finding #3) — `11f7a1c`
+
+Replaced `SemanticAnalyzer`'s whole-program multi-pass inference (tolerant
+seed pass + authoritative pass + ≤10-iteration global fixed point — up to 12
+full body walks, all to compensate for `HashMap` iteration order) with call
+graph → Tarjan SCC → reverse-topological inference (`semantics.rs`).
+Non-recursive functions now get exactly **one** authoritative walk; only
+genuinely recursive SCCs iterate to a fixed point, scoped to their members.
+
+This also fixes a latent **correctness bug**: the old fixed point capped at
+10 iterations, so a call chain deeper than ~12 functions could
+nondeterministically fail to converge (depending on `HashMap` order), leaving
+placeholder `Null` return types — silently wrong programs. Pinned by
+`deep_call_chain_return_types_resolve` (40-deep chain) and
+`mutual_recursion_return_types_resolve` in `tests/type_check_tests.rs`.
+
+**Scaling measurement** (`tests/semantic_scaling.rs`, run with
+`cargo test -p crush-frontend --test semantic_scaling --release -- --ignored --nocapture`;
+median of 30 runs of `SemanticAnalyzer::check`):
+
+```
+functions,call_shape,median_check_us   OLD (multi-pass)   NEW (SCC)   speedup
+25,chain_forward                        62                 16          3.9x
+100,chain_forward                       231                65          3.6x
+300,chain_forward                       694                205         3.4x
+25,chain_arith                          22                 17          1.3x
+300,chain_arith                         276                213         1.3x
+```
+
+`chain_forward` (`return callee(x)`) is the honest worst case: each old
+whole-program pass propagated types exactly one chain level, so the old
+numbers above are also **wrong results** past depth ~12 (types left `Null` at
+the cap) — the 3.4x is the cost of not even converging. `chain_arith`
+(`return callee(x) + 1`) converges in one pass under the old code too
+(lenient `Null + Int → Int` coalescing), so it isolates the constant-factor
+win (~1.3x).
+
+**Standard bench after** (`cargo bench -p crush-frontend --bench cast_compile`,
+same fixtures as §1.1; these have shallow call graphs so the win is the
+constant factor only):
+
+```
+fixture,path,p50_us,p95_us,peak_heap_bytes      baseline p50 → after p50
+09,text,12,13,36729                              14 → 12
+13,text,13,15,26058                              16 → 13
+16,text,33,40,48625                              38 → 33
+19,text,36,60,46704                              39 → 36
+20,text,59,67,83880                              69 → 59
+20,breakdown,lex=8,parse=7,semantic=9,optimize=4,compile=19   (semantic 11 → 9)
+```
+
+~10–15% end-to-end compile improvement on the small fixtures; the
+asymptotic behavior is the real payoff (semantic analysis is now O(N+E) walks
+instead of O(13·N) worst case, and deterministic).
+
+### 4.2 Clone-free compile entry point (finding #5) — `11f7a1c`
+
+`compile_cast_owned(Program)` added; `compile_crush_source` (the hot path
+used by crush-lang-sdk / crush-aot / lang-c/js/python/dart) now consumes the
+freshly-parsed program instead of deep-cloning the entire AST (the clone was
+2× oversized due to the always-empty `meta` maps, finding #2).
+`compile_cast(&Program)` keeps its signature — existing callers (bash walker
+tests, type-check tests) are untouched.
+
+### 4.3 Not landed here (needs coordination — flagged per halt criteria)
+
+Findings **#1** (typed `OpCode` emission — casm instruction-stream shape is
+the `.cvm1`/crush-notebook/exo-light/mycelium contract) and **#2** (CAST
+`meta` → packed spans — the `crush_cast::Program` shape is the
+nimbus/crush-visuals contract) are the two largest wins but both change
+cross-repo contract shapes. Per the dispatch's halt criteria they are
+flagged for foreman sign-off rather than landed unilaterally; both are
+captured as dejavue plan entries with design sketches in §3.1.
