@@ -34,7 +34,9 @@
 | 103   | Walker→AOT pipeline (ex-39, renumbered) |
 | 104   | Publish lane (version.workspace sweep + walker-core publish + `walker`→`crush-walker` rename) |
 | 105   | JVM/Android guest bridge (the unfiled CRUSH-21 sub-shard; gates CRUSH-52) |
-| 106+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
+| 106   | Typed OpCode emission (audit finding #1 — 4–6 allocs/instruction via serde_json) |
+| 107   | CAST meta → packed Span (audit finding #2 — contract-coordinated; reshapes CRUSH-74's mechanism) |
+| 108+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index
 
@@ -86,7 +88,9 @@ the spine; most later work is gated on 73/77 existing.
 |----|-------|------|------|--------|
 | CRUSH-79 | casm source_map flat-vector: wrong location for multi-fn programs | correctness | crush-ast | crush-backlog/CRUSH-79.txt |
 | CRUSH-80 | casm dead code: CachedProgram (O(F²), unwired) + ecasm.rs — wire or delete | hygiene | crush-ast | crush-backlog/CRUSH-80.txt |
-| CRUSH-81 | SemanticAnalyzer 4–14 walks → Tarjan SCC inference (⚠ CRUSH-71 may land this — check first) | design/perf | crush-ast | crush-backlog/CRUSH-81.txt |
+| CRUSH-81 | ✅ DONE — landed via CRUSH-71 (`11f7a1c` + seed-fix `97bd7c4`; 3.4–3.9x on chain shapes) | design/perf | crush-ast | — |
+| CRUSH-106 | Typed OpCode emission — kill serde_json on the emit path (audit #1) | design/perf | crush-ast | crush-backlog/CRUSH-106.txt |
+| CRUSH-107 | CAST meta HashMap → packed Span + side table (audit #2; nimbus/visuals contract — coordinate; pairs with CRUSH-74) | design/perf | crush-ast | crush-backlog/CRUSH-107.txt |
 | CRUSH-82 | Lexer: byte-span tokens + interner | design/perf | crush-ast | crush-backlog/CRUSH-82.txt |
 | CRUSH-83 | Compile cache / incremental unit (content-hash casm cache) | design/perf | crush-ast | crush-backlog/CRUSH-83.txt |
 | CRUSH-84 | notebook casm_to_assembly unknown-opcode → NOP silently | correctness | crush-workspace/crush-notebook | crush-backlog/CRUSH-84.txt |
@@ -179,11 +183,18 @@ the spine; most later work is gated on 73/77 existing.
 |----|-------|------|
 | CRUSH-104 | version.workspace sweep + walker-core publish + `walker`→`crush-walker` rename | CRUSH-36 |
 
-## Open questions for CRUSH-71's audit to settle
+## CRUSH-71 audit fold-in (s412 — settled)
 
-- Final ranking of 79–83 (design/perf captures) against 72–78: the audit's
-  measured baseline decides what actually gates "3000x"-class wins.
-- Whether CRUSH-83 (compile cache) subsumes or replaces casm's dead
-  CachedProgram (CRUSH-80).
-- Whether CRUSH-81 (Tarjan SCC) is already landed by CRUSH-71 itself.
-- Client-survey matrix may add tickets beyond 84–86.
+- Audit ranking (§3.1): #1 serde_json instructions → **CRUSH-106**; #2 empty
+  meta HashMap → **CRUSH-107** (and CRUSH-74 should implement spans AS 107's
+  packed Span, not by stamping meta); #3 SemanticAnalyzer multi-pass → landed
+  (CRUSH-81 ✅ via CRUSH-71, 3.4–3.9x). Perf dispatch order: 106 → 107(+74/79)
+  → 83 (compile cache) → 82 (lexer).
+- CRUSH-83 vs CRUSH-80: still open — 83's design doc decides; 80 defaults to
+  delete.
+- Client matrix confirmed 84–86 and added per-client canary/policy tickets in
+  the client repos themselves (VISUALS-7/8/9, NB-025..029, SQUEEZE-7, LSP-1/2,
+  VSC-1/2, GUIDE-1/2, WEB-1, polydex O-05).
+- Blast-radius ranking (§2) for any casm/cast/value/frontend change: notebook
+  casm mapping > visuals cast matches > value-enum split (razor vs bozo) >
+  frontend facade — check the matrix before landing breaking changes.

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-81 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — landed via CRUSH-71 (`11f7a1c` + foreman seed-fix `97bd7c4`) |
 | **Phase** | Design/perf (s412) |
 
 ## Problem
@@ -41,3 +41,15 @@ Also removes a class of iteration-order nondeterminism (helps CRUSH-42/77).
 ## Gates
 
 CRUSH-71 merge status check (see warning above).
+
+## Resolution (s412)
+
+Implemented by the CRUSH-71 campaign itself, exactly as this ticket's warning
+anticipated: call graph → iterative Tarjan SCC → reverse-topological
+inference; non-recursive functions get ONE authoritative walk; only genuine
+SCCs iterate. Measured (audit §4.1, median of 30): 3.4–3.9x on forward-chain
+shapes, 1.3x on arith chains. Also fixed a latent correctness bug (10-iter
+global cap could leave Null returns on >12-deep chains, HashMap-order
+dependent). Post-merge, foreman fixed an SCC seeding bug (mutual recursion
+typed as optional<T>; pre-seed members to Any — `97bd7c4`), caught by the
+branch's own `mutual_recursion_return_types_resolve` test.
