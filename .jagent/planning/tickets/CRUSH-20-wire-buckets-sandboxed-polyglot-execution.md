@@ -24,8 +24,8 @@ bwrap-sandboxed runtime via `buckets` (already a real, working library in this w
 `projects/buckets`, not hypothetical) instead of touching the host interpreter at all.
 
 **This was spiked and proven, twice, in-repo** (`agent/cece/CRUSHAST-BUCKETSPIKE-1`/`-2`, merged to
-`main` this session): the standalone `crates/crush-bucketspike` crate + `SPIKE_RESULTS.md` +
-`SPIKE_RESULTS_2.md` at the repo root are the receipts. Confirmed, not assumed:
+`main` this session): the standalone `crates/crush-bucketspike` crate + `docs/design/spikes/SPIKE_RESULTS.md` +
+`docs/design/spikes/SPIKE_RESULTS_2.md` at the repo root are the receipts. Confirmed, not assumed:
 
 - **bwrap sandboxing genuinely exercised** for all 3 languages (python/node/bash), verified by the
   *absence* of buckets' own "bwrap not found — running WITHOUT sandbox isolation" fallback warning

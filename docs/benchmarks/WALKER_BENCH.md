@@ -6,11 +6,11 @@ through CASM compilation and FastVM execution.
 
 ## Harness
 
-`harness.py` in the repo root orchestrates the benchmark:
+`docs/benchmarks/harness.py` orchestrates the benchmark:
 
 ```bash
 cd crush-ast
-python3 harness.py --runs 20 --warmup 3
+python3 docs/benchmarks/harness.py --runs 20 --warmup 3
 ```
 
 First run builds the walker binaries (one-time, ~2 minutes). Subsequent runs

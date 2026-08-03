@@ -41,7 +41,7 @@ against an unresponsive server) — but CRUSH-20 specifically would make it
 worse by routing `@python[deps]` through a cold-provision-capable path
 that can legitimately take seconds (buckets' own measured cold-provision
 latency: 347ms–4.4s depending on language, per
-`SPIKE_RESULTS.md`/`SPIKE_RESULTS_2.md`).
+`docs/design/spikes/SPIKE_RESULTS.md`/`docs/design/spikes/SPIKE_RESULTS_2.md`).
 
 ## Reproduction
 
