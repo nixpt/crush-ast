@@ -1,8 +1,8 @@
-# CRUSH-17 — crush-jit Phase 2-4 correctness gaps (float Mod, serr checks, handler_pc contract, StoreLocal audit, call-stack overflow)
+# CRUSH-87 — crush-jit Phase 2–4 residue (ex-CRUSH-17 ID collision)
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-17 |
+| **ID** | CRUSH-87 |
 | **Priority** | P1 |
 | **Status** | Closed (1,2,3,4,5,6,8 closed; 7 minor) |
 | **Phase** | M2 |
@@ -10,6 +10,19 @@
 | **Dependencies** | none (gate for M2 Phases 5-7) |
 | **Estimated effort** | M |
 | **Origin** | code-reviewer-glm review of commit `fe9a60a` on `agent/buffy/M2-JIT-PHASES-2-4` (2026-07-18) |
+
+> **Renumbering note (s412)**: This ticket was filed as CRUSH-17 by an agent that
+> didn't check the folder — the parser-errors ticket
+> (`CRUSH-17-parser-errors-leak-token-debug-format.md`) owns that ID. Renumbered
+> CRUSH-87 s412. Items 1–6 and 8 are Closed. The LIVE residue is item #7 plus the
+> documented unsolved Cranelift GVN/LICM problem noted at
+> `crush-jit/src/lib.rs:2452` (on `test_recursive_int_sum`, `#[ignore]`d):
+> "recursive JIT calls have a Cranelift GVN issue. The frame-relative locals
+> implementation in compiler.rs (FRAME_LOCALS=8, lload/lstore use call_stack_top
+> as frame index) is structurally correct and passes all non-recursive
+> multi-function tests (87/89). However, for recursive calls, CRUSH-17 GVN/LICM:
+> 7 approaches attempted, none have defeated Cranelift's hoisting of
+> `load(call_stack_top)` across re-entrant blocks."
 
 > **Updated 2026-07-18**: Items 1-6 and 8 are FIXED. Remaining minor item: #7.
 >
