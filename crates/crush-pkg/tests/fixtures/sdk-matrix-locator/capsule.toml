@@ -3,8 +3,8 @@
 #
 # Structural-lockstep fixture for
 #   crush-pkg/tests/test_selfhost_sdk_matrix.rs
-# Matrix ticket: TICKETS/CRUSH-SELFHOST-1.md
-# Audit-resolution ticket: TICKETS/CRUSH-SELFHOST-1-AMEND-1.md (RESOLVED)
+# Matrix ticket: .jagent/planning/tickets/CRUSH-SELFHOST-1.md
+# Audit-resolution ticket: .jagent/planning/tickets/CRUSH-SELFHOST-1-AMEND-1.md (RESOLVED)
 #
 # CELL 2 (language dispatch). `language = "crush"` (lowercase, the shard
 # the dispatcher in `crates/crush-pkg/src/manifest.rs::language_to_capsule_type`

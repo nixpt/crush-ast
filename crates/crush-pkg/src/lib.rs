@@ -10,7 +10,7 @@
 //!
 //! ## Why this exists
 //!
-//! `TICKETS/CRUSH-SELFHOST-1.md#constraint-4` said "crush-pkg is
+//! `.jagent/planning/tickets/CRUSH-SELFHOST-1.md#constraint-4` said "crush-pkg is
 //! currently binary-only" — integration tests couldn't `use
 //! crush_pkg::runners::CrushRunner` and so drove the VM path
 //! directly via `crush_lang_sdk::compile::compile_crush_source +

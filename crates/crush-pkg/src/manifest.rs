@@ -192,7 +192,7 @@ pub enum CapsuleType {
 /// introduced for the unknown-format run path — see PR #10). Until a
 /// real signal exists, the cap is acceptable; if you're tempted to add
 /// a 5th variant speculatively, prefer asking first. Closes Gap 2 of
-/// `TICKETS/CRUSHRUNNERS-1.md` (sister branch
+/// `.jagent/planning/tickets/CRUSHRUNNERS-1.md` (sister branch
 /// `agent/buffy/CRUSHRUNNERS-1`, PR #7 — file not merged into
 /// `2f2b2f5` yet, forward-looking cross-link).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -280,7 +280,7 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
         "crush" => CapsuleType::Crush,
         "native" | "rust" | "c" => CapsuleType::Native,
         // Legacy "container" arm removed (CRUSHCN-1) — see validate_language() below and
-        // TICKETS/CRUSHRUNNERS-1.md Gap 1. Falls through to `CapsuleType::Auto` and is
+        // .jagent/planning/tickets/CRUSHRUNNERS-1.md Gap 1. Falls through to `CapsuleType::Auto` and is
         // then rejected at parse time by `Manifest::from_str` via validate_language().
         "javascript" | "js" | "ts" | "typescript" | "bun" => {
             CapsuleType::Script(ScriptRuntime::Bun)
@@ -305,7 +305,7 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
 /// there is no roadmap signal for any of the three candidate models
 /// (Docker-spawn / OCI hooks / WASI-bundle). The legacy literal `"container"`
 /// now fails loudly at parse time instead of silently routing to a stub-bail
-/// at run time. See `TICKETS/CRUSHRUNNERS-1.md` Gap 1 for the thread history
+/// at run time. See `.jagent/planning/tickets/CRUSHRUNNERS-1.md` Gap 1 for the thread history
 /// and re-introduction path.
 pub fn validate_language(language: &str) -> anyhow::Result<()> {
     if language == "container" {

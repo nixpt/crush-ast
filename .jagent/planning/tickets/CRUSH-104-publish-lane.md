@@ -9,7 +9,7 @@
 
 ## Problem
 
-Per repo-root TASKS.md Publish lane (verify counts at dispatch): only 9/35
+Per archived root TASKS (.jagent/planning/TASKS-root-archive-2026H1.md) Publish lane (verify counts at dispatch): only 9/35
 crates use `version.workspace = true`; 6 crates (walker-core, cli/"walker",
 go_walker, zig_walker, dart_walker, wasm_walker) hardcode a stale 0.1.0 vs
 the workspace's 0.3.0. `walker-core` isn't on crates.io at all — blocking 10

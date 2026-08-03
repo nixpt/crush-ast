@@ -47,7 +47,7 @@ pub enum MessageFormat {
 // lib re-exports its modules as `pub mod`, but those modules are
 // reachable from outside the lib ONLY through `crush_pkg::` (the
 // lib crate's external name). Closing
-// `TICKETS/CRUSH-SELFHOST-1.md#constraint-4` was the motivation
+// `.jagent/planning/tickets/CRUSH-SELFHOST-1.md#constraint-4` was the motivation
 // for adding `src/lib.rs` in the first place: the integration test
 // `tests/test_selfhost_demo.rs` already uses `crush_pkg::*` paths;
 // `main.rs` joins the same external-name idiom here so the bin and

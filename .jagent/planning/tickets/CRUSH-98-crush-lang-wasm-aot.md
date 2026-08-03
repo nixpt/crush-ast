@@ -13,7 +13,7 @@ ROADMAP M11 says "migrate wasm_walker into a new crush-lang-wasm crate" — but
 `crates/crush-lang-wasm` ALREADY EXISTS (created in the crush-lang-* family
 unification 9a9f4a6, s412 triage), so the ticket is HALF-DONE at filing.
 Verify what the crate contains vs the old `wasm_walker` (both may exist —
-repo-root TASKS.md says wasm_walker was "verified with WASI integration
+archived root TASKS (.jagent/planning/TASKS-root-archive-2026H1.md) says wasm_walker was "verified with WASI integration
 tests"); consolidate if duplicated. Real remaining scope: the walker→AOT path
 + benchmark parity within 2× of AOT-C on nqueens/sieve/mergesort.
 

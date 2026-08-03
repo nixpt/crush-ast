@@ -17,7 +17,7 @@
 //!    expected command IDs.
 //!
 //! Now that `crush-pkg` ships with a lib facade
-//! (`TICKETS/CRUSH-SELFHOST-1.md#constraint-4` fix), this test
+//! (`.jagent/planning/tickets/CRUSH-SELFHOST-1.md#constraint-4` fix), this test
 //! truly exercises `crush_pkg::runners::CrushRunner` — no longer
 //! parallel to its body via `crush_lang_sdk::compile +
 //! crush_vm::run_with_caps`. A regression on either side surfaces
@@ -64,7 +64,7 @@ impl HostCap for Recorder {
             //
             // This is the contract for any HostCap invoked in
             // STATEMENT position under the current single-shot emitter.
-            // Full venue: `TICKETS/CRUSH-FRONTEND-1.md` (option (b)
+            // Full venue: `.jagent/planning/tickets/CRUSH-FRONTEND-1.md` (option (b)
             // bundles a `register_void_cap` seam in `crush-lang-sdk`
             // that auto-translates user-facing `returns: false` /
             // `Ok(None)` into the VM-required `Ok(Some(Value::Null))`).

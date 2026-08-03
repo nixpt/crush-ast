@@ -1,6 +1,6 @@
 //! `crush-pkg/tests/test_selfhost_sdk_matrix.rs` — structural lockstep test
 //! for the authoring-surface matrix documented in
-//! `TICKETS/CRUSH-SELFHOST-1.md`.
+//! `.jagent/planning/tickets/CRUSH-SELFHOST-1.md`.
 //!
 //! Locks the **7 reachable** surface cells (the `good` cells of the matrix)
 //! to the actual SDK surface. If any future change to `crush-vm::HostCap`,
@@ -9,7 +9,7 @@
 //! cell, the relevant assertion fails synchronously and the assertion message
 //! names the cell identifier — pointing at the matrix row that drifted.
 //!
-//! Per `TICKETS/CRUSH-SELFHOST-1.md`, the 7 reachable cells are:
+//! Per `.jagent/planning/tickets/CRUSH-SELFHOST-1.md`, the 7 reachable cells are:
 //!
 //!   ── Capsule axis (3 reachable cells)
 //!     1. The program body: `fn main()` calling any host-table cap

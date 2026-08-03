@@ -210,7 +210,7 @@ pub fn get_runner(capsule_type: &CapsuleType) -> Box<dyn CapsuleRunner> {
     match capsule_type {
         CapsuleType::Auto | CapsuleType::Crush => Box::new(CrushRunner::default()),
         CapsuleType::Native => Box::new(NativeRunner),
-        // Container variant deleted (CRUSHCN-1) — see TICKETS/CRUSHRUNNERS-1.md Gap 1.
+        // Container variant deleted (CRUSHCN-1) — see .jagent/planning/tickets/CRUSHRUNNERS-1.md Gap 1.
         CapsuleType::Script(runtime) => Box::new(ScriptRunner::new(runtime.clone())),
     }
 }
