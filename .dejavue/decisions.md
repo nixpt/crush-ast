@@ -603,3 +603,9 @@ Rejected alternatives:
 Outcome:
 New leaf crate crates/crush-vm-py (cdylib only) holds the bindings verbatim; crush-vm back to crate-type=["lib"] with pyo3 dep and 'python' feature removed. Python API deliberately unchanged: same wheel name, same module-name crush_vm, same run_blob signature — only the maturin invocation moves (crates/crush-vm-py --features extension-module, was crates/crush-vm --features python). Plus a blocking 'Test (workspace)' CI job AND a deterministic manifest-level regression test (crates/crush-vm/tests/crate_type_invariant.rs), because the CI job alone can go green by winning the race.
 
+
+## 2026-08-02T02:29:57-05:00 — CRUSH-71: SCC-ordered return-type inference in SemanticAnalyzer
+
+Reason:
+The whole-program seed+authoritative+10-capped fixed point existed only to fight HashMap iteration order, and was a latent correctness bug: call chains deeper than ~12 functions nondeterministically kept placeholder Null return types (silently wrong programs). Replaced with call graph -> Tarjan SCC -> reverse-topological inference in semantics.rs: non-recursive functions get exactly one authoritative walk; only recursive SCCs run a scoped fixed point. Measured 3.4x on a 300-fn forward chain (694us->205us) and ~10-15% on the standard cast_compile fixtures; pinned by deep_call_chain_return_types_resolve + mutual_recursion_return_types_resolve. Also compile_cast_owned so compile_crush_source skips the whole-AST deep clone (compile_cast &Program signature preserved).
+
