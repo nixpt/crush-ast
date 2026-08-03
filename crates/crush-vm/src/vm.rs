@@ -101,10 +101,10 @@ pub enum LangFailurePhase {
     GuestException,
     /// The buckets-sandboxed provisioning/spawn step (CRUSH-20's 4th
     /// execution path) failed before the guest program ever started:
-    /// dependency resolution/fetch failed (network, unknown package —
-    /// buckets has no PyPI/npm resolution, see the ticket's "numpy
-    /// reframe"), or the sandboxed command itself could not be built or
-    /// spawned. Not the guest's fault.
+    /// dependency resolution/fetch failed (network, unknown package,
+    /// resolve deadline, a rejected dep spec such as scoped npm — see
+    /// `bucket_exec::validate_deps`), or the sandboxed command itself could
+    /// not be built or spawned. Not the guest's fault.
     SandboxSetup,
 }
 

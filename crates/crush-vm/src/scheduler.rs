@@ -246,12 +246,13 @@ pub(crate) struct ExecLangOutcome {
 ///
 /// When the `sandboxed-polyglot` feature is enabled, `binary` is provisioned
 /// via `buckets` and run inside a bwrap sandbox (see `crate::bucket_exec`)
-/// instead of the host's own interpreter; `deps` are additional bare-runtime
-/// `buckets` package specs (NOT PyPI/npm packages — see
-/// `Statement::LangBlock::deps`'s doc comment for why). When the feature is
-/// disabled (the default), behavior is byte-for-byte unchanged from before
-/// this ticket: a plain `Command::new(binary)` with the host's full
-/// authority, `deps` silently unused.
+/// instead of the host's own interpreter; `deps` are additional `buckets`
+/// package specs — bare bottle aliases (`openssl@^1.1`) or `pypi:`/`npm:`
+/// registry specs (`pypi:six`, `npm:is-number@7`, CRUSH-66) — see
+/// `Statement::LangBlock::deps`'s doc comment. When the feature is disabled
+/// (the default), behavior is byte-for-byte unchanged from before this
+/// ticket: a plain `Command::new(binary)` with the host's full authority,
+/// `deps` silently unused.
 pub(crate) fn run_exec_lang(
     lang: &str,
     code_str: &str,
@@ -283,9 +284,10 @@ pub(crate) fn run_exec_lang(
 
         #[cfg(not(feature = "sandboxed-polyglot"))]
         let (cmd, remaining_ms) = {
-            // `deps` is a CRUSH-20 sandboxed-only concept (bare-runtime
-            // buckets package specs) — a no-op on the unsandboxed path,
-            // same as before this field existed.
+            // `deps` is a sandboxed-only concept (CRUSH-20/CRUSH-66 buckets
+            // package specs — bare bottles or `pypi:`/`npm:` registry specs)
+            // — a no-op on the unsandboxed path, same as before this field
+            // existed.
             let _ = deps;
             let mut cmd = std::process::Command::new(binary);
             cmd.arg(exec_flag).arg(code_str);
@@ -1889,5 +1891,229 @@ mod wall_clock_limit_tests {
         }
 
         let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    /// CRUSH-66 live end-to-end proof: a `pypi:` registry dep is resolved
+    /// HOST-side by buckets and reaches a NETWORK-ISOLATED python sandbox via
+    /// RO-bind + `PYTHONPATH` — `import six` succeeds with `allow_network:
+    /// false`. Same evidentiary bar as the CRUSH-20 bash live test above.
+    /// Feature-gated + `#[ignore]` (needs network to pypi.org + real bwrap on
+    /// a cold cache); run explicitly with `--features sandboxed-polyglot
+    /// --ignored`.
+    #[cfg(feature = "sandboxed-polyglot")]
+    #[test]
+    #[ignore = "needs network egress to pypi.org + real bwrap; run explicitly"]
+    fn exec_lang_provisions_a_pypi_dep_into_a_network_isolated_sandbox() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::{Value, run_with_caps};
+
+        let cache_dir = std::env::temp_dir().join(format!(
+            "crush66-pypi-live-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        // SAFETY: single-threaded w.r.t. this env var; buckets reads it fresh
+        // inside `resolve_with_deadline`'s spawned thread per call.
+        unsafe {
+            std::env::set_var("BUCKETS_CACHE_DIR", &cache_dir);
+        }
+
+        let spec = serde_json::json!({
+            "lang": "python",
+            "code": "import six; print(six.__version__, end='')",
+            "deps": ["pypi:six"],
+            "var_count": 0,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["python"]);
+        // Cold pypi resolve+install can be slow; generous headroom without
+        // masking a genuine hang.
+        let quotas = Quotas { max_wall_time_ms: 90_000, ..Default::default() };
+
+        let result = run_with_caps(&prog, &quotas, Some(&host_caps));
+
+        // Proof it went through buckets: something was installed under OUR
+        // fresh cache dir (a host `python3 -c` would leave it empty).
+        let populated = std::fs::read_dir(&cache_dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
+        assert!(
+            populated,
+            "buckets should have installed python + pypi:six under the fresh \
+             BUCKETS_CACHE_DIR ({cache_dir:?})"
+        );
+
+        match result {
+            Ok(vm_result) => match vm_result.stack.last() {
+                Some(Value::Str(s)) => {
+                    // six.__version__ is a dotted semver-ish string; assert the
+                    // shape rather than a pinned version.
+                    assert!(
+                        s.contains('.'),
+                        "expected six.__version__ on stdout, got {s:?}"
+                    );
+                    assert!(
+                        s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false),
+                        "expected a version number, got {s:?}"
+                    );
+                }
+                other => panic!("expected Value::Str with sandboxed stdout, got {other:?}"),
+            },
+            other => panic!("expected the sandboxed python+pypi:six block to succeed, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    /// CRUSH-66 live smoke: an `npm:` registry dep (`npm:is-number@7`) is
+    /// resolved host-side and importable from a network-isolated node sandbox
+    /// via `NODE_PATH`. Feature-gated + `#[ignore]` like the pypi test.
+    #[cfg(feature = "sandboxed-polyglot")]
+    #[test]
+    #[ignore = "needs network egress to registry.npmjs.org + real bwrap; run explicitly"]
+    fn exec_lang_provisions_an_npm_dep_into_a_network_isolated_sandbox() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::{Value, run_with_caps};
+
+        let cache_dir = std::env::temp_dir().join(format!(
+            "crush66-npm-live-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        unsafe {
+            std::env::set_var("BUCKETS_CACHE_DIR", &cache_dir);
+        }
+
+        let spec = serde_json::json!({
+            "lang": "javascript",
+            "code": "const isNumber = require('is-number'); process.stdout.write(String(isNumber(5)))",
+            "deps": ["npm:is-number@7"],
+            "var_count": 0,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["javascript"]);
+        let quotas = Quotas { max_wall_time_ms: 90_000, ..Default::default() };
+
+        let result = run_with_caps(&prog, &quotas, Some(&host_caps));
+
+        let populated = std::fs::read_dir(&cache_dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
+        assert!(
+            populated,
+            "buckets should have installed node + npm:is-number under the fresh \
+             BUCKETS_CACHE_DIR ({cache_dir:?})"
+        );
+
+        match result {
+            Ok(vm_result) => match vm_result.stack.last() {
+                Some(Value::Str(s)) => assert!(
+                    s.contains("true"),
+                    "is-number(5) should print 'true', got {s:?}"
+                ),
+                other => panic!("expected Value::Str with sandboxed stdout, got {other:?}"),
+            },
+            other => panic!("expected the sandboxed node+npm block to succeed, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
+    }
+
+    /// CRUSH-66 (fast, no network): a scoped npm dep is rejected up front by
+    /// `bucket_exec::validate_deps` and surfaces as a `SandboxSetup`-phase
+    /// `LangRuntimeError` naming the limitation — NOT a guest exception, NOT
+    /// an `UnknownCap`. Runs under the feature without bwrap/network because
+    /// validation happens before any resolve.
+    #[cfg(feature = "sandboxed-polyglot")]
+    #[test]
+    fn exec_lang_rejects_scoped_npm_with_a_sandbox_setup_error() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::run_with_caps;
+
+        let spec = serde_json::json!({
+            "lang": "javascript",
+            "code": "process.stdout.write('x')",
+            "deps": ["npm:@types/node"],
+            "var_count": 0,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["javascript"]);
+
+        match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
+            Err(VmError::LangRuntimeError { lang, message, phase, .. }) => {
+                assert_eq!(lang, "javascript");
+                assert_eq!(phase, LangFailurePhase::SandboxSetup);
+                assert!(
+                    message.contains("scoped npm"),
+                    "message should name the scoped-npm limitation, got: {message}"
+                );
+            }
+            other => panic!("expected a SandboxSetup LangRuntimeError, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-66 (fast, no network): an empty dep entry is rejected up front
+    /// with a `SandboxSetup` error rather than passed to buckets.
+    #[cfg(feature = "sandboxed-polyglot")]
+    #[test]
+    fn exec_lang_rejects_an_empty_dep_with_a_sandbox_setup_error() {
+        use crate::assembler::assemble;
+        use crate::host::HostCaps;
+        use crate::vm::run_with_caps;
+
+        let spec = serde_json::json!({
+            "lang": "python",
+            "code": "print('x', end='')",
+            "deps": [""],
+            "var_count": 0,
+        });
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let prog = assemble(&src, None, None).unwrap();
+
+        let mut host_caps = HostCaps::new();
+        host_caps.grant_polyglot(&["python"]);
+
+        match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
+            Err(VmError::LangRuntimeError { phase, message, .. }) => {
+                assert_eq!(phase, LangFailurePhase::SandboxSetup);
+                assert!(
+                    message.contains("empty dependency"),
+                    "message should name the empty-dep rejection, got: {message}"
+                );
+            }
+            other => panic!("expected a SandboxSetup LangRuntimeError, got {other:?}"),
+        }
     }
 }

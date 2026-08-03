@@ -1,6 +1,6 @@
 # Design: `@lang[deps]` → buckets `pypi:` / `npm:` (CRUSH-66)
 
-**Status:** proposed  
+**Status:** implemented (CRUSH-66 Done 2026-08-01)  
 **Date:** 2026-07-25  
 **Depends on:** CRUSH-20 (shipped), [BUCKETS-15](https://github.com/nixpt/buckets/pull/4)  
 **Ticket:** `.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md`
