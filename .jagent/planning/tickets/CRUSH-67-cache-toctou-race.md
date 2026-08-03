@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-67 |
 | **Priority** | P1 — deterministic failure from `cargo test` with two identical AOT tests |
-| **Status** | Ready |
+| **Status** | Done |
 | **Phase** | Correctness |
 | **Assignee** | unassigned |
 | **Depends on** | none |
 | **Estimated effort** | S |
+
+> Status refreshed s412 per triage: 7dec26f (via merge df307d2)
 
 ## Origin
 

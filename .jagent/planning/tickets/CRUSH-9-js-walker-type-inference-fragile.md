@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-9 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (adjacent to CRUSH-7/CRUSH-8, distinct root cause) |
 | **Estimated effort** | L |
+
+> Status refreshed s412 per triage: 87ac57c
 
 ## Problem
 

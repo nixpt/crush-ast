@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-33 |
 | **Priority** | P2 — depends on CRUSH-32 (parallel — same VM-side dispatch shape); unblocks browser-extension / surfer scripting paths |
-| **Status** | Backlog |
+| **Status** | Superseded |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | none — parallels CRUSH-32 (shared design pattern for VM dispatch + cap-provider registration; can be developed in either order; the parallelism is on the development side, not a hard upstream dependency) |
 | **Estimated effort** | M |
+
+> Superseded s412: canonical file is `CRUSH-33-dom-opcodes-vm-wire-up.md` (landed: df5f59f/b4c81a8/4f5c0a7).
 
 ## Origin
 

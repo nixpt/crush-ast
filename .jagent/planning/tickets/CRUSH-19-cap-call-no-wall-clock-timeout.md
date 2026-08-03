@@ -4,11 +4,13 @@
 |-------|-------|
 | **ID** | CRUSH-19 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none, but is a stated prerequisite for CRUSH-20 (buckets-sandboxed polyglot) |
 | **Estimated effort** | M |
+
+> Status refreshed s412 per triage: 07c328b
 
 ## Problem
 
