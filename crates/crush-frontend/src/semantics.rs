@@ -133,6 +133,18 @@ impl SemanticAnalyzer {
                 // Recursive SCC: error-tolerant seed (restoring scope depth
                 // on bail), authoritative pass where errors surface, then a
                 // fixed point over just these members.
+                //
+                // Pre-seed members to Any, not the Null placeholder: merge_types
+                // absorbs Any into the concrete side (merge(Bool, Any) = Bool),
+                // so base-case branches anchor the fixed point. With Null the
+                // seed yields Optional(base) and the fixed point can only widen,
+                // never narrow — mutual recursion then types as optional<T>
+                // forever.
+                for &i in &scc {
+                    if let Some((_, ret)) = self.functions.get_mut(names[i].as_str()) {
+                        *ret = Type::Any;
+                    }
+                }
                 for &i in &scc {
                     let depth = self.scopes.len();
                     match self.infer_function_return_type(&program.functions[names[i].as_str()]) {
