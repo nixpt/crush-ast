@@ -33,7 +33,8 @@
 | 98–102| M11 (minted s412; note crates/crush-lang-wasm already exists — 98 is half-done) |
 | 103   | Walker→AOT pipeline (ex-39, renumbered) |
 | 104   | Publish lane (version.workspace sweep + walker-core publish + `walker`→`crush-walker` rename) |
-| 105+  | free |
+| 105   | JVM/Android guest bridge (the unfiled CRUSH-21 sub-shard; gates CRUSH-52) |
+| 106+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index
 
@@ -138,7 +139,7 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-49 | CI multi-OS matrix (mind the warm-cache trap, CRUSH-CI-CACHE-1) | — |
 | CRUSH-50 | CI multi-arch matrix | CRUSH-49 |
 | CRUSH-51 | AOT target cfg audit (3 sites) | — |
-| CRUSH-52 | Android host cap shard | CRUSH-21's unfiled JVM-bridge sub-shard |
+| CRUSH-52 | Android host cap shard | CRUSH-105 (JVM bridge) |
 | CRUSH-53 | Installer Pi-class default | — |
 
 ## M9 — Convergence + STDLIB (54–58 + shards 88–97)
