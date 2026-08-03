@@ -61,9 +61,18 @@ pub fn check_source(
 
 /// Compile an already-parsed CAST Program into CASM bytecode.
 ///
-/// Runs semantic analysis, optimization, and code generation.
+/// Runs semantic analysis, optimization, and code generation. Clones the
+/// program so the caller keeps the original; callers that are done with
+/// their `Program` should use [`compile_cast_owned`] to skip the deep clone.
 pub fn compile_cast(program: &crush_cast::Program) -> Result<casm::Program> {
-    let mut program = program.clone();
+    compile_cast_owned(program.clone())
+}
+
+/// Compile an already-parsed CAST Program into CASM bytecode, consuming it.
+///
+/// Identical to [`compile_cast`] but takes the program by value, avoiding a
+/// deep clone of the whole AST on the hot compile path.
+pub fn compile_cast_owned(mut program: crush_cast::Program) -> Result<casm::Program> {
     let mut sema = semantics::SemanticAnalyzer::new();
     sema.check(&program)?;
     optimizer::Optimizer::optimize(&mut program);
@@ -74,7 +83,7 @@ pub fn compile_cast(program: &crush_cast::Program) -> Result<casm::Program> {
 /// Parse Crush source and compile directly to CASM bytecode.
 pub fn compile_crush_source(source: &str) -> Result<casm::Program> {
     let program = parse_source(source)?;
-    compile_cast(&program)
+    compile_cast_owned(program)
 }
 
 // ── Surgical symbol extraction ───────────────────────────────────────────────

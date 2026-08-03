@@ -90,49 +90,89 @@ impl SemanticAnalyzer {
             self.functions.insert(name.clone(), (arg_types, Type::Null));
         }
 
-        // Return-type inference visits functions in HashMap order, so a caller
-        // inferred before its callee sees the callee's placeholder Null type.
-        // Seed with an error-tolerant pass (restoring scope depth on bail) so
-        // single-level call dependencies resolve regardless of iteration order,
-        // then run the authoritative pass where errors surface.
-        for (name, func) in &program.functions {
-            let depth = self.scopes.len();
-            match self.infer_function_return_type(func) {
-                Ok(inferred) => {
-                    if let Some((_, ret)) = self.functions.get_mut(name) {
-                        *ret = inferred;
-                    }
+        // Return-type inference order matters: a caller inferred before its
+        // callee sees the callee's placeholder Null type. Build the call
+        // graph, condense it into strongly-connected components (Tarjan),
+        // and infer in reverse topological order so every callee's return
+        // type is final before its callers run. A non-recursive function
+        // needs exactly one inference walk; only genuinely recursive SCCs
+        // iterate to a fixed point, scoped to their own members. (The
+        // previous whole-program fixed point was capped at 10 iterations,
+        // so a call chain deeper than ~12 functions could nondeterministically
+        // fail to converge depending on HashMap order.)
+        let mut names: Vec<&String> = program.functions.keys().collect();
+        names.sort();
+        let index_of: HashMap<&str, usize> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.as_str(), i))
+            .collect();
+        let mut edges: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
+        for (i, name) in names.iter().enumerate() {
+            let mut callees = Vec::new();
+            collect_called_functions(&program.functions[*name].body, &mut callees);
+            for callee in callees {
+                if let Some(&j) = index_of.get(callee)
+                    && !edges[i].contains(&j)
+                {
+                    edges[i].push(j);
                 }
-                Err(_) => self.scopes.truncate(depth),
-            }
-        }
-        for (name, func) in &program.functions {
-            let inferred = self.infer_function_return_type(func)?;
-            if let Some((_, ret)) = self.functions.get_mut(name) {
-                *ret = inferred;
             }
         }
 
-        // Fixed-point iteration for recursive functions: keep re-inferring until
-        // return types stabilize (or max iterations reached).
-        for _ in 0..10 {
-            let mut changed = false;
-            for (name, func) in &program.functions {
-                let depth = self.scopes.len();
-                match self.infer_function_return_type(func) {
-                    Ok(inferred) => {
-                        if let Some((_, ret)) = self.functions.get_mut(name)
-                            && *ret != inferred
+        for scc in tarjan_sccs(&edges) {
+            if scc.len() == 1 && !edges[scc[0]].contains(&scc[0]) {
+                // Non-recursive: every callee is already final, so a single
+                // walk is authoritative — errors surface here.
+                let name = names[scc[0]].as_str();
+                let inferred = self.infer_function_return_type(&program.functions[name])?;
+                if let Some((_, ret)) = self.functions.get_mut(name) {
+                    *ret = inferred;
+                }
+            } else {
+                // Recursive SCC: error-tolerant seed (restoring scope depth
+                // on bail), authoritative pass where errors surface, then a
+                // fixed point over just these members.
+                for &i in &scc {
+                    let depth = self.scopes.len();
+                    match self.infer_function_return_type(&program.functions[names[i].as_str()]) {
+                        Ok(inferred) => {
+                            if let Some((_, ret)) = self.functions.get_mut(names[i].as_str()) {
+                                *ret = inferred;
+                            }
+                        }
+                        Err(_) => self.scopes.truncate(depth),
+                    }
+                }
+                for &i in &scc {
+                    let inferred =
+                        self.infer_function_return_type(&program.functions[names[i].as_str()])?;
+                    if let Some((_, ret)) = self.functions.get_mut(names[i].as_str()) {
+                        *ret = inferred;
+                    }
+                }
+                for _ in 0..10 {
+                    let mut changed = false;
+                    for &i in &scc {
+                        let depth = self.scopes.len();
+                        match self
+                            .infer_function_return_type(&program.functions[names[i].as_str()])
                         {
-                            *ret = inferred;
-                            changed = true;
+                            Ok(inferred) => {
+                                if let Some((_, ret)) = self.functions.get_mut(names[i].as_str())
+                                    && *ret != inferred
+                                {
+                                    *ret = inferred;
+                                    changed = true;
+                                }
+                            }
+                            Err(_) => self.scopes.truncate(depth),
                         }
                     }
-                    Err(_) => self.scopes.truncate(depth),
+                    if !changed {
+                        break;
+                    }
                 }
-            }
-            if !changed {
-                break;
             }
         }
 
@@ -692,4 +732,220 @@ impl SemanticAnalyzer {
         }
         Ok(())
     }
+}
+
+/// Collect the names of every function called (by name) anywhere in `stmts`,
+/// for call-graph construction. This is a superset of the positions the
+/// inference walk actually visits — extra edges only add harmless ordering
+/// constraints, whereas a missed edge would let a caller be inferred before
+/// its callee. `AI` nodes are skipped because inference skips them too.
+fn collect_called_functions<'a>(stmts: &'a [Statement], out: &mut Vec<&'a str>) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VarDecl { value, .. }
+            | Statement::Assign { value, .. }
+            | Statement::Export { value, .. }
+            | Statement::Throw { value, .. } => collect_called_in_expr(value, out),
+            Statement::ExprStmt { expr, .. } => collect_called_in_expr(expr, out),
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_called_in_expr(condition, out);
+                collect_called_functions(then_body, out);
+                if let Some(eb) = else_body {
+                    collect_called_functions(eb, out);
+                }
+            }
+            Statement::While {
+                condition, body, ..
+            } => {
+                collect_called_in_expr(condition, out);
+                collect_called_functions(body, out);
+            }
+            Statement::For { iterable, body, .. } => {
+                collect_called_in_expr(iterable, out);
+                collect_called_functions(body, out);
+            }
+            Statement::Return { value, .. } => {
+                if let Some(expr) = value {
+                    collect_called_in_expr(expr, out);
+                }
+            }
+            Statement::TryCatch { body, handler, .. } => {
+                collect_called_functions(body, out);
+                collect_called_functions(handler, out);
+            }
+            Statement::FunctionDef { body, .. } => collect_called_functions(body, out),
+            Statement::SetField { target, value, .. } => {
+                collect_called_in_expr(target, out);
+                collect_called_in_expr(value, out);
+            }
+            Statement::DomMutate {
+                target,
+                value,
+                value2,
+                ..
+            } => {
+                collect_called_in_expr(target, out);
+                if let Some(v) = value {
+                    collect_called_in_expr(v, out);
+                }
+                if let Some(v) = value2 {
+                    collect_called_in_expr(v, out);
+                }
+            }
+            Statement::DomEventListener {
+                target, callback, ..
+            } => {
+                collect_called_in_expr(target, out);
+                collect_called_in_expr(callback, out);
+            }
+            Statement::LangBlock { .. }
+            | Statement::Import { .. }
+            | Statement::StructDef { .. }
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
+            | Statement::AI(_) => {}
+        }
+    }
+}
+
+fn collect_called_in_expr<'a>(expr: &'a Expression, out: &mut Vec<&'a str>) {
+    match expr {
+        Expression::Call { function, args, .. } | Expression::Spawn { function, args, .. } => {
+            out.push(function.as_str());
+            for arg in args {
+                collect_called_in_expr(arg, out);
+            }
+        }
+        Expression::BinaryOp { left, right, .. } => {
+            collect_called_in_expr(left, out);
+            collect_called_in_expr(right, out);
+        }
+        Expression::UnaryOp { operand, .. } => collect_called_in_expr(operand, out),
+        Expression::CapabilityCall { args, .. } | Expression::VectorMath { args, .. } => {
+            for arg in args {
+                collect_called_in_expr(arg, out);
+            }
+        }
+        Expression::Pipeline { segments, .. }
+        | Expression::ArrayLiteral {
+            elements: segments, ..
+        }
+        | Expression::TupleLiteral {
+            elements: segments, ..
+        }
+        | Expression::ListLiteral {
+            elements: segments, ..
+        }
+        | Expression::VectorLiteral {
+            elements: segments, ..
+        }
+        | Expression::SetLiteral {
+            elements: segments, ..
+        } => {
+            for seg in segments {
+                collect_called_in_expr(seg, out);
+            }
+        }
+        Expression::Lambda { body, .. } => collect_called_functions(body, out),
+        Expression::GetField { target, .. } => collect_called_in_expr(target, out),
+        Expression::Range { start, end, .. } => {
+            collect_called_in_expr(start, out);
+            collect_called_in_expr(end, out);
+        }
+        Expression::Await { expression, .. } => collect_called_in_expr(expression, out),
+        Expression::ObjectLiteral { properties, .. } => {
+            for (_, value) in properties {
+                collect_called_in_expr(value, out);
+            }
+        }
+        Expression::Index { target, index, .. } => {
+            collect_called_in_expr(target, out);
+            collect_called_in_expr(index, out);
+        }
+        Expression::DomQuery { selector, .. } => collect_called_in_expr(selector, out),
+        Expression::Match {
+            expression, arms, ..
+        } => {
+            collect_called_in_expr(expression, out);
+            for arm in arms {
+                collect_called_functions(&arm.body, out);
+            }
+        }
+        Expression::IntLiteral { .. }
+        | Expression::FloatLiteral { .. }
+        | Expression::StringLiteral { .. }
+        | Expression::BoolLiteral { .. }
+        | Expression::NullLiteral { .. }
+        | Expression::Var { .. }
+        | Expression::Yield { .. }
+        | Expression::NewStruct { .. }
+        | Expression::AI(_) => {}
+    }
+}
+
+/// Iterative Tarjan SCC. Returns components in reverse topological order of
+/// the condensation: with edges pointing caller → callee, every callee's
+/// component is emitted before any of its callers'.
+fn tarjan_sccs(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    const UNVISITED: usize = usize::MAX;
+    let n = edges.len();
+    let mut index = vec![UNVISITED; n];
+    let mut lowlink = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut next_index = 0usize;
+    let mut sccs: Vec<Vec<usize>> = Vec::new();
+    let mut dfs: Vec<(usize, usize)> = Vec::new(); // (node, next edge offset)
+
+    for start in 0..n {
+        if index[start] != UNVISITED {
+            continue;
+        }
+        index[start] = next_index;
+        lowlink[start] = next_index;
+        next_index += 1;
+        stack.push(start);
+        on_stack[start] = true;
+        dfs.push((start, 0));
+
+        while let Some(&mut (v, ref mut ei)) = dfs.last_mut() {
+            if *ei < edges[v].len() {
+                let w = edges[v][*ei];
+                *ei += 1;
+                if index[w] == UNVISITED {
+                    index[w] = next_index;
+                    lowlink[w] = next_index;
+                    next_index += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    dfs.push((w, 0));
+                } else if on_stack[w] {
+                    lowlink[v] = lowlink[v].min(index[w]);
+                }
+            } else {
+                dfs.pop();
+                if let Some(&mut (parent, _)) = dfs.last_mut() {
+                    lowlink[parent] = lowlink[parent].min(lowlink[v]);
+                }
+                if lowlink[v] == index[v] {
+                    let mut scc = Vec::new();
+                    loop {
+                        let w = stack.pop().expect("Tarjan stack cannot underflow");
+                        on_stack[w] = false;
+                        scc.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    sccs.push(scc);
+                }
+            }
+        }
+    }
+    sccs
 }
