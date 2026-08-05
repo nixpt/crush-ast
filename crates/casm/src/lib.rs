@@ -725,8 +725,14 @@ pub fn format_runtime_error_with_location(
     message: &str,
     debug_info: Option<&DebugInfo>,
     pc: usize,
+    fn_name: Option<&str>,
 ) -> String {
-    if let Some(loc) = debug_info.and_then(|d| d.source_location_for_pc(pc)) {
+    let loc = if let Some(name) = fn_name {
+        debug_info.and_then(|d| d.source_location_for_function_pc(name, pc))
+    } else {
+        debug_info.and_then(|d| d.source_location_for_pc(pc))
+    };
+    if let Some(loc) = loc {
         return format!("Error at line {}, col {}: {}", loc.line, loc.col, message);
     }
     message.to_string()
@@ -741,15 +747,45 @@ mod tests {
         let mut dbg = DebugInfo::new();
         dbg.push_source_location(SourceLocation::new(42, 10, Some("main.crush".to_string())));
 
-        let msg = format_runtime_error_with_location("division by zero", Some(&dbg), 0);
+        let msg = format_runtime_error_with_location("division by zero", Some(&dbg), 0, None);
         assert_eq!(msg, "Error at line 42, col 10: division by zero");
     }
 
     #[test]
     fn runtime_error_location_falls_back_without_source() {
         let dbg = DebugInfo::new();
-        let msg = format_runtime_error_with_location("division by zero", Some(&dbg), 0);
+        let msg = format_runtime_error_with_location("division by zero", Some(&dbg), 0, None);
         assert_eq!(msg, "division by zero");
+    }
+
+    #[test]
+    fn runtime_error_location_falls_back_without_debug_info() {
+        let msg = format_runtime_error_with_location("division by zero", None, 0, None);
+        assert_eq!(msg, "division by zero");
+    }
+
+    #[test]
+    fn runtime_error_location_with_function_name_resolves_correct_function() {
+        let mut dbg = DebugInfo::new();
+        // Simulate a two-function program: "main" at pc 0-1, "helper" at pc 2-3.
+        dbg.push_source_location(SourceLocation::new(1, 1, Some("main.crush".to_string())));
+        dbg.push_source_location(SourceLocation::new(2, 1, Some("main.crush".to_string())));
+        dbg.record_function_range("main", 0, 2);
+        dbg.push_source_location(SourceLocation::new(10, 5, Some("main.crush".to_string())));
+        dbg.push_source_location(SourceLocation::new(11, 5, Some("main.crush".to_string())));
+        dbg.record_function_range("helper", 2, 4);
+
+        // Without function name: pc=0 returns line 1 (first function).
+        let msg = format_runtime_error_with_location("boom", Some(&dbg), 0, None);
+        assert_eq!(msg, "Error at line 1, col 1: boom");
+
+        // With "helper": pc=0 returns line 10 (helper's first instruction).
+        let msg = format_runtime_error_with_location("boom", Some(&dbg), 0, Some("helper"));
+        assert_eq!(msg, "Error at line 10, col 5: boom");
+
+        // With "helper": pc=1 returns line 11.
+        let msg = format_runtime_error_with_location("boom", Some(&dbg), 1, Some("helper"));
+        assert_eq!(msg, "Error at line 11, col 5: boom");
     }
 
     // VER-02 CASM version-gate tests live in `tests/ver02_version_gate.rs`

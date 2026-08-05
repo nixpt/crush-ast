@@ -106,8 +106,15 @@ pub struct DebugInfo {
     /// Original program name
     pub program_name: Option<String>,
     /// Linear source map indexed by emitted instruction index.
+    /// For multi-function programs, use `source_location_for_function_pc`
+    /// with the function name to resolve correctly.
     #[serde(default)]
     pub source_map: Vec<SourceLocation>,
+    /// Per-function ranges into `source_map`: function_name → (start, end_exclusive).
+    /// Populated by `record_function_range` so `source_location_for_function_pc`
+    /// can offset lookups correctly for multi-function programs (CRUSH-79).
+    #[serde(default)]
+    pub fn_offsets: HashMap<String, (usize, usize)>,
 }
 
 impl DebugInfo {
@@ -163,8 +170,38 @@ impl DebugInfo {
     }
 
     /// Lookup source location by linear program-counter index.
+    /// **Single-function programs only.** For multi-function programs,
+    /// use `source_location_for_function_pc` which offsets by function.
     pub fn source_location_for_pc(&self, pc: usize) -> Option<&SourceLocation> {
         self.source_map.get(pc)
+    }
+
+    /// Record the (start, end_exclusive) range of a function's instructions
+    /// in the flat `source_map`. Call this AFTER pushing all instructions
+    /// for a function via `push_source_location`.
+    pub fn record_function_range(&mut self, fn_name: &str, start: usize, end: usize) {
+        self.fn_offsets.insert(fn_name.to_string(), (start, end));
+    }
+
+    /// Lookup source location by function-local program-counter index.
+    /// Uses `fn_offsets` to resolve the correct range in the flat `source_map`
+    /// for multi-function programs (CRUSH-79).
+    pub fn source_location_for_function_pc(
+        &self,
+        fn_name: &str,
+        pc: usize,
+    ) -> Option<&SourceLocation> {
+        if let Some(&(base, end)) = self.fn_offsets.get(fn_name) {
+            let global_pc = base + pc;
+            if global_pc < end {
+                return self.source_map.get(global_pc);
+            }
+            // pc beyond this function's range
+            None
+        } else {
+            // Fall back to direct lookup (backward compat, single-function programs)
+            self.source_map.get(pc)
+        }
     }
 
     /// Find all instructions for a given source line
