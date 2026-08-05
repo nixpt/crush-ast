@@ -1,6 +1,6 @@
 # CRUSH-108 — test_cmp_eq_nan_never_equal_jit fails deterministically on main
 
-**Status**: Backlog · **Priority**: P1 (red test on main = gate noise for every merge)
+**Status**: IN PROGRESS → fixed, PR #30 open (s418) · **Priority**: P1 (red test on main = gate noise for every merge)
 
 ## Problem
 
@@ -14,5 +14,5 @@ is wrong. CI presumably shows green — check whether CI even runs `crush-jit
 
 ## Done
 
-- [ ] Root cause: JIT NaN semantics vs test expectation, decided + fixed
-- [ ] Test green 20/20; CI actually exercises it (evidence)
+- [x] Root cause: JIT NaN semantics vs test expectation, decided + fixed — JIT wrong (IEEE miscompile class); identity-override in `do_cmp` forced `true` for bit-identical operands, including NaN. Gated to non-float operands (compiler.rs).
+- [x] Test green 97/97 (incl. new Ne mirror case); CI now exercises crush-jit (test-core job) — was check-only before, red test invisible to badge.

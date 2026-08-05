@@ -1458,13 +1458,21 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     // they are the same runtime value (null, bool, or identical tagged int).
     // The float path treats null/bool NaN-boxes as IEEE NaN which returns
     // false for equality comparisons. Override with the identity-correct result.
+    // GATE (CRUSH-108): never apply the override when BOTH operands are
+    // genuine floats — bit-identical NaNs must still compare unequal under
+    // IEEE-754 (fcmp answers correctly; the override would force `true`).
     let bits_eq = icmp_eq(b, a, bv);
+    let fa = is_float(b, a);
+    let fb = is_float(b, bv);
+    let both_floats = band(b, fa, fb);
     let identity_result = if icc == IntCC::Equal {
         iconst(b, TAG_TRUE)
     } else {
         iconst(b, TAG_FALSE)
     };
-    let result = select(b, bits_eq, identity_result, raw_result);
+    let not_both_floats = bnot(b, both_floats);
+    let override_on = band(b, bits_eq, not_both_floats);
+    let result = select(b, override_on, identity_result, raw_result);
     push(b, ctx, result);
 
     b.seal_block(ibb);
