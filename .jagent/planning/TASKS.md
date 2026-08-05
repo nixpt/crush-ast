@@ -28,6 +28,7 @@ working this backlog must follow.
 |----|------|-------|
 | [CRUSH-66](./tickets/CRUSH-66-lang-deps-pypi-npm.md) | `@lang[pypi:/npm:]` deps via buckets | **Done 2026-08-01** — BUCKETS-15 merged; lexer + `validate_deps` + live bwrap proof. Design: `docs/design/lang-deps-pypi-npm.md`. |
 | [CRUSH-72](./tickets/CRUSH-72-jit-silent-null-catchall-bailout.md) | JIT silent TAG_NULL catch-all → Unsupported error + FastVm fallback | **Done 2026-08-05 (s417)** — merged 13fba6a. Catch-all now returns CompileError::Unsupported; JitEngine::run falls back to FastVm transparently. Exhaustive compile-or-refuse test over all FastOp variants. 96/97 tests pass. |
+| [CRUSH-73](./tickets/CRUSH-73-conformance-corpus.md) | Conformance corpus — annotated .crush files + black-box runner | **MVP Done 2026-08-05 (s417)** — merged 337544c. 39 files annotated, xtask runner with expect/expect-error/expect-exit/xfail support. Needs release build for CI; debug VM is ~10-20ms/step. |
 
 For the next-arc milestones **M5–M11**, this file tracks only milestone-level
 status (one short paragraph per milestone). For full ticket-level detail,
