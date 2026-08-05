@@ -103,6 +103,16 @@ fn parse_annotations(source: &str) -> Annotations {
     ann
 }
 
+/// Extract `// budget: N` annotation (if any).
+fn parse_budget_annotation(source: &str) -> Option<u32> {
+    for line in source.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("// budget: ") {
+            return rest.trim().parse().ok();
+        }
+    }
+    None
+}
+
 /// Discover all `.crush` files in the given directories (relative to workspace root).
 fn discover_corpus(workspace_root: &Path, dirs: &[&str]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -138,8 +148,10 @@ fn discover_corpus(workspace_root: &Path, dirs: &[&str]) -> Vec<PathBuf> {
 fn run_crush(source: &str) -> Result<String, String> {
     let program = crush_lang_sdk::compile::compile_crush_source(source)
         .map_err(|e| format!("compile error: {e}"))?;
+    // Use a modest default; heavy programs can annotate // budget: N.
+    let budget: usize = parse_budget_annotation(&source).unwrap_or(5_000) as usize;
     let quotas = crush_vm::Quotas {
-        max_steps: 50_000,
+        max_steps: budget,
         max_output: 1 << 20,
         ..Default::default()
     };
