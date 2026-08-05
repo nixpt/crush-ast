@@ -309,6 +309,8 @@ impl Compiler {
         debug_info: &mut DebugInfo,
         source_files: &mut HashMap<String, usize>,
     ) {
+        let fn_start = debug_info.source_map.len();
+
         for (pc, instr) in instrs.iter().enumerate() {
             let loc = instr
                 .meta
@@ -336,6 +338,10 @@ impl Compiler {
 
             debug_info.map_instruction(function_name, pc, file_idx, loc.line, loc.col);
         }
+
+        // Record function range for correct multi-function pc→location lookup (CRUSH-79).
+        let fn_end = debug_info.source_map.len();
+        debug_info.record_function_range(function_name, fn_start, fn_end);
     }
 
     fn ensure_return(

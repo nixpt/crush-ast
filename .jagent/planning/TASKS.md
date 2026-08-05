@@ -102,7 +102,7 @@ reproduces.
 
 - [x] Breakpoint registry, REPL, VM integration, VmDriver abstraction, NDJSON wire consumer
 - [ ] Variable inspection (`print <var>`)
-- [ ] Source → bytecode sourcemap (crush-frontend integration)
+- [ ] Source → bytecode sourcemap (crush-frontend integration) — UNBLOCKED by CRUSH-74/79 (s418): real parses now stamp line/col meta, casm `source_map` handles multi-function programs with flat vectors; remaining work is the debugger consuming `Program::with_source_map`
 - [ ] Step-by-step state inspection
 
 ## M4 — Cross-project integration
