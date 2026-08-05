@@ -148,8 +148,8 @@ fn discover_corpus(workspace_root: &Path, dirs: &[&str]) -> Vec<PathBuf> {
 fn run_crush(source: &str) -> Result<String, String> {
     let program = crush_lang_sdk::compile::compile_crush_source(source)
         .map_err(|e| format!("compile error: {e}"))?;
-    // Use a modest default; heavy programs can annotate // budget: N.
-    let budget: usize = parse_budget_annotation(&source).unwrap_or(5_000) as usize;
+    // Use a modest default (1K steps); heavy programs can annotate // budget: N.
+    let budget: usize = parse_budget_annotation(&source).unwrap_or(1_000) as usize;
     let quotas = crush_vm::Quotas {
         max_steps: budget,
         max_output: 1 << 20,
