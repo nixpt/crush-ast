@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: module.load
 # Test explicit module imports
 
 # CrushModule import

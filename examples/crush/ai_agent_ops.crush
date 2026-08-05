@@ -1,3 +1,4 @@
+// expect-error: TIMEOUT
 @module {
     purpose: "Demonstrate AI-native capabilities of Crush (Phase 1 & Phase 2a features)"
     exports: [process_user_intent, summarize_unresolved_tasks]

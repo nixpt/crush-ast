@@ -1,3 +1,29 @@
+// expect: Testing Arrays and For Loops
+// expect: Array created: [10, 20, 30, 40, 50]
+// expect: Array length: 5
+// expect: Accessing elements:
+// expect: 10
+// expect: 30
+// expect: 50
+// expect: Iterating with for loop:
+// expect: Item: 10
+// expect: Item: 20
+// expect: Item: 30
+// expect: Item: 40
+// expect: Item: 50
+// expect: Iterating with break (break at 30):
+// expect: Item: 10
+// expect: Item: 20
+// expect: Iterating with continue (skip 30):
+// expect: Item: 10
+// expect: Item: 20
+// expect: Item: 40
+// expect: Item: 50
+// expect: String indexing:
+// expect: h
+// expect: e
+// expect: o
+// expect: Done
 # Test: Arrays and Loops
 # Description: Verifies array creation, indexing, looping, and nested loops.
 

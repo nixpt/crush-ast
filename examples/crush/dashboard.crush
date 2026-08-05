@@ -1,3 +1,4 @@
+// expect-error: [runtime] Parse errors: Unexpected token at line 29, column 28: unexpected token in expression: n...
 // Pure Crush implementation of Pipefish LLM Dashboard
 // This demonstrates the DOM capability integration
 

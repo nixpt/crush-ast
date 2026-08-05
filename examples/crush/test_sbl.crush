@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: system.path_normalize
 let path = "/mnt/data/../user/./projects//exosphere";
 let normalized = system.path_normalize(path);
 io.print("Path: " + path);

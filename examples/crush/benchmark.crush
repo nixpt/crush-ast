@@ -1,3 +1,4 @@
+// expect-error: [runtime] Undefined function: str
 capability system readonly
 
 fn bench_loop(n) {

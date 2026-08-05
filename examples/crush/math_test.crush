@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: math.sqrt
 # Test: Math Library
 # Description: Verifies mathematical functions and operations.
 

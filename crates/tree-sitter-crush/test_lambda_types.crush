@@ -1,3 +1,4 @@
+// expect-error: [runtime] Parse errors: Unexpected token at line 1, column 13: unexpected token in expression: `:...
 let add = |x: Int, y: Int| => x + y;
 let greet = |name, msg: String| {
     print(msg);

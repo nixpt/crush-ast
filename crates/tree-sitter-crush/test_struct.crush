@@ -1,2 +1,3 @@
+// expect-error: [runtime] Parse errors: Unexpected token at line 2, column 19: `new Point(...)` does not take con...
 struct Point { x, y }
 let p = new Point(10, 20);

@@ -1,3 +1,4 @@
+// expect-error: [runtime] Unknown struct: Point
 # Test: Concurrency and Structs
 # Description: Verifies struct definition, instantiation, and concurrent access.
 

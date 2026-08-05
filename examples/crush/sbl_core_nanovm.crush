@@ -1,3 +1,4 @@
+// expect-error: [runtime] stack underflow
 // System Bytecode Layer (SBL) Core Utilities
 // This is compiled to CASM and loaded as the Root of Trust.
 

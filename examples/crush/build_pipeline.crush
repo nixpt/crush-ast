@@ -1,3 +1,4 @@
+// expect-error: [runtime] call depth quota exceeded (256)
 // build_pipeline.crush — a real-world Crush example: orchestrating a native build.
 //
 // Unlike the toy fixtures (fib, arithmetic), this shows Crush in its intended role from the

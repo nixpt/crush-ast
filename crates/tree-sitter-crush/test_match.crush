@@ -1,3 +1,4 @@
+// expect-error: [runtime] Undefined variable: Point
 struct Point { x, y }
 
 let p = Point { x: 10, y: 20 };

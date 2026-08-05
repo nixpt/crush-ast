@@ -5207,7 +5207,11 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "crush-diagnostics",
+ "crush-frontend",
+ "crush-lang-sdk",
+ "crush-vm",
  "regex",
  "serde_json",
 ]

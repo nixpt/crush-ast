@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: async.sleep
 # Test: Async/Await
 # Description: Verifies async function execution, task spawning, and awaiting results.
 

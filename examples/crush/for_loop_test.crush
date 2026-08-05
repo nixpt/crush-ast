@@ -1,3 +1,13 @@
+// expect: Testing for loops with ranges
+// expect: Test 1: Range 0..3
+// expect: 0
+// expect: 1
+// expect: 2
+// expect: Test 2: Range 5..8
+// expect: 5
+// expect: 6
+// expect: 7
+// expect: For loop tests passed!
 # Test: For Loops
 # Description: Verifies 'for' loop syntax and execution over ranges and collections.
 

@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: fs.touch
 io.print("Testing Phase 2 and 3 capabilities")
 
 io.print("Test 1: fs.cp - Copy file")

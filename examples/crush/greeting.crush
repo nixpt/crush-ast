@@ -1,3 +1,4 @@
+// expect-error: [runtime] Cannot access field 'total_gb' on non-struct type any
 capability system readonly
 
 fn get_time_greeting() {

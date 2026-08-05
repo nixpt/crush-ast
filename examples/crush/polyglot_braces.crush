@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: @python requires the 'polyglot.python' capability (run with --polyg...
 // Test: Polyglot block brace handling (EXO-47)
 // Description: Verifies the parser treats @<lang> { ... } bodies as opaque
 // raw text bounded by a matching '}' at the outer nesting level, with

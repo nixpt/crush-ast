@@ -1,3 +1,4 @@
+// expect-error: [runtime] Parse errors: Expected `}` but found newline at line 1, column 15, Unexpected token at ...
 struct Point {
     x: Int,
     y: Int,

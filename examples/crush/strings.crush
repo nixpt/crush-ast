@@ -1,1 +1,2 @@
+// expect-exit: 0
 "hello" + " world"

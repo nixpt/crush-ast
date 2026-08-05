@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: text.wc
 # Test: Text Tools
 # Description: Verifies text processing utilities.
 

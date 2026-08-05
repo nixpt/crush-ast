@@ -6,10 +6,18 @@ publish = false
 
 [dependencies]
 crush-diagnostics.workspace = true
+crush-frontend.workspace = true
+crush-vm.workspace = true
+crush-lang-sdk.workspace = true
 serde_json.workspace = true
+anyhow.workspace = true
 regex = "1.10"
 
 [[bin]]
 name = "lint-dejavue"
 path = "src/lint_dejavue.rs"
+
+[[bin]]
+name = "conformance"
+path = "src/conformance.rs"
 

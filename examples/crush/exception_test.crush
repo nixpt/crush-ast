@@ -1,3 +1,7 @@
+// expect: Starting Exception Test
+// expect: Inside try block
+// expect: Caught exception: Oops
+// expect: After catch block
 # Test: Exception Handling
 # Description: Verifies try-catch blocks and error propagation.
 

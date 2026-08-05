@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: @python requires the 'polyglot.python' capability (run with --polyg...
 # Test: Language Basics
 # Description: Verifies fundamental language constructs like variables and basic arithmetic.
 

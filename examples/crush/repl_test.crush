@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: fs.pwd
 io.print("Testing CoreUtils in REPL")
 
 io.print("1. File system operations:")

@@ -1,3 +1,4 @@
+// expect-error: [runtime] unknown capability: fs.pwd
 io.print("Testing fs capabilities")
 
 io.print("Test 1: fs.pwd")
