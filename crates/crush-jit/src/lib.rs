@@ -2594,7 +2594,7 @@ mod tests {
             FastOp::CapCall,
             // Host yield (trampoline escape)
             FastOp::CallHost, FastOp::ExecLang, FastOp::Spawn, FastOp::Gc,
-            FastOp::ImportVar, FastOp::Await, FastOp::CrossLangCall,
+            FastOp::ImportVar, FastOp::Await,
         ];
 
         let unsupported: &[FastOp] = &[
@@ -2608,6 +2608,7 @@ mod tests {
             FastOp::ExportVar,
             // Host interaction — not yet implemented
             FastOp::CallInterface,
+            FastOp::CrossLangCall,
             // AI opcodes — all NOP at runtime
             FastOp::AiQuery,
             FastOp::AiToolchain,
