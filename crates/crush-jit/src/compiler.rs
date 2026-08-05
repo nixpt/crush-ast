@@ -39,6 +39,31 @@ const TAG_INT: i64 = 0x7FFD_0000_0000_0000i64;
 const TAG_REF: i64 = 0x7FFE_0000_0000_0000i64;
 const MASK_U64: u64 = 0xFFFF_0000_0000_0000;
 
+/// Error type for JIT compilation failures.
+#[derive(Debug, Clone)]
+pub enum CompileError {
+    /// One or more FastOp variants are not yet implemented in the JIT compiler.
+    /// The caller should fall back to the FastVM interpreter for this function.
+    Unsupported(Vec<FastOp>),
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompileError::Unsupported(ops) => {
+                write!(f, "JIT unsupported opcodes: ")?;
+                for (i, op) in ops.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{op:?}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for CompileError {}
+
 pub struct JitProgram {
     _mem: region::Allocation,
     func: unsafe extern "C" fn(*mut JitContext),
@@ -64,7 +89,7 @@ impl JitCompiler {
         let mut fctx = FunctionBuilderContext::new();
         let mut bld = FunctionBuilder::new(&mut func, &mut fctx);
         let helper_sig = import_helper_sig(&mut bld, ptr_ty);
-        build_fn(&mut bld, &blocks, program, ptr_ty, helper_sig);
+        build_fn(&mut bld, &blocks, program, ptr_ty, helper_sig)?;
         bld.finalize();
 
         let mut ctx = Context::for_function(func);
@@ -147,7 +172,7 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
 
 // ── Builder ────────────────────────────────────────────────────────────────
 
-fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef) {
+fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef) -> Result<(), CompileError> {
     let mut map: HashMap<usize, ir::Block> = HashMap::new();
     for &(off, _) in blocks { map.insert(off, bld.create_block()); }
 
@@ -278,7 +303,7 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
         bld.switch_to_block(block);
         let mut term = false;
         for (i, instr) in instrs.iter().enumerate() {
-            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig);
+            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig)?;
         }
         if !term {
             if let Some(&next_block) = next_off_map.get(&off) {
@@ -318,6 +343,8 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     for &rb in &ret_blocks {
         bld.seal_block(rb);
     }
+
+    Ok(())
 }
 
 // ── Primitives (single builder.ins() call each) ────────────────────────────
@@ -675,7 +702,7 @@ fn emit_one(
     handler_entries: &[(usize, ir::Block)],
     _ptr_ty: types::Type,
     helper_sig: ir::SigRef,
-) -> bool {
+) -> Result<bool, CompileError> {
     use FastOp::*;
     match instr.op {
         PushInt => {
@@ -874,7 +901,7 @@ fn emit_one(
             if let Some(&t) = clif.get(&(instr.arg as usize)) {
                 dec_budget(b, ctx);
                 b.ins().jump(t, &[] as &[BlockArg]);
-                return true;
+                return Ok(true);
             }
         }
         JumpIf => {
@@ -884,7 +911,7 @@ fn emit_one(
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
                 b.ins().brif(c, tb, &[] as &[BlockArg], eb, &[] as &[BlockArg]);
-                return true;
+                return Ok(true);
             }
         }
         JumpIfNot => {
@@ -895,7 +922,7 @@ fn emit_one(
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
                 b.ins().brif(nb, tb, &[] as &[BlockArg], eb, &[] as &[BlockArg]);
-                return true;
+                return Ok(true);
             }
         }
 
@@ -946,7 +973,7 @@ fn emit_one(
                 dec_budget(b, ctx);
                 if let Some(&target_block) = clif.get(&target_pc) {
                     b.ins().jump(target_block, &[] as &[BlockArg]);
-                    return true;
+                    return Ok(true);
                 }
             }
             // Fallback: function not resolved
@@ -981,10 +1008,10 @@ fn emit_one(
 
             b.seal_block(top_bb);
             b.seal_block(ret_bb);
-            return true;
+            return Ok(true);
         }
 
-        Halt => { let val = pop(b, ctx); sres(b, ctx, val); b.ins().return_(&[] as &[ir::Value]); return true; }
+        Halt => { let val = pop(b, ctx); sres(b, ctx, val); b.ins().return_(&[] as &[ir::Value]); return Ok(true); }
         Nop => {}
 
         LoadLocal => { let v = lload(b, ctx, instr.arg as usize); push(b, ctx, v); }
@@ -1019,7 +1046,7 @@ fn emit_one(
             if let Some(&t) = clif.get(&(instr.arg as usize)) {
                 dec_budget(b, ctx);
                 b.ins().jump(t, &[] as &[BlockArg]);
-                return true;
+                return Ok(true);
             }
         }
 
@@ -1130,7 +1157,7 @@ fn emit_one(
             b.seal_block(dispatch_bb);
             b.seal_block(return_bb);
 
-            return true;
+            return Ok(true);
         }
 
         CapCall => {
@@ -1146,33 +1173,33 @@ fn emit_one(
         // and return. The host processes the request and calls resume() to continue.
         CallHost => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_CALL_HOST);
-            return true;
+            return Ok(true);
         }
         ExecLang => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_EXEC_LANG);
-            return true;
+            return Ok(true);
         }
         Spawn => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_SPAWN);
-            return true;
+            return Ok(true);
         }
         Gc => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_GC);
-            return true;
+            return Ok(true);
         }
         ImportVar => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_IMPORT_VAR);
-            return true;
+            return Ok(true);
         }
         Await => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_AWAIT);
-            return true;
+            return Ok(true);
         }
 
-        // Remaining unimplemented ops fall through to push null.
-        _ => { let cv = iconst(b, TAG_NULL); push(b, ctx, cv); }
+        // Remaining unimplemented ops: refuse to compile (no silent null fabrication).
+        op => { return Err(CompileError::Unsupported(vec![op])); }
     }
-    false
+    Ok(false)
 }
 
 // ── Arithmetic dispatch ─────────────────────────────────────────────────────

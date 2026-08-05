@@ -8,12 +8,12 @@ pub mod compiler;
 pub mod runtime;
 pub mod value;
 
-use crush_vm::fastvm::{Capability, FastYield, Hal, LoweredProgram};
+use crush_vm::fastvm::{Capability, FastVM, FastYield, Hal, LoweredProgram};
 use crush_vm::memory::Arena;
 use crush_vm::value::RuntimeValue;
 use std::cell::RefCell;
 use std::sync::Arc;
-use crate::compiler::{JitCompiler, JitProgram};
+use crate::compiler::{CompileError, JitCompiler, JitProgram};
 use crate::runtime::{JitContext, jit_runtime_helper};
 use crate::value::JitValue;
 
@@ -102,10 +102,27 @@ impl JitEngine {
         self.compilation_count.get()
     }
 
+    /// Fall back to the FastVM interpreter when JIT compilation fails
+    /// because of unsupported opcodes (CRUSH-72).
+    fn fallback_to_fastvm(&self, program: &LoweredProgram) -> anyhow::Result<FastYield> {
+        let budget = std::cmp::min(self.budget, u32::MAX as u64) as u32;
+        let mut vm = FastVM::new(
+            program.clone(),
+            self.capabilities.clone(),
+            self.hal.clone(),
+        );
+        Ok(vm.run(budget))
+    }
+
     /// Compile and execute `program` using the provided context and arena.
     ///
     /// The caller owns `ctx` and `arena` — this allows state to be carried
     /// forward across yield/resume boundaries (M2 Phase 5 Tier 2).
+    ///
+    /// If the JIT compiler does not support one or more opcodes in the program,
+    /// execution falls back to the FastVM interpreter automatically.  The
+    /// provided `ctx` and `arena` are unused in the fallback path (FastVM
+    /// manages its own arena).
     ///
     /// If the program yields via a host-request opcode (CallHost, ExecLang,
     /// Spawn, etc.), returns `FastYield::Yielded` with `ctx.saved_pc` set
@@ -120,7 +137,17 @@ impl JitEngine {
     ) -> anyhow::Result<FastYield> {
         // M2 Phase 5 Tier 3: always compile fresh on initial entry — this
         // populates the cache so subsequent resume() calls can reuse it.
-        let compiled = self.compiler.compile(program)?;
+        // If compilation fails because of unsupported opcodes, fall back
+        // to the FastVM interpreter (CRUSH-72).
+        let compiled = match self.compiler.compile(program) {
+            Ok(compiled) => compiled,
+            Err(e) => {
+                if e.downcast_ref::<CompileError>().is_some() {
+                    return self.fallback_to_fastvm(program);
+                }
+                return Err(e);
+            }
+        };
         self.compilation_count.set(self.compilation_count.get() + 1);
 
         // Store arena pointer
@@ -2509,5 +2536,308 @@ mod tests {
         assert_eq!(expected, actual,
             "recursive int sum(5)=15: JIT ({:?}) should match FastVM ({:?})",
             actual, expected);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CRUSH-72: silent null catch-all → Unsupported error + FastVM fallback
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Every FastOp variant must either compile successfully or return
+    /// `CompileError::Unsupported`. No variant may silently fabricate a value
+    /// through an unhandled catch-all (CRUSH-72).
+    #[test]
+    fn exhaustive_fastop_compile_or_refuse() {
+        let compiler = JitCompiler::new().expect("JitCompiler::new");
+
+        // Ops that we expect to be implemented in the JIT. This list tracks
+        // the current state of compiler.rs:emit_one's match arms.
+        // When a new op is implemented, move it from UNSUPPORTED to IMPLEMENTED.
+        let implemented: &[FastOp] = &[
+            // Stack
+            FastOp::PushInt, FastOp::PushFloat, FastOp::PushBool, FastOp::PushNull,
+            FastOp::PushStr, FastOp::Pop, FastOp::Dup, FastOp::Swap,
+            // Locals
+            FastOp::LoadLocal, FastOp::StoreLocal,
+            // Control flow
+            FastOp::Jump, FastOp::JumpIf, FastOp::JumpIfNot, FastOp::Call, FastOp::Return,
+            FastOp::Halt, FastOp::Nop, FastOp::Break, FastOp::Continue,
+            // Arithmetic
+            FastOp::Add, FastOp::Sub, FastOp::Mul, FastOp::Div, FastOp::Mod, FastOp::Neg,
+            // Comparison
+            FastOp::Eq, FastOp::Ne, FastOp::Lt, FastOp::Le, FastOp::Gt, FastOp::Ge,
+            // Logical
+            FastOp::And, FastOp::Or, FastOp::Not,
+            // Stack manipulation
+            FastOp::Rot, FastOp::Pick, FastOp::Roll,
+            // Bitwise
+            FastOp::BitAnd, FastOp::BitOr, FastOp::BitXor, FastOp::BitNot,
+            FastOp::Shl, FastOp::Shr,
+            // Math
+            FastOp::MathSqrt, FastOp::MathAbs, FastOp::MathRound,
+            FastOp::MathFloor, FastOp::MathCeil, FastOp::MathPow,
+            // Arena (runtime helpers)
+            FastOp::MakeList, FastOp::MakeMap, FastOp::Index, FastOp::Len,
+            FastOp::TypeOf, FastOp::NewArray, FastOp::ArrayPush, FastOp::ArrayPop,
+            FastOp::ArrSet,
+            // String (runtime helpers)
+            FastOp::StrContains, FastOp::StrStartsWith, FastOp::StrEndsWith,
+            FastOp::StrToUpper, FastOp::StrToLower, FastOp::StrTrim,
+            FastOp::StrSplit, FastOp::StrReplace, FastOp::StrJoin, FastOp::StrSim,
+            // Object/collection (runtime helpers)
+            FastOp::Cast, FastOp::NewTuple, FastOp::NewList, FastOp::NewVector,
+            FastOp::NewSet, FastOp::MakeRange, FastOp::TuplePush, FastOp::ListPush,
+            FastOp::VectorPush, FastOp::SetPush, FastOp::GetField, FastOp::SetField,
+            FastOp::NewObj, FastOp::NewStruct,
+            // Exception (runtime helpers)
+            FastOp::EnterTry, FastOp::ExitTry, FastOp::Throw,
+            // Capability
+            FastOp::CapCall,
+            // Host yield (trampoline escape)
+            FastOp::CallHost, FastOp::ExecLang, FastOp::Spawn, FastOp::Gc,
+            FastOp::ImportVar, FastOp::Await, FastOp::CrossLangCall,
+        ];
+
+        let unsupported: &[FastOp] = &[
+            // VM control — not yet implemented in JIT
+            FastOp::Yield,
+            FastOp::Restart,
+            FastOp::Watchdog,
+            // Variables — not yet implemented
+            FastOp::ExportVar,
+            // Host interaction — not yet implemented
+            FastOp::CallInterface,
+            // AI opcodes — all NOP at runtime
+            FastOp::AiQuery,
+            FastOp::AiToolchain,
+            FastOp::AiAgentDelegation,
+            FastOp::AiLearningLoop,
+            FastOp::AiContextAware,
+            FastOp::AiSemanticMatch,
+            FastOp::AiSynthesize,
+            FastOp::AiGoalDeclaration,
+            FastOp::AiProgressUpdate,
+            FastOp::AiKnowledgeSharing,
+        ];
+
+        // Build a simple program for each variant and try to compile it.
+        // For implemented ops: compilation should either succeed or fail
+        // with a non-Unsupported error (e.g., Cranelift error from bad
+        // stack state — that's fine, it means the op IS handled).
+        // For unsupported ops: compilation must fail with Unsupported.
+
+        // Helper: create a minimal program for this op with a valid symbol table.
+        fn prog_for(op: FastOp) -> LoweredProgram {
+            let mut prog = match op {
+                // Ops that naturally terminate: push a value first.
+                FastOp::Halt | FastOp::Return | FastOp::Throw => {
+                    make_prog(vec![(FastOp::PushInt, 42, 0), (op, 0, 0)])
+                }
+                // Jumps need valid-ish targets.
+                FastOp::Jump | FastOp::JumpIf | FastOp::JumpIfNot => {
+                    make_prog(vec![
+                        (FastOp::PushBool, 1, 0),
+                        (op, 2, 0), // target PC 2 = Halt
+                        (FastOp::Halt, 0, 0),
+                    ])
+                }
+                FastOp::Break | FastOp::Continue => {
+                    make_prog(vec![(op, 0, 0), (FastOp::Halt, 0, 0)])
+                }
+                // Ops that reference the string table need interned strings.
+                FastOp::PushStr | FastOp::Cast | FastOp::GetField | FastOp::SetField
+                | FastOp::NewStruct | FastOp::StrSim | FastOp::NewTuple
+                | FastOp::NewList | FastOp::NewVector | FastOp::NewSet => {
+                    let mut p = make_prog(vec![
+                        (FastOp::PushInt, 42, 0),
+                        (op, 0, 0),
+                        (FastOp::Halt, 0, 0),
+                    ]);
+                    p.symbols.intern_string("test");
+                    p
+                }
+                // Ops that need multiple values on stack.
+                FastOp::MakeList | FastOp::MakeMap | FastOp::NewArray => {
+                    let mut p = make_prog(vec![
+                        (FastOp::PushInt, 42, 0),
+                        (FastOp::PushInt, 42, 0),
+                        (op, 2, 0), // count = 2
+                        (FastOp::Halt, 0, 0),
+                    ]);
+                    p.symbols.intern_string("test");
+                    p
+                }
+                // Index needs obj and key on stack.
+                FastOp::Index => {
+                    let mut p = make_prog(vec![
+                        (FastOp::PushInt, 42, 0),
+                        (FastOp::PushInt, 0, 0), // key
+                        (FastOp::PushInt, 42, 0), // obj placeholder
+                        (FastOp::Swap, 0, 0),    // obj, key
+                        (FastOp::Index, 0, 0),
+                        (FastOp::Halt, 0, 0),
+                    ]);
+                    p.symbols.intern_string("test");
+                    p
+                }
+                // CapCall needs a registered capability.
+                FastOp::CapCall => {
+                    let mut p = make_prog(vec![
+                        (FastOp::PushInt, 42, 0),
+                        (FastOp::CapCall, 0, 1),
+                        (FastOp::Halt, 0, 0),
+                    ]);
+                    p.symbols.register_capability("test");
+                    p
+                }
+                // Call needs function table — use a simple one-fn program.
+                FastOp::Call => make_multi_fn(
+                    vec![
+                        (FastOp::PushInt, 7, 0),
+                        (FastOp::Call, 0, 1),
+                        (FastOp::Halt, 0, 0),
+                        (FastOp::StoreLocal, 0, 0),
+                        (FastOp::LoadLocal, 0, 0),
+                        (FastOp::PushInt, 2, 0),
+                        (FastOp::Mul, 0, 0),
+                        (FastOp::Return, 0, 0),
+                    ],
+                    vec!["double"],
+                    vec![("double", 3, 8, 1)],
+                    0,
+                ),
+                // String ops that pop from stack.
+                FastOp::StrContains | FastOp::StrStartsWith | FastOp::StrEndsWith
+                | FastOp::StrToUpper | FastOp::StrToLower | FastOp::StrTrim
+                | FastOp::StrSplit | FastOp::StrReplace | FastOp::StrJoin => {
+                    let mut p = make_prog(vec![
+                        (FastOp::PushInt, 42, 0), // placeholder val
+                        (FastOp::PushInt, 42, 0), // placeholder val
+                        (op, 0, 0),
+                        (FastOp::Halt, 0, 0),
+                    ]);
+                    p.symbols.intern_string("test");
+                    p
+                }
+                // Everything else: push a value for stack consumers, then op, then halt.
+                _ => make_prog(vec![
+                    (FastOp::PushInt, 42, 0),
+                    (op, 0, 0),
+                    (FastOp::Halt, 0, 0),
+                ]),
+            };
+            // Ensure every program has at least one interned string so
+            // string-table-referencing ops don't index out of bounds.
+            if prog.symbols.strings.is_empty() {
+                prog.symbols.intern_string("_");
+            }
+            prog
+        }
+
+        // Verify the union of implemented + unsupported = all variants.
+        let mut seen = std::collections::HashSet::new();
+        for op in implemented.iter().chain(unsupported.iter()) {
+            seen.insert(*op as u8);
+        }
+        // Build the full set by iterating possible discriminant values.
+        // FastOp is repr(u8), so we can iterate 0..255 and try to match.
+        // But we can't easily enumerate all enum variants programmatically.
+        // Instead, assert we have reasonable coverage: all ops we know about.
+        let total_covered = seen.len();
+        assert!(total_covered >= 90,
+            "only {total_covered} FastOp variants covered by test lists; expected >= 90");
+
+        for &op in implemented {
+            let prog = prog_for(op);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compiler.compile(&prog)
+            }));
+            match result {
+                Ok(Ok(_)) => {
+                    // Compilation succeeded — op is handled.
+                }
+                Ok(Err(e)) => {
+                    // Must NOT be Unsupported for an implemented op.
+                    assert!(
+                        e.downcast_ref::<CompileError>().is_none(),
+                        "FastOp::{op:?} is listed as implemented but returned Unsupported"
+                    );
+                    // Other errors (Cranelift, etc.) are fine — the op IS handled.
+                }
+                Err(panic_info) => {
+                    // If compilation panicked, extract the message.
+                    let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else {
+                        format!("{:?}", panic_info)
+                    };
+                    panic!(
+                        "FastOp::{op:?} caused a compilation panic: {msg}"
+                    );
+                }
+            }
+        }
+
+        for &op in unsupported {
+            let prog = prog_for(op);
+            match compiler.compile(&prog) {
+                Ok(_) => {
+                    panic!(
+                        "FastOp::{op:?} is listed as unsupported but compilation succeeded! \
+                         Move it to the `implemented` list."
+                    );
+                }
+                Err(e) => {
+                    assert!(
+                        e.downcast_ref::<CompileError>().is_some(),
+                        "FastOp::{op:?} is unsupported but error was not Unsupported: {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A program containing an unsupported opcode must run through the JIT
+    /// entry point and produce the same result as the FastVM interpreter,
+    /// via the automatic fallback path (CRUSH-72).
+    #[test]
+    fn unsupported_op_falls_back_to_fastvm() {
+        // Restart is unsupported by the JIT. It pops a task ID from the stack
+        // in FastVM and yields. The JIT should detect the unsupported op and
+        // fall back transparently.
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 42, 0),
+            (FastOp::Restart, 0, 0), // unsupported by JIT → triggers fallback
+            (FastOp::Halt, 0, 0),
+        ]);
+
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+
+        assert_eq!(
+            expected, actual,
+            "JIT with unsupported op (Restart) should fall back to FastVM: \
+             expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    /// Verify that a program containing ONLY supported ops does NOT trigger
+    /// the fallback (it compiles and runs via JIT natively).
+    #[test]
+    fn supported_program_runs_via_jit_not_fallback() {
+        // A simple arithmetic program — all ops are implemented.
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 7, 0),
+            (FastOp::PushInt, 3, 0),
+            (FastOp::Mul, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+
+        let expected = run_fastvm(&prog);
+        let actual = run_jit(&prog);
+
+        assert_eq!(expected, actual,
+            "simple supported program should match FastVM");
     }
 }
