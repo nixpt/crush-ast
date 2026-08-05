@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-74 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (s418) |
 | **Phase** | Correctness spine (s412) |
 
 ## Problem
@@ -36,10 +36,19 @@ Connect-the-wire, not a from-scratch span project (estimated days):
 
 ## Definition of done
 
-- [ ] Real parse produces nodes with location; a test asserts it (no meta_at)
-- [ ] Runtime error from a multi-function program reports correct file:line
-- [ ] Debugger source-map item (M3) unblocked — note in its TASKS entry
-- [ ] `cargo test --workspace` green
+- [x] Real parse produces nodes with location; a test asserts it (no meta_at) — `location_tests.rs` (2 tests: fn-keyword location + multi-function line tracking)
+- [x] Runtime error from a multi-function program reports correct file:line — CRUSH-79's `runtime_error_location_*` suite (casm + frontend integration)
+- [x] Debugger source-map item (M3) unblocked — note in its TASKS entry
+- [x] `cargo test --workspace` green (166 suites, 0 failed)
+
+## Resolution (s418, foreman-finish)
+
+Panini absorbed CRUSH-79 first (flat-vector source_map for multi-function
+programs — 2 commits, ticket Done), then wired the parser stamping. Foreman
+finished after the horse hit its 80-turn budget mid-edit: corrected the
+function-node stamp (was recorded at the closing brace — capture moved to the
+`fn` token) and the synthesized script-main stamp (was EOF — now the script's
+first token), added the DoD #1 tests. Merged via PR #31 (`…`).
 
 ## Files in scope
 
