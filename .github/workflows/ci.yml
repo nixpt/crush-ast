@@ -64,6 +64,7 @@ jobs:
             -p crush-cast \
             -p casm \
             -p crush-frontend \
+            -p crush-jit \
             2>&1
 
   # ── All language SDK tests ────────────────────────────────────────────────

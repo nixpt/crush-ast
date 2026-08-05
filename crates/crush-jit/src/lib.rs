@@ -673,6 +673,17 @@ mod tests {
         ]);
         assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(false))));
         assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
+
+        // Mirror case: NaN != NaN must be TRUE for bit-identical NaNs too —
+        // the old identity-override forced `false` (CRUSH-108).
+        let prog3 = make_prog(vec![
+            (FastOp::PushFloat, nan_bits, 0),
+            (FastOp::PushFloat, nan_bits, 0),
+            (FastOp::Ne, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        assert_eq!(run_jit(&prog3), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(run_fastvm(&prog3), run_jit(&prog3));
     }
 
     #[test]
