@@ -1,6 +1,41 @@
 use crush_frontend::{parse_source, render::render_program};
 
+/// Recursively strip source-location fields ("line", "col") from all `meta`
+/// objects so roundtrip tests don't fail on location drift (CRUSH-74).
+fn strip_source_locations(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(meta) = map.get_mut("meta") {
+                if let serde_json::Value::Object(meta_map) = meta {
+                    meta_map.remove("line");
+                    meta_map.remove("col");
+                    meta_map.remove("file");
+                }
+            }
+            // Also strip from "location" fields (used in exhaustive_sites, etc.)
+            if let Some(loc) = map.get_mut("location") {
+                if let serde_json::Value::Object(loc_map) = loc {
+                    loc_map.remove("line");
+                    loc_map.remove("col");
+                    loc_map.remove("file");
+                }
+            }
+            for (_, v) in map.iter_mut() {
+                strip_source_locations(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_source_locations(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Helper: parse → render → parse, then compare ASTs via canonical JSON.
+/// Source locations in meta are stripped before comparison since the
+/// renderer reformats code and shifts line/col numbers.
 fn assert_roundtrip(source: &str) {
     let original = parse_source(source).expect("initial parse should succeed");
     let rendered = render_program(&original);
@@ -9,13 +44,17 @@ fn assert_roundtrip(source: &str) {
     let orig_json = serde_json::to_string_pretty(&original).expect("serialize original");
     let rep_json = serde_json::to_string_pretty(&reparsed).expect("serialize reparsed");
 
-    let orig_val: serde_json::Value =
+    let mut orig_val: serde_json::Value =
         serde_json::from_str(&orig_json).expect("deserialize original");
-    let rep_val: serde_json::Value = serde_json::from_str(&rep_json).expect("deserialize reparsed");
+    let mut rep_val: serde_json::Value =
+        serde_json::from_str(&rep_json).expect("deserialize reparsed");
+
+    strip_source_locations(&mut orig_val);
+    strip_source_locations(&mut rep_val);
 
     assert_eq!(
         orig_val, rep_val,
-        "AST mismatch after round-trip.\nRendered:\n{}",
+        "AST mismatch after round-trip (source locations stripped).\nRendered:\n{}",
         rendered
     );
 }

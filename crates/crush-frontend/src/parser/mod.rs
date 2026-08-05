@@ -172,6 +172,21 @@ impl Parser {
         }
     }
 
+    /// Get the source location of the current peek token.
+    fn current_location(&self) -> (usize, usize) {
+        self.get_location(self.peek())
+    }
+
+    /// Create a meta HashMap stamped with the current token's line and column
+    /// for source-level diagnostics and debugger source maps (CRUSH-74).
+    fn make_meta(&self) -> HashMap<String, serde_json::Value> {
+        let (line, col) = self.current_location();
+        let mut meta = HashMap::new();
+        meta.insert("line".to_string(), serde_json::Value::from(line));
+        meta.insert("col".to_string(), serde_json::Value::from(col));
+        meta
+    }
+
     fn expect(&mut self, expected: Token) -> Result<(), ()> {
         let actual = self.peek();
         if std::mem::discriminant(actual) == std::mem::discriminant(&expected) {
@@ -241,6 +256,10 @@ impl Parser {
 
     /// Parse a complete program with error recovery
     fn parse_program(&mut self) -> Result<Program, ()> {
+        // Location of the script's first token — used for the synthesized
+        // script-style `main` (stamping at construction time would record
+        // EOF instead of the script start, CRUSH-74).
+        let script_start_meta = self.make_meta();
         let mut functions = HashMap::new();
         let mut statements = Vec::new();
         let mut iterations = 0usize;
@@ -514,7 +533,7 @@ impl Parser {
                         Function {
                             params: Vec::new(),
                             body: statements,
-                            meta: HashMap::new(),
+                            meta: script_start_meta.clone(),
                             ..Default::default()
                         },
                     );
@@ -551,6 +570,10 @@ impl Parser {
 
     /// Parse a function definition with error recovery
     fn parse_function(&mut self, is_async: bool) -> Result<(String, Function), ()> {
+        // Stamp the function node with the location of the `fn` keyword —
+        // captured BEFORE the body parses (the peek moves past it, so a
+        // late make_meta would record the closing brace instead, CRUSH-74).
+        let func_meta = self.make_meta();
         match self.peek() {
             Token::Fn(_) => {
                 self.advance();
@@ -666,7 +689,7 @@ impl Parser {
         let func = Function {
             params: params.into_iter().map(|p| (p.name, p.type_hint)).collect(),
             body,
-            meta: HashMap::new(),
+            meta: func_meta,
             is_async,
             ..Default::default()
         };
@@ -771,9 +794,9 @@ impl Parser {
                 self.maybe_semicolon();
                 Ok(Statement::ExprStmt {
                     expr: Expression::Yield {
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     },
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Return(_) => self.parse_return_statement(),
@@ -781,14 +804,14 @@ impl Parser {
                 self.advance();
                 self.maybe_semicolon();
                 Ok(Statement::Break {
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Continue(_) => {
                 self.advance();
                 self.maybe_semicolon();
                 Ok(Statement::Continue {
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Try(_) => self.parse_try_catch(),
@@ -845,7 +868,7 @@ impl Parser {
             name,
             value,
             type_hint: type_hint.unwrap_or(CastType::Any),
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -885,7 +908,7 @@ impl Parser {
             } else {
                 Some(else_body)
             },
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -903,7 +926,7 @@ impl Parser {
         Ok(Statement::While {
             condition: Box::new(condition),
             body,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -942,7 +965,7 @@ impl Parser {
             variable,
             iterable: Box::new(iterable),
             body,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -960,7 +983,7 @@ impl Parser {
 
         Ok(Statement::Return {
             value,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -992,7 +1015,7 @@ impl Parser {
             body,
             error_var,
             handler,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1005,7 +1028,7 @@ impl Parser {
 
         Ok(Statement::Throw {
             value,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1065,7 +1088,7 @@ impl Parser {
         Ok(Statement::StructDef {
             name,
             fields,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1097,14 +1120,14 @@ impl Parser {
         } else {
             Expression::Var {
                 name: name.clone(),
-                meta: HashMap::new(),
+                meta: self.make_meta(),
             }
         };
 
         Ok(Statement::Export {
             name,
             value,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1122,7 +1145,7 @@ impl Parser {
                     return Ok(Statement::Assign {
                         target: name,
                         value,
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     });
                 }
                 // `p.x = 10` — field assignment. Statement::SetField already exists in the CAST
@@ -1136,7 +1159,7 @@ impl Parser {
                         target: *target,
                         field,
                         value,
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     });
                 }
                 // `xs[0] = 9` — indexed assignment. Lowered to a cap_call "arr_set"
@@ -1149,9 +1172,9 @@ impl Parser {
                         expr: Expression::CapabilityCall {
                             name: "arr_set".to_string(),
                             args: vec![*target, *index, value],
-                            meta: HashMap::new(),
+                            meta: self.make_meta(),
                         },
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     });
                 }
                 other => {
@@ -1165,7 +1188,7 @@ impl Parser {
 
         Ok(Statement::ExprStmt {
             expr,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1236,7 +1259,7 @@ impl Parser {
                 Expression::Range {
                     start: Box::new(left),
                     end: Box::new(end),
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 }
             } else if op == "|>" {
                 // Pipeline: left |> right becomes right(left)
@@ -1293,7 +1316,7 @@ impl Parser {
                 Expression::GetField {
                     target: Box::new(left),
                     field,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 }
             } else if op == "[]" {
                 // Check for slice syntax: xs[start:end] or xs[start:] or xs[:end]
@@ -1301,7 +1324,7 @@ impl Parser {
                 if matches!(self.peek(), Token::Colon(_)) {
                     self.advance(); // consume ':'
                     let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
-                        Expression::NullLiteral { meta: HashMap::new() }
+                        Expression::NullLiteral { meta: self.make_meta() }
                     } else {
                         self.parse_expression()?
                     };
@@ -1311,10 +1334,10 @@ impl Parser {
                         name: "arr_slice".to_string(),
                         args: vec![
                             left,
-                            Expression::NullLiteral { meta: HashMap::new() },
+                            Expression::NullLiteral { meta: self.make_meta() },
                             end_expr,
                         ],
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     }
                 } else {
                     // Parse the start expression
@@ -1323,7 +1346,7 @@ impl Parser {
                         // xs[start:end] — slice with start and optional end
                         self.advance(); // consume ':'
                         let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
-                            Expression::NullLiteral { meta: HashMap::new() }
+                            Expression::NullLiteral { meta: self.make_meta() }
                         } else {
                             self.parse_expression()?
                         };
@@ -1336,7 +1359,7 @@ impl Parser {
                                 index,
                                 end_expr,
                             ],
-                            meta: HashMap::new(),
+                            meta: self.make_meta(),
                         }
                     } else {
                         // Regular index access: xs[i]
@@ -1345,7 +1368,7 @@ impl Parser {
                         Expression::Index {
                             target: Box::new(left),
                             index: Box::new(index),
-                            meta: HashMap::new(),
+                            meta: self.make_meta(),
                         }
                     }
                 }
@@ -1358,13 +1381,13 @@ impl Parser {
                     Expression::Var { name, .. } => Expression::Call {
                         function: name,
                         args,
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     },
                     Expression::GetField { target, field, .. } => match *target {
                         Expression::Var { name: obj, .. } => Expression::CapabilityCall {
                             name: format!("{}.{}", obj, field),
                             args,
-                            meta: HashMap::new(),
+                            meta: self.make_meta(),
                         },
                         _ => {
                             let (line, col) = self.get_location(self.peek());
@@ -1393,7 +1416,7 @@ impl Parser {
                     operator: op.to_string(),
                     left: Box::new(left),
                     right: Box::new(right),
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 }
             };
         }
@@ -1447,7 +1470,7 @@ impl Parser {
                 }
                 Ok(Expression::NewStruct {
                     name,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             // `async` is a CONTEXTUAL keyword. The lexer emits Token::Async for it
@@ -1459,7 +1482,7 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Var {
                     name: "async".to_string(),
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Int(n, _) => {
@@ -1467,7 +1490,7 @@ impl Parser {
                 self.advance();
                 Ok(Expression::IntLiteral {
                     value,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Float(n, _) => {
@@ -1475,7 +1498,7 @@ impl Parser {
                 self.advance();
                 Ok(Expression::FloatLiteral {
                     value,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::String(s, _) => {
@@ -1483,7 +1506,7 @@ impl Parser {
                 self.advance();
                 Ok(Expression::StringLiteral {
                     value,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Pipe(_) => self.parse_lambda(),
@@ -1492,13 +1515,13 @@ impl Parser {
                 self.advance();
                 Ok(Expression::BoolLiteral {
                     value,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Null(_) => {
                 self.advance();
                 Ok(Expression::NullLiteral {
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Ident(name, _) => {
@@ -1506,7 +1529,7 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Var {
                     name: n,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::LParen(_) => {
@@ -1524,7 +1547,7 @@ impl Parser {
                 Ok(Expression::UnaryOp {
                     operator: "-".to_string(),
                     operand: Box::new(operand),
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Not(_) => {
@@ -1533,7 +1556,7 @@ impl Parser {
                 Ok(Expression::UnaryOp {
                     operator: "!".to_string(),
                     operand: Box::new(operand),
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Await(_) => {
@@ -1541,7 +1564,7 @@ impl Parser {
                 let expr = self.parse_expression()?;
                 Ok(Expression::Await {
                     expression: Box::new(expr),
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             Token::Spawn(_) => {
@@ -1571,7 +1594,7 @@ impl Parser {
                 Ok(Expression::Spawn {
                     function: func,
                     args,
-                    meta: HashMap::new(),
+                    meta: self.make_meta(),
                 })
             }
             _ => {
@@ -1606,7 +1629,7 @@ impl Parser {
 
         Ok(Expression::ArrayLiteral {
             elements,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1655,7 +1678,7 @@ impl Parser {
 
         Ok(Expression::ObjectLiteral {
             properties,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1707,7 +1730,7 @@ impl Parser {
             let expr = self.parse_expression()?;
             vec![Statement::Return {
                 value: Some(expr),
-                meta: HashMap::new(),
+                meta: self.make_meta(),
             }]
         } else {
             Vec::new()
@@ -1716,7 +1739,7 @@ impl Parser {
         Ok(Expression::Lambda {
             params,
             body,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1737,7 +1760,7 @@ impl Parser {
         Ok(Expression::Match {
             expression,
             arms,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
@@ -1771,7 +1794,7 @@ impl Parser {
             }
             vec![Statement::ExprStmt {
                 expr,
-                meta: HashMap::new(),
+                meta: self.make_meta(),
             }]
         };
 
@@ -1786,7 +1809,7 @@ impl Parser {
                 Ok(Pattern::Literal {
                     value: Expression::IntLiteral {
                         value: val,
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     },
                 })
             }
@@ -1796,7 +1819,7 @@ impl Parser {
                 Ok(Pattern::Literal {
                     value: Expression::StringLiteral {
                         value: val,
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     },
                 })
             }
@@ -1806,7 +1829,7 @@ impl Parser {
                 Ok(Pattern::Literal {
                     value: Expression::BoolLiteral {
                         value: val,
-                        meta: HashMap::new(),
+                        meta: self.make_meta(),
                     },
                 })
             }
@@ -1928,7 +1951,7 @@ impl Parser {
 
         Ok(Statement::Import {
             import: import_stmt,
-            meta: HashMap::new(),
+            meta: self.make_meta(),
         })
     }
 
