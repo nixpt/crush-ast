@@ -1,8 +1,8 @@
+use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
-    ImportStatement, Program, Statement, MatchArm, Pattern,
+    ImportStatement, MatchArm, Pattern, Program, Statement,
 };
-use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_frontend::compiler::Compiler;
 use std::collections::HashMap;
 
@@ -743,11 +743,18 @@ fn spawn_with_args_compiles_successfully() {
         meta: meta(),
     }]));
 
-    assert!(result.is_ok(), "spawn with args should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "spawn with args should compile: {:?}",
+        result.err()
+    );
     let casm = result.unwrap();
     let main = casm.functions.get("main").unwrap();
     // Expect: push 1, push 2, push_str "worker", spawn with argc=2
-    assert!(main.body.iter().any(|inst| inst.op == "spawn"), "should contain spawn instruction");
+    assert!(
+        main.body.iter().any(|inst| inst.op == "spawn"),
+        "should contain spawn instruction"
+    );
 }
 
 #[test]
@@ -965,7 +972,10 @@ fn emits_runtime_invariant_cap_calls_when_flag_enabled() {
 
     // Permission was registered in casm.manifest.
     assert!(
-        casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        casm.manifest
+            .permissions
+            .iter()
+            .any(|p| p == "invariant.evaluate"),
         "invariant.evaluate must appear in casm.manifest.permissions"
     );
 }
@@ -1000,7 +1010,11 @@ fn invariant_runtime_is_disabled_by_default() {
         "no invariant cap_calls should be emitted by default"
     );
     assert!(
-        !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        !casm
+            .manifest
+            .permissions
+            .iter()
+            .any(|p| p == "invariant.evaluate"),
         "no invariant.evaluate permission without flag"
     );
 }
@@ -1031,7 +1045,11 @@ fn empty_check_source_invariance_is_silently_skipped() {
         "empty check_source should be silently skipped, not emitted"
     );
     assert!(
-        !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        !casm
+            .manifest
+            .permissions
+            .iter()
+            .any(|p| p == "invariant.evaluate"),
         "no permission registered when check_source is empty"
     );
 }
@@ -1051,20 +1069,75 @@ fn main() {
 }
 "#;
     let program = crush_frontend::parse_source(source).expect("should parse async fn");
-    let fetch = program.functions.get("fetch_data").expect("should have fetch_data function");
+    let fetch = program
+        .functions
+        .get("fetch_data")
+        .expect("should have fetch_data function");
     assert!(fetch.is_async, "fetch_data should be marked async");
 
-    let main_fn = program.functions.get("main").expect("should have main function");
-    let has_spawn = main_fn.body.iter().any(|stmt| {
-        match stmt {
-            Statement::VarDecl { value, .. } => {
-                matches!(value, Expression::Spawn { .. })
-            }
-            Statement::ExprStmt { expr, .. } => {
-                matches!(expr, Expression::Spawn { .. })
-            }
-            _ => false,
+    let main_fn = program
+        .functions
+        .get("main")
+        .expect("should have main function");
+    let has_spawn = main_fn.body.iter().any(|stmt| match stmt {
+        Statement::VarDecl { value, .. } => {
+            matches!(value, Expression::Spawn { .. })
         }
+        Statement::ExprStmt { expr, .. } => {
+            matches!(expr, Expression::Spawn { .. })
+        }
+        _ => false,
     });
     assert!(has_spawn, "main should contain spawn expression");
+}
+
+#[test]
+fn typed_literal_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::VarDecl {
+            name: "i".to_string(),
+            value: int(7),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "f".to_string(),
+            value: Expression::FloatLiteral {
+                value: 1.5,
+                meta: meta(),
+            },
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "s".to_string(),
+            value: string("hello"),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "b".to_string(),
+            value: bool_lit(true),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "n".to_string(),
+            value: Expression::NullLiteral { meta: meta() },
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+    ]);
+    let body = &casm.functions["main"].body;
+    let find = |op: &str| {
+        body.iter()
+            .find(|instruction| instruction.op == op)
+            .unwrap()
+    };
+
+    assert_eq!(find("push_int").args["value"], 7);
+    assert_eq!(find("push_float").args["value"], 1.5);
+    assert_eq!(find("push_str").args["value"], "hello");
+    assert_eq!(find("push_bool").args["value"], true);
+    assert_eq!(find("push_null").args, serde_json::json!({}));
 }

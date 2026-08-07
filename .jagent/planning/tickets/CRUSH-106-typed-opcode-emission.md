@@ -11,7 +11,7 @@
 
 The first bounded slice expands `casm::OpCode` and `Instruction::to_opcode` to cover compiler-emitted opcode spellings that were previously unrepresentable, including try/throw, collection aliases, DOM, and additional AI operations. Focused serde/conversion tests preserve the JSON view. The full frontend migration away from `serde_json` construction remains open and is not claimed complete by this slice.
 
-The next slice routes the five literal expression branches through typed `OpCode` construction before materializing the compatibility `Instruction` JSON view. The bridge intentionally still allocates the legacy args object; remaining compiler call sites are open.
+The next slice routes the five literal expression branches through typed `OpCode` construction before materializing the compatibility `Instruction` JSON view. The bridge intentionally still allocates the legacy args object; remaining compiler call sites are open. A compiler-level regression test now covers all five branches.
 
 ## Problem
 
