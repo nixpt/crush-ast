@@ -355,6 +355,8 @@ impl Instruction {
             OpCode::Gt => ("gt", serde_json::json!({})),
             OpCode::Le => ("le", serde_json::json!({})),
             OpCode::Ge => ("ge", serde_json::json!({})),
+            OpCode::Pop => ("pop", serde_json::json!({})),
+            OpCode::Dup => ("dup", serde_json::json!({})),
             other => {
                 return Err(CasmError::UnknownOpcode(format!(
                     "typed opcode emission unsupported: {other:?}"

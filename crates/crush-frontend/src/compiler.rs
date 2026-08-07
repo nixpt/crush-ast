@@ -528,7 +528,7 @@ impl Compiler {
                 // its instruction pushes nothing. Popping after it underflows the stack.
                 // Every other expression leaves exactly one value behind.
                 if !matches!(expr, Expression::Yield { .. }) {
-                    instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
                 }
             }
             Statement::Return { value, meta } => {
@@ -850,7 +850,7 @@ impl Compiler {
                         ));
                     }
                     None => {
-                        instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                        instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
                     }
                 }
             }
@@ -1568,7 +1568,7 @@ impl Compiler {
                     let is_pre = function.contains("pre");
                     self.compile_expr(&args[0], instrs)?;  // load var
                     if !is_pre {
-                        instrs.push(self.create_instr("dup", serde_json::json!({}), &meta));
+                        instrs.push(self.create_typed_instr(OpCode::Dup, &meta)?);
                     }
                     instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), &meta));
                     if is_inc {
@@ -1577,7 +1577,7 @@ impl Compiler {
                         instrs.push(self.create_instr("sub", serde_json::json!({}), &meta));
                     }
                     if is_pre {
-                        instrs.push(self.create_instr("dup", serde_json::json!({}), &meta));
+                        instrs.push(self.create_typed_instr(OpCode::Dup, &meta)?);
                     }
                     instrs.push(self.create_instr("store", serde_json::json!({"name": var_name}), &meta));
                 } else if function == "__crush_deref__" {
@@ -1773,7 +1773,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("tuple_push", serde_json::json!({}), meta));
                 }
@@ -1785,7 +1785,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("list_push", serde_json::json!({}), meta));
                 }
@@ -1797,7 +1797,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("vector_push", serde_json::json!({}), meta));
                 }
@@ -1809,7 +1809,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("set_push", serde_json::json!({}), meta));
                 }

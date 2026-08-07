@@ -189,10 +189,13 @@ fn test_typed_literal_instruction_materializes_legacy_view() {
         (OpCode::Gt, "gt"),
         (OpCode::Le, "le"),
         (OpCode::Ge, "ge"),
+        (OpCode::Pop, "pop"),
+        (OpCode::Dup, "dup"),
     ] {
-        let instruction = Instruction::from_opcode(opcode, None, None).unwrap();
+        let instruction = Instruction::from_opcode(opcode.clone(), None, None).unwrap();
         assert_eq!(instruction.op, expected_op);
         assert_eq!(instruction.args, json!({}));
+        assert_eq!(instruction.to_opcode().unwrap(), opcode);
     }
 
     assert!(

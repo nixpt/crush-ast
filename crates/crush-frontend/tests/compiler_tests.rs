@@ -1264,3 +1264,33 @@ fn typed_logical_emission_preserves_legacy_instruction_view() {
         assert_eq!(instruction.args, serde_json::json!({}));
     }
 }
+
+#[test]
+fn typed_stack_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::ExprStmt {
+            expr: int(7),
+            meta: meta(),
+        },
+        Statement::ExprStmt {
+            expr: Expression::TupleLiteral {
+                elements: vec![int(1), int(2)],
+                meta: meta(),
+            },
+            meta: meta(),
+        },
+    ]);
+    let instructions = &casm.functions["main"].body;
+    let pop = instructions
+        .iter()
+        .find(|instruction| instruction.op == "pop")
+        .expect("expression discard emits pop");
+    assert_eq!(pop.args, serde_json::json!({}));
+    assert_eq!(pop.to_opcode().unwrap(), OpCode::Pop);
+    let dup = instructions
+        .iter()
+        .find(|instruction| instruction.op == "dup")
+        .expect("tuple literal emits dup");
+    assert_eq!(dup.args, serde_json::json!({}));
+    assert_eq!(dup.to_opcode().unwrap(), OpCode::Dup);
+}
