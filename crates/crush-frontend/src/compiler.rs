@@ -1333,8 +1333,13 @@ impl Compiler {
                     ">" => OpCode::Gt,
                     "<=" => OpCode::Le,
                     ">=" => OpCode::Ge,
-                    "and" | "&&" | "or" | "||" => {
-                        bail!("Typed logical op emission is not implemented: {}", operator)
+                    "and" | "&&" => {
+                        instrs.push(self.create_instr("and", serde_json::json!({}), meta));
+                        return Ok(());
+                    }
+                    "or" | "||" => {
+                        instrs.push(self.create_instr("or", serde_json::json!({}), meta));
+                        return Ok(());
                     }
                     _ => bail!("Unsupported op: {}", operator),
                 };
@@ -1349,7 +1354,8 @@ impl Compiler {
                 let opcode = match operator.as_str() {
                     "-" => OpCode::Neg,
                     "not" | "!" => {
-                        bail!("Typed logical op emission is not implemented: {}", operator)
+                        instrs.push(self.create_instr("not", serde_json::json!({}), meta));
+                        return Ok(());
                     }
                     _ => bail!("Unsupported op: {}", operator),
                 };
