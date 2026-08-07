@@ -505,14 +505,14 @@ impl Compiler {
             } => {
                 self.declared_vars.insert(name.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
-                instrs.push(self.create_instr("store", serde_json::json!({"name": name}), meta));
+                instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }
             Statement::Assign {
                 target, value, meta
             } => {
                 self.declared_vars.insert(target.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(target))?;
-                instrs.push(self.create_instr("store", serde_json::json!({"name": target}), meta));
+                instrs.push(self.create_typed_instr(OpCode::Store(target.clone()), meta)?);
             }
             Statement::Export { name, value, meta } => {
                 self.compile_expr(value, instrs)?;
@@ -1311,7 +1311,7 @@ impl Compiler {
                 instrs.push(self.create_typed_instr(OpCode::PushNull, meta)?);
             }
             Expression::Var { name, meta } => {
-                instrs.push(self.create_instr("load", serde_json::json!({"name": name}), meta));
+                instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
             }
             Expression::BinaryOp {
                 operator,

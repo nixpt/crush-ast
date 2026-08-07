@@ -1141,3 +1141,40 @@ fn typed_literal_emission_preserves_legacy_instruction_view() {
     assert_eq!(find("push_bool").args["value"], true);
     assert_eq!(find("push_null").args, serde_json::json!({}));
 }
+
+#[test]
+fn typed_variable_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::VarDecl {
+            name: "value".to_string(),
+            value: int(7),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::Assign {
+            target: "value".to_string(),
+            value: int(8),
+            meta: meta(),
+        },
+        Statement::ExprStmt {
+            expr: var("value"),
+            meta: meta(),
+        },
+    ]);
+    let body = &casm.functions["main"].body;
+    let stores: Vec<_> = body
+        .iter()
+        .filter(|instruction| instruction.op == "store")
+        .collect();
+    assert_eq!(stores.len(), 2);
+    assert!(
+        stores
+            .iter()
+            .all(|instruction| instruction.args["name"] == "value")
+    );
+    let load = body
+        .iter()
+        .find(|instruction| instruction.op == "load")
+        .unwrap();
+    assert_eq!(load.args["name"], "value");
+}

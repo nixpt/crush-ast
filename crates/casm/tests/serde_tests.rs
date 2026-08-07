@@ -168,5 +168,13 @@ fn test_typed_literal_instruction_materializes_legacy_view() {
         assert_eq!(instruction.meta, meta);
     }
 
+    let load = Instruction::from_opcode(OpCode::Load("item".into()), None, None).unwrap();
+    assert_eq!(load.op, "load");
+    assert_eq!(load.args, json!({"name": "item"}));
+
+    let store = Instruction::from_opcode(OpCode::Store("item".into()), None, None).unwrap();
+    assert_eq!(store.op, "store");
+    assert_eq!(store.args, json!({"name": "item"}));
+
     assert!(Instruction::from_opcode(OpCode::Add, None, None).is_err());
 }

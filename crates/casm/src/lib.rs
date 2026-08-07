@@ -341,6 +341,8 @@ impl Instruction {
             OpCode::PushStr(value) => ("push_str", serde_json::json!({"value": value})),
             OpCode::PushBool(value) => ("push_bool", serde_json::json!({"value": value})),
             OpCode::PushNull => ("push_null", serde_json::json!({})),
+            OpCode::Load(name) => ("load", serde_json::json!({"name": name})),
+            OpCode::Store(name) => ("store", serde_json::json!({"name": name})),
             other => {
                 return Err(CasmError::UnknownOpcode(format!(
                     "typed opcode emission unsupported: {other:?}"
