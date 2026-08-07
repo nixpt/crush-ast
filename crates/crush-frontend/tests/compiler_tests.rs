@@ -1178,3 +1178,51 @@ fn typed_variable_emission_preserves_legacy_instruction_view() {
         .unwrap();
     assert_eq!(load.args["name"], "value");
 }
+
+#[test]
+fn typed_arithmetic_emission_preserves_legacy_instruction_view() {
+    let binary = [
+        ("+", "add"),
+        ("-", "sub"),
+        ("*", "mul"),
+        ("/", "div"),
+        ("%", "mod"),
+        ("==", "eq"),
+        ("!=", "ne"),
+        ("<", "lt"),
+        (">", "gt"),
+        ("<=", "le"),
+        (">=", "ge"),
+    ];
+    let mut body = Vec::new();
+    for (operator, _) in binary {
+        body.push(Statement::ExprStmt {
+            expr: Expression::BinaryOp {
+                operator: operator.to_string(),
+                left: Box::new(int(7)),
+                right: Box::new(int(2)),
+                meta: meta(),
+            },
+            meta: meta(),
+        });
+    }
+    body.push(Statement::ExprStmt {
+        expr: Expression::UnaryOp {
+            operator: "-".to_string(),
+            operand: Box::new(int(7)),
+            meta: meta(),
+        },
+        meta: meta(),
+    });
+
+    let casm = compile_program(body);
+    let instructions = &casm.functions["main"].body;
+    for (_, expected_op) in binary.into_iter().chain(std::iter::once(("-", "neg"))) {
+        let instruction = instructions
+            .iter()
+            .find(|instruction| instruction.op == expected_op)
+            .unwrap();
+        assert_eq!(instruction.args, serde_json::json!({}));
+        assert!(instruction.to_opcode().is_ok());
+    }
+}

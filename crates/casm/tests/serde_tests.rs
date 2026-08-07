@@ -176,5 +176,33 @@ fn test_typed_literal_instruction_materializes_legacy_view() {
     assert_eq!(store.op, "store");
     assert_eq!(store.args, json!({"name": "item"}));
 
-    assert!(Instruction::from_opcode(OpCode::Add, None, None).is_err());
+    for (opcode, expected_op) in [
+        (OpCode::Add, "add"),
+        (OpCode::Sub, "sub"),
+        (OpCode::Mul, "mul"),
+        (OpCode::Div, "div"),
+        (OpCode::Mod, "mod"),
+        (OpCode::Neg, "neg"),
+        (OpCode::Eq, "eq"),
+        (OpCode::Ne, "ne"),
+        (OpCode::Lt, "lt"),
+        (OpCode::Gt, "gt"),
+        (OpCode::Le, "le"),
+        (OpCode::Ge, "ge"),
+    ] {
+        let instruction = Instruction::from_opcode(opcode, None, None).unwrap();
+        assert_eq!(instruction.op, expected_op);
+        assert_eq!(instruction.args, json!({}));
+    }
+
+    assert!(
+        Instruction::from_opcode(
+            OpCode::Await {
+                handle: "task".into()
+            },
+            None,
+            None
+        )
+        .is_err()
+    );
 }

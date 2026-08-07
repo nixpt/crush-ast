@@ -343,6 +343,18 @@ impl Instruction {
             OpCode::PushNull => ("push_null", serde_json::json!({})),
             OpCode::Load(name) => ("load", serde_json::json!({"name": name})),
             OpCode::Store(name) => ("store", serde_json::json!({"name": name})),
+            OpCode::Add => ("add", serde_json::json!({})),
+            OpCode::Sub => ("sub", serde_json::json!({})),
+            OpCode::Mul => ("mul", serde_json::json!({})),
+            OpCode::Div => ("div", serde_json::json!({})),
+            OpCode::Mod => ("mod", serde_json::json!({})),
+            OpCode::Neg => ("neg", serde_json::json!({})),
+            OpCode::Eq => ("eq", serde_json::json!({})),
+            OpCode::Ne => ("ne", serde_json::json!({})),
+            OpCode::Lt => ("lt", serde_json::json!({})),
+            OpCode::Gt => ("gt", serde_json::json!({})),
+            OpCode::Le => ("le", serde_json::json!({})),
+            OpCode::Ge => ("ge", serde_json::json!({})),
             other => {
                 return Err(CasmError::UnknownOpcode(format!(
                     "typed opcode emission unsupported: {other:?}"

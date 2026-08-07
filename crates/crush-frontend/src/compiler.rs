@@ -1321,28 +1321,24 @@ impl Compiler {
             } => {
                 self.compile_expr(left, instrs)?;
                 self.compile_expr(right, instrs)?;
-                let op_code = match operator.as_str() {
-                    "+" => "add",
-                    "-" => "sub",
-                    "*" => "mul",
-                    "/" => "div",
-                    "%" => "mod",
-                    "//" => "div",   // floor division: same as div for positive ints
-                    "===" => "eq",    // JS strict equality
-                    "!==" => "ne",    // JS strict inequality
-                    "==" => "eq",
-                    "!=" => "ne",
-                    "<" => "lt",
-                    ">" => "gt",
-                    "<=" => "le",
-                    ">=" => "ge",
-                    "and" => "and",
-                    "or" => "or",
-                    "&&" => "and",
-                    "||" => "or",
+                let opcode = match operator.as_str() {
+                    "+" => OpCode::Add,
+                    "-" => OpCode::Sub,
+                    "*" => OpCode::Mul,
+                    "/" | "//" => OpCode::Div,
+                    "%" => OpCode::Mod,
+                    "===" | "==" => OpCode::Eq,
+                    "!==" | "!=" => OpCode::Ne,
+                    "<" => OpCode::Lt,
+                    ">" => OpCode::Gt,
+                    "<=" => OpCode::Le,
+                    ">=" => OpCode::Ge,
+                    "and" | "&&" | "or" | "||" => {
+                        bail!("Typed logical op emission is not implemented: {}", operator)
+                    }
                     _ => bail!("Unsupported op: {}", operator),
                 };
-                instrs.push(self.create_instr(op_code, serde_json::json!({}), meta));
+                instrs.push(self.create_typed_instr(opcode, meta)?);
             }
             Expression::UnaryOp {
                 operator,
@@ -1350,13 +1346,14 @@ impl Compiler {
                 meta,
             } => {
                 self.compile_expr(operand, instrs)?;
-                let op_code = match operator.as_str() {
-                    "-" => "neg",
-                    "not" => "not",
-                    "!" => "not",    // JS logical not
+                let opcode = match operator.as_str() {
+                    "-" => OpCode::Neg,
+                    "not" | "!" => {
+                        bail!("Typed logical op emission is not implemented: {}", operator)
+                    }
                     _ => bail!("Unsupported op: {}", operator),
                 };
-                instrs.push(self.create_instr(op_code, serde_json::json!({}), meta));
+                instrs.push(self.create_typed_instr(opcode, meta)?);
             }
             Expression::Call {
                 function,
