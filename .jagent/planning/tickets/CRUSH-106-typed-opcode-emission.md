@@ -4,8 +4,12 @@
 |-------|-------|
 | **ID** | CRUSH-106 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In Progress — bounded CASM opcode-surface slice landed; compiler migration remains open |
 | **Phase** | Design/perf (CRUSH-71 audit finding #1) |
+
+## Progress
+
+The first bounded slice expands `casm::OpCode` and `Instruction::to_opcode` to cover compiler-emitted opcode spellings that were previously unrepresentable, including try/throw, collection aliases, DOM, and additional AI operations. Focused serde/conversion tests preserve the JSON view. The full frontend migration away from `serde_json` construction remains open and is not claimed complete by this slice.
 
 ## Problem
 

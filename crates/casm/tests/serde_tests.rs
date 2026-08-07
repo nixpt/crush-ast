@@ -66,3 +66,78 @@ fn test_metadata_preservation() {
     assert_eq!(meta["line"], 10);
     assert_eq!(meta["file"], "main.crush");
 }
+
+#[test]
+fn test_frontend_opcode_surface_converts_to_typed_opcodes() {
+    use casm::OpCode;
+
+    let cases = [
+        (
+            Instruction {
+                op: "len".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::Len,
+        ),
+        (
+            Instruction {
+                op: "index".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::Index,
+        ),
+        (
+            Instruction {
+                op: "enter_try".into(),
+                lang: None,
+                meta: None,
+                args: json!({"target": 4}),
+            },
+            OpCode::EnterTry,
+        ),
+        (
+            Instruction {
+                op: "throw".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::Throw,
+        ),
+        (
+            Instruction {
+                op: "ai_goal_decl".into(),
+                lang: None,
+                meta: None,
+                args: json!({"name": "demo"}),
+            },
+            OpCode::AiGoalDeclaration(json!({"name": "demo"})),
+        ),
+    ];
+
+    for (instruction, expected) in cases {
+        assert_eq!(instruction.to_opcode().unwrap(), expected);
+    }
+}
+
+#[test]
+fn test_frontend_opcode_json_names_are_stable() {
+    use casm::OpCode;
+
+    assert_eq!(
+        serde_json::to_string(&OpCode::AiGoalDeclaration(json!({}))).unwrap(),
+        r#"{"ai_goal_decl":{}}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&OpCode::AiToolchain(json!({}))).unwrap(),
+        r#"{"ai_tool_chain":{}}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&OpCode::AiKnowledgeSharing(json!({}))).unwrap(),
+        r#"{"ai_knowledge_share":{}}"#
+    );
+}
