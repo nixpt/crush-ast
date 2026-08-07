@@ -326,6 +326,36 @@ impl Instruction {
         })
     }
 
+    /// Materialize a typed opcode as the legacy JSON-backed instruction view.
+    ///
+    /// The compatibility view is intentionally retained while compiler emission
+    /// migrates incrementally to typed opcodes.
+    pub fn from_opcode(
+        opcode: OpCode,
+        lang: Option<String>,
+        meta: Option<serde_json::Value>,
+    ) -> Result<Self> {
+        let (op, args) = match opcode {
+            OpCode::PushInt(value) => ("push_int", serde_json::json!({"value": value})),
+            OpCode::PushFloat(value) => ("push_float", serde_json::json!({"value": value})),
+            OpCode::PushStr(value) => ("push_str", serde_json::json!({"value": value})),
+            OpCode::PushBool(value) => ("push_bool", serde_json::json!({"value": value})),
+            OpCode::PushNull => ("push_null", serde_json::json!({})),
+            other => {
+                return Err(CasmError::UnknownOpcode(format!(
+                    "typed opcode emission unsupported: {other:?}"
+                ))
+                .into());
+            }
+        };
+        Ok(Self {
+            op: op.to_string(),
+            lang,
+            meta,
+            args,
+        })
+    }
+
     /// Convert JSON instruction to typed OpCode
     pub fn to_opcode(&self) -> Result<OpCode> {
         match self.op.as_str() {

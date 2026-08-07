@@ -141,3 +141,32 @@ fn test_frontend_opcode_json_names_are_stable() {
         r#"{"ai_knowledge_share":{}}"#
     );
 }
+
+#[test]
+fn test_typed_literal_instruction_materializes_legacy_view() {
+    use casm::OpCode;
+
+    let meta = Some(json!({"line": 7}));
+    let cases = [
+        (OpCode::PushInt(42), "push_int", json!({"value": 42})),
+        (OpCode::PushFloat(2.5), "push_float", json!({"value": 2.5})),
+        (
+            OpCode::PushStr("hello".into()),
+            "push_str",
+            json!({"value": "hello"}),
+        ),
+        (OpCode::PushBool(true), "push_bool", json!({"value": true})),
+        (OpCode::PushNull, "push_null", json!({})),
+    ];
+
+    for (opcode, expected_op, expected_args) in cases {
+        let instruction =
+            Instruction::from_opcode(opcode, Some("crush".into()), meta.clone()).unwrap();
+        assert_eq!(instruction.op, expected_op);
+        assert_eq!(instruction.args, expected_args);
+        assert_eq!(instruction.lang.as_deref(), Some("crush"));
+        assert_eq!(instruction.meta, meta);
+    }
+
+    assert!(Instruction::from_opcode(OpCode::Add, None, None).is_err());
+}
