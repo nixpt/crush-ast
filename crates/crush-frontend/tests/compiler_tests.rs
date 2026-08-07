@@ -1,3 +1,4 @@
+use casm::OpCode;
 use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
@@ -1182,23 +1183,23 @@ fn typed_variable_emission_preserves_legacy_instruction_view() {
 #[test]
 fn typed_arithmetic_emission_preserves_legacy_instruction_view() {
     let binary = [
-        ("+", "add"),
-        ("-", "sub"),
-        ("*", "mul"),
-        ("/", "div"),
-        ("%", "mod"),
-        ("==", "eq"),
-        ("!=", "ne"),
-        ("<", "lt"),
-        (">", "gt"),
-        ("<=", "le"),
-        (">=", "ge"),
+        ("+", "add", OpCode::Add),
+        ("-", "sub", OpCode::Sub),
+        ("*", "mul", OpCode::Mul),
+        ("/", "div", OpCode::Div),
+        ("%", "mod", OpCode::Mod),
+        ("==", "eq", OpCode::Eq),
+        ("!=", "ne", OpCode::Ne),
+        ("<", "lt", OpCode::Lt),
+        (">", "gt", OpCode::Gt),
+        ("<=", "le", OpCode::Le),
+        (">=", "ge", OpCode::Ge),
     ];
     let mut body = Vec::new();
-    for (operator, _) in binary {
+    for (operator, _, _) in binary.iter() {
         body.push(Statement::ExprStmt {
             expr: Expression::BinaryOp {
-                operator: operator.to_string(),
+                operator: (*operator).to_string(),
                 left: Box::new(int(7)),
                 right: Box::new(int(2)),
                 meta: meta(),
@@ -1217,12 +1218,49 @@ fn typed_arithmetic_emission_preserves_legacy_instruction_view() {
 
     let casm = compile_program(body);
     let instructions = &casm.functions["main"].body;
-    for (_, expected_op) in binary.into_iter().chain(std::iter::once(("-", "neg"))) {
+    for (_, expected_op, expected_opcode) in binary {
         let instruction = instructions
             .iter()
             .find(|instruction| instruction.op == expected_op)
             .unwrap();
         assert_eq!(instruction.args, serde_json::json!({}));
-        assert!(instruction.to_opcode().is_ok());
+        assert_eq!(instruction.to_opcode().unwrap(), expected_opcode);
+    }
+    let neg = instructions
+        .iter()
+        .find(|instruction| instruction.op == "neg")
+        .unwrap();
+    assert_eq!(neg.args, serde_json::json!({}));
+    assert_eq!(neg.to_opcode().unwrap(), OpCode::Neg);
+}
+
+#[test]
+fn typed_logical_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::ExprStmt {
+            expr: Expression::BinaryOp {
+                operator: "and".to_string(),
+                left: Box::new(bool_lit(true)),
+                right: Box::new(bool_lit(false)),
+                meta: meta(),
+            },
+            meta: meta(),
+        },
+        Statement::ExprStmt {
+            expr: Expression::UnaryOp {
+                operator: "not".to_string(),
+                operand: Box::new(bool_lit(true)),
+                meta: meta(),
+            },
+            meta: meta(),
+        },
+    ]);
+    let instructions = &casm.functions["main"].body;
+    for expected_op in ["and", "not"] {
+        let instruction = instructions
+            .iter()
+            .find(|instruction| instruction.op == expected_op)
+            .unwrap();
+        assert_eq!(instruction.args, serde_json::json!({}));
     }
 }
