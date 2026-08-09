@@ -66,3 +66,146 @@ fn test_metadata_preservation() {
     assert_eq!(meta["line"], 10);
     assert_eq!(meta["file"], "main.crush");
 }
+
+#[test]
+fn test_frontend_opcode_surface_converts_to_typed_opcodes() {
+    use casm::OpCode;
+
+    let cases = [
+        (
+            Instruction {
+                op: "len".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::Len,
+        ),
+        (
+            Instruction {
+                op: "index".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::Index,
+        ),
+        (
+            Instruction {
+                op: "enter_try".into(),
+                lang: None,
+                meta: None,
+                args: json!({"target": 4}),
+            },
+            OpCode::EnterTry,
+        ),
+        (
+            Instruction {
+                op: "throw".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::Throw,
+        ),
+        (
+            Instruction {
+                op: "ai_goal_decl".into(),
+                lang: None,
+                meta: None,
+                args: json!({"name": "demo"}),
+            },
+            OpCode::AiGoalDeclaration(json!({"name": "demo"})),
+        ),
+    ];
+
+    for (instruction, expected) in cases {
+        assert_eq!(instruction.to_opcode().unwrap(), expected);
+    }
+}
+
+#[test]
+fn test_frontend_opcode_json_names_are_stable() {
+    use casm::OpCode;
+
+    assert_eq!(
+        serde_json::to_string(&OpCode::AiGoalDeclaration(json!({}))).unwrap(),
+        r#"{"ai_goal_decl":{}}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&OpCode::AiToolchain(json!({}))).unwrap(),
+        r#"{"ai_tool_chain":{}}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&OpCode::AiKnowledgeSharing(json!({}))).unwrap(),
+        r#"{"ai_knowledge_share":{}}"#
+    );
+}
+
+#[test]
+fn test_typed_literal_instruction_materializes_legacy_view() {
+    use casm::OpCode;
+
+    let meta = Some(json!({"line": 7}));
+    let cases = [
+        (OpCode::PushInt(42), "push_int", json!({"value": 42})),
+        (OpCode::PushFloat(2.5), "push_float", json!({"value": 2.5})),
+        (
+            OpCode::PushStr("hello".into()),
+            "push_str",
+            json!({"value": "hello"}),
+        ),
+        (OpCode::PushBool(true), "push_bool", json!({"value": true})),
+        (OpCode::PushNull, "push_null", json!({})),
+    ];
+
+    for (opcode, expected_op, expected_args) in cases {
+        let instruction =
+            Instruction::from_opcode(opcode, Some("crush".into()), meta.clone()).unwrap();
+        assert_eq!(instruction.op, expected_op);
+        assert_eq!(instruction.args, expected_args);
+        assert_eq!(instruction.lang.as_deref(), Some("crush"));
+        assert_eq!(instruction.meta, meta);
+    }
+
+    let load = Instruction::from_opcode(OpCode::Load("item".into()), None, None).unwrap();
+    assert_eq!(load.op, "load");
+    assert_eq!(load.args, json!({"name": "item"}));
+
+    let store = Instruction::from_opcode(OpCode::Store("item".into()), None, None).unwrap();
+    assert_eq!(store.op, "store");
+    assert_eq!(store.args, json!({"name": "item"}));
+
+    for (opcode, expected_op) in [
+        (OpCode::Add, "add"),
+        (OpCode::Sub, "sub"),
+        (OpCode::Mul, "mul"),
+        (OpCode::Div, "div"),
+        (OpCode::Mod, "mod"),
+        (OpCode::Neg, "neg"),
+        (OpCode::Eq, "eq"),
+        (OpCode::Ne, "ne"),
+        (OpCode::Lt, "lt"),
+        (OpCode::Gt, "gt"),
+        (OpCode::Le, "le"),
+        (OpCode::Ge, "ge"),
+        (OpCode::Pop, "pop"),
+        (OpCode::Dup, "dup"),
+    ] {
+        let instruction = Instruction::from_opcode(opcode.clone(), None, None).unwrap();
+        assert_eq!(instruction.op, expected_op);
+        assert_eq!(instruction.args, json!({}));
+        assert_eq!(instruction.to_opcode().unwrap(), opcode);
+    }
+
+    assert!(
+        Instruction::from_opcode(
+            OpCode::Await {
+                handle: "task".into()
+            },
+            None,
+            None
+        )
+        .is_err()
+    );
+}

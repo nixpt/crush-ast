@@ -129,6 +129,9 @@ pub enum OpCode {
     Await {
         handle: String,
     }, // Await async operation (event_id from handle)
+    EnterTry,
+    ExitTry,
+    Throw,
 
     // Array operations
     NewArray(usize), // Create array with n elements from stack
@@ -137,6 +140,16 @@ pub enum OpCode {
     ArrLen,          // array -> length
     ArrPush,         // array, value -> array
     ArrPop,          // array -> array, value
+    /// Frontend alias for indexed collection access.
+    Index,
+    /// Frontend alias for collection length.
+    Len,
+    /// Frontend array append operation.
+    ArrayPush,
+    /// Frontend array pop operation.
+    ArrayPop,
+    /// Construct a range from its operands.
+    MakeRange,
 
     // Collection operations
     NewTuple(usize),
@@ -190,14 +203,20 @@ pub enum OpCode {
 
     // AI opcodes
     AiQuery(serde_json::Value),
+    AiAdaptationRequest(serde_json::Value),
+    AiCapabilityDiscovery(serde_json::Value),
+    AiSemanticSwitch(serde_json::Value),
+    #[serde(rename = "ai_tool_chain")]
     AiToolchain(serde_json::Value),
     AiAgentDelegation(serde_json::Value),
     AiLearningLoop(serde_json::Value),
     AiContextAware(serde_json::Value),
     AiSemanticMatch(serde_json::Value),
     AiSynthesize(serde_json::Value),
+    #[serde(rename = "ai_goal_decl")]
     AiGoalDeclaration(serde_json::Value),
     AiProgressUpdate(serde_json::Value),
+    #[serde(rename = "ai_knowledge_share")]
     AiKnowledgeSharing(serde_json::Value),
     MathPow,
     MathSqrt,
@@ -210,6 +229,11 @@ pub enum OpCode {
     StrToUpper,
     StrToLower,
     StrTrim,
+
+    // DOM operations
+    DomQuery(serde_json::Value),
+    DomMutate(serde_json::Value),
+    DomEventListener(serde_json::Value),
 
     // Program control
     Halt, // Halt execution
@@ -302,6 +326,52 @@ impl Instruction {
         })
     }
 
+    /// Materialize a typed opcode as the legacy JSON-backed instruction view.
+    ///
+    /// The compatibility view is intentionally retained while compiler emission
+    /// migrates incrementally to typed opcodes.
+    pub fn from_opcode(
+        opcode: OpCode,
+        lang: Option<String>,
+        meta: Option<serde_json::Value>,
+    ) -> Result<Self> {
+        let (op, args) = match opcode {
+            OpCode::PushInt(value) => ("push_int", serde_json::json!({"value": value})),
+            OpCode::PushFloat(value) => ("push_float", serde_json::json!({"value": value})),
+            OpCode::PushStr(value) => ("push_str", serde_json::json!({"value": value})),
+            OpCode::PushBool(value) => ("push_bool", serde_json::json!({"value": value})),
+            OpCode::PushNull => ("push_null", serde_json::json!({})),
+            OpCode::Load(name) => ("load", serde_json::json!({"name": name})),
+            OpCode::Store(name) => ("store", serde_json::json!({"name": name})),
+            OpCode::Add => ("add", serde_json::json!({})),
+            OpCode::Sub => ("sub", serde_json::json!({})),
+            OpCode::Mul => ("mul", serde_json::json!({})),
+            OpCode::Div => ("div", serde_json::json!({})),
+            OpCode::Mod => ("mod", serde_json::json!({})),
+            OpCode::Neg => ("neg", serde_json::json!({})),
+            OpCode::Eq => ("eq", serde_json::json!({})),
+            OpCode::Ne => ("ne", serde_json::json!({})),
+            OpCode::Lt => ("lt", serde_json::json!({})),
+            OpCode::Gt => ("gt", serde_json::json!({})),
+            OpCode::Le => ("le", serde_json::json!({})),
+            OpCode::Ge => ("ge", serde_json::json!({})),
+            OpCode::Pop => ("pop", serde_json::json!({})),
+            OpCode::Dup => ("dup", serde_json::json!({})),
+            other => {
+                return Err(CasmError::UnknownOpcode(format!(
+                    "typed opcode emission unsupported: {other:?}"
+                ))
+                .into());
+            }
+        };
+        Ok(Self {
+            op: op.to_string(),
+            lang,
+            meta,
+            args,
+        })
+    }
+
     /// Convert JSON instruction to typed OpCode
     pub fn to_opcode(&self) -> Result<OpCode> {
         match self.op.as_str() {
@@ -388,6 +458,9 @@ impl Instruction {
             "continue" => Ok(OpCode::Continue),
             "spawn" => Ok(OpCode::Spawn),
             "yield" => Ok(OpCode::Yield),
+            "enter_try" => Ok(OpCode::EnterTry),
+            "exit_try" => Ok(OpCode::ExitTry),
+            "throw" => Ok(OpCode::Throw),
             "await" => Ok(OpCode::Await {
                 handle: self
                     .args
@@ -404,13 +477,26 @@ impl Instruction {
             "arr_len" => Ok(OpCode::ArrLen),
             "arr_push" => Ok(OpCode::ArrPush),
             "arr_pop" => Ok(OpCode::ArrPop),
-            "new_tuple" => Ok(OpCode::NewTuple(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "index" => Ok(OpCode::Index),
+            "len" => Ok(OpCode::Len),
+            "array_push" => Ok(OpCode::ArrayPush),
+            "array_pop" => Ok(OpCode::ArrayPop),
+            "make_range" => Ok(OpCode::MakeRange),
+            "new_tuple" => Ok(OpCode::NewTuple(
+                self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            )),
             "tuple_push" => Ok(OpCode::TuplePush),
-            "new_list" => Ok(OpCode::NewList(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "new_list" => Ok(OpCode::NewList(
+                self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            )),
             "list_push" => Ok(OpCode::ListPush),
-            "new_vector" => Ok(OpCode::NewVector(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "new_vector" => Ok(OpCode::NewVector(
+                self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            )),
             "vector_push" => Ok(OpCode::VectorPush),
-            "new_set" => Ok(OpCode::NewSet(self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+            "new_set" => Ok(OpCode::NewSet(
+                self.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            )),
             "set_push" => Ok(OpCode::SetPush),
             "new_obj" => Ok(OpCode::NewObj),
             "new_struct" => Ok(OpCode::NewStruct(
@@ -472,15 +558,25 @@ impl Instruction {
                 argc: self.require_field("argc", |v| v.as_u64().map(|n| n as usize))?,
             }),
             "ai_query" => Ok(OpCode::AiQuery(self.args.clone())),
-            "ai_toolchain" => Ok(OpCode::AiToolchain(self.args.clone())),
+            "ai_adaptation_request" => Ok(OpCode::AiAdaptationRequest(self.args.clone())),
+            "ai_capability_discovery" => Ok(OpCode::AiCapabilityDiscovery(self.args.clone())),
+            "ai_semantic_switch" => Ok(OpCode::AiSemanticSwitch(self.args.clone())),
+            "ai_toolchain" | "ai_tool_chain" => Ok(OpCode::AiToolchain(self.args.clone())),
             "ai_agent_delegation" => Ok(OpCode::AiAgentDelegation(self.args.clone())),
             "ai_learning_loop" => Ok(OpCode::AiLearningLoop(self.args.clone())),
             "ai_context_aware" => Ok(OpCode::AiContextAware(self.args.clone())),
             "ai_semantic_match" => Ok(OpCode::AiSemanticMatch(self.args.clone())),
             "ai_synthesize" => Ok(OpCode::AiSynthesize(self.args.clone())),
-            "ai_goal_declaration" => Ok(OpCode::AiGoalDeclaration(self.args.clone())),
+            "ai_goal_declaration" | "ai_goal_decl" => {
+                Ok(OpCode::AiGoalDeclaration(self.args.clone()))
+            }
             "ai_progress_update" => Ok(OpCode::AiProgressUpdate(self.args.clone())),
-            "ai_knowledge_sharing" => Ok(OpCode::AiKnowledgeSharing(self.args.clone())),
+            "ai_knowledge_sharing" | "ai_knowledge_share" => {
+                Ok(OpCode::AiKnowledgeSharing(self.args.clone()))
+            }
+            "dom_query" => Ok(OpCode::DomQuery(self.args.clone())),
+            "dom_mutate" => Ok(OpCode::DomMutate(self.args.clone())),
+            "dom_event_listener" => Ok(OpCode::DomEventListener(self.args.clone())),
             "math_pow" => Ok(OpCode::MathPow),
             "math_sqrt" => Ok(OpCode::MathSqrt),
             "math_abs" => Ok(OpCode::MathAbs),

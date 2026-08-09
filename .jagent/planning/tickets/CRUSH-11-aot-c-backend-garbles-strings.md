@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-11 |
 | **Priority** | P1 |
-| **Status** | **Needs re-verification** — partially checked s388 (2026-07-16), not closed |
+| **Status** | **Done** — verified on current main (2026-08-07) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -23,6 +23,17 @@ runnable without recreating it). The ticket's specific complaint involves
 recursively-built strings (`build_air_row`/`build_ground_row`) which is a
 meaningfully different code path than a literal string — **do not assume
 fixed from the simple-case check above; re-run the real repro first.**
+
+## Resolution
+
+Verified against current `main` in the isolated CRUSH-11 worktree. The documented recursive string-output path passes the focused differential test:
+
+```text
+CARGO_TARGET_DIR=/tmp/crush-ast-target-buffy-crush-11 cargo test -p crush-aot --test differential_aot aot_turtle_runner_render_agrees -- --nocapture
+test result: ok. 1 passed; 0 failed
+```
+
+No source change was required; the AOT-C output agrees with the interpreter for the turtle-runner repro.
 
 ## Problem
 

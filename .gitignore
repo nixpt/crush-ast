@@ -22,3 +22,11 @@ tmp_*.rs
 tcp_loopback.rs.bak
 .newnmv
 command.sh
+
+# .jagent: planning board + knowledge markdown committed; runtime DBs + caches ignored
+.jagent/*.db
+.jagent/*.db-shm
+.jagent/*.db-wal
+.jagent/cache/
+.jagent/*.lock
+.jagent/*.sock
