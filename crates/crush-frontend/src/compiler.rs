@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use casm::debug_info::{DebugInfo, SourceLocation};
-use casm::{Function as CasmFunction, Instruction, Manifest, Program as CasmProgram};
+use casm::{Function as CasmFunction, Instruction, Manifest, OpCode, Program as CasmProgram};
 use crush_cast::*;
 use std::collections::{HashMap, HashSet};
 
@@ -505,14 +505,14 @@ impl Compiler {
             } => {
                 self.declared_vars.insert(name.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
-                instrs.push(self.create_instr("store", serde_json::json!({"name": name}), meta));
+                instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }
             Statement::Assign {
                 target, value, meta
             } => {
                 self.declared_vars.insert(target.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(target))?;
-                instrs.push(self.create_instr("store", serde_json::json!({"name": target}), meta));
+                instrs.push(self.create_typed_instr(OpCode::Store(target.clone()), meta)?);
             }
             Statement::Export { name, value, meta } => {
                 self.compile_expr(value, instrs)?;
@@ -528,7 +528,7 @@ impl Compiler {
                 // its instruction pushes nothing. Popping after it underflows the stack.
                 // Every other expression leaves exactly one value behind.
                 if !matches!(expr, Expression::Yield { .. }) {
-                    instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
                 }
             }
             Statement::Return { value, meta } => {
@@ -850,7 +850,7 @@ impl Compiler {
                         ));
                     }
                     None => {
-                        instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                        instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
                     }
                 }
             }
@@ -1233,7 +1233,7 @@ impl Compiler {
                 fallback,
             } => {
                 self.compile_expr(target, instrs)?;
-                
+
                 let switch_idx = instrs.len();
                 instrs.push(self.create_instr(
                     "ai_semantic_switch",
@@ -1256,7 +1256,7 @@ impl Compiler {
                     jump_to_end_indices.push(instrs.len());
                     instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
                 }
-                
+
                 let fallback_target = if let Some(fb) = fallback {
                     let start_idx = instrs.len();
                     for s in fb {
@@ -1268,7 +1268,7 @@ impl Compiler {
                 };
 
                 let end_label = instrs.len();
-                
+
                 // Patch the switch instruction
                 instrs[switch_idx].args = serde_json::json!({
                     "cases": switch_cases,
@@ -1296,38 +1296,22 @@ impl Compiler {
     ) -> Result<()> {
         match expr {
             Expression::IntLiteral { value, meta } => {
-                instrs.push(self.create_instr(
-                    "push_int",
-                    serde_json::json!({"value": value}),
-                    meta,
-                ));
+                instrs.push(self.create_typed_instr(OpCode::PushInt(*value), meta)?);
             }
             Expression::FloatLiteral { value, meta } => {
-                instrs.push(self.create_instr(
-                    "push_float",
-                    serde_json::json!({"value": value}),
-                    meta,
-                ));
+                instrs.push(self.create_typed_instr(OpCode::PushFloat(*value), meta)?);
             }
             Expression::StringLiteral { value, meta } => {
-                instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": value}),
-                    meta,
-                ));
+                instrs.push(self.create_typed_instr(OpCode::PushStr(value.clone()), meta)?);
             }
             Expression::BoolLiteral { value, meta } => {
-                instrs.push(self.create_instr(
-                    "push_bool",
-                    serde_json::json!({"value": value}),
-                    meta,
-                ));
+                instrs.push(self.create_typed_instr(OpCode::PushBool(*value), meta)?);
             }
             Expression::NullLiteral { meta } => {
-                instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                instrs.push(self.create_typed_instr(OpCode::PushNull, meta)?);
             }
             Expression::Var { name, meta } => {
-                instrs.push(self.create_instr("load", serde_json::json!({"name": name}), meta));
+                instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
             }
             Expression::BinaryOp {
                 operator,
@@ -1337,28 +1321,29 @@ impl Compiler {
             } => {
                 self.compile_expr(left, instrs)?;
                 self.compile_expr(right, instrs)?;
-                let op_code = match operator.as_str() {
-                    "+" => "add",
-                    "-" => "sub",
-                    "*" => "mul",
-                    "/" => "div",
-                    "%" => "mod",
-                    "//" => "div",   // floor division: same as div for positive ints
-                    "===" => "eq",    // JS strict equality
-                    "!==" => "ne",    // JS strict inequality
-                    "==" => "eq",
-                    "!=" => "ne",
-                    "<" => "lt",
-                    ">" => "gt",
-                    "<=" => "le",
-                    ">=" => "ge",
-                    "and" => "and",
-                    "or" => "or",
-                    "&&" => "and",
-                    "||" => "or",
+                let opcode = match operator.as_str() {
+                    "+" => OpCode::Add,
+                    "-" => OpCode::Sub,
+                    "*" => OpCode::Mul,
+                    "/" | "//" => OpCode::Div,
+                    "%" => OpCode::Mod,
+                    "===" | "==" => OpCode::Eq,
+                    "!==" | "!=" => OpCode::Ne,
+                    "<" => OpCode::Lt,
+                    ">" => OpCode::Gt,
+                    "<=" => OpCode::Le,
+                    ">=" => OpCode::Ge,
+                    "and" | "&&" => {
+                        instrs.push(self.create_instr("and", serde_json::json!({}), meta));
+                        return Ok(());
+                    }
+                    "or" | "||" => {
+                        instrs.push(self.create_instr("or", serde_json::json!({}), meta));
+                        return Ok(());
+                    }
                     _ => bail!("Unsupported op: {}", operator),
                 };
-                instrs.push(self.create_instr(op_code, serde_json::json!({}), meta));
+                instrs.push(self.create_typed_instr(opcode, meta)?);
             }
             Expression::UnaryOp {
                 operator,
@@ -1366,13 +1351,15 @@ impl Compiler {
                 meta,
             } => {
                 self.compile_expr(operand, instrs)?;
-                let op_code = match operator.as_str() {
-                    "-" => "neg",
-                    "not" => "not",
-                    "!" => "not",    // JS logical not
+                let opcode = match operator.as_str() {
+                    "-" => OpCode::Neg,
+                    "not" | "!" => {
+                        instrs.push(self.create_instr("not", serde_json::json!({}), meta));
+                        return Ok(());
+                    }
                     _ => bail!("Unsupported op: {}", operator),
                 };
-                instrs.push(self.create_instr(op_code, serde_json::json!({}), meta));
+                instrs.push(self.create_typed_instr(opcode, meta)?);
             }
             Expression::Call {
                 function,
@@ -1581,7 +1568,7 @@ impl Compiler {
                     let is_pre = function.contains("pre");
                     self.compile_expr(&args[0], instrs)?;  // load var
                     if !is_pre {
-                        instrs.push(self.create_instr("dup", serde_json::json!({}), &meta));
+                        instrs.push(self.create_typed_instr(OpCode::Dup, &meta)?);
                     }
                     instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), &meta));
                     if is_inc {
@@ -1590,7 +1577,7 @@ impl Compiler {
                         instrs.push(self.create_instr("sub", serde_json::json!({}), &meta));
                     }
                     if is_pre {
-                        instrs.push(self.create_instr("dup", serde_json::json!({}), &meta));
+                        instrs.push(self.create_typed_instr(OpCode::Dup, &meta)?);
                     }
                     instrs.push(self.create_instr("store", serde_json::json!({"name": var_name}), &meta));
                 } else if function == "__crush_deref__" {
@@ -1786,7 +1773,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("tuple_push", serde_json::json!({}), meta));
                 }
@@ -1798,7 +1785,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("list_push", serde_json::json!({}), meta));
                 }
@@ -1810,7 +1797,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("vector_push", serde_json::json!({}), meta));
                 }
@@ -1822,7 +1809,7 @@ impl Compiler {
                     meta,
                 ));
                 for element in elements {
-                    instrs.push(self.create_instr("dup", serde_json::json!({}), meta));
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.compile_expr(element, instrs)?;
                     instrs.push(self.create_instr("set_push", serde_json::json!({}), meta));
                 }
@@ -2260,7 +2247,7 @@ impl Compiler {
                         self.compile_expr(expr, instrs)?;
                     }
                 }
-                
+
                 instrs.push(self.create_instr(
                     "ai_synthesize",
                     serde_json::json!({
@@ -2291,6 +2278,19 @@ impl Compiler {
             lang,
             meta: Some(meta_json),
         }
+    }
+
+    fn create_typed_instr(
+        &self,
+        opcode: OpCode,
+        meta: &HashMap<String, serde_json::Value>,
+    ) -> Result<Instruction> {
+        let meta_json = serde_json::to_value(meta)?;
+        let lang = meta
+            .get("lang")
+            .and_then(|l| l.as_str())
+            .map(|s| s.to_string());
+        Ok(Instruction::from_opcode(opcode, lang, Some(meta_json))?)
     }
 }
 

@@ -1,8 +1,9 @@
+use casm::OpCode;
+use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
-    ImportStatement, Program, Statement, MatchArm, Pattern,
+    ImportStatement, MatchArm, Pattern, Program, Statement,
 };
-use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_frontend::compiler::Compiler;
 use std::collections::HashMap;
 
@@ -743,11 +744,18 @@ fn spawn_with_args_compiles_successfully() {
         meta: meta(),
     }]));
 
-    assert!(result.is_ok(), "spawn with args should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "spawn with args should compile: {:?}",
+        result.err()
+    );
     let casm = result.unwrap();
     let main = casm.functions.get("main").unwrap();
     // Expect: push 1, push 2, push_str "worker", spawn with argc=2
-    assert!(main.body.iter().any(|inst| inst.op == "spawn"), "should contain spawn instruction");
+    assert!(
+        main.body.iter().any(|inst| inst.op == "spawn"),
+        "should contain spawn instruction"
+    );
 }
 
 #[test]
@@ -965,7 +973,10 @@ fn emits_runtime_invariant_cap_calls_when_flag_enabled() {
 
     // Permission was registered in casm.manifest.
     assert!(
-        casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        casm.manifest
+            .permissions
+            .iter()
+            .any(|p| p == "invariant.evaluate"),
         "invariant.evaluate must appear in casm.manifest.permissions"
     );
 }
@@ -1000,7 +1011,11 @@ fn invariant_runtime_is_disabled_by_default() {
         "no invariant cap_calls should be emitted by default"
     );
     assert!(
-        !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        !casm
+            .manifest
+            .permissions
+            .iter()
+            .any(|p| p == "invariant.evaluate"),
         "no invariant.evaluate permission without flag"
     );
 }
@@ -1031,7 +1046,11 @@ fn empty_check_source_invariance_is_silently_skipped() {
         "empty check_source should be silently skipped, not emitted"
     );
     assert!(
-        !casm.manifest.permissions.iter().any(|p| p == "invariant.evaluate"),
+        !casm
+            .manifest
+            .permissions
+            .iter()
+            .any(|p| p == "invariant.evaluate"),
         "no permission registered when check_source is empty"
     );
 }
@@ -1051,20 +1070,227 @@ fn main() {
 }
 "#;
     let program = crush_frontend::parse_source(source).expect("should parse async fn");
-    let fetch = program.functions.get("fetch_data").expect("should have fetch_data function");
+    let fetch = program
+        .functions
+        .get("fetch_data")
+        .expect("should have fetch_data function");
     assert!(fetch.is_async, "fetch_data should be marked async");
 
-    let main_fn = program.functions.get("main").expect("should have main function");
-    let has_spawn = main_fn.body.iter().any(|stmt| {
-        match stmt {
-            Statement::VarDecl { value, .. } => {
-                matches!(value, Expression::Spawn { .. })
-            }
-            Statement::ExprStmt { expr, .. } => {
-                matches!(expr, Expression::Spawn { .. })
-            }
-            _ => false,
+    let main_fn = program
+        .functions
+        .get("main")
+        .expect("should have main function");
+    let has_spawn = main_fn.body.iter().any(|stmt| match stmt {
+        Statement::VarDecl { value, .. } => {
+            matches!(value, Expression::Spawn { .. })
         }
+        Statement::ExprStmt { expr, .. } => {
+            matches!(expr, Expression::Spawn { .. })
+        }
+        _ => false,
     });
     assert!(has_spawn, "main should contain spawn expression");
+}
+
+#[test]
+fn typed_literal_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::VarDecl {
+            name: "i".to_string(),
+            value: int(7),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "f".to_string(),
+            value: Expression::FloatLiteral {
+                value: 1.5,
+                meta: meta(),
+            },
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "s".to_string(),
+            value: string("hello"),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "b".to_string(),
+            value: bool_lit(true),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::VarDecl {
+            name: "n".to_string(),
+            value: Expression::NullLiteral { meta: meta() },
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+    ]);
+    let body = &casm.functions["main"].body;
+    let find = |op: &str| {
+        body.iter()
+            .find(|instruction| instruction.op == op)
+            .unwrap()
+    };
+
+    assert_eq!(find("push_int").args["value"], 7);
+    assert_eq!(find("push_float").args["value"], 1.5);
+    assert_eq!(find("push_str").args["value"], "hello");
+    assert_eq!(find("push_bool").args["value"], true);
+    assert_eq!(find("push_null").args, serde_json::json!({}));
+}
+
+#[test]
+fn typed_variable_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::VarDecl {
+            name: "value".to_string(),
+            value: int(7),
+            type_hint: CastType::Any,
+            meta: meta(),
+        },
+        Statement::Assign {
+            target: "value".to_string(),
+            value: int(8),
+            meta: meta(),
+        },
+        Statement::ExprStmt {
+            expr: var("value"),
+            meta: meta(),
+        },
+    ]);
+    let body = &casm.functions["main"].body;
+    let stores: Vec<_> = body
+        .iter()
+        .filter(|instruction| instruction.op == "store")
+        .collect();
+    assert_eq!(stores.len(), 2);
+    assert!(
+        stores
+            .iter()
+            .all(|instruction| instruction.args["name"] == "value")
+    );
+    let load = body
+        .iter()
+        .find(|instruction| instruction.op == "load")
+        .unwrap();
+    assert_eq!(load.args["name"], "value");
+}
+
+#[test]
+fn typed_arithmetic_emission_preserves_legacy_instruction_view() {
+    let binary = [
+        ("+", "add", OpCode::Add),
+        ("-", "sub", OpCode::Sub),
+        ("*", "mul", OpCode::Mul),
+        ("/", "div", OpCode::Div),
+        ("%", "mod", OpCode::Mod),
+        ("==", "eq", OpCode::Eq),
+        ("!=", "ne", OpCode::Ne),
+        ("<", "lt", OpCode::Lt),
+        (">", "gt", OpCode::Gt),
+        ("<=", "le", OpCode::Le),
+        (">=", "ge", OpCode::Ge),
+    ];
+    let mut body = Vec::new();
+    for (operator, _, _) in binary.iter() {
+        body.push(Statement::ExprStmt {
+            expr: Expression::BinaryOp {
+                operator: (*operator).to_string(),
+                left: Box::new(int(7)),
+                right: Box::new(int(2)),
+                meta: meta(),
+            },
+            meta: meta(),
+        });
+    }
+    body.push(Statement::ExprStmt {
+        expr: Expression::UnaryOp {
+            operator: "-".to_string(),
+            operand: Box::new(int(7)),
+            meta: meta(),
+        },
+        meta: meta(),
+    });
+
+    let casm = compile_program(body);
+    let instructions = &casm.functions["main"].body;
+    for (_, expected_op, expected_opcode) in binary {
+        let instruction = instructions
+            .iter()
+            .find(|instruction| instruction.op == expected_op)
+            .unwrap();
+        assert_eq!(instruction.args, serde_json::json!({}));
+        assert_eq!(instruction.to_opcode().unwrap(), expected_opcode);
+    }
+    let neg = instructions
+        .iter()
+        .find(|instruction| instruction.op == "neg")
+        .unwrap();
+    assert_eq!(neg.args, serde_json::json!({}));
+    assert_eq!(neg.to_opcode().unwrap(), OpCode::Neg);
+}
+
+#[test]
+fn typed_logical_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::ExprStmt {
+            expr: Expression::BinaryOp {
+                operator: "and".to_string(),
+                left: Box::new(bool_lit(true)),
+                right: Box::new(bool_lit(false)),
+                meta: meta(),
+            },
+            meta: meta(),
+        },
+        Statement::ExprStmt {
+            expr: Expression::UnaryOp {
+                operator: "not".to_string(),
+                operand: Box::new(bool_lit(true)),
+                meta: meta(),
+            },
+            meta: meta(),
+        },
+    ]);
+    let instructions = &casm.functions["main"].body;
+    for expected_op in ["and", "not"] {
+        let instruction = instructions
+            .iter()
+            .find(|instruction| instruction.op == expected_op)
+            .unwrap();
+        assert_eq!(instruction.args, serde_json::json!({}));
+    }
+}
+
+#[test]
+fn typed_stack_emission_preserves_legacy_instruction_view() {
+    let casm = compile_program(vec![
+        Statement::ExprStmt {
+            expr: int(7),
+            meta: meta(),
+        },
+        Statement::ExprStmt {
+            expr: Expression::TupleLiteral {
+                elements: vec![int(1), int(2)],
+                meta: meta(),
+            },
+            meta: meta(),
+        },
+    ]);
+    let instructions = &casm.functions["main"].body;
+    let pop = instructions
+        .iter()
+        .find(|instruction| instruction.op == "pop")
+        .expect("expression discard emits pop");
+    assert_eq!(pop.args, serde_json::json!({}));
+    assert_eq!(pop.to_opcode().unwrap(), OpCode::Pop);
+    let dup = instructions
+        .iter()
+        .find(|instruction| instruction.op == "dup")
+        .expect("tuple literal emits dup");
+    assert_eq!(dup.args, serde_json::json!({}));
+    assert_eq!(dup.to_opcode().unwrap(), OpCode::Dup);
 }
