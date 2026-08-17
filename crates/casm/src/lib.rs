@@ -57,7 +57,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod debug_info;
-pub mod ecasm;
 
 pub use debug_info::{DebugInfo, SourceLocation};
 
@@ -268,49 +267,7 @@ pub struct Instruction {
 }
 
 /// Cached instruction with pre-parsed opcode and Arc<str> caching for maximum performance
-///
-/// This structure eliminates string parsing and allocations during execution by caching
-/// the parsed OpCode and using Arc<str> for string data.
-#[derive(Debug, Clone)]
-pub struct CachedInstruction {
-    /// Original instruction for debugging and serialization
-    pub instruction: Instruction,
-    /// Pre-parsed opcode for fast dispatch
-    pub opcode: OpCode,
-    /// Cached operation name as Arc<str> to avoid allocations
-    pub op_cached: Arc<str>,
-}
 
-impl CachedInstruction {
-    /// Create a new cached instruction with parsed opcode and Arc<str> caching
-    pub fn new(instruction: Instruction) -> Result<Self> {
-        let opcode = instruction.to_opcode()?;
-        let op_cached = Arc::from(instruction.op.as_str());
-        Ok(Self {
-            instruction,
-            opcode,
-            op_cached,
-        })
-    }
-
-    /// Get the opcode without any parsing overhead
-    #[inline]
-    pub fn opcode(&self) -> &OpCode {
-        &self.opcode
-    }
-
-    /// Get the cached operation name as Arc<str> (zero-copy access)
-    #[inline]
-    pub fn op_cached(&self) -> &Arc<str> {
-        &self.op_cached
-    }
-
-    /// Get access to the original instruction
-    #[inline]
-    pub fn instruction(&self) -> &Instruction {
-        &self.instruction
-    }
-}
 
 impl Instruction {
     fn require_field<T, F>(&self, field: &str, extract: F) -> Result<T>
@@ -637,17 +594,7 @@ pub struct Program {
     pub lang: Option<String>,
 }
 
-/// Cached program with pre-parsed opcodes for maximum performance
-///
-/// This structure optimizes execution by pre-parsing all instructions
-/// into opcodes, eliminating the need for string-based dispatch during runtime.
-#[derive(Debug, Clone)]
-pub struct CachedProgram {
-    /// Original program for reference
-    pub program: Program,
-    /// Pre-parsed functions with cached instructions
-    pub cached_functions: HashMap<String, CachedFunction>,
-}
+
 
 /// Cached function with pre-parsed instructions and Arc<str> caching
 #[derive(Debug, Clone)]
