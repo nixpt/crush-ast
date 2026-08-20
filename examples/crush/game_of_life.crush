@@ -1,0 +1,167 @@
+# Conway's Game of Life — deterministic, self-playing ASCII simulation.
+#
+# A 5x5 cellular automaton. Board packed into one integer, one bit per
+# cell (r,c) at bit r*5+c — same bit(b,i) = (b/2^i)%2 read convention
+# lights_out.crush uses, and the same reason: no mutable arrays for
+# per-generation state here, so the whole board threads through
+# recursion as a single int, one generation per recursive call. No
+# bitwise ops in current crush-ast, so accumulating set bits into a new
+# board is addition (bit * 2^i), same trick lights_out.crush's flip uses.
+#
+# Seeded with a blinker (three cells in a row) — the simplest non-trivial
+# Life oscillator, period 2 (horizontal <-> vertical). Placed at the exact
+# center with 2 clear cells on every side so its neighbor counts never
+# touch the board edge — this board has a dead/absent border, not a
+# toroidal wrap, so edge cells legitimately have fewer neighbors.
+
+@module {
+    purpose: "Self-playing Conway's Game of Life on a 5x5 bounded board, seeded with a blinker oscillator"
+    exports: [main]
+}
+
+@decision "board-as-integer-not-arrays" {
+    chose: "single int, one bit per cell, read via (b/2^i)%2"
+    over: ["a real array of 25 cells"]
+    because: "current crush-ast has no mutable array index-assignment, so per-generation state can't live in an array; every other game in this set (pong/tictactoe/lights_out) hit the same wall and threads state through recursion arguments instead"
+}
+
+@invariant "board-stays-in-25-bits" {
+    description: "the board integer never represents more than 25 live/dead cells (values 0..33554431 inclusive) -- every write path (the seed in main, and step_board's accumulation) only ever sets bits 0..24"
+    applies_to: [step_board, main]
+}
+
+# The @decision block above deliberately omits `revisit-if` — verified live
+# that it hangs crushc indefinitely (isolated by bisection: @module and
+# @invariant alone compile fine; @decision with chose/because/over[] all
+# compile fine; @decision{revisit-if:[...]} alone hangs with zero output).
+# This is almost certainly why examples/crush/ai_agent_ops.crush (which
+# does use revisit-if) is marked `// expect-error: TIMEOUT` — captured in
+# dejavue, not just asserted here.
+
+fn pow2(n) {
+    if n <= 0 {
+        return 1;
+    }
+    return 2 * pow2(n - 1);
+}
+
+fn cell(b, i) {
+    return (b / pow2(i)) % 2;
+}
+
+fn idx(r, c) {
+    return r * 5 + c;
+}
+
+fn in_bounds(r, c) {
+    return (r >= 0) && (r < 5) && (c >= 0) && (c < 5);
+}
+
+# Count live neighbors of (r, c) in board b. No arrays -> the 8 offsets
+# are enumerated by hand instead of looped over a pairs list.
+fn neighbor_count(b, r, c) {
+    let n = 0;
+    if in_bounds(r - 1, c - 1) {
+        n = n + cell(b, idx(r - 1, c - 1));
+    }
+    if in_bounds(r - 1, c) {
+        n = n + cell(b, idx(r - 1, c));
+    }
+    if in_bounds(r - 1, c + 1) {
+        n = n + cell(b, idx(r - 1, c + 1));
+    }
+    if in_bounds(r, c - 1) {
+        n = n + cell(b, idx(r, c - 1));
+    }
+    if in_bounds(r, c + 1) {
+        n = n + cell(b, idx(r, c + 1));
+    }
+    if in_bounds(r + 1, c - 1) {
+        n = n + cell(b, idx(r + 1, c - 1));
+    }
+    if in_bounds(r + 1, c) {
+        n = n + cell(b, idx(r + 1, c));
+    }
+    if in_bounds(r + 1, c + 1) {
+        n = n + cell(b, idx(r + 1, c + 1));
+    }
+    return n;
+}
+
+fn next_bit(b, r, c) {
+    let alive = cell(b, idx(r, c));
+    let n = neighbor_count(b, r, c);
+    if alive == 1 {
+        if n == 2 {
+            return 1;
+        }
+        if n == 3 {
+            return 1;
+        }
+        return 0;
+    }
+    if n == 3 {
+        return 1;
+    }
+    return 0;
+}
+
+# Walk all 25 cells (5 rows x 5 cols via two recursive counters, no
+# arrays) accumulating the next generation's set bits.
+fn step_row(b, r, c, acc) {
+    if c >= 5 {
+        return acc;
+    }
+    let bit = next_bit(b, r, c);
+    let acc2 = acc + bit * pow2(idx(r, c));
+    return step_row(b, r, c + 1, acc2);
+}
+
+fn step_board(b, r, acc) {
+    if r >= 5 {
+        return acc;
+    }
+    let acc2 = step_row(b, r, 0, acc);
+    return step_board(b, r + 1, acc2);
+}
+
+fn render(b) {
+    let out = "";
+    let r = 0;
+    while r < 5 {
+        let line = "";
+        let c = 0;
+        while c < 5 {
+            let ch = ".";
+            if cell(b, idx(r, c)) == 1 {
+                ch = "#";
+            }
+            line = line + ch;
+            c = c + 1;
+        }
+        out = out + line + "\n";
+        r = r + 1;
+    }
+    io.print(out);
+    return;
+}
+
+fn life_tick(b, gen, max_gen) {
+    io.print("gen " + gen + ":");
+    render(b);
+    if gen >= max_gen {
+        return;
+    }
+    let nb = step_board(b, 0, 0);
+    life_tick(nb, gen + 1, max_gen);
+    return;
+}
+
+fn main() {
+    # Blinker: row 2, columns 1..3 (0-indexed) — dead center of the 5x5
+    # board, two clear cells on every side.
+    let seed = pow2(idx(2, 1)) + pow2(idx(2, 2)) + pow2(idx(2, 3));
+    io.print("Conway's Game of Life -- 5x5, blinker seed, dead border (no wrap)");
+    life_tick(seed, 0, 6);
+    return;
+}
