@@ -1,0 +1,364 @@
+# Fifteen Puzzle — self-scrambling, self-solving sliding puzzle.
+#
+# The classic 4x4 "15 puzzle": tiles 1..15 and one blank. It plays itself:
+#   1. builds the solved board,
+#   2. scrambles it with 30 seeded-LCG moves (always solvable, since every
+#      scramble is just a sequence of legal moves from the solved state),
+#   3. solves it with IDA* (iterative-deepening A*) using the Manhattan
+#      distance heuristic,
+#   4. replays the optimal solution move-by-move as ASCII frames.
+#
+# State encoding (the trick that keeps this representable in one i64):
+#   A naive 16-nibble board (cell i in 0..15 is nibble i, base 16) would
+#   reach 16^16 - 1 = 2^64 - 1, which overflows Crush's i64. But the blank
+#   carries no information worth a nibble: there are only ever 15 tiles.
+#   So the board packs just the 15 non-blank cells, in cell order with the
+#   blank skipped, as 15 nibbles — max value 15 * 16^14, comfortably inside
+#   i64 — and the blank's own position (0..15) travels alongside as a second
+#   scalar. Both are threaded through recursion/loops as plain arguments,
+#   exactly the constraint every other game in this set hit (no mutable
+#   array index-assignment in current crush-ast).
+#
+# The solver's path is packed the same way: each move is 2 bits (0=up,
+#   1=down, 2=left, 3=right), most-significant move first, so a k-move
+#   solution is one integer < 4^k. Decoding replays moves in order without
+#   any array. A 30-move scramble means optimal <= 30, so the packed path
+#   stays < 4^30, again inside i64.
+
+@module {
+    purpose: "Self-solving 15-puzzle: seeded-LCG scramble, then IDA* (iterative-deepening A* with Manhattan distance) recovery, replayed as ASCII frames"
+    exports: [main]
+}
+
+@decision "board-as-nibbles-plus-blank" {
+    chose: "15 tiles packed as base-16 nibbles in one i64, blank position carried as a separate scalar"
+    over: ["a full 16-nibble board with the blank encoded as nibble 0", "a real array of 16 cells"]
+    because: "a 16-nibble board overflows i64 (16^16 >> 2^63-1) and current crush-ast has no mutable array index-assignment; packing only the 15 non-blank cells keeps the entire board in one int while the blank coordinate threads alongside it"
+}
+
+@invariant "board-fits-in-i64" {
+    description: "the packed board never exceeds 15 * 16^14 = 1080863910568919040 (well below 2^63-1 = 9223372036854775807) because it always holds exactly 15 nibbles, and the only write paths (the solved seed in main and move_blank's rebuild) accumulate tiles 1..15 into slots 0..14"
+    applies_to: [move_blank, main]
+}
+
+# --- small powers -----------------------------------------------------------
+
+fn pow16(n) {
+    let r = 1;
+    let k = 0;
+    while k < n {
+        r = r * 16;
+        k = k + 1;
+    }
+    return r;
+}
+
+fn pow4(n) {
+    let r = 1;
+    let k = 0;
+    while k < n {
+        r = r * 4;
+        k = k + 1;
+    }
+    return r;
+}
+
+# Deterministic RNG, same LCG every other game here hand-rolls.
+fn lcg_next(state) {
+    return (state * 1103515245 + 12345) % 2147483648;
+}
+
+# --- board access -----------------------------------------------------------
+#
+# Nibble slot s (0..14) holds the tile at the s-th non-blank cell:
+#   slot -> cell:  s if s < blank, else s + 1
+#   cell -> slot:  i if i < blank, else i - 1
+
+fn cell(board, blank, i) {
+    if i == blank {
+        return 0;
+    }
+    let s = i;
+    if i > blank {
+        s = i - 1;
+    }
+    return (board / pow16(s)) % 16;
+}
+
+# Move the blank into adjacent cell j (which currently holds a tile). The
+# rebuild walks all 16 cells once, skipping the new blank, and re-packs the
+# 15 tiles in cell order. `old_pow` tracks 16^slot for the input packing,
+# `pow` tracks 16^slot for the output packing — both advance exactly when a
+# nibble is consumed/emitted, so no array is needed.
+fn move_blank(board, blank, j) {
+    let t = cell(board, blank, j);
+    let out = 0;
+    let pow = 1;
+    let old_pow = 1;
+    let i = 0;
+    while i < 16 {
+        if i == j {
+            # new blank: no output nibble, but j did occupy an input nibble
+            old_pow = old_pow * 16;
+            i = i + 1;
+        } else {
+            let tile = 0;
+            if i == blank {
+                # old blank cell now receives the tile that was at j
+                tile = t;
+            } else {
+                tile = (board / old_pow) % 16;
+                old_pow = old_pow * 16;
+            }
+            out = out + tile * pow;
+            pow = pow * 16;
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+# --- heuristic --------------------------------------------------------------
+
+# Manhattan distance: for every non-blank cell, |goal_row - row| +
+# |goal_col - col|, where tile t belongs at (row (t-1)/4, col (t-1)%4).
+# Incremental power keeps this cheap — it is the hot path of the search.
+fn manhattan(board, blank) {
+    let total = 0;
+    let i = 0;
+    let pow = 1;
+    while i < 16 {
+        if i == blank {
+            i = i + 1;
+        } else {
+            let t = (board / pow) % 16;
+            if t != 0 {
+                let gr = (t - 1) / 4;
+                let gc = (t - 1) % 4;
+                let cr = i / 4;
+                let cc = i % 4;
+                let dr = gr - cr;
+                if dr < 0 {
+                    dr = 0 - dr;
+                }
+                let dc = gc - cc;
+                if dc < 0 {
+                    dc = 0 - dc;
+                }
+                total = total + dr + dc;
+            }
+            pow = pow * 16;
+            i = i + 1;
+        }
+    }
+    return total;
+}
+
+# --- moves ------------------------------------------------------------------
+
+fn valid_dir(blank, dir) {
+    if dir == 0 {
+        return blank >= 4;
+    }
+    if dir == 1 {
+        return blank < 12;
+    }
+    if dir == 2 {
+        return blank % 4 != 0;
+    }
+    return blank % 4 != 3;
+}
+
+fn target(blank, dir) {
+    if dir == 0 {
+        return blank - 4;
+    }
+    if dir == 1 {
+        return blank + 4;
+    }
+    if dir == 2 {
+        return blank - 1;
+    }
+    return blank + 1;
+}
+
+fn reverse_of(prev) {
+    if prev == 0 {
+        return 1;
+    }
+    if prev == 1 {
+        return 0;
+    }
+    if prev == 2 {
+        return 3;
+    }
+    if prev == 3 {
+        return 2;
+    }
+    return 99;
+}
+
+fn dir_name(dir) {
+    if dir == 0 {
+        return "up";
+    }
+    if dir == 1 {
+        return "down";
+    }
+    if dir == 2 {
+        return "left";
+    }
+    return "right";
+}
+
+# --- IDA* -------------------------------------------------------------------
+
+# Depth-first search with a cost bound. Return convention (single value, no
+# tuples): a NEGATIVE result means "solved" and encodes the move path as
+# -1 - path (first move is the most significant 2-bit group); a POSITIVE
+# result is the smallest f = g + h that exceeded the current bound, i.e.
+# the next bound to try. `prev` is the previous move direction, so we never
+# immediately undo it.
+fn search(board, blank, g, bound, path, prev) {
+    let h = manhattan(board, blank);
+    let f = g + h;
+    if f > bound {
+        return f;
+    }
+    if h == 0 {
+        return 0 - (path + 1);
+    }
+    let min = 999999;
+    let rev = reverse_of(prev);
+    let dir = 0;
+    while dir < 4 {
+        if valid_dir(blank, dir) {
+            if dir != rev {
+                let j = target(blank, dir);
+                let nb = move_blank(board, blank, j);
+                let path2 = path * 4 + dir;
+                let r = search(nb, j, g + 1, bound, path2, dir);
+                if r < 0 {
+                    return r;
+                }
+                if r < min {
+                    min = r;
+                }
+            }
+        }
+        dir = dir + 1;
+    }
+    return min;
+}
+
+# --- rendering --------------------------------------------------------------
+
+fn render(board, blank) {
+    let out = "";
+    let i = 0;
+    while i < 16 {
+        let t = cell(board, blank, i);
+        if t == 0 {
+            out = out + "  .";
+        } else {
+            if t < 10 {
+                out = out + "  " + t;
+            } else {
+                out = out + " " + t;
+            }
+        }
+        if i % 4 == 3 {
+            out = out + "\n";
+        }
+        i = i + 1;
+    }
+    io.print(out);
+    return;
+}
+
+# --- main -------------------------------------------------------------------
+
+fn main() {
+    io.print("Fifteen Puzzle (self-solving) -- 4x4 sliding puzzle");
+    io.print("  scramble: 30 seeded-LCG legal moves");
+    io.print("  solver:   IDA* with Manhattan distance heuristic");
+    io.print("");
+
+    # Solved board: slots 0..14 hold tiles 1..15, blank at cell 15.
+    let board = 0;
+    let blank = 15;
+    let pow = 1;
+    let s = 0;
+    while s < 15 {
+        board = board + (s + 1) * pow;
+        pow = pow * 16;
+        s = s + 1;
+    }
+
+    io.print("solved board:");
+    render(board, blank);
+
+    # Scramble: legal moves from the solved state, so it stays solvable.
+    # Skip the immediate reverse of the previous move so the scramble does
+    # not just undo itself.
+    let rng = 42;
+    let prev = 99;
+    let m = 0;
+    while m < 30 {
+        rng = lcg_next(rng);
+        let dir = rng % 4;
+        if valid_dir(blank, dir) {
+            if dir != reverse_of(prev) {
+                let j = target(blank, dir);
+                board = move_blank(board, blank, j);
+                blank = j;
+                prev = dir;
+                m = m + 1;
+            }
+        }
+    }
+
+    io.print("scrambled board (30 random legal moves):");
+    render(board, blank);
+
+    # Solve with iterative deepening.
+    let bound = manhattan(board, blank);
+    io.print("initial heuristic (Manhattan): " + bound);
+    let path = 0;
+    let found = 0;
+    let iter = 0;
+    while found == 0 {
+        let r = search(board, blank, 0, bound, 0, 99);
+        if r < 0 {
+            found = 1;
+            path = 0 - r - 1;
+        } else {
+            bound = r;
+            iter = iter + 1;
+            if iter > 200 {
+                io.print("solver exceeded 200 iterations -- giving up");
+                return 0;
+            }
+        }
+    }
+
+    io.print("");
+    io.print("solution found: " + bound + " moves -- replaying:");
+    io.print("");
+
+    # Replay the packed path, first move at the most significant end.
+    let m2 = 0;
+    while m2 < bound {
+        let k = bound - 1 - m2;
+        let dir = (path / pow4(k)) % 4;
+        let j = target(blank, dir);
+        board = move_blank(board, blank, j);
+        blank = j;
+        io.print("move " + (m2 + 1) + ": " + dir_name(dir));
+        render(board, blank);
+        m2 = m2 + 1;
+    }
+
+    io.print("solved in " + bound + " moves.");
+    return 0;
+}
