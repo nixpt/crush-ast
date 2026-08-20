@@ -36,7 +36,9 @@
 | 105   | JVM/Android guest bridge (the unfiled CRUSH-21 sub-shard; gates CRUSH-52) |
 | 106   | Typed OpCode emission (audit finding #1 — 4–6 allocs/instruction via serde_json) |
 | 107   | CAST meta → packed Span (audit finding #2 — contract-coordinated; reshapes CRUSH-74's mechanism) |
-| 108+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
+| 108   | Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
+| 109   | Disambiguate top-level `stdlib/` (polyglot transpiled modules) from CRUSH-56/57's native HostCap restoration work — includes an already-observed string-function naming overlap |
+| 110+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index
 
