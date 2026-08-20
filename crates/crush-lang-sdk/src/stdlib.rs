@@ -41,6 +41,9 @@ pub fn register(caps: &mut HostCaps) {
     caps.register(Box::new(MathMinCap));
     caps.register(Box::new(MathMaxCap));
     caps.register(Box::new(MathPiCap));
+    caps.register(Box::new(MathRandomCap));
+    caps.register(Box::new(MathRandomIntCap));
+    caps.register(Box::new(MathSeedCap));
 
     // Conversion capabilities
     caps.register(Box::new(ConvToIntCap));
@@ -360,6 +363,109 @@ impl HostCap for MathPiCap {
     }
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
         Ok(Some(Value::Float(std::f64::consts::PI)))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RNG Capabilities (math.random, math.random_int, math.seed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+use std::sync::{Mutex, OnceLock};
+
+/// Simple SplitMix64 PRNG — dependency-free, good enough for game shuffles.
+/// State is a single u64, updated by the SplitMix64 algorithm.
+struct RngState(u64);
+
+impl RngState {
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    /// SplitMix64 next — returns a u64 and updates state.
+    fn next_u64(&mut self) -> u64 {
+        let z = self.0.wrapping_add(0x9E3779B97F4A7C15);
+        self.0 = z;
+        let mut x = z;
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+        x ^ (x >> 31)
+    }
+
+    /// Next float in [0, 1)
+    fn next_f64(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 * (1.0 / ((1u64 << 53) as f64))
+    }
+
+    /// Next int in [lo, hi)
+    fn next_int(&mut self, lo: i64, hi: i64) -> i64 {
+        let range = (hi - lo) as u64;
+        if range == 0 {
+            return lo;
+        }
+        lo + (self.next_u64() % range) as i64
+    }
+}
+
+static RNG: OnceLock<Mutex<RngState>> = OnceLock::new();
+
+fn get_rng() -> std::sync::MutexGuard<'static, RngState> {
+    RNG.get_or_init(|| Mutex::new(RngState::new(0))) // Default seed = 0 (deterministic)
+        .lock()
+        .unwrap()
+}
+
+pub struct MathRandomCap;
+impl HostCap for MathRandomCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "math.random".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        Ok(Some(Value::Float(get_rng().next_f64())))
+    }
+}
+
+pub struct MathRandomIntCap;
+impl HostCap for MathRandomIntCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "math.random_int".to_string(),
+            argc: Some(2),
+            returns: true,
+        }
+    }
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let lo = match args.get(0) {
+            Some(Value::Int(i)) => *i,
+            _ => return Err("math.random_int: missing lo (int)".to_string()),
+        };
+        let hi = match args.get(1) {
+            Some(Value::Int(i)) => *i,
+            _ => return Err("math.random_int: missing hi (int)".to_string()),
+        };
+        Ok(Some(Value::Int(get_rng().next_int(lo, hi))))
+    }
+}
+
+pub struct MathSeedCap;
+impl HostCap for MathSeedCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "math.seed".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let seed = match args.get(0) {
+            Some(Value::Int(i)) => *i,
+            _ => return Err("math.seed: missing seed (int)".to_string()),
+        };
+        *RNG.get_or_init(|| Mutex::new(RngState::new(0))).lock().unwrap() = RngState::new(seed as u64);
+        Ok(Some(Value::Int(seed)))
     }
 }
 
