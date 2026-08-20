@@ -1038,6 +1038,9 @@ fn emit_c_instr(
                 "io.print" | "print" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); switch (__pv.tag) {{ case TAG_INT: printf(\"%ld\\n\", (long)__pv.i); break; case TAG_FLOAT: printf(\"%g\\n\", __pv.f); break; case TAG_BOOL: printf(\"%s\\n\", __pv.b ? \"true\" : \"false\"); break; case TAG_NULL: printf(\"null\\n\"); break; case TAG_STRING: printf(\"%s\\n\", __pv.s); break; default: printf(\"[array#%d]\\n\", __pv.array_idx); break; }} }} _pc={next_pc}; break; // cap_call io.print\n"));
                 }
+                "io.read" => {
+                    out.push_str(&format!("                {{ char __buf[4096]; char* __line = fgets(__buf, sizeof(__buf), stdin); if (__line) {{ size_t __len = strlen(__buf); while (__len > 0 && (__buf[__len-1] == '\\n' || __buf[__len-1] == '\\r')) __buf[--__len] = '\\0'; _push(mk_string(__buf)); }} else {{ _push(mk_string(\"\")); }} }} _pc={next_pc}; break; // cap_call io.read\n"));
+                }
                 _ => {
                     if argc > 0 {
                         out.push_str(&format!("                for (int __i=0; __i<{argc}; __i++) _pop();\n"));

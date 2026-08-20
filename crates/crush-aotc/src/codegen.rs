@@ -407,6 +407,11 @@ impl AotcCompiler {
                             writeln!(out, "    CrushValue {} = CV_NULL;", t)?;
                             stack.push((t, ty));
                         }
+                        "io.read" => {
+                            let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                            writeln!(out, "    CrushValue {} = cap_io_read();", t)?;
+                            stack.push((t, ty));
+                        }
                         "math.sqrt"  => emit_math_cap(out, "cap_math_sqrt",  &boxed_args, &mut stack, &mut tmp_count)?,
                         "math.pow"   => emit_math_cap(out, "cap_math_pow",   &boxed_args, &mut stack, &mut tmp_count)?,
                         "math.abs"   => emit_math_cap(out, "cap_math_abs",   &boxed_args, &mut stack, &mut tmp_count)?,
