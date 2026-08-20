@@ -1,0 +1,203 @@
+# Tic-tac-toe — self-playing simulation.
+#
+# A companion to snake.crush: two self-playing agents (X and O) that play
+# against each other on a 3x3 board, each move rendered as ASCII via print().
+# No interactive input, no sleep — the game plays itself to completion and
+# prints the final result.
+#
+# Board encoding (the trick that keeps this representable):
+#   Crush has no mutable array index-assignment, so instead of a 3x3 array
+#   the whole board is ONE base-3 integer. Cell `i` (0..8) is the i-th base-3
+#   digit: 0 = empty, 1 = X, 2 = O.
+#     - cell(board, i)  = (board / 3^i) % 3
+#     - setcell(board,i,v) = board + (v - cell(board,i)) * 3^i
+#   Max board value is 3^9 - 1 = 19682, well within 64-bit ints. The entire
+#   game state therefore threads through recursion as a single integer.
+#
+# The two strategies (deterministic — no RNG needed):
+#   X (strong):  win > block opponent > center > corner > edge > first empty
+#   O (weaker):  win > block opponent > first empty
+#   Both agents block effectively, so the deterministic match settles into
+#   a draw — a real self-played game (full 9 moves, win detection armed the
+#   whole time), not a scripted or draw-by-construction result.
+
+# --- board arithmetic -----------------------------------------------------
+
+fn pow3(i) {
+    let r = 1;
+    let k = 0;
+    while k < i {
+        r = r * 3;
+        k = k + 1;
+    }
+    return r;
+}
+
+fn cell(board, i) {
+    return (board / pow3(i)) % 3;
+}
+
+fn setcell(board, i, v) {
+    return board + (v - cell(board, i)) * pow3(i);
+}
+
+# --- win detection --------------------------------------------------------
+
+fn line_all(board, a, b, c, p) {
+    if cell(board, a) == p {
+        if cell(board, b) == p {
+            if cell(board, c) == p {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+fn wins(board, p) {
+    if line_all(board, 0, 1, 2, p) { return true; }
+    if line_all(board, 3, 4, 5, p) { return true; }
+    if line_all(board, 6, 7, 8, p) { return true; }
+    if line_all(board, 0, 3, 6, p) { return true; }
+    if line_all(board, 1, 4, 7, p) { return true; }
+    if line_all(board, 2, 5, 8, p) { return true; }
+    if line_all(board, 0, 4, 8, p) { return true; }
+    if line_all(board, 2, 4, 6, p) { return true; }
+    return false;
+}
+
+# --- move selection -------------------------------------------------------
+
+# Return cell `i` if placing `p` there immediately wins, else sentinel 99.
+fn try_move_wins(board, i, p) {
+    if cell(board, i) == 0 {
+        if wins(setcell(board, i, p), p) {
+            return i;
+        }
+    }
+    return 99;
+}
+
+# First move (scanning 0..8) that lets `p` win, else 99.
+fn first_winning_move(board, p) {
+    let r = try_move_wins(board, 0, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 1, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 2, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 3, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 4, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 5, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 6, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 7, p);
+    if r != 99 { return r; }
+    r = try_move_wins(board, 8, p);
+    if r != 99 { return r; }
+    return 99;
+}
+
+fn first_empty(board) {
+    let i = 0;
+    while i < 9 {
+        if cell(board, i) == 0 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 99;
+}
+
+fn choose_move(board, p) {
+    let opp = 3 - p;
+    # 1) take a winning move if one exists
+    let w = first_winning_move(board, p);
+    if w != 99 { return w; }
+    # 2) block the opponent's winning move if they have one
+    let b = first_winning_move(board, opp);
+    if b != 99 { return b; }
+    if p == 1 {
+        # 3) X prefers the center, then a corner, then any open cell
+        if cell(board, 4) == 0 { return 4; }
+        if cell(board, 0) == 0 { return 0; }
+        if cell(board, 2) == 0 { return 2; }
+        if cell(board, 6) == 0 { return 6; }
+        if cell(board, 8) == 0 { return 8; }
+        return first_empty(board);
+    }
+    # 4) O is weaker: just take the first empty cell
+    return first_empty(board);
+}
+
+# --- rendering ------------------------------------------------------------
+
+fn cell_char(board, i) {
+    let c = cell(board, i);
+    if c == 1 { return "X"; }
+    if c == 2 { return "O"; }
+    return ".";
+}
+
+fn render_row(board, r) {
+    let a = r * 3;
+    let line = "| ";
+    line = line + cell_char(board, a) + " | ";
+    line = line + cell_char(board, a + 1) + " | ";
+    line = line + cell_char(board, a + 2) + " |";
+    print(line + "\n");
+}
+
+fn render_board(board) {
+    print("+---+---+---+\n");
+    render_row(board, 0);
+    print("+---+---+---+\n");
+    render_row(board, 1);
+    print("+---+---+---+\n");
+    render_row(board, 2);
+    print("+---+---+---+\n");
+}
+
+fn winner_name(board) {
+    if wins(board, 1) { return "X"; }
+    if wins(board, 2) { return "O"; }
+    return "-";
+}
+
+# --- self-play loop -------------------------------------------------------
+
+fn play(board, turn, moves) {
+    render_board(board);
+
+    let w = winner_name(board);
+    if w != "-" {
+        print("game over: " + w + " wins!\n");
+        return;
+    }
+    if moves >= 9 {
+        print("game over: draw\n");
+        return;
+    }
+
+    let m = choose_move(board, turn);
+    if m == 99 {
+        m = first_empty(board);
+    }
+    let board2 = setcell(board, m, turn);
+    print("move " + (moves + 1) + ": " + cell_char(board2, m) + " places at cell " + m + "\n\n");
+
+    let next = 3 - turn;
+    return play(board2, next, moves + 1);
+}
+
+fn main() {
+    print("Tic-tac-toe (self-playing) — X vs O\n");
+    print("  X: win > block > center > corner > edge\n");
+    print("  O: win > block > first empty\n");
+    print("\n");
+    let board = 0;
+    return play(board, 1, 0);
+}
