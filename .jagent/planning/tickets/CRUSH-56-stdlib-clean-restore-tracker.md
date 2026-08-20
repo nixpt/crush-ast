@@ -17,11 +17,20 @@ dejavue↔crush-index) is DONE (s412), so this can start.
 
 ## Approach
 
+0. **Do [CRUSH-108](CRUSH-108-stdlib-reconcile-source-and-dedupe.md) first.**
+   Live exploration (s439) found a candidate better source-of-truth than the
+   zip (exosphere's own live `crates/core/base/stdlib`, mostly mock-free) and
+   59 caps already restored/wired here (`crash-lang-sdk/src/stdlib.rs`) that
+   neither this tracker nor the shard tickets currently know about — resolve
+   both before step 1 below, or step 2's partitioning will re-do settled work.
 1. **Step 1 — locate + pin the source of truth**: find `exosphere-1.0.zip`
    and the "STDLIB RESTORATION MAP" (search crush-ast `stdlib/` + `docs/`,
    exosphere repo, assets/). If the per-cap map doesn't exist at cap
    granularity, CREATING it (cap name → clean/mock verdict → target module)
    is this ticket's first deliverable. Record location via dejavue.
+   See also [CRUSH-109](CRUSH-109-disambiguate-polyglot-stdlib-dir.md) —
+   `stdlib/` (this repo's top-level dir) is a *different* transpiled-module
+   mechanism, not this ticket's restoration target; don't conflate the two.
 2. Partition the 103 caps into the 10 shard tickets CRUSH-88..97 by family
    (io/fs/string/net/process/...); write each shard's cap list into its file.
 3. Tracker table here: shard → caps → status; updated as shards land.
