@@ -1,0 +1,230 @@
+# Lights Out — self-solving puzzle.
+#
+# A companion to snake.crush / tictactoe.crush: the classic 5x5 Lights Out
+# puzzle, played by an agent with no human input. Pressing a cell toggles it
+# and its 4 orthogonal neighbors. The agent:
+#   1. scrambles the board by pressing 10 LCG-chosen buttons (every board
+#      built this way is solvable — presses are their own undo),
+#   2. solves it itself with "light chasing": try all 32 first-row press
+#      patterns, chase each one top to bottom (row r is pressed wherever
+#      row r-1 is still lit), and keep the pattern that leaves the bottom
+#      row dark,
+#   3. replays the winning press sequence, rendering an ASCII frame after
+#      every press.
+#
+# Board encoding (the trick that keeps this representable):
+#   Crush has no mutable arrays and no bitwise ops, so the whole board is
+#   ONE 25-bit integer. Cell i (0..24, i = row*5 + col) is bit i:
+#     - cell(board, i) = (board / 2^i) % 2
+#     - flip bit i:     board + (1 - 2 * bit) * 2^i  (+2^i lights, -2^i darks)
+#   Max board value is 2^25 - 1, well within 64-bit ints.
+#
+# Return-value threading:
+#   Crush functions return a single value (no structs in the runtime, no
+#   tuples), so the replay threads its (board, move-count) pair as ONE
+#   integer — board * 64 + n — like tictactoe's base-3 board.
+
+# --- board arithmetic -------------------------------------------------------
+
+fn pow2(i) {
+    let r = 1;
+    let k = 0;
+    while k < i {
+        r = r * 2;
+        k = k + 1;
+    }
+    return r;
+}
+
+fn cell(board, i) {
+    return (board / pow2(i)) % 2;
+}
+
+fn flip(board, i) {
+    let b = cell(board, i);
+    return board + (1 - 2 * b) * pow2(i);
+}
+
+fn press(board, r, c) {
+    let i = r * 5 + c;
+    let b = flip(board, i);
+    if r > 0 {
+        b = flip(b, i - 5);
+    }
+    if r < 4 {
+        b = flip(b, i + 5);
+    }
+    if c > 0 {
+        b = flip(b, i - 1);
+    }
+    if c < 4 {
+        b = flip(b, i + 1);
+    }
+    return b;
+}
+
+# --- rendering --------------------------------------------------------------
+
+fn render(board) {
+    let r = 0;
+    while r < 5 {
+        let c = 0;
+        let line = "  ";
+        while c < 5 {
+            if cell(board, r * 5 + c) == 1 {
+                line = line + "*";
+            } else {
+                line = line + ".";
+            }
+            line = line + " ";
+            c = c + 1;
+        }
+        print(line + "\n");
+        r = r + 1;
+    }
+    print("\n");
+}
+
+# --- scramble ---------------------------------------------------------------
+
+fn lcg_next(state) {
+    return (state * 1103515245 + 12345) % 2147483648;
+}
+
+fn scramble(board, presses, rng) {
+    if presses <= 0 {
+        return board;
+    }
+    let r = lcg_next(rng);
+    let row = r % 5;
+    let col = (r / 5) % 5;
+    let b2 = press(board, row, col);
+    return scramble(b2, presses - 1, r);
+}
+
+# --- light chasing ----------------------------------------------------------
+
+# Chase one row: press (r, c) wherever (r-1, c) is still lit.
+fn chase_row(board, r) {
+    let b = board;
+    let c = 0;
+    while c < 5 {
+        if cell(b, (r - 1) * 5 + c) == 1 {
+            b = press(b, r, c);
+        }
+        c = c + 1;
+    }
+    return b;
+}
+
+# Apply first-row `mask`, then chase rows 1..4 downward.
+fn chase(board, mask) {
+    let b = board;
+    let c = 0;
+    while c < 5 {
+        if (mask / pow2(c)) % 2 == 1 {
+            b = press(b, 0, c);
+        }
+        c = c + 1;
+    }
+    let r = 1;
+    while r < 5 {
+        b = chase_row(b, r);
+        r = r + 1;
+    }
+    return b;
+}
+
+fn row_dark(board, r) {
+    let c = 0;
+    while c < 5 {
+        if cell(board, r * 5 + c) == 1 {
+            return false;
+        }
+        c = c + 1;
+    }
+    return true;
+}
+
+# First of the 32 masks whose chase leaves row 4 dark; 99 if none (cannot
+# happen for a board built by pressing buttons from all-dark).
+fn find_mask(board, mask) {
+    if mask >= 32 {
+        return 99;
+    }
+    let chased = chase(board, mask);
+    if row_dark(chased, 4) {
+        return mask;
+    }
+    return find_mask(board, mask + 1);
+}
+
+# --- replay -----------------------------------------------------------------
+
+fn pack(board, n) {
+    return board * 64 + n;
+}
+
+fn replay_row(p, r) {
+    let b = p / 64;
+    let n = p % 64;
+    let c = 0;
+    while c < 5 {
+        if cell(b, (r - 1) * 5 + c) == 1 {
+            b = press(b, r, c);
+            n = n + 1;
+            print("  move " + n + ": press (" + r + "," + c + ")\n");
+            render(b);
+        }
+        c = c + 1;
+    }
+    return pack(b, n);
+}
+
+# Replay the winning press sequence with a frame after each press; returns
+# the total move count.
+fn replay(p, mask) {
+    let b = p / 64;
+    let n = p % 64;
+    let c = 0;
+    while c < 5 {
+        if (mask / pow2(c)) % 2 == 1 {
+            b = press(b, 0, c);
+            n = n + 1;
+            print("  move " + n + ": press (0," + c + ")\n");
+            render(b);
+        }
+        c = c + 1;
+    }
+    let pp = pack(b, n);
+    let r = 1;
+    while r < 5 {
+        pp = replay_row(pp, r);
+        r = r + 1;
+    }
+    return pp % 64;
+}
+
+# --- main -------------------------------------------------------------------
+
+fn main() {
+    print("Lights Out (self-solving) — * lit, . dark\n");
+    print("  5x5 board; a press toggles the cell + 4 neighbors\n");
+    print("  solver: light chasing over 32 first-row masks\n\n");
+
+    let board = scramble(0, 10, 42);
+    print("scrambled board (10 random presses):\n\n");
+    render(board);
+
+    let mask = find_mask(board, 0);
+    if mask == 99 {
+        print("no solution found (should be impossible)\n");
+        return 0;
+    }
+    print("solution found: first-row mask " + mask + " — replaying the presses\n\n");
+
+    let moves = replay(pack(board, 0), mask);
+
+    print("board solved in " + moves + " moves\n");
+    return moves;
+}
