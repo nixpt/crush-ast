@@ -1,0 +1,177 @@
+# brainfuck.crush — a Brainfuck interpreter written in Crush.
+#
+# A second hosted language for this collection, alongside forth.crush.
+# Brainfuck is the canonical "can your host run another language?" test:
+# eight instructions, a tape, a pointer, and bracket-matching control flow.
+# This interpreter walks the program one character at a time (string
+# indexing yields one-character strings), keeps the tape in a fixed-size
+# integer array mutated with indexed assignment, and builds its output into
+# one string that is printed at the end.
+#
+# The one genuinely hard part is *output*. Crush has no chr/ord and the
+# standalone binary has no conv.* (that lives behind the unbuilt `stdlib`
+# feature), so a byte value cannot be turned into a character directly. The
+# trick here: a 95-character string holding every printable ASCII character
+# (32..126) in order, indexed by `value - 32`. Newline (10) is special-cased.
+
+@module {
+    purpose: "A self-contained Brainfuck interpreter: walks a program string character by character on a fixed-size byte tape, with bracket-matching control flow and a printable-ASCII lookup table for output"
+    exports: [main]
+}
+
+@decision "ascii-table-for-output" {
+    chose: "a 95-char string of printable ASCII (32..126), indexed by value-32 to turn a byte into a character"
+    over: ["a 256-way if/else mapping", "splitting the table into an array"]
+    because: "Crush has no chr() and the standalone binary lacks conv.* (stdlib feature unbuilt), so the only character-producing primitive is string indexing s[i]; a single ordered string makes value->char a one-line lookup"
+}
+
+@invariant "tape-in-bounds" {
+    description: "the tape pointer stays within [0,32): > and < are clamped at the edges, and every cell write goes through indexed assignment at the current (in-bounds) pointer"
+    applies_to: [run_program]
+}
+
+# --- delimiter scanning -----------------------------------------------------
+# One generalized helper, shared with forth.crush: find the delimiter that
+# matches the token at `pos`, scanning in direction `dir` (1 forward,
+# -1 backward) from pos+dir. `open` increments the nesting depth, `close`
+# returns the match at depth 0, and `stop` (empty string if unused) also
+# returns at depth 0. That is how brainfuck's [] (open="[", close="]") and
+# forth's if/else/then (open="if", close="then", stop="else") both map onto
+# the same function. Returns the match index, or `n` if none.
+#
+# Duplicated here rather than imported because the standalone
+# crushc/crush-run toolchain has no working cross-file import (an `import`
+# statement compiles to an unregistered `module.load` capability).
+fn scan(seq, n, pos, dir, open, close, stop) {
+    let depth = 0;
+    let i = pos + dir;
+    while i >= 0 && i < n {
+        let t = seq[i];
+        if t == open {
+            depth = depth + 1;
+        } else if t == close {
+            if depth == 0 {
+                return i;
+            }
+            depth = depth - 1;
+        } else if stop != "" {
+            if t == stop {
+                if depth == 0 {
+                    return i;
+                }
+            }
+        }
+        i = i + dir;
+    }
+    return n;
+}
+
+# --- byte -> character ------------------------------------------------------
+
+fn bf_char(v, alphabet) {
+    if v == 10 {
+        return "\n";
+    }
+    if v >= 32 && v <= 126 {
+        return alphabet[v - 32];
+    }
+    return "";
+}
+
+# --- the interpreter --------------------------------------------------------
+
+fn run_program(prog, label) {
+    io.print("--- " + label + " ---");
+    io.print("source: " + prog);
+    io.print("");
+
+    # printable ASCII, 32..126, in order
+    let alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
+    # 32-cell byte tape
+    let tape = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let ptr = 0;
+    let out = "";
+
+    let n = str.len(prog);
+    let pc = 0;
+    let steps = 0;
+
+    while pc < n {
+        steps = steps + 1;
+        if steps > 100000 {
+            io.print("(runaway program -- aborted)");
+            return 0;
+        }
+
+        let c = prog[pc];
+
+        if c == ">" {
+            if ptr < 31 {
+                ptr = ptr + 1;
+            }
+            pc = pc + 1;
+        } else if c == "<" {
+            if ptr > 0 {
+                ptr = ptr - 1;
+            }
+            pc = pc + 1;
+        } else if c == "+" {
+            tape[ptr] = tape[ptr] + 1;
+            if tape[ptr] > 255 {
+                tape[ptr] = 0;
+            }
+            pc = pc + 1;
+        } else if c == "-" {
+            tape[ptr] = tape[ptr] - 1;
+            if tape[ptr] < 0 {
+                tape[ptr] = 255;
+            }
+            pc = pc + 1;
+        } else if c == "." {
+            out = out + bf_char(tape[ptr], alphabet);
+            pc = pc + 1;
+        } else if c == "," {
+            # no stdin in Crush: input is a no-op
+            pc = pc + 1;
+        } else if c == "[" {
+            if tape[ptr] == 0 {
+                pc = scan(prog, n, pc, 1, "[", "]", "") + 1;
+            } else {
+                pc = pc + 1;
+            }
+        } else if c == "]" {
+            if tape[ptr] != 0 {
+                pc = scan(prog, n, pc, -1, "]", "[", "") + 1;
+            } else {
+                pc = pc + 1;
+            }
+        } else {
+            # anything else is a comment in BF source — skip it
+            pc = pc + 1;
+        }
+    }
+
+    io.print(out);
+    io.print("(final ptr = " + ptr + ", tape[0..2] = " + tape[0] + " " + tape[1] + " " + tape[2] + ")");
+    io.print("");
+    return 0;
+}
+
+# --- main: run three Brainfuck programs ------------------------------------
+
+fn main() {
+    io.print("Brainfuck-in-Crush: a Brainfuck interpreter running on the Crush VM");
+    io.print("");
+
+    # 1. the classic Hello World
+    run_program("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.", "hello world");
+
+    # 2. A..Z via a counted loop
+    run_program("++++++++++++++++++++++++++>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<[>.+<-]", "alphabet A-Z");
+
+    # 3. 0..9 via a counted loop
+    run_program("++++++++++>++++++++++++++++++++++++++++++++++++++++++++++++<[>.+<-]", "digits 0-9");
+
+    return 0;
+}

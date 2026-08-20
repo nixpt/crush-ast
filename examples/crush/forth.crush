@@ -1,0 +1,376 @@
+# forth.crush — a Forth interpreter written in Crush.
+#
+# Crush is a stack-oriented, capability-based language. This file turns it
+# into a *host* for another stack language: a small but real Forth. It
+# tokenizes a Forth source string with str.split, runs it on a fixed-size
+# integer stack, and supports numbers, arithmetic, stack juggling,
+# comparisons, output, conditionals (if/else/then), counted loops
+# (do/loop with i), and single-word string literals (."word").
+#
+# Why this instead of yet another ASCII game: every other entry in this
+# collection renders a board and plays itself. This one *interprets other
+# programs* — it is a meta-program (an interpreter implemented inside an
+# interpreter), and it is the only entry that uses Crush's array and string
+# capabilities (arr_set via indexed assignment, str.split, str.replace)
+# rather than packing all state into one integer.
+
+@module {
+    purpose: "A self-contained Forth interpreter: tokenizes a Forth program with str.split and executes it on a fixed-size integer stack with do/loop and if/else/then"
+    exports: [main]
+}
+
+@decision "fixed-array-stack" {
+    chose: "a fixed-size integer array (literal) plus a depth counter, mutated with indexed assignment"
+    over: ["packing the stack into a single integer in base N", "a scalar slot per possible stack cell"]
+    because: "integer packing caps stack depth times value width (an i64 gives only ~4-6 slots at useful precision), and a scalar-slot cascade needs an if/else arm per push/pop; a fixed array with indexed assignment is the natural stack and the only entry here to use Crush's real array mutation"
+}
+
+@invariant "stack-in-bounds" {
+    description: "the data stack pointer stays within [0,32) and the return stack pointer within [0,16); every push increments after the write, every pop decrements before the read, and the demo programs never exceed a handful of cells"
+    applies_to: [run_program]
+}
+
+# --- character helpers ------------------------------------------------------
+# String indexing s[i] yields a one-character string, so digit recognition is
+# a comparison against the ten single-character literals.
+
+fn is_digit_char(c) {
+    if c == "0" { return 1; }
+    if c == "1" { return 1; }
+    if c == "2" { return 1; }
+    if c == "3" { return 1; }
+    if c == "4" { return 1; }
+    if c == "5" { return 1; }
+    if c == "6" { return 1; }
+    if c == "7" { return 1; }
+    if c == "8" { return 1; }
+    if c == "9" { return 1; }
+    return 0;
+}
+
+fn digit(c) {
+    if c == "0" { return 0; }
+    if c == "1" { return 1; }
+    if c == "2" { return 2; }
+    if c == "3" { return 3; }
+    if c == "4" { return 4; }
+    if c == "5" { return 5; }
+    if c == "6" { return 6; }
+    if c == "7" { return 7; }
+    if c == "8" { return 8; }
+    if c == "9" { return 9; }
+    return 0;
+}
+
+# --- number parsing ---------------------------------------------------------
+
+fn parse_int(s) {
+    let neg = 0;
+    let start = 0;
+    if s[0] == "-" {
+        neg = 1;
+        start = 1;
+    }
+    let n = 0;
+    let i = start;
+    let L = str.len(s);
+    while i < L {
+        n = n * 10 + digit(s[i]);
+        i = i + 1;
+    }
+    if neg == 1 {
+        n = 0 - n;
+    }
+    return n;
+}
+
+fn is_number_token(t) {
+    if is_digit_char(t[0]) == 1 {
+        return 1;
+    }
+    if t[0] == "-" {
+        if str.len(t) >= 2 {
+            if is_digit_char(t[1]) == 1 {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+# --- delimiter scanning -----------------------------------------------------
+# One generalized helper, shared with brainfuck.crush: find the delimiter
+# that matches the token at `pos`, scanning in direction `dir` (1 forward,
+# -1 backward) from pos+dir. `open` increments the nesting depth, `close`
+# returns the match at depth 0, and `stop` (empty string if unused) also
+# returns at depth 0. That is how forth's if/else/then (open="if",
+# close="then", stop="else") and brainfuck's [] (open="[", close="]") both
+# map onto the same function. Returns the match index, or `n` if none.
+#
+# Duplicated here rather than imported because the standalone
+# crushc/crush-run toolchain has no working cross-file import (an `import`
+# statement compiles to an unregistered `module.load` capability).
+fn scan(seq, n, pos, dir, open, close, stop) {
+    let depth = 0;
+    let i = pos + dir;
+    while i >= 0 && i < n {
+        let t = seq[i];
+        if t == open {
+            depth = depth + 1;
+        } else if t == close {
+            if depth == 0 {
+                return i;
+            }
+            depth = depth - 1;
+        } else if stop != "" {
+            if t == stop {
+                if depth == 0 {
+                    return i;
+                }
+            }
+        }
+        i = i + dir;
+    }
+    return n;
+}
+
+# --- the interpreter --------------------------------------------------------
+
+fn run_program(prog, label) {
+    io.print("--- " + label + " ---");
+    io.print("source: " + prog);
+    io.print("");
+
+    let tokens = str.split(prog, " ");
+    let n = len(tokens);
+
+    # data stack: 32 fixed cells + depth pointer
+    let dstk = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let dsp = 0;
+
+    # return stack: loop frames of [start_pc, limit, index] -> 16 cells
+    let rstk = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let rsp = 0;
+
+    let pc = 0;
+    let steps = 0;
+
+    while pc < n {
+        steps = steps + 1;
+        if steps > 100000 {
+            io.print("(runaway program -- aborted)");
+            return 0;
+        }
+
+        let tok = tokens[pc];
+
+        if tok == "+" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            dstk[dsp] = a + b;
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "-" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            dstk[dsp] = a - b;
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "*" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            dstk[dsp] = a * b;
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "/" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            dstk[dsp] = a / b;
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "mod" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            dstk[dsp] = a % b;
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "dup" {
+            dstk[dsp] = dstk[dsp - 1];
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "drop" {
+            dsp = dsp - 1;
+            pc = pc + 1;
+        } else if tok == "swap" {
+            let t = dstk[dsp - 1];
+            dstk[dsp - 1] = dstk[dsp - 2];
+            dstk[dsp - 2] = t;
+            pc = pc + 1;
+        } else if tok == "over" {
+            dstk[dsp] = dstk[dsp - 2];
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "rot" {
+            let t = dstk[dsp - 3];
+            dstk[dsp - 3] = dstk[dsp - 2];
+            dstk[dsp - 2] = dstk[dsp - 1];
+            dstk[dsp - 1] = t;
+            pc = pc + 1;
+        } else if tok == "=" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            if a == b {
+                dstk[dsp] = 1;
+            } else {
+                dstk[dsp] = 0;
+            }
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "<>" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            if a != b {
+                dstk[dsp] = 1;
+            } else {
+                dstk[dsp] = 0;
+            }
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "<" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            if a < b {
+                dstk[dsp] = 1;
+            } else {
+                dstk[dsp] = 0;
+            }
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == ">" {
+            dsp = dsp - 1;
+            let b = dstk[dsp];
+            dsp = dsp - 1;
+            let a = dstk[dsp];
+            if a > b {
+                dstk[dsp] = 1;
+            } else {
+                dstk[dsp] = 0;
+            }
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "." {
+            dsp = dsp - 1;
+            io.print(dstk[dsp]);
+            pc = pc + 1;
+        } else if tok == ".s" {
+            let out = "stack(" + dsp + "): ";
+            let k = 0;
+            while k < dsp {
+                out = out + dstk[k] + " ";
+                k = k + 1;
+            }
+            io.print(out);
+            pc = pc + 1;
+        } else if tok == "cr" {
+            io.print("");
+            pc = pc + 1;
+        } else if tok == "i" {
+            dstk[dsp] = rstk[rsp - 1];
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else if tok == "do" {
+            dsp = dsp - 1;
+            let start = dstk[dsp];
+            dsp = dsp - 1;
+            let limit = dstk[dsp];
+            rstk[rsp] = pc + 1;
+            rstk[rsp + 1] = limit;
+            rstk[rsp + 2] = start;
+            rsp = rsp + 3;
+            pc = pc + 1;
+        } else if tok == "loop" {
+            let cur = rstk[rsp - 1] + 1;
+            let lim = rstk[rsp - 2];
+            let st = rstk[rsp - 3];
+            if cur < lim {
+                rstk[rsp - 1] = cur;
+                pc = st;
+            } else {
+                rsp = rsp - 3;
+                pc = pc + 1;
+            }
+        } else if tok == "if" {
+            dsp = dsp - 1;
+            let cond = dstk[dsp];
+            if cond != 0 {
+                pc = pc + 1;
+            } else {
+                pc = scan(tokens, n, pc, 1, "if", "then", "else") + 1;
+            }
+        } else if tok == "else" {
+            pc = scan(tokens, n, pc, 1, "if", "then", "") + 1;
+        } else if tok == "then" {
+            pc = pc + 1;
+        } else if tok[0] == "." {
+            # string literal: ."word" (single word, no spaces)
+            if str.len(tok) >= 2 {
+                if tok[1] == "\"" {
+                    let w = str.replace(str.replace(tok, ".\"", ""), "\"", "");
+                    io.print(w);
+                }
+            }
+            pc = pc + 1;
+        } else if is_number_token(tok) == 1 {
+            dstk[dsp] = parse_int(tok);
+            dsp = dsp + 1;
+            pc = pc + 1;
+        } else {
+            io.print("(unknown word: " + tok + ")");
+            pc = pc + 1;
+        }
+    }
+
+    io.print("(final stack depth: " + dsp + ")");
+    io.print("");
+    return 0;
+}
+
+# --- main: run several Forth programs --------------------------------------
+
+fn main() {
+    io.print("Forth-in-Crush: a Forth interpreter running on the Crush VM");
+    io.print("");
+
+    # 1. stack arithmetic, with a stack dump
+    run_program("3 4 + dup * .s .", "stack arithmetic: (3+4)^2");
+
+    # 2. first ten Fibonacci numbers
+    run_program("0 1 10 0 do dup . swap over + loop", "fibonacci (10 terms)");
+
+    # 3. factorial of 7
+    run_program("1 8 1 do i * loop .", "7! (factorial)");
+
+    # 4. FizzBuzz over 1..15
+    run_program("16 1 do i 15 mod 0 = if .\"FizzBuzz\" else i 3 mod 0 = if .\"Fizz\" else i 5 mod 0 = if .\"Buzz\" else i . then then then loop", "FizzBuzz (1..15)");
+
+    # 5. remaining wordset: / - < <> rot > and negative literals
+    run_program("100 6 / . 5 3 - . 7 3 < . 5 5 <> . 1 2 3 rot . . . 7 3 > . -5 3 + .", "wordset smoke test");
+
+    return 0;
+}
