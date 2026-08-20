@@ -37,6 +37,18 @@ and `.jagent/planning/tickets/CRUSH-NN-*.md` (individual ticket files) —
 per the ROADMAP's own instructions: don't duplicate ticket content here,
 milestone tracking only.
 
+## Filed — awesome-crush toolchain findings (buffy)
+
+Found by black-box language testing while building the `awesome-crush`
+model-comparison entries (a Forth + a Brainfuck interpreter). All Backlog,
+all with a reproduction in their ticket file:
+
+- **CRUSH-110** — `import` is a no-op: lowered to an unregistered `module.load` cap; no way to share code across files. (P1)
+- **CRUSH-111** — type checker registers only `len`/`print` while `compiler.rs` handles ~25 builtin names; non-dotted builtins (`arr_get`, `make_range`, …) are unreachable ("Undefined function").
+- **CRUSH-112** — dotted `array.*`/`str.*`/`math.*` builtins compile to unregistered capabilities (`array.push`/`array.pop`, `str.starts_with`, `math.sqrt`, … fail at runtime).
+- **CRUSH-113** — `stdlib` feature is off by default and `--stdlib` silently no-ops: no `conv.*`/`chr`/`parse_int`/`collections.*` in the default build.
+- **CRUSH-114** — `len()` errors on strings in the VM but works in the AOT backend (diverges from `str.len`).
+
 ## P0 — Build & Core Health ✅
 
 - [x] **CRUSH-26**: `Build (release)` CI job fails workspace-wide on every
