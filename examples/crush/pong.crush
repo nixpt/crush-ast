@@ -1,0 +1,190 @@
+# Pong — self-playing simulation.
+#
+# A companion to snake.crush / tictactoe.crush / lights_out.crush: the
+# classic two-paddle Pong rally played by two AI agents with no human input.
+# Each paddle chases the ball's height every tick, with an LCG-driven
+# hesitation (a fraction of ticks each paddle skips its move) so the rally
+# is imperfect and somebody eventually scores. Every tick renders as an
+# ASCII frame via print().
+#
+# Same Crush constraints as the rest of this set — no mutable arrays, no
+# structs/tuples, no interactive input, no sleep — so the whole game state
+# (ball, velocity, paddle tops, scores, RNG, countdown) threads through one
+# recursive function as plain integer arguments.
+
+fn lcg_next(state) {
+    return (state * 1103515245 + 12345) % 2147483648;
+}
+
+# ---- rendering -------------------------------------------------------------
+
+fn render_cell(x, y, bx, by, lpy, rpy) {
+    if x == 0 {
+        if y >= lpy {
+            if y <= lpy + 2 {
+                return "|";
+            }
+        }
+        return ".";
+    }
+    if x == 23 {
+        if y >= rpy {
+            if y <= rpy + 2 {
+                return "|";
+            }
+        }
+        return ".";
+    }
+    if x == bx {
+        if y == by {
+            return "o";
+        }
+    }
+    return ".";
+}
+
+fn render_row(y, bx, by, lpy, rpy) {
+    let line = "";
+    let x = 0;
+    while x < 24 {
+        line = line + render_cell(x, y, bx, by, lpy, rpy);
+        x = x + 1;
+    }
+    print(line);
+}
+
+fn render_frame(bx, by, lpy, rpy, sl, sr, ticks_left) {
+    print("score  left " + sl + " : " + sr + " right     ticks left " + ticks_left);
+
+    let border = "+";
+    let i = 0;
+    while i < 24 {
+        border = border + "-";
+        i = i + 1;
+    }
+
+    print(border);
+
+    let y = 0;
+    while y < 10 {
+        render_row(y, bx, by, lpy, rpy);
+        y = y + 1;
+    }
+
+    print(border);
+    print("");
+}
+
+# ---- paddle AI -------------------------------------------------------------
+
+fn move_left(lpy, by, r) {
+    let dy = 0;
+    if by < lpy + 1 {
+        dy = 0 - 1;
+    }
+    if by > lpy + 1 {
+        dy = 1;
+    }
+    if lpy + dy < 0 {
+        dy = 0;
+    }
+    if lpy + dy > 7 {
+        dy = 0;
+    }
+    if r % 7 == 0 {
+        dy = 0;
+    }
+    return lpy + dy;
+}
+
+fn move_right(rpy, by, r) {
+    let dy = 0;
+    if by < rpy + 1 {
+        dy = 0 - 1;
+    }
+    if by > rpy + 1 {
+        dy = 1;
+    }
+    if rpy + dy < 0 {
+        dy = 0;
+    }
+    if rpy + dy > 7 {
+        dy = 0;
+    }
+    if r % 11 == 0 {
+        dy = 0;
+    }
+    return rpy + dy;
+}
+
+# ---- game loop -------------------------------------------------------------
+
+fn tick(bx, by, vx, vy, lpy, rpy, sl, sr, rng, ticks_left) {
+    render_frame(bx, by, lpy, rpy, sl, sr, ticks_left);
+
+    if ticks_left <= 0 {
+        print("time's up — final score: left " + sl + " : " + sr + " right");
+        return sl + sr;
+    }
+    if sl >= 5 {
+        print("LEFT WINS " + sl + ":" + sr);
+        return sl + sr;
+    }
+    if sr >= 5 {
+        print("RIGHT WINS " + sl + ":" + sr);
+        return sl + sr;
+    }
+
+    let r = lcg_next(rng);
+    let new_rng = r;
+
+    let nlpy = move_left(lpy, by, r);
+    let nrpy = move_right(rpy, by, r);
+
+    let nbx = bx + vx;
+    let nby = by + vy;
+    let nvx = vx;
+    let nvy = vy;
+
+    if nby < 0 {
+        nby = 1;
+        nvy = 1;
+    }
+    if nby >= 10 {
+        nby = 8;
+        nvy = 0 - 1;
+    }
+
+    if nbx <= 0 {
+        if nby >= nlpy {
+            if nby <= nlpy + 2 {
+                nbx = 1;
+                nvx = 1;
+            } else {
+                return tick(12, 5, 1, 1, nlpy, nrpy, sl, sr + 1, new_rng, ticks_left - 1);
+            }
+        } else {
+            return tick(12, 5, 1, 1, nlpy, nrpy, sl, sr + 1, new_rng, ticks_left - 1);
+        }
+    }
+    if nbx >= 23 {
+        if nby >= nrpy {
+            if nby <= nrpy + 2 {
+                nbx = 22;
+                nvx = 0 - 1;
+            } else {
+                return tick(12, 5, 0 - 1, 1, nlpy, nrpy, sl + 1, sr, new_rng, ticks_left - 1);
+            }
+        } else {
+            return tick(12, 5, 0 - 1, 1, nlpy, nrpy, sl + 1, sr, new_rng, ticks_left - 1);
+        }
+    }
+
+    return tick(nbx, nby, nvx, nvy, nlpy, nrpy, sl, sr, new_rng, ticks_left - 1);
+}
+
+fn main() {
+    print("Pong (self-playing) — | paddles, o ball");
+    print("");
+    return tick(12, 5, 1, 1, 4, 4, 0, 0, 42, 120);
+}
