@@ -1,0 +1,41 @@
+name: release
+
+# Bumps the workspace version on every push to main (i.e. after a
+# merge), then tags vX.Y.Z. Bump logic lives in scripts/bump-version.sh
+# (installed by squadron/bin/bump-version --install) so it runs standalone in
+# CI with no squadron/bin on PATH.
+#
+# branches/BUMPVER_MAIN_BRANCH below are this repo's ACTUAL default branch,
+# detected at install time (not hardcoded 'main' — see squadron/bin/bump-
+# version's detect_default_branch(); a repo whose default is master got a
+# release job that could never fire on a real push before this).
+#
+# Loop-safe: pushes made with the default GITHUB_TOKEN do NOT trigger new
+# workflow runs (a deliberate GitHub behavior), so the bump commit won't
+# recurse. The commit message also carries [skip ci].
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    if: github.actor != 'crush-ast-release'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags are needed for `git describe`
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: hashFiles('Cargo.toml') != ''
+      - name: bump + tag + push
+        env:
+          BUMPVER_MAIN_BRANCH: main
+          BUMPVER_GIT_USER: crush-ast-release
+          BUMPVER_GIT_EMAIL: release@crush-ast.local
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # so `gh release create` inside the script authenticates
+        run: ./scripts/bump-version.sh
