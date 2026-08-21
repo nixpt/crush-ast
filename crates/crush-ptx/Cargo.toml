@@ -2,6 +2,13 @@
 name = "crush-ptx"
 version = "0.1.0"
 edition = "2021"
+description = "CASM -> PTX (NVIDIA GPU assembly) emission backend for Crush kernel programs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["crush", "ptx", "gpu", "cuda", "compiler"]
+categories = ["compilers"]
 
 [dependencies]
 casm = { path = "../casm", version = "0.3.0" }
