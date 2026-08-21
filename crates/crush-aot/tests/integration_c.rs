@@ -37,6 +37,16 @@ fn test_c_codegen_float() {
 }
 
 #[test]
+fn test_c_codegen_io_read() {
+    let source = r#"fn main() { let line = io.read(); io.print(line); }"#;
+    let c_src = crush_aot::codegen_c::gen_c_source(
+        &crush_frontend::compile_crush_source(source).unwrap()
+    );
+    assert!(c_src.contains("io_read_line"));
+    assert!(c_src.contains("cap_call io.read"));
+}
+
+#[test]
 fn test_c_codegen_arithmetic() {
     let source = r#"fn main() { return 40 + 2; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
@@ -73,6 +83,21 @@ fn test_c_gcc_int() {
     let so_path = compiler.compile_c(&program, "test_c_gcc_int", "gcc").expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(42));
+}
+
+#[test]
+fn test_c_gcc_io_read_codegen_compiles() {
+    let compiler = AotCompiler::new();
+    let program = crush_frontend::compile_crush_source(
+        "fn main() { let line = io.read(); io.print(line); }",
+    )
+    .unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_io_read", "gcc")
+        .expect("gcc compile failed");
+    // Compiling and loading is sufficient here; executing would block on the
+    // test harness's inherited stdin rather than exercising a controlled pipe.
+    Module::load(&so_path).expect("load failed");
 }
 
 #[test]

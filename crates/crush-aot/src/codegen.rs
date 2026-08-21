@@ -243,6 +243,19 @@ fn wrap_index(idx: i64, len: usize) -> Option<usize> {
     if wrapped >= 0 && wrapped < ilen { Some(wrapped as usize) } else { None }
 }
 
+/// Read one line from stdin using the same LF/CRLF stripping and EOF-empty
+/// convention as `crush_vm::io_read`.
+fn io_read_line() -> String {
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let mut line = String::new();
+    let _ = std::io::BufRead::read_line(&mut reader, &mut line);
+    while matches!(line.as_bytes().last(), Some(b'\n' | b'\r')) {
+        line.pop();
+    }
+    line
+}
+
 /// Single source of truth for the trailing newline that `io.print` must emit.
 /// Mirrors `crush_vm::io_print::format_io_print_line` so the AOT Rust backend
 /// stays consistent with the interpreter and FastVM.
@@ -701,6 +714,10 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let mut __start: i64 = 0; let mut __end: i64 = 100; if {argc} >= 2 {{ let __ev = stack.pop().unwrap_or(RuntimeValue::Null); let __sv = stack.pop().unwrap_or(RuntimeValue::Null); __end = if let RuntimeValue::Int(i) = &__ev {{ *i }} else {{ 100 }}; __start = if let RuntimeValue::Int(i) = &__sv {{ *i }} else {{ 0 }}; }} else if {argc} >= 1 {{ let __ev = stack.pop().unwrap_or(RuntimeValue::Null); __end = if let RuntimeValue::Int(i) = &__ev {{ *i }} else {{ 100 }}; }} let __r: Vec<RuntimeValue> = (__start..__end).map(RuntimeValue::Int).collect(); stack.push(RuntimeValue::Array(Rc::new(RefCell::new(__r)))); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "io.read" => {
+                    out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::String(io_read_line())); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "io.print" | "print" => {
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
@@ -790,6 +807,15 @@ mod tests {
         let rust_src = gen_rust_source(&program);
         assert!(rust_src.contains("fn io_print_line"), "generated Rust should contain io_print_line helper");
         assert!(rust_src.contains("io_print_line(&[__v.to_string().as_str()])"), "io.print should use the newline helper via to_string");
+    }
+
+    #[test]
+    fn rust_aot_io_read_emits_shared_line_semantics() {
+        let source = "fn main() { let line = io.read(); return line; }";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let rust_src = gen_rust_source(&program);
+        assert!(rust_src.contains("fn io_read_line()"));
+        assert!(rust_src.contains("RuntimeValue::String(io_read_line())"));
     }
 }
 "#);

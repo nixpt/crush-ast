@@ -39,6 +39,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "write args (concatenated) to output",
         });
+        reg(CapabilitySpec {
+            name: "io.read",
+            argc: Some(0),
+            returns: true,
+            privileged: false,
+            summary: "read one line from stdin; EOF returns an empty string",
+        });
         // String
         reg(CapabilitySpec {
             name: "str.concat",

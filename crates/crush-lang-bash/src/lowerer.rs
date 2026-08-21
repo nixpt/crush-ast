@@ -250,9 +250,9 @@ fn lower_simple_command(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> anyhow::
         "read" => {
             stmts.push(Statement::ExprStmt {
                 expr: Expression::CapabilityCall {
-                    name: "io.readline".to_string(),
+                    name: "io.read".to_string(),
                     args,
-                    meta: cap_meta("io", "readline"),
+                    meta: cap_meta("io", "read"),
                 },
                 meta: node_meta(simple, ctx),
             });
