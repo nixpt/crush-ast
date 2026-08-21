@@ -227,15 +227,21 @@ static inline void cap_io_print(CrushValue v) {
         }
     }
 }
+
+/* `io.read` returns a line without its line ending. The generated runtime
+   stores text in a process-lifetime buffer because CrushValue carries a
+   tagged pointer rather than owning a string allocation -- a stack-local
+   buffer here would hand back a dangling pointer the instant this function
+   returns (verified: cv_string() packs the raw pointer, it does not copy). */
+#define CRUSH_INPUT_BUF_SIZE 65536
+static char crush_input_buf[CRUSH_INPUT_BUF_SIZE];
 static inline CrushValue cap_io_read(void) {
-    char buf[4096];
-    char* line = fgets(buf, sizeof(buf), stdin);
-    if (line) {
-        size_t len = strlen(buf);
-        while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
-        return cv_string(buf);
+    if (fgets(crush_input_buf, sizeof(crush_input_buf), stdin) == NULL) {
+        crush_input_buf[0] = '\0';
+        return cv_string(crush_input_buf);
     }
-    return cv_string("");
+    crush_input_buf[strcspn(crush_input_buf, "\r\n")] = '\0';
+    return cv_string(crush_input_buf);
 }
 static inline CrushValue cap_math_sqrt(CrushValue v) {
     return cv_float(sqrt(cv_is_int(v) ? (double)cv_as_int(v) : cv_as_float(v)));

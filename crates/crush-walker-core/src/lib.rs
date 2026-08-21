@@ -593,7 +593,8 @@ pub mod capabilities {
     // I/O
     pub const IO_PRINT: &str = "io.print";
     pub const IO_READ: &str = "io.read";
-    pub const IO_READLINE: &str = "io.readline";
+    /// Backwards-compatible alias for the canonical line-input capability.
+    pub const IO_READLINE: &str = IO_READ;
     pub const IO_WRITE: &str = "io.write";
 
     // Filesystem

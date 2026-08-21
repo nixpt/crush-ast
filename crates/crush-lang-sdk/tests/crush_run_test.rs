@@ -233,3 +233,40 @@ fn crush_run_accepts_valid_cvm1_blob_for_regression() {
         "expected stdout to contain 'hi' from io.print, got: {stdout}"
     );
 }
+
+#[test]
+fn crush_run_reads_piped_stdin_through_source_pipeline() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("read.crush");
+    std::fs::write(
+        &src,
+        "fn main() { let line = io.read(); io.print(line); return 0; }\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(crush_run_bin())
+        .args(["run", "--cap", "io.read", src.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to execute crush-run");
+    child
+        .stdin
+        .take()
+        .expect("stdin pipe")
+        .write_all(b"piped input\n")
+        .expect("write piped input");
+    let output = child.wait_with_output().expect("wait for crush-run");
+
+    assert!(
+        output.status.success(),
+        "io.read source pipeline failed\nstderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "piped input\n");
+}

@@ -1415,10 +1415,9 @@ fn dispatch_cap(
                 out_parts.push(line);
                 Ok(None)
             }
-            "io.read" => {
-                let line = crate::io_read::read_stdin_line();
-                Ok(Some(Value::Str(line)))
-            }
+            "io.read" => crate::io_read::read_io_line()
+                .map(|line| Some(Value::Str(line)))
+                .map_err(|error| VmError::Io(error.to_string())),
             "str.concat" => {
                 let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
                 Ok(Some(Value::Str(s)))

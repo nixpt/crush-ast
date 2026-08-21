@@ -214,6 +214,21 @@ static inline const char* _str_dup(const char* src) {
     return _str_alloc(src);
 }
 
+// Read one line from stdin. EOF and read errors both produce an empty string;
+// a trailing LF or CRLF terminator is removed before the value is copied into
+// the generated runtime's string buffer.
+static inline const char* io_read_line(void) {
+    static char input[4096];
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        input[0] = '\0';
+    }
+    size_t len = strlen(input);
+    while (len > 0 && (input[len - 1] == '\n' || input[len - 1] == '\r')) {
+        input[--len] = '\0';
+    }
+    return _str_dup(input);
+}
+
 "#);
 }
 
@@ -1035,11 +1050,11 @@ fn emit_c_instr(
                     // Variadic: 0, 1, or 2 args �� args pushed left-to-right, top of stack = last arg
                     out.push_str(&format!("                {{ int64_t __start = 0, __end = 100; if ({argc} >= 2) {{ Value __ev = _pop(); __end = (__ev.tag == TAG_INT) ? __ev.i : 100; Value __sv = _pop(); __start = (__sv.tag == TAG_INT) ? __sv.i : 0; }} else if ({argc} >= 1) {{ Value __ev = _pop(); __end = (__ev.tag == TAG_INT) ? __ev.i : 100; }} int __ai = _alloc_array(); if (__ai >= 0) {{ CrushArray* __a = &_arrays[__ai]; int64_t __i = __start; int __n = 0; while (__i < __end && __n < ARRAY_DATA_CAP) {{ __a->data[__n++] = mk_int(__i); __i++; }} __a->len = __n; _push(mk_array(__ai)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call make_range\n"));
                 }
+                "io.read" => {
+                    out.push_str(&format!("                {{ _push(mk_string(io_read_line())); }} _pc={next_pc}; break; // cap_call io.read\n"));
+                }
                 "io.print" | "print" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); switch (__pv.tag) {{ case TAG_INT: printf(\"%ld\\n\", (long)__pv.i); break; case TAG_FLOAT: printf(\"%g\\n\", __pv.f); break; case TAG_BOOL: printf(\"%s\\n\", __pv.b ? \"true\" : \"false\"); break; case TAG_NULL: printf(\"null\\n\"); break; case TAG_STRING: printf(\"%s\\n\", __pv.s); break; default: printf(\"[array#%d]\\n\", __pv.array_idx); break; }} }} _pc={next_pc}; break; // cap_call io.print\n"));
-                }
-                "io.read" => {
-                    out.push_str(&format!("                {{ char __buf[4096]; char* __line = fgets(__buf, sizeof(__buf), stdin); if (__line) {{ size_t __len = strlen(__buf); while (__len > 0 && (__buf[__len-1] == '\\n' || __buf[__len-1] == '\\r')) __buf[--__len] = '\\0'; _push(mk_string(__buf)); }} else {{ _push(mk_string(\"\")); }} }} _pc={next_pc}; break; // cap_call io.read\n"));
                 }
                 _ => {
                     if argc > 0 {

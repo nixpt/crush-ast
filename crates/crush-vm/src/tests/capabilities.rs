@@ -22,6 +22,16 @@ fn cap_io_print() {
 }
 
 #[test]
+fn cap_io_read_is_registered_as_zero_arg_string_capability() {
+    let spec = crate::capabilities()
+        .get("io.read")
+        .expect("io.read should be in the portable registry");
+    assert_eq!(spec.argc, Some(0));
+    assert!(spec.returns);
+    assert!(!spec.privileged);
+}
+
+#[test]
 fn cap_str_concat() {
     let r = run_src_with_perms(
         "PUSH_STR \"foo\"\nPUSH_STR \"bar\"\nCAP_CALL \"str.concat\" 2\nHALT",
