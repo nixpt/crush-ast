@@ -9,9 +9,9 @@ dependencies run in either direction; exosphere pins its own `crush-cast`/
 Full contribution rules live in `CONTRIBUTING.md` — read that first for
 anything beyond a small fix. This file is the condensed working-context
 version for an agent mid-task. (Hand-authored 2026-08-21, not yet generated
-via `dejavue export --target claude` — running that later will append a
+via `dejavue export --target codex` — running that later will append a
 managed block below this content without clobbering it; see CONTRIBUTING.md.
-`AGENTS.md` carries the same content for non-Claude tools.)
+`CLAUDE.md` carries the same content for Claude specifically.)
 
 ## Operating rules (see CONTRIBUTING.md for the full reasoning on each)
 
