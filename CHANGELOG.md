@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-21
+
+- Add canonical io.read capability across runtimes (#52)
+
+
+
 ## [0.3.4] - 2026-08-21
 
 - docs: rewrite CONTRIBUTING.md, add CHANGELOG.md, enrich CLAUDE.md/AGENTS.md (#51)
