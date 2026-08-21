@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-21
+
+- docs: rewrite CONTRIBUTING.md, add CHANGELOG.md, enrich CLAUDE.md/AGENTS.md (#51)
+
+
+
 ### Added
 
 - `scripts/bump-version.sh` + `.github/workflows/release.yml` — automatic
