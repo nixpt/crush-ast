@@ -227,6 +227,16 @@ static inline void cap_io_print(CrushValue v) {
         }
     }
 }
+static inline CrushValue cap_io_read(void) {
+    char buf[4096];
+    char* line = fgets(buf, sizeof(buf), stdin);
+    if (line) {
+        size_t len = strlen(buf);
+        while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
+        return cv_string(buf);
+    }
+    return cv_string("");
+}
 static inline CrushValue cap_math_sqrt(CrushValue v) {
     return cv_float(sqrt(cv_is_int(v) ? (double)cv_as_int(v) : cv_as_float(v)));
 }
