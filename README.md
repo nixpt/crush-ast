@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20/%20Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust Version">
+  <img src="https://img.shields.io/badge/rust-1.95%2B-orange.svg" alt="Rust Version">
 </p>
 
 <p align="center">
@@ -58,13 +58,19 @@ crates/
 ├── crush-lang-wasm/      # WebAssembly walker — parses Wasm modules into CAST IR
 ├── crush-lang-dart/      # Dart → CAST
 ├── crush-lang-nepali/    # Nepali (Sona) → CAST
+├── crush-lang-java/      # Java → CAST (skeleton)
 ├── crush-lang-custom/    # Custom/user-defined language adapter scaffold
 │
 ├── crush-frontend/       # Crush language parser, semantic analyzer, optimizer, and CASM compiler
 ├── crush-lang-sdk/       # Rust SDK for hosting the CVM1 runtime (produces: crushc, crush-run, crush-compile, crush-repl)
 ├── crush-vm/             # CVM1 bytecode assembler, disassembler, and sandboxed interpreter (incl. polyglot exec + capability gates)
+├── crush-vm-capi/        # C API shared library for embedding CrushVM in C/C++ programs
+├── crush-vm-py/          # Python extension module (PyO3) exposing the canonical CVM1 VM
 ├── crush-jit/            # Cranelift-based JIT backend (native execution tier)
 ├── crush-aot/            # Ahead-of-time C codegen across all language walkers
+├── crush-aotc/           # AOT compiler: CASM → C source → shared library (.so)
+├── crush-ptx/            # CASM → PTX (NVIDIA GPU assembly) emission backend
+├── crush-web/            # Browser WebAssembly runtime (compiles/runs CAST via crush-frontend + crush-vm's portable interpreter)
 ├── crush-ffi/            # C-ABI plugin interface
 ├── crush-plugin-example/ # Example native plugin built on crush-ffi
 ├── crush-python/         # PyO3 bindings exposing crush-cast to Python
@@ -76,6 +82,8 @@ crates/
 ├── crush-pkg/            # Package manager — cargo-like build tool for Crush (uses buckets for sandboxed script runtimes)
 └── crush-installer/      # Toolchain installer and uninstaller
 ```
+
+`crates/crush-bucketspike/` also exists but is deliberately excluded from this list — it's an internal throwaway spike (see its own `Cargo.toml` description), not part of the release surface.
 
 ## 🚀 Quick Start
 
@@ -120,6 +128,17 @@ graph TD
     class A,C,E file
     class B,D,F process
 ```
+
+## 🎮 Examples
+
+[`examples/crush/`](examples/crush/) holds 40+ `.crush` programs, from language-feature smoke
+tests (`arithmetic.crush`, `control_flow.crush`, `exception_test.crush`, ...) to full self-playing
+programs written by several different LLMs given the same "learn this language" prompt — two
+hosted-language interpreters (`forth.crush`, `brainfuck.crush`), self-playing games
+(`tictactoe.crush`, `lights_out.crush`, `pong.crush`, `breakout.crush`), an IDA*-based 15-puzzle
+solver (`fifteen_puzzle.crush`), and Conway's Game of Life. The story behind that particular set —
+which model wrote what, and the real language constraints/bugs each one hit — is documented in
+[`nixpt/awesome-crush`](https://github.com/nixpt/awesome-crush).
 
 ## 📚 Documentation
 
