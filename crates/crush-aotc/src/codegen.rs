@@ -623,6 +623,21 @@ mod tests {
     }
 
     #[test]
+    fn c_aot_io_read_uses_stdin_helper() {
+        let source = r#"
+            fn main() {
+                let line = io.read()
+                print(line)
+            }
+        "#;
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let c = AotcCompiler::new(AotcOpts::default())
+            .compile(&program).expect("emit C");
+        assert!(c.contains("cap_io_read"), "generated C should call cap_io_read");
+        assert!(c.contains("CRUSH_INPUT_BUF_SIZE"), "generated runtime should define stdin storage");
+    }
+
+    #[test]
     fn c_aot_io_print_emits_trailing_newline() {
         let source = r#"
             fn main() {

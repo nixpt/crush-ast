@@ -25,6 +25,8 @@ pub enum VmError {
     StepQuota(usize),
     #[error("output quota exceeded ({0})")]
     OutputQuota(usize),
+    #[error("I/O error: {0}")]
+    Io(String),
     #[error("call depth quota exceeded ({0})")]
     CallDepthQuota(usize),
     #[error("unknown opcode {0:#04x} at {1}")]

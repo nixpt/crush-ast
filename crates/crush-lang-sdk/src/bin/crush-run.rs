@@ -179,6 +179,7 @@ fn main() {
 fn list_caps() {
     println!("Built-in portable capabilities:");
     println!("  io.print      write args to stdout");
+    println!("  io.read       read one line from stdin (EOF → empty string)");
     println!("  str.concat    concatenate args → string");
     println!("  str.len       byte length of a string");
     println!();

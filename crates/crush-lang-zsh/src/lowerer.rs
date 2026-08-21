@@ -173,9 +173,9 @@ fn lower_simple(simple: &ZshSimple, ctx: &LowerCtx) -> anyhow::Result<(Vec<State
         "read" => {
             stmts.push(Statement::ExprStmt {
                 expr: Expression::CapabilityCall {
-                    name: "io.readline".to_string(),
+                    name: "io.read".to_string(),
                     args,
-                    meta: cap_meta("io", "readline"),
+                    meta: cap_meta("io", "read"),
                 },
                 meta: ctx.meta_at(0),
             });

@@ -58,6 +58,19 @@ fn test_aot_bool_false() {
 }
 
 #[test]
+fn test_aot_io_read_codegen_compiles() {
+    let compiler = AotCompiler::new();
+    let so_path = compiler
+        .compile_source(
+            "fn main() { let line = io.read(); io.print(line); }",
+            "test_io_read",
+        )
+        .expect("compile_source failed");
+
+    Module::load(&so_path).expect("Module::load failed");
+}
+
+#[test]
 fn test_aot_arithmetic_add() {
     let compiler = AotCompiler::new();
     let so_path = compiler
