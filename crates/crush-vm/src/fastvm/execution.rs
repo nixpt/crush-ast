@@ -565,15 +565,15 @@ pub fn execute_one(
         FastOp::ArrayPop => {
             let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
             if let RuntimeValue::Ref(ptr) = arr_ref {
-                if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
-                    if let Some(val) = arr.pop() {
-                        stack.push(val);
-                    } else {
-                        stack.push(RuntimeValue::Null);
-                    }
+                let val = if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
+                    arr.pop().unwrap_or(RuntimeValue::Null)
                 } else {
                     return Err(FastError::TypeMismatch);
-                }
+                };
+                // Match CVM1's ARR_POP contract: return the mutated array
+                // followed by the removed value.
+                stack.push(RuntimeValue::Ref(ptr));
+                stack.push(val);
             } else {
                 return Err(FastError::TypeMismatch);
             }
@@ -588,6 +588,10 @@ pub fn execute_one(
                 } else {
                     return Err(FastError::TypeMismatch);
                 }
+                // Array mutation is expression-valued in Crush. Preserve the
+                // array reference so `acc = acc.push(item)` and chained push
+                // expressions have the same stack contract as CVM1.
+                stack.push(RuntimeValue::Ref(ptr));
             } else {
                 return Err(FastError::TypeMismatch);
             }
@@ -716,6 +720,11 @@ pub fn execute_one(
                         }
                     }
                 }
+                // Indexed mutation is also expression-valued and must return
+                // the array for assignment/chaining parity with CVM1.
+                stack.push(RuntimeValue::Ref(ptr));
+            } else {
+                return Err(FastError::TypeMismatch);
             }
         }
         FastOp::NewTuple => {
