@@ -1316,13 +1316,8 @@ fn lower_call_expr(
                     args: lowered_args,
                     meta: m,
                 }),
-                // NOTE (CRUSH-65): `Math.random` is deliberately NOT mapped — it has
-                // no counterpart anywhere in the workspace (no `math.random` opcode
-                // arm, no stdlib host cap). Mapping it would invent a builtin that
-                // does not exist. Left on the pre-existing passthrough path with its
-                // behaviour unchanged; tracked as a gap in .jagent/planning/TASKS.md.
-                "Math.random" => Ok(Expression::Call {
-                    function: func_name,
+                "Math.random" => Ok(Expression::CapabilityCall {
+                    name: "math.random".to_string(),
                     args: lowered_args,
                     meta: m,
                 }),

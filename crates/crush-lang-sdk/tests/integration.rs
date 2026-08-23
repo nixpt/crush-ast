@@ -260,6 +260,41 @@ fn host_env_capabilities() {
     assert_eq!(result.output, "crush-value\n");
 }
 
+#[cfg(feature = "stdlib")]
+#[test]
+fn math_random_seed_is_deterministic_through_source_pipeline() {
+    let source = r#"
+        fn main() {
+            math.seed(2026);
+            print(math.random());
+            print(math.random());
+            print(math.random_int(-3, 4));
+        }
+    "#;
+
+    let run = || {
+        let program = crush_lang_sdk::compile::compile_crush_source(source)
+            .expect("math RNG source should compile");
+        Runtime::new()
+            .with_host_caps(HostCapsBuilder::new().stdlib(true).build())
+            .run(&program)
+            .expect("math RNG source should run")
+            .output
+    };
+
+    let first = run();
+    let second = run();
+    assert_eq!(first, second, "same explicit seed must replay the same sequence");
+
+    let mut lines = first.lines();
+    let first_float: f64 = lines.next().unwrap().parse().expect("first random float");
+    let second_float: f64 = lines.next().unwrap().parse().expect("second random float");
+    let random_int: i64 = lines.next().unwrap().parse().expect("random integer");
+    assert!((0.0..1.0).contains(&first_float));
+    assert!((0.0..1.0).contains(&second_float));
+    assert!((-3..4).contains(&random_int));
+}
+
 #[test]
 fn quotas_stop_infinite_loops() {
     let program = ProgramBuilder::new()

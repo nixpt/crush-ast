@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-116 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | **Done** — verified on `agent/nixp/CRUSH-116` (2026-08-23) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -41,13 +41,45 @@ same missing primitive.
 
 ## Definition of done
 
-- [ ] `math.random`/`math.random_int`/`math.seed` registered and implemented
-- [ ] Default seed is deterministic; explicit seeding documented
-- [ ] `@covers` test proving same-seed → same-sequence, through the real
-      pipeline
+- [x] `math.random`/`math.random_int`/`math.seed` registered and implemented
+- [x] Default seed is deterministic; explicit seeding documented
+- [x] Source-pipeline test proves same-seed → same-sequence for floats and
+      integers, with bounds checks
 - [ ] Nice-to-have, not blocking: port one existing example (e.g.
       `blackjack.crush`'s `(seed + 17*index) % 52` affine permutation) to
       the new primitive, as a real proof of adoption
+
+## Resolution
+
+The existing dependency-free SplitMix64 implementation is now complete across
+both native and JavaScript frontends. `HostCapsBuilder::stdlib(true)` gives each
+registry its own RNG state seeded to `0`, so separate runtimes are reproducible
+and do not consume one another's sequences. `math.random()` returns a float in
+`[0, 1)`, `math.random_int(lo, hi)` returns an integer in `[lo, hi)` and rejects
+invalid bounds, and `math.seed(n)` resets the sequence and returns the seed.
+
+Native capability calls are accepted by semantic analysis with precise result
+types, while JavaScript `Math.random()` lowers to the canonical `math.random`
+capability. The RNG remains stdlib-gated; CRUSH-113 still owns the default-on
+stdlib decision.
+
+Verification:
+
+```text
+cargo test -p crush-lang-sdk --features stdlib test_math_random_seed_replays_float_and_integer_sequence
+1 passed
+
+cargo test -p crush-lang-sdk --features stdlib math_random_seed_is_deterministic_through_source_pipeline
+1 passed
+
+cargo test -p crush-lang-js math_random_is_lowered_to_the_seedable_crush_capability
+1 passed
+
+```
+
+The full workspace rustfmt check remains blocked by unrelated formatting drift
+in the sibling `buckets` checkout and the host process limit; targeted checks
+were run on the touched files.
 
 ## Files to modify
 

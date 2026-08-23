@@ -1,33 +1,38 @@
 # Handoff
 
-Updated: 2026-07-25T03:30:00-05:00
+Updated: 2026-08-23
 
 ## Summary
-Docs/planning refresh + CRUSH-66 filing (no code). Synced memory to `main`
-`5fb5bff` (M2 JIT merge). Marked CRUSH-20 ticket Done. Designed and filed
-CRUSH-66: wire `@lang[pypi:/npm:]` through existing `bucket_exec` /
-`resolve_multi` once BUCKETS-15 lands on sibling buckets.
 
-## Next Steps
-1. Merge [nixpt/buckets#4](https://github.com/nixpt/buckets/pull/4) (BUCKETS-15).  
-2. Implement [CRUSH-66](../.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md) per [design](../docs/design/lang-deps-pypi-npm.md) — likely small: deps already pass to `resolve_multi`; verify PYTHONPATH/NODE_PATH + live tests + doc comment fixes.  
-3. Optional: review panini Math.* fix worktree; or start M5 (CRUSH-1 AI opcodes).
+CRUSH-116 is complete on `agent/nixp/CRUSH-116`. The existing dependency-free
+SplitMix64 implementation is now wired as the stdlib `math.random`,
+`math.random_int`, and `math.seed` capability surface. Each
+`HostCapsBuilder::stdlib(true)` registry owns an independent RNG state seeded to
+zero, so separate runtimes are reproducible and do not consume one another's
+sequences.
 
-## Boot Instructions
-Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.
+`math.random()` returns a float in `[0, 1)`. `math.random_int(lo, hi)` returns an
+integer in `[lo, hi)`, supports the full valid i64 span, and rejects `lo >= hi`.
+`math.seed(n)` resets the sequence and returns the seed. Native capability calls
+have precise semantic result types, and JavaScript `Math.random()` lowers to the
+canonical `math.random` capability. The feature remains stdlib-gated; CRUSH-113
+owns the default-on decision.
 
-```bash
-cd /workspace/projects/crush-ast && dejavue context
-cat .jagent/planning/STATE.md .jagent/planning/TASKS.md
-# buckets consumers
-rg -n 'crush-buckets|sandboxed-polyglot' crates/*/Cargo.toml
-```
+## Verification
 
-## Key paths
+- `crush-lang-sdk` direct RNG tests: deterministic default, same-seed replay,
+  float/integer bounds, invalid-range rejection, full-i64-range acceptance.
+- `crush-lang-sdk` source-pipeline test with `math.seed`, `math.random`, and
+  `math.random_int`: passed.
+- `crush-lang-js` `Math.random` lowering regression: passed.
+- `cargo check -p crush-lang-sdk --features stdlib -p crush-lang-js -p crush-frontend`: passed.
+- `git diff --check`: passed.
+- Targeted rustfmt was inspected; workspace-wide rustfmt remains noisy due to
+  unrelated formatting drift in the sibling `buckets` checkout and host process
+  limits.
 
-| What | Where |
-|------|--------|
-| CRUSH-66 ticket | `.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md` |
-| Design | `docs/design/lang-deps-pypi-npm.md` |
-| Sandbox wiring | `crates/crush-vm/src/bucket_exec.rs` |
-| crush-pkg runners | `crates/crush-pkg/src/runners.rs` |
+## Remaining work
+
+The non-blocking adoption nice-to-have is still open: port an existing example
+such as `blackjack.crush` to the new RNG. CRUSH-117 (`conv.chr`/`conv.ord`) and
+CRUSH-118 (the user-facing `io.read` demo) remain separate tickets.
