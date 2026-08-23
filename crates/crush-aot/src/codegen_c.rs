@@ -298,6 +298,50 @@ static inline int _str_contains_ptr(const char* p) {
     return p >= _strbuf && p < _strbuf + STRBUF_SIZE;
 }
 
+static const char* _conv_chr(int64_t codepoint) {
+    static char buffers[16][5];
+    static int slot = 0;
+    uint32_t cp;
+    if (codepoint < 0 || codepoint > 0x10FFFF ||
+        (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+        _crush_arith_error("conv.chr: invalid Unicode codepoint");
+    }
+    cp = (uint32_t)codepoint;
+    char* out = buffers[slot++ % 16];
+    if (cp <= 0x7F) { out[0] = (char)cp; out[1] = '\0'; }
+    else if (cp <= 0x7FF) {
+        out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); out[2] = '\0';
+    } else if (cp <= 0xFFFF) {
+        out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F)); out[3] = '\0';
+    } else {
+        out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); out[4] = '\0';
+    }
+    return out;
+}
+
+static int64_t _conv_ord(const char* s) {
+    const unsigned char* p = (const unsigned char*)s;
+    uint32_t cp; size_t width;
+    if (!p[0]) _crush_arith_error("conv.ord: expected one Unicode character");
+    if (p[0] < 0x80) { cp = p[0]; width = 1; }
+    else if (p[0] >= 0xC2 && p[0] <= 0xDF) { cp = p[0] & 0x1F; width = 2; }
+    else if (p[0] >= 0xE0 && p[0] <= 0xEF) { cp = p[0] & 0x0F; width = 3; }
+    else if (p[0] >= 0xF0 && p[0] <= 0xF4) { cp = p[0] & 0x07; width = 4; }
+    else _crush_arith_error("conv.ord: invalid UTF-8 character");
+    for (size_t i = 1; i < width; i++) {
+        if ((p[i] & 0xC0) != 0x80) _crush_arith_error("conv.ord: invalid UTF-8 character");
+        cp = (cp << 6) | (p[i] & 0x3F);
+    }
+    if ((width == 2 && cp < 0x80) || (width == 3 && cp < 0x800) ||
+        (width == 4 && cp < 0x10000) || cp > 0x10FFFF ||
+        (cp >= 0xD800 && cp <= 0xDFFF) || p[width] != '\0') {
+        _crush_arith_error("conv.ord: expected one Unicode character");
+    }
+    return (int64_t)cp;
+}
+
 static Value _add(Value a, Value b) {
     // String concatenation when either operand is a string
     if (a.tag == TAG_STRING || b.tag == TAG_STRING) {
@@ -1052,6 +1096,12 @@ fn emit_c_instr(
                 }
                 "io.read" => {
                     out.push_str(&format!("                {{ _push(mk_string(io_read_line())); }} _pc={next_pc}; break; // cap_call io.read\n"));
+                }
+                "conv.chr" => {
+                    out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_INT) _crush_arith_error(\"conv.chr: expected int\"); _push(mk_string(_conv_chr(__v.i))); }} _pc={next_pc}; break; // cap_call conv.chr\n"));
+                }
+                "conv.ord" => {
+                    out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_STRING) _crush_arith_error(\"conv.ord: expected string\"); _push(mk_int(_conv_ord(__v.s))); }} _pc={next_pc}; break; // cap_call conv.ord\n"));
                 }
                 "io.print" | "print" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); switch (__pv.tag) {{ case TAG_INT: printf(\"%ld\\n\", (long)__pv.i); break; case TAG_FLOAT: printf(\"%g\\n\", __pv.f); break; case TAG_BOOL: printf(\"%s\\n\", __pv.b ? \"true\" : \"false\"); break; case TAG_NULL: printf(\"null\\n\"); break; case TAG_STRING: printf(\"%s\\n\", __pv.s); break; default: printf(\"[array#%d]\\n\", __pv.array_idx); break; }} }} _pc={next_pc}; break; // cap_call io.print\n"));

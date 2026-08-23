@@ -125,6 +125,35 @@ fn cap_make_range() {
     }
 }
 
+#[test]
+fn cap_conv_chr_ord_round_trip_unicode() {
+    let r = run_src_with_perms(
+        "PUSH 233\nCAP_CALL \"conv.chr\" 1\nCAP_CALL \"conv.ord\" 1\nHALT",
+        &["conv.chr", "conv.ord"],
+    );
+    assert_eq!(r.stack, vec![Value::Int(233)]);
+
+    let r = run_src_with_perms(
+        "PUSH 128512\nCAP_CALL \"conv.chr\" 1\nCAP_CALL \"conv.ord\" 1\nHALT",
+        &["conv.chr", "conv.ord"],
+    );
+    assert_eq!(r.stack, vec![Value::Int(128512)]);
+}
+
+#[test]
+fn cap_conv_chr_ord_reject_invalid_values() {
+    for source in [
+        "PUSH -1\nCAP_CALL \"conv.chr\" 1\nHALT",
+        "PUSH 55296\nCAP_CALL \"conv.chr\" 1\nHALT",
+        "PUSH 1114112\nCAP_CALL \"conv.chr\" 1\nHALT",
+        "PUSH_STR \"\"\nCAP_CALL \"conv.ord\" 1\nHALT",
+        "PUSH_STR \"ab\"\nCAP_CALL \"conv.ord\" 1\nHALT",
+    ] {
+        let program = assemble(source, Some(&["conv.chr", "conv.ord"]), Some("test")).unwrap();
+        assert!(run(&program, &Quotas::default()).is_err(), "expected rejection: {source}");
+    }
+}
+
 fn map_is_truthy_only_when_non_empty() {
     assert!(!Value::new_map(std::collections::HashMap::new()).is_truthy());
     let mut m = std::collections::HashMap::new();

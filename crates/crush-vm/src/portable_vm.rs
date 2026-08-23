@@ -1265,6 +1265,35 @@ impl PortableVm {
                         }),
                     }
                 }
+                "conv.chr" => {
+                    let codepoint = match &args[0] {
+                        Value::Int(value) => *value,
+                        other => return Err(VmError::TypeError { expected: "int", got: value_type_name(other) }),
+                    };
+                    let character = char::from_u32(codepoint as u32).ok_or_else(|| VmError::TypeError {
+                        expected: "valid Unicode codepoint",
+                        got: "invalid codepoint",
+                    })?;
+                    Ok(Some(Value::Str(character.to_string())))
+                }
+                "conv.ord" => {
+                    let text = match &args[0] {
+                        Value::Str(value) => value,
+                        other => return Err(VmError::TypeError { expected: "string", got: value_type_name(other) }),
+                    };
+                    let mut chars = text.chars();
+                    let character = chars.next().ok_or_else(|| VmError::TypeError {
+                        expected: "single Unicode character",
+                        got: "empty string",
+                    })?;
+                    if chars.next().is_some() {
+                        return Err(VmError::TypeError {
+                            expected: "single Unicode character",
+                            got: "multi-character string",
+                        });
+                    }
+                    Ok(Some(Value::Int(character as i64)))
+                }
                                 "arr_slice" => {
                                     if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
                                     match &args[0] {
@@ -2019,6 +2048,44 @@ HALT"#;
     // failure must surface as its own `VmError::LangRuntimeError`,
     // carrying the `.crush`-source line of the `@lang { ... }` block
     // (from the compiler's `crush_line` spec field).
+    #[test]
+    fn test_portable_conv_chr_ord_round_trip_unicode() {
+        let program = assemble(
+            "PUSH 233\nCAP_CALL \"conv.chr\" 1\nCAP_CALL \"conv.ord\" 1\nHALT",
+            Some(&["conv.chr", "conv.ord"]),
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.stack, vec![Value::Int(233)]);
+
+        let program = assemble(
+            "PUSH 128512\nCAP_CALL \"conv.chr\" 1\nCAP_CALL \"conv.ord\" 1\nHALT",
+            Some(&["conv.chr", "conv.ord"]),
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.stack, vec![Value::Int(128512)]);
+    }
+
+    #[test]
+    fn test_portable_conv_chr_ord_reject_invalid_values() {
+        for source in [
+            "PUSH -1\nCAP_CALL \"conv.chr\" 1\nHALT",
+            "PUSH 55296\nCAP_CALL \"conv.chr\" 1\nHALT",
+            "PUSH 1114112\nCAP_CALL \"conv.chr\" 1\nHALT",
+            "PUSH_STR \"\"\nCAP_CALL \"conv.ord\" 1\nHALT",
+            "PUSH_STR \"ab\"\nCAP_CALL \"conv.ord\" 1\nHALT",
+        ] {
+            let program = assemble(source, Some(&["conv.chr", "conv.ord"]), Some("test")).unwrap();
+            let mut vm = PortableVm::new(program);
+            assert!(vm.run().is_err(), "expected rejection: {source}");
+        }
+    }
+
     #[test]
     fn test_portable_exec_lang_guest_failure_maps_to_lang_runtime_error_not_unknown_cap() {
         let spec = serde_json::json!({

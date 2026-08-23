@@ -1457,6 +1457,35 @@ fn dispatch_cap(
                     other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
                 }
             }
+            "conv.chr" => {
+                let codepoint = match &args[0] {
+                    Value::Int(value) => *value,
+                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                };
+                let character = char::from_u32(codepoint as u32).ok_or_else(|| VmError::TypeError {
+                    expected: "valid Unicode codepoint",
+                    got: "invalid codepoint",
+                })?;
+                Ok(Some(Value::Str(character.to_string())))
+            }
+            "conv.ord" => {
+                let text = match &args[0] {
+                    Value::Str(value) => value,
+                    other => return Err(VmError::TypeError { expected: "string", got: other.type_name() }),
+                };
+                let mut chars = text.chars();
+                let character = chars.next().ok_or_else(|| VmError::TypeError {
+                    expected: "single Unicode character",
+                    got: "empty string",
+                })?;
+                if chars.next().is_some() {
+                    return Err(VmError::TypeError {
+                        expected: "single Unicode character",
+                        got: "multi-character string",
+                    });
+                }
+                Ok(Some(Value::Int(character as i64)))
+            }
             "arr_slice" => {
                 if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
                 match &args[0] {

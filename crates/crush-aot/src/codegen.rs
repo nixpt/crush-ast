@@ -112,6 +112,47 @@ fn arith_overflow() -> ! {
     std::process::exit(1);
 }
 
+fn conv_chr_value(value: RuntimeValue) -> RuntimeValue {
+    let codepoint = match value {
+        RuntimeValue::Int(value) => value,
+        other => {
+            eprintln!("crush(aot): conv.chr expects int, got {other:?}");
+            std::process::exit(1);
+        }
+    };
+    let character = match u32::try_from(codepoint).ok().and_then(char::from_u32) {
+        Some(character) => character,
+        None => {
+            eprintln!("crush(aot): conv.chr received an invalid Unicode codepoint");
+            std::process::exit(1);
+        }
+    };
+    RuntimeValue::String(character.to_string())
+}
+
+fn conv_ord_value(value: RuntimeValue) -> RuntimeValue {
+    let text = match value {
+        RuntimeValue::String(text) => text,
+        other => {
+            eprintln!("crush(aot): conv.ord expects string, got {other:?}");
+            std::process::exit(1);
+        }
+    };
+    let mut chars = text.chars();
+    let character = match (chars.next(), chars.next()) {
+        (Some(character), None) => character,
+        (None, _) => {
+            eprintln!("crush(aot): conv.ord expects one Unicode character, got an empty string");
+            std::process::exit(1);
+        }
+        (Some(_), Some(_)) => {
+            eprintln!("crush(aot): conv.ord expects one Unicode character, got multiple");
+            std::process::exit(1);
+        }
+    };
+    RuntimeValue::Int(character as i64)
+}
+
 fn arith_type_error(a: &RuntimeValue, b: &RuntimeValue) -> ! {
     eprintln!("crush(aot): type error: arithmetic on non-numeric operands ({:?}, {:?})", a, b);
     std::process::exit(1);
@@ -718,6 +759,14 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::String(io_read_line())); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "conv.chr" => {
+                    out.push_str(&format!("{ind}stack.push(conv_chr_value(stack.pop().unwrap_or(RuntimeValue::Null)));\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "conv.ord" => {
+                    out.push_str(&format!("{ind}stack.push(conv_ord_value(stack.pop().unwrap_or(RuntimeValue::Null)));\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "io.print" | "print" => {
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
@@ -799,6 +848,15 @@ pub extern "C" fn crush_run_free(s: *mut std::ffi::c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rust_aot_conv_chr_ord_are_emitted() {
+        let source = "fn main() { return conv.ord(conv.chr(233)); }";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let rust_src = gen_rust_source(&program);
+        assert!(rust_src.contains("conv_chr_value"));
+        assert!(rust_src.contains("conv_ord_value"));
+    }
 
     #[test]
     fn rust_aot_io_print_emits_trailing_newline() {
