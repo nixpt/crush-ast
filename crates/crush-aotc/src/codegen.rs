@@ -400,6 +400,18 @@ impl AotcCompiler {
                         _ => a.clone(),
                     }).collect();
                     match cap_name {
+                        "conv.chr" => {
+                            let arg = boxed_args.first().map(|s| s.as_str()).unwrap_or("CV_NULL");
+                            let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                            writeln!(out, "    CrushValue {} = cap_conv_chr({});", t, arg)?;
+                            stack.push((t, ty));
+                        }
+                        "conv.ord" => {
+                            let arg = boxed_args.first().map(|s| s.as_str()).unwrap_or("CV_NULL");
+                            let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                            writeln!(out, "    CrushValue {} = cap_conv_ord({});", t, arg)?;
+                            stack.push((t, ty));
+                        }
                         "io.print" => {
                             let arg = boxed_args.first().map(|s| s.as_str()).unwrap_or("CV_NULL");
                             writeln!(out, "    cap_io_print({});", arg)?;
@@ -598,6 +610,15 @@ mod tests {
         println!("=== Generated C (loop_sum) ===\n{}", c);
         // Fast path: sum and i should be int64_t scalars
         assert!(c.contains("int64_t"));
+    }
+
+    #[test]
+    fn test_emit_conv_caps() {
+        let source = "fn main() { return conv.ord(conv.chr(233)); }";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let c = AotcCompiler::new(AotcOpts::default()).compile(&program).expect("emit C");
+        assert!(c.contains("cap_conv_chr"));
+        assert!(c.contains("cap_conv_ord"));
     }
 
     #[test]

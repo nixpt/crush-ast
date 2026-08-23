@@ -227,6 +227,44 @@ static inline void cap_io_print(CrushValue v) {
         }
     }
 }
+static inline CrushValue cap_conv_chr(CrushValue v) {
+    if (!cv_is_int(v)) crush_arith_error("conv.chr: expected int");
+    int64_t codepoint = cv_as_int(v);
+    if (codepoint < 0 || codepoint > 0x10FFFF ||
+        (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+        crush_arith_error("conv.chr: invalid Unicode codepoint");
+    }
+    static char buffers[16][5];
+    static int slot;
+    uint32_t cp = (uint32_t)codepoint;
+    char* out = buffers[slot++ % 16];
+    if (cp <= 0x7F) { out[0] = (char)cp; out[1] = '\0'; }
+    else if (cp <= 0x7FF) { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); out[2] = '\0'; }
+    else if (cp <= 0xFFFF) { out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[2] = (char)(0x80 | (cp & 0x3F)); out[3] = '\0'; }
+    else { out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); out[4] = '\0'; }
+    return cv_string(out);
+}
+static inline CrushValue cap_conv_ord(CrushValue v) {
+    if (!cv_is_string(v)) crush_arith_error("conv.ord: expected string");
+    const unsigned char* p = (const unsigned char*)cv_as_string(v);
+    uint32_t cp; size_t width;
+    if (!p[0]) crush_arith_error("conv.ord: expected one Unicode character");
+    if (p[0] < 0x80) { cp = p[0]; width = 1; }
+    else if (p[0] >= 0xC2 && p[0] <= 0xDF) { cp = p[0] & 0x1F; width = 2; }
+    else if (p[0] >= 0xE0 && p[0] <= 0xEF) { cp = p[0] & 0x0F; width = 3; }
+    else if (p[0] >= 0xF0 && p[0] <= 0xF4) { cp = p[0] & 0x07; width = 4; }
+    else crush_arith_error("conv.ord: invalid UTF-8 character");
+    for (size_t i = 1; i < width; i++) {
+        if ((p[i] & 0xC0) != 0x80) crush_arith_error("conv.ord: invalid UTF-8 character");
+        cp = (cp << 6) | (p[i] & 0x3F);
+    }
+    if ((width == 2 && cp < 0x80) || (width == 3 && cp < 0x800) ||
+        (width == 4 && cp < 0x10000) || cp > 0x10FFFF ||
+        (cp >= 0xD800 && cp <= 0xDFFF) || p[width] != '\0') {
+        crush_arith_error("conv.ord: expected one Unicode character");
+    }
+    return cv_int((int64_t)cp);
+}
 static inline CrushValue cap_math_sqrt(CrushValue v) {
     return cv_float(sqrt(cv_is_int(v) ? (double)cv_as_int(v) : cv_as_float(v)));
 }

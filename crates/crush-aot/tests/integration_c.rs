@@ -128,6 +128,18 @@ fn test_c_gcc_null() {
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Null);
 }
 
+#[test]
+fn test_c_gcc_conv_chr_ord_unicode_round_trip() {
+    let compiler = AotCompiler::new();
+    let program = crush_frontend::compile_crush_source(
+        "fn main() { return conv.ord(conv.chr(233)); }"
+    ).unwrap();
+    let so_path = compiler.compile_c(&program, "test_c_gcc_conv_chr_ord", "gcc")
+        .expect("gcc compile failed");
+    let module = Module::load(&so_path).expect("load failed");
+    assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(233));
+}
+
 // ── C compiler tests (clang) ──────────────────────────────────────────────
 
 #[test]

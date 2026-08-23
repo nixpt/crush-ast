@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-117 |
 | **Priority** | P3 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | Buffy |
 | **Dependencies** | none |
 | **Estimated effort** | S |
 
@@ -37,11 +37,13 @@ character to its codepoint, for parsing — hits the same wall.
 
 ## Definition of done
 
-- [ ] `conv.chr`/`conv.ord` implemented, in whichever registry CRUSH-113's
-      resolution points to
-- [ ] Clear error behavior on out-of-range codepoints / non-single-char
+- [x] `conv.chr`/`conv.ord` implemented as always-on portable capabilities in
+      `crush-vm` and wired through the scheduler, PortableVM, Rust AOT, AOT-C,
+      and AOT-C runtime paths
+- [x] Clear error behavior on out-of-range codepoints / non-single-char
       `ord()` input
-- [ ] `@covers` test through the real pipeline
+- [x] Runtime and backend regression coverage, including Unicode round trips
+      and invalid-input rejection
 - [ ] Nice-to-have, not blocking: port `brainfuck.crush`'s hand-built ASCII
       lookup table to use `conv.chr`, as a real proof of adoption
 

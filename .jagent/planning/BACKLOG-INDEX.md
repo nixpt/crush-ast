@@ -41,7 +41,7 @@
 | 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
 | 115   | `io.read` — interactive stdin input capability (captain's ask, s439: "add input support") |
 | 116   | `math.random`/`math.seed` — real numeric RNG (every example program hand-rolled its own LCG) |
-| 117   | `conv.chr`/`conv.ord` — character ↔ codepoint (brainfuck.crush hand-built a 95-char ASCII table without it) |
+| 117   | `conv.chr`/`conv.ord` — character ↔ codepoint |
 | 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 |
 | 119+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 

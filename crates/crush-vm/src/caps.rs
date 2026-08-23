@@ -124,6 +124,20 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "create an integer range [start..end)",
         });
+        reg(CapabilitySpec {
+            name: "conv.chr",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "convert a Unicode codepoint to a single-character string",
+        });
+        reg(CapabilitySpec {
+            name: "conv.ord",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "convert a single-character string to its Unicode codepoint",
+        });
         m
     })
 }

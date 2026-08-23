@@ -57,7 +57,7 @@ this session's whole games/interpreters arc independently hit; 118 proves
 
 - **CRUSH-115** — `io.read`: interactive stdin input. Zero input capability exists today; every example program is self-playing/simulated specifically because of this gap. (P1)
 - **CRUSH-116** — `math.random`/`math.seed`: real numeric RNG. Every example program that needs unpredictability hand-rolls its own LCG (5+ independent reimplementations of the same missing primitive).
-- **CRUSH-117** — `conv.chr`/`conv.ord`: character ↔ codepoint. `brainfuck.crush` hand-built a 95-char ASCII lookup table specifically because this doesn't exist.
+- **CRUSH-117** — `conv.chr`/`conv.ord`: character ↔ codepoint. **Done 2026-08-23** — portable runtime + Rust/AOT-C/AOT-C backend paths and Unicode/error regressions shipped on the dedicated branch; the brainfuck table port remains optional.
 - **CRUSH-118** — a real interactive demo proving `io.read` end-to-end, not just registered. Gates: CRUSH-115.
 
 ## P0 — Build & Core Health ✅
