@@ -1,9 +1,9 @@
 # Planning state — crush-ast
 
-**Updated:** 2026-08-23 (CRUSH-119 FastVM array/for-loop parity fix and CRUSH-120 optimizer self-reference fix completed; header + Active work refreshed this pass;
-the Delivery snapshot table below is UNCHANGED since 2026-07-25 and was NOT
-re-verified this pass — treat those rows as of that date, not current)  
-**Milestone focus:** Post-M2 — JIT Phases 2–7 merged; buckets consumer follow-on (CRUSH-66) Ready; M5 AI-native / M3 debugger next  
+**Updated:** 2026-08-23 (CRUSH-119/120 implementation fixes and milestone-status
+reconciliation completed; delivery snapshot refreshed against the current
+planning records)
+**Milestone focus:** M2 implementation substantially landed (Phases 1-5); M2 closure gates remain in conformance/optimization/AOT work; CRUSH-66 done; M3 debugger / M5 AI-native next
 **Branch:** `main` (= `origin/main` @ `cd0f497`, 2026-08-21)
 
 ## Since 2026-07-25 (this session's verified activity — not yet folded into the snapshot below)
@@ -38,19 +38,19 @@ re-verified this pass — treat those rows as of that date, not current)
 | Core compiler pipeline | **shipped** | Parser → CAST → Semantics → Optimizer → Compiler → CASM |
 | CVM1 PortableVm | **shipped** | 40+ opcodes, debugger-aware |
 | FastVM | **shipped** | 84 FastOp instructions |
-| crush-jit (Cranelift) | **partial→expanded** | M2 Phases 2–7 landed via PR #21 (CRUSH-26..38 band on that arc) |
+| crush-jit (Cranelift) | **substantially implemented** | M2 Phases 1-5 landed; full conformance, optimization, and AOT-from-JIT closure remain |
 | AOT C / AOT Rust | **shipped** | Polyglot walker→AOT for C/Python/JS/TS/Rust |
 | Polyglot + buckets sandbox | **shipped** | CRUSH-20: `sandboxed-polyglot` + `bucket_exec` (bare runtimes only) |
 | crush-pkg ↔ buckets | **shipped** | Script capsules via `crush-buckets` path-dep |
-| AI-native / async opcodes | **stub** | Still NOP at runtime (CRUSH-1 / CRUSH-32–34) |
-| Annotations / crush-index / dejavue | **shipped** | M5 tickets filed CRUSH-27..34 |
+| AI-native / async opcodes | **partial / stubbed** | Annotation/index work is partly landed; VM-side AI opcode execution and spawn/await/yield remain open (CRUSH-1 / CRUSH-32–34) |
+| Annotations / crush-index / dejavue | **partial / active** | Annotation/index foundations and M5 tickets exist; full M5 done condition is not met |
 | Debugger | **partial** | Breakpoints/REPL; variable inspection open |
 
 ## Active work
 
 | Item | Status |
 |------|--------|
-| Docs + CRUSH-66 filing (2026-07-25 session) | in flight — design + ticket, not impl; not re-checked this pass |
+| CRUSH-66 `@lang[pypi:/npm:]` deps | **done 2026-08-01** — BUCKETS-15 merged; lexer, dependency validation, sandbox provisioning, and live proof landed. |
 | panini `CRUSH-39` / Math.* lowering | separate worktree (`agent/panini-crush/CRUSH-39`); not re-checked this pass |
 | Open GitHub PRs | CRUSH-117/118 (conv.chr/ord, interactive-input demo) still open/unstarted as of 2026-08-21; #45-49 merged this session (see "Since 2026-07-25" above) |
 | CRUSH-119 FastVM array/loop parity | **done on `agent/buffy/CRUSH-119-for-loop`**; native array mutation contracts and compiled range/array-loop regressions pass. |
@@ -64,16 +64,15 @@ re-verified this pass — treat those rows as of that date, not current)
 | `crush-pkg` | same alias | pinned sandboxed script toolchains |
 | `crush-bucketspike` | throwaway; **broken absolute path** | spike only — ignore |
 
-**CRUSH-66 Ready:** wire `@lang[pypi:…]` / `@lang[npm:…]` through existing
-`resolve_multi` once [buckets#4](https://github.com/nixpt/buckets/pull/4)
-(BUCKETS-15) is on buckets `main`. Design: `docs/design/lang-deps-pypi-npm.md`.
+**CRUSH-66 Done:** `@lang[pypi:…]` / `@lang[npm:…]` dependency resolution
+is wired through `resolve_multi`, with BUCKETS-15 merged and the sandbox path
+verified live. Design: `docs/design/lang-deps-pypi-npm.md`.
 
 ## Blockers
 
 | ID | Blocker | Unblock |
 |----|---------|---------|
-| B1 | CRUSH-66 needs BUCKETS-15 on sibling `buckets` checkout | Merge buckets#4 |
-| B2 | (soft) dejavue was stale vs main through 2026-07-15 | refreshed this session |
+| B1 | (soft) dejavue was stale vs main through 2026-07-15 | refreshed this session |
 
 ## Metrics (indicative — re-measure before claiming)
 

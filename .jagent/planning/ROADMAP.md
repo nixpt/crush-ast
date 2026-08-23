@@ -1,6 +1,6 @@
-# Crush Roadmap — M5+ (post-JIT, post-`crush` umbrella)
+# Crush Roadmap — M0+ (post-JIT, post-`crush` umbrella)
 
-> Extends the milestone ladder defined in `TASKS.md` (M1-M4 + Publish + Aspirational)
+> Extends the milestone ladder defined in `TASKS.md` (M0-M4 + Publish + Aspirational)
 > for the next major arc. Anchors to the project's three thesis documents:
 >
 > - `docs/design/ai-native-roadmap.md` — Crush is *for* AI writers
@@ -27,12 +27,13 @@
 
 | Phase  | Title                                              | Done condition summary                                                                  | Status   |
 | ------ | -------------------------------------------------- | -------------------------------------------------------------------------------------- | -------- |
-| M1     | Correctness sweep                                  | All 12 CRUSH-N tickets (excluding CRUSH-1 wiring, CRUSH-24 retired) verified fixed     | Mostly ✓  |
-| M2     | JIT completion (Phases 1-7)                        | All 84 `FastOp` lowered; AOT-from-JIT live; differential coverage w/ AOT C              | In progress |
+| M0     | Foundation & release hygiene                      | Core pipeline/runtime stable; release and publish baseline established                 | Foundation complete; publish cleanup remains |
+| M1     | Correctness sweep                                  | Backend parity and black-box language regressions closed                                | Mostly complete; residual findings remain |
+| M2     | JIT completion (Phases 1-7)                        | All 84 `FastOp` lowered; AOT-from-JIT live; differential coverage w/ AOT C              | Phases 1-5 landed; Phase 6/7 and conformance closure remain |
 | M3     | Debugger completion                                | Source-map + var print + step inspection                                               | Partial  |
 | M4     | Cross-project integration                          | Surfer migration + exosphere reconcile                                                | Partial  |
 | Publish | crates.io lane                                    | All 35 crates via `version.workspace`; `walker-core` published; taxon renames          | Open     |
-| **M5** | **AI-native compiler layer**                       | Annotations as CAST nodes; `crush-index` live; AI opcodes execute                      | Proposed |
+| **M5** | **AI-native compiler layer**                       | Annotations as CAST nodes; `crush-index` live; AI opcodes execute                      | Partial / active |
 | **M6** | **Walker parity & multi-language completeness**    | 11 walker lowering gaps closed; LanguageAdapter unification; Java/Kotlin                | Proposed |
 | **M7** | **Runtime hardening & ops tooling**                | Fuel + determinism + firewall + snapshot + V8/RustPython lanes                         | Proposed |
 | **M8** | **Platform & architecture maturation (CRUSH-22)**  | CI multi-OS + multi-arch; Android API; `wasm32` first-class                              | Proposed |
