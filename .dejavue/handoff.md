@@ -1,33 +1,33 @@
 # Handoff
 
-Updated: 2026-07-25T03:30:00-05:00
+Updated: 2026-08-23
 
 ## Summary
-Docs/planning refresh + CRUSH-66 filing (no code). Synced memory to `main`
-`5fb5bff` (M2 JIT merge). Marked CRUSH-20 ticket Done. Designed and filed
-CRUSH-66: wire `@lang[pypi:/npm:]` through existing `bucket_exec` /
-`resolve_multi` once BUCKETS-15 lands on sibling buckets.
+CRUSH-115 is complete on `agent/buffy/CRUSH-115`. `io.read` is registered as a
+zero-argument, non-privileged capability and reads one line from stdin through
+the shared `crush-vm::io_read` helper. LF and CRLF endings are stripped and EOF
+or read errors return the empty string.
+
+The capability is wired through the scheduler/CVM1, PortableVM, Rust AOT, C
+AOT, and AOT-C paths. The JIT intentionally uses its existing unsupported-op
+fallback rather than attempting to compile blocking stdin I/O.
+
+## Verification
+- `crush-vm` io-read tests: 3 passed.
+- `crush-vm` capability tests: 10 passed.
+- Real `crush-run` source pipeline with piped stdin: 1 passed.
+- Rust AOT io-read codegen/compile test: 1 passed.
+- C AOT io-read codegen test: 1 passed.
+- C AOT gcc compile/load test: 1 passed.
+- AOT-C stdin-helper test: 1 passed.
+- `git diff --check`: passed before ticket-memory edits.
+
+## Remaining work
+CRUSH-118 remains open: add a user-facing interactive example under
+`examples/crush/` and verify it with piped input. Do not mark CRUSH-118 done
+from capability-level tests alone.
 
 ## Next Steps
-1. Merge [nixpt/buckets#4](https://github.com/nixpt/buckets/pull/4) (BUCKETS-15).  
-2. Implement [CRUSH-66](../.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md) per [design](../docs/design/lang-deps-pypi-npm.md) — likely small: deps already pass to `resolve_multi`; verify PYTHONPATH/NODE_PATH + live tests + doc comment fixes.  
-3. Optional: review panini Math.* fix worktree; or start M5 (CRUSH-1 AI opcodes).
-
-## Boot Instructions
-Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.
-
-```bash
-cd /workspace/projects/crush-ast && dejavue context
-cat .jagent/planning/STATE.md .jagent/planning/TASKS.md
-# buckets consumers
-rg -n 'crush-buckets|sandboxed-polyglot' crates/*/Cargo.toml
-```
-
-## Key paths
-
-| What | Where |
-|------|--------|
-| CRUSH-66 ticket | `.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md` |
-| Design | `docs/design/lang-deps-pypi-npm.md` |
-| Sandbox wiring | `crates/crush-vm/src/bucket_exec.rs` |
-| crush-pkg runners | `crates/crush-pkg/src/runners.rs` |
+1. Ship/merge CRUSH-115.
+2. Implement CRUSH-118 as a separate example/demo change.
+3. Continue with the next correctness-spine ticket after the demo.

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-115 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | **Done** — verified on `agent/buffy/CRUSH-115` (2026-08-23) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -65,6 +65,43 @@ player, and any CLI tool that prompts for input.
 - [ ] `@covers` test through the real pipeline (parse → compile → execute),
       feeding piped stdin, not a smoke test
 - [ ] CRUSH-118 (a real interactive demo) can build on this
+
+## Resolution
+
+Implemented `io.read` as a canonical zero-argument, non-privileged capability.
+The shared `crush-vm::io_read` helper reads one line, strips LF/CRLF terminators,
+and returns an empty string on EOF or read error. The capability is wired through
+CVM1's scheduler, PortableVM, Rust AOT, C AOT, and AOT-C; the JIT deliberately
+falls back to the VM path for unsupported blocking I/O.
+
+Verification on `agent/buffy/CRUSH-115`:
+
+```text
+cargo test -p crush-vm io_read --lib -- --test-threads=1
+3 passed
+
+cargo test -p crush-vm capabilities --lib -- --test-threads=1
+10 passed
+
+cargo test -p crush-lang-sdk crush_run_reads_piped_stdin_through_source_pipeline -- --nocapture
+1 passed
+
+cargo test -p crush-aot --test integration test_aot_io_read_codegen_compiles -- --nocapture
+1 passed
+
+cargo test -p crush-aot --test integration_c test_c_codegen_io_read -- --nocapture
+1 passed
+
+cargo test -p crush-aot --test integration_c test_c_gcc_io_read_codegen_compiles -- --nocapture
+1 passed
+
+cargo test -p crush-aotc c_aot_io_read_uses_stdin_helper --lib -- --nocapture
+1 passed
+```
+
+CRUSH-118 remains open because this ticket adds the capability and pipeline
+proof but does not yet add a user-facing interactive example under
+`examples/crush/`.
 
 ## Files to modify
 
