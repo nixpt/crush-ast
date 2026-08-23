@@ -1,6 +1,6 @@
 # Planning state — crush-ast
 
-**Updated:** 2026-08-22 (CRUSH-119 FastVM array/for-loop parity fix completed; header + Active work + PR/crate-count refreshed this pass;
+**Updated:** 2026-08-23 (CRUSH-119 FastVM array/for-loop parity fix and CRUSH-120 optimizer self-reference fix completed; header + Active work refreshed this pass;
 the Delivery snapshot table below is UNCHANGED since 2026-07-25 and was NOT
 re-verified this pass — treat those rows as of that date, not current)  
 **Milestone focus:** Post-M2 — JIT Phases 2–7 merged; buckets consumer follow-on (CRUSH-66) Ready; M5 AI-native / M3 debugger next  
@@ -53,7 +53,8 @@ re-verified this pass — treat those rows as of that date, not current)
 | Docs + CRUSH-66 filing (2026-07-25 session) | in flight — design + ticket, not impl; not re-checked this pass |
 | panini `CRUSH-39` / Math.* lowering | separate worktree (`agent/panini-crush/CRUSH-39`); not re-checked this pass |
 | Open GitHub PRs | CRUSH-117/118 (conv.chr/ord, interactive-input demo) still open/unstarted as of 2026-08-21; #45-49 merged this session (see "Since 2026-07-25" above) |
-| CRUSH-119 FastVM array/loop parity | **done on `agent/buffy/CRUSH-119-for-loop`**; native array mutation contracts and compiled range/array-loop regressions pass. Separate optimized arithmetic assignment defect remains captured in TASKS.md. |
+| CRUSH-119 FastVM array/loop parity | **done on `agent/buffy/CRUSH-119-for-loop`**; native array mutation contracts and compiled range/array-loop regressions pass. |
+| CRUSH-120 optimizer self-reference | **done on `agent/buffy/CRUSH-119-for-loop`**; assignment invalidation now precedes RHS constant propagation, preserving loop-carried accumulators. |
 
 ## Buckets consumer reality
 

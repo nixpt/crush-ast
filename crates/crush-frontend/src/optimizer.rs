@@ -68,9 +68,13 @@ impl Optimizer {
                 mut value,
                 meta,
             } => {
+                // Invalidate the target before rewriting its RHS. Otherwise a
+                // self-referential update such as `total = total + item`
+                // observes the stale constant from the declaration instead of
+                // the loop-carried runtime value.
+                consts.remove(&target);
                 Self::replace_vars_expr(&mut value, consts);
                 Self::optimize_expr(&mut value);
-                consts.remove(&target);
                 vec![Statement::Assign {
                     target,
                     value,
