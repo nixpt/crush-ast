@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-08-24
+
+- docs(planning): import crush backlog dispatch prompts
+- docs(planning): reconcile completed crush backlog
+
+
+
 ## [0.3.6] - 2026-08-24
 
 - casm: delete dead ecasm.rs + CachedProgram remnants (CRUSH-80)
