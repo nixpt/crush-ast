@@ -14,6 +14,19 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-08-24
+
+- casm: delete dead ecasm.rs + CachedProgram remnants (CRUSH-80)
+- Implement conv.chr and conv.ord across runtimes
+- merge(agent/nixp): CRUSH-116 deterministic RNG completion
+- merge(agent/buffy): CRUSH-119 for-loop fixes
+- Complete deterministic math RNG capability integration.
+- docs: reconcile milestone and backlog status
+- fix: preserve self-referential assignment values in optimizer
+- fix: preserve FastVM array mutation values
+
+
+
 ## [0.3.5] - 2026-08-21
 
 - Add canonical io.read capability across runtimes (#52)
