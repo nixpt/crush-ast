@@ -439,3 +439,18 @@ All GREEN. The Commit B commit is ready.
 - **F9**: After Commit B, `GoAdapter` is registered in both registries. The `AdapterRegistry::walk("foo.go")` path now produces a real CAST (via the macro's `walk()` delegation). The CLI's `walker_binary("go")` mapping (in `crates/cli/src/main.rs:11-30`) still returns `"crush_lang_go"` (subprocess binary) — this is Sub-Commit 3's job to fix.
 - **F10**: The 3 remaining walker crates (C/Zig/Dart) follow the same pattern. Each is a separate Commit (e.g., `CRUSH-36-SUB-COMMIT-2-COMMIT-B-FOLLOW-UP-1` for C, etc.).
 - **F11**: After all 4 tree-sitter walkers are migrated, the `impl_adapter_from_walker!` macro (now `#[deprecated]`) can be REMOVED entirely (Phase 2 of the M6 trait-surface cleanup).
+
+
+## Dispatch
+
+Imported from `workspace-meta/prompts/crush-backlog/CRUSH-36.txt` on 2026-08-24 so this tracked ticket contains the dispatch prompt metadata.
+
+- Branch: `agent/horse/CRUSH-36`
+- Repo: `crush-ast`
+- Turns: `60`
+- Runner: `claude`
+- Scope: this ticket file is the canonical implementation spec; read it before changing code.
+- Discipline: verify the repro against current `main` first, commit and push each meaningful unit, and update this ticket with the result.
+- Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
+- Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
+- Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.

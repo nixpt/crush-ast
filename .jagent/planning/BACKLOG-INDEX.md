@@ -1,10 +1,13 @@
-# BACKLOG-INDEX — the dispatch map (milestone → ticket → prompt)
+# BACKLOG-INDEX — the dispatch map (milestone → ticket → dispatch)
 
 > Authored s412 (2026-08-02) per captain's directive: horses build well but don't
 > architect, so the architecture happens here, once — a large pre-authored backlog
-> where every dispatch-ready ticket has a spec in `tickets/` and a ready-to-go
-> prompt in `workspace-meta/prompts/crush-backlog/`. Foreman (or any captain
-> session) picks the top unblocked ticket, launches the prompt, done.
+> where every dispatch-ready ticket has a spec in `tickets/`. The historical
+> prompts from `workspace-meta/prompts/crush-backlog/` were imported into the
+> matching ticket files as `## Dispatch` sections on 2026-08-24, so the tracked
+> ticket is now the self-contained dispatch source. Foreman (or any captain
+> session) picks the top unblocked ticket, launches from the ticket's Dispatch
+> section, done.
 >
 > Broad statuses were last triaged at s412 against `HEAD 060d9c5`; the current
 > summary corrections below incorporate the later CRUSH-66 resolution, CRUSH-80,
@@ -50,13 +53,14 @@
 ## How to dispatch from this index
 
 1. Pick the topmost ticket whose **Gate** column is clear (or whose gate is met).
-2. Its prompt lives at `workspace-meta/prompts/crush-backlog/CRUSH-NN.txt`
-   (absolute: `/home/nixp/WORKSPACE/workspace-meta/prompts/crush-backlog/`).
-   Prompts are pre-linted (`dispatch-prompt lint --strict`).
+2. Use the ticket file's `## Dispatch` section. The old
+   `workspace-meta/prompts/crush-backlog/CRUSH-NN.txt` files are historical
+   sources; their branch/runner/turn metadata has been ported into the tracked
+   ticket files.
 3. Launch per persona-session or foreman-dispatch-wave. Preferred identity for
    compiler-lane tickets: `panini`; VM-runtime lane: `nimbus`; fastvm: `buffy`;
-   bindings/build: `sangam`. Lane boundaries are in each prompt.
-4. Every prompt requires incremental commits (the panini s390 lesson) and
+   bindings/build: `sangam`. Lane boundaries are in each ticket `## Dispatch` section.
+4. Every dispatch requires incremental commits (the panini s390 lesson) and
    carries halt-criteria + the nimbus-contract flag where relevant.
 
 ## Verify+close quick wins (cheap dispatches, run the repro → flip status)
@@ -81,36 +85,36 @@ The 2026-07-14 meta-finding: crush-ast repeatedly builds both ends of a feature,
 never connects the middle, and has no test that would notice. These tickets ARE
 the spine; most later work is gated on 73/77 existing.
 
-| ID | Title | Rank | Gate | Prompt |
+| ID | Title | Rank | Gate | Dispatch |
 |----|-------|------|------|--------|
-| CRUSH-72 | crush-jit silent TAG_NULL catch-all → Unsupported + FastVm fallback | #1 (spec re-verifies vs post-M2 state) | — | crush-backlog/CRUSH-72.txt |
-| CRUSH-73 | Conformance corpus + one black-box runner across all four engines | #2 — meta-finding killer | — | crush-backlog/CRUSH-73.txt |
-| CRUSH-74 | Source locations wired through AST → casm debug_info | #3 | pairs with CRUSH-79 | crush-backlog/CRUSH-74.txt |
-| CRUSH-75 | Lambda syntax unreachable (lexer bare-`\|` shortcut) + lex-error on unknown operator chars | #4 | before CRUSH-82 | crush-backlog/CRUSH-75.txt |
-| CRUSH-76 | Parser/lexer/cson fuzz targets | #5 | — | crush-backlog/CRUSH-76.txt |
-| CRUSH-77 | Differential harness: all four engines, assert identical | #6 | extends existing crush-diff | crush-backlog/CRUSH-77.txt |
-| CRUSH-78 | Memory-model decision (design-first) | #7 | gates CRUSH-62 | crush-backlog/CRUSH-78.txt |
+| CRUSH-72 | crush-jit silent TAG_NULL catch-all → Unsupported + FastVm fallback | #1 (spec re-verifies vs post-M2 state) | — | ticket `## Dispatch` |
+| CRUSH-73 | Conformance corpus + one black-box runner across all four engines | #2 — meta-finding killer | — | ticket `## Dispatch` |
+| CRUSH-74 | Source locations wired through AST → casm debug_info | #3 | pairs with CRUSH-79 | ticket `## Dispatch` |
+| CRUSH-75 | Lambda syntax unreachable (lexer bare-`\|` shortcut) + lex-error on unknown operator chars | #4 | before CRUSH-82 | ticket `## Dispatch` |
+| CRUSH-76 | Parser/lexer/cson fuzz targets | #5 | — | ticket `## Dispatch` |
+| CRUSH-77 | Differential harness: all four engines, assert identical | #6 | extends existing crush-diff | ticket `## Dispatch` |
+| CRUSH-78 | Memory-model decision (design-first) | #7 | gates CRUSH-62 | ticket `## Dispatch` |
 
 ## CRUSH-71 opening-survey captures (79–86)
 
-| ID | Title | Kind | Repo | Prompt |
+| ID | Title | Kind | Repo | Dispatch |
 |----|-------|------|------|--------|
-| CRUSH-79 | casm source_map flat-vector: wrong location for multi-fn programs | correctness | crush-ast | crush-backlog/CRUSH-79.txt |
+| CRUSH-79 | casm source_map flat-vector: wrong location for multi-fn programs | correctness | crush-ast | ticket `## Dispatch` |
 | CRUSH-80 | ✅ DONE — deleted dead `CachedProgram`/`to_cached` remnants and `ecasm.rs`; future real caching remains CRUSH-83 | hygiene | crush-ast | — |
 | CRUSH-81 | ✅ DONE — landed via CRUSH-71 (`11f7a1c` + seed-fix `97bd7c4`; 3.4–3.9x on chain shapes) | design/perf | crush-ast | — |
-| CRUSH-106 | Typed OpCode emission — kill serde_json on the emit path (audit #1) | design/perf | crush-ast | crush-backlog/CRUSH-106.txt |
-| CRUSH-107 | CAST meta HashMap → packed Span + side table (audit #2; nimbus/visuals contract — coordinate; pairs with CRUSH-74) | design/perf | crush-ast | crush-backlog/CRUSH-107.txt |
-| CRUSH-82 | Lexer: byte-span tokens + interner | design/perf | crush-ast | crush-backlog/CRUSH-82.txt |
-| CRUSH-83 | Compile cache / incremental unit (content-hash casm cache) | design/perf | crush-ast | crush-backlog/CRUSH-83.txt |
-| CRUSH-84 | notebook casm_to_assembly unknown-opcode → NOP silently | correctness | crush-workspace/crush-notebook | crush-backlog/CRUSH-84.txt |
-| CRUSH-85 | exo-light fabric_executor fakes exit 0 when crush-run missing | correctness | openko-network/openko | crush-backlog/CRUSH-85.txt |
-| CRUSH-86 | Dead crush-vm deps: squeeze + crush-visuals-debug-bridge | hygiene | crush-workspace | crush-backlog/CRUSH-86.txt |
+| CRUSH-106 | Typed OpCode emission — kill serde_json on the emit path (audit #1) | design/perf | crush-ast | ticket `## Dispatch` |
+| CRUSH-107 | CAST meta HashMap → packed Span + side table (audit #2; nimbus/visuals contract — coordinate; pairs with CRUSH-74) | design/perf | crush-ast | ticket `## Dispatch` |
+| CRUSH-82 | Lexer: byte-span tokens + interner | design/perf | crush-ast | ticket `## Dispatch` |
+| CRUSH-83 | Compile cache / incremental unit (content-hash casm cache) | design/perf | crush-ast | ticket `## Dispatch` |
+| CRUSH-84 | notebook casm_to_assembly unknown-opcode → NOP silently | correctness | crush-workspace/crush-notebook | ticket `## Dispatch` |
+| CRUSH-85 | exo-light fabric_executor fakes exit 0 when crush-run missing | correctness | openko-network/openko | ticket `## Dispatch` |
+| CRUSH-86 | Dead crush-vm deps: squeeze + crush-visuals-debug-bridge | hygiene | crush-workspace | ticket `## Dispatch` |
 
 ## M2 — JIT completion
 
-| ID | Title | Status | Gate | Prompt |
+| ID | Title | Status | Gate | Dispatch |
 |----|-------|--------|------|--------|
-| CRUSH-87 | JIT Phase 2–4 residue (item #7 + unsolved Cranelift GVN/LICM, lib.rs:2452) — ex-17 | open (residue only) | CRUSH-72 | crush-backlog/CRUSH-87.txt |
+| CRUSH-87 | JIT Phase 2–4 residue (item #7 + unsolved Cranelift GVN/LICM, lib.rs:2452) — ex-17 | open (residue only) | CRUSH-72 | ticket `## Dispatch` |
 | — | Phases 3–5 tracked in TASKS.md; Phase 6/7 = CRUSH-60/61 (M10) | | | |
 
 ## M5 — AI-native compiler layer (NEARLY COMPLETE)
@@ -119,17 +123,17 @@ the spine; most later work is gated on 73/77 existing.
 |----|-------|--------|
 | CRUSH-27 annotation nodes · 28 crush-index v0 · 29 codebase.* caps · 31 dejavue join · 32 AI opcodes · 33 DOM opcodes | | ALL DONE on HEAD (verified s412) |
 | CRUSH-30 | @exhaustive-match-sites lint | partial — see quick wins |
-| CRUSH-34 | spawn/await/yield wire-up | in progress — Commits 2 (5-tier wiring) + 3 (differential fixture) remain → prompt crush-backlog/CRUSH-34.txt |
+| CRUSH-34 | spawn/await/yield wire-up | in progress — Commits 2 (5-tier wiring) + 3 (differential fixture) remain → ticket `## Dispatch` |
 
 ## M6 — Walker parity
 
-| ID | Title | Status | Gate | Prompt |
+| ID | Title | Status | Gate | Dispatch |
 |----|-------|--------|------|--------|
-| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + VISION.md table refresh (6/7 verified closed) | open | — | crush-backlog/CRUSH-35.txt |
-| CRUSH-36 | LanguageAdapter unification | partial — Sub-Commit 3 + CLI py/pyw fix remain | — | crush-backlog/CRUSH-36.txt |
-| CRUSH-37 | Java walker | partial — skeleton landed, real parsing remains | CRUSH-36 | crush-backlog/CRUSH-37.txt |
-| CRUSH-38 | Kotlin walker | open (no crate yet) | CRUSH-37 | crush-backlog/CRUSH-38.txt |
-| CRUSH-103 | Walker→AOT for all 12 walkers (ex-39) | open | CRUSH-35 | crush-backlog/CRUSH-103.txt |
+| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + VISION.md table refresh (6/7 verified closed) | open | — | ticket `## Dispatch` |
+| CRUSH-36 | LanguageAdapter unification | partial — Sub-Commit 3 + CLI py/pyw fix remain | — | ticket `## Dispatch` |
+| CRUSH-37 | Java walker | partial — skeleton landed, real parsing remains | CRUSH-36 | ticket `## Dispatch` |
+| CRUSH-38 | Kotlin walker | open (no crate yet) | CRUSH-37 | ticket `## Dispatch` |
+| CRUSH-103 | Walker→AOT for all 12 walkers (ex-39) | open | CRUSH-35 | ticket `## Dispatch` |
 
 ## M7 — Runtime hardening (40–48)
 

@@ -122,3 +122,19 @@ Captured here so a future CRUSH-34 review-flag polish commit (analogous to CRUSH
 The initial Commit 1 draft had `register()` body / macro instantiation list / both test cap-vecs in `[Spawn, Await, Yield]` order, but `KINDS` was defined as `["spawn", "yield", "await"]` (per the rustdoc claim). The validation basher caught a test failure at `spec_names_match_kinds_constant_in_order` with `left: "concurrency_native.await" right: "concurrency_native.yield"` (a `concurrency_native_cap!` macro invocation with cap-short-name `"yield"` was being placed at KINDS index 1, where `"await"` was expected). Fix: 4-place ordering swap -- swap `Await` + `Yield` in `register()` body, macro instantiation list, and both test cap-vecs to align all order-sensitive sites with the KINDS contract. Post-fix: 7/7 GREEN.
 
 Diagnostic lesson: the `spec_names_match_kinds_constant_in_order` test (and its DOM/AI twins) is a *positive invariant test* on top of the size+no-dup *positive invariant test* -- both are needed to catch both kinds of drift (count-type and order-type). Both Compile green and Test green matters here; a tight `test result: ok` filter that misses per-thread FAILED output can swallow order-type test failures (that's why the validation basher prompt this turn explicitly required `tail -30` of the full cargo test output, not just the `test result:` line).
+
+## Dispatch
+
+Imported from `workspace-meta/prompts/crush-backlog/CRUSH-34.txt` on 2026-08-24
+via the superseded `CRUSH-34-spawn-await-yield-vm-execution.md` wrapper so this
+active tracked ticket contains the dispatch prompt metadata.
+
+- Branch: `agent/horse/CRUSH-34`
+- Repo: `crush-ast`
+- Turns: `80`
+- Runner: `claude`
+- Scope: this ticket file is the canonical implementation spec; read it before changing code.
+- Discipline: verify the repro against current `main` first, commit and push each meaningful unit, and update this ticket with the result.
+- Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
+- Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
+- Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.

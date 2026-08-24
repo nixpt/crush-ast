@@ -139,3 +139,18 @@ FF5: per CRUSH-37's F1/F2/F3 pattern, any future walker crate files (CRUSH-SCALA
 | 1 | Skeleton: KotlinWalker + KotlinAdapter (macro) + KotlinFrontend (type alias) + 3 active tests + workspace registration | `cargo test -p crush-lang-kotlin --lib` + `cargo check --workspace --tests` + per-FE regression | 3-fix cascade (per CRUSH-37 pattern) — mitigated by F1/F2/F3 process notes |
 | 2 | Real Kotlin parsing: `tree-sitter-kotlin` dep + replace unreachable!() stubs + real AST → CAST IR conversion + end-to-end test + 5 differential fixtures | `cargo test -p crush-lang-kotlin --lib` (end-to-end) + `crush-diff` cross-tier test | E0034 latent risk (F2) — mitigated by typed-ref disambiguation |
 | 3 | Docs: README/kotlin.md + ROADMAP M6 update + cross-references | `cargo check --workspace --tests` (no functional change) | None — markdown-only |
+
+
+## Dispatch
+
+Imported from `workspace-meta/prompts/crush-backlog/CRUSH-38.txt` on 2026-08-24 so this tracked ticket contains the dispatch prompt metadata.
+
+- Branch: `agent/horse/CRUSH-38`
+- Repo: `crush-ast`
+- Turns: `80`
+- Runner: `claude`
+- Scope: this ticket file is the canonical implementation spec; read it before changing code.
+- Discipline: verify the repro against current `main` first, commit and push each meaningful unit, and update this ticket with the result.
+- Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
+- Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
+- Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
