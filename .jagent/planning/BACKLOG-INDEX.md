@@ -39,8 +39,8 @@
 | 108   | Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
 | 109   | Disambiguate top-level `stdlib/` (polyglot transpiled modules) from CRUSH-56/57's native HostCap restoration work — includes an already-observed string-function naming overlap |
 | 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
-| 115   | `io.read` — interactive stdin input capability (captain's ask, s439: "add input support") |
-| 116   | `math.random`/`math.seed` — real numeric RNG (every example program hand-rolled its own LCG) |
+| 115   | `io.read` — interactive stdin input capability | **Done 2026-08-23** — verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
+| 116   | `math.random`/`math.seed` — real numeric RNG | **Done 2026-08-23** — deterministic SplitMix64 stdlib caps, native source pipeline, and JS `Math.random()` lowering verified. |
 | 117   | `conv.chr`/`conv.ord` — character ↔ codepoint (brainfuck.crush hand-built a 95-char ASCII table without it) |
 | 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 |
 | 119+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
@@ -65,6 +65,7 @@
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
 | CRUSH-30 | whether E-EXH-001 wildcard-warn satisfies the ticket | `missing_arms` is a documented stub pending a type registry — needs a scope ruling, then either close or re-scope |
 | CRUSH-35 | VISION.md walker table refresh | 6/7 gaps verified closed in code; table still shows all red |
+| CRUSH-116 | `math.random`/`math.seed` capability | **Done 2026-08-23** — per-registry deterministic RNG state, explicit seed replay, half-open integer bounds, and JS lowering coverage complete. |
 
 ## In flight
 

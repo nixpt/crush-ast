@@ -541,7 +541,9 @@ impl SemanticAnalyzer {
     /// Return the known return type for a built-in capability name
     fn capability_return_type(&self, name: &str) -> Type {
         match name {
-            "io.print" | "array.push" => Type::Null,
+            "io.print" => Type::Null,
+            "math.random" => Type::Float,
+            "math.random_int" | "math.seed" => Type::Int,
             "arr_slice" => Type::Array(Box::new(Type::Any)),
             "str.contains" => Type::Bool,
             "str.split" => Type::Array(Box::new(Type::String)),

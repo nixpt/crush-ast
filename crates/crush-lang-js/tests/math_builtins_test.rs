@@ -122,6 +122,29 @@ fn math_tan_of_zero_is_zero() {
 }
 
 #[test]
+fn math_random_is_lowered_to_the_seedable_crush_capability() {
+    let source = "console.log(Math.random());";
+    let cast = js_to_cast(source, "js").expect("js to cast");
+    let dumped = format!("{cast:?}");
+    assert!(
+        dumped.contains("math.random"),
+        "Math.random should lower to the canonical math.random capability: {dumped}"
+    );
+    assert!(
+        !dumped.contains("Math.random"),
+        "capitalized Math.random should not survive lowering: {dumped}"
+    );
+
+    let casm = crush_frontend::compile_cast(&cast).expect("CAST should compile");
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("CASM should assemble");
+    let caps = crush_lang_sdk::HostCapsBuilder::new().stdlib(true).build();
+    let result = crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), Some(&caps))
+        .expect("Math.random should execute through stdlib");
+    let value: f64 = result.output.trim().parse().expect("Math.random output should be numeric");
+    assert!((0.0..1.0).contains(&value), "Math.random returned {value}");
+}
+
+#[test]
 fn math_sin_of_pi_over_two_is_one() {
     // Closest portable angle without depending on Math.PI (not mapped yet).
     assert_prints("console.log(Math.sin(1.5707963267948966));", 1.0);

@@ -5,9 +5,18 @@
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
+use std::sync::{Arc, Mutex};
 
 /// Register all standard library capabilities on the given [`HostCaps`] registry.
+///
+/// Each registry receives an independent RNG state, so separate runtimes do not
+/// consume one another's seeded sequences.
 pub fn register(caps: &mut HostCaps) {
+    register_with_rng(caps, Arc::new(Mutex::new(RngState::new(0))));
+}
+
+/// Register stdlib capabilities using the supplied per-registry RNG state.
+pub(crate) fn register_with_rng(caps: &mut HostCaps, rng: SharedRng) {
     // String capabilities
     caps.register(Box::new(StrSplitCap));
     caps.register(Box::new(StrJoinCap));
@@ -41,9 +50,13 @@ pub fn register(caps: &mut HostCaps) {
     caps.register(Box::new(MathMinCap));
     caps.register(Box::new(MathMaxCap));
     caps.register(Box::new(MathPiCap));
-    caps.register(Box::new(MathRandomCap));
-    caps.register(Box::new(MathRandomIntCap));
-    caps.register(Box::new(MathSeedCap));
+    caps.register(Box::new(MathRandomCap {
+        rng: Arc::clone(&rng),
+    }));
+    caps.register(Box::new(MathRandomIntCap {
+        rng: Arc::clone(&rng),
+    }));
+    caps.register(Box::new(MathSeedCap { rng }));
 
     // Conversion capabilities
     caps.register(Box::new(ConvToIntCap));
@@ -370,14 +383,13 @@ impl HostCap for MathPiCap {
 // RNG Capabilities (math.random, math.random_int, math.seed)
 // ─────────────────────────────────────────────────────────────────────────────
 
-use std::sync::{Mutex, OnceLock};
-
 /// Simple SplitMix64 PRNG — dependency-free, good enough for game shuffles.
 /// State is a single u64, updated by the SplitMix64 algorithm.
-struct RngState(u64);
+pub(crate) struct RngState(u64);
+type SharedRng = Arc<Mutex<RngState>>;
 
 impl RngState {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self(seed)
     }
 
@@ -396,25 +408,17 @@ impl RngState {
         (self.next_u64() >> 11) as f64 * (1.0 / ((1u64 << 53) as f64))
     }
 
-    /// Next int in [lo, hi)
+    /// Next int in [lo, hi), including ranges spanning the full i64 domain.
     fn next_int(&mut self, lo: i64, hi: i64) -> i64 {
-        let range = (hi - lo) as u64;
-        if range == 0 {
-            return lo;
-        }
-        lo + (self.next_u64() % range) as i64
+        let range = (hi as i128 - lo as i128) as u128;
+        let offset = (self.next_u64() as u128 % range) as i128;
+        (lo as i128 + offset) as i64
     }
 }
 
-static RNG: OnceLock<Mutex<RngState>> = OnceLock::new();
-
-fn get_rng() -> std::sync::MutexGuard<'static, RngState> {
-    RNG.get_or_init(|| Mutex::new(RngState::new(0))) // Default seed = 0 (deterministic)
-        .lock()
-        .unwrap()
+pub struct MathRandomCap {
+    rng: SharedRng,
 }
-
-pub struct MathRandomCap;
 impl HostCap for MathRandomCap {
     fn spec(&self) -> HostCapSpec {
         HostCapSpec {
@@ -423,12 +427,17 @@ impl HostCap for MathRandomCap {
             returns: true,
         }
     }
-    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
-        Ok(Some(Value::Float(get_rng().next_f64())))
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        if !args.is_empty() {
+            return Err("math.random: expected 0 arguments".to_string());
+        }
+        Ok(Some(Value::Float(self.rng.lock().unwrap().next_f64())))
     }
 }
 
-pub struct MathRandomIntCap;
+pub struct MathRandomIntCap {
+    rng: SharedRng,
+}
 impl HostCap for MathRandomIntCap {
     fn spec(&self) -> HostCapSpec {
         HostCapSpec {
@@ -446,11 +455,17 @@ impl HostCap for MathRandomIntCap {
             Some(Value::Int(i)) => *i,
             _ => return Err("math.random_int: missing hi (int)".to_string()),
         };
-        Ok(Some(Value::Int(get_rng().next_int(lo, hi))))
+        if lo >= hi {
+            return Err(format!("math.random_int: expected lo < hi, got {lo}..{hi}"));
+        }
+        let value = self.rng.lock().unwrap().next_int(lo, hi);
+        Ok(Some(Value::Int(value)))
     }
 }
 
-pub struct MathSeedCap;
+pub struct MathSeedCap {
+    rng: SharedRng,
+}
 impl HostCap for MathSeedCap {
     fn spec(&self) -> HostCapSpec {
         HostCapSpec {
@@ -460,11 +475,14 @@ impl HostCap for MathSeedCap {
         }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let seed = match args.get(0) {
+        if args.len() != 1 {
+            return Err("math.seed: expected exactly 1 argument".to_string());
+        }
+        let seed = match args.first() {
             Some(Value::Int(i)) => *i,
-            _ => return Err("math.seed: missing seed (int)".to_string()),
+            _ => return Err("math.seed: expected an integer seed".to_string()),
         };
-        *RNG.get_or_init(|| Mutex::new(RngState::new(0))).lock().unwrap() = RngState::new(seed as u64);
+        *self.rng.lock().unwrap() = RngState::new(seed as u64);
         Ok(Some(Value::Int(seed)))
     }
 }
@@ -1284,6 +1302,73 @@ mod tests {
                 .abs()
                 < 0.001
         );
+    }
+
+    #[test]
+    fn test_math_random_seed_replays_float_and_integer_sequence() {
+        let first_caps = setup_caps();
+        let second_caps = setup_caps();
+        let first_default = first_caps.get("math.random").unwrap().call(vec![]).unwrap();
+        let second_default = second_caps.get("math.random").unwrap().call(vec![]).unwrap();
+        assert_eq!(first_default, second_default, "default seed must be deterministic");
+
+        let caps = setup_caps();
+        let seed = caps.get("math.seed").unwrap();
+        let random = caps.get("math.random").unwrap();
+        let random_int = caps.get("math.random_int").unwrap();
+
+        assert_eq!(
+            seed.call(vec![Value::Int(123)]).unwrap(),
+            Some(Value::Int(123))
+        );
+        let first_float = random.call(vec![]).unwrap();
+        let first_int = random_int
+            .call(vec![Value::Int(-4), Value::Int(7)])
+            .unwrap();
+        seed.call(vec![Value::Int(123)]).unwrap();
+        assert_eq!(random.call(vec![]).unwrap(), first_float);
+        assert_eq!(
+            random_int
+                .call(vec![Value::Int(-4), Value::Int(7)])
+                .unwrap(),
+            first_int
+        );
+
+        seed.call(vec![Value::Int(123)]).unwrap();
+        let first_int = random_int
+            .call(vec![Value::Int(-4), Value::Int(7)])
+            .unwrap();
+        seed.call(vec![Value::Int(123)]).unwrap();
+        assert_eq!(
+            random_int
+                .call(vec![Value::Int(-4), Value::Int(7)])
+                .unwrap(),
+            first_int
+        );
+
+        match first_float {
+            Some(Value::Float(value)) => assert!((0.0..1.0).contains(&value)),
+            other => panic!("expected float in [0, 1), got {other:?}"),
+        }
+        match first_int {
+            Some(Value::Int(value)) => assert!((-4..7).contains(&value)),
+            other => panic!("expected integer in [-4, 7), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_math_random_int_rejects_invalid_range() {
+        let caps = setup_caps();
+        let random_int = caps.get("math.random_int").unwrap();
+        let err = random_int
+            .call(vec![Value::Int(5), Value::Int(5)])
+            .expect_err("empty random_int ranges must be rejected");
+        assert!(err.contains("lo < hi"), "unexpected error: {err}");
+
+        let full = random_int
+            .call(vec![Value::Int(i64::MIN), Value::Int(i64::MAX)])
+            .expect("the full i64 range is valid");
+        assert!(matches!(full, Some(Value::Int(_))));
     }
 
     // Conversion tests

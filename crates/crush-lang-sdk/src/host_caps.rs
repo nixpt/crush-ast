@@ -7,6 +7,8 @@
 use crush_index::CrushIndex;
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(feature = "stdlib")]
+use std::sync::Mutex;
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
@@ -225,7 +227,10 @@ impl HostCapsBuilder {
         }
         #[cfg(feature = "stdlib")]
         if self.stdlib {
-            crate::stdlib::register(&mut caps);
+            crate::stdlib::register_with_rng(
+                &mut caps,
+                Arc::new(Mutex::new(crate::stdlib::RngState::new(0))),
+            );
         }
         if let Some(idx) = self.codebase_index {
             crate::codebase::register(&mut caps, idx);
