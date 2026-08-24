@@ -489,6 +489,36 @@ mod tests {
     }
 
     #[test]
+    fn test_array_push_returns_array_reference() {
+        let program = make_simple_program(vec![
+            FastInstr::simple(FastOp::NewArray),
+            FastInstr::new(FastOp::PushInt, 7, 0),
+            FastInstr::simple(FastOp::ArrayPush),
+            FastInstr::simple(FastOp::Len),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+
+        let mut vm = make_vm(program);
+        assert_eq!(vm.run(100), FastYield::Finished(Some(RuntimeValue::Int(1))));
+    }
+
+    #[test]
+    fn test_array_pop_returns_array_and_value() {
+        let program = make_simple_program(vec![
+            FastInstr::new(FastOp::PushInt, 7, 0),
+            FastInstr::simple(FastOp::NewArray),
+            FastInstr::simple(FastOp::ArrayPop),
+            // Drop the removed value and inspect the returned array.
+            FastInstr::simple(FastOp::Pop),
+            FastInstr::simple(FastOp::Len),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+
+        let mut vm = make_vm(program);
+        assert_eq!(vm.run(100), FastYield::Finished(Some(RuntimeValue::Int(0))));
+    }
+
+    #[test]
     fn test_throw_unwind_three_functions_uncaught() {
         // Verifies that Throw without any handler produces an error.
         // main → a → b → c where c throws and NO frame has a handler.

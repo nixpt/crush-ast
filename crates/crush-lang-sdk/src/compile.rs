@@ -592,6 +592,91 @@ mod tests {
         assert_eq!(result.output, "yes\n");
     }
 
+    #[cfg(feature = "native-plugins")]
+    #[test]
+    fn test_compiled_for_loop_array_accumulator_runs_in_fastvm() {
+        let source = r#"
+            fn main() {
+                let acc = [];
+                for i in 0..3 {
+                    acc = acc.push(i);
+                }
+                return len(acc);
+            }
+        "#;
+        let casm = crush_frontend::compile_crush_source(source).expect("compile for loop");
+        let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower for loop");
+        let mut vm = crush_vm::fastvm::FastVM::new(
+            lowered,
+            Vec::new(),
+            std::sync::Arc::new(crate::compile::tests::TestHal),
+        );
+        assert_eq!(
+            vm.run(10_000),
+            crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(3)))
+        );
+    }
+
+    #[cfg(feature = "native-plugins")]
+    #[test]
+    fn test_compiled_array_for_loop_runs_in_fastvm() {
+        let source = r#"
+            fn main() {
+                let acc = [];
+                for item in [1, 2, 3] {
+                    if item == 2 {
+                        continue;
+                    }
+                    acc = acc.push(item);
+                }
+                return len(acc);
+            }
+        "#;
+        let casm = crush_frontend::compile_crush_source(source).expect("compile array loop");
+        let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower array loop");
+        let mut vm = crush_vm::fastvm::FastVM::new(
+            lowered,
+            Vec::new(),
+            std::sync::Arc::new(TestHal),
+        );
+        assert_eq!(
+            vm.run(10_000),
+            crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(2)))
+        );
+    }
+
+    #[cfg(feature = "native-plugins")]
+    #[test]
+    fn test_compiled_for_loop_arithmetic_assignment_runs_in_fastvm() {
+        let source = r#"
+            fn main() {
+                let total = 0;
+                for item in [1, 2, 3] {
+                    total = total + item;
+                }
+                return total;
+            }
+        "#;
+        let casm = crush_frontend::compile_crush_source(source).expect("compile arithmetic loop");
+        let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower arithmetic loop");
+        let mut vm = crush_vm::fastvm::FastVM::new(
+            lowered,
+            Vec::new(),
+            std::sync::Arc::new(TestHal),
+        );
+        assert_eq!(
+            vm.run(10_000),
+            crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(6)))
+        );
+    }
+
+    #[cfg(feature = "native-plugins")]
+    #[derive(Debug)]
+    struct TestHal;
+
+    #[cfg(feature = "native-plugins")]
+    impl crush_vm::fastvm::Hal for TestHal {}
+
     #[test]
     fn test_compile_with_object() {
         let source = "fn main() {\n    let obj = {name: \"crush\", version: 42}\n    io.print(obj.name)\n}\n";

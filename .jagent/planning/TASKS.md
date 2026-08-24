@@ -6,10 +6,13 @@ provision through the buckets sandbox (lexer char-set fix + `validate_deps`
 + live bwrap proof for `pypi:six` / `npm:is-number`, network-isolated). See
 `tickets/CRUSH-66-lang-deps-pypi-npm.md` Resolution.
 
-Refreshed 2026-07-25 (docs + CRUSH-66 filing): `main` @ `5fb5bff` includes M2
-JIT Phases 2–7 (PR #21). CRUSH-20 ticket status corrected to **Done**. New
-Ready item **CRUSH-66** (pypi/npm `@lang[deps]` via BUCKETS-15). Prior
-s388 refresh note below still applies for M1 ticket hygiene.
+Refreshed 2026-08-23: CRUSH-66 is **Done** (BUCKETS-15 merged and the
+`@lang[pypi:/npm:]` sandbox path verified). M2's implementation arc is
+substantially landed through Phases 1-5; formal M2 closure still requires the
+remaining conformance audit and Phase 6/7 performance/AOT gates. M1 remains
+mostly complete with CRUSH-1, residual builtin/backend findings, and nested
+array semantics still open. Prior s388 refresh note below still applies for
+M1 ticket hygiene.
 
 Refreshed s388 (2026-07-16): every open item below was either re-verified against
 current `main`, or is a genuinely-still-open ticket. Previously this file had ~60
@@ -79,21 +82,30 @@ this session's whole games/interpreters arc independently hit; 118 proves
 - [x] **CRUSH-10** (AOT Rust backend can't compile anything) — verified fixed s388, compiles + executes correctly
 - [x] **CRUSH-16** (P1): `cargo test --workspace` link failure — fixed by `lto = "thin"` and single crate-type for crush-python.
 
+## M0 — Foundation & release hygiene
+
+M0 is effectively complete: the parser → CAST → semantics → optimizer →
+compiler → CASM pipeline, CVM1/PortableVM, FastVM, core AOT paths, polyglot
+execution, sandbox integration, and the initial release/publish plumbing are
+landed. Remaining M0-adjacent work is tracked in the Publish lane: workspace
+version normalization, walker-core publication, and the `walker` →
+`crush-walker` package rename. Platform matrix work belongs to M8, not M0.
+
 ## M1 — Correctness sweep (black-box bugs found porting real examples)
 
-Every item here was found by actually running programs against the toolchain,
-not by source-diving. **Re-verify each repro before fixing** — this session
-found 2 of the "P0 critical" tickets in this exact folder were already fixed
-by unrelated work; don't assume a ticket's Backlog status means the bug still
-reproduces.
+M1 is **mostly complete**, not closed. Every item here was found by actually
+running programs against the toolchain, not by source-diving. **Re-verify each
+repro before fixing** — this session found 2 of the "P0 critical" tickets in
+this exact folder were already fixed by unrelated work; don't assume a ticket's
+Backlog status means the bug still reproduces.
 
 - [ ] **CRUSH-1** (L): Wire 10 AI-native opcodes + spawn/await/yield to real VM execution (currently all NOP). Blocks crush-notebook's AI-native cells.
-- [x] **CRUSH-7** (M): Array mutation effectively unusable — index-assignment fixed, chained `.push()` fixed (scheduler/portable return array), array slice syntax (`xs[1:]`, `xs[1:3]`) implemented. Nested indexing still open per ticket Resolution.
+- [ ] **CRUSH-7** (M): Array mutation is mostly repaired — index-assignment, chained `.push()`, array slices, and the FastVM loop path are fixed. Nested indexing remains open per the ticket Resolution.
 - [x] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) — fixed: recursive type inference (Null→Any in BinaryOp + merge_types Any compatibility), for-loop continue target (continue_indices patching), ARR_GET string indexing support
 - [x] **CRUSH-9** (L): JS-walked CAST type-inference bugs — root cause was same as CRUSH-8: recursive/forward function calls returned Null placeholder types during inference, causing spurious type errors. Fixed by lenient Null handling in BinaryOp and Any compatibility in merge_types.
 - [x] **CRUSH-11** (M): AOT C backend's string-output garbling — **fixed in M1 session**. Root cause: `_add` reset `_strbuf_idx=0` overwriting previously stored strings. Fix: ring-buffer append in `_add`, `_str_dup` in `store`, plus `str_to_upper/lower/trim`. Verified: all 5 backends agree on recursive multi-function string concat (turtle_runner-style).
 - [x] **CRUSH-12** (M): Any `struct` declaration silently kills `main` — re-verified; already fixed by unrelated prior work.
-- [x] **CRUSH-13** (L): Five independent arithmetic implementations (scheduler/portable_vm/fastvm/aot-rust/aot-c) disagree on div/mod-by-zero (loud error vs. silent 0) and likely other operators. The bugarium flagship differential-testing target; `crush-diff` harness exists but doesn't yet cover the AOT backends.
+- [ ] **CRUSH-13** (L): Arithmetic parity is fixed for the covered interpreter/portable/FastVM paths, but the AOT backends are not yet included in the differential closure gate. Keep open until the all-backend comparison is live.
 - [x] **CRUSH-14** (S): `io.print` emits no trailing newline — fixed in scheduler.rs and portable_vm.rs; test expectations updated.
 - [x] **CRUSH-15** (S): `crushc --emit casm` text + `crush-run` CASM assembler — **verified working M1 session**. Round-trip tested successfully: basic arithmetic, strings, function calls, recursive functions with conditionals all produce correct output via `crush-run run <file.casm>`. The text format and the assembler accept the same dialect.
 - [x] **CRUSH-17** (S): Parser error messages leaked `Token`'s Debug format — fixed s388, added `Token::describe()`/`Display`, 30 call sites updated, verified live + 91 tests green.
@@ -104,8 +116,14 @@ reproduces.
 
 ## M2 — JIT completion
 
+M2 implementation is substantially landed, but the milestone is not formally
+closed. Phases 1-5 have implementation and regression coverage in the merged
+JIT arc; the remaining closure gates are the full FastOp conformance audit,
+optimization validation, AOT-from-JIT output, and differential coverage against
+AOT-C.
+
 - [x] Phase 1: Skeleton (stack ops, arithmetic, logic, jumps, locals, 21 tests)
-- [ ] Phase 2: Locals & Calls (function calls, store/load, CapCall, CallHost)
+- [x] Phase 2: Locals & Calls (function calls, store/load, CapCall, CallHost)
   - [x] **CRUSH-24**: JIT `CALL`/`RETURN` dispatch cascade panics on Cranelift's
     `!self.is_sealed(block)` SSA invariant, found on `agent/buffy/CRUSHAST-CRUSH-1`
     (s391, foreman). **Superseded, not fixed (s391)** — that branch is retired
@@ -114,11 +132,11 @@ reproduces.
     different "frame-relative locals" design; non-recursive CALL/RETURN already
     works there. `CRUSHAST-CRUSH-1`'s other commit (AI-opcode AOT stubs) was
     salvaged separately, cherry-picked to `main` `f49ece5`. See ticket for detail.
-- [ ] Phase 3: Data & Caps (MakeList, MakeMap, Index, Len, arena)
-- [ ] Phase 4: Exceptions (EnterTry, ExitTry, Throw)
-- [ ] Phase 5: ExoLight integration
-- [ ] Phase 6: Optimization passes
-- [ ] Phase 7: AOT compilation
+- [x] Phase 3: Data & Caps (MakeList, MakeMap, Index, Len, arena)
+- [x] Phase 4: Exceptions (EnterTry, ExitTry, Throw)
+- [x] Phase 5: ExoLight integration
+- [ ] Phase 6: Optimization passes — closure work is tracked under M10 / CRUSH-60.
+- [ ] Phase 7: AOT compilation — AOT-from-JIT dump remains open under M10 / CRUSH-61.
 - [ ] (unfiled) crush-jit silently miscompiles ~55 of 86 FastOps per a cranelift fuzz target disagreement (panini, 2026-07-14) — needs its own ticket before work starts; scope unclear from the one-line finding alone.
 
 ## M3 — Debugger completion
@@ -137,7 +155,11 @@ reproduces.
 
 ## M5 — AI-native compiler layer
 
-**Proposed**, `.jagent/planning/ROADMAP.md` M5 spec — annotations as CAST node types; `crush-index` v0; AI opcodes VM-execute; agent `codebase.*` host caps wired; `@exhaustive-match-sites` lint; dejavue ↔ crush-index integration. **8 tickets filed** (CRUSH-27 through CRUSH-34) under `.jagent/planning/tickets/CRUSH-27..34-*.md`. See ROADMAP M5 for full spec.
+**Partial / active**, `.jagent/planning/ROADMAP.md` M5 spec. CRUSH-27/28/29/31/32/33
+are recorded as done in the current backlog index; CRUSH-30 needs a scope ruling
+and CRUSH-34 (spawn/await/yield execution) remains in progress. The VM-side
+AI opcode contract is still the main gap, so M5 is not closed. See ROADMAP M5
+for the full done condition.
 
 ## M6 — Walker parity & multi-language completeness
 
@@ -235,3 +257,5 @@ reproduces.
 - [ ] **opportunity** — casm::Function has no constant pool (literals inlined per use), no local slots (name-string lookup per variable access at runtime; compiler tracks declared_vars then throws numbering away — crush-lang-sdk/src/compile.rs re-derives slots at a LATER layer), and record_debug_info_for_function produces 'line 1 col 1' for everything with 2 allocs/instruction. Fix: consts Vec<ConstValue> + PushConst(u16), slot-numbered Load/Store(u16), RLE source map. Touches casm shape = same contract caveat as finding #1 (CRUSH-71 finding #10)  _(panini-crush, 2026-08-02)_
 - [ ] **issue** — BUG: function ending in if{return;}else{<call>;} with nothing after emits bytecode missing a terminator -> VM crashes 'truncated instruction at N' (N=total instr count). Repro: fn count(n,max){io.print(n); if n>=max{return;}else{count(n+1,max);}} fn main(){count(0,5);} -- crashes. Fix: add trailing 'return;' after the if/else (even though unreachable) makes it work. Found reviewing Ornith-1.5-35B's pong.crush (pong_tick's body ends in exactly this shape, no code bug on its side). Needs a real codegen fix: emit an implicit return/halt when a function body's last statement is an if/else with no fallthrough statement.  _(unknown, 2026-08-20)_
 - [ ] **issue** — BUG: crushc hangs (infinite loop, not a crash) parsing @decision's 'revisit-if' field specifically -- isolated via bisection: @module alone compiles fine, @invariant alone compiles fine, @decision with chose/because/over[] all compile fine, but @decision { revisit-if: [...] } alone hangs crushc indefinitely (tested with timeout 10, never returns). Likely the hyphenated field name (revisit-if) confuses the lexer/parser -- 'if' after the hyphen is a reserved keyword, and the parser's error-recovery path for 'identifier, unexpected -, keyword' probably loops instead of erroring. Repro: @decision "test" { chose: "a" revisit-if: ["never"] } fn main() { io.print("hi"); return; } -- crushc hangs with zero output, never reaches instruction-count print. NOT reproduced for @module or @invariant (both compile instantly). This affects docs/design/CRUSH-AI-ANNOTATIONS.md's own documented @decision schema (revisit-if is one of its 4 fields) and examples/crush/ai_agent_ops.crush's own // expect-error: TIMEOUT fixture likely traces to this exact bug, not (only) the semantic_switch/ai_synthesize runtime calls the file's comments imply.  _(unknown, 2026-08-20)_
+- [x] **CRUSH-119** — FastVM array mutation and `for` loops — **fixed 2026-08-22**. Native `push`/`append`/`pop`/`arr_get`/`arr_set`/`arr_len` capability forms now lower to FastOps; array mutation returns match CVM1. Regression coverage executes compiled range and array loops, including `continue`.  _(buffy)_
+- [x] **CRUSH-120** — Optimizer constant propagation no longer rewrites an assignment target's self-reference before invalidating it. `total = total + item` now preserves loop-carried state in optimized FastVM execution; regression coverage returns `6` for `[1, 2, 3]`.  _(buffy, 2026-08-23)_

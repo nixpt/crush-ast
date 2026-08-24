@@ -1,33 +1,50 @@
 # Handoff
 
-Updated: 2026-07-25T03:30:00-05:00
+Updated: 2026-08-23
 
 ## Summary
-Docs/planning refresh + CRUSH-66 filing (no code). Synced memory to `main`
-`5fb5bff` (M2 JIT merge). Marked CRUSH-20 ticket Done. Designed and filed
-CRUSH-66: wire `@lang[pypi:/npm:]` through existing `bucket_exec` /
-`resolve_multi` once BUCKETS-15 lands on sibling buckets.
+CRUSH-119 is complete on `agent/buffy/CRUSH-119-for-loop`. FastVM now has
+CVM1-parity contracts for array mutation: `push`/`append` preserve the mutated
+array reference, `pop` returns the array plus removed value, and `arr_set`
+returns the mutated array. Compiler-emitted array primitives (`push`, `append`,
+`pop`, `arr_get`/`index`, `arr_set`, `arr_len`) lower to native FastOps instead
+of requiring an unavailable host capability.
+
+CRUSH-120 is also complete on the same dedicated branch. The frontend
+optimizer now removes an assignment target from its constant map before
+rewriting the RHS. This preserves the runtime value in self-referential
+updates such as `total = total + item`, including loop-carried accumulators.
+
+The planning records were reconciled on 2026-08-23. M0 is now explicit as
+foundation/release hygiene; M1 is marked mostly complete with residual
+correctness findings; M2 is marked substantially implemented through Phases
+1-5 with conformance, optimization, and AOT-from-JIT closure still open; M3
+and M4 remain partial; M5 is partial/active; M6-M11 remain proposed. CRUSH-66
+is recorded as done and its obsolete BUCKETS-15 blocker was removed.
+
+## Verification
+- `CARGO_BUILD_JOBS=1 cargo test -p crush-frontend --lib`: 83 passed.
+- `CARGO_BUILD_JOBS=1 cargo test -p crush-lang-sdk --lib`: 181 passed.
+- Focused FastVM arithmetic regression: passed, returning `6` for `[1, 2, 3]`.
+- `cargo check -p crush-vm -p crush-lang-sdk`: previously passed for CRUSH-119.
+- `git diff --check`: passed before final metadata edits.
+- Targeted rustfmt check on changed Rust files: passed for CRUSH-119; workspace-wide
+  formatting remains blocked by unrelated pre-existing drift.
+- `crush-vm` built with one job, but its full test harness hit the environment's
+  process/thread resource limit while starting/listing tests; no code failure
+  was reported.
+
+## Known follow-up
+The compiler and optimizer are covered by the new loop accumulator regression.
+Existing repository warnings remain unrelated to CRUSH-120. Remaining roadmap
+closure work is listed in `.jagent/planning/ROADMAP.md` and `.jagent/planning/TASKS.md`.
 
 ## Next Steps
-1. Merge [nixpt/buckets#4](https://github.com/nixpt/buckets/pull/4) (BUCKETS-15).  
-2. Implement [CRUSH-66](../.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md) per [design](../docs/design/lang-deps-pypi-npm.md) — likely small: deps already pass to `resolve_multi`; verify PYTHONPATH/NODE_PATH + live tests + doc comment fixes.  
-3. Optional: review panini Math.* fix worktree; or start M5 (CRUSH-1 AI opcodes).
+1. Foreman reviews and merges the CRUSH-119/CRUSH-120 branch.
+2. Close the M1 correctness spine or choose M2 conformance/AOT closure, M3
+   debugger inspection, or M5 AI-native VM execution.
+3. Keep M6-M11 gated on their documented dependencies.
 
 ## Boot Instructions
-Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and `.dejavue/timeline.jsonl` before making changes.
-
-```bash
-cd /workspace/projects/crush-ast && dejavue context
-cat .jagent/planning/STATE.md .jagent/planning/TASKS.md
-# buckets consumers
-rg -n 'crush-buckets|sandboxed-polyglot' crates/*/Cargo.toml
-```
-
-## Key paths
-
-| What | Where |
-|------|--------|
-| CRUSH-66 ticket | `.jagent/planning/tickets/CRUSH-66-lang-deps-pypi-npm.md` |
-| Design | `docs/design/lang-deps-pypi-npm.md` |
-| Sandbox wiring | `crates/crush-vm/src/bucket_exec.rs` |
-| crush-pkg runners | `crates/crush-pkg/src/runners.rs` |
+Read `.dejavue/handoff.md`, `.dejavue/state.md`, `.dejavue/decisions.md`, and
+`.dejavue/timeline.jsonl` before making changes.

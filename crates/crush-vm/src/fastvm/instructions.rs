@@ -896,8 +896,22 @@ fn lower_instruction(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| LowerError::MissingArgument("cap_call name".into()))?;
             let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            let idx = symbols.register_capability(name);
-            Ok(FastInstr::new(FastOp::CapCall, idx as u64, argc))
+
+            // These are compiler-emitted array primitives, not host calls.
+            // Resolve them to native FastOps so method syntax such as
+            // `acc.push(item)` works in FastVM without requiring a host cap,
+            // matching the portable VM's built-in dispatch.
+            match name {
+                "push" | "append" if argc == 2 => Ok(FastInstr::simple(FastOp::ArrayPush)),
+                "pop" if argc == 1 => Ok(FastInstr::simple(FastOp::ArrayPop)),
+                "arr_get" | "index" if argc == 2 => Ok(FastInstr::simple(FastOp::Index)),
+                "arr_set" if argc == 3 => Ok(FastInstr::simple(FastOp::ArrSet)),
+                "arr_len" if argc == 1 => Ok(FastInstr::simple(FastOp::Len)),
+                _ => {
+                    let idx = symbols.register_capability(name);
+                    Ok(FastInstr::new(FastOp::CapCall, idx as u64, argc))
+                }
+            }
         }
 
         "call_host" => {

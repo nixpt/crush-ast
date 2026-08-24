@@ -6,10 +6,10 @@
 > prompt in `workspace-meta/prompts/crush-backlog/`. Foreman (or any captain
 > session) picks the top unblocked ticket, launches the prompt, done.
 >
-> Statuses verified s412 by a full triage (every ticket file cross-checked against
-> `git log --all`, TASKS.md, and the actual code — statuses below are relative to
-> HEAD `060d9c5`). `RULES.md` still applies at dispatch time: **verify the repro
-> before fixing.**
+> Broad statuses were last triaged at s412 against `HEAD 060d9c5`; the current
+> summary corrections below incorporate the later CRUSH-66 resolution and the
+> CRUSH-119/120 FastVM/compiler fixes. `RULES.md` still applies at dispatch time:
+> **verify the repro before fixing.**
 > Sources: `ROADMAP.md` (M5–M11 specs), `research/2026-07-14-crush-ast-opportunities.md`
 > (ranked findings), CRUSH-71 audit (in flight, panini), dejavue timeline captures.
 
@@ -24,7 +24,7 @@
 | 39    | ⚠ ID BURNED — branch `agent/panini-crush/CRUSH-39` holds unrelated Math.* WIP stash; walker→AOT renumbered → **CRUSH-103** |
 | 59–63 | M10 (minted s412) |
 | 64    | reserved-free (ROADMAP's stale "M11 = 64+" claim) |
-| 65–70 | s403–s411 bug tickets (65/67/68/69/70 done; 66 impl-on-branch, gated) |
+| 65–70 | s403–s411 bug tickets (65/67/68/69/70 done; 66 done 2026-08-01) |
 | 71    | Design audit + client survey campaign (panini persona-session, IN FLIGHT s412) |
 | 72–78 | Correctness spine: research-doc ranked findings (minted s412) |
 | 79–86 | CRUSH-71 opening-survey captures (minted s412) |
@@ -71,7 +71,7 @@
 | ID | Title | Who | Status |
 |----|-------|-----|--------|
 | CRUSH-71 | Design audit + client survey + top-win implementation | panini (persona-session s412) | branch `agent/panini-crush/CRUSH-71` |
-| CRUSH-66 | `@lang[pypi:/npm:]` deps via buckets | impl exists on `agent/cece/CRUSH-66` (80c48f5), unmerged | GATED on buckets#4 (BUCKETS-15) |
+| CRUSH-66 | `@lang[pypi:/npm:]` deps via buckets | **Done 2026-08-01**; BUCKETS-15 merged and sandbox path verified | no gate |
 
 ## Correctness spine (72–78) — dispatch these first
 
