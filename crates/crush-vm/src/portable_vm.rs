@@ -1197,6 +1197,34 @@ impl PortableVm {
             return Err(VmError::CapDenied(cap.to_string()));
         }
 
+        // Host-provided capabilities override portable defaults. This lets
+        // embedders provide controlled stdin/output while preserving the
+        // manifest and quota checks above.
+        if let Some(host) = &self.host_caps
+            && let Some(handler) = host.get(cap)
+        {
+            let spec = handler.spec();
+            if let Some(expected) = spec.argc
+                && args.len() != expected
+            {
+                return Err(VmError::CapArity {
+                    cap: cap.to_string(),
+                    expected,
+                    got: args.len(),
+                });
+            }
+            return match handler.call_with_deadline(args, self.quotas.max_wall_time_ms) {
+                Ok(v) => Ok(v),
+                Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
+                    cap: cap.to_string(),
+                    limit_ms: self.quotas.max_wall_time_ms,
+                }),
+                Err(crate::host::HostCapError::Message(msg)) => {
+                    Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+                }
+            };
+        }
+
         // Built-in portable capabilities
         if let Some(spec) = crate::caps::capabilities().get(cap) {
             if let Some(expected) = spec.argc

@@ -1398,6 +1398,29 @@ fn dispatch_cap(
         return Err(VmError::CapDenied(cap.to_string()));
     }
 
+    // Host-provided capabilities override portable defaults so embedders can
+    // inject controlled stdin/output without changing the global process I/O.
+    if let Some(host) = host_caps
+        && let Some(handler) = host.get(cap)
+    {
+        let spec = handler.spec();
+        if let Some(expected) = spec.argc
+            && args.len() != expected
+        {
+            return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+        }
+        return match handler.call_with_deadline(args, quotas.max_wall_time_ms) {
+            Ok(v) => Ok(v),
+            Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
+                cap: cap.to_string(),
+                limit_ms: quotas.max_wall_time_ms,
+            }),
+            Err(crate::host::HostCapError::Message(msg)) => {
+                Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+            }
+        };
+    }
+
     if let Some(spec) = capabilities().get(cap) {
         if let Some(expected) = spec.argc
             && args.len() != expected
