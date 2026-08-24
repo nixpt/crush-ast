@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-115 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — merged in #52 (`1d5f0cf`) / v0.3.5 |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -57,14 +57,24 @@ player, and any CLI tool that prompts for input.
 
 ## Definition of done
 
-- [ ] `io.read` registered in `caps.rs`
-- [ ] Implemented consistently in `portable_vm`, `scheduler`, and the AOT
+- [x] `io.read` registered in `caps.rs`
+- [x] Implemented consistently in `portable_vm`, `scheduler`, and the AOT
       backend (or a documented, deliberate fallback for backends that can't
       support blocking I/O, e.g. JIT)
-- [ ] EOF behavior decided and documented
-- [ ] `@covers` test through the real pipeline (parse → compile → execute),
+- [x] EOF behavior decided and documented
+- [x] `@covers` test through the real pipeline (parse → compile → execute),
       feeding piped stdin, not a smoke test
-- [ ] CRUSH-118 (a real interactive demo) can build on this
+- [x] CRUSH-118 (a real interactive demo) can build on this
+
+## Resolution
+
+Merged in #52 as `1d5f0cf` (`Add canonical io.read capability across runtimes`)
+and released in `v0.3.5`.
+
+`io.read` is now a canonical opt-in capability across CVM1, PortableVM, Rust
+AOT, C AOT, and AOT-C. The `crush-run` source pipeline includes piped-stdin
+coverage, and CRUSH-118 remains the open follow-up for a real user-facing
+interactive example rather than the capability implementation itself.
 
 ## Files to modify
 

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-117 |
 | **Priority** | P3 |
-| **Status** | Done |
+| **Status** | Done — merged in `52a0e0e` / v0.3.6 |
 | **Phase** | M1 |
 | **Assignee** | Buffy |
 | **Dependencies** | none |
@@ -51,6 +51,17 @@ character to its codepoint, for parsing — hits the same wall.
 
 - `crates/crush-lang-sdk/src/stdlib.rs`
 - `crates/crush-vm/src/caps.rs` — if promoted to a portable (always-on) cap
+
+## Resolution
+
+Merged in `52a0e0e` (`Implement conv.chr and conv.ord across runtimes`) and
+released in `v0.3.6`.
+
+`conv.chr` and `conv.ord` are always-on portable capabilities wired through the
+VM scheduler, PortableVM, Rust AOT, C AOT, and AOT-C runtime paths. Regression
+coverage includes Unicode round trips and invalid-input rejection. Porting
+`brainfuck.crush` away from its hand-built ASCII table remains optional adoption
+work, not part of this ticket's blocking definition.
 
 ## Gates
 

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-7 |
 | **Priority** | P1 |
-| **Status** | Done |
+| **Status** | Partial — core mutation paths fixed; nested indexing and slicing remain open |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |

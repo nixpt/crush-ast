@@ -7,8 +7,8 @@
 > session) picks the top unblocked ticket, launches the prompt, done.
 >
 > Broad statuses were last triaged at s412 against `HEAD 060d9c5`; the current
-> summary corrections below incorporate the later CRUSH-66 resolution and the
-> CRUSH-119/120 FastVM/compiler fixes. `RULES.md` still applies at dispatch time:
+> summary corrections below incorporate the later CRUSH-66 resolution, CRUSH-80,
+> CRUSH-115/116/117, and the CRUSH-119/120 FastVM/compiler fixes. `RULES.md` still applies at dispatch time:
 > **verify the repro before fixing.**
 > Sources: `ROADMAP.md` (M5–M11 specs), `research/2026-07-14-crush-ast-opportunities.md`
 > (ranked findings), CRUSH-71 audit (in flight, panini), dejavue timeline captures.
@@ -39,11 +39,13 @@
 | 108   | Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
 | 109   | Disambiguate top-level `stdlib/` (polyglot transpiled modules) from CRUSH-56/57's native HostCap restoration work — includes an already-observed string-function naming overlap |
 | 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
-| 115   | `io.read` — interactive stdin input capability | **Done 2026-08-23** — verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
-| 116   | `math.random`/`math.seed` — real numeric RNG | **Done 2026-08-23** — deterministic SplitMix64 stdlib caps, native source pipeline, and JS `Math.random()` lowering verified. |
-| 117   | `conv.chr`/`conv.ord` — character ↔ codepoint | **Done 2026-08-23** — implemented across VM, PortableVM, Rust AOT, C AOT, and AOT-C. |
-| 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 |
-| 119+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
+| 115   | `io.read` — interactive stdin input capability | **Done 2026-08-21** — canonical implementation merged in #52 and released in v0.3.5; verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
+| 116   | `math.random`/`math.seed` — real numeric RNG | **Done 2026-08-24** — deterministic SplitMix64 stdlib caps, native source pipeline, and JS `Math.random()` lowering merged in v0.3.6. |
+| 117   | `conv.chr`/`conv.ord` — character ↔ codepoint | **Done 2026-08-24** — implemented across VM, PortableVM, Rust AOT, C AOT, and AOT-C in v0.3.6. |
+| 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 | **Open** — gate is now clear. |
+| 119   | FastVM array mutation return-value parity | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
+| 120   | Optimizer self-referential assignment preservation | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
+| 121+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index
 
@@ -65,7 +67,6 @@
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
 | CRUSH-30 | whether E-EXH-001 wildcard-warn satisfies the ticket | `missing_arms` is a documented stub pending a type registry — needs a scope ruling, then either close or re-scope |
 | CRUSH-35 | VISION.md walker table refresh | 6/7 gaps verified closed in code; table still shows all red |
-| CRUSH-116 | `math.random`/`math.seed` capability | **Done 2026-08-23** — per-registry deterministic RNG state, explicit seed replay, half-open integer bounds, and JS lowering coverage complete. |
 
 ## In flight
 
@@ -95,7 +96,7 @@ the spine; most later work is gated on 73/77 existing.
 | ID | Title | Kind | Repo | Prompt |
 |----|-------|------|------|--------|
 | CRUSH-79 | casm source_map flat-vector: wrong location for multi-fn programs | correctness | crush-ast | crush-backlog/CRUSH-79.txt |
-| CRUSH-80 | casm dead code: CachedProgram (O(F²), unwired) + ecasm.rs — wire or delete | hygiene | crush-ast | crush-backlog/CRUSH-80.txt |
+| CRUSH-80 | ✅ DONE — deleted dead `CachedProgram`/`to_cached` remnants and `ecasm.rs`; future real caching remains CRUSH-83 | hygiene | crush-ast | — |
 | CRUSH-81 | ✅ DONE — landed via CRUSH-71 (`11f7a1c` + seed-fix `97bd7c4`; 3.4–3.9x on chain shapes) | design/perf | crush-ast | — |
 | CRUSH-106 | Typed OpCode emission — kill serde_json on the emit path (audit #1) | design/perf | crush-ast | crush-backlog/CRUSH-106.txt |
 | CRUSH-107 | CAST meta HashMap → packed Span + side table (audit #2; nimbus/visuals contract — coordinate; pairs with CRUSH-74) | design/perf | crush-ast | crush-backlog/CRUSH-107.txt |
@@ -198,8 +199,8 @@ the spine; most later work is gated on 73/77 existing.
   packed Span, not by stamping meta); #3 SemanticAnalyzer multi-pass → landed
   (CRUSH-81 ✅ via CRUSH-71, 3.4–3.9x). Perf dispatch order: 106 → 107(+74/79)
   → 83 (compile cache) → 82 (lexer).
-- CRUSH-83 vs CRUSH-80: still open — 83's design doc decides; 80 defaults to
-  delete.
+- CRUSH-83 vs CRUSH-80: settled — 80 deleted the dead stillborn cache path;
+  83 remains the future real compile-cache/incremental-unit design.
 - Client matrix confirmed 84–86 and added per-client canary/policy tickets in
   the client repos themselves (VISUALS-7/8/9, NB-025..029, SQUEEZE-7, LSP-1/2,
   VSC-1/2, GUIDE-1/2, WEB-1, polydex O-05).

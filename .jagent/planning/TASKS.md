@@ -14,6 +14,12 @@ mostly complete with CRUSH-1, residual builtin/backend findings, and nested
 array semantics still open. Prior s388 refresh note below still applies for
 M1 ticket hygiene.
 
+Refreshed 2026-08-24: `origin/main`/`v0.3.6` now includes CRUSH-80
+(delete dead `CachedProgram`/`ecasm.rs`), CRUSH-115 (`io.read`), CRUSH-116
+(`math.random`/`math.random_int`/`math.seed`), CRUSH-117
+(`conv.chr`/`conv.ord`), and the CRUSH-119/120 FastVM/compiler fixes. CRUSH-118
+remains open as the real user-facing `io.read` demo/proof gate.
+
 Refreshed s388 (2026-07-16): every open item below was either re-verified against
 current `main`, or is a genuinely-still-open ticket. Previously this file had ~60
 lines of unstructured findings dumped under "Aspirational" that were neither
@@ -54,17 +60,13 @@ all with a reproduction in their ticket file:
 
 ## Filed — new capability requests (s439, captain's ask: "add input support and other things")
 
-CRUSH-115 and CRUSH-116 are implemented and verified on their dedicated
-branches (2026-08-23). CRUSH-118 remains the separate user-facing proof gate
-for stdin; CRUSH-117 remains backlog.
+CRUSH-115, CRUSH-116, and CRUSH-117 are implemented on `origin/main` as of
+`v0.3.6`. CRUSH-118 remains the separate user-facing proof gate for stdin.
 
 - [x] **CRUSH-115** — `io.read`: interactive stdin input. Implemented across CVM1, PortableVM, Rust AOT, C AOT, and AOT-C; piped source-pipeline coverage passes.
 - [x] **CRUSH-116** — `math.random`/`math.random_int`/`math.seed`: dependency-free SplitMix64 RNG in stdlib, deterministic default and explicit seeding, native source and JavaScript lowering coverage.
-- **CRUSH-117** — `conv.chr`/`conv.ord`: character ↔ codepoint. `brainfuck.crush` hand-built a 95-char ASCII lookup table specifically because this doesn't exist.
-- **CRUSH-115** — `io.read`: interactive stdin input. Zero input capability exists today; every example program is self-playing/simulated specifically because of this gap. (P1)
-- **CRUSH-116** — `math.random`/`math.seed`: real numeric RNG. Every example program that needs unpredictability hand-rolls its own LCG (5+ independent reimplementations of the same missing primitive).
-- **CRUSH-117** — `conv.chr`/`conv.ord`: character ↔ codepoint. **Done 2026-08-23** — portable runtime + Rust/AOT-C/AOT-C backend paths and Unicode/error regressions shipped on the dedicated branch; the brainfuck table port remains optional.
-- **CRUSH-118** — a real interactive demo proving `io.read` end-to-end, not just registered. Gates: CRUSH-115.
+- [x] **CRUSH-117** — `conv.chr`/`conv.ord`: always-on portable codepoint conversion with VM, PortableVM, Rust AOT, C AOT, and AOT-C coverage.
+- [ ] **CRUSH-118** — a real interactive demo proving `io.read` end-to-end, not just registered. Gates: CRUSH-115.
 
 ## P0 — Build & Core Health ✅
 
@@ -103,7 +105,7 @@ this exact folder were already fixed by unrelated work; don't assume a ticket's
 Backlog status means the bug still reproduces.
 
 - [ ] **CRUSH-1** (L): Wire 10 AI-native opcodes + spawn/await/yield to real VM execution (currently all NOP). Blocks crush-notebook's AI-native cells.
-- [ ] **CRUSH-7** (M): Array mutation is mostly repaired — index-assignment, chained `.push()`, array slices, and the FastVM loop path are fixed. Nested indexing remains open per the ticket Resolution.
+- [ ] **CRUSH-7** (M): Array mutation is mostly repaired — index-assignment, chained `.push()`/`.append()`, and the FastVM loop path are fixed. Nested indexing and slice syntax remain open per the ticket Resolution. CRUSH-119/120 closed the FastVM loop/regression portion, not the whole residual ticket.
 - [x] **CRUSH-8** (S): Two shipped example files (`fibonacci.crush`, `arrays_and_loops.crush`) — fixed: recursive type inference (Null→Any in BinaryOp + merge_types Any compatibility), for-loop continue target (continue_indices patching), ARR_GET string indexing support
 - [x] **CRUSH-9** (L): JS-walked CAST type-inference bugs — root cause was same as CRUSH-8: recursive/forward function calls returned Null placeholder types during inference, causing spurious type errors. Fixed by lenient Null handling in BinaryOp and Any compatibility in merge_types.
 - [x] **CRUSH-11** (M): AOT C backend's string-output garbling — **fixed in M1 session**. Root cause: `_add` reset `_strbuf_idx=0` overwriting previously stored strings. Fix: ring-buffer append in `_add`, `_str_dup` in `store`, plus `str_to_upper/lower/trim`. Verified: all 5 backends agree on recursive multi-function string concat (turtle_runner-style).
@@ -248,7 +250,7 @@ for the full done condition.
 - [ ] **issue** — crush-notebook casm_to_assembly (kernel/src/main.rs:403-478) silently maps unknown casm opcodes to NOP — wrong programs instead of errors; needs a hard-error arm  _(panini-crush, 2026-08-02)_
 - [ ] **issue** — exo-light fabric_executor falls back to fake exit_code:0 success when no crush-run binary found — silent failure mode on binary rename  _(panini-crush, 2026-08-02)_
 - [ ] **issue** — casm DebugInfo.source_map correctness bug: record_debug_info_for_function appends per-function pc into one flat vector — source_location_for_pc returns wrong function's location for multi-function programs (compiler.rs:312-319, casm/debug_info.rs:166-168)  _(panini-crush, 2026-08-02)_
-- [ ] **gap** — casm dead code: CachedProgram/to_cached (lib.rs:246-610, promises 10-100x, never wired, O(F^2) as written) and ecasm.rs (1039 lines, zero external refs) — wire or delete  _(panini-crush, 2026-08-02)_
+- [x] **gap** — casm dead code: CachedProgram/to_cached and ecasm.rs — **fixed CRUSH-80**. Deleted `crates/casm/src/ecasm.rs` and the orphaned `CachedProgram`/`to_cached` remnants from `crates/casm/src/lib.rs`; CRUSH-83 owns any future real compile-cache design.
 - [ ] **opportunity** — SemanticAnalyzer multi-pass (4-14 full walks) exists only to work around HashMap function iteration order — replace with Tarjan SCC reverse-topological inference (semantics.rs:98-137)  _(panini-crush, 2026-08-02)_
 - [ ] **opportunity** — Lexer design: Vec<char> whole-source copy + String per token + comments materialized then discarded — byte-span tokens + interner (lexer.rs:252)  _(panini-crush, 2026-08-02)_
 - [ ] **opportunity** — No compile cache/incremental unit: every entry point recompiles from source; content-hash casm cache + per-function memoization (lib.rs:75-78)  _(panini-crush, 2026-08-02)_

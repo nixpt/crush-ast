@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-80 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done — deleted in `1cd2506` / v0.3.6 |
 | **Phase** | Hygiene (s412) |
 
 ## Problem
@@ -24,9 +24,26 @@ is the default; CRUSH-83 owns the real caching design.
 
 ## Definition of done
 
-- [ ] CachedProgram + ecasm.rs either deleted (with dejavue entry) or wired
+- [x] CachedProgram + ecasm.rs either deleted (with dejavue entry) or wired
       with a consumer + test — no third state
-- [ ] `cargo test --workspace` green; no orphaned pub API remains
+- [x] No orphaned public `CachedProgram`/`to_cached` API remains
+
+## Resolution
+
+Resolved by deletion in `1cd2506` (`casm: delete dead ecasm.rs + CachedProgram
+remnants (CRUSH-80)`), released in `v0.3.6`.
+
+The stale `crates/casm/src/ecasm.rs` file was removed, and the orphaned
+`CachedProgram`/`to_cached` remnants were removed from `crates/casm/src/lib.rs`.
+CRUSH-83 remains the correct home for any future content-hash compile cache or
+incremental-unit design.
+
+Verification:
+
+```text
+CARGO_TARGET_DIR=/tmp/target-crush-ast-foreman-review CARGO_BUILD_JOBS=2 cargo check -p crush-vm -p crush-lang-sdk -p crush-frontend -p crush-aot -p crush-aotc
+passed
+```
 
 ## Files in scope
 
@@ -34,4 +51,5 @@ is the default; CRUSH-83 owns the real caching design.
 
 ## Gates
 
-Read CRUSH-83's direction first (subsume-or-delete question).
+Settled by deletion. CRUSH-83 is no longer blocked on deciding whether to reuse
+this code.

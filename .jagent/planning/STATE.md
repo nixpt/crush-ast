@@ -1,10 +1,10 @@
 # Planning state — crush-ast
 
-**Updated:** 2026-08-23 (CRUSH-119/120 implementation fixes and milestone-status
-reconciliation completed; delivery snapshot refreshed against the current
-planning records)
+**Updated:** 2026-08-24 (v0.3.6 backlog reconciliation: CRUSH-80, CRUSH-115,
+CRUSH-116, CRUSH-117, CRUSH-119, and CRUSH-120 marked complete where the merge
+history proves it)
 **Milestone focus:** M2 implementation substantially landed (Phases 1-5); M2 closure gates remain in conformance/optimization/AOT work; CRUSH-66 done; M3 debugger / M5 AI-native next
-**Branch:** `main` (= `origin/main` @ `cd0f497`, 2026-08-21)
+**Branch:** `main` (= `origin/main` @ `d755781` / tag `v0.3.6`, 2026-08-24)
 
 ## Since 2026-07-25 (this session's verified activity — not yet folded into the snapshot below)
 
@@ -15,8 +15,9 @@ planning records)
 - Two real compiler bugs found and filed as GitHub issues (#37 trailing-return
   codegen, #38 `revisit-if` parser hang), plus tickets **CRUSH-108..118** minted
   (stdlib source reconciliation, toolchain gaps found building the interpreters,
-  and new capability requests: `io.read`/`math.random`/`conv.chr`/`conv.ord`,
-  115/46 and 116/47 already merged).
+  and new capability requests: `io.read`/`math.random`/`conv.chr`/`conv.ord`;
+  CRUSH-115/116/117 are now merged, while CRUSH-118 remains the interactive
+  demo/proof ticket).
 - **`crates-publish-sync`'s systemd timer had been failing 52+ consecutive runs**
   (crates.io 400: missing description/license on `crush-ptx`) — silently stalling
   ALL remaining crates.io publishes behind it. Fixed (PR #48); verified via
@@ -52,9 +53,10 @@ planning records)
 |------|--------|
 | CRUSH-66 `@lang[pypi:/npm:]` deps | **done 2026-08-01** — BUCKETS-15 merged; lexer, dependency validation, sandbox provisioning, and live proof landed. |
 | panini `CRUSH-39` / Math.* lowering | separate worktree (`agent/panini-crush/CRUSH-39`); not re-checked this pass |
-| Open GitHub PRs | CRUSH-117/118 (conv.chr/ord, interactive-input demo) still open/unstarted as of 2026-08-21; #45-49 merged this session (see "Since 2026-07-25" above) |
-| CRUSH-119 FastVM array/loop parity | **done on `agent/buffy/CRUSH-119-for-loop`**; native array mutation contracts and compiled range/array-loop regressions pass. |
-| CRUSH-120 optimizer self-reference | **done on `agent/buffy/CRUSH-119-for-loop`**; assignment invalidation now precedes RHS constant propagation, preserving loop-carried accumulators. |
+| Open capability follow-up | CRUSH-118 (interactive-input demo) remains open; CRUSH-115 `io.read`, CRUSH-116 RNG, and CRUSH-117 `conv.chr`/`conv.ord` are merged. |
+| CRUSH-80 casm dead code | **done in v0.3.6** — `ecasm.rs` and orphaned `CachedProgram`/`to_cached` remnants deleted; CRUSH-83 remains the real cache design. |
+| CRUSH-119 FastVM array/loop parity | **done in v0.3.6**; native array mutation contracts and compiled range/array-loop regressions pass. |
+| CRUSH-120 optimizer self-reference | **done in v0.3.6**; assignment invalidation now precedes RHS constant propagation, preserving loop-carried accumulators. |
 
 ## Buckets consumer reality
 
@@ -86,9 +88,9 @@ verified live. Design: `docs/design/lang-deps-pypi-npm.md`.
 
 ## Next 3 (suggested)
 
-1. Merge buckets#4 → implement [CRUSH-66](./tickets/CRUSH-66-lang-deps-pypi-npm.md)  
-2. Land or review panini Math.* fix (CRUSH-39 / CRUSH-65 naming)  
-3. Pick M5 start (CRUSH-1 / CRUSH-32 AI opcodes) or M3 debugger variable inspection  
+1. Build the CRUSH-118 interactive `io.read` demo now that CRUSH-115 is merged.
+2. Land or review panini Math.* fix (CRUSH-39 / CRUSH-65 naming).
+3. Pick M5 start (CRUSH-1 / CRUSH-32 AI opcodes) or M3 debugger variable inspection.
 
 ## Memory split
 

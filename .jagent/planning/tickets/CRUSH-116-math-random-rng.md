@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-116 |
 | **Priority** | P2 |
-| **Status** | **Done** — verified on `agent/nixp/CRUSH-116` (2026-08-23) |
+| **Status** | **Done** — merged in `fb2a670` / v0.3.6 |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -76,6 +76,8 @@ cargo test -p crush-lang-js math_random_is_lowered_to_the_seedable_crush_capabil
 1 passed
 
 ```
+
+Merged to `origin/main` in `fb2a670` and released in `v0.3.6`.
 
 The full workspace rustfmt check remains blocked by unrelated formatting drift
 in the sibling `buckets` checkout and the host process limit; targeted checks

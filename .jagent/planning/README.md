@@ -8,8 +8,9 @@ Execution board. Pattern: squadron `.jagent/planning/`.
 planning/
 ├── README.md           # this file
 ├── STATE.md            # current project state + metrics (per-session updates)
-├── ROADMAP.md          # milestones (M0-M4), phases, non-goals
-├── TASKS.md            # kanban: P0-P5 priority levels
+├── ROADMAP.md          # milestones (M0-M11), phases, non-goals
+├── TASKS.md            # milestone/backlog status summary
+├── BACKLOG-INDEX.md    # dispatch map: ticket IDs, prompt links, gates, done status
 ├── tickets/            # ticket files
 └── templates/
     ├── ticket.md       # ticket template
