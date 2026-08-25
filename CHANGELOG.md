@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-08-25
+
+- chore(security): ignore agent/MCP artifacts and secret-shaped files
+
+
+
 ## [0.3.7] - 2026-08-24
 
 - docs(planning): import crush backlog dispatch prompts
