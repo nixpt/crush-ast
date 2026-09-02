@@ -13,9 +13,9 @@ name: release
 # Loop-safe: pushes made with the default GITHUB_TOKEN do NOT trigger new
 # workflow runs (a deliberate GitHub behavior), so the bump commit won't
 # recurse. The commit message also carries [skip ci].
+# Trigger is workflow_dispatch ONLY (2026-09-02, account-wide Actions-usage trim):
+# release/bump used to fire on every push to main.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
