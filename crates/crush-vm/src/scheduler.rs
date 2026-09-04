@@ -865,9 +865,23 @@ fn execute_one(
         }
         ARR_LEN => {
             let v = pop!();
-            let arr_rc = need_array(v)?;
-            let len = arr_rc.borrow().len();
-            push!(Value::Int(len as i64));
+            match v {
+                Value::Array(arr_rc) => {
+                    let len = arr_rc.borrow().len();
+                    push!(Value::Int(len as i64));
+                }
+                // CRUSH-114: len() accepts strings (byte length, shared with
+                // str.len and every other backend via crate::str_len).
+                Value::Str(s) => {
+                    push!(Value::Int(crate::str_len::str_len(&s)));
+                }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "array or string",
+                        got: other.type_name(),
+                    })
+                }
+            }
         }
         ARR_PUSH => {
             let val = pop!();
@@ -1424,7 +1438,7 @@ fn dispatch_cap(
             }
             "str.len" => {
                 let s = args[0].as_text();
-                Ok(Some(Value::Int(s.len() as i64)))
+                Ok(Some(Value::Int(crate::str_len::str_len(&s))))
             }
             "str.contains" => {
                 let haystack = args[0].as_text();

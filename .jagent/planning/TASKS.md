@@ -56,7 +56,7 @@ all with a reproduction in their ticket file:
 - **CRUSH-111** — type checker registers only `len`/`print` while `compiler.rs` handles ~25 builtin names; non-dotted builtins (`arr_get`, `make_range`, …) are unreachable ("Undefined function").
 - **CRUSH-112** — dotted `array.*`/`str.*`/`math.*` builtins compile to unregistered capabilities (`array.push`/`array.pop`, `str.starts_with`, `math.sqrt`, … fail at runtime).
 - **CRUSH-113** — `stdlib` feature is off by default and `--stdlib` silently no-ops: no `conv.*`/`chr`/`parse_int`/`collections.*` in the default build.
-- **CRUSH-114** — `len()` errors on strings in the VM but works in the AOT backend (diverges from `str.len`).
+- **CRUSH-114** — `len()` errors on strings in the VM but works in the AOT backend (diverges from `str.len`). **[x] Done 2026-09-04** — shared `crush_vm::str_len` byte-length helper across scheduler/PortableVM/FastVM/JIT + both `str.len` caps; differential test green.
 
 ## Filed — new capability requests (s439, captain's ask: "add input support and other things")
 

@@ -539,7 +539,8 @@ pub fn execute_one(
                 let len = match arena.get(ptr) {
                     Some(Object::Array(a)) => a.len(),
                     Some(Object::Map(m)) => m.len(),
-                    Some(Object::Str(s)) => s.len(),
+                    // CRUSH-114: shared byte-length semantics with every backend.
+                    Some(Object::Str(s)) => crate::str_len::str_len(s) as usize,
                     Some(Object::Bytes(b)) => b.len(),
                     Some(Object::Buffer(b)) => b.len(),
                     _ => return Err(FastError::TypeMismatch),

@@ -79,6 +79,26 @@ fn arr_get_and_len() {
     assert_eq!(r.stack, vec![Value::Int(10)]);
 }
 
+// CRUSH-114: len() accepts strings on every backend (byte length, shared
+// with str.len via crate::str_len — not chars().count()).
+#[test]
+fn arr_len_accepts_strings() {
+    let r = run_src("PUSH_STR \"abc\"\nARR_LEN\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(3)]);
+    let r = run_src("PUSH_STR \"\"\nARR_LEN\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(0)]);
+    // "héllo": 5 chars, 6 bytes — pinned to bytes to match str.len,
+    // FastVM, JIT, and both AOT backends.
+    let r = run_src("PUSH_STR \"héllo\"\nARR_LEN\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(6)]);
+    // Arrays are unchanged.
+    let r = run_src("PUSH 1\nPUSH 2\nPUSH 3\nNEW_ARRAY 3\nARR_LEN\nHALT");
+    assert_eq!(r.stack, vec![Value::Int(3)]);
+    // Anything else is still a type error.
+    let prog = assemble("PUSH 1\nARR_LEN\nHALT", None, None).expect("assembly");
+    assert!(run(&prog, &Quotas::default()).is_err());
+}
+
 #[test]
 fn arr_set() {
     let r =

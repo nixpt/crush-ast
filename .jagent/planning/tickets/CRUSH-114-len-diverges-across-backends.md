@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-114 |
 | **Priority** | P3 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (see CRUSH-13 for the analogous arithmetic divergence) |
@@ -54,3 +54,28 @@ crushc /tmp/l.crush -o /tmp/l.cvm1 && crush-run run /tmp/l.cvm1 --cap io.print
 ## Non-goals
 
 - Unifying the other array-op divergences (CRUSH-13 tracks arithmetic; this is `len` only).
+
+## Resolution (Done 2026-09-04, branch `agent/nixp/CRUSH-114`)
+
+Repro re-verified on `main` before fixing (`len("abc")` → `[runtime] type
+error: expected array, got str`), then fixed. Surveyed all seven `len`
+paths: only scheduler + PortableVM `ARR_LEN` errored; `str.len` caps,
+FastVM `Len`, JIT `OP_LEN`, AOT-Rust and AOT-C codegen all returned **byte**
+length already — so canonical semantics is byte length (matching the
+documented `str.len` "byte length of a string"), not the ticket's guessed
+`chars().count()` (which would have diverged from `str.len` on non-ASCII).
+
+New shared `crush_vm::str_len::str_len(&str) -> i64` helper (`io_read.rs`
+pattern) now serves scheduler `ARR_LEN`, PortableVM `ARR_LEN`, both
+`str.len` caps, FastVM `Len`, and JIT `OP_LEN`; AOT-Rust (`s.len()`) and
+AOT-C (`strlen`) were already byte-correct and left as-is. `ARR_GET`'s
+char-based indexing untouched (indexing ≠ length).
+
+Verified: `len("abc")`/`str.len("abc")`/`len([1,2,3])` all print `3`
+end-to-end via crushc+crush-run; `cargo test -p crush-vm` 144 pass (new
+`arr_len_accepts_strings` + `test_portable_arr_len_string` + `str_len`
+units, incl. pinned `len("héllo")==6` bytes); `cargo test -p crush-jit
+--lib` 97 pass; new `aot_len_on_string_agrees` differential test green
+(FastVM/AOT-Rust/AOT-C/interpreter/portable agree). The 2 `cargo clippy`
+errors in `crush-vm` (`approx_constant` on 3.14 in tests/arith.rs,
+tests/matrix.rs) are pre-existing on `main`, untouched.

@@ -783,8 +783,22 @@ impl PortableVm {
             }
             ARR_LEN => {
                 let v = self.pop()?;
-                let arr_rc = need_array(v)?;
-                self.push(Value::Int(arr_rc.borrow().len() as i64));
+                match v {
+                    Value::Array(arr_rc) => {
+                        self.push(Value::Int(arr_rc.borrow().len() as i64));
+                    }
+                    // CRUSH-114: len() accepts strings (byte length, shared
+                    // with str.len and every other backend via crate::str_len).
+                    Value::Str(s) => {
+                        self.push(Value::Int(crate::str_len::str_len(&s)));
+                    }
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "array or string",
+                            got: other.type_name(),
+                        })
+                    }
+                }
             }
             ARR_PUSH => {
                 let val = self.pop()?;
@@ -1228,7 +1242,7 @@ impl PortableVm {
                 }
                 "str.len" => {
                     let s = value_to_text(&args[0]);
-                    Ok(Some(Value::Int(s.len() as i64)))
+                    Ok(Some(Value::Int(crate::str_len::str_len(&s))))
                 }
                 "str.contains" => {
                     let haystack = value_to_text(&args[0]);
@@ -1772,6 +1786,20 @@ mod tests {
         let mut vm = PortableVm::new(program);
         let result = vm.run().unwrap();
         assert_eq!(result.output, "3\n");
+    }
+
+    #[test]
+    fn test_portable_arr_len_string() {
+        // CRUSH-114 parity: len() accepts strings (byte length, shared via
+        // crate::str_len) — mirrors arr_len_accepts_strings in src/tests.
+        let program = assemble("PUSH_STR \"abc\"\nARR_LEN\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.stack, vec![Value::Int(3)]);
+        let program = assemble("PUSH_STR \"héllo\"\nARR_LEN\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run().unwrap();
+        assert_eq!(result.stack, vec![Value::Int(6)]);
     }
 
     // ── parity tests (mirror canonical src/tests.rs for these opcodes) ─────
