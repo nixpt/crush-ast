@@ -200,6 +200,47 @@ fn main() {}
     assert_eq!(p.decisions[0].over, vec!["Arc<Mutex>"]);
 }
 
+/// Regression test for github.com/nixpt/crush-ast#38.
+/// `revisit-if` caused an infinite loop because the lexer emits `if` as a
+/// keyword token and the parser's annotation key reader only accepted plain
+/// identifiers.  After the fix, the field must be parsed and its value stored.
+#[test]
+fn parse_decision_revisit_if_field_does_not_hang() {
+    let src = r#"
+@decision "test" {
+    chose: "a"
+    revisit-if: ["never"]
+}
+fn main() {}
+"#;
+    let p = parse(src).expect("should parse");
+    assert_eq!(p.decisions.len(), 1);
+    assert_eq!(p.decisions[0].revisit_if, vec!["never"]);
+}
+
+/// Full `@decision` block with all four documented fields (chose, over,
+/// because, revisit-if) to ensure nothing regresses together.
+#[test]
+fn parse_decision_all_fields() {
+    let src = r#"
+@decision "use-semantic-switch-routing" {
+    chose: "semantic_switch"
+    over: ["regex matching", "LLM zero-shot prompt"]
+    because: "embeddings cover common intents"
+    revisit-if: ["user intents become too highly contextual"]
+}
+fn main() {}
+"#;
+    let p = parse(src).expect("should parse");
+    assert_eq!(p.decisions.len(), 1);
+    let d = &p.decisions[0];
+    assert_eq!(d.name, "use-semantic-switch-routing");
+    assert_eq!(d.chose, "semantic_switch");
+    assert_eq!(d.over, vec!["regex matching", "LLM zero-shot prompt"]);
+    assert_eq!(d.because, "embeddings cover common intents");
+    assert_eq!(d.revisit_if, vec!["user intents become too highly contextual"]);
+}
+
 #[test]
 fn parse_wip_block_attaches_to_program() {
     let src = r#"

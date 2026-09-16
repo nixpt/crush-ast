@@ -2558,6 +2558,9 @@ impl Parser {
         self.skip_newlines();
         while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
             let key = self.read_annotation_key();
+            if key.is_empty() {
+                break;
+            }
             if matches!(self.peek(), Token::Colon(_)) {
                 self.advance();
             }
@@ -2694,15 +2697,28 @@ impl Parser {
                     }
                 }
                 Token::Minus(_) => {
-                    // Peek two ahead: if next is Ident, treat as kebab-case hyphen
-                    if matches!(self.tokens.get(self.pos + 1), Some(Token::Ident(_, _))) {
-                        self.advance(); // consume -
-                        if let Token::Ident(part, _) = self.peek() {
-                            let part = part.clone();
+                    // If the token after `-` is a word (ident or keyword), treat
+                    // this as a kebab-case hyphen.  Keywords are valid word-parts
+                    // in annotation value paths (e.g. `revisit-if`).
+                    let next_is_word = self.tokens.get(self.pos + 1).map_or(false, |t| {
+                        matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some()
+                    });
+                    if next_is_word {
+                        self.advance(); // consume `-`
+                        let kw = Self::kw_text(self.peek());
+                        let part = if let Some(s) = kw {
+                            let owned = s.to_string();
                             self.advance();
-                            result.push('-');
-                            result.push_str(&part);
-                        }
+                            owned
+                        } else if let Token::Ident(p, _) = self.peek() {
+                            let p = p.clone();
+                            self.advance();
+                            p
+                        } else {
+                            break;
+                        };
+                        result.push('-');
+                        result.push_str(&part);
                     } else {
                         break;
                     }
@@ -2850,16 +2866,89 @@ impl Parser {
         items
     }
 
-    /// Read a single identifier key from an annotation block (bare ident, no qualifiers).
+    /// Read a kebab-case field key from an annotation block.
+    ///
+    /// Handles names like `revisit-if` where `if` is a reserved keyword: in
+    /// annotation context every keyword is a valid bare word.  Returns an empty
+    /// string (without advancing) when the current token cannot start a key.
     fn read_annotation_key(&mut self) -> String {
         self.skip_newlines();
-        match self.peek() {
-            Token::Ident(k, _) => {
-                let k = k.clone();
-                self.advance();
-                k
+        // First segment: plain ident or keyword used as a bare name.
+        let kw = Self::kw_text(self.peek());
+        let first = if let Some(s) = kw {
+            let owned = s.to_string();
+            self.advance();
+            owned
+        } else {
+            match self.peek() {
+                Token::Ident(k, _) => {
+                    let k = k.clone();
+                    self.advance();
+                    k
+                }
+                _ => return String::new(),
             }
-            _ => String::new(),
+        };
+        // Extend with kebab segments (`-` followed by an ident or keyword).
+        let mut result = first;
+        loop {
+            if !matches!(self.peek(), Token::Minus(_)) {
+                break;
+            }
+            // Look past the Minus: is the next token a word?
+            let next_is_word = self.tokens.get(self.pos + 1).map_or(false, |t| {
+                matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some()
+            });
+            if !next_is_word {
+                break;
+            }
+            self.advance(); // consume `-`
+            let kw = Self::kw_text(self.peek());
+            let part = if let Some(s) = kw {
+                let owned = s.to_string();
+                self.advance();
+                owned
+            } else {
+                match self.peek() {
+                    Token::Ident(p, _) => {
+                        let p = p.clone();
+                        self.advance();
+                        p
+                    }
+                    _ => break,
+                }
+            };
+            result.push('-');
+            result.push_str(&part);
+        }
+        result
+    }
+
+    /// If `token` is a keyword that is valid as a bare word in annotation
+    /// field-name position, return its source spelling; otherwise `None`.
+    fn kw_text(token: &Token) -> Option<&'static str> {
+        match token {
+            Token::If(_) => Some("if"),
+            Token::Else(_) => Some("else"),
+            Token::While(_) => Some("while"),
+            Token::For(_) => Some("for"),
+            Token::In(_) => Some("in"),
+            Token::Return(_) => Some("return"),
+            Token::Try(_) => Some("try"),
+            Token::Catch(_) => Some("catch"),
+            Token::Throw(_) => Some("throw"),
+            Token::Break(_) => Some("break"),
+            Token::Continue(_) => Some("continue"),
+            Token::Let(_) => Some("let"),
+            Token::Mut(_) => Some("mut"),
+            Token::Fn(_) => Some("fn"),
+            Token::Struct(_) => Some("struct"),
+            Token::Use(_) => Some("use"),
+            Token::Async(_) => Some("async"),
+            Token::Await(_) => Some("await"),
+            Token::New(_) => Some("new"),
+            Token::Match(_) => Some("match"),
+            _ => None,
         }
     }
 
