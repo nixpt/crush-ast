@@ -1592,6 +1592,60 @@ impl Compiler {
                     if args.len() != 1 { bail!("__crush_unary__ expects exactly 1 argument"); }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "__crush_unary__", "argc": 1}), &meta));
+                } else if function == "ai_synthesize" {
+                    // ai_synthesize(type_str [, constraints=[...]]) — lower to ai_synthesize CASM
+                    let type_str = if let Some(Expression::StringLiteral { value, .. }) = args.first() {
+                        value.clone()
+                    } else {
+                        bail!("ai_synthesize: first argument must be a string literal (output type)");
+                    };
+                    let constraints: Vec<String> = if args.len() > 1 {
+                        if let Expression::ArrayLiteral { elements, .. } = &args[1] {
+                            elements.iter().filter_map(|e| {
+                                if let Expression::StringLiteral { value, .. } = e {
+                                    Some(value.clone())
+                                } else {
+                                    None
+                                }
+                            }).collect()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+                    instrs.push(self.create_instr(
+                        "ai_synthesize",
+                        serde_json::json!({
+                            "output_type": type_str,
+                            "constraints": constraints
+                        }),
+                        &meta,
+                    ));
+                } else if function == "ai_semantic_match" {
+                    // ai_semantic_match(target, concept_str [, threshold]) — lower to ai_semantic_match CASM
+                    if args.len() < 2 {
+                        bail!("ai_semantic_match: expects at least 2 arguments (target, concept)");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    let concept = if let Expression::StringLiteral { value, .. } = &args[1] {
+                        value.clone()
+                    } else {
+                        bail!("ai_semantic_match: second argument must be a string literal (concept)");
+                    };
+                    let threshold = if let Some(Expression::FloatLiteral { value, .. }) = args.get(2) {
+                        *value
+                    } else {
+                        0.8
+                    };
+                    instrs.push(self.create_instr(
+                        "ai_semantic_match",
+                        serde_json::json!({
+                            "concept": concept,
+                            "confidence_threshold": threshold
+                        }),
+                        &meta,
+                    ));
                 } else {
                     // Check for method-call syntax: obj.method(args)
                     if let Some(dot_pos) = function.find('.') {

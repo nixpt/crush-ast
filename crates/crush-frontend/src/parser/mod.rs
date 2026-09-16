@@ -14,6 +14,7 @@ use crush_cast::manifest::{
 use crush_cast::*;
 use crush_cast::{ExternalResourceType, ImportStatement};
 use std::collections::HashMap;
+use crush_cast::ai as cast_ai;
 
 /// Parser for Crush language with error recovery
 pub struct Parser {
@@ -780,6 +781,11 @@ impl Parser {
     /// Parse a statement with error recovery
     fn parse_statement(&mut self) -> Result<Statement, ()> {
         self.skip_newlines();
+
+        // semantic_switch is a soft keyword (lexed as Token::Ident, not a reserved token)
+        if matches!(self.peek(), Token::Ident(n, _) if n == "semantic_switch") {
+            return self.parse_semantic_switch_statement();
+        }
 
         match self.peek() {
             Token::Let(_) => self.parse_let_statement(),
@@ -2348,6 +2354,14 @@ impl Parser {
         let mut args = Vec::new();
 
         while !matches!(self.peek(), Token::RParen(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            // Strip named-arg key: `ident = expr` → use only the value
+            let is_named = matches!(self.peek(), Token::Ident(_, _))
+                && matches!(self.tokens.get(self.pos + 1), Some(Token::Assign(_)));
+            if is_named {
+                self.advance(); // skip identifier name
+                self.advance(); // skip =
+            }
+
             let arg = self.parse_expression()?;
             args.push(arg);
 
@@ -3002,6 +3016,108 @@ impl Parser {
             }
             _ => {}
         }
+    }
+
+    // ── AI soft-keyword statement parsers ────────────────────────────────────
+
+    /// Parse `semantic_switch <expr> { case "concept": <stmts>… fallback: <stmts> }`.
+    fn parse_semantic_switch_statement(&mut self) -> Result<Statement, ()> {
+        self.advance(); // consume "semantic_switch" identifier
+
+        let target = self.parse_expression()?;
+        self.skip_newlines();
+
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            let (line, col) = self.get_location(self.peek());
+            self.errors.push(ParseError::Expected {
+                line,
+                col,
+                expected: "{ after semantic_switch target".to_string(),
+                found: self.peek().describe(),
+            });
+            return Err(());
+        }
+        self.advance(); // consume {
+
+        let mut cases: Vec<(String, Vec<Statement>)> = Vec::new();
+        let mut fallback: Option<Vec<Statement>> = None;
+
+        loop {
+            self.skip_newlines();
+            match self.peek().clone() {
+                Token::RBrace(_) => {
+                    self.advance();
+                    break;
+                }
+                Token::EOF(_) => break,
+                Token::Ident(kw, _) if kw == "case" => {
+                    self.advance(); // consume "case"
+                    let concept = self.parse_at_string_value();
+                    if matches!(self.peek(), Token::Colon(_)) {
+                        self.advance();
+                    }
+                    let body = self.parse_case_body()?;
+                    cases.push((concept, body));
+                }
+                Token::Ident(kw, _) if kw == "fallback" => {
+                    self.advance(); // consume "fallback"
+                    if matches!(self.peek(), Token::Colon(_)) {
+                        self.advance();
+                    }
+                    let body = self.parse_case_body()?;
+                    fallback = Some(body);
+                }
+                other => {
+                    let (line, col) = self.get_location(&other);
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: "case or fallback".to_string(),
+                        found: other.describe(),
+                    });
+                    return Err(());
+                }
+            }
+        }
+
+        Ok(Statement::AI(cast_ai::AIStatement::SemanticSwitch {
+            target: Box::new(target),
+            cases,
+            fallback,
+        }))
+    }
+
+    /// Parse statements until the next `case`, `fallback`, or `}` at the switch level.
+    fn parse_case_body(&mut self) -> Result<Vec<Statement>, ()> {
+        let mut stmts = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.at_switch_case_boundary() {
+                break;
+            }
+            if matches!(self.peek(), Token::EOF(_)) {
+                break;
+            }
+            match self.parse_statement() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(()) => break,
+            }
+        }
+        Ok(stmts)
+    }
+
+    /// True when the next non-newline token starts a new switch arm or closes the switch.
+    fn at_switch_case_boundary(&self) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i] {
+                Token::Newline(_) => i += 1,
+                Token::Ident(name, _) if name == "case" || name == "fallback" => return true,
+                Token::RBrace(_) | Token::EOF(_) => return true,
+                _ => return false,
+            }
+        }
+        true
     }
 }
 
