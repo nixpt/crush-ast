@@ -490,6 +490,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "ai_capability_discovery" | "ai_adaptation_request" => "NOP".to_string(),
                 "ai_query" | "ai_tool_chain" | "ai_agent_delegation" => "NOP".to_string(),
                 "ai_learning_loop" | "ai_context_aware" => "NOP".to_string(),
+                "ai_synthesize" | "ai_semantic_match" | "ai_semantic_switch" => "NOP".to_string(),
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));

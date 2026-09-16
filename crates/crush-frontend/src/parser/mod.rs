@@ -14,6 +14,7 @@ use crush_cast::manifest::{
 use crush_cast::*;
 use crush_cast::{ExternalResourceType, ImportStatement};
 use std::collections::HashMap;
+use crush_cast::ai as cast_ai;
 
 /// Parser for Crush language with error recovery
 pub struct Parser {
@@ -780,6 +781,11 @@ impl Parser {
     /// Parse a statement with error recovery
     fn parse_statement(&mut self) -> Result<Statement, ()> {
         self.skip_newlines();
+
+        // semantic_switch is a soft keyword (lexed as Token::Ident, not a reserved token)
+        if matches!(self.peek(), Token::Ident(n, _) if n == "semantic_switch") {
+            return self.parse_semantic_switch_statement();
+        }
 
         match self.peek() {
             Token::Let(_) => self.parse_let_statement(),
@@ -2348,6 +2354,14 @@ impl Parser {
         let mut args = Vec::new();
 
         while !matches!(self.peek(), Token::RParen(_)) && !matches!(self.peek(), Token::EOF(_)) {
+            // Strip named-arg key: `ident = expr` → use only the value
+            let is_named = matches!(self.peek(), Token::Ident(_, _))
+                && matches!(self.tokens.get(self.pos + 1), Some(Token::Assign(_)));
+            if is_named {
+                self.advance(); // skip identifier name
+                self.advance(); // skip =
+            }
+
             let arg = self.parse_expression()?;
             args.push(arg);
 
@@ -2558,6 +2572,9 @@ impl Parser {
         self.skip_newlines();
         while !matches!(self.peek(), Token::RBrace(_)) && !matches!(self.peek(), Token::EOF(_)) {
             let key = self.read_annotation_key();
+            if key.is_empty() {
+                break;
+            }
             if matches!(self.peek(), Token::Colon(_)) {
                 self.advance();
             }
@@ -2694,15 +2711,28 @@ impl Parser {
                     }
                 }
                 Token::Minus(_) => {
-                    // Peek two ahead: if next is Ident, treat as kebab-case hyphen
-                    if matches!(self.tokens.get(self.pos + 1), Some(Token::Ident(_, _))) {
-                        self.advance(); // consume -
-                        if let Token::Ident(part, _) = self.peek() {
-                            let part = part.clone();
+                    // If the token after `-` is a word (ident or keyword), treat
+                    // this as a kebab-case hyphen.  Keywords are valid word-parts
+                    // in annotation value paths (e.g. `revisit-if`).
+                    let next_is_word = self.tokens.get(self.pos + 1).map_or(false, |t| {
+                        matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some()
+                    });
+                    if next_is_word {
+                        self.advance(); // consume `-`
+                        let kw = Self::kw_text(self.peek());
+                        let part = if let Some(s) = kw {
+                            let owned = s.to_string();
                             self.advance();
-                            result.push('-');
-                            result.push_str(&part);
-                        }
+                            owned
+                        } else if let Token::Ident(p, _) = self.peek() {
+                            let p = p.clone();
+                            self.advance();
+                            p
+                        } else {
+                            break;
+                        };
+                        result.push('-');
+                        result.push_str(&part);
                     } else {
                         break;
                     }
@@ -2850,16 +2880,89 @@ impl Parser {
         items
     }
 
-    /// Read a single identifier key from an annotation block (bare ident, no qualifiers).
+    /// Read a kebab-case field key from an annotation block.
+    ///
+    /// Handles names like `revisit-if` where `if` is a reserved keyword: in
+    /// annotation context every keyword is a valid bare word.  Returns an empty
+    /// string (without advancing) when the current token cannot start a key.
     fn read_annotation_key(&mut self) -> String {
         self.skip_newlines();
-        match self.peek() {
-            Token::Ident(k, _) => {
-                let k = k.clone();
-                self.advance();
-                k
+        // First segment: plain ident or keyword used as a bare name.
+        let kw = Self::kw_text(self.peek());
+        let first = if let Some(s) = kw {
+            let owned = s.to_string();
+            self.advance();
+            owned
+        } else {
+            match self.peek() {
+                Token::Ident(k, _) => {
+                    let k = k.clone();
+                    self.advance();
+                    k
+                }
+                _ => return String::new(),
             }
-            _ => String::new(),
+        };
+        // Extend with kebab segments (`-` followed by an ident or keyword).
+        let mut result = first;
+        loop {
+            if !matches!(self.peek(), Token::Minus(_)) {
+                break;
+            }
+            // Look past the Minus: is the next token a word?
+            let next_is_word = self.tokens.get(self.pos + 1).map_or(false, |t| {
+                matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some()
+            });
+            if !next_is_word {
+                break;
+            }
+            self.advance(); // consume `-`
+            let kw = Self::kw_text(self.peek());
+            let part = if let Some(s) = kw {
+                let owned = s.to_string();
+                self.advance();
+                owned
+            } else {
+                match self.peek() {
+                    Token::Ident(p, _) => {
+                        let p = p.clone();
+                        self.advance();
+                        p
+                    }
+                    _ => break,
+                }
+            };
+            result.push('-');
+            result.push_str(&part);
+        }
+        result
+    }
+
+    /// If `token` is a keyword that is valid as a bare word in annotation
+    /// field-name position, return its source spelling; otherwise `None`.
+    fn kw_text(token: &Token) -> Option<&'static str> {
+        match token {
+            Token::If(_) => Some("if"),
+            Token::Else(_) => Some("else"),
+            Token::While(_) => Some("while"),
+            Token::For(_) => Some("for"),
+            Token::In(_) => Some("in"),
+            Token::Return(_) => Some("return"),
+            Token::Try(_) => Some("try"),
+            Token::Catch(_) => Some("catch"),
+            Token::Throw(_) => Some("throw"),
+            Token::Break(_) => Some("break"),
+            Token::Continue(_) => Some("continue"),
+            Token::Let(_) => Some("let"),
+            Token::Mut(_) => Some("mut"),
+            Token::Fn(_) => Some("fn"),
+            Token::Struct(_) => Some("struct"),
+            Token::Use(_) => Some("use"),
+            Token::Async(_) => Some("async"),
+            Token::Await(_) => Some("await"),
+            Token::New(_) => Some("new"),
+            Token::Match(_) => Some("match"),
+            _ => None,
         }
     }
 
@@ -2913,6 +3016,108 @@ impl Parser {
             }
             _ => {}
         }
+    }
+
+    // ── AI soft-keyword statement parsers ────────────────────────────────────
+
+    /// Parse `semantic_switch <expr> { case "concept": <stmts>… fallback: <stmts> }`.
+    fn parse_semantic_switch_statement(&mut self) -> Result<Statement, ()> {
+        self.advance(); // consume "semantic_switch" identifier
+
+        let target = self.parse_expression()?;
+        self.skip_newlines();
+
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            let (line, col) = self.get_location(self.peek());
+            self.errors.push(ParseError::Expected {
+                line,
+                col,
+                expected: "{ after semantic_switch target".to_string(),
+                found: self.peek().describe(),
+            });
+            return Err(());
+        }
+        self.advance(); // consume {
+
+        let mut cases: Vec<(String, Vec<Statement>)> = Vec::new();
+        let mut fallback: Option<Vec<Statement>> = None;
+
+        loop {
+            self.skip_newlines();
+            match self.peek().clone() {
+                Token::RBrace(_) => {
+                    self.advance();
+                    break;
+                }
+                Token::EOF(_) => break,
+                Token::Ident(kw, _) if kw == "case" => {
+                    self.advance(); // consume "case"
+                    let concept = self.parse_at_string_value();
+                    if matches!(self.peek(), Token::Colon(_)) {
+                        self.advance();
+                    }
+                    let body = self.parse_case_body()?;
+                    cases.push((concept, body));
+                }
+                Token::Ident(kw, _) if kw == "fallback" => {
+                    self.advance(); // consume "fallback"
+                    if matches!(self.peek(), Token::Colon(_)) {
+                        self.advance();
+                    }
+                    let body = self.parse_case_body()?;
+                    fallback = Some(body);
+                }
+                other => {
+                    let (line, col) = self.get_location(&other);
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: "case or fallback".to_string(),
+                        found: other.describe(),
+                    });
+                    return Err(());
+                }
+            }
+        }
+
+        Ok(Statement::AI(cast_ai::AIStatement::SemanticSwitch {
+            target: Box::new(target),
+            cases,
+            fallback,
+        }))
+    }
+
+    /// Parse statements until the next `case`, `fallback`, or `}` at the switch level.
+    fn parse_case_body(&mut self) -> Result<Vec<Statement>, ()> {
+        let mut stmts = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.at_switch_case_boundary() {
+                break;
+            }
+            if matches!(self.peek(), Token::EOF(_)) {
+                break;
+            }
+            match self.parse_statement() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(()) => break,
+            }
+        }
+        Ok(stmts)
+    }
+
+    /// True when the next non-newline token starts a new switch arm or closes the switch.
+    fn at_switch_case_boundary(&self) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i] {
+                Token::Newline(_) => i += 1,
+                Token::Ident(name, _) if name == "case" || name == "fallback" => return true,
+                Token::RBrace(_) | Token::EOF(_) => return true,
+                _ => return false,
+            }
+        }
+        true
     }
 }
 
