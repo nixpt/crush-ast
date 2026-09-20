@@ -422,6 +422,17 @@ fn aot_arithmetic_overflow_rejected_consistently() {
     assert_all_backends_agree("fn add_any(a: any, b: any) { return a + b; }\nfn main() { return add_any(9223372036854775807, 1); }");
 }
 
+// CRUSH-114: `len()` on a string agrees across all five backends
+// (interpreter, portable_vm, FastVM, AOT Rust, AOT C) -- byte length via the
+// shared crush_vm::str_len helper. Before this fix, interpreter/portable
+// errored (`expected array, got str`) while FastVM/AOT returned a length.
+#[test]
+fn aot_len_on_string_agrees() {
+    assert_all_backends_agree("fn main() { return len(\"abc\"); }");
+    assert_all_backends_agree("fn main() { return len(\"\"); }");
+    assert_all_backends_agree("fn main() { return len([1, 2, 3]); }");
+}
+
 // ── AOT Rust vs AOT C direct consistency checks ───────────────────────────
 
 #[test]

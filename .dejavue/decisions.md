@@ -609,3 +609,9 @@ New leaf crate crates/crush-vm-py (cdylib only) holds the bindings verbatim; cru
 Reason:
 The whole-program seed+authoritative+10-capped fixed point existed only to fight HashMap iteration order, and was a latent correctness bug: call chains deeper than ~12 functions nondeterministically kept placeholder Null return types (silently wrong programs). Replaced with call graph -> Tarjan SCC -> reverse-topological inference in semantics.rs: non-recursive functions get exactly one authoritative walk; only recursive SCCs run a scoped fixed point. Measured 3.4x on a 300-fn forward chain (694us->205us) and ~10-15% on the standard cast_compile fixtures; pinned by deep_call_chain_return_types_resolve + mutual_recursion_return_types_resolve. Also compile_cast_owned so compile_crush_source skips the whole-AST deep clone (compile_cast &Program signature preserved).
 
+
+## 2026-09-04T03:27:05-05:00 — CRUSH-114: len()-on-string is byte length via shared crush_vm::str_len helper
+
+Reason:
+Surveyed all 7 len paths: str.len cap (scheduler+portable), FastVM Len, JIT OP_LEN, AOT-Rust codegen, AOT-C codegen all use byte length (s.len/strlen); only CVM1 scheduler/portable ARR_LEN errored. Ticket suggested chars().count() but that would create a NEW divergence from documented str.len byte semantics (crush-run help: 'byte length of a string'). Fix: new shared crush_vm::str_len::str_len helper (io_read.rs pattern) called by all in-workspace paths; AOT-Rust/AOT-C already byte-correct, left as-is with contract comment. ARR_GET char-indexing untouched (indexing != length).
+

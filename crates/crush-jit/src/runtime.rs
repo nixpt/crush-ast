@@ -322,7 +322,8 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 Some(ref_idx) => match arena.get(ref_idx) {
                     Some(Object::Array(a)) => a.len(),
                     Some(Object::Map(m)) => m.len(),
-                    Some(Object::Str(s)) => s.len(),
+                    // CRUSH-114: shared byte-length semantics with every backend.
+                    Some(Object::Str(s)) => crush_vm::str_len::str_len(s) as usize,
                     Some(Object::Tuple(t)) => t.len(),
                     Some(Object::Vector(v)) => v.len(),
                     Some(Object::Set(s)) => s.len(),

@@ -23,6 +23,7 @@ pub mod caps;
 pub mod host;
 pub mod io_print;
 pub mod io_read;
+pub mod str_len;
 pub mod portable_vm;
 pub mod scheduler;
 pub mod vm;
