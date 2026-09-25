@@ -3,7 +3,7 @@ use clap::Parser as ClapParser;
 use crush_walker_core::run_walker_binary;
 
 #[derive(ClapParser)]
-#[command(name = "crush_lang_go")]
+#[command(name = "go_walker")]
 struct Cli {
     input: String,
 }

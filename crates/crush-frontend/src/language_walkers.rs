@@ -25,6 +25,11 @@ pub trait LanguageWalker {
     fn capabilities(&self) -> LanguageCapabilities {
         LanguageCapabilities::default()
     }
+
+    /// The external walker binary this walker runs, if it runs one.
+    fn binary_name(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -136,9 +141,8 @@ impl LanguageWalker for SubprocessWalker {
 
         std::fs::write(&temp_path, source).map_err(WalkerError::IoError)?;
 
-        let output = std::process::Command::new(&self.binary_name)
-            .arg(&temp_path)
-            .output();
+        let output = resolve_binary(&self.binary_name)
+            .and_then(|bin| std::process::Command::new(bin).arg(&temp_path).output());
 
         let _ = std::fs::remove_file(&temp_path);
 
@@ -162,6 +166,39 @@ impl LanguageWalker for SubprocessWalker {
     fn capabilities(&self) -> LanguageCapabilities {
         self.capabilities.clone()
     }
+
+    fn binary_name(&self) -> Option<&str> {
+        Some(&self.binary_name)
+    }
+}
+
+/// Find a walker binary: `PATH` first, then the directories `cargo install` and
+/// `pip install --user`-style installs use, which a daemon or GUI launched with a
+/// minimal environment often lacks on its `PATH`. A name containing a path
+/// separator is taken as a path and not searched for.
+fn resolve_binary(name: &str) -> std::io::Result<std::path::PathBuf> {
+    let as_path = std::path::Path::new(name);
+    if as_path.components().count() > 1 {
+        return Ok(as_path.to_path_buf());
+    }
+    let path_dirs = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let home_dirs = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|home| vec![home.join(".cargo/bin"), home.join(".local/bin")])
+        .unwrap_or_default();
+    path_dirs
+        .into_iter()
+        .chain(home_dirs)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("walker binary '{name}' not found on PATH, ~/.cargo/bin or ~/.local/bin"),
+            )
+        })
 }
 
 impl Default for WalkerRegistry {
@@ -263,7 +300,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "go",
             &["go"],
-            "crush_lang_go",
+            "go_walker",
             LanguageCapabilities {
                 version: "1.21".to_string(),
                 execution_model: ExecutionModel::Compiled,
@@ -305,7 +342,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "zig",
             &["zig"],
-            "crush_lang_zig",
+            "zig_walker",
             LanguageCapabilities {
                 version: "0.11".to_string(),
                 execution_model: ExecutionModel::Compiled,
@@ -341,7 +378,7 @@ impl WalkerRegistry {
         registry.register_walker(Box::new(SubprocessWalker::new(
             "wasm",
             &["wasm"],
-            "crush_lang_wasm",
+            "wasm_walker",
             LanguageCapabilities {
                 version: "2.0".to_string(),
                 execution_model: ExecutionModel::Compiled,
@@ -473,10 +510,32 @@ mod tests {
                 native_supported: false,
             },
         );
+        assert_eq!(py_walker.binary_name(), Some("python_walker"));
         let caps = py_walker.capabilities();
         assert_eq!(caps.version, "3.11");
         assert!(!caps.type_system.static_typing);
         assert!(caps.type_system.type_inference);
         assert_eq!(caps.package_manager, Some("pip".to_string()));
+    }
+
+    #[test]
+    fn resolve_binary_searches_path() {
+        assert!(resolve_binary("sh").unwrap().is_absolute());
+    }
+
+    #[test]
+    fn resolve_binary_reports_a_missing_walker_as_not_found() {
+        let err = resolve_binary("definitely_not_a_crush_walker_12345").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            err.to_string()
+                .contains("definitely_not_a_crush_walker_12345")
+        );
+    }
+
+    #[test]
+    fn resolve_binary_takes_a_name_with_a_separator_as_a_path() {
+        let p = resolve_binary("./some_walker").unwrap();
+        assert_eq!(p, std::path::Path::new("./some_walker"));
     }
 }

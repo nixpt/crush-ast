@@ -9,7 +9,7 @@ repository.workspace = true
 name = "crush_lang_go"
 
 [[bin]]
-name = "crush-lang-go"
+name = "go_walker"
 path = "src/main.rs"
 
 
