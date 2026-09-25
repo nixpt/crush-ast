@@ -247,19 +247,56 @@ impl HostCapsBuilder {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, Path, PathBuf};
+
     let s = crate::caps::value_as_text(path);
-    let p = std::path::Path::new(&s);
+    let p = Path::new(&s);
     if p.is_absolute() {
         return Err(format!("absolute paths are not allowed: {s}"));
     }
-    let root = std::path::Path::new(root);
-    let joined = root.join(p);
-    let canonical = joined.canonicalize().unwrap_or(joined);
-    let root_canonical = root.canonicalize().unwrap_or(root.to_path_buf());
-    if !canonical.starts_with(&root_canonical) {
-        return Err(format!("path escapes sandbox root: {s}"));
+    let escapes = || format!("path escapes sandbox root: {s}");
+    let root = Path::new(root);
+    let root_canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    // Resolve `.` / `..` lexically first. A path that does not exist yet
+    // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
+    // compares components, so `<root>/../x` used to pass the check below and
+    // let `fs.write("../x", ..)` write outside the sandbox.
+    let mut relative = PathBuf::new();
+    for component in p.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => relative.push(part),
+            Component::ParentDir => {
+                if !relative.pop() {
+                    return Err(escapes());
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => return Err(escapes()),
+        }
     }
-    Ok(canonical)
+    let joined = root_canonical.join(&relative);
+
+    // Then resolve symlinks through the deepest ancestor that exists, so a
+    // symlink inside the root cannot point a new file outside it either.
+    let mut existing = joined.as_path();
+    let mut rest = Vec::new();
+    let resolved = loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            break rest.iter().rev().fold(canonical, |acc: PathBuf, part| acc.join(part));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                existing = parent;
+            }
+            _ => break joined.clone(),
+        }
+    };
+    if !resolved.starts_with(&root_canonical) {
+        return Err(escapes());
+    }
+    Ok(resolved)
 }
 
 pub struct FsReadCap {
@@ -555,6 +592,45 @@ mod tests {
         assert!(caps.get("crypto.sha256").is_some());
         assert!(caps.get("crypto.random").is_some());
         assert!(caps.get("missing").is_none());
+    }
+
+    #[test]
+    fn sandbox_rejects_parent_escapes_for_paths_that_do_not_exist_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let root_str = root.to_str().unwrap();
+        let write = FsWriteCap::new(root_str);
+        let text = |s: &str| Value::Str(s.to_string());
+
+        for escape in ["../escaped.txt", "a/../../escaped.txt", "./../escaped.txt"] {
+            let err = write.call(vec![text(escape), text("x")]).unwrap_err();
+            assert!(err.contains("escapes sandbox"), "{escape}: {err}");
+        }
+        assert!(!dir.path().join("escaped.txt").exists());
+
+        // new files inside the root still work, including via `..` that stays inside
+        write.call(vec![text("new.txt"), text("ok")]).unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        write.call(vec![text("sub/../new2.txt"), text("ok")]).unwrap();
+        assert!(root.join("new.txt").exists() && root.join("new2.txt").exists());
+    }
+
+    #[test]
+    fn sandbox_follows_symlinks_for_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+
+        let write = FsWriteCap::new(root.to_str().unwrap());
+        let err = write
+            .call(vec![Value::Str("link/new.txt".into()), Value::Str("x".into())])
+            .unwrap_err();
+        assert!(err.contains("escapes sandbox"), "{err}");
+        assert!(!outside.join("new.txt").exists());
     }
 
     #[test]
