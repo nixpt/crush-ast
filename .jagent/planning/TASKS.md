@@ -181,7 +181,8 @@ for the full done condition.
 ## Captured 2026-09-24 (captain) — from the nanovm / extraction review
 
 - [ ] **CRUSH-121** — a kitchen-shaped GC for `crush-vm` (scoped arenas + precise tracing + owned/returned audit); **step 1: reproduce + fix the root set** (`collect_garbage` roots only the current stack + locals). [ticket](tickets/CRUSH-121.md)
-- [ ] **CRUSH-122** — stdlib convergence: finish absorbing exosphere's `core/base/stdlib` (W10). Partial port exists (`crush-lang-sdk` stdlib: math/str/json/path/conv/collections/regex), off by default (CRUSH-113); host-capability families go to osmosis, not the stdlib. [ticket](tickets/CRUSH-122.md)
+- [ ] **CRUSH-122** — stdlib convergence (W10): **steps 2–4 landed in #61** (2026-09-25: remaining exosphere stdlib families + nanovm SBL as `system.*`, fs sandbox escape fixed, `array.push/pop` lowering); remaining: step 1 = CRUSH-113 (`stdlib` on by default), step 5 = atlas/playbook correction (outside this repo). [ticket](tickets/CRUSH-122.md)
+- [ ] **CRUSH-123** — conformance runner: per-file timeout via child process + fix the frontend hang on `examples/crush/ai_agent_ops.crush` (reproduced: >60 s, no output); full corpus must terminate. [ticket](tickets/CRUSH-123.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
