@@ -187,7 +187,7 @@ impl PartialEq for Value {
 }
 
 impl Value {
-    pub(crate) fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> &'static str {
         match self {
             Value::Null => "null",
             Value::Bool(_) => "bool",
