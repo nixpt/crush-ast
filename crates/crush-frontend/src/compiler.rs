@@ -1626,6 +1626,28 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if (name == "array.push" || name == "array.pop")
+                    && !self.declared_vars.contains("array")
+                    && !self.local_functions.contains(name)
+                {
+                    // The parser emits `array.push(a, x)` / `array.pop(a)` as a
+                    // dotted CapabilityCall, not a `Call`, so the `Call`-branch
+                    // intrinsics above never saw them and they fell through to
+                    // an unknown `cap_call "array.push"`. Lower them to the same
+                    // ARR_PUSH / ARR_POP instructions every backend implements
+                    // (nanovm's sbl_core.crush relies on both — CRUSH-122).
+                    let (op, argc) = if name == "array.push" {
+                        ("array_push", 2)
+                    } else {
+                        ("array_pop", 1)
+                    };
+                    if args.len() != argc {
+                        bail!("{name}() expects exactly {argc} argument(s)");
+                    }
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    instrs.push(self.create_instr(op, serde_json::json!({}), meta));
                 } else if self.local_functions.contains(name) {
                     for arg in args {
                         self.compile_expr(arg, instrs)?;
