@@ -615,3 +615,17 @@ The whole-program seed+authoritative+10-capped fixed point existed only to fight
 Reason:
 Surveyed all 7 len paths: str.len cap (scheduler+portable), FastVM Len, JIT OP_LEN, AOT-Rust codegen, AOT-C codegen all use byte length (s.len/strlen); only CVM1 scheduler/portable ARR_LEN errored. Ticket suggested chars().count() but that would create a NEW divergence from documented str.len byte semantics (crush-run help: 'byte length of a string'). Fix: new shared crush_vm::str_len::str_len helper (io_read.rs pattern) called by all in-workspace paths; AOT-Rust/AOT-C already byte-correct, left as-is with contract comment. ARR_GET char-indexing untouched (indexing != length).
 
+
+## 2026-09-25T07:44:11+00:00 — CRUSH-122 (W10): exosphere stdlib + nanovm SBL absorbed; SBL runs as Crush, I/O families stay grant-gated
+
+Reason:
+Pure families (collections map half, bytes/buffer, binary, result, text.sort/uniq, time.format/parse, env.os/arch) ported into crush-lang-sdk's stdlib as HostCaps. nanovm's System Bytecode Layer is kept as Crush source (sbl/sbl_core.crush) and exposed as system.* by compiling it once and running each call in a fresh quota-bounded PortableVm whose only caps are the pure stdlib — this keeps the SBL's point (one shared implementation in bytecode, not host Rust) instead of re-writing path_normalize in Rust. File-reading text tools and the clock half of time are grant-gated host caps (--fs sandboxed, --time), never stdlib.
+
+Rejected alternatives:
+- **Re-implement system.path_normalize in Rust**: duplicates path.normalize and drops the SBL's reason to exist
+- **Put text.head/tail/wc/cut/grep in the stdlib as nanovm did**: ambient file access violates capability-based security
+- **Port polyglot_bridge**: its execute path returns hard-coded mock values; EXEC_LANG supersedes it
+
+Outcome:
+~50 caps landed with unit + source-pipeline tests; array.push/array.pop lowering and an fs sandbox escape (non-existent ../ paths) fixed on the way; CRUSH-113 (stdlib default-on) left open.
+
