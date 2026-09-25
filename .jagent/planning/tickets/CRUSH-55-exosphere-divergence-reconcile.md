@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-55 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | In progress — inventory done, plan awaiting lane owner |
 | **Phase** | M9 — CROSS-REPO (exosphere) |
 
 ## Problem
@@ -29,9 +29,20 @@ A version bump cannot reconcile this — feature sets must merge.
 
 ## Definition of done
 
-- [ ] Delta inventory committed (both repos cited)
+- [x] Delta inventory committed (both repos cited) — `.jagent/planning/research/2026-09-25-CRUSH-55-delta-inventory.md`
 - [ ] Reconcile plan agreed on the bridge with the exosphere lane owner
 - [ ] First slice landed both sides or explicitly deferred with reasons
+
+## Result (2026-09-25)
+
+Inventory at `.jagent/planning/research/2026-09-25-CRUSH-55-delta-inventory.md` (exo `8d52996`,
+ast `868be4f`). Finding: the divergence is no longer both-ways — crush-ast is a superset of the
+exo fork's language surface. The three "exosphere-only" features named in Problem don't hold up
+(corecaps stdlib → done in CRUSH-122; exo's PolyglotContext file isn't compiled; AI-metadata is on
+both sides; Wave3 gating belongs in exo-light). Real ports are engine work behind crush-ast stubs:
+AI tool-chain engine (CRUSH-32 follow-up) and debugger semantics. Also found two crush-ast bugs
+(walker binary-name mismatch, orphaned `crush-vm/src/polyglot/`). Reconcile plan + decisions
+D-1…D-4 are in the inventory; next step is the lane-owner review.
 
 ## Files in scope
 
