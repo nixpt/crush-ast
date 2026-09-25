@@ -1,4 +1,7 @@
-// expect-error: [runtime] unknown capability: system.path_normalize
+// caps: stdlib
+// expect: Path: /mnt/data/../user/./projects//exosphere
+// expect: Normalized: /mnt/user/projects/exosphere
+// expect: Info: Node: node-001 (v1.2.3)
 let path = "/mnt/data/../user/./projects//exosphere";
 let normalized = system.path_normalize(path);
 io.print("Path: " + path);

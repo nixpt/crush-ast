@@ -51,8 +51,11 @@ pub mod repl;
 pub mod repl_helper;
 pub mod repl_util;
 pub mod runtime;
+#[cfg(feature = "stdlib")]
+pub mod sbl;
 pub mod stdlib;
 pub mod task;
+mod text_tools;
 pub mod theme;
 
 // Re-export the core crush-vm types a host author needs.

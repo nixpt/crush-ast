@@ -51,7 +51,7 @@ struct RunArgs {
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
 
-    /// Enable filesystem host capabilities (fs.read, fs.write, fs.exists, fs.list).
+    /// Enable filesystem host capabilities (fs.read, fs.write, fs.exists, fs.list, text.head/tail/wc/cut/grep).
     #[arg(long)]
     fs: bool,
 
@@ -68,7 +68,7 @@ struct RunArgs {
     #[arg(long)]
     env: bool,
 
-    /// Enable time host capability (time.now).
+    /// Enable time host capabilities (time.now, time.now_ms, time.now_iso, time.elapsed, time.sleep).
     #[arg(long)]
     time: bool,
 
@@ -96,7 +96,7 @@ struct RunArgs {
     #[arg(long)]
     graphics: bool,
 
-    /// Enable standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*).
+    /// Enable standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*, bytes.*, buffer.*, binary.*, result.*, text.sort/uniq, time.format/parse, env.os/arch, system.* SBL).
     #[arg(long)]
     stdlib: bool,
 
@@ -188,8 +188,15 @@ fn list_caps() {
     println!("  fs.write PATH DATA     write file contents");
     println!("  fs.exists PATH         return 1 if file exists, else 0");
     println!("  fs.list DIR            list directory entries");
+    println!("  text.head/tail PATH N  first / last N lines of a file");
+    println!("  text.wc PATH           {{lines, words, chars}} of a file");
+    println!("  text.cut PATH DELIM COL  1-based column of every line");
+    println!("  text.grep PAT PATH [RECURSIVE [IGNORE_CASE]]  (also needs the stdlib feature)");
     println!("  env.get NAME           read environment variable");
-    println!("  time.now               return Unix timestamp");
+    println!("  time.now               return Unix timestamp (seconds)");
+    println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
+    println!("  time.elapsed START_MS  milliseconds since START_MS");
+    println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
     println!("Message-bus capabilities (enable with --bus):");
     println!("  message_bus.publish TOPIC PAYLOAD");
     println!("  message_bus.subscribe TOPIC");
@@ -235,9 +242,16 @@ fn list_caps() {
         println!("  math.sqrt/abs/floor/ceil/round/sin/cos/tan/pow/min/max/pi");
         println!("  conv.to_int/to_float/to_str/to_bool/parse_int/parse_float/type_of");
         println!("  collections.len/reverse/includes/flatten/chunk/zip/unique");
+        println!("  collections.keys/values/entries/merge/pluck/sort_by/find/any/all");
         println!("  json.parse/stringify/stringify_pretty");
         println!("  path.join/dirname/basename/extension/is_absolute/normalize/stem");
         println!("  regex.test/match/find_all/replace/split");
+        println!("  bytes.len/slice/from_string/to_string");
+        println!("  buffer.alloc/write/read/freeze");
+        println!("  binary.read_u16_le/u32_le/u64_le/u16_be/u32_be/u64_be (+ write_*)");
+        println!("  result.ok/err/is_ok/unwrap");
+        println!("  text.sort/uniq  time.format/parse  env.os/arch");
+        println!("  system.path_normalize/format_info/format_node_info  (SBL, written in Crush)");
     }
 }
 

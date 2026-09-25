@@ -188,12 +188,17 @@ impl HostCapsBuilder {
             caps.register(Box::new(FsWriteCap::new(&root)));
             caps.register(Box::new(FsExistsCap::new(&root)));
             caps.register(Box::new(FsListCap::new(&root)));
+            crate::text_tools::register(&mut caps, &root);
         }
         if self.env {
             caps.register(Box::new(EnvGetCap::new(self.env_vars)));
         }
         if self.time {
             caps.register(Box::new(TimeNowCap));
+            caps.register(Box::new(TimeNowMsCap));
+            caps.register(Box::new(TimeNowIsoCap));
+            caps.register(Box::new(TimeElapsedCap));
+            caps.register(Box::new(TimeSleepCap));
         }
         if self.bus {
             crate::bus::register(&mut caps);
@@ -246,20 +251,57 @@ impl HostCapsBuilder {
 // Filesystem helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
+pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, Path, PathBuf};
+
     let s = crate::caps::value_as_text(path);
-    let p = std::path::Path::new(&s);
+    let p = Path::new(&s);
     if p.is_absolute() {
         return Err(format!("absolute paths are not allowed: {s}"));
     }
-    let root = std::path::Path::new(root);
-    let joined = root.join(p);
-    let canonical = joined.canonicalize().unwrap_or(joined);
-    let root_canonical = root.canonicalize().unwrap_or(root.to_path_buf());
-    if !canonical.starts_with(&root_canonical) {
-        return Err(format!("path escapes sandbox root: {s}"));
+    let escapes = || format!("path escapes sandbox root: {s}");
+    let root = Path::new(root);
+    let root_canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    // Resolve `.` / `..` lexically first. A path that does not exist yet
+    // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
+    // compares components, so `<root>/../x` used to pass the check below and
+    // let `fs.write("../x", ..)` write outside the sandbox.
+    let mut relative = PathBuf::new();
+    for component in p.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => relative.push(part),
+            Component::ParentDir => {
+                if !relative.pop() {
+                    return Err(escapes());
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => return Err(escapes()),
+        }
     }
-    Ok(canonical)
+    let joined = root_canonical.join(&relative);
+
+    // Then resolve symlinks through the deepest ancestor that exists, so a
+    // symlink inside the root cannot point a new file outside it either.
+    let mut existing = joined.as_path();
+    let mut rest = Vec::new();
+    let resolved = loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            break rest.iter().rev().fold(canonical, |acc: PathBuf, part| acc.join(part));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                existing = parent;
+            }
+            _ => break joined.clone(),
+        }
+    };
+    if !resolved.starts_with(&root_canonical) {
+        return Err(escapes());
+    }
+    Ok(resolved)
 }
 
 pub struct FsReadCap {
@@ -437,6 +479,101 @@ impl HostCap for TimeNowCap {
     }
 }
 
+// The rest of the clock family, ported from exosphere's stdlib `time_cap.rs`
+// (W10 / CRUSH-122). nanovm's `time.now` returned milliseconds; this crate's
+// `time.now` (above) has always returned seconds, so the millisecond clock is
+// `time.now_ms` and `time.elapsed` / `time.sleep` work in milliseconds, as in
+// nanovm. The pure half (`time.format` / `time.parse`) is in the stdlib.
+
+fn now_ms() -> Result<i64, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?;
+    i64::try_from(now.as_millis()).map_err(|e| e.to_string())
+}
+
+macro_rules! time_cap {
+    ($name:ident, $full:expr, $argc:expr, $body:expr) => {
+        pub struct $name;
+        impl HostCap for $name {
+            fn spec(&self) -> HostCapSpec {
+                HostCapSpec {
+                    name: $full.to_string(),
+                    argc: Some($argc),
+                    returns: true,
+                }
+            }
+            fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+                #[allow(clippy::redundant_closure_call)]
+                ($body)(&args)
+            }
+        }
+    };
+}
+
+time_cap!(TimeNowMsCap, "time.now_ms", 0, |_args: &[Value]| {
+    Ok(Some(Value::Int(now_ms()?)))
+});
+
+time_cap!(TimeNowIsoCap, "time.now_iso", 0, |_args: &[Value]| {
+    Ok(Some(Value::Str(chrono::Utc::now().to_rfc3339())))
+});
+
+// Milliseconds since `start_ms` (a `time.now_ms` value).
+time_cap!(TimeElapsedCap, "time.elapsed", 1, |args: &[Value]| {
+    match &args[0] {
+        Value::Int(start) => Ok(Some(Value::Int(now_ms()? - start))),
+        other => Err(format!("time.elapsed: expected int milliseconds, got {other}")),
+    }
+});
+
+/// `time.sleep(ms)` — blocks the calling thread (nanovm's `time.sleep` and
+/// `async.sleep` were this same synchronous sleep under two names). A sleep
+/// longer than the VM's wall-time quota stops at the quota and reports
+/// `CapTimeout` rather than hanging the program.
+pub struct TimeSleepCap;
+
+impl TimeSleepCap {
+    fn millis(args: &[Value]) -> Result<u64, String> {
+        match args.first() {
+            Some(Value::Int(ms)) if *ms >= 0 => Ok(*ms as u64),
+            other => Err(format!(
+                "time.sleep: expected non-negative int milliseconds, got {}",
+                other.map_or("nothing".to_string(), |v| v.to_string())
+            )),
+        }
+    }
+}
+
+impl HostCap for TimeSleepCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "time.sleep".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        std::thread::sleep(std::time::Duration::from_millis(Self::millis(&args)?));
+        Ok(Some(Value::Null))
+    }
+
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        deadline_ms: u64,
+    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+        let ms = Self::millis(&args)?;
+        if ms > deadline_ms {
+            std::thread::sleep(std::time::Duration::from_millis(deadline_ms));
+            return Err(crush_vm::host::HostCapError::Timeout);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        Ok(Some(Value::Null))
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Process helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -551,10 +688,76 @@ mod tests {
         assert!(caps.get("fs.read").is_some());
         assert!(caps.get("env.get").is_some());
         assert!(caps.get("time.now").is_some());
+        assert!(caps.get("time.now_ms").is_some());
+        assert!(caps.get("time.sleep").is_some());
+        assert!(caps.get("text.wc").is_some());
         assert!(caps.get("process.exec").is_some());
         assert!(caps.get("crypto.sha256").is_some());
         assert!(caps.get("crypto.random").is_some());
         assert!(caps.get("missing").is_none());
+    }
+
+    #[test]
+    fn sandbox_rejects_parent_escapes_for_paths_that_do_not_exist_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let root_str = root.to_str().unwrap();
+        let write = FsWriteCap::new(root_str);
+        let text = |s: &str| Value::Str(s.to_string());
+
+        for escape in ["../escaped.txt", "a/../../escaped.txt", "./../escaped.txt"] {
+            let err = write.call(vec![text(escape), text("x")]).unwrap_err();
+            assert!(err.contains("escapes sandbox"), "{escape}: {err}");
+        }
+        assert!(!dir.path().join("escaped.txt").exists());
+
+        // new files inside the root still work, including via `..` that stays inside
+        write.call(vec![text("new.txt"), text("ok")]).unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        write.call(vec![text("sub/../new2.txt"), text("ok")]).unwrap();
+        assert!(root.join("new.txt").exists() && root.join("new2.txt").exists());
+    }
+
+    #[test]
+    fn sandbox_follows_symlinks_for_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+
+        let write = FsWriteCap::new(root.to_str().unwrap());
+        let err = write
+            .call(vec![Value::Str("link/new.txt".into()), Value::Str("x".into())])
+            .unwrap_err();
+        assert!(err.contains("escapes sandbox"), "{err}");
+        assert!(!outside.join("new.txt").exists());
+    }
+
+    #[test]
+    fn time_sleep_respects_the_wall_time_deadline() {
+        use crush_vm::host::HostCapError;
+        let cap = TimeSleepCap;
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(1)], 1_000),
+            Ok(Some(Value::Null))
+        ));
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(60_000)], 5),
+            Err(HostCapError::Timeout)
+        ));
+        assert!(cap.call(vec![Value::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn time_elapsed_counts_from_now_ms() {
+        let now = TimeNowMsCap.call(vec![]).unwrap().unwrap();
+        let Some(Value::Int(elapsed)) = TimeElapsedCap.call(vec![now]).unwrap() else {
+            panic!("expected int");
+        };
+        assert!((0..60_000).contains(&elapsed));
     }
 
     #[test]

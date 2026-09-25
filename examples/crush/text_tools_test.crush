@@ -1,11 +1,21 @@
-// expect-error: [runtime] unknown capability: text.wc
+// caps: fs, stdlib
+// expect: Testing advanced text tools
+// expect: Test 1: text.wc
+// expect: [1061, 25, 168]
+// expect: Test 2: text.head
+// expect: [Copyright (c) 2026 The Crush Authors]
+// expect: All text tool tests passed!
 # Test: Text Tools
 # Description: Verifies text processing utilities.
 
 io.print("Testing advanced text tools")
 
 io.print("Test 1: text.wc")
-let stats = text.wc("tests/for_loop_test.crush")
-io.print(stats)
+// {chars, lines, words}, values in key order
+let stats = text.wc("LICENSE-MIT")
+io.print(collections.values(stats))
+
+io.print("Test 2: text.head")
+io.print(text.head("LICENSE-MIT", 1))
 
 io.print("All text tool tests passed!")

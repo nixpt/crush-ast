@@ -1,4 +1,8 @@
-// expect-error: [runtime] stack underflow
+// caps: stdlib
+// expect: /mnt/user/projects/exosphere
+// expect: /
+// expect: /a/c
+// expect: Node: node-001 (v1.2.3)
 // System Bytecode Layer (SBL) Core Utilities
 // This is compiled to CASM and loaded as the Root of Trust.
 
@@ -23,4 +27,15 @@ pub fn path_normalize(path: string) -> string {
 
 pub fn format_node_info(id: string, version: string) -> string {
     return "Node: " + id + " (v" + version + ")";
+}
+
+// Driver (added in the crush-ast port, W10 / CRUSH-122). The library above is
+// nanovm's source unchanged; crush-lang-sdk ships it (plus a `format_info`
+// alias) as `sbl/sbl_core.crush` and exposes it as `system.*` (see
+// examples/crush/test_sbl.crush).
+fn main() {
+    print(path_normalize("/mnt/data/../user/./projects//exosphere"));
+    print(path_normalize("/../.."));
+    print(path_normalize("a/b/../c"));
+    print(format_node_info("node-001", "1.2.3"));
 }

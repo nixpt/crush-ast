@@ -201,6 +201,18 @@ impl PortableVm {
         self.privileged_allowed = allowed;
     }
 
+    /// Seed the operand stack with `args` for the entry function, following
+    /// the compiler's calling convention: arguments are pushed in reverse so
+    /// the callee's prologue (`STORE 0`, `STORE 1`, ...) pops them in
+    /// declaration order. Together with `manifest.entry` this lets a host call
+    /// one function of a compiled library directly and read its return value
+    /// off `VmResult::stack`. Call before the first `step()` / `run()`.
+    pub fn push_entry_args(&mut self, args: Vec<Value>) {
+        for arg in args.into_iter().rev() {
+            self.push(arg);
+        }
+    }
+
     /// Get the program.
     pub fn program(&self) -> &Program {
         &self.program
