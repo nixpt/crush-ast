@@ -27,6 +27,9 @@
 //! - `// expect-exit: <N>` — expect exit code N (0 = halted cleanly, non-zero
 //!   for programs that halt or error). Default is 0 for expect-mode, 1 for
 //!   expect-error mode.
+//! - `// caps: <cap>[, <cap>...]` — host capabilities to grant, from
+//!   `stdlib` (`--stdlib`) and `fs` (`--fs`, sandboxed to the workspace root,
+//!   so paths in the program are repo-relative). Default: none.
 //! - `// xfail: <reason>` — expected failure; test is INVERTED: if it passes
 //!   (unexpectedly), the runner reports it as a regression-to-fix. If it
 //!   fails for the documented reason, the test is XPASS (diagnostic only).
@@ -43,6 +46,7 @@
 //! ```bash
 //! cargo run -p xtask --bin conformance
 //! cargo run -p xtask --bin conformance -- --verbose
+//! cargo run -p xtask --bin conformance -- examples/crush/test_sbl.crush  # just these files
 //! ```
 
 use std::collections::BTreeMap;
@@ -113,6 +117,31 @@ fn parse_budget_annotation(source: &str) -> Option<u32> {
     None
 }
 
+/// Build the host capabilities a `// caps:` annotation asks for, or `None`
+/// when the file asks for none.
+fn parse_caps_annotation(
+    source: &str,
+    workspace_root: &Path,
+) -> Result<Option<crush_vm::HostCaps>, String> {
+    let Some(list) = source
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("// caps: "))
+    else {
+        return Ok(None);
+    };
+    let mut builder = crush_lang_sdk::HostCapsBuilder::new();
+    for cap in list.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+        builder = match cap {
+            "stdlib" => builder.stdlib(true),
+            "fs" => builder
+                .fs(true)
+                .fs_root(workspace_root.to_string_lossy().into_owned()),
+            other => return Err(format!("unknown `// caps:` entry '{other}'")),
+        };
+    }
+    Ok(Some(builder.build()))
+}
+
 /// Discover all `.crush` files in the given directories (relative to workspace root).
 fn discover_corpus(workspace_root: &Path, dirs: &[&str]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -145,7 +174,8 @@ fn discover_corpus(workspace_root: &Path, dirs: &[&str]) -> Vec<PathBuf> {
 /// Uses a reduced step quota (50k) so a slow program fails fast rather than
 /// blocking the corpus run. A program legitimately needing more steps should
 /// declare `// expect-xstep: N` (not yet implemented).
-fn run_crush(source: &str) -> Result<String, String> {
+fn run_crush(source: &str, workspace_root: &Path) -> Result<String, String> {
+    let host_caps = parse_caps_annotation(source, workspace_root)?;
     let program = crush_lang_sdk::compile::compile_crush_source(source)
         .map_err(|e| format!("compile error: {e}"))?;
     // Use a modest default (1K steps); heavy programs can annotate // budget: N.
@@ -155,13 +185,13 @@ fn run_crush(source: &str) -> Result<String, String> {
         max_output: 1 << 20,
         ..Default::default()
     };
-    let result = crush_vm::run_with_caps(&program, &quotas, None)
+    let result = crush_vm::run_with_caps(&program, &quotas, host_caps.as_ref())
         .map_err(|e| format!("runtime error: {e}"))?;
     Ok(result.output)
 }
 
 /// Evaluate one corpus file and return its outcome.
-fn evaluate_file(path: &Path, verbose: bool) -> Outcome {
+fn evaluate_file(path: &Path, workspace_root: &Path, verbose: bool) -> Outcome {
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -180,7 +210,7 @@ fn evaluate_file(path: &Path, verbose: bool) -> Outcome {
     }
 
     // Run the program.
-    let result = run_crush(&source);
+    let result = run_crush(&source, workspace_root);
 
     // xfail mode: expectation is inverted.
     if let Some(ref xfail_reason) = ann.xfail {
@@ -302,8 +332,20 @@ fn main() -> ExitCode {
         .unwrap()
         .to_path_buf();
 
+    // Positional arguments select individual files (relative to the
+    // workspace root); with none, the whole corpus runs.
+    let selected: Vec<PathBuf> = args
+        .iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .map(|a| workspace_root.join(a))
+        .collect();
     let corpus_dirs = &["examples/crush", "crates/tree-sitter-crush"];
-    let paths = discover_corpus(&workspace_root, corpus_dirs);
+    let paths = if selected.is_empty() {
+        discover_corpus(&workspace_root, corpus_dirs)
+    } else {
+        selected
+    };
 
     if paths.is_empty() {
         eprintln!("No .crush files found in corpus directories.");
@@ -320,7 +362,7 @@ fn main() -> ExitCode {
     // Evaluate each file.
     let mut outcomes: Vec<Outcome> = Vec::new();
     for path in &paths {
-        let outcome = evaluate_file(path, verbose);
+        let outcome = evaluate_file(path, &workspace_root, verbose);
         outcomes.push(outcome);
     }
 
