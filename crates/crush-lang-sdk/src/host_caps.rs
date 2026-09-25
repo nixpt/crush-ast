@@ -188,12 +188,17 @@ impl HostCapsBuilder {
             caps.register(Box::new(FsWriteCap::new(&root)));
             caps.register(Box::new(FsExistsCap::new(&root)));
             caps.register(Box::new(FsListCap::new(&root)));
+            crate::text_tools::register(&mut caps, &root);
         }
         if self.env {
             caps.register(Box::new(EnvGetCap::new(self.env_vars)));
         }
         if self.time {
             caps.register(Box::new(TimeNowCap));
+            caps.register(Box::new(TimeNowMsCap));
+            caps.register(Box::new(TimeNowIsoCap));
+            caps.register(Box::new(TimeElapsedCap));
+            caps.register(Box::new(TimeSleepCap));
         }
         if self.bus {
             crate::bus::register(&mut caps);
@@ -246,7 +251,7 @@ impl HostCapsBuilder {
 // Filesystem helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
+pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
     use std::path::{Component, Path, PathBuf};
 
     let s = crate::caps::value_as_text(path);
@@ -474,6 +479,101 @@ impl HostCap for TimeNowCap {
     }
 }
 
+// The rest of the clock family, ported from exosphere's stdlib `time_cap.rs`
+// (W10 / CRUSH-122). nanovm's `time.now` returned milliseconds; this crate's
+// `time.now` (above) has always returned seconds, so the millisecond clock is
+// `time.now_ms` and `time.elapsed` / `time.sleep` work in milliseconds, as in
+// nanovm. The pure half (`time.format` / `time.parse`) is in the stdlib.
+
+fn now_ms() -> Result<i64, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?;
+    i64::try_from(now.as_millis()).map_err(|e| e.to_string())
+}
+
+macro_rules! time_cap {
+    ($name:ident, $full:expr, $argc:expr, $body:expr) => {
+        pub struct $name;
+        impl HostCap for $name {
+            fn spec(&self) -> HostCapSpec {
+                HostCapSpec {
+                    name: $full.to_string(),
+                    argc: Some($argc),
+                    returns: true,
+                }
+            }
+            fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+                #[allow(clippy::redundant_closure_call)]
+                ($body)(&args)
+            }
+        }
+    };
+}
+
+time_cap!(TimeNowMsCap, "time.now_ms", 0, |_args: &[Value]| {
+    Ok(Some(Value::Int(now_ms()?)))
+});
+
+time_cap!(TimeNowIsoCap, "time.now_iso", 0, |_args: &[Value]| {
+    Ok(Some(Value::Str(chrono::Utc::now().to_rfc3339())))
+});
+
+// Milliseconds since `start_ms` (a `time.now_ms` value).
+time_cap!(TimeElapsedCap, "time.elapsed", 1, |args: &[Value]| {
+    match &args[0] {
+        Value::Int(start) => Ok(Some(Value::Int(now_ms()? - start))),
+        other => Err(format!("time.elapsed: expected int milliseconds, got {other}")),
+    }
+});
+
+/// `time.sleep(ms)` — blocks the calling thread (nanovm's `time.sleep` and
+/// `async.sleep` were this same synchronous sleep under two names). A sleep
+/// longer than the VM's wall-time quota stops at the quota and reports
+/// `CapTimeout` rather than hanging the program.
+pub struct TimeSleepCap;
+
+impl TimeSleepCap {
+    fn millis(args: &[Value]) -> Result<u64, String> {
+        match args.first() {
+            Some(Value::Int(ms)) if *ms >= 0 => Ok(*ms as u64),
+            other => Err(format!(
+                "time.sleep: expected non-negative int milliseconds, got {}",
+                other.map_or("nothing".to_string(), |v| v.to_string())
+            )),
+        }
+    }
+}
+
+impl HostCap for TimeSleepCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "time.sleep".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        std::thread::sleep(std::time::Duration::from_millis(Self::millis(&args)?));
+        Ok(Some(Value::Null))
+    }
+
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        deadline_ms: u64,
+    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+        let ms = Self::millis(&args)?;
+        if ms > deadline_ms {
+            std::thread::sleep(std::time::Duration::from_millis(deadline_ms));
+            return Err(crush_vm::host::HostCapError::Timeout);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        Ok(Some(Value::Null))
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Process helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -588,6 +688,9 @@ mod tests {
         assert!(caps.get("fs.read").is_some());
         assert!(caps.get("env.get").is_some());
         assert!(caps.get("time.now").is_some());
+        assert!(caps.get("time.now_ms").is_some());
+        assert!(caps.get("time.sleep").is_some());
+        assert!(caps.get("text.wc").is_some());
         assert!(caps.get("process.exec").is_some());
         assert!(caps.get("crypto.sha256").is_some());
         assert!(caps.get("crypto.random").is_some());
@@ -631,6 +734,30 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("escapes sandbox"), "{err}");
         assert!(!outside.join("new.txt").exists());
+    }
+
+    #[test]
+    fn time_sleep_respects_the_wall_time_deadline() {
+        use crush_vm::host::HostCapError;
+        let cap = TimeSleepCap;
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(1)], 1_000),
+            Ok(Some(Value::Null))
+        ));
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(60_000)], 5),
+            Err(HostCapError::Timeout)
+        ));
+        assert!(cap.call(vec![Value::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn time_elapsed_counts_from_now_ms() {
+        let now = TimeNowMsCap.call(vec![]).unwrap().unwrap();
+        let Some(Value::Int(elapsed)) = TimeElapsedCap.call(vec![now]).unwrap() else {
+            panic!("expected int");
+        };
+        assert!((0..60_000).contains(&elapsed));
     }
 
     #[test]

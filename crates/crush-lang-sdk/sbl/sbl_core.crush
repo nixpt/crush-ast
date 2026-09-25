@@ -1,0 +1,38 @@
+// System Bytecode Layer (SBL) Core Utilities
+//
+// Ported from exosphere `crates/core/vm/nanovm/src/sbl_core.crush` (W10 /
+// CRUSH-122). The SBL is security-relevant system logic written in Crush
+// rather than host Rust, so every caller shares one implementation that
+// runs under the VM's own quotas. crush-lang-sdk compiles this file once and
+// exposes each function below as a `system.<name>` capability (see
+// `src/sbl.rs`); the functions may use the pure stdlib (`str.*`, ...) but no
+// I/O capability.
+
+pub fn path_normalize(path: string) -> string {
+    // Collapse `.`, empty segments (`//`) and `..`; `..` at the root is dropped.
+    let parts = str.split(path, "/");
+    let result = [];
+
+    for part in parts {
+        if (part == "..") {
+            if (len(result) > 0) {
+                array.pop(result);
+            }
+        } else if (part != "." && part != "") {
+             array.push(result, part);
+        }
+    }
+
+    let joined = str.join(result, "/");
+    return "/" + joined;
+}
+
+pub fn format_node_info(id: string, version: string) -> string {
+    return "Node: " + id + " (v" + version + ")";
+}
+
+// nanovm's hand-assembled `sbl_core.casm` exported this function as
+// `format_info`, and callers (`system.format_info`) still use that name.
+pub fn format_info(id: string, version: string) -> string {
+    return format_node_info(id, version);
+}

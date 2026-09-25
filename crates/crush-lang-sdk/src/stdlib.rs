@@ -17,6 +17,22 @@ pub fn register(caps: &mut HostCaps) {
 
 /// Register stdlib capabilities using the supplied per-registry RNG state.
 pub(crate) fn register_with_rng(caps: &mut HostCaps, rng: SharedRng) {
+    register_pure_with_rng(caps, rng);
+    // `system.*` — nanovm's System Bytecode Layer, implemented in Crush and
+    // run on the pure families registered above.
+    #[cfg(feature = "stdlib")]
+    crate::sbl::register(caps);
+}
+
+/// Register only the pure-computation families (everything except the
+/// Crush-implemented `system.*` SBL). The SBL's own VM runs on exactly this
+/// set, so an SBL function can reach nothing the stdlib cannot.
+#[cfg(feature = "stdlib")]
+pub(crate) fn register_pure(caps: &mut HostCaps) {
+    register_pure_with_rng(caps, Arc::new(Mutex::new(RngState::new(0))));
+}
+
+fn register_pure_with_rng(caps: &mut HostCaps, rng: SharedRng) {
     // String capabilities
     caps.register(Box::new(StrSplitCap));
     caps.register(Box::new(StrJoinCap));
@@ -102,7 +118,45 @@ pub(crate) fn register_with_rng(caps: &mut HostCaps, rng: SharedRng) {
         caps.register(Box::new(RegexReplaceCap));
         caps.register(Box::new(RegexSplitCap));
     }
+
+    // Families ported from exosphere `core/base/stdlib` for W10 / CRUSH-122.
+    collections_ext::register(caps);
+    text::register(caps);
+    result::register(caps);
+    bytes::register(caps);
+    binary::register(caps);
+    env_info::register(caps);
+    time_fmt::register(caps);
 }
+
+/// Declare a stdlib capability with its full dotted name. Used by the
+/// submodules below (ported families); `argc: None` means variadic.
+macro_rules! std_cap {
+    ($name:ident, $full:expr, $argc:expr, $body:expr) => {
+        pub struct $name;
+        impl HostCap for $name {
+            fn spec(&self) -> HostCapSpec {
+                HostCapSpec {
+                    name: $full.to_string(),
+                    argc: $argc,
+                    returns: true,
+                }
+            }
+            fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+                #[allow(clippy::redundant_closure_call)]
+                ($body)(&args)
+            }
+        }
+    };
+}
+
+mod binary;
+mod bytes;
+mod collections_ext;
+mod env_info;
+mod result;
+mod text;
+mod time_fmt;
 
 fn get_str(args: &[Value], idx: usize) -> Result<String, String> {
     args.get(idx)
