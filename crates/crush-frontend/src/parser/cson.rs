@@ -3,7 +3,7 @@
 //! Parses CSON text into the canonical `crush_cson` types.
 //! Uses the unified type definitions from `crush-cson`.
 
-use crush_cast::cson::{CsonDocument, CsonKey, CsonNode, CsonValue};
+use crush_cast::cson::{CaisonDocument, CaisonKey, CaisonNode, CaisonValue};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -101,7 +101,7 @@ impl<'a> CsonParser<'a> {
         Ok(None)
     }
 
-    pub fn parse_value(&mut self) -> Result<CsonNode, CsonParseError> {
+    pub fn parse_value(&mut self) -> Result<CaisonNode, CsonParseError> {
         self.skip_whitespace();
         if self.match_char('{') {
             let mut properties = HashMap::new();
@@ -137,8 +137,8 @@ impl<'a> CsonParser<'a> {
                 self.match_char(',');
             }
 
-            Ok(CsonNode {
-                value: CsonValue::Object(properties),
+            Ok(CaisonNode {
+                value: CaisonValue::Object(properties),
                 confidence: None,
                 annotations,
             })
@@ -151,8 +151,8 @@ impl<'a> CsonParser<'a> {
                 self.skip_whitespace();
                 self.match_char(',');
             }
-            Ok(CsonNode {
-                value: CsonValue::Array(arr),
+            Ok(CaisonNode {
+                value: CaisonValue::Array(arr),
                 confidence: None,
                 annotations: vec![],
             })
@@ -161,20 +161,20 @@ impl<'a> CsonParser<'a> {
             let weight = self.parse_weight()?;
 
             let value = if val_str == "null" {
-                CsonValue::Null
+                CaisonValue::Null
             } else if val_str == "true" {
-                CsonValue::Boolean(true)
+                CaisonValue::Boolean(true)
             } else if val_str == "false" {
-                CsonValue::Boolean(false)
+                CaisonValue::Boolean(false)
             } else if let Ok(i) = val_str.parse::<i64>() {
-                CsonValue::Number(i as f64)
+                CaisonValue::Number(i as f64)
             } else if let Ok(f) = val_str.parse::<f64>() {
-                CsonValue::Number(f)
+                CaisonValue::Number(f)
             } else {
-                CsonValue::String(val_str)
+                CaisonValue::String(val_str)
             };
 
-            Ok(CsonNode {
+            Ok(CaisonNode {
                 value,
                 confidence: weight,
                 annotations: vec![],
@@ -182,16 +182,16 @@ impl<'a> CsonParser<'a> {
         }
     }
 
-    pub fn parse_document(&mut self) -> Result<CsonDocument, CsonParseError> {
+    pub fn parse_document(&mut self) -> Result<CaisonDocument, CsonParseError> {
         let root_node = self.parse_value()?;
-        Ok(CsonDocument {
+        Ok(CaisonDocument {
             version: "1.0".into(),
             root: root_node,
         })
     }
 }
 
-pub fn parse_cson(input: &str) -> Result<CsonDocument, CsonParseError> {
+pub fn parse_cson(input: &str) -> Result<CaisonDocument, CsonParseError> {
     let mut parser = CsonParser::new(input);
     parser.parse_document()
 }

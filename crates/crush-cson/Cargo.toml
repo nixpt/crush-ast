@@ -1,6 +1,6 @@
 [package]
 name = "crush-cson"
-description = "CSON (Crush Semantic Object Notation) — a JSON-like config/serialization format with AI-native primitives: confidence weights, semantic keys, annotations, and synthesized values."
+description = "Crush VM host capability for CAISON (formerly CSON) parsing — the format types/parser/printer now live in the standalone `caison` crate; this crate keeps only the `cson.parse` capability and re-exports caison."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
@@ -13,5 +13,12 @@ rust-version.workspace = true
 # Only needs host::{HostCap, HostCapSpec} + vm::Value for the cson.parse
 # capability (vm_cap.rs) — none of the native-only extras.
 crush-vm = { path = "../crush-vm", version = "0.3.0", default-features = false }
+# CAISON (formerly CSON) canonical types/parser/printer — extracted from this
+# crate into the standalone https://github.com/nixpt/caison and since diverged
+# (spec fixes, printer, metadata-order changes). NOT YET on crates.io as of
+# this commit — see CRUSH-CAISON-1; this dep will not resolve until caison
+# 0.1.0 publishes (local verification used a gitignored .cargo/config.toml
+# [patch.crates-io] path override, reverted before commit).
+caison.workspace = true
 serde.workspace = true
 serde_json.workspace = true

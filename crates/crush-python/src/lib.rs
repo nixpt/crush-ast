@@ -39,12 +39,12 @@ fn run_casm(json: &str) -> PyResult<String> {
 /// Parse a CSON string.
 #[pyfunction]
 fn parse_cson(cson_str: &str) -> PyResult<String> {
-    let mut parser = crush_cson::parser::CsonParser::new(cson_str);
+    let mut parser = crush_cson::parser::CaisonParser::new(cson_str);
     let doc = parser.parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
-    
+
     // For now, return a basic repr of the version and root to Python
-    Ok(format!("CsonDocument(version={:?}, root={:?})", doc.version, doc.root))
+    Ok(format!("CaisonDocument(version={:?}, root={:?})", doc.version, doc.root))
 }
 
 /// List all CAST version strings known to this library.
