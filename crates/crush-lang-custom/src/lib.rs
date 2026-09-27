@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use regex::Regex;
 use anyhow::{Result, anyhow};
 use crush_cast::{Program, Statement, Expression, Function, CastType};
-use crush_cson::CsonValue;
-use crush_cson::parser::CsonParser;
+use crush_cson::CaisonValue;
+use crush_cson::parser::CaisonParser;
 use crush_walker_core::{Frontend, FeatureReport};
 
 /// Rule matching structure mapping a regex to a CAST node type.
@@ -30,10 +30,10 @@ pub struct CustomFrontend {
 impl CustomFrontend {
     /// Load a CustomFrontend from a CSON definition string.
     pub fn from_cson(cson_str: &str) -> Result<Self> {
-        let mut parser = CsonParser::new(cson_str);
+        let mut parser = CaisonParser::new(cson_str);
         let doc = parser.parse().map_err(|e| anyhow!("CSON parse error: {}", e))?;
         
-        let CsonValue::Object(root_map) = doc.root.value else {
+        let CaisonValue::Object(root_map) = doc.root.value else {
             return Err(anyhow!("Root of custom grammar must be an object"));
         };
 
@@ -42,16 +42,16 @@ impl CustomFrontend {
         let mut extensions = vec![".custom".to_string()];
 
         if let Some(grammar_node) = root_map.get("grammar") {
-            if let CsonValue::Object(grammar_map) = &grammar_node.value {
+            if let CaisonValue::Object(grammar_map) = &grammar_node.value {
                 if let Some(node) = grammar_map.get("language") {
-                    if let CsonValue::String(s) = &node.value {
+                    if let CaisonValue::String(s) = &node.value {
                         lang_name = s.clone();
                     }
                 }
                 if let Some(node) = grammar_map.get("extensions") {
-                    if let CsonValue::Array(arr) = &node.value {
+                    if let CaisonValue::Array(arr) = &node.value {
                         extensions = arr.iter().filter_map(|v| {
-                            if let CsonValue::String(s) = &v.value { Some(s.clone()) } else { None }
+                            if let CaisonValue::String(s) = &v.value { Some(s.clone()) } else { None }
                         }).collect();
                     }
                 }
@@ -61,27 +61,27 @@ impl CustomFrontend {
         // Parse rules
         let mut rules = Vec::new();
         if let Some(rules_node) = root_map.get("rules") {
-            if let CsonValue::Object(rules_map) = &rules_node.value {
+            if let CaisonValue::Object(rules_map) = &rules_node.value {
                 for (key, val_node) in rules_map {
                     let rule_name = key.clone();
-                    if let CsonValue::Object(rule_obj) = &val_node.value {
+                    if let CaisonValue::Object(rule_obj) = &val_node.value {
                         let pattern_str = match rule_obj.get("pattern") {
                             Some(n) => match &n.value {
-                                CsonValue::String(s) => s.clone(),
+                                CaisonValue::String(s) => s.clone(),
                                 _ => continue,
                             },
                             None => continue,
                         };
                         let node_type = match rule_obj.get("node") {
                             Some(n) => match &n.value {
-                                CsonValue::String(s) => s.clone(),
+                                CaisonValue::String(s) => s.clone(),
                                 _ => "ExprStmt".to_string(),
                             },
                             None => "ExprStmt".to_string(),
                         };
                         let capability = match rule_obj.get("capability") {
                             Some(n) => match &n.value {
-                                CsonValue::String(s) => Some(s.clone()),
+                                CaisonValue::String(s) => Some(s.clone()),
                                 _ => None,
                             },
                             None => None,
@@ -89,9 +89,9 @@ impl CustomFrontend {
 
                         let mut mappings = HashMap::new();
                         if let Some(m_node) = rule_obj.get("mappings") {
-                            if let CsonValue::Object(m_map) = &m_node.value {
+                            if let CaisonValue::Object(m_map) = &m_node.value {
                                 for (k, v) in m_map {
-                                    if let CsonValue::String(val_str) = &v.value {
+                                    if let CaisonValue::String(val_str) = &v.value {
                                         mappings.insert(k.clone(), val_str.clone());
                                     }
                                 }

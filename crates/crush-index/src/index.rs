@@ -68,7 +68,7 @@ pub struct CrushIndex {
     decisions: Vec<(String, crush_cast::manifest::DecisionNode)>,
     
     /// CSON configurations indexed by file path (private; see `cson_configs()` and `cson_doc()`)
-    cson_configs: HashMap<String, crush_cson::CsonDocument>,
+    cson_configs: HashMap<String, crush_cson::CaisonDocument>,
     /// Flattened semantic keys `(intent, cson_file_path, confidence)` (private; see `semantic_keys()`)
     semantic_keys: Vec<(String, String, Option<f64>)>,
     /// Dejavue project timeline events (private; see `dejavue_timeline()`)
@@ -416,7 +416,7 @@ impl CrushIndex {
     pub fn decisions(&self) -> Vec<&crush_cast::manifest::DecisionNode> {
         self.decisions.iter().map(|(_, d)| d).collect()
     }
-    pub fn add_cson(&mut self, path: &str, doc: crush_cson::CsonDocument) {
+    pub fn add_cson(&mut self, path: &str, doc: crush_cson::CaisonDocument) {
         // Walk the document root to extract semantic keys
         let mut keys = Vec::new();
         self.extract_semantic_keys(&doc.root, path, &mut keys);
@@ -424,9 +424,9 @@ impl CrushIndex {
         self.cson_configs.insert(path.to_string(), doc);
     }
 
-    fn extract_semantic_keys(&self, node: &crush_cson::CsonNode, path: &str, keys: &mut Vec<(String, String, Option<f64>)>) {
+    fn extract_semantic_keys(&self, node: &crush_cson::CaisonNode, path: &str, keys: &mut Vec<(String, String, Option<f64>)>) {
         match &node.value {
-            crush_cson::CsonValue::Object(map) => {
+            crush_cson::CaisonValue::Object(map) => {
                 for (k, v) in map {
                     // Object keys are now plain Strings; semantic keys are serialized with "~" prefix
                     if let Some(s) = k.strip_prefix('~') {
@@ -435,7 +435,7 @@ impl CrushIndex {
                     self.extract_semantic_keys(v, path, keys);
                 }
             }
-            crush_cson::CsonValue::Array(arr) => {
+            crush_cson::CaisonValue::Array(arr) => {
                 for v in arr {
                     self.extract_semantic_keys(v, path, keys);
                 }
@@ -523,12 +523,12 @@ impl CrushIndex {
     /// All CSON configurations indexed by file path. Read-only view so
     /// callers cannot bypass the [`add_cson`](Self::add_cson) ingestion
     /// path. For a single document, prefer [`cson_doc`](Self::cson_doc).
-    pub fn cson_configs(&self) -> &HashMap<String, crush_cson::CsonDocument> {
+    pub fn cson_configs(&self) -> &HashMap<String, crush_cson::CaisonDocument> {
         &self.cson_configs
     }
 
     /// Single CSON document by file path, if any was ingested.
-    pub fn cson_doc(&self, path: &str) -> Option<&crush_cson::CsonDocument> {
+    pub fn cson_doc(&self, path: &str) -> Option<&crush_cson::CaisonDocument> {
         self.cson_configs.get(path)
     }
 

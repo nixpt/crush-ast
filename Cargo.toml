@@ -66,6 +66,10 @@ rust-version  = "1.95.0"
 crush-errors      = { path = "crates/crush-errors",      version = "0.3.0" }
 crush-cast        = { path = "crates/crush-cast",        version = "0.3.0" }
 crush-cson        = { path = "crates/crush-cson",        version = "0.3.0" }
+# CAISON (formerly CSON) canonical types/parser/printer — standalone crate,
+# https://github.com/nixpt/caison. NOT YET on crates.io as of CRUSH-CAISON-1;
+# this dep will not resolve until caison 0.1.0 publishes.
+caison            = { version = "0.1.0" }
 casm              = { path = "crates/casm",              version = "0.3.0" }
 crush-vm          = { path = "crates/crush-vm",          version = "0.3.0" }
 crush-frontend    = { path = "crates/crush-frontend",    version = "0.3.0" }
