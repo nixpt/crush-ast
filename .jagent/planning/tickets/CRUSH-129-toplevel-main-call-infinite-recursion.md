@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-129 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/gh-64-71-quick-fixes`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -38,8 +38,8 @@ Easy to hit by accident (e.g. habits from other languages). A warning or error a
 
 ## Success criteria
 
-- [ ] the repro prints `hi` once
-- [ ] a top-level `main()` call with an explicit `fn main` is dropped with a warning (or rejected) — decide, document, test
+- [x] the repro prints `hi` once
+- [x] a top-level `main()` call with an explicit `fn main` is dropped with a warning (or rejected) — decide, document, test
 
 ## Technical approach
 
@@ -48,3 +48,7 @@ Easy to hit by accident (e.g. habits from other languages). A warning or error a
 ## Files to modify
 
 - `crates/crush-frontend/src/parser/mod.rs`
+
+## Resolution
+
+Reproduced on `main` `a8247af` first (RULES §1). A bare `main()` statement is dropped when merging top-level statements into an explicit `fn main` (`is_bare_main_call`). Live: #69 repro prints `hi` once. Other top-level statements still run first (tested).

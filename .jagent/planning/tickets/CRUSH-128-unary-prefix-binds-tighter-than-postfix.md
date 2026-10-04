@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-128 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/gh-64-71-quick-fixes`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -40,8 +40,8 @@ Compile error: `[E-PP01] Cannot call non-function` pointing at the `!`.
 
 ## Success criteria
 
-- [ ] `!f(x)`, `-f(x)`, `!a[i]`, `!m.flag`, `-a[i]` parse as `!(f(x))` etc.
-- [ ] `-2 * 3` and `!a && b` keep their precedence
+- [x] `!f(x)`, `-f(x)`, `!a[i]`, `!m.flag`, `-a[i]` parse as `!(f(x))` etc.
+- [x] `-2 * 3` and `!a && b` keep their precedence
 
 ## Technical approach
 
@@ -50,3 +50,7 @@ Compile error: `[E-PP01] Cannot call non-function` pointing at the `!`.
 ## Files to modify
 
 - `crates/crush-frontend/src/parser/mod.rs`
+
+## Resolution
+
+Reproduced on `main` `a8247af` first (RULES §1). Unary operand parsed at precedence 80 (postfix chain, no binary ops) via `parse_unary_operand`; `semantics.rs` types `!x` as bool and `-x` as its numeric operand type (needed so `if !is_digit(c)` type-checks). Live: #68 repro prints `not a digit`; `-three()` prints `-3`. Precedence of `-2 * 3`, `!false && false` covered by tests.

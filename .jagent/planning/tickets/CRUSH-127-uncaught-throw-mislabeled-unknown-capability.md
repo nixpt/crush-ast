@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-127 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/gh-64-71-quick-fixes`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -37,8 +37,8 @@ Something like `[runtime] uncaught error: line 5, col 5: expected a value` — t
 
 ## Success criteria
 
-- [ ] uncaught throw prints `[runtime] uncaught error: <msg>`
-- [ ] compile-time errors are not labelled `[runtime]`
+- [x] uncaught throw prints `[runtime] uncaught error: <msg>`
+- [x] compile-time errors are not labelled `[runtime]`
 
 ## Technical approach
 
@@ -51,3 +51,7 @@ Something like `[runtime] uncaught error: line 5, col 5: expected a value` — t
 - `crates/crush-vm/src/portable_vm.rs`
 - `crates/crush-vm/src/scheduler.rs`
 - `crates/crush-lang-sdk/src/bin/crush-run.rs`
+
+## Resolution
+
+Reproduced on `main` `a8247af` first (RULES §1). New `VmError::Uncaught` used by portable_vm and the scheduler → `[runtime] uncaught error: <msg>`. `crush-run` wraps frontend failures in `CompileFailed` and labels them `[compile]`. Live: #67 repro prints `[runtime] uncaught error: line 5, col 5: expected a value`; a type error prints `[compile] …`. Not done: `fs.read` failures are still uncatchable by try/catch (noted in #67) — a design question, not part of this fix.

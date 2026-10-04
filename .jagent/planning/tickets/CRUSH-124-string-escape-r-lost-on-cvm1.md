@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-124 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/gh-64-71-quick-fixes`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -44,9 +44,9 @@ Any code that treats `\r` as whitespace (e.g. `" \t\n\r"` in a `char_in` check) 
 
 ## Success criteria
 
-- [ ] `"\r"` evaluates to U+000D on `crush-run run x.crush`
-- [ ] every escape the CASM emitter can produce round-trips (`\r`, `\0`, `\u{..}`, `\'`)
-- [ ] regression test in crush-vm assembler tests + a source-level test
+- [x] `"\r"` evaluates to U+000D on `crush-run run x.crush`
+- [x] every escape the CASM emitter can produce round-trips (`\r`, `\0`, `\u{..}`, `\'`)
+- [x] regression test in crush-vm assembler tests + a source-level test
 
 ## Technical approach
 
@@ -55,3 +55,7 @@ Any code that treats `\r` as whitespace (e.g. `" \t\n\r"` in a `char_in` check) 
 ## Files to modify
 
 - `crates/crush-vm/src/assembler.rs`
+
+## Resolution
+
+Reproduced on `main` `a8247af` first (RULES §1). `crush-vm/src/assembler.rs` `parse_string` now decodes the full `{:?}` escape set (`\r`, `\0`, `\'`, `\u{..}`) and rejects a malformed `\u{..}`. Unit round-trip test over Debug-quoted samples + source-level test (`crush-lang-sdk/tests/gh_issues_64_71.rs`). Live: the #64 repro prints `ok`.

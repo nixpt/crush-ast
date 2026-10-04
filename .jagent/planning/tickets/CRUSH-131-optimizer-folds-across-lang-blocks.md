@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-131 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/gh-64-71-quick-fixes`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -33,8 +33,8 @@ Variables written by a `@lang` block must not be constant-folded across the bloc
 
 ## Success criteria
 
-- [ ] a variable assigned before and written by a `@lang` block is read with the written-back value after it
-- [ ] regression test
+- [x] a variable assigned before and written by a `@lang` block is read with the written-back value after it
+- [x] regression test
 
 ## Technical approach
 
@@ -43,3 +43,7 @@ Variables written by a `@lang` block must not be constant-folded across the bloc
 ## Files to modify
 
 - `crates/crush-frontend/src/optimizer.rs`
+
+## Resolution
+
+Reproduced on `main` `a8247af` first (RULES §1). `LangBlock` arm in `optimizer.rs` clears known constants. CAST-level test in `crush-frontend/tests/optimizer_tests.rs`. Live with `--polyglot`: `let x = 1; @python { x = 42 }; print(x)` printed `1` before, `42` after.
