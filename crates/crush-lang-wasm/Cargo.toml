@@ -7,6 +7,10 @@ version.workspace = true
 edition = "2024"
 repository.workspace = true
 
+[[bin]]
+name = "wasm_walker"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
