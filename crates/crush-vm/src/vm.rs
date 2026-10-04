@@ -601,12 +601,24 @@ impl<'de> serde::Deserialize<'de> for Value {
     }
 }
 
+/// An active `try` block: where its handler starts, and the call depth and
+/// operand-stack height to unwind to when a `THROW` reaches it. A throw from a
+/// callee must run the handler in the frame that entered the `try`, not in the
+/// callee's — otherwise the callee later returns into code that already ran
+/// (CRUSH-126).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TryHandler {
+    pub handler_ip: usize,
+    pub call_depth: usize,
+    pub stack_len: usize,
+}
+
 /// Per-thread execution state for the green-thread scheduler.
 pub struct GreenThread {
     pub ip: usize,
     pub stack: Vec<Value>,
     pub call_stack: Vec<Frame>,
-    pub try_stack: Vec<usize>,
+    pub try_stack: Vec<TryHandler>,
     pub steps: usize,
     pub done: bool,
     pub yielded: bool,

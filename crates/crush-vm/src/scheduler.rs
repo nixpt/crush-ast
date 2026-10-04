@@ -1037,6 +1037,9 @@ fn execute_one(
         }
         RET => {
             let frame = call_stack.pop().expect("call stack invariant");
+            // A `return` from inside a `try` leaves its handler behind; it must
+            // not catch a later throw in the caller.
+            try_stack.retain(|h| h.call_depth <= call_stack.len());
             match frame.return_ip {
                 None => {
                     return Ok(StepAction::Done(stack.pop()));
@@ -1165,15 +1168,22 @@ fn execute_one(
             if target > n {
                 return Err(VmError::BadJump(target));
             }
-            try_stack.push(target);
+            try_stack.push(crate::vm::TryHandler {
+                handler_ip: target,
+                call_depth: call_stack.len(),
+                stack_len: stack.len(),
+            });
         }
         EXIT_TRY => {
             try_stack.pop();
         }
         THROW => {
             let err_val = pop!();
-            if let Some(handler_ip) = try_stack.pop() {
-                thread.ip = handler_ip;
+            if let Some(handler) = try_stack.pop() {
+                // Unwind to the frame and stack height that entered the try.
+                call_stack.truncate(handler.call_depth);
+                stack.truncate(handler.stack_len);
+                thread.ip = handler.handler_ip;
                 push!(err_val);
                 return Ok(StepAction::Jump);
             }

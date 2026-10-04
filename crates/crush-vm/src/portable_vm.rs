@@ -112,8 +112,8 @@ pub struct PortableVm {
     halted: bool,
     /// Whether privileged capabilities are allowed.
     privileged_allowed: bool,
-    /// Exception handler stack (target IP for each active try block).
-    try_stack: Vec<usize>,
+    /// Active try blocks, innermost last.
+    try_stack: Vec<crate::vm::TryHandler>,
     /// Next task ID for async spawn.
     next_task_id: u64,
     /// Scheduled tasks: task_id → (function name, args).
@@ -737,6 +737,10 @@ impl PortableVm {
             }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
+                // A `return` from inside a `try` leaves its handler behind; it
+                // must not catch a later throw in the caller.
+                let depth = self.call_stack.len();
+                self.try_stack.retain(|h| h.call_depth <= depth);
                 match frame.return_ip {
                     None => {
                         self.halted = true;
@@ -945,15 +949,22 @@ impl PortableVm {
                 if target > self.program.code.len() {
                     return Err(VmError::BadJump(target));
                 }
-                self.try_stack.push(target);
+                self.try_stack.push(crate::vm::TryHandler {
+                    handler_ip: target,
+                    call_depth: self.call_stack.len(),
+                    stack_len: self.stack.len(),
+                });
             }
             EXIT_TRY => {
                 self.try_stack.pop();
             }
             THROW => {
                 let err_val = self.pop()?;
-                if let Some(handler_ip) = self.try_stack.pop() {
-                    self.ip = handler_ip;
+                if let Some(handler) = self.try_stack.pop() {
+                    // Unwind to the frame and stack height that entered the try.
+                    self.call_stack.truncate(handler.call_depth);
+                    self.stack.truncate(handler.stack_len);
+                    self.ip = handler.handler_ip;
                     self.push(err_val);
                     return Ok(());
                 }

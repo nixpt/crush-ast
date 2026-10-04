@@ -630,21 +630,20 @@ fn aot_ordered_comparison_with_string_rejected() {
 
 // ── Exception handling: multi-function rethrow ─────────────────────────────
 // AOT Rust and C backends do NOT support exception opcodes (enter_try/throw),
-// so this test uses assert_fastvm_agrees which skips AOT backends and only
-// compares VM backends (FastVM vs interpreter vs portable VM).
+// so these tests compare the VM backends only (FastVM vs interpreter vs
+// portable VM).
 //
-// NOTE: The scheduler (interpreter) and portable VM have a pre-existing
-// limitation: their flat `try_stack` doesn't properly persist across function
-// calls during multi-function throw unwinding. The FastVM (with its integrated
-// call_stack/try_stack design) handles this correctly. This test therefore
-// only validates the FastVM result directly.
+// The scheduler (interpreter) and portable VM used to run a caught throw's
+// handler in the callee's frame — they recorded only the handler IP, never
+// the call depth to unwind to — so they only agreed with FastVM on
+// single-function try/catch. CRUSH-126 (#66) fixed that; all three VMs must
+// now agree on multi-function unwinding.
 
 #[test]
 fn aot_rethrow_through_three_functions_agrees_fastvm() {
     // Verifies Throw unwinding through main → a → b → c where c throws,
     // a's catch block catches and re-throws, and main's catch block catches
-    // and returns the error value. FastVM returns the expected Int(7).
-    // The scheduler/portable VM have a pre-existing multi-function issue.
+    // and returns the error value. Every VM backend must return Int(7).
     //
     // main: try { a() } catch e { return e }
     //   a:  try { b() } catch e { throw e }   ← rethrows
@@ -675,12 +674,36 @@ fn aot_rethrow_through_three_functions_agrees_fastvm() {
         }
     "##;
 
-    // FastVM returns the correct result.
     let result = crush_lang_sdk::differential::differential_run(source)
         .unwrap_or_else(|e| panic!("differential_run failed: {e}"));
-    let fv = result.fastvm_return().cloned();
-    assert_eq!(fv, Some(crush_lang_sdk::differential::Norm::Int(7)),
-        "FastVM should return Int(7) for the rethrow, got {:?}", fv);
+    let seven = Some(crush_lang_sdk::differential::Norm::Int(7));
+    assert_eq!(
+        result.fastvm_return().cloned(),
+        seven,
+        "FastVM: {:?}",
+        result.fastvm
+    );
+    assert_eq!(
+        result.portable_return().cloned(),
+        seven,
+        "portable: {:?}",
+        result.portable
+    );
+
+    // The interpreter (scheduler) path doesn't surface main's return value
+    // to this harness at all (CRUSH-137), so check it by output instead.
+    let printed = source.replace("return e", "print(e)");
+    let result = crush_lang_sdk::differential::differential_run(&printed)
+        .unwrap_or_else(|e| panic!("differential_run failed: {e}"));
+    for (name, outcome) in [
+        ("interpreter", &result.interpreter),
+        ("portable", &result.portable),
+    ] {
+        assert!(
+            matches!(outcome, crush_lang_sdk::differential::StackOutcome::Ok { output, .. } if output == "7\n"),
+            "{name}: {outcome:?}"
+        );
+    }
 }
 
 // ── CRUSH-17: JIT-variant frontend-source rethrow integration test ───────────
@@ -983,10 +1006,7 @@ fn vm_comprehensive_exception_pipeline_agrees() {
         }
     "#);
 
-    // Sub-test 3: single-function throw/catch (avoids multi-function
-    // propagation edge case in interpreter/portable VM's flat try_stack).
-    // Multi-function exception propagation is covered by
-    // `aot_rethrow_through_three_functions_agrees_fastvm`.
+    // Sub-test 3: single-function throw/catch.
     assert_fastvm_agrees(r#"
         fn main() {
             try {
@@ -994,6 +1014,21 @@ fn vm_comprehensive_exception_pipeline_agrees() {
             } catch e {
                 return e
             }
+        }
+    "#);
+
+    // Sub-test 4 (CRUSH-126): a throw caught one frame up must not resume
+    // the callee, and a handler left behind by `return` inside a try must not
+    // catch a later throw in the caller.
+    assert_fastvm_agrees(r#"
+        fn boom() { throw 5 }
+        fn early() { try { return 1 } catch e { return 100 } }
+        fn main() {
+            let n = 0
+            try { boom() } catch e { n = n + e }
+            n = n + early()
+            try { throw 30 } catch e { n = n + e }
+            return n
         }
     "#);
 }
