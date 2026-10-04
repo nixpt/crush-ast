@@ -222,6 +222,13 @@ impl Optimizer {
                     meta,
                 }]
             }
+            // A polyglot block can write any variable back (`polyglot_output`),
+            // so nothing known before it is known after it. Without this, a
+            // later read was folded to the pre-block constant (CRUSH-131).
+            block @ Statement::LangBlock { .. } => {
+                consts.clear();
+                vec![block]
+            }
             other => vec![other],
         }
     }
