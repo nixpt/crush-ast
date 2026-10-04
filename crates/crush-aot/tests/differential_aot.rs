@@ -1032,3 +1032,90 @@ fn vm_comprehensive_exception_pipeline_agrees() {
         }
     "#);
 }
+
+// ── CRUSH-125 (#65): `&&` / `||` short-circuit on every backend ─────────────
+// They used to compile to eager `and`/`or` opcodes, so the right operand always
+// ran: the bounds-check idiom below indexed out of range. They now lower to
+// `jmp_if_not`/`jmp`, leaving a bool on the stack at the join point, so these
+// also check that every backend handles a branch taken mid-expression (in the
+// last test `7` is already on the stack when the `&&` jumps).
+//
+// Agreement alone isn't enough here — with eager evaluation every backend
+// fails the bounds check *identically* — so each test also pins the value.
+
+fn assert_all_backends_return(source: &str, expected: i64) {
+    assert_all_backends_agree(source);
+    let report = crush_lang_sdk::differential::differential_run(source)
+        .unwrap_or_else(|e| panic!("differential_run failed for {source:?}: {e}"));
+    assert_eq!(
+        report.fastvm_return().cloned(),
+        Some(Norm::Int(expected)),
+        "FastVM: {source:?}"
+    );
+    // The CVM1 VMs are the ones whose bounds checks trap (FastVM's index
+    // returns null), so pin them too. The interpreter's return value isn't
+    // visible to the harness (CRUSH-137); it must at least finish.
+    assert_eq!(
+        report.portable_return().cloned(),
+        Some(Norm::Int(expected)),
+        "portable: {:?}",
+        report.portable
+    );
+    assert!(
+        matches!(report.interpreter, StackOutcome::Ok { .. }),
+        "interpreter: {:?}",
+        report.interpreter
+    );
+}
+
+#[test]
+fn and_skips_its_right_operand_when_the_left_is_false() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let s = [1, 2, 3]
+            let i = 3
+            if i < len(s) && s[i] == 1 { return 1 }
+            if i >= len(s) || s[i] == 1 { return 2 }
+            return 3
+        }
+    "#,
+        2,
+    );
+}
+
+#[test]
+fn short_circuit_results_are_bools_usable_as_values() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let x = 4
+            let inside = x > 0 && x < 5
+            let outside = x < 0 || x > 9
+            if inside == true && outside == false { return 10 }
+            return 20
+        }
+    "#,
+        10,
+    );
+}
+
+#[test]
+fn short_circuit_in_the_middle_of_an_expression() {
+    assert_all_backends_return(
+        r#"
+        fn choose(c) {
+            if c == true { return 1 }
+            return 0
+        }
+        fn main() {
+            let x = 4
+            let p = 7 + choose(x > 0 && x < 5)
+            let q = 70 + choose(x > 9 || x < 0)
+            return p * 100 + q
+        }
+    "#,
+        870,
+    );
+}
+

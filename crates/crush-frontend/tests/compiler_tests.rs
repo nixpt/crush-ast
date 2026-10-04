@@ -1236,32 +1236,46 @@ fn typed_arithmetic_emission_preserves_legacy_instruction_view() {
 
 #[test]
 fn typed_logical_emission_preserves_legacy_instruction_view() {
-    let casm = compile_program(vec![
-        Statement::ExprStmt {
+    let casm = compile_program(vec![Statement::ExprStmt {
+        expr: Expression::UnaryOp {
+            operator: "not".to_string(),
+            operand: Box::new(bool_lit(true)),
+            meta: meta(),
+        },
+        meta: meta(),
+    }]);
+    let instruction = casm.functions["main"]
+        .body
+        .iter()
+        .find(|instruction| instruction.op == "not")
+        .unwrap();
+    assert_eq!(instruction.args, serde_json::json!({}));
+}
+
+/// CRUSH-125 (#65): `&&` / `||` lower to branches, not to the eager
+/// `and` / `or` opcodes, so the right operand can be skipped.
+#[test]
+fn logical_and_or_lower_to_short_circuit_branches() {
+    for operator in ["and", "&&", "or", "||"] {
+        let casm = compile_program(vec![Statement::ExprStmt {
             expr: Expression::BinaryOp {
-                operator: "and".to_string(),
+                operator: operator.to_string(),
                 left: Box::new(bool_lit(true)),
                 right: Box::new(bool_lit(false)),
                 meta: meta(),
             },
             meta: meta(),
-        },
-        Statement::ExprStmt {
-            expr: Expression::UnaryOp {
-                operator: "not".to_string(),
-                operand: Box::new(bool_lit(true)),
-                meta: meta(),
-            },
-            meta: meta(),
-        },
-    ]);
-    let instructions = &casm.functions["main"].body;
-    for expected_op in ["and", "not"] {
-        let instruction = instructions
+        }]);
+        let ops: Vec<&str> = casm.functions["main"]
+            .body
             .iter()
-            .find(|instruction| instruction.op == expected_op)
-            .unwrap();
-        assert_eq!(instruction.args, serde_json::json!({}));
+            .map(|instruction| instruction.op.as_str())
+            .collect();
+        assert!(
+            !ops.contains(&"and") && !ops.contains(&"or"),
+            "{operator}: {ops:?}"
+        );
+        assert!(ops.contains(&"jmp_if_not"), "{operator}: {ops:?}");
     }
 }
 

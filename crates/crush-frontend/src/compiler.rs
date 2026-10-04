@@ -1288,6 +1288,61 @@ impl Compiler {
         self.compile_expr_with_name_hint(expr, instrs, None)
     }
 
+    /// `a && b` / `a || b` evaluate `b` only when `a` doesn't decide the
+    /// result (CRUSH-125). Both still produce a bool, as the eager `and`/`or`
+    /// opcodes did. Only `jmp_if_not` / `jmp` are used — the same branches
+    /// `if` compiles to, so every backend already supports them:
+    ///
+    /// ```text
+    /// &&:  <a> jmp_if_not F  <b> jmp_if_not F  push true  jmp E  F: push false  E:
+    /// ||:  <a> jmp_if_not B  jmp T  B: <b> jmp_if_not F  T: push true  jmp E  F: push false  E:
+    /// ```
+    fn compile_short_circuit(
+        &mut self,
+        operator: &str,
+        left: &Expression,
+        right: &Expression,
+        meta: &HashMap<String, serde_json::Value>,
+        instrs: &mut Vec<Instruction>,
+    ) -> Result<()> {
+        let is_and = matches!(operator, "and" | "&&");
+        let mut to_false = Vec::new();
+        let mut to_true = Vec::new();
+
+        self.compile_expr(left, instrs)?;
+        let left_falsy = instrs.len();
+        instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+        if is_and {
+            to_false.push(left_falsy);
+        } else {
+            to_true.push(instrs.len());
+            instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+            let eval_right = instrs.len();
+            instrs[left_falsy].args = serde_json::json!({"target": eval_right});
+        }
+
+        self.compile_expr(right, instrs)?;
+        to_false.push(instrs.len());
+        instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+
+        let true_label = instrs.len();
+        instrs.push(self.create_typed_instr(OpCode::PushBool(true), meta)?);
+        let to_end = instrs.len();
+        instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+        let false_label = instrs.len();
+        instrs.push(self.create_typed_instr(OpCode::PushBool(false), meta)?);
+        let end_label = instrs.len();
+
+        for idx in to_false {
+            instrs[idx].args = serde_json::json!({"target": false_label});
+        }
+        for idx in to_true {
+            instrs[idx].args = serde_json::json!({"target": true_label});
+        }
+        instrs[to_end].args = serde_json::json!({"target": end_label});
+        Ok(())
+    }
+
     fn compile_expr_with_name_hint(
         &mut self,
         expr: &Expression,
@@ -1319,6 +1374,9 @@ impl Compiler {
                 right,
                 meta,
             } => {
+                if matches!(operator.as_str(), "and" | "&&" | "or" | "||") {
+                    return self.compile_short_circuit(operator, left, right, meta, instrs);
+                }
                 self.compile_expr(left, instrs)?;
                 self.compile_expr(right, instrs)?;
                 let opcode = match operator.as_str() {
@@ -1333,14 +1391,6 @@ impl Compiler {
                     ">" => OpCode::Gt,
                     "<=" => OpCode::Le,
                     ">=" => OpCode::Ge,
-                    "and" | "&&" => {
-                        instrs.push(self.create_instr("and", serde_json::json!({}), meta));
-                        return Ok(());
-                    }
-                    "or" | "||" => {
-                        instrs.push(self.create_instr("or", serde_json::json!({}), meta));
-                        return Ok(());
-                    }
                     _ => bail!("Unsupported op: {}", operator),
                 };
                 instrs.push(self.create_typed_instr(opcode, meta)?);
