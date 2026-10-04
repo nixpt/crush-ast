@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-126 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/crush-126-try-catch-unwind`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -62,10 +62,10 @@ After the catch block completes, execution continues exactly once at the stateme
 
 ## Success criteria
 
-- [ ] both repros in the issue print exactly once, in order
-- [ ] `return` inside catch returns from the enclosing function
-- [ ] throw from a nested call 3 frames deep is caught by the right handler; uncaught still errors
-- [ ] same behaviour on FastVM/JIT/AOT (differential test)
+- [x] both repros in the issue print exactly once, in order
+- [x] `return` inside catch returns from the enclosing function
+- [x] throw from a nested call 3 frames deep is caught by the right handler; uncaught still errors
+- [x] same behaviour on FastVM/JIT/AOT (differential test)
 
 ## Technical approach
 
@@ -77,3 +77,11 @@ After the catch block completes, execution continues exactly once at the stateme
 - `crates/crush-vm/src/portable_vm.rs`
 - `crates/crush-vm/src/scheduler.rs`
 - FastVM / JIT / AOT equivalents (check each)
+
+## Resolution
+
+Reproduced on `main` `a8247af` first (both repros printed exactly what #66 reports). `ENTER_TRY` now pushes a `TryHandler { handler_ip, call_depth, stack_len }` (`crush-vm/src/vm.rs`); `THROW` truncates the call and operand stacks to it before jumping, in both `scheduler.rs` and `portable_vm.rs`; `RET` drops handlers registered by the returning frame. FastVM already unwound correctly; AOT backends don't support exceptions (unchanged); JIT tests pass unchanged.
+
+Live (`crush-run`): repro 1 → `A caught C`, repro 2 → `caught done`, plus a 3-frame / return-in-catch / return-in-try case. Tests: `crush-lang-sdk/tests/gh_issue_66_try_catch.rs`; in `crush-aot/tests/differential_aot.rs` the three-function rethrow test and a new exception-pipeline sub-test now require the interpreter and portable VM to agree with FastVM (previously FastVM-only because of this bug) — both fail without the fix.
+
+Found while testing: the scheduler drops `main`'s return value (filed as CRUSH-137).

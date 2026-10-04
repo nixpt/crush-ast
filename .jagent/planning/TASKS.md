@@ -190,7 +190,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 
 - [x] **CRUSH-124** (XS): `"\r"` becomes the letter `r` on CVM1 (assembler unescape) — GH #64. [ticket](tickets/CRUSH-124-string-escape-r-lost-on-cvm1.md)
 - [ ] **CRUSH-125** (M): `&&`/`||` do not short-circuit — GH #65. [ticket](tickets/CRUSH-125-and-or-no-short-circuit.md)
-- [ ] **CRUSH-126** (M): `throw` across a call boundary runs post-try code twice (no frame unwinding) — GH #66. [ticket](tickets/CRUSH-126-throw-across-call-runs-code-twice.md)
+- [x] **CRUSH-126** (M): `throw` across a call boundary runs post-try code twice (no frame unwinding) — GH #66. [ticket](tickets/CRUSH-126-throw-across-call-runs-code-twice.md)
 - [x] **CRUSH-127** (XS): uncaught `throw` reported as `unknown capability`; compile errors labelled `[runtime]` — GH #67. [ticket](tickets/CRUSH-127-uncaught-throw-mislabeled-unknown-capability.md)
 - [x] **CRUSH-128** (S): prefix `!`/`-` bind tighter than call/index/field (`!f(x)`, `-f(x)` fail) — GH #68. [ticket](tickets/CRUSH-128-unary-prefix-binds-tighter-than-postfix.md)
 - [x] **CRUSH-129** (S): top-level `main()` + `fn main` → infinite recursion — GH #69. [ticket](tickets/CRUSH-129-toplevel-main-call-infinite-recursion.md)
@@ -201,6 +201,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [ ] **CRUSH-134** (M): field access on `any` rejected (params, nested maps); `any` in conditions — **design decision** — GH #74, #77. [ticket](tickets/CRUSH-134-field-access-on-any-rejected.md)
 - [ ] **CRUSH-135** (S): heterogeneous array literals / array `+` — **design decision** — GH #75. [ticket](tickets/CRUSH-135-heterogeneous-arrays-and-array-plus.md)
 - [ ] **CRUSH-136** (S): string `<`/`>` type-check but fail at run time — GH #76. [ticket](tickets/CRUSH-136-string-comparison-runtime-error.md)
+- [ ] **CRUSH-137** (S): the scheduler drops `main`'s return value, so the differential harness never compares the interpreter's return (found during CRUSH-126). [ticket](tickets/CRUSH-137-scheduler-drops-main-return-value.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 

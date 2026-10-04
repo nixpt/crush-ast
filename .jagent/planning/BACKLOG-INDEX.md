@@ -50,6 +50,7 @@
 | 120   | Optimizer self-referential assignment preservation | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
 | 121–123 | Captured 2026-09-24/25: kitchen GC (121), stdlib convergence W10 (122), conformance per-file timeout (123) |
 | 124–136 | GitHub issues #64–#77 (pranix, 2026-10-04): correctness (124–129, 131, 136), polyglot pipeline (130, 132, 133), type-checker design (134, 135). #78 → CRUSH-75 |
+| 137 | Scheduler drops `main`'s return value (found during CRUSH-126) |
 | 121+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index
