@@ -184,6 +184,24 @@ for the full done condition.
 - [ ] **CRUSH-122** — stdlib convergence (W10): **steps 2–4 landed in #61** (2026-09-25: remaining exosphere stdlib families + nanovm SBL as `system.*`, fs sandbox escape fixed, `array.push/pop` lowering); remaining: step 1 = CRUSH-113 (`stdlib` on by default), step 5 = atlas/playbook correction (outside this repo). [ticket](tickets/CRUSH-122.md)
 - [ ] **CRUSH-123** — conformance runner: per-file timeout via child process + fix the frontend hang on `examples/crush/ai_agent_ops.crush` (reproduced: >60 s, no output); full corpus must terminate. [ticket](tickets/CRUSH-123.md)
 
+## Filed 2026-10-04 — GitHub issues #64–#78 (pranix, while writing a CAISON parser)
+
+All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). #78 (lambda `|x| =>`) is a duplicate of **CRUSH-75**.
+
+- [ ] **CRUSH-124** (XS): `"\r"` becomes the letter `r` on CVM1 (assembler unescape) — GH #64. [ticket](CRUSH-124-string-escape-r-lost-on-cvm1.md)
+- [ ] **CRUSH-125** (M): `&&`/`||` do not short-circuit — GH #65. [ticket](CRUSH-125-and-or-no-short-circuit.md)
+- [ ] **CRUSH-126** (M): `throw` across a call boundary runs post-try code twice (no frame unwinding) — GH #66. [ticket](CRUSH-126-throw-across-call-runs-code-twice.md)
+- [ ] **CRUSH-127** (XS): uncaught `throw` reported as `unknown capability`; compile errors labelled `[runtime]` — GH #67. [ticket](CRUSH-127-uncaught-throw-mislabeled-unknown-capability.md)
+- [ ] **CRUSH-128** (S): prefix `!`/`-` bind tighter than call/index/field (`!f(x)`, `-f(x)` fail) — GH #68. [ticket](CRUSH-128-unary-prefix-binds-tighter-than-postfix.md)
+- [ ] **CRUSH-129** (S): top-level `main()` + `fn main` → infinite recursion — GH #69. [ticket](CRUSH-129-toplevel-main-call-infinite-recursion.md)
+- [ ] **CRUSH-130** (S): `crushc → .cvm1` skips polyglot marshaling — GH #70. [ticket](CRUSH-130-crushc-skips-polyglot-marshaling.md)
+- [ ] **CRUSH-131** (XS): optimizer folds constants across `@lang` blocks — GH #71. [ticket](CRUSH-131-optimizer-folds-across-lang-blocks.md)
+- [ ] **CRUSH-132** (S): `crush-aotc --emit rust` silently drops unsupported ops — GH #72. [ticket](CRUSH-132-aotc-rust-drops-unsupported-ops.md)
+- [ ] **CRUSH-133** (S): JIT `ExecLang` is inert — GH #73. [ticket](CRUSH-133-jit-exec-lang-inert.md)
+- [ ] **CRUSH-134** (M): field access on `any` rejected (params, nested maps); `any` in conditions — **design decision** — GH #74, #77. [ticket](CRUSH-134-field-access-on-any-rejected.md)
+- [ ] **CRUSH-135** (S): heterogeneous array literals / array `+` — **design decision** — GH #75. [ticket](CRUSH-135-heterogeneous-arrays-and-array-plus.md)
+- [ ] **CRUSH-136** (S): string `<`/`>` type-check but fail at run time — GH #76. [ticket](CRUSH-136-string-comparison-runtime-error.md)
+
 ## M9 — Cross-project convergence & STDLIB restoration
 
 **Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); STDLIB clean-restore of **103** capabilities from `exosphere-1.0.zip` with zero mock markers (each gated by an M5 `@covers` test, not hand-verified); STDLIB mock-rewrite of **46** mock-tainted capabilities from spec (one CRUSH ticket per cap, because rewrites touch behavior). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.

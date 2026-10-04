@@ -5,6 +5,7 @@
 | **ID** | CRUSH-75 |
 | **Priority** | P1 |
 | **Status** | Backlog |
+| **GitHub** | [#78](https://github.com/nixpt/crush-ast/issues/78) — reported again 2026-10-04 by pranix: `\|x\| => x + 10` fails with "unexpected token `=>`"; the block form `\|x\| { return x + 10 }` is misparsed as a map literal |
 | **Phase** | Correctness spine (s412) |
 
 ## Problem
