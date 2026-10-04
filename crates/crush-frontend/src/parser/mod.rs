@@ -1424,6 +1424,14 @@ impl Parser {
         Ok(left)
     }
 
+    /// The operand of a prefix `-` / `!`: a primary plus its postfix chain
+    /// (field access, indexing and calls bind at 80/90), but no binary
+    /// operator — so `!f(x)` is `!(f(x))` and `-a[i]` is `-(a[i])`, while
+    /// `-2 * 3` stays `(-2) * 3` and `!a && b` stays `(!a) && b` (CRUSH-128).
+    fn parse_unary_operand(&mut self) -> Result<Expression, ()> {
+        self.parse_expression_with_precedence(80)
+    }
+
     /// Parse primary expression
     fn parse_primary(&mut self) -> Result<Expression, ()> {
         match self.peek() {
@@ -1543,7 +1551,7 @@ impl Parser {
             Token::Match(_) => self.parse_match_expression(),
             Token::Minus(_) => {
                 self.advance();
-                let operand = self.parse_primary()?;
+                let operand = self.parse_unary_operand()?;
                 Ok(Expression::UnaryOp {
                     operator: "-".to_string(),
                     operand: Box::new(operand),
@@ -1552,7 +1560,7 @@ impl Parser {
             }
             Token::Not(_) => {
                 self.advance();
-                let operand = self.parse_primary()?;
+                let operand = self.parse_unary_operand()?;
                 Ok(Expression::UnaryOp {
                     operator: "!".to_string(),
                     operand: Box::new(operand),

@@ -534,6 +534,20 @@ impl SemanticAnalyzer {
                 }
                 Ok(self.capability_return_type(name))
             }
+            // `!x` is always a bool (the VM negates truthiness, so the operand
+            // may be anything); `-x` keeps a numeric operand's type. Falling
+            // through to `Any` made `if !is_digit(c)` a type error once
+            // CRUSH-128 let `!` apply to calls.
+            Expression::UnaryOp {
+                operator, operand, ..
+            } => {
+                let operand_type = self.check_expr(operand)?;
+                Ok(match (operator.as_str(), operand_type) {
+                    ("!", _) => Type::Bool,
+                    ("-", t @ (Type::Int | Type::Float)) => t,
+                    _ => Type::Any,
+                })
+            }
             _ => Ok(Type::Any), // Default for complex expressions (capabilities, index, etc.)
         }
     }
