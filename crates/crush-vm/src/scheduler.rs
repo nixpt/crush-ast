@@ -1177,7 +1177,7 @@ fn execute_one(
                 push!(err_val);
                 return Ok(StepAction::Jump);
             }
-            return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
+            return Err(VmError::Uncaught(err_val.as_text()));
         }
         STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
             let needle = pop!();

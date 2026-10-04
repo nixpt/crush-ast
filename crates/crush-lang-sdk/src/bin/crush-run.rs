@@ -146,10 +146,12 @@ fn main() {
                     MessageFormat::Text => {
                         // Walk anyhow's full cause chain — works for any
                         // error type produced by `run_file`.
-                        eprint!(
-                            "{}",
-                            crush_lang_sdk::theme::render_anyhow_error(&e, "runtime")
-                        );
+                        let label = if e.is::<CompileFailed>() {
+                            "compile"
+                        } else {
+                            "runtime"
+                        };
+                        eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, label));
                     }
                     MessageFormat::Json => {
                         // Map a typed `RuntimeError` to a structured
@@ -173,6 +175,24 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+}
+
+/// A `.crush` source that failed to parse, type-check or compile, so `main`
+/// labels it `[compile]` rather than `[runtime]` (CRUSH-127). Display and the
+/// cause chain are the inner error's, unchanged.
+#[derive(Debug)]
+struct CompileFailed(anyhow::Error);
+
+impl std::fmt::Display for CompileFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for CompileFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
     }
 }
 
@@ -363,7 +383,8 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         }
         "crush" => {
             let source = std::fs::read_to_string(&args.path)?;
-            let program = crush_lang_sdk::compile::compile_crush_source(&source)?;
+            let program =
+                crush_lang_sdk::compile::compile_crush_source(&source).map_err(CompileFailed)?;
             runtime.run(&program)?
         }
         "casm" => {

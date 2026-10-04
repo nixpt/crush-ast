@@ -60,6 +60,10 @@ pub enum VmError {
     CapDenied(String),
     #[error("unknown capability: {0}")]
     UnknownCap(String),
+    /// A `throw` that no enclosing `try` caught. The payload is the thrown
+    /// value's text. (Was reported as `UnknownCap`, CRUSH-127.)
+    #[error("uncaught error: {0}")]
+    Uncaught(String),
     #[error("{cap} takes {expected} arg(s), got {got}")]
     CapArity {
         cap: String,

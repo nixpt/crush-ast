@@ -957,10 +957,7 @@ impl PortableVm {
                     self.push(err_val);
                     return Ok(());
                 }
-                return Err(VmError::UnknownCap(format!(
-                    "uncaught error: {}",
-                    value_to_text(&err_val)
-                )));
+                return Err(VmError::Uncaught(value_to_text(&err_val)));
             }
             STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
                 let needle = self.pop()?;
