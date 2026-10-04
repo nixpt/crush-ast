@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-125 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-04, branch `claude/crush-125-short-circuit`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -41,9 +41,9 @@ Expected: `false`. Actual: `[runtime] array index out of range: 3 (len 3)`.
 
 ## Success criteria
 
-- [ ] `false && f()` / `true || f()` never call `f` on CVM1, FastVM, JIT and both AOT backends
-- [ ] the repro prints `false`
-- [ ] differential test across backends
+- [x] `false && f()` / `true || f()` never call `f` on CVM1, FastVM, JIT and both AOT backends
+- [x] the repro prints `false`
+- [x] differential test across backends
 
 ## Technical approach
 
@@ -54,3 +54,11 @@ Expected: `false`. Actual: `[runtime] array index out of range: 3 (len 3)`.
 
 - `crates/crush-frontend/src/compiler.rs`
 - backend differential tests
+
+## Resolution
+
+Reproduced on `main` `a8247af` first. `Compiler::compile_short_circuit` (`crush-frontend/src/compiler.rs`) lowers `&&`/`||` to `jmp_if_not`/`jmp` with a bool pushed at the join point — the result stays a bool (the open question above), and no backend changed. Live: the #65 repro prints `false`; an evaluation-order trace shows each right operand runs only when needed.
+
+Tests: `crush-lang-sdk/tests/gh_issue_65_short_circuit.rs`; `logical_and_or_lower_to_short_circuit_branches` in `crush-frontend/tests/compiler_tests.rs`; three all-backend tests in `crush-aot/tests/differential_aot.rs` (including a branch taken mid-expression) with pinned values — needed because FastVM's out-of-range index returns null instead of trapping, so with eager evaluation every backend still "agreed".
+
+Found while testing (pre-existing on `main`, filed): CRUSH-138 (FastVM binds call arguments in reverse order), CRUSH-139 (JIT returns the wrong branch for `if inside && !outside`).
