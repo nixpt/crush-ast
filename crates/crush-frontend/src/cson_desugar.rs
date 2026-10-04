@@ -1,4 +1,4 @@
-use crush_cast::cson::{CsonKey, CsonNode, CsonValue};
+use crush_cast::cson::{CaisonKey, CaisonNode, CaisonValue};
 use crush_cast::{Expression, CastType};
 use crush_cast::ai::AIExpression;
 use std::collections::HashMap;
@@ -6,25 +6,25 @@ use std::collections::HashMap;
 /// Converts a CSON AST Node into a fully executable Crush Expression.
 /// This allows CSON data blocks containing `@synthesize` or fuzzy keys
 /// to be compiled directly into executable CAST logic by the frontend.
-pub fn desugar_cson_to_expr(node: &CsonNode) -> Expression {
+pub fn desugar_cson_to_expr(node: &CaisonNode) -> Expression {
     match &node.value {
-        CsonValue::Null => Expression::NullLiteral { meta: HashMap::new() },
-        CsonValue::Boolean(b) => Expression::BoolLiteral { value: *b, meta: HashMap::new() },
-        CsonValue::Number(n) => {
+        CaisonValue::Null => Expression::NullLiteral { meta: HashMap::new() },
+        CaisonValue::Boolean(b) => Expression::BoolLiteral { value: *b, meta: HashMap::new() },
+        CaisonValue::Number(n) => {
             if n.fract() == 0.0 && *n <= i64::MAX as f64 && *n >= i64::MIN as f64 {
                 Expression::IntLiteral { value: *n as i64, meta: HashMap::new() }
             } else {
                 Expression::FloatLiteral { value: *n, meta: HashMap::new() }
             }
         }
-        CsonValue::String(s) => Expression::StringLiteral { value: s.clone(), meta: HashMap::new() },
+        CaisonValue::String(s) => Expression::StringLiteral { value: s.clone(), meta: HashMap::new() },
 
-        CsonValue::Array(elements) => {
+        CaisonValue::Array(elements) => {
             let exprs = elements.iter().map(desugar_cson_to_expr).collect();
             Expression::ArrayLiteral { elements: exprs, meta: HashMap::new() }
         }
 
-        CsonValue::Object(properties) => {
+        CaisonValue::Object(properties) => {
             let mut elements = Vec::new();
             for (k, v) in properties {
                 if let Some(semantic_key) = k.strip_prefix('~') {
@@ -60,7 +60,7 @@ pub fn desugar_cson_to_expr(node: &CsonNode) -> Expression {
             }
         }
 
-        CsonValue::Synthesize(prompt) => {
+        CaisonValue::Synthesize(prompt) => {
             Expression::AI(AIExpression::Synthesize {
                 output_type: CastType::Any,
                 constraints: vec![prompt.clone()],

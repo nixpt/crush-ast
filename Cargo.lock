@@ -422,6 +422,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 
 [[package]]
+name = "caison"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8547b3c34be6c145c55ad272a0e5f17b656a064d590777cb2e9c9d05d1ad3ce0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casm"
 version = "0.3.8"
 dependencies = [
@@ -989,6 +999,7 @@ dependencies = [
 name = "crush-cson"
 version = "0.3.8"
 dependencies = [
+ "caison",
  "crush-vm",
  "serde",
  "serde_json",
