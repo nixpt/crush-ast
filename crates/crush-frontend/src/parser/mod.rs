@@ -523,7 +523,14 @@ impl Parser {
         if !statements.is_empty() {
             match functions.get_mut("main") {
                 Some(existing) => {
-                    let mut merged = statements;
+                    // A bare top-level `main()` next to `fn main` (the Python/C habit of
+                    // calling main yourself) would land inside main's own body and recurse
+                    // until the call-depth quota trips. `fn main` already runs, so the call
+                    // means "run main" — drop it (CRUSH-129).
+                    let mut merged: Vec<Statement> = statements
+                        .into_iter()
+                        .filter(|stmt| !is_bare_main_call(stmt))
+                        .collect();
                     merged.append(&mut existing.body);
                     existing.body = merged;
                 }
@@ -2929,6 +2936,17 @@ impl Parser {
 pub struct Parameter {
     pub name: String,
     pub type_hint: CastType,
+}
+
+/// `main()` as a statement on its own: no arguments, result unused.
+fn is_bare_main_call(stmt: &Statement) -> bool {
+    matches!(
+        stmt,
+        Statement::ExprStmt {
+            expr: Expression::Call { function, args, .. },
+            ..
+        } if function == "main" && args.is_empty()
+    )
 }
 
 #[cfg(test)]
