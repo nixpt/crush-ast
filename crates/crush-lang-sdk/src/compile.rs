@@ -33,6 +33,10 @@ pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
     casm_to_vm(&casm_program)
 }
 
+/// Every path from Crush source to bytecode must run this — `crushc` used to
+/// skip it, so `crushc x.crush -o x.cvm1` rejected or mis-ran any program
+/// whose `@lang` block produces a variable (CRUSH-130).
+///
 /// Fill in `Statement::LangBlock.variables` (inputs) and
 /// `meta["polyglot_output"]` (the single output var, per the current
 /// exec_lang protocol) for every `@python { ... }` block, via real
@@ -46,7 +50,7 @@ pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
 /// Python block is left unmarshaled too rather than failing Crush
 /// compilation outright; the actual `python3` subprocess will raise its
 /// own loud syntax error at run time, which is still honest, just later.
-fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
+pub fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
     for func in program.functions.values_mut() {
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
