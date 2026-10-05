@@ -47,6 +47,21 @@ fn require_numeric(a: &RuntimeValue, b: &RuntimeValue) -> Result<(), FastError> 
 }
 
 /// ADD with string concatenation when either side is a string.
+/// `a + b` on two arrays: a new array, a's elements then b's; neither operand
+/// changes (#75, CRUSH-135). `None` when either side isn't an array.
+pub fn concat_arrays(a: &RuntimeValue, b: &RuntimeValue, arena: &mut Arena) -> Option<RuntimeValue> {
+    let (RuntimeValue::Ref(pa), RuntimeValue::Ref(pb)) = (a, b) else { return None };
+    let joined = match (arena.get(*pa), arena.get(*pb)) {
+        (Some(Object::Array(x)), Some(Object::Array(y))) => {
+            let mut out = x.clone();
+            out.extend(y.iter().cloned());
+            out
+        }
+        _ => return None,
+    };
+    Some(RuntimeValue::Ref(arena.alloc(Object::Array(joined))))
+}
+
 pub fn add_rtv(a: &RuntimeValue, b: &RuntimeValue, arena: &Arena) -> Result<RuntimeValue, FastError> {
     if is_string(a, arena) || is_string(b, arena) {
         let s = format!("{}{}", rtv_as_text(a, arena), rtv_as_text(b, arena));

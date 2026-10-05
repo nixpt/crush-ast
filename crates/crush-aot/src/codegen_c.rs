@@ -392,6 +392,20 @@ static Value _add(Value a, Value b) {
             if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
             return mk_string(buf);
     }
+    if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
+        // Array concatenation: a new array, neither operand changes (#75, CRUSH-135).
+        CrushArray* la = &_arrays[a.array_idx];
+        CrushArray* ra = &_arrays[b.array_idx];
+        if (la->len + ra->len > ARRAY_DATA_CAP) _crush_arith_error("array concatenation exceeds capacity");
+        int id = _alloc_array();
+        if (id < 0) _crush_arith_error("array pool exhausted");
+        la = &_arrays[a.array_idx]; ra = &_arrays[b.array_idx];
+        memcpy(_arrays[id].data, la->data, sizeof(Value) * (size_t)la->len);
+        memcpy(_arrays[id].data + la->len, ra->data, sizeof(Value) * (size_t)ra->len);
+        _arrays[id].len = la->len + ra->len;
+        return mk_array(id);
+    }
+    if (!_is_num(a) || !_is_num(b)) _crush_arith_error("type error: + on non-numeric operands");
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         int64_t out;
         if (__builtin_add_overflow(a.i, b.i, &out)) _crush_arith_error("arithmetic overflow");

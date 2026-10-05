@@ -3,7 +3,7 @@
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
 use super::operations::{compare_op, current_locals_base, is_truthy};
-use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
+use super::arithmetic::{add_rtv, concat_arrays, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
 use crate::memory::{Arena, Object};
@@ -177,7 +177,11 @@ pub fn execute_one(
         FastOp::Add => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(add_rtv(&a, &b, arena)?);
+            let r = match concat_arrays(&a, &b, arena) {
+                Some(r) => r,
+                None => add_rtv(&a, &b, arena)?,
+            };
+            stack.push(r);
         }
         FastOp::Sub => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;

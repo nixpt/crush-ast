@@ -450,6 +450,9 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     }
                 }
             }
+            // CVM1 and FastVM push the array back (the compiler POPs it after
+            // `a[i] = v`); without it that POP ate a live value (CRUSH-146).
+            ctx.push(container);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -1092,7 +1095,29 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
             });
 
-            if a_is_str || b_is_str {
+            let joined = match (a_val.to_ref(), b_val.to_ref()) {
+                (Some(ia), Some(ib)) => arena_ref(ctx.arena).and_then(|ar| {
+                    match (ar.get(ia), ar.get(ib)) {
+                        (Some(Object::Array(x)), Some(Object::Array(y))) => {
+                            Some(x.iter().chain(y.iter()).cloned().collect::<Vec<_>>())
+                        }
+                        _ => None,
+                    }
+                }),
+                _ => None,
+            };
+
+            if let Some(items) = joined {
+                // Array concatenation: a new array, neither operand changes
+                // (#75, CRUSH-135).
+                match arena_mut(ctx.arena) {
+                    Some(arena) => {
+                        let ptr = arena.alloc(Object::Array(items));
+                        ctx.push(JitValue::from_ref(ptr));
+                    }
+                    None => ctx.push(JitValue::null()),
+                }
+            } else if a_is_str || b_is_str {
                 // String concatenation: get text for each operand.
                 let arena = match arena_mut(ctx.arena) {
                     Some(a) => a,
@@ -1114,6 +1139,13 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                         ctx.push(JitValue::null());
                     }
                 }
+            } else if !(a_val.to_float().is_some() || a_val.to_int().is_some())
+                || !(b_val.to_float().is_some() || b_val.to_int().is_some())
+            {
+                // Non-numeric operand (array + int, null + 1, ...): a type
+                // error, as on FastVM — it used to read as 0.0.
+                ctx.error = 1;
+                ctx.push(JitValue::null());
             } else {
                 // Float or mixed: promote both to f64.
                 let af = a_val.to_float()

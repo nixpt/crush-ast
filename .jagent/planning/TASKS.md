@@ -199,7 +199,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-132** (S): `crush-aotc --emit rust` silently drops unsupported ops — GH #72. [ticket](tickets/CRUSH-132-aotc-rust-drops-unsupported-ops.md)
 - [x] **CRUSH-133** (S): JIT `ExecLang` is inert — GH #73. [ticket](tickets/CRUSH-133-jit-exec-lang-inert.md)
 - [x] **CRUSH-134** (M): field access on `any` rejected (params, nested maps); `any` in conditions — GH #74, #77; truthiness unified on every backend. [ticket](tickets/CRUSH-134-field-access-on-any-rejected.md)
-- [ ] **CRUSH-135** (S): heterogeneous array literals / array `+` — **design decision** — GH #75. [ticket](tickets/CRUSH-135-heterogeneous-arrays-and-array-plus.md)
+- [x] **CRUSH-135** (S): heterogeneous array literals / array `+` — GH #75; mixed literals are `array<any>`, `+` concatenates on every backend. [ticket](tickets/CRUSH-135-heterogeneous-arrays-and-array-plus.md)
 - [x] **CRUSH-136** (S): string `<`/`>` type-check but fail at run time — GH #76. [ticket](tickets/CRUSH-136-string-comparison-runtime-error.md)
 - [ ] **CRUSH-137** (S): the scheduler drops `main`'s return value, so the differential harness never compares the interpreter's return (found during CRUSH-126). [ticket](tickets/CRUSH-137-scheduler-drops-main-return-value.md)
 - [x] **CRUSH-138** (S–M, P1): FastVM binds call arguments in reverse order — `sub(10, 3)` is `-7` (found during CRUSH-125). [ticket](tickets/CRUSH-138-fastvm-call-arguments-reversed.md)
@@ -210,6 +210,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-143** (XS, P0): optimizer dropped assignments made inside `if` branches — `let n = 0; if c { n = n + 1 }; print(n)` printed 0 (found during CRUSH-136). [ticket](tickets/CRUSH-143-optimizer-drops-if-branch-assignments.md)
 - [ ] **CRUSH-144** (S): crush-aotc is outside the differential harness; it missed #76 string ordering (found during CRUSH-134). [ticket](tickets/CRUSH-144-crush-aotc-outside-differential-harness.md)
 - [x] **CRUSH-145** (S, P1): SET_FIELD contract diverged — map literals broken on FastVM/JIT/AOT; `m.x = v` leaked a stack slot (found during CRUSH-134). [ticket](tickets/CRUSH-145-set-field-contract-diverged.md)
+- [x] **CRUSH-146** (XS, P1): JIT `arr_set` didn't push the array back — `a[i] = v` corrupted the JIT stack (found during CRUSH-135). [ticket](tickets/CRUSH-146-jit-arr-set-stack-contract.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 

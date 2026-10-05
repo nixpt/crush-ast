@@ -423,9 +423,15 @@ impl PortableVm {
                 self.push(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
             }
             // Anything else non-numeric is a LOUD error, not a silent 0.
+            // (Two arrays under ADD concatenate in `add_values`, CRUSH-135.)
             ADD | SUB | MUL | DIV | MOD
-                if !matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
-                    || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_))) =>
+                if !(opcode == ADD
+                    && matches!(
+                        (self.peek_n(1), self.peek_n(0)),
+                        (Some(Value::Array(_)), Some(Value::Array(_)))
+                    ))
+                    && (!matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
+                        || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_)))) =>
             {
                 let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
                 return Err(VmError::TypeError { expected: "numeric", got });

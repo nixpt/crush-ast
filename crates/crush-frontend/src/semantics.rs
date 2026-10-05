@@ -356,6 +356,11 @@ impl SemanticAnalyzer {
                             Ok(self.numeric_result_type(&l_type, &r_type))
                         } else if l_type == Type::String || r_type == Type::String {
                             Ok(Type::String)
+                        } else if let (Type::Array(l), Type::Array(r)) = (&l_type, &r_type) {
+                            // Array concatenation: a new array, a's elements
+                            // then b's (#75, CRUSH-135).
+                            let elem = self.merge_types(l, r).unwrap_or(Type::Any);
+                            Ok(Type::Array(Box::new(elem)))
                         } else if l_type == Type::Any || r_type == Type::Any {
                             Ok(Type::Any)
                         } else if l_type == Type::Null || r_type == Type::Null {
@@ -470,16 +475,12 @@ impl SemanticAnalyzer {
                 if elements.is_empty() {
                     return Ok(Type::Array(Box::new(Type::Any)));
                 }
+                // Uniform literals keep their element type; mixed ones are
+                // `array<any>`, like map values (#75, CRUSH-135).
                 let mut current = self.check_expr(&elements[0])?;
                 for elem in elements.iter().skip(1) {
                     let elem_ty = self.check_expr(elem)?;
-                    current = self.merge_types(&current, &elem_ty).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Array elements must have compatible types, found {} and {}",
-                            current,
-                            elem_ty
-                        )
-                    })?;
+                    current = self.merge_types(&current, &elem_ty).unwrap_or(Type::Any);
                 }
                 Ok(Type::Array(Box::new(current)))
             }

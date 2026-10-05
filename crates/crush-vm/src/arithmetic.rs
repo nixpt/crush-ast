@@ -57,10 +57,16 @@ fn require_numeric(a: &Value, b: &Value) -> Result<(), VmError> {
     Ok(())
 }
 
-/// ADD with string concatenation when either side is a string.
+/// ADD with string concatenation when either side is a string, and array
+/// concatenation (a new array; neither operand changes) when both are arrays.
 pub fn add_values(a: &Value, b: &Value) -> Result<Value, VmError> {
     if matches!(a, Value::Str(_)) || matches!(b, Value::Str(_)) {
         return Ok(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
+    }
+    if let (Value::Array(x), Value::Array(y)) = (a, b) {
+        let mut out = x.borrow().clone();
+        out.extend(y.borrow().iter().cloned());
+        return Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(out))));
     }
     require_numeric(a, b)?;
     if is_float(a) || is_float(b) {

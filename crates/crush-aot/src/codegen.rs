@@ -203,9 +203,17 @@ fn bin_add(stack: &mut Vec<RuntimeValue>) {
     let is_str = |v: &RuntimeValue| matches!(v, RuntimeValue::String(_));
     let n = stack.len();
     let mixed = n >= 2 && (is_str(&stack[n - 1]) || is_str(&stack[n - 2]));
+    let arrays = n >= 2 && matches!((&stack[n - 2], &stack[n - 1]), (RuntimeValue::Array(_), RuntimeValue::Array(_)));
     if mixed {
         let (a, b) = pop2(stack);
         stack.push(RuntimeValue::String(format!("{}{}", as_text(&a), as_text(&b))));
+    } else if arrays {
+        // Array concatenation: a new array, neither operand changes (#75, CRUSH-135).
+        if let (RuntimeValue::Array(x), RuntimeValue::Array(y)) = pop2(stack) {
+            let mut out = x.borrow().clone();
+            out.extend(y.borrow().iter().cloned());
+            stack.push(RuntimeValue::Array(std::rc::Rc::new(std::cell::RefCell::new(out))));
+        }
     } else {
         bin_arith(stack, |a, b| a.checked_add(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()), |a, b| a + b);
     }

@@ -1388,3 +1388,48 @@ fn aot_set_field_object_literals_and_statements() {
         5000321,
     );
 }
+
+#[test]
+fn aot_array_concat_and_mixed_literals() {
+    // CRUSH-135 (#75): mixed literals are `array<any>`; `a + b` is a new
+    // array, a's elements then b's, neither operand changed.
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let a = [1, 2]
+            let b = a + [3]
+            b[0] = 50
+            let m = ["s", 4, true] + a
+            let e = [] + []
+            let s = 0
+            let i = 0
+            while i < len(b) { s = s + b[i] i = i + 1 }
+            return len(a) + a[0] * 10 + s * 100 + len(m) * 100000 + m[1] * 1000000 + len(e)
+        }
+    "#,
+        2 + 10 + 55 * 100 + 5 * 100000 + 4 * 1000000,
+    );
+}
+
+#[test]
+fn aot_array_plus_number_rejected() {
+    assert_all_backends_agree("fn add(a: any, b: any) { return a + b }\nfn main() { return add([1], 2) }");
+}
+
+#[test]
+fn aot_index_assignment_keeps_the_stack_balanced() {
+    // CRUSH-146: `a[i] = v` compiles to `arr_set; pop`. The JIT's arr_set
+    // didn't push the array back, so the POP ate a live value and the next
+    // read came back null.
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let b = [0, 0, 0]
+            let i = 0
+            while i < 3 { b[i] = i * 10 + 1 i = i + 1 }
+            return b[0] + b[1] * 100 + b[2] * 10000
+        }
+    "#,
+        1 + 11 * 100 + 21 * 10000,
+    );
+}
