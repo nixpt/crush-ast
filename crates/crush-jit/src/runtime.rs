@@ -386,33 +386,49 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         // OP_ARRAY_PUSH (7)
         // ════════════════════════════════════════════════════════════════════
         OP_ARRAY_PUSH => {
+            // Same stack contract as FastVM / CVM1: pop value and array, push
+            // the array back. An array literal compiles to `new_array` then
+            // `push x; array_push` per element, so dropping the array (as
+            // this did) left the next element pushing into nothing and
+            // `len([1, 2, 3])` was null (CRUSH-142).
             let val = ctx.pop().unwrap_or(JitValue::null());
             let container = ctx.pop().unwrap_or(JitValue::null());
-            if let Some(ref_idx) = container.to_ref() {
-                if let Some(arena) = arena_mut(ctx.arena) {
-                    if let Ok(Object::Array(arr)) = arena.get_mut(ref_idx) {
+            let pushed = container.to_ref().is_some_and(|ref_idx| {
+                arena_mut(ctx.arena).is_some_and(|arena| match arena.get_mut(ref_idx) {
+                    Ok(Object::Array(arr)) => {
                         arr.push(jit_to_rtv(val));
+                        true
                     }
-                }
+                    _ => false,
+                })
+            });
+            if !pushed {
+                ctx.error = 1; // FastVM: TypeMismatch
             }
+            ctx.push(container);
         }
 
         // ════════════════════════════════════════════════════════════════════
         // OP_ARRAY_POP (8)
         // ════════════════════════════════════════════════════════════════════
         OP_ARRAY_POP => {
+            // FastVM / CVM1 leave the array, then the popped value (CRUSH-142).
             let container = ctx.pop().unwrap_or(JitValue::null());
-            if let Some(ref_idx) = container.to_ref() {
-                if let Some(arena) = arena_mut(ctx.arena) {
-                    if let Ok(Object::Array(arr)) = arena.get_mut(ref_idx) {
-                        let result = arr.pop().map(|v| rtv_to_jit(&v))
-                            .unwrap_or(JitValue::null());
-                        ctx.push(result);
-                        return;
-                    }
+            let popped = container.to_ref().and_then(|ref_idx| {
+                arena_mut(ctx.arena).and_then(|arena| match arena.get_mut(ref_idx) {
+                    Ok(Object::Array(arr)) => Some(arr.pop()),
+                    _ => None,
+                })
+            });
+            let result = match popped {
+                Some(v) => v.map(|v| rtv_to_jit(&v)).unwrap_or(JitValue::null()),
+                None => {
+                    ctx.error = 1; // FastVM: TypeMismatch
+                    JitValue::null()
                 }
-            }
-            ctx.push(JitValue::null());
+            };
+            ctx.push(container);
+            ctx.push(result);
         }
 
         // ════════════════════════════════════════════════════════════════════
