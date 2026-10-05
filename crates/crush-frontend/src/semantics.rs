@@ -278,9 +278,7 @@ impl SemanticAnalyzer {
                 ..
             } => {
                 let cond_type = self.check_expr(condition)?;
-                if cond_type != Type::Bool {
-                    bail!("If condition must be bool, found {}", cond_type);
-                }
+                check_condition("If", &cond_type)?;
                 self.check_block(then_body)?;
                 if let Some(eb) = else_body {
                     self.check_block(eb)?;
@@ -290,9 +288,7 @@ impl SemanticAnalyzer {
                 condition, body, ..
             } => {
                 let cond_type = self.check_expr(condition)?;
-                if cond_type != Type::Bool {
-                    bail!("While condition must be bool, found {}", cond_type);
-                }
+                check_condition("While", &cond_type)?;
                 self.check_block(body)?;
             }
             Statement::ExprStmt { expr, .. } => {
@@ -360,6 +356,11 @@ impl SemanticAnalyzer {
                             Ok(self.numeric_result_type(&l_type, &r_type))
                         } else if l_type == Type::String || r_type == Type::String {
                             Ok(Type::String)
+                        } else if let (Type::Array(l), Type::Array(r)) = (&l_type, &r_type) {
+                            // Array concatenation: a new array, a's elements
+                            // then b's (#75, CRUSH-135).
+                            let elem = self.merge_types(l, r).unwrap_or(Type::Any);
+                            Ok(Type::Array(Box::new(elem)))
                         } else if l_type == Type::Any || r_type == Type::Any {
                             Ok(Type::Any)
                         } else if l_type == Type::Null || r_type == Type::Null {
@@ -474,16 +475,12 @@ impl SemanticAnalyzer {
                 if elements.is_empty() {
                     return Ok(Type::Array(Box::new(Type::Any)));
                 }
+                // Uniform literals keep their element type; mixed ones are
+                // `array<any>`, like map values (#75, CRUSH-135).
                 let mut current = self.check_expr(&elements[0])?;
                 for elem in elements.iter().skip(1) {
                     let elem_ty = self.check_expr(elem)?;
-                    current = self.merge_types(&current, &elem_ty).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Array elements must have compatible types, found {} and {}",
-                            current,
-                            elem_ty
-                        )
-                    })?;
+                    current = self.merge_types(&current, &elem_ty).unwrap_or(Type::Any);
                 }
                 Ok(Type::Array(Box::new(current)))
             }
@@ -516,8 +513,11 @@ impl SemanticAnalyzer {
                             struct_name
                         )
                     }
-                } else if matches!(target_type, Type::Map(_, _)) {
-                    // Field access on maps returns the value type (Any for now)
+                } else if matches!(target_type, Type::Map(_, _) | Type::Any) {
+                    // Maps, and values whose type isn't known statically
+                    // (untyped params, `m.outer.inner`), are looked up at run
+                    // time; a missing key is `null`, as every VM's GET_FIELD
+                    // already does (#74/#77, CRUSH-134).
                     Ok(Type::Any)
                 } else {
                     bail!(
@@ -533,6 +533,20 @@ impl SemanticAnalyzer {
                     self.check_expr(arg)?;
                 }
                 Ok(self.capability_return_type(name))
+            }
+            // `!x` is always a bool (the VM negates truthiness, so the operand
+            // may be anything); `-x` keeps a numeric operand's type. Falling
+            // through to `Any` made `if !is_digit(c)` a type error once
+            // CRUSH-128 let `!` apply to calls.
+            Expression::UnaryOp {
+                operator, operand, ..
+            } => {
+                let operand_type = self.check_expr(operand)?;
+                Ok(match (operator.as_str(), operand_type) {
+                    ("!", _) => Type::Bool,
+                    ("-", t @ (Type::Int | Type::Float)) => t,
+                    _ => Type::Any,
+                })
             }
             _ => Ok(Type::Any), // Default for complex expressions (capabilities, index, etc.)
         }
@@ -682,9 +696,7 @@ impl SemanticAnalyzer {
                     ..
                 } => {
                     let cond_type = self.check_expr(condition)?;
-                    if cond_type != Type::Bool {
-                        bail!("If condition must be bool, found {}", cond_type);
-                    }
+                    check_condition("If", &cond_type)?;
                     self.enter_scope();
                     self.collect_return_types_in_order(then_body, out)?;
                     self.exit_scope();
@@ -698,9 +710,7 @@ impl SemanticAnalyzer {
                     condition, body, ..
                 } => {
                     let cond_type = self.check_expr(condition)?;
-                    if cond_type != Type::Bool {
-                        bail!("While condition must be bool, found {}", cond_type);
-                    }
+                    check_condition("While", &cond_type)?;
                     self.enter_scope();
                     self.collect_return_types_in_order(body, out)?;
                     self.exit_scope();
@@ -825,6 +835,18 @@ fn collect_called_functions<'a>(stmts: &'a [Statement], out: &mut Vec<&'a str>) 
             | Statement::Continue { .. }
             | Statement::AI(_) => {}
         }
+    }
+}
+
+/// `if` / `while` accept a `bool`, or an `any` whose truthiness is decided at
+/// run time (null/false/0 are falsy — what every backend's branch already
+/// does). A type known not to be `bool`, like `if 5`, is still an error
+/// (#74, CRUSH-134).
+fn check_condition(kind: &str, cond_type: &Type) -> Result<()> {
+    if matches!(cond_type, Type::Bool | Type::Any) {
+        Ok(())
+    } else {
+        bail!("{kind} condition must be bool, found {cond_type}")
     }
 }
 

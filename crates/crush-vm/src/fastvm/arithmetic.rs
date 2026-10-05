@@ -47,6 +47,21 @@ fn require_numeric(a: &RuntimeValue, b: &RuntimeValue) -> Result<(), FastError> 
 }
 
 /// ADD with string concatenation when either side is a string.
+/// `a + b` on two arrays: a new array, a's elements then b's; neither operand
+/// changes (#75, CRUSH-135). `None` when either side isn't an array.
+pub fn concat_arrays(a: &RuntimeValue, b: &RuntimeValue, arena: &mut Arena) -> Option<RuntimeValue> {
+    let (RuntimeValue::Ref(pa), RuntimeValue::Ref(pb)) = (a, b) else { return None };
+    let joined = match (arena.get(*pa), arena.get(*pb)) {
+        (Some(Object::Array(x)), Some(Object::Array(y))) => {
+            let mut out = x.clone();
+            out.extend(y.iter().cloned());
+            out
+        }
+        _ => return None,
+    };
+    Some(RuntimeValue::Ref(arena.alloc(Object::Array(joined))))
+}
+
 pub fn add_rtv(a: &RuntimeValue, b: &RuntimeValue, arena: &Arena) -> Result<RuntimeValue, FastError> {
     if is_string(a, arena) || is_string(b, arena) {
         let s = format!("{}{}", rtv_as_text(a, arena), rtv_as_text(b, arena));
@@ -138,6 +153,36 @@ where
 {
     require_numeric(a, b)?;
     Ok(RuntimeValue::Bool(cmp(to_f64(a), to_f64(b))))
+}
+
+/// The string a value holds, inline or in the arena.
+fn rtv_str<'a>(v: &'a RuntimeValue, arena: &'a Arena) -> Option<&'a str> {
+    match v {
+        RuntimeValue::String(s) => Some(s),
+        RuntimeValue::Ref(idx) => match arena.get(*idx) {
+            Some(Object::Str(s)) => Some(s),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `<` / `<=` / `>` / `>=`: numbers numerically, two strings
+/// lexicographically by code point, anything else a type error — the same
+/// rule as `crate::arithmetic::compare_values` (CRUSH-136).
+pub fn compare_ordered<F>(
+    arena: &Arena,
+    a: &RuntimeValue,
+    b: &RuntimeValue,
+    cmp: F,
+) -> Result<RuntimeValue, FastError>
+where
+    F: FnOnce(f64, f64) -> bool,
+{
+    if let (Some(x), Some(y)) = (rtv_str(a, arena), rtv_str(b, arena)) {
+        return Ok(RuntimeValue::Bool(cmp(x.cmp(y) as i8 as f64, 0.0)));
+    }
+    compare_rtv(a, b, cmp)
 }
 
 fn rtv_as_text(v: &RuntimeValue, arena: &Arena) -> String {

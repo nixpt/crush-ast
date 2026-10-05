@@ -27,12 +27,24 @@ fn cap_returns_value(name: &str) -> bool {
 }
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
-    let mut program = crush_frontend::parse_source(source)?;
-    prepare_polyglot_blocks(&mut program);
-    let casm_program = crush_frontend::compile_cast(&program)?;
-    casm_to_vm(&casm_program)
+    casm_to_vm(&compile_crush_to_casm(source)?)
 }
 
+/// Crush source → CASM, including [`prepare_polyglot_blocks`]. Use this,
+/// not `crush_frontend::compile_crush_source`, from any tool that compiles
+/// Crush source: the frontend can't run the polyglot pass itself (it needs
+/// the Python analyzer), so the bare frontend entry point leaves `@lang`
+/// blocks unmarshaled (CRUSH-130).
+pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
+    let mut program = crush_frontend::parse_source(source)?;
+    prepare_polyglot_blocks(&mut program);
+    crush_frontend::compile_cast_owned(program)
+}
+
+/// Every path from Crush source to bytecode must run this — `crushc` used to
+/// skip it, so `crushc x.crush -o x.cvm1` rejected or mis-ran any program
+/// whose `@lang` block produces a variable (CRUSH-130).
+///
 /// Fill in `Statement::LangBlock.variables` (inputs) and
 /// `meta["polyglot_output"]` (the single output var, per the current
 /// exec_lang protocol) for every `@python { ... }` block, via real
@@ -46,7 +58,7 @@ pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
 /// Python block is left unmarshaled too rather than failing Crush
 /// compilation outright; the actual `python3` subprocess will raise its
 /// own loud syntax error at run time, which is still honest, just later.
-fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
+pub fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
     for func in program.functions.values_mut() {
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
@@ -342,6 +354,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "push_null" => "PUSH_NULL".to_string(),
                 "pop" => "POP".to_string(),
                 "dup" => "DUP".to_string(),
+                "swap" => "SWAP".to_string(),
                 "load" => {
                     let name = instr.args["name"]
                         .as_str()

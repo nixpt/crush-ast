@@ -187,7 +187,7 @@ fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<cas
             compiler.compile(program)
                 .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
         }
-        _ => crush_frontend::compile_crush_source(source)
+        _ => crush_lang_sdk::compile::compile_crush_to_casm(source)
             .map_err(|e| anyhow::anyhow!("Crush→CASM: {e}")),
     }
 }
@@ -236,11 +236,11 @@ fn cmd_compile(args: &CompileArgs) -> anyhow::Result<()> {
 
     // ── Emit source only ──
     if args.emit == EmitKind::Rust {
-        let src = crush_aot::codegen::gen_rust_source(&program);
+        let src = crush_aot::codegen::gen_rust_source(&program)?;
         return emit_text(args, &src);
     }
     if args.emit == EmitKind::CSource {
-        let src = crush_aot::codegen_c::gen_c_source(&program);
+        let src = crush_aot::codegen_c::gen_c_source(&program)?;
         return emit_text(args, &src);
     }
 

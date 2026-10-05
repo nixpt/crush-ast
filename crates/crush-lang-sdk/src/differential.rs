@@ -380,9 +380,37 @@ mod tests {
     }
 
     #[test]
-    fn ordered_comparison_with_string_rejected() {
-        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(\"a\", \"b\"); }").unwrap();
-        assert!(!r.diverged(), "\"a\" < \"b\" should be rejected consistently: {:?}", r.divergences);
+    fn ordered_comparison_of_strings_is_lexicographic() {
+        // CRUSH-136: two strings order by code point, consistently.
+        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(\"a\", \"b\"); lt_any(\"b\", \"a\"); }").unwrap();
+        assert!(
+            !r.diverged(),
+            "string ordering diverged: {:?}",
+            r.divergences
+        );
+        assert!(
+            matches!(&r.interpreter, StackOutcome::Ok { output, .. } if output == "true\nfalse\n"),
+            "{:?}",
+            r.interpreter
+        );
+    }
+
+    #[test]
+    fn ordered_comparison_of_string_and_number_rejected() {
+        let r = differential_run(
+            "fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(\"a\", 1); }",
+        )
+        .unwrap();
+        assert!(
+            !r.diverged(),
+            "\"a\" < 1 should be rejected consistently: {:?}",
+            r.divergences
+        );
+        assert!(
+            matches!(r.interpreter, StackOutcome::Err(_)),
+            "{:?}",
+            r.interpreter
+        );
     }
 
     #[test]

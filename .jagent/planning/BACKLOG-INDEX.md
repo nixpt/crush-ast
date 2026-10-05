@@ -48,6 +48,16 @@
 | 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 | **Open** — gate is now clear. |
 | 119   | FastVM array mutation return-value parity | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
 | 120   | Optimizer self-referential assignment preservation | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
+| 121–123 | Captured 2026-09-24/25: kitchen GC (121), stdlib convergence W10 (122), conformance per-file timeout (123) |
+| 124–136 | GitHub issues #64–#77 (pranix, 2026-10-04): correctness (124–129, 131, 136), polyglot pipeline (130, 132, 133), type-checker design (134, 135). #78 → CRUSH-75 |
+| 137 | Scheduler drops `main`'s return value (found during CRUSH-126) |
+| 138–139 | Found during CRUSH-125: FastVM reverses call arguments (138), JIT wrong branch on `a && !b` (139) |
+| 140–141 | Found during step 3 (CRUSH-130/133): FastVM `ExecLang` sends no variables (140), crushc vs crush-run pipeline differences (141) |
+| 142 | JIT `len` / overflow divergences (found while fixing CRUSH-138/139) |
+| 143 | Optimizer dropped `if`-branch assignments (found during CRUSH-136) |
+| 144 | crush-aotc outside the differential harness; missed #76 string ordering (found during CRUSH-134) |
+| 145 | SET_FIELD contract diverged: map literals broken off CVM1 (found during CRUSH-134) |
+| 146 | JIT `arr_set` stack contract: `a[i] = v` corrupted the JIT stack (found during CRUSH-135) |
 | 121+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index

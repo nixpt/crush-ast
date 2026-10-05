@@ -175,3 +175,23 @@ fn ordered_comparison_on_string_is_rejected() {
     let result = compile_and_run(source);
     assert!(result.is_err(), "ordered comparison on strings should be rejected");
 }
+
+#[test]
+fn truthiness_is_canonical() {
+    // CRUSH-134: null, false, 0, 0.0 and "" are falsy; everything else truthy.
+    let source = r#"
+        fn t(v: any) { if v { return 1 } return 0 }
+        fn main() {
+            print(t(null)) print(t(false)) print(t(true))
+            print(t(0)) print(t(7))
+            print(t(0.0)) print(t(1.5))
+            print(t("")) print(t("x"))
+        }
+    "#;
+    let out = compile_and_run(source).expect("compile and run");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["0", "0", "1", "0", "1", "0", "1", "0", "1"],
+        "{out}"
+    );
+}

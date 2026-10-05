@@ -112,8 +112,8 @@ pub struct PortableVm {
     halted: bool,
     /// Whether privileged capabilities are allowed.
     privileged_allowed: bool,
-    /// Exception handler stack (target IP for each active try block).
-    try_stack: Vec<usize>,
+    /// Active try blocks, innermost last.
+    try_stack: Vec<crate::vm::TryHandler>,
     /// Next task ID for async spawn.
     next_task_id: u64,
     /// Scheduled tasks: task_id → (function name, args).
@@ -423,9 +423,15 @@ impl PortableVm {
                 self.push(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
             }
             // Anything else non-numeric is a LOUD error, not a silent 0.
+            // (Two arrays under ADD concatenate in `add_values`, CRUSH-135.)
             ADD | SUB | MUL | DIV | MOD
-                if !matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
-                    || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_))) =>
+                if !(opcode == ADD
+                    && matches!(
+                        (self.peek_n(1), self.peek_n(0)),
+                        (Some(Value::Array(_)), Some(Value::Array(_)))
+                    ))
+                    && (!matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
+                        || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_)))) =>
             {
                 let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
                 return Err(VmError::TypeError { expected: "numeric", got });
@@ -737,6 +743,10 @@ impl PortableVm {
             }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
+                // A `return` from inside a `try` leaves its handler behind; it
+                // must not catch a later throw in the caller.
+                let depth = self.call_stack.len();
+                self.try_stack.retain(|h| h.call_depth <= depth);
                 match frame.return_ip {
                     None => {
                         self.halted = true;
@@ -945,22 +955,26 @@ impl PortableVm {
                 if target > self.program.code.len() {
                     return Err(VmError::BadJump(target));
                 }
-                self.try_stack.push(target);
+                self.try_stack.push(crate::vm::TryHandler {
+                    handler_ip: target,
+                    call_depth: self.call_stack.len(),
+                    stack_len: self.stack.len(),
+                });
             }
             EXIT_TRY => {
                 self.try_stack.pop();
             }
             THROW => {
                 let err_val = self.pop()?;
-                if let Some(handler_ip) = self.try_stack.pop() {
-                    self.ip = handler_ip;
+                if let Some(handler) = self.try_stack.pop() {
+                    // Unwind to the frame and stack height that entered the try.
+                    self.call_stack.truncate(handler.call_depth);
+                    self.stack.truncate(handler.stack_len);
+                    self.ip = handler.handler_ip;
                     self.push(err_val);
                     return Ok(());
                 }
-                return Err(VmError::UnknownCap(format!(
-                    "uncaught error: {}",
-                    value_to_text(&err_val)
-                )));
+                return Err(VmError::Uncaught(value_to_text(&err_val)));
             }
             STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
                 let needle = self.pop()?;
@@ -1644,25 +1658,10 @@ pub fn value_to_text(v: &Value) -> String {
     }
 }
 
-/// Check if a Value is truthy (Python-style truthiness).
+/// Truthiness — the one canonical rule lives on `Value::is_truthy`
+/// (shared with the scheduler; CRUSH-134).
 fn value_is_truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Int(i) => *i != 0,
-        Value::Float(f) => *f != 0.0,
-        Value::Str(s) => !s.is_empty(),
-        Value::Array(a) => !a.borrow().is_empty(),
-        Value::Tuple(t) => !t.is_empty(),
-        Value::List(l) => !l.borrow().is_empty(),
-        Value::Vector(v) => !v.borrow().is_empty(),
-        Value::Set(s) => !s.borrow().is_empty(),
-        Value::Map(m) => !m.borrow().is_empty(),
-        Value::Error(_) => true,
-        Value::Bytes(b) => !b.is_empty(),
-        Value::Handle(_) => true,
-        Value::Foreign(_) => true,
-    }
+    v.is_truthy()
 }
 
 #[cfg(test)]

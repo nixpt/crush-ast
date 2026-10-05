@@ -1,16 +1,31 @@
 //! Helper operations for FastVM execution.
 
+use crate::memory::{Arena, Object};
 use super::types::{FastError, FastFrame};
 use crate::value::RuntimeValue;
 
 /// Check if a value is truthy
 #[inline(always)]
-pub fn is_truthy(val: &RuntimeValue) -> bool {
+/// Canonical truthiness — the same rule as the CVM1 VMs (`Value::is_truthy`):
+/// `null`, `false`, `0`, `0.0`, `""` and empty collections are falsy,
+/// everything else truthy. This used to treat `0.0`, `""` and every
+/// arena value (strings, arrays, maps) as truthy (CRUSH-134).
+pub fn is_truthy(val: &RuntimeValue, arena: &Arena) -> bool {
     match val {
         RuntimeValue::Bool(b) => *b,
         RuntimeValue::Int(i) => *i != 0,
+        RuntimeValue::Float(f) => *f != 0.0,
         RuntimeValue::Null => false,
-        _ => true,
+        RuntimeValue::String(s) => !s.is_empty(),
+        RuntimeValue::Ref(idx) => match arena.get(*idx) {
+            Some(Object::Str(s)) => !s.is_empty(),
+            Some(Object::Array(v) | Object::Tuple(v) | Object::Vector(v) | Object::Set(v)) => {
+                !v.is_empty()
+            }
+            Some(Object::List(l)) => !l.is_empty(),
+            Some(Object::Map(m)) => !m.is_empty(),
+            _ => true,
+        },
     }
 }
 

@@ -1198,20 +1198,19 @@ mod tests {
 
     #[test]
     fn test_new_obj_set_get_field() {
-        // NewObj → Dup → PushInt(42) → SetField(0, "x") → GetField(0) → should return 42
-        // Dup preserves the Ref so SetField consumes the copy and GetField uses the original.
+        // NewObj → PushInt(42) → SetField(0, "x") → GetField(0) → should return 42
+        // SetField pushes the map back (CVM1's contract, CRUSH-145).
         let mut prog = make_prog(vec![
             (FastOp::NewObj, 0, 0),
-            (FastOp::Dup, 0, 0),      // copy Ref so SetField doesn't consume the only reference
             (FastOp::PushInt, 42, 0),
-            (FastOp::SetField, 0, 0), // pop val=42, pop target=obj_copy, set fields["x"]=42
+            (FastOp::SetField, 0, 0), // pop val=42, pop target, set fields["x"]=42, push target
             (FastOp::GetField, 0, 0), // pop target, push fields["x"]
             (FastOp::Halt, 0, 0),
         ]);
         prog.symbols.intern_string("x");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "NewObj+Dup+SetField(x=42)+GetField(x) should match FastVM");
+        assert_eq!(expected, actual, "NewObj+SetField(x=42)+GetField(x) should match FastVM");
     }
 
     #[test]
@@ -2339,8 +2338,8 @@ mod tests {
     }
 
     #[test]
-    fn test_lt_string_and_string_should_error() {
-        // "a" < "b" → FastVM returns TypeMismatch error, JIT should too.
+    fn test_lt_string_and_string_orders_lexicographically() {
+        // CRUSH-136: two strings compare by code point on every backend.
         let mut prog = make_prog(vec![
             (FastOp::PushStr, 0, 0),
             (FastOp::PushStr, 1, 0),
@@ -2351,8 +2350,14 @@ mod tests {
         prog.symbols.intern_string("b");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert!(expected.is_err(), "FastVM should return error for 'a' < 'b', got {:?}", expected);
-        assert!(actual.is_err(), "JIT should return error for 'a' < 'b', got {:?}", actual);
+        assert!(
+            matches!(
+                expected,
+                FastYield::Finished(Some(RuntimeValue::Bool(true)))
+            ),
+            "FastVM: {expected:?}"
+        );
+        assert_eq!(expected, actual, "'a' < 'b' should match FastVM");
     }
 
     #[test]
@@ -2604,7 +2609,7 @@ mod tests {
             // Capability
             FastOp::CapCall,
             // Host yield (trampoline escape)
-            FastOp::CallHost, FastOp::ExecLang, FastOp::Spawn, FastOp::Gc,
+            FastOp::CallHost, FastOp::Spawn, FastOp::Gc,
             FastOp::ImportVar, FastOp::Await,
         ];
 
@@ -2619,6 +2624,8 @@ mod tests {
             FastOp::ExportVar,
             // Host interaction — not yet implemented
             FastOp::CallInterface,
+            // Polyglot — falls back to FastVM, which yields the full request (CRUSH-133)
+            FastOp::ExecLang,
             FastOp::CrossLangCall,
             // AI opcodes — all NOP at runtime
             FastOp::AiQuery,

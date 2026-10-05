@@ -100,6 +100,8 @@ pub(crate) const OP_EXIT_TRY: i64 = 36;
 pub(crate) const OP_THROW: i64 = 37;
 pub(crate) const OP_ADD_STR: i64 = 38;
 pub(crate) const OP_CMP_ORDERED: i64 = 39;
+/// Pop a value, push its canonical truthiness as a bool (CRUSH-134).
+pub(crate) const OP_TRUTHY: i64 = 40;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -386,33 +388,49 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         // OP_ARRAY_PUSH (7)
         // ════════════════════════════════════════════════════════════════════
         OP_ARRAY_PUSH => {
+            // Same stack contract as FastVM / CVM1: pop value and array, push
+            // the array back. An array literal compiles to `new_array` then
+            // `push x; array_push` per element, so dropping the array (as
+            // this did) left the next element pushing into nothing and
+            // `len([1, 2, 3])` was null (CRUSH-142).
             let val = ctx.pop().unwrap_or(JitValue::null());
             let container = ctx.pop().unwrap_or(JitValue::null());
-            if let Some(ref_idx) = container.to_ref() {
-                if let Some(arena) = arena_mut(ctx.arena) {
-                    if let Ok(Object::Array(arr)) = arena.get_mut(ref_idx) {
+            let pushed = container.to_ref().is_some_and(|ref_idx| {
+                arena_mut(ctx.arena).is_some_and(|arena| match arena.get_mut(ref_idx) {
+                    Ok(Object::Array(arr)) => {
                         arr.push(jit_to_rtv(val));
+                        true
                     }
-                }
+                    _ => false,
+                })
+            });
+            if !pushed {
+                ctx.error = 1; // FastVM: TypeMismatch
             }
+            ctx.push(container);
         }
 
         // ════════════════════════════════════════════════════════════════════
         // OP_ARRAY_POP (8)
         // ════════════════════════════════════════════════════════════════════
         OP_ARRAY_POP => {
+            // FastVM / CVM1 leave the array, then the popped value (CRUSH-142).
             let container = ctx.pop().unwrap_or(JitValue::null());
-            if let Some(ref_idx) = container.to_ref() {
-                if let Some(arena) = arena_mut(ctx.arena) {
-                    if let Ok(Object::Array(arr)) = arena.get_mut(ref_idx) {
-                        let result = arr.pop().map(|v| rtv_to_jit(&v))
-                            .unwrap_or(JitValue::null());
-                        ctx.push(result);
-                        return;
-                    }
+            let popped = container.to_ref().and_then(|ref_idx| {
+                arena_mut(ctx.arena).and_then(|arena| match arena.get_mut(ref_idx) {
+                    Ok(Object::Array(arr)) => Some(arr.pop()),
+                    _ => None,
+                })
+            });
+            let result = match popped {
+                Some(v) => v.map(|v| rtv_to_jit(&v)).unwrap_or(JitValue::null()),
+                None => {
+                    ctx.error = 1; // FastVM: TypeMismatch
+                    JitValue::null()
                 }
-            }
-            ctx.push(JitValue::null());
+            };
+            ctx.push(container);
+            ctx.push(result);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -432,6 +450,9 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     }
                 }
             }
+            // CVM1 and FastVM push the array back (the compiler POPs it after
+            // `a[i] = v`); without it that POP ate a live value (CRUSH-146).
+            ctx.push(container);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -916,6 +937,8 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     }
                 }
             }
+            // CVM1's contract: push the map back (CRUSH-145).
+            ctx.push(target);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -1072,7 +1095,29 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 arena_ref(ctx.arena).map_or(false, |a| matches!(a.get(idx), Some(Object::Str(_))))
             });
 
-            if a_is_str || b_is_str {
+            let joined = match (a_val.to_ref(), b_val.to_ref()) {
+                (Some(ia), Some(ib)) => arena_ref(ctx.arena).and_then(|ar| {
+                    match (ar.get(ia), ar.get(ib)) {
+                        (Some(Object::Array(x)), Some(Object::Array(y))) => {
+                            Some(x.iter().chain(y.iter()).cloned().collect::<Vec<_>>())
+                        }
+                        _ => None,
+                    }
+                }),
+                _ => None,
+            };
+
+            if let Some(items) = joined {
+                // Array concatenation: a new array, neither operand changes
+                // (#75, CRUSH-135).
+                match arena_mut(ctx.arena) {
+                    Some(arena) => {
+                        let ptr = arena.alloc(Object::Array(items));
+                        ctx.push(JitValue::from_ref(ptr));
+                    }
+                    None => ctx.push(JitValue::null()),
+                }
+            } else if a_is_str || b_is_str {
                 // String concatenation: get text for each operand.
                 let arena = match arena_mut(ctx.arena) {
                     Some(a) => a,
@@ -1087,13 +1132,20 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 ctx.push(JitValue::from_ref(ptr));
             } else if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
                 // Both ints: checked add with overflow detection.
-                match ai.checked_add(bi) {
-                    Some(sum) => ctx.push(JitValue::int(sum)),
+                match ai.checked_add(bi).and_then(JitValue::try_int) {
+                    Some(sum) => ctx.push(sum),
                     None => {
                         ctx.error = 1;
                         ctx.push(JitValue::null());
                     }
                 }
+            } else if !(a_val.to_float().is_some() || a_val.to_int().is_some())
+                || !(b_val.to_float().is_some() || b_val.to_int().is_some())
+            {
+                // Non-numeric operand (array + int, null + 1, ...): a type
+                // error, as on FastVM — it used to read as 0.0.
+                ctx.error = 1;
+                ctx.push(JitValue::null());
             } else {
                 // Float or mixed: promote both to f64.
                 let af = a_val.to_float()
@@ -1112,6 +1164,25 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         // in `arg` (0=LT, 1=LE, 2=GT, 3=GE). Rejects non-numeric types
         // with error flag 1, matching FastVM's TypeMismatch behaviour.
         // ════════════════════════════════════════════════════════════════════
+        OP_TRUTHY => {
+            // Same rule as every backend: null/false/0/0.0, "" and empty
+            // collections are falsy. Refs need the arena to tell.
+            let v = ctx.pop().unwrap_or(JitValue::null());
+            let truthy = match v.to_ref() {
+                Some(idx) => match arena_ref(ctx.arena).and_then(|a| a.get(idx)) {
+                    Some(Object::Str(s)) => !s.is_empty(),
+                    Some(
+                        Object::Array(v) | Object::Tuple(v) | Object::Vector(v) | Object::Set(v),
+                    ) => !v.is_empty(),
+                    Some(Object::List(l)) => !l.is_empty(),
+                    Some(Object::Map(m)) => !m.is_empty(),
+                    _ => true,
+                },
+                None => v.is_truthy(),
+            };
+            ctx.push(JitValue::bool(truthy));
+        }
+
         OP_CMP_ORDERED => {
             let b_val = ctx.pop().unwrap_or(JitValue::null());
             let a_val = ctx.pop().unwrap_or(JitValue::null());
@@ -1146,8 +1217,24 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     _ => af >= bf,
                 };
                 ctx.push(JitValue::bool(result));
+            } else if let Some((sa, sb)) = arena_ref(ctx.arena).and_then(|arena| {
+                Some((
+                    jit_val_to_string(a_val, arena)?,
+                    jit_val_to_string(b_val, arena)?,
+                ))
+            }) {
+                // Two strings: lexicographic by code point, like every other
+                // backend (CRUSH-136).
+                let ord = sa.cmp(&sb);
+                let result = match arg {
+                    0 => ord.is_lt(),
+                    1 => ord.is_le(),
+                    2 => ord.is_gt(),
+                    _ => ord.is_ge(),
+                };
+                ctx.push(JitValue::bool(result));
             } else {
-                // Non-numeric: set error (matching FastVM's TypeMismatch).
+                // Otherwise a type error (matching FastVM's TypeMismatch).
                 ctx.error = 1;
                 ctx.push(JitValue::null());
             }

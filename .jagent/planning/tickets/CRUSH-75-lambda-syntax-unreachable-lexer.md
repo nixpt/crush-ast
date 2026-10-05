@@ -5,6 +5,7 @@
 | **ID** | CRUSH-75 |
 | **Priority** | P1 |
 | **Status** | Backlog |
+| **GitHub** | [#78](https://github.com/nixpt/crush-ast/issues/78) — reported again 2026-10-04 by pranix: `\|x\| => x + 10` fails with "unexpected token `=>`"; the block form `\|x\| { return x + 10 }` is misparsed as a map literal |
 | **Phase** | Correctness spine (s412) |
 
 ## Problem
@@ -66,3 +67,10 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-75.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Decision (owner interview, 2026-10-05, GitHub #78)
+
+- Both `|x| => expr` and `|x| { block }` parse.
+- No captures for now: a lambda referencing an outer local is a clear compile error ("lambda can't capture local 'n'"); closures deferred.
+- Recorded in `.dejavue/decisions.md` (2026-10-05).
+

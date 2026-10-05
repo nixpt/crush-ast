@@ -369,7 +369,7 @@ impl PackageBuilder {
         let sources = self.collect_all_sources()?;
         for (path, _) in &sources {
             let source = std::fs::read_to_string(path)?;
-            let program = crush_frontend::compile_crush_source(&source)?;
+            let program = crush_lang_sdk::compile::compile_crush_to_casm(&source)?;
             if program.functions.is_empty() {
                 anyhow::bail!("{}: no functions defined", path.display());
             }
@@ -377,7 +377,7 @@ impl PackageBuilder {
         }
         let deps = self.resolve_deps()?;
         for dep in &deps {
-            let program = crush_frontend::compile_crush_source(&dep.source)?;
+            let program = crush_lang_sdk::compile::compile_crush_to_casm(&dep.source)?;
             if program.functions.is_empty() {
                 anyhow::bail!("{}: no functions defined", dep.source_file.display());
             }

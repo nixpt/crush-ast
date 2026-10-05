@@ -523,7 +523,14 @@ impl Parser {
         if !statements.is_empty() {
             match functions.get_mut("main") {
                 Some(existing) => {
-                    let mut merged = statements;
+                    // A bare top-level `main()` next to `fn main` (the Python/C habit of
+                    // calling main yourself) would land inside main's own body and recurse
+                    // until the call-depth quota trips. `fn main` already runs, so the call
+                    // means "run main" — drop it (CRUSH-129).
+                    let mut merged: Vec<Statement> = statements
+                        .into_iter()
+                        .filter(|stmt| !is_bare_main_call(stmt))
+                        .collect();
                     merged.append(&mut existing.body);
                     existing.body = merged;
                 }
@@ -1424,6 +1431,14 @@ impl Parser {
         Ok(left)
     }
 
+    /// The operand of a prefix `-` / `!`: a primary plus its postfix chain
+    /// (field access, indexing and calls bind at 80/90), but no binary
+    /// operator — so `!f(x)` is `!(f(x))` and `-a[i]` is `-(a[i])`, while
+    /// `-2 * 3` stays `(-2) * 3` and `!a && b` stays `(!a) && b` (CRUSH-128).
+    fn parse_unary_operand(&mut self) -> Result<Expression, ()> {
+        self.parse_expression_with_precedence(80)
+    }
+
     /// Parse primary expression
     fn parse_primary(&mut self) -> Result<Expression, ()> {
         match self.peek() {
@@ -1543,7 +1558,7 @@ impl Parser {
             Token::Match(_) => self.parse_match_expression(),
             Token::Minus(_) => {
                 self.advance();
-                let operand = self.parse_primary()?;
+                let operand = self.parse_unary_operand()?;
                 Ok(Expression::UnaryOp {
                     operator: "-".to_string(),
                     operand: Box::new(operand),
@@ -1552,7 +1567,7 @@ impl Parser {
             }
             Token::Not(_) => {
                 self.advance();
-                let operand = self.parse_primary()?;
+                let operand = self.parse_unary_operand()?;
                 Ok(Expression::UnaryOp {
                     operator: "!".to_string(),
                     operand: Box::new(operand),
@@ -2921,6 +2936,17 @@ impl Parser {
 pub struct Parameter {
     pub name: String,
     pub type_hint: CastType,
+}
+
+/// `main()` as a statement on its own: no arguments, result unused.
+fn is_bare_main_call(stmt: &Statement) -> bool {
+    matches!(
+        stmt,
+        Statement::ExprStmt {
+            expr: Expression::Call { function, args, .. },
+            ..
+        } if function == "main" && args.is_empty()
+    )
 }
 
 #[cfg(test)]

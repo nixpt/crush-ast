@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 
 /// Transpile a CASM program to C source code.
-pub fn gen_c_source(program: &casm::Program) -> String {
+/// Fails with [`crate::UnsupportedOps`] if any instruction has no C
+/// translation.
+pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     let mut out = String::new();
 
     emit_c_header(&mut out);
@@ -25,12 +27,19 @@ pub fn gen_c_source(program: &casm::Program) -> String {
     }
     out.push_str("\n");
 
+    let mut unsupported = Vec::new();
     for (name, func) in &program.functions {
-        emit_c_function(&mut out, name, func, program);
+        emit_c_function(&mut out, name, func, program, &mut unsupported);
+    }
+    if !unsupported.is_empty() {
+        return Err(crate::UnsupportedOps {
+            backend: "C",
+            ops: unsupported,
+        });
     }
 
     emit_c_entry_point(&mut out);
-    out
+    Ok(out)
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -256,7 +265,12 @@ static inline bool _truthy(Value v) {
     switch (v.tag) {
         case TAG_BOOL: return v.b;
         case TAG_INT:  return v.i != 0;
+        case TAG_FLOAT: return v.f != 0.0;
         case TAG_NULL: return false;
+        // Canonical rule (CRUSH-134): "" and empty collections are falsy.
+        case TAG_STRING: return v.s != NULL && v.s[0] != '\0';
+        case TAG_ARRAY: return _arrays[v.array_idx].len != 0;
+        case TAG_OBJECT: return _objects[v.obj_idx].field_count != 0;
         default:       return true;
     }
 }
@@ -378,6 +392,20 @@ static Value _add(Value a, Value b) {
             if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
             return mk_string(buf);
     }
+    if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
+        // Array concatenation: a new array, neither operand changes (#75, CRUSH-135).
+        CrushArray* la = &_arrays[a.array_idx];
+        CrushArray* ra = &_arrays[b.array_idx];
+        if (la->len + ra->len > ARRAY_DATA_CAP) _crush_arith_error("array concatenation exceeds capacity");
+        int id = _alloc_array();
+        if (id < 0) _crush_arith_error("array pool exhausted");
+        la = &_arrays[a.array_idx]; ra = &_arrays[b.array_idx];
+        memcpy(_arrays[id].data, la->data, sizeof(Value) * (size_t)la->len);
+        memcpy(_arrays[id].data + la->len, ra->data, sizeof(Value) * (size_t)ra->len);
+        _arrays[id].len = la->len + ra->len;
+        return mk_array(id);
+    }
+    if (!_is_num(a) || !_is_num(b)) _crush_arith_error("type error: + on non-numeric operands");
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         int64_t out;
         if (__builtin_add_overflow(a.i, b.i, &out)) _crush_arith_error("arithmetic overflow");
@@ -460,9 +488,15 @@ static Value _cmp(Value a, Value b, int op) {
             case 2: r = fa <  fb; break; case 3: r = fa <= fb; break;
             case 4: r = fa >  fb; break; case 5: r = fa >= fb; break;
         }
-    } else if (a.tag == TAG_STRING && b.tag == TAG_STRING && (op == 0 || op == 1)) {
+    } else if (a.tag == TAG_STRING && b.tag == TAG_STRING) {
+        /* strcmp compares as unsigned char: UTF-8 byte order = code point
+           order, matching every other backend (CRUSH-136). */
         int c = strcmp(a.s, b.s);
-        r = (op == 0) ? (c == 0) : (c != 0);
+        switch (op) {
+            case 0: r = c == 0; break; case 1: r = c != 0; break;
+            case 2: r = c <  0; break; case 3: r = c <= 0; break;
+            case 4: r = c >  0; break; case 5: r = c >= 0; break;
+        }
     } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL && (op == 0 || op == 1)) {
         r = (op == 0) ? (a.b == b.b) : (a.b != b.b);
     } else if (a.tag == TAG_NULL && b.tag == TAG_NULL && (op == 0 || op == 1)) {
@@ -490,6 +524,7 @@ fn emit_c_function(
     name: &str,
     func: &casm::Function,
     _program: &casm::Program,
+    unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
     let n = func.body.len();
@@ -514,7 +549,9 @@ fn emit_c_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            case {i}: {{\n"));
-        emit_c_instr(out, instr, i, n, &local_index);
+        if let Some(op) = emit_c_instr(out, instr, i, n, &local_index) {
+            unsupported.push(format!("{op} (fn {name}, instruction {i})"));
+        }
         out.push_str("            }\n");
     }
 
@@ -676,13 +713,16 @@ fn discover_locals(body: &[casm::Instruction], params: &[String], type_hints: Op
 
 // ── Instruction emission ────────────────────────────────────────────────────
 
+/// Emits one instruction; returns a description of it if it has no C
+/// translation.
 fn emit_c_instr(
     out: &mut String,
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
     locals: &HashMap<String, LocalMeta>,
-) {
+) -> Option<String> {
+    let mut unsupported = None;
     let args = &instr.args;
     let next = this_pc + 1;
     let next_pc = if next < total_instrs { next } else { total_instrs };
@@ -867,10 +907,10 @@ fn emit_c_instr(
         // ── Comparison ──
         "eq" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,0)); }} _pc={next_pc}; break;\n")); }
         "ne" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,1)); }} _pc={next_pc}; break;\n")); }
-        "lt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,2)); }} _pc={next_pc}; break;\n")); }
-        "le" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,3)); }} _pc={next_pc}; break;\n")); }
-        "gt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,4)); }} _pc={next_pc}; break;\n")); }
-        "ge" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,5)); }} _pc={next_pc}; break;\n")); }
+        "lt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,2)); }} _pc={next_pc}; break;\n")); }
+        "le" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,3)); }} _pc={next_pc}; break;\n")); }
+        "gt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,4)); }} _pc={next_pc}; break;\n")); }
+        "ge" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,5)); }} _pc={next_pc}; break;\n")); }
 
         // ── Logical ──
         "and" => {
@@ -1073,7 +1113,7 @@ fn emit_c_instr(
         "set_field" => {{
             let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let escaped = field.escape_default().to_string();
-            out.push_str(&format!("                {{ Value __val = _pop(); Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _obj_set(&_objects[__oi], \"{escaped}\", __val); }} }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __val = _pop(); Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _obj_set(&_objects[__oi], \"{escaped}\", __val); }} }} _push(__obj); }} _pc={next_pc}; break;\n"));
         }}
 
         // ── Cap calls → inline dispatch ──
@@ -1106,12 +1146,7 @@ fn emit_c_instr(
                 "io.print" | "print" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); switch (__pv.tag) {{ case TAG_INT: printf(\"%ld\\n\", (long)__pv.i); break; case TAG_FLOAT: printf(\"%g\\n\", __pv.f); break; case TAG_BOOL: printf(\"%s\\n\", __pv.b ? \"true\" : \"false\"); break; case TAG_NULL: printf(\"null\\n\"); break; case TAG_STRING: printf(\"%s\\n\", __pv.s); break; default: printf(\"[array#%d]\\n\", __pv.array_idx); break; }} }} _pc={next_pc}; break; // cap_call io.print\n"));
                 }
-                _ => {
-                    if argc > 0 {
-                        out.push_str(&format!("                for (int __i=0; __i<{argc}; __i++) _pop();\n"));
-                    }
-                    out.push_str(&format!("                _push(mk_null()); _pc={next_pc}; break; // cap_call '{}' stubbed\n", cap_name.escape_default()));
-                }
+                _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
         }
 
@@ -1136,16 +1171,12 @@ fn emit_c_instr(
         "str_trim" => {{
             out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; const char* __start = __src; while (*__start && isspace((unsigned char)*__start)) __start++; const char* __end = __src + strlen(__src); while (__end > __start && isspace((unsigned char)*(__end-1))) __end--; size_t __len = (size_t)(__end - __start); int __pos = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__start)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __start = _sv + (__start - _strbuf); }} if (__len >= (size_t)(STRBUF_SIZE - __pos)) {{ __pos = 0; }} memcpy(&_strbuf[__pos], __start, __len); _strbuf[__pos + __len] = '\\0'; _strbuf_idx = __pos + (int)__len + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__pos])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
         }}
-        // Complex string ops: emit as cap_call stubs (need dynamic allocation)
-        "str_split" | "str_replace" | "str_join" => {{
-            out.push_str(&format!("                _pop(); _pop(); _push(mk_null()); _pc={next_pc}; break; // str_* stubbed (needs dynamic strings)\n"));
-        }}
-
-        // ── Unknown / NOP ──
-        _ => {
-            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
-        }
+        // `str_split` / `str_replace` / `str_join` need dynamic strings this
+        // backend doesn't have; they used to compile to a null stub.
+        "nop" => out.push_str(&format!("                _pc = {next_pc}; break;\n")),
+        _ => unsupported = Some(format!("`{}`", instr.op)),
     }
+    unsupported
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────

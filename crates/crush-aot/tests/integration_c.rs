@@ -10,7 +10,7 @@ fn test_c_codegen_int() {
     let source = r#"fn main() { return 42; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("fn_main"));
     assert!(c_src.contains("crush_run"));
     assert!(c_src.contains("TAG_INT"));
@@ -22,7 +22,7 @@ fn test_c_codegen_bool() {
     let source = r#"fn main() { return true; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("TAG_BOOL"));
     assert!(c_src.contains("true"));
 }
@@ -32,7 +32,7 @@ fn test_c_codegen_float() {
     let source = r#"fn main() { return 3.14; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("3.14"));
 }
 
@@ -41,7 +41,7 @@ fn test_c_codegen_io_read() {
     let source = r#"fn main() { let line = io.read(); io.print(line); }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("io_read_line"));
     assert!(c_src.contains("cap_call io.read"));
 }
@@ -51,7 +51,7 @@ fn test_c_codegen_arithmetic() {
     let source = r#"fn main() { return 40 + 2; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("_add"));
 }
 
@@ -60,7 +60,7 @@ fn test_c_codegen_null() {
     let source = r#"fn main() { return null; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("TAG_NULL"));
 }
 
@@ -69,7 +69,7 @@ fn test_c_codegen_has_entry_point() {
     let source = r#"fn main() { return 42; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(
         &crush_frontend::compile_crush_source(source).unwrap()
-    );
+    ).unwrap();
     assert!(c_src.contains("visibility"));
     assert!(c_src.contains("crush_run"));
 }

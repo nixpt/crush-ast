@@ -985,14 +985,29 @@ fn lower_instruction(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
 
-            let var_names_indices =
+            // The compiler names the block's inputs `var_0`..`var_{n-1}` (and
+            // loads their values onto the stack just before this op). A
+            // `var_names` array is accepted too. Reading only `var_names`
+            // left every request's variables empty (CRUSH-140).
+            let var_names_indices: Vec<u32> =
                 if let Some(arr) = instr.args.get("var_names").and_then(|v| v.as_array()) {
                     arr.iter()
                         .filter_map(|v| v.as_str())
                         .map(|s| symbols.intern_string(s))
                         .collect()
                 } else {
-                    Vec::new()
+                    (0..var_count)
+                        .map(|i| {
+                            instr
+                                .args
+                                .get(format!("var_{i}"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| symbols.intern_string(s))
+                                .ok_or_else(|| {
+                                    LowerError::MissingArgument(format!("exec_lang var_{i}"))
+                                })
+                        })
+                        .collect::<Result<_, _>>()?
                 };
 
             let site = ExecLangSite {

@@ -1,7 +1,10 @@
 //! CASM → Rust source code generator.
 
 /// Transpile a CASM program to Rust source code.
-pub fn gen_rust_source(program: &casm::Program) -> String {
+///
+/// Fails with [`crate::UnsupportedOps`] if any instruction has no Rust
+/// translation.
+pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     let mut out = String::new();
 
     emit_header(&mut out);
@@ -10,12 +13,19 @@ pub fn gen_rust_source(program: &casm::Program) -> String {
     emit_ai_stub(&mut out);
     emit_dom_stub(&mut out);
 
+    let mut unsupported = Vec::new();
     for (name, func) in &program.functions {
-        emit_function(&mut out, name, func, program);
+        emit_function(&mut out, name, func, program, &mut unsupported);
+    }
+    if !unsupported.is_empty() {
+        return Err(crate::UnsupportedOps {
+            backend: "Rust",
+            ops: unsupported,
+        });
     }
 
     emit_entry_point(&mut out);
-    out
+    Ok(out)
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -98,7 +108,17 @@ impl PartialEq for RuntimeValue {
 fn emit_helpers(out: &mut String) {
     out.push_str(r#"#[inline(always)]
 fn truthy(v: &RuntimeValue) -> bool {
-    match v { RuntimeValue::Bool(b) => *b, RuntimeValue::Int(i) => *i != 0, RuntimeValue::Null => false, RuntimeValue::Array(a) => !a.borrow().is_empty(), _ => true }
+    // Canonical rule, same as every backend (CRUSH-134): null, false, 0,
+    // 0.0, "" and empty collections are falsy.
+    match v {
+        RuntimeValue::Bool(b) => *b,
+        RuntimeValue::Int(i) => *i != 0,
+        RuntimeValue::Float(f) => *f != 0.0,
+        RuntimeValue::Null => false,
+        RuntimeValue::String(s) => !s.is_empty(),
+        RuntimeValue::Array(a) => !a.borrow().is_empty(),
+        RuntimeValue::Object(o) => !o.borrow().is_empty(),
+    }
 }
 
 fn pop2(stack: &mut Vec<RuntimeValue>) -> (RuntimeValue, RuntimeValue) {
@@ -183,9 +203,17 @@ fn bin_add(stack: &mut Vec<RuntimeValue>) {
     let is_str = |v: &RuntimeValue| matches!(v, RuntimeValue::String(_));
     let n = stack.len();
     let mixed = n >= 2 && (is_str(&stack[n - 1]) || is_str(&stack[n - 2]));
+    let arrays = n >= 2 && matches!((&stack[n - 2], &stack[n - 1]), (RuntimeValue::Array(_), RuntimeValue::Array(_)));
     if mixed {
         let (a, b) = pop2(stack);
         stack.push(RuntimeValue::String(format!("{}{}", as_text(&a), as_text(&b))));
+    } else if arrays {
+        // Array concatenation: a new array, neither operand changes (#75, CRUSH-135).
+        if let (RuntimeValue::Array(x), RuntimeValue::Array(y)) = pop2(stack) {
+            let mut out = x.borrow().clone();
+            out.extend(y.borrow().iter().cloned());
+            stack.push(RuntimeValue::Array(std::rc::Rc::new(std::cell::RefCell::new(out))));
+        }
     } else {
         bin_arith(stack, |a, b| a.checked_add(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()), |a, b| a + b);
     }
@@ -249,7 +277,13 @@ fn bin_cmp_eq_ne(stack: &mut Vec<RuntimeValue>, is_eq: bool) {
 
 fn bin_cmp_ordered(stack: &mut Vec<RuntimeValue>, icmp: fn(i64,i64)->bool, fcmp: fn(f64,f64)->bool) {
     let (a, b) = pop2(stack);
-    // lt/gt/le/ge require numeric operands, matching the scheduler.
+    // Two strings order lexicographically by code point (CRUSH-136); fed to
+    // the float predicate as (-1|0|1, 0).
+    if let (RuntimeValue::String(x), RuntimeValue::String(y)) = (&a, &b) {
+        stack.push(RuntimeValue::Bool(fcmp(x.cmp(y) as i8 as f64, 0.0)));
+        return;
+    }
+    // Otherwise lt/gt/le/ge require numeric operands, matching the scheduler.
     if !is_numeric_rtv(&a) || !is_numeric_rtv(&b) {
         cmp_type_error(&a, &b);
     }
@@ -327,6 +361,7 @@ fn emit_function(
     name: &str,
     func: &casm::Function,
     _program: &casm::Program,
+    unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
     let is_main = name == "main";
@@ -361,7 +396,9 @@ fn emit_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            {i} => {{\n"));
-        emit_body(out, instr, i, n);
+        if let Some(op) = emit_body(out, instr, i, n) {
+            unsupported.push(format!("{op} (fn {name}, instruction {i})"));
+        }
         out.push_str("            }\n");
     }
 
@@ -380,12 +417,15 @@ fn sanitize_fn_name(name: &str) -> String {
 
 // ── Instruction body emission ───────────────────────────────────────────────
 
+/// Emits one instruction; returns a description of it if it has no Rust
+/// translation.
 fn emit_body(
     out: &mut String,
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
-) {
+) -> Option<String> {
+    let mut unsupported = None;
     let args = &instr.args;
     let next = this_pc + 1;
     let next_pc = if next < total_instrs { next } else { total_instrs }; // fall-through
@@ -730,7 +770,7 @@ fn emit_body(
         }}
         "set_field" => {{
             let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __obj = stack.pop(); if let Some(RuntimeValue::Object(ref o)) = __obj {{ o.borrow_mut().insert(\"{field}\".to_string(), __val); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __obj = stack.pop().unwrap_or(RuntimeValue::Null); if let RuntimeValue::Object(ref o) = __obj {{ o.borrow_mut().insert(\"{field}\".to_string(), __val); }} stack.push(__obj); }}\n"));
             out.push_str(&next_pc_str);
         }}
 
@@ -771,18 +811,14 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
                 }
-                _ => {
-                    out.push_str(&format!("{ind}for _ in 0..{argc} {{ stack.pop(); }} stack.push(RuntimeValue::Null); // cap_call '{0}' stubbed\n", cap_name.escape_debug()));
-                    out.push_str(&next_pc_str);
-                }
+                _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
         }
 
-        // ── Unknown / NOP ──
-        _ => {
-            out.push_str(&next_pc_str);
-        }
+        "nop" => out.push_str(&next_pc_str),
+        _ => unsupported = Some(format!("`{}`", instr.op)),
     }
+    unsupported
 }
 
 // ── AI stub helper ────────────────────────────────────────────────────────

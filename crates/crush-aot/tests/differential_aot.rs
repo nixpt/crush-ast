@@ -158,9 +158,14 @@ fn jit_outcome_via_subprocess(source: &str) -> FastOutcome {
         Err(e) => return FastOutcome::Err(format!("serialize LoweredProgram: {e}")),
     };
 
-    // Write to a temp file.
+    // Write to a temp file — unique per call, not just per process: the
+    // tests run in parallel threads, and a shared `crush_jit_test_<pid>.json`
+    // let one test's JIT run read another test's program (the "JIT
+    // divergence" warnings on `return -5` / `1 == 1` were that, not the JIT).
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut tmp = std::env::temp_dir();
-    tmp.push(format!("crush_jit_test_{}.json", std::process::id()));
+    tmp.push(format!("crush_jit_test_{}_{n}.json", std::process::id()));
     if let Err(e) = std::fs::write(&tmp, &json) {
         return FastOutcome::Err(format!("write temp file: {e}"));
     }
@@ -224,6 +229,20 @@ fn pick_c_compiler() -> Option<&'static str> {
 /// Dedicated JIT tests (e.g. `jit_rethrow_through_three_functions_agrees_fastvm`)
 /// use `jit_outcome()` directly with programs known to compile safely.
 fn assert_all_backends_agree(source: &str) {
+    check_all_backends(source, true);
+}
+
+/// Every backend except the JIT must agree. Only for a JIT gap that has its
+/// own ticket — name it in `why` so the exemption can be removed with it.
+fn assert_all_backends_agree_except_jit(source: &str, why: &str) {
+    assert!(
+        why.contains("CRUSH-"),
+        "name the ticket tracking the JIT gap"
+    );
+    check_all_backends(source, false);
+}
+
+fn check_all_backends(source: &str, compare_jit: bool) {
     let cc = pick_c_compiler().expect("no C compiler (gcc or clang) available on PATH");
 
     let mut report = crush_lang_sdk::differential::differential_run(source)
@@ -244,11 +263,14 @@ fn assert_all_backends_agree(source: &str) {
     let rust_ok = matches!(report.aot_rust, Some(FastOutcome::Finished(_)));
     let c_ok = matches!(report.aot_c, Some(FastOutcome::Finished(_)));
     let jit_ok = matches!(report.jit, Some(FastOutcome::Finished(_)));
-    // Detect JIT unavailability or known JIT gaps: any JIT error or
-    // unexpected result is non-fatal — the JIT is under active development
-    // and this harness provides safe comparison without breaking the suite.
-    let jit_skip = !matches!(&report.jit, Some(FastOutcome::Finished(_)));
-
+    // The JIT is held to the same bar as every other backend (CRUSH-142:
+    // once the harness noise and the JIT's 16-bit ints / array_push were
+    // fixed, no divergence was left). Only a missing jit-runner binary skips it.
+    let jit_unavailable = !compare_jit
+        || matches!(
+            &report.jit,
+            Some(FastOutcome::Err(e)) if e.contains("jit-runner binary not found")
+        );
     if vm_ok != rust_ok {
         panic!(
             "FastVM vs AOT Rust outcome divergence for {source:?}\n  fastvm={:?}\n  aot_rust={:?}",
@@ -261,27 +283,15 @@ fn assert_all_backends_agree(source: &str) {
             report.fastvm, report.aot_c
         );
     }
-    // JIT comparison is best-effort — warn on divergence rather than
-    // panicking. The JIT is under active development; known gaps include
-    // ordered comparisons with non-numeric types, recursive string concat,
-    // and multi-function exception handling.
-    if !jit_skip && vm_ok != jit_ok {
-        eprintln!(
-            "warning: FastVM vs JIT outcome divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
+    if !jit_unavailable && vm_ok != jit_ok {
+        panic!(
+            "FastVM vs JIT outcome divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
             report.fastvm, report.jit
-        );
-    }
-    // When JIT fails but FastVM succeeds, log the gap for visibility into
-    // active JIT development gaps.
-    if jit_skip && vm_ok {
-        eprintln!(
-            "warning: JIT failed for {:?} (FastVM succeeded): {:?}",
-            source, report.jit
         );
     }
 
     // When all succeed, compare the returned scalar values across every backend.
-    if vm_ok && rust_ok && c_ok && (jit_ok || jit_skip) {
+    if vm_ok && rust_ok && c_ok {
         let vm_val = report.fastvm_return().cloned();
         let rust_val = match &report.aot_rust {
             Some(FastOutcome::Finished(Some(v))) => v.clone(),
@@ -315,13 +325,11 @@ fn assert_all_backends_agree(source: &str) {
                 vm_val, Some(c_val.clone()),
                 "FastVM vs AOT C return value divergence for {source:?}"
             );
-            if let Some(ref jv) = jit_val {
-                if vm_val != Some(jv.clone()) {
-                    eprintln!(
-                        "warning: FastVM vs JIT return value divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
-                        vm_val, jit_val
-                    );
-                }
+            if !jit_unavailable {
+                assert_eq!(
+                    vm_val, jit_val,
+                    "FastVM vs JIT return value divergence for {source:?}"
+                );
             }
         }
 
@@ -561,7 +569,8 @@ fn assert_fastvm_agrees(source: &str) {
 /// then render_frame concatenates them. All 5 backends now agree.
 #[test]
 fn aot_turtle_runner_render_agrees() {
-    assert_all_backends_agree(r##"
+    assert_all_backends_agree_except_jit(
+        r##"
         fn cell_a(x: Int) {
             if x == 3 { return "T" }
             return "."
@@ -583,7 +592,9 @@ fn aot_turtle_runner_render_agrees() {
             let row_b = build_b(0)
             return row_a + "|" + row_b
         }
-    "##);
+    "##,
+        "recursive JIT calls: Cranelift GVN/LICM issue, CRUSH-87",
+    );
 }
 
 /// Multi-function recursive string concat — ALL five backends now agree.
@@ -624,27 +635,51 @@ fn aot_ordered_comparison_with_bool_rejected() {
 }
 
 #[test]
-fn aot_ordered_comparison_with_string_rejected() {
-    assert_all_backends_agree("fn lt_any(a: any, b: any) { return a < b; }\nfn main() { return lt_any(\"a\", \"b\"); }");
+fn aot_ordered_comparison_of_strings_is_lexicographic() {
+    // CRUSH-136 (#76): code-point order on every backend — uppercase before
+    // lowercase, a prefix before its extensions, "" first.
+    assert_all_backends_return(
+        r#"
+        fn lt(a: any, b: any) { return a < b }
+        fn ge(a: any, b: any) { return a >= b }
+        fn main() {
+            let n = 0
+            if lt("a", "b") == true { n = n + 1 }
+            if lt("b", "a") == false { n = n + 10 }
+            if lt("B", "a") == true { n = n + 100 }
+            if lt("app", "apple") == true { n = n + 1000 }
+            if lt("", "x") == true { n = n + 10000 }
+            if ge("é", "z") == true { n = n + 100000 }
+            return n
+        }
+    "#,
+        111111,
+    );
+}
+
+#[test]
+fn aot_ordered_comparison_of_string_and_number_rejected() {
+    assert_all_backends_agree(
+        "fn lt_any(a: any, b: any) { return a < b; }\nfn main() { return lt_any(\"a\", 1); }",
+    );
 }
 
 // ── Exception handling: multi-function rethrow ─────────────────────────────
 // AOT Rust and C backends do NOT support exception opcodes (enter_try/throw),
-// so this test uses assert_fastvm_agrees which skips AOT backends and only
-// compares VM backends (FastVM vs interpreter vs portable VM).
+// so these tests compare the VM backends only (FastVM vs interpreter vs
+// portable VM).
 //
-// NOTE: The scheduler (interpreter) and portable VM have a pre-existing
-// limitation: their flat `try_stack` doesn't properly persist across function
-// calls during multi-function throw unwinding. The FastVM (with its integrated
-// call_stack/try_stack design) handles this correctly. This test therefore
-// only validates the FastVM result directly.
+// The scheduler (interpreter) and portable VM used to run a caught throw's
+// handler in the callee's frame — they recorded only the handler IP, never
+// the call depth to unwind to — so they only agreed with FastVM on
+// single-function try/catch. CRUSH-126 (#66) fixed that; all three VMs must
+// now agree on multi-function unwinding.
 
 #[test]
 fn aot_rethrow_through_three_functions_agrees_fastvm() {
     // Verifies Throw unwinding through main → a → b → c where c throws,
     // a's catch block catches and re-throws, and main's catch block catches
-    // and returns the error value. FastVM returns the expected Int(7).
-    // The scheduler/portable VM have a pre-existing multi-function issue.
+    // and returns the error value. Every VM backend must return Int(7).
     //
     // main: try { a() } catch e { return e }
     //   a:  try { b() } catch e { throw e }   ← rethrows
@@ -675,12 +710,36 @@ fn aot_rethrow_through_three_functions_agrees_fastvm() {
         }
     "##;
 
-    // FastVM returns the correct result.
     let result = crush_lang_sdk::differential::differential_run(source)
         .unwrap_or_else(|e| panic!("differential_run failed: {e}"));
-    let fv = result.fastvm_return().cloned();
-    assert_eq!(fv, Some(crush_lang_sdk::differential::Norm::Int(7)),
-        "FastVM should return Int(7) for the rethrow, got {:?}", fv);
+    let seven = Some(crush_lang_sdk::differential::Norm::Int(7));
+    assert_eq!(
+        result.fastvm_return().cloned(),
+        seven,
+        "FastVM: {:?}",
+        result.fastvm
+    );
+    assert_eq!(
+        result.portable_return().cloned(),
+        seven,
+        "portable: {:?}",
+        result.portable
+    );
+
+    // The interpreter (scheduler) path doesn't surface main's return value
+    // to this harness at all (CRUSH-137), so check it by output instead.
+    let printed = source.replace("return e", "print(e)");
+    let result = crush_lang_sdk::differential::differential_run(&printed)
+        .unwrap_or_else(|e| panic!("differential_run failed: {e}"));
+    for (name, outcome) in [
+        ("interpreter", &result.interpreter),
+        ("portable", &result.portable),
+    ] {
+        assert!(
+            matches!(outcome, crush_lang_sdk::differential::StackOutcome::Ok { output, .. } if output == "7\n"),
+            "{name}: {outcome:?}"
+        );
+    }
 }
 
 // ── CRUSH-17: JIT-variant frontend-source rethrow integration test ───────────
@@ -983,10 +1042,7 @@ fn vm_comprehensive_exception_pipeline_agrees() {
         }
     "#);
 
-    // Sub-test 3: single-function throw/catch (avoids multi-function
-    // propagation edge case in interpreter/portable VM's flat try_stack).
-    // Multi-function exception propagation is covered by
-    // `aot_rethrow_through_three_functions_agrees_fastvm`.
+    // Sub-test 3: single-function throw/catch.
     assert_fastvm_agrees(r#"
         fn main() {
             try {
@@ -996,4 +1052,384 @@ fn vm_comprehensive_exception_pipeline_agrees() {
             }
         }
     "#);
+
+    // Sub-test 4 (CRUSH-126): a throw caught one frame up must not resume
+    // the callee, and a handler left behind by `return` inside a try must not
+    // catch a later throw in the caller.
+    assert_fastvm_agrees(r#"
+        fn boom() { throw 5 }
+        fn early() { try { return 1 } catch e { return 100 } }
+        fn main() {
+            let n = 0
+            try { boom() } catch e { n = n + e }
+            n = n + early()
+            try { throw 30 } catch e { n = n + e }
+            return n
+        }
+    "#);
+}
+
+// ── CRUSH-125 (#65): `&&` / `||` short-circuit on every backend ─────────────
+// They used to compile to eager `and`/`or` opcodes, so the right operand always
+// ran: the bounds-check idiom below indexed out of range. They now lower to
+// `jmp_if_not`/`jmp`, leaving a bool on the stack at the join point, so these
+// also check that every backend handles a branch taken mid-expression (in the
+// last test `7` is already on the stack when the `&&` jumps).
+//
+// Agreement alone isn't enough here — with eager evaluation every backend
+// fails the bounds check *identically* — so each test also pins the value.
+
+fn assert_all_backends_return(source: &str, expected: i64) {
+    assert_all_backends_agree(source);
+    let report = crush_lang_sdk::differential::differential_run(source)
+        .unwrap_or_else(|e| panic!("differential_run failed for {source:?}: {e}"));
+    assert_eq!(
+        report.fastvm_return().cloned(),
+        Some(Norm::Int(expected)),
+        "FastVM: {source:?}"
+    );
+    // The CVM1 VMs are the ones whose bounds checks trap (FastVM's index
+    // returns null), so pin them too. The interpreter's return value isn't
+    // visible to the harness (CRUSH-137); it must at least finish.
+    assert_eq!(
+        report.portable_return().cloned(),
+        Some(Norm::Int(expected)),
+        "portable: {:?}",
+        report.portable
+    );
+    assert!(
+        matches!(report.interpreter, StackOutcome::Ok { .. }),
+        "interpreter: {:?}",
+        report.interpreter
+    );
+}
+
+#[test]
+fn and_skips_its_right_operand_when_the_left_is_false() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let s = [1, 2, 3]
+            let i = 3
+            if i < len(s) && s[i] == 1 { return 1 }
+            if i >= len(s) || s[i] == 1 { return 2 }
+            return 3
+        }
+    "#,
+        2,
+    );
+}
+
+#[test]
+fn short_circuit_results_are_bools_usable_as_values() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let x = 4
+            let inside = x > 0 && x < 5
+            let outside = x < 0 || x > 9
+            if inside == true && outside == false { return 10 }
+            return 20
+        }
+    "#,
+        10,
+    );
+}
+
+#[test]
+fn short_circuit_in_the_middle_of_an_expression() {
+    assert_all_backends_return(
+        r#"
+        fn choose(c) {
+            if c == true { return 1 }
+            return 0
+        }
+        fn main() {
+            let x = 4
+            let p = 7 + choose(x > 0 && x < 5)
+            let q = 70 + choose(x > 9 || x < 0)
+            return p * 100 + q
+        }
+    "#,
+        870,
+    );
+}
+
+// ── CRUSH-138: call arguments bind in order on every backend ────────────────
+// The compiler pushes arguments last-to-first so the callee's `store <param1>`
+// pops the first one. FastVM and the JIT reversed them again, so every
+// multi-argument call bound its parameters backwards (`sub(10, 3)` was -7);
+// the earlier differential tests only used symmetric calls (`scale(a, 3)`).
+
+#[test]
+fn asymmetric_multi_argument_calls_bind_in_order() {
+    assert_all_backends_return(
+        r#"
+        fn sub(a, b) { return a - b }
+        fn three(a, b, c) { return a * 100 + b * 10 + c }
+        fn main() { return sub(10, 3) * 1000 + three(1, 2, 3) }
+    "#,
+        7123,
+    );
+    let jit = jit_outcome_via_subprocess(
+        "fn sub(a, b) { return a - b }\nfn main() { return sub(10, 3) }",
+    );
+    assert!(
+        matches!(jit, FastOutcome::Finished(Some(Norm::Int(7)))),
+        "JIT: {jit:?}"
+    );
+}
+
+#[derive(Debug)]
+struct TestHal;
+impl Hal for TestHal {}
+
+/// A dotted call to a program function (walker-produced CAST, e.g. a method)
+/// went through a second call site that pushed arguments first-to-last.
+#[test]
+fn dotted_call_to_a_program_function_binds_in_order() {
+    let json = r#"{"cast_version":"1.0","entry":"main","functions":{
+      "m.sub":{"meta":{},"params":[["a","Any"],["b","Any"]],"body":[{"type":"Return","meta":{},"value":{"type":"BinaryOp","meta":{},"operator":"-","left":{"type":"Var","meta":{},"name":"a"},"right":{"type":"Var","meta":{},"name":"b"}}}]},
+      "main":{"meta":{},"params":[],"body":[{"type":"Return","meta":{},"value":{"type":"CapabilityCall","meta":{},"name":"m.sub","args":[{"type":"IntLiteral","meta":{},"value":10},{"type":"IntLiteral","meta":{},"value":3}]}}]}}}"#;
+    let program: crush_cast::Program = serde_json::from_str(json).unwrap();
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let portable = crush_vm::portable_vm::PortableVm::new(vm).run().unwrap();
+    assert_eq!(portable.stack.last(), Some(&crush_vm::vm::Value::Int(7)));
+
+    let lowered = crush_vm::fastvm::lower_program(&casm).unwrap();
+    let fast =
+        crush_vm::fastvm::FastVM::new(lowered, vec![], std::sync::Arc::new(TestHal)).run(100_000);
+    assert!(
+        matches!(fast, FastYield::Finished(Some(RuntimeValue::Int(7)))),
+        "FastVM: {fast:?}"
+    );
+}
+
+// ── CRUSH-139: the JIT's `JumpIfNot` / `!` used a bitwise NOT ──────────────
+// `bnot` of a 0/1 truth value is 0xFE/0xFF — never zero — so every
+// `jmp_if_not` the optimizer couldn't fold away jumped, and `!x` was always
+// true. The harness only *warns* on JIT divergence, so these pin the JIT.
+
+#[test]
+fn jit_branches_on_comparisons_and_negation() {
+    let cases = [
+        (
+            "fn main() { let y = false\n if y == false { return 10 }\n return 20 }",
+            10,
+        ),
+        (
+            "fn main() { let y = 1\n if y == 2 { return 10 }\n return 20 }",
+            20,
+        ),
+        (
+            "fn main() { let x = 4\n let inside = x > 0 && x < 5\n \
+             let outside = x < 0 || x > 9\n if inside && !outside { return 10 }\n return 20 }",
+            10,
+        ),
+        (
+            "fn main() { let x = 3\n let n = 0\n \
+             while x > 0 { n = n + x\n x = x - 1 }\n return n }",
+            6,
+        ),
+    ];
+    for (source, expected) in cases {
+        let jit = jit_outcome_via_subprocess(source);
+        assert!(
+            matches!(jit, FastOutcome::Finished(Some(Norm::Int(v))) if v == expected),
+            "JIT {source:?}: {jit:?}"
+        );
+    }
+}
+
+// ── CRUSH-142: JIT array literals and integer range ─────────────────────────
+// The JIT's `array_push` dropped the array (so `len([1, 2, 3])` was null), and
+// its ints were 16-bit: anything past ±32767 was truncated, so
+// `i64::MAX + 1` "returned" 0. Ints are now 48-bit; the harness is strict on
+// the JIT, so these run it like every other backend.
+
+#[test]
+fn array_literals_and_pop_agree_on_every_backend() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let a = [1, 2, 3]
+            let v = array.pop(a)
+            return v * 10 + len(a)
+        }
+    "#,
+        32,
+    );
+}
+
+#[test]
+fn ints_past_16_bits_agree_on_every_backend() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let x = 1000
+            let big = x * x
+            let neg = 0 - 40000
+            let i = 0
+            let n = 0
+            while i < 300 { n = n + i
+                i = i + 1 }
+            return big + neg + n
+        }
+    "#,
+        1_000_000 - 40_000 + 44_850,
+    );
+}
+
+/// Past the 48-bit payload the JIT must fail loudly, never wrap.
+#[test]
+fn jit_int_beyond_48_bits_is_an_error_not_a_wrong_value() {
+    let source = "fn main() { let x = 3\n let i = 0\n \
+                  while i < 30 { x = x * 3\n i = i + 1 }\n return x }";
+    let jit = jit_outcome_via_subprocess(source);
+    assert!(matches!(jit, FastOutcome::Err(_)), "JIT: {jit:?}");
+}
+
+
+#[test]
+fn aot_truthiness_is_canonical() {
+    // CRUSH-134: the one truthiness rule (CVM1's) on every backend — null,
+    // false, 0, 0.0, "" and empty collections are falsy, everything else
+    // truthy — through `if`, `while`, `!`, `&&` and `||`.
+    assert_all_backends_return(
+        r#"
+        fn t(v: any) { if v { return 1 } return 0 }
+        fn main() {
+            let n = 0
+            n = n * 2 + t(null)
+            n = n * 2 + t(false)
+            n = n * 2 + t(true)
+            n = n * 2 + t(0)
+            n = n * 2 + t(7)
+            n = n * 2 + t(-1)
+            n = n * 2 + t(0.0)
+            n = n * 2 + t(1.5)
+            n = n * 2 + t("")
+            n = n * 2 + t("x")
+            n = n * 2 + t([])
+            n = n * 2 + t([0])
+            return n
+        }
+    "#,
+        0b001011010101,
+    );
+}
+
+#[test]
+fn aot_truthiness_through_logical_ops() {
+    assert_all_backends_return(
+        r#"
+        fn nt(v: any) { if !v { return 1 } return 0 }
+        fn both(a: any, b: any) { if a && b { return 1 } return 0 }
+        fn either(a: any, b: any) { if a || b { return 1 } return 0 }
+        fn count(v: any) { let i = 0 while v { i = i + 1 v = v - 1 } return i }
+        fn main() {
+            let n = 0
+            n = n * 2 + nt(0)
+            n = n * 2 + nt("")
+            n = n * 2 + nt("a")
+            n = n * 2 + both(1, "a")
+            n = n * 2 + both(1, 0.0)
+            n = n * 2 + either(0, "")
+            n = n * 2 + either(null, [1])
+            return n * 10 + count(3)
+        }
+    "#,
+        0b1101001 * 10 + 3,
+    );
+}
+
+#[test]
+fn aot_field_access_on_any_is_dynamic() {
+    // CRUSH-134 (#74/#77): `.field` on an `any` value (a param, a nested map)
+    // is a map lookup; a missing key reads as null, which is falsy.
+    assert_all_backends_return(
+        r#"
+        fn getpos(p) { return p.pos }
+        fn has(p) { if p.nope { return 1 } return 0 }
+        fn main() {
+            let m = {"pos": 42, "flag": true, "outer": {"inner": 7}}
+            let n = getpos(m)
+            if m.flag { n = n + 100 }
+            let o = m.outer
+            n = n + o.inner * 1000 + m.outer.inner * 10000
+            if getpos({"x": 1}) == null { n = n + 100000 }
+            return n + has(m)
+        }
+    "#,
+        177142,
+    );
+}
+
+#[test]
+fn aot_set_field_object_literals_and_statements() {
+    // CRUSH-145: SET_FIELD pushes the map back on every backend (CVM1's
+    // contract, which multi-key object literals rely on); `m.x = v` as a
+    // statement pops it, so a loop of field writes leaks nothing.
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let m = {"a": 1, "b": 2, "c": {"d": 3}}
+            m.count = 0
+            let i = 0
+            while i < 5000 {
+                m.count = m.count + 1
+                i = i + 1
+            }
+            return m.a + m.b * 10 + m.c.d * 100 + m.count * 1000
+        }
+    "#,
+        5000321,
+    );
+}
+
+#[test]
+fn aot_array_concat_and_mixed_literals() {
+    // CRUSH-135 (#75): mixed literals are `array<any>`; `a + b` is a new
+    // array, a's elements then b's, neither operand changed.
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let a = [1, 2]
+            let b = a + [3]
+            b[0] = 50
+            let m = ["s", 4, true] + a
+            let e = [] + []
+            let s = 0
+            let i = 0
+            while i < len(b) { s = s + b[i] i = i + 1 }
+            return len(a) + a[0] * 10 + s * 100 + len(m) * 100000 + m[1] * 1000000 + len(e)
+        }
+    "#,
+        2 + 10 + 55 * 100 + 5 * 100000 + 4 * 1000000,
+    );
+}
+
+#[test]
+fn aot_array_plus_number_rejected() {
+    assert_all_backends_agree("fn add(a: any, b: any) { return a + b }\nfn main() { return add([1], 2) }");
+}
+
+#[test]
+fn aot_index_assignment_keeps_the_stack_balanced() {
+    // CRUSH-146: `a[i] = v` compiles to `arr_set; pop`. The JIT's arr_set
+    // didn't push the array back, so the POP ate a live value and the next
+    // read came back null.
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let b = [0, 0, 0]
+            let i = 0
+            while i < 3 { b[i] = i * 10 + 1 i = i + 1 }
+            return b[0] + b[1] * 100 + b[2] * 10000
+        }
+    "#,
+        1 + 11 * 100 + 21 * 10000,
+    );
 }

@@ -3,7 +3,7 @@
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
 use super::operations::{compare_op, current_locals_base, is_truthy};
-use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_rtv};
+use super::arithmetic::{add_rtv, concat_arrays, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
 use crate::memory::{Arena, Object};
@@ -84,14 +84,14 @@ pub fn execute_one(
 
         FastOp::JumpIf => {
             let cond = stack.pop().ok_or(FastError::StackUnderflow)?;
-            if is_truthy(&cond) {
+            if is_truthy(&cond, arena) {
                 *pc = instr.arg as usize;
             }
         }
 
         FastOp::JumpIfNot => {
             let cond = stack.pop().ok_or(FastError::StackUnderflow)?;
-            if !is_truthy(&cond) {
+            if !is_truthy(&cond, arena) {
                 *pc = instr.arg as usize;
             }
         }
@@ -107,17 +107,14 @@ pub fn execute_one(
             let argc = instr.arg2 as usize;
             let locals_base = locals.len();
 
-            // Pop args from stack (top = last pushed = last arg)
+            // The arguments stay where the caller put them. The compiler pushes
+            // them last-to-first, so the first argument is on top for the
+            // callee's `store <param1>` — the same convention the CVM1 VMs and
+            // AOT backends follow. FastVM used to reverse them again here, so
+            // every multi-argument call bound its parameters backwards:
+            // `sub(10, 3)` was -7 (CRUSH-138).
             if stack.len() < argc {
                 return Err(FastError::StackUnderflow);
-            }
-            let split_at = stack.len() - argc;
-            let call_args: Vec<RuntimeValue> = stack.drain(split_at..).collect();
-            // call_args is [first_arg, ..., last_arg]
-            // Callee's 'store param1' pops from top, so first_arg must be on top.
-            // Push last_arg first, ..., first_arg last:
-            for arg in call_args.iter().rev() {
-                stack.push(arg.clone());
             }
 
             // Push call frame
@@ -180,7 +177,11 @@ pub fn execute_one(
         FastOp::Add => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(add_rtv(&a, &b, arena)?);
+            let r = match concat_arrays(&a, &b, arena) {
+                Some(r) => r,
+                None => add_rtv(&a, &b, arena)?,
+            };
+            stack.push(r);
         }
         FastOp::Sub => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
@@ -245,38 +246,38 @@ pub fn execute_one(
         FastOp::Lt => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x < y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x < y)?);
         }
         FastOp::Le => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x <= y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x <= y)?);
         }
         FastOp::Gt => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x > y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x > y)?);
         }
         FastOp::Ge => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x >= y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x >= y)?);
         }
 
         // ===== Logical =====
         FastOp::And => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(is_truthy(&a) && is_truthy(&b)));
+            stack.push(RuntimeValue::Bool(is_truthy(&a, arena) && is_truthy(&b, arena)));
         }
         FastOp::Or => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(is_truthy(&a) || is_truthy(&b)));
+            stack.push(RuntimeValue::Bool(is_truthy(&a, arena) || is_truthy(&b, arena)));
         }
         FastOp::Not => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(!is_truthy(&a)));
+            stack.push(RuntimeValue::Bool(!is_truthy(&a, arena)));
         }
 
         // ===== Bitwise =====
@@ -451,7 +452,7 @@ pub fn execute_one(
                     let ptr = arena.alloc(Object::Str(s));
                     RuntimeValue::Ref(ptr)
                 }
-                "bool" => RuntimeValue::Bool(is_truthy(&val)),
+                "bool" => RuntimeValue::Bool(is_truthy(&val, arena)),
                 _ => return Err(FastError::TypeMismatch),
             };
             stack.push(casted);
@@ -700,6 +701,9 @@ pub fn execute_one(
             } else {
                 return Err(FastError::TypeMismatch);
             }
+            // CVM1's contract: the map is pushed back (object literals chain
+            // on it; `m.x = v` pops it). CRUSH-145.
+            stack.push(target);
         }
 
         FastOp::NewArray => {
@@ -1113,19 +1117,23 @@ pub fn execute_one(
             let lang = symbols.strings[site.lang_idx as usize].clone();
             let code = symbols.strings[site.code_idx as usize].clone();
 
-            let mut variables = std::collections::HashMap::new();
-
-            let locals_base = current_locals_base(call_stack);
-            for name_idx in &site.var_names {
-                let name_str = &symbols.strings[*name_idx as usize];
-                // lookup local slot
-                if let Some(&local_slot) = symbols.locals.get(name_str) {
-                    let val_idx = locals_base + local_slot as usize;
-                    if let Some(val) = locals.get(val_idx) {
-                        variables.insert(name_str.clone(), val.clone());
-                    }
-                }
+            // The compiler loaded each input's value just before this op, in
+            // `var_names` order, so they're the top `n` stack entries. Pop
+            // them (they used to be left behind) and pair them with their
+            // names. Looking names up in `symbols.locals` instead found
+            // nothing — that table only describes the last function lowered
+            // (CRUSH-140).
+            let n = site.var_names.len();
+            if stack.len() < n {
+                return Err(FastError::StackUnderflow);
             }
+            let values = stack.split_off(stack.len() - n);
+            let variables: std::collections::HashMap<String, RuntimeValue> = site
+                .var_names
+                .iter()
+                .map(|idx| symbols.strings[*idx as usize].clone())
+                .zip(values)
+                .collect();
 
             return Ok(Some(FastYield::Request(HostRequest::ExecLang {
                 lang,

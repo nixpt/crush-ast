@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -358,6 +358,10 @@ fn iadd(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.i
 fn band(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().band(a, b2) }
 fn bor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().bor(a, b2) }
 fn bnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().bnot(v) }
+/// Logical not of a 0/1 truth value (an `icmp` result). Not `bnot`: the
+/// bitwise NOT of 1 is 0xFE, which is still non-zero, so `brif`/`select` read
+/// it as true — `JumpIfNot` always jumped and `!x` was always true (CRUSH-139).
+fn lnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().icmp_imm(IntCC::Equal, v, 0) }
 fn band_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().band_imm(v, i) }
 fn icmp_eq(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(IntCC::Equal, a, b2) }
 fn icmp_ne(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(IntCC::NotEqual, a, b2) }
@@ -499,22 +503,68 @@ fn is_float(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let eq_r = icmp_eq(b, masked, r_tag);
     let or1 = bor(b, eq_s, eq_i);
     let or2 = bor(b, or1, eq_r);
-    bnot(b, or2)
+    lnot(b, or2)
 }
-fn truthy(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
-    let ft = iconst(b, TAG_FALSE);
-    let nt = iconst(b, TAG_NULL);
-    let nf = icmp_ne(b, val, ft);
-    let nn = icmp_ne(b, val, nt);
-    band(b, nf, nn)
+/// Truthiness of a non-ref value: `null`, `false`, int `0` and float
+/// `±0.0` are falsy (canonical rule, CRUSH-134; `0` used to be truthy here).
+fn truthy_imm(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
+    let f = iconst(b, TAG_FALSE);
+    let mut t = icmp_ne(b, val, f);
+    for falsy in [TAG_NULL, TAG_INT, 0, i64::MIN] {
+        // TAG_INT = int 0; 0 = +0.0; i64::MIN = -0.0
+        let c = iconst(b, falsy);
+        let ne = icmp_ne(b, val, c);
+        t = band(b, t, ne);
+    }
+    t
+}
+
+/// Canonical truthiness of any value. Refs (strings, collections) are falsy
+/// when empty, which needs the arena: they go through `OP_TRUTHY`; every
+/// other value is decided inline.
+fn truthy(
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    val: ir::Value,
+    ptr_ty: types::Type,
+    helper_sig: ir::SigRef,
+) -> ir::Value {
+    let mask = iconst(b, MASK_U64 as i64);
+    let tag = band(b, val, mask);
+    let rt = iconst(b, TAG_REF);
+    let is_ref = icmp_eq(b, tag, rt);
+    let ref_bb = b.create_block();
+    let imm_bb = b.create_block();
+    let merge = b.create_block();
+    b.append_block_param(merge, types::I8);
+    b.ins().brif(is_ref, ref_bb, &[] as &[BlockArg], imm_bb, &[] as &[BlockArg]);
+
+    b.switch_to_block(ref_bb);
+    b.seal_block(ref_bb);
+    push(b, ctx, val);
+    emit_helper_call(b, ctx, OP_TRUTHY, 0, ptr_ty, helper_sig);
+    let r = pop(b, ctx);
+    let tt = iconst(b, TAG_TRUE);
+    let is_true = icmp_eq(b, r, tt);
+    b.ins().jump(merge, &[BlockArg::Value(is_true)]);
+
+    b.switch_to_block(imm_bb);
+    b.seal_block(imm_bb);
+    let t = truthy_imm(b, val);
+    b.ins().jump(merge, &[BlockArg::Value(t)]);
+
+    b.switch_to_block(merge);
+    b.seal_block(merge);
+    b.block_params(merge)[0]
 }
 fn eint(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
-    let shl = ishl_imm(b, val, 48);
-    sshr_imm(b, shl, 48)
+    // Sign-extend the 48-bit int payload (CRUSH-142; was 16-bit).
+    let shl = ishl_imm(b, val, 16);
+    sshr_imm(b, shl, 16)
 }
 fn tint(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let base = iconst(b, TAG_INT);
-    let low = band_imm(b, val, 0xFFFF);
+    let low = band_imm(b, val, 0x0000_FFFF_FFFF_FFFF);
     iadd(b, base, low)
 }
 fn tbool(b: &mut FunctionBuilder, cond: ir::Value) -> ir::Value {
@@ -613,6 +663,7 @@ fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::
 /// Tag values for `host_request_tag` in JitContext.
 /// Must match the variant ordering in `HostRequest` enum.
 const HOST_REQ_CALL_HOST: i64 = 0;
+#[allow(dead_code)] // reserved: ExecLang is not JIT-compiled (CRUSH-133)
 const HOST_REQ_EXEC_LANG: i64 = 1;
 const HOST_REQ_SPAWN: i64 = 2;
 const HOST_REQ_GC: i64 = 3;
@@ -706,8 +757,12 @@ fn emit_one(
     use FastOp::*;
     match instr.op {
         PushInt => {
-            let v = (instr.arg as u64) & 0xFFFF;
-            let cv = iconst(b, (TAG_INT as u64 | v) as i64);
+            // A constant outside the 48-bit payload can't be represented:
+            // refuse the program (→ FastVM fallback) rather than truncate it.
+            let Some(v) = crate::value::JitValue::try_int(instr.arg as i64) else {
+                return Err(CompileError::Unsupported(vec![PushInt]));
+            };
+            let cv = iconst(b, v.0 as i64);
             push(b, ctx, cv);
         }
         PushFloat => { let cv = iconst(b, instr.arg as i64); push(b, ctx, cv); }
@@ -874,8 +929,8 @@ fn emit_one(
         And => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
-            let ta = truthy(b, a);
-            let tb = truthy(b, bv);
+            let ta = truthy(b, ctx, a, _ptr_ty, helper_sig);
+            let tb = truthy(b, ctx, bv, _ptr_ty, helper_sig);
             let r = band(b, ta, tb);
             let rv = tbool(b, r);
             push(b, ctx, rv);
@@ -883,16 +938,16 @@ fn emit_one(
         Or => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
-            let ta = truthy(b, a);
-            let tb = truthy(b, bv);
+            let ta = truthy(b, ctx, a, _ptr_ty, helper_sig);
+            let tb = truthy(b, ctx, bv, _ptr_ty, helper_sig);
             let r = bor(b, ta, tb);
             let rv = tbool(b, r);
             push(b, ctx, rv);
         }
         Not => {
             let a = pop(b, ctx);
-            let ta = truthy(b, a);
-            let nb = bnot(b, ta);
+            let ta = truthy(b, ctx, a, _ptr_ty, helper_sig);
+            let nb = lnot(b, ta);
             let rv = tbool(b, nb);
             push(b, ctx, rv);
         }
@@ -906,7 +961,7 @@ fn emit_one(
         }
         JumpIf => {
             let cond = pop(b, ctx);
-            let c = truthy(b, cond);
+            let c = truthy(b, ctx, cond, _ptr_ty, helper_sig);
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
@@ -916,8 +971,8 @@ fn emit_one(
         }
         JumpIfNot => {
             let cond = pop(b, ctx);
-            let t = truthy(b, cond);
-            let nb = bnot(b, t);
+            let t = truthy(b, ctx, cond, _ptr_ty, helper_sig);
+            let nb = lnot(b, t);
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
@@ -931,15 +986,10 @@ fn emit_one(
         Call => {
             let func_name = &program.symbols.strings[instr.arg as usize];
             if let Some(&(target_pc, _, _arity)) = program.symbols.functions.get(func_name) {
-                let argc = instr.arg2 as usize;
-
-                // Reverse args on stack so first arg is on top (callee pops first).
-                // Same semantics as FastVM's Call handler.
-                if argc > 1 {
-                    let mut args: Vec<ir::Value> = Vec::with_capacity(argc);
-                    for _ in 0..argc { args.push(pop(b, ctx)); }
-                    for &arg in &args { push(b, ctx, arg); }
-                }
+                // Arguments stay as the caller pushed them: last-to-first, so
+                // the first one is on top for the callee's `store <param1>`.
+                // This used to reverse them, mirroring FastVM's Call — both
+                // bound multi-argument calls backwards (CRUSH-138).
 
                 // Guard: check call-stack depth before pushing.
                 // With FRAME_LOCALS=2, only 32 frames fit in the 64-entry
@@ -1175,10 +1225,12 @@ fn emit_one(
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_CALL_HOST);
             return Ok(true);
         }
-        ExecLang => {
-            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_EXEC_LANG);
-            return Ok(true);
-        }
+        // Not compiled (CRUSH-133, #73): the yield carried only a tag — no
+        // language, code or variables — so nothing could service it, and a
+        // string result resumed as null. Refusing it here sends the program
+        // to the FastVM fallback, which yields a full
+        // `HostRequest::ExecLang { lang, code, variables }`.
+        ExecLang => return Err(CompileError::Unsupported(vec![ExecLang])),
         Spawn => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_SPAWN);
             return Ok(true);
@@ -1224,14 +1276,22 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     b.switch_to_block(ibb);
     let av = eint(b, a);
     let bv2 = eint(b, bv);
-    // Compute the full i64 result, then check if it fits in 16 bits.
-    // Crush ints are 16-bit sign-extended; overflow = result != sign_extend(low16).
-    // This works for add, sub, mul, and div uniformly.
+    // Compute the full i64 result, then check it fits the 48-bit int
+    // payload: overflow = result != sign_extend(low48). This works for add,
+    // sub, mul, and div uniformly — except that a product of two 48-bit
+    // values can wrap i64 itself, so for mul also require the high half of
+    // the 128-bit product to be the low half's sign extension.
     // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
     let ri = if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
-    let shifted = ishl_imm(b, ri, 48);
-    let low16 = sshr_imm(b, shifted, 48);
-    let of_cond = icmp(b, IntCC::NotEqual, ri, low16);
+    let shifted = ishl_imm(b, ri, 16);
+    let low48 = sshr_imm(b, shifted, 16);
+    let mut of_cond = icmp(b, IntCC::NotEqual, ri, low48);
+    if mul {
+        let hi = b.ins().smulhi(av, bv2);
+        let sign = sshr_imm(b, ri, 63);
+        let wrapped = icmp(b, IntCC::NotEqual, hi, sign);
+        of_cond = bor(b, of_cond, wrapped);
+    }
     let iok = b.create_block();
     let ierr = b.create_block();
     b.ins().brif(of_cond, ierr, &[] as &[BlockArg], iok, &[] as &[BlockArg]);
@@ -1470,7 +1530,7 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     } else {
         iconst(b, TAG_FALSE)
     };
-    let not_both_floats = bnot(b, both_floats);
+    let not_both_floats = lnot(b, both_floats);
     let override_on = band(b, bits_eq, not_both_floats);
     let result = select(b, override_on, identity_result, raw_result);
     push(b, ctx, result);

@@ -7,7 +7,7 @@
 //! Tags use distinct top-4-nibbles of the mantissa for mutual disambiguation:
 //!
 //!   0x7FFC_XXXX_XXXX_XXXX  → {Null=0x0000, True=0x0001, False=0x0002} + reserved
-//!   0x7FFD_XXXX_XXXX_XXXX  → Small Int  (lower 48 bits = sign-extended i16)
+//!   0x7FFD_XXXX_XXXX_XXXX  → Int        (lower 48 bits = sign-extended i48)
 //!   0x7FFE_XXXX_XXXX_XXXX  → Heap Ref   (lower 48 bits = arena index)
 //!   anything else           → Float (includes canonical NaN 0x7FF8*)
 
@@ -23,6 +23,11 @@ pub(crate) const REF_PAYLOAD: u64 = 0x0000_FFFF_FFFF_FFFF; // lower 48 bits
 pub(crate) const MASK_SPECIAL: u64 = 0x7FFC_0000_0000_0000;
 pub(crate) const MASK_INT: u64 = 0x7FFD_0000_0000_0000;
 pub(crate) const MASK_REF: u64  = 0x7FFE_0000_0000_0000;
+/// Range of the int payload: 48-bit signed. It used to be 16-bit — every
+/// int outside ±32767 was truncated, so `i64::MAX` became -1 and
+/// `i64::MAX + 1` "returned" 0 instead of overflowing (CRUSH-142).
+pub(crate) const INT_MAX: i64 = (1 << 47) - 1;
+pub(crate) const INT_MIN: i64 = -(1 << 47);
 
 /// A 64-bit nan-boxed value that maps to Crush's [`RuntimeValue`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,9 +36,19 @@ pub struct JitValue(pub u64);
 impl JitValue {
     #[inline]
     pub fn int(v: i64) -> Self {
-        debug_assert!(v >= -0x8000 && v <= 0x7FFF, "large ints not yet supported in JIT Phase 1");
-        let bits = (v as u64) & 0xFFFF;
-        Self(TAG_INT | bits)
+        debug_assert!(
+            (INT_MIN..=INT_MAX).contains(&v),
+            "{v} doesn't fit the JIT's 48-bit int payload"
+        );
+        Self(TAG_INT | ((v as u64) & REF_PAYLOAD))
+    }
+
+    /// `v` as a JIT int, or `None` if it doesn't fit the 48-bit payload.
+    #[inline]
+    pub fn try_int(v: i64) -> Option<Self> {
+        (INT_MIN..=INT_MAX)
+            .contains(&v)
+            .then_some(Self(TAG_INT | ((v as u64) & REF_PAYLOAD)))
     }
 
     #[inline]
@@ -80,8 +95,8 @@ impl JitValue {
     #[inline]
     pub fn to_int(self) -> Option<i64> {
         if self.is_int() {
-            let low16 = (self.0 & 0xFFFF) as i16 as i64;
-            Some(low16)
+            // Sign-extend the 48-bit payload.
+            Some(((self.0 << 16) as i64) >> 16)
         } else {
             None
         }
@@ -132,8 +147,15 @@ impl JitValue {
     }
 
     #[inline]
+    /// Truthiness of an immediate value: `null`, `false`, `0` and `±0.0`
+    /// are falsy. A ref's truthiness depends on what it points to (empty
+    /// strings/collections are falsy) — that needs the arena; see
+    /// `OP_TRUTHY`. Same rule as every other backend (CRUSH-134).
     pub fn is_truthy(self) -> bool {
-        self.0 != TAG_FALSE && self.0 != TAG_NULL
+        !(self.0 == TAG_FALSE
+            || self.0 == TAG_NULL
+            || self.to_int() == Some(0)
+            || self.to_float() == Some(0.0))
     }
 
     pub fn as_bool(self) -> bool {
@@ -251,8 +273,9 @@ mod tests {
     #[test]
     fn truthy_values() {
         assert!(JitValue::int(1).is_truthy());
-        assert!(JitValue::int(0).is_truthy());
-        assert!(JitValue::float(0.0).is_truthy());
+        assert!(!JitValue::int(0).is_truthy()); // CRUSH-134: 0 is falsy
+        assert!(!JitValue::float(0.0).is_truthy());
+        assert!(JitValue::float(0.5).is_truthy());
         assert!(JitValue::bool(true).is_truthy());
         assert!(!JitValue::bool(false).is_truthy());
         assert!(!JitValue::null().is_truthy());
@@ -274,5 +297,23 @@ mod tests {
         assert!(nan.is_float());
         assert!(r.is_ref());
         assert_ne!(nan.0, r.0);
+    }
+
+    /// CRUSH-142: ints are 48-bit (were 16-bit — `i64::MAX` became -1).
+    #[test]
+    fn ints_round_trip_across_the_48_bit_range() {
+        for v in [
+            0, 1, -1, 32_767, 32_768, -32_769, 1_000_000, INT_MAX, INT_MIN,
+        ] {
+            assert_eq!(JitValue::try_int(v).unwrap().to_int(), Some(v), "{v}");
+            assert_eq!(JitValue::int(v).to_int(), Some(v), "{v}");
+        }
+    }
+
+    #[test]
+    fn ints_outside_48_bits_are_refused_not_truncated() {
+        for v in [INT_MAX + 1, INT_MIN - 1, i64::MAX, i64::MIN] {
+            assert_eq!(JitValue::try_int(v), None, "{v}");
+        }
     }
 }

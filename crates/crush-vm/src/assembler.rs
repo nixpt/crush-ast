@@ -5,7 +5,7 @@
 //!   label:              jump target label
 //!   .func NAME          function entry point directive
 //!   PUSH 42             integer operand
-//!   PUSH_STR "hello"    string operand (double-quoted, \n \t \\ \" escapes)
+//!   PUSH_STR "hello"    string operand (double-quoted, Rust `{:?}` escapes)
 //!   JMP loop            jump to a label
 //!   CAP_CALL "io.print" 1    capability call
 //!   HALT
@@ -643,23 +643,41 @@ fn parse_string(token: &str, lineno: usize) -> Result<String, AssemblyError> {
             format!("expected quoted string, got {token:?}"),
         ));
     }
+    // Inverse of the `{:?}` (Rust `Debug`) quoting every emitter uses —
+    // `disassemble` here and `crush_lang_sdk::compile::casm_to_vm`. Debug
+    // also writes `\r`, `\0`, `\'` and `\u{XXXX}`; decoding only `\n \t
+    // \" \\` turned `"\r"` into the letter `r` (CRUSH-124).
     let body = &token[1..token.len() - 1];
     let mut out = String::new();
-    let mut esc = false;
-    for ch in body.chars() {
-        if esc {
-            out.push(match ch {
-                'n' => '\n',
-                't' => '\t',
-                '"' => '"',
-                '\\' => '\\',
-                c => c,
-            });
-            esc = false;
-        } else if ch == '\\' {
-            esc = true;
-        } else {
+    let mut chars = body.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
             out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some('u') => {
+                let rest = chars.as_str();
+                let hex = rest
+                    .strip_prefix('{')
+                    .and_then(|r| r.split_once('}'))
+                    .map(|(hex, _)| hex)
+                    .ok_or_else(|| AssemblyError::new(lineno, "malformed \\u{...} escape"))?;
+                let decoded = u32::from_str_radix(hex, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| {
+                        AssemblyError::new(lineno, format!("invalid \\u{{{hex}}} escape"))
+                    })?;
+                out.push(decoded);
+                chars = rest[hex.len() + 2..].chars();
+            }
+            Some(c) => out.push(c),
+            None => out.push('\\'),
         }
     }
     Ok(out)
@@ -690,4 +708,40 @@ fn require_args<'a>(
         ));
     }
     Ok((&args[0],))
+}
+
+#[cfg(test)]
+mod string_escape_tests {
+    use super::*;
+
+    #[test]
+    fn every_debug_escape_round_trips_through_casm_text() {
+        let samples = [
+            "\r",
+            "a\r\nb",
+            "\0",
+            "\t\\\"'",
+            "\u{7}\u{1b}[0m",
+            "é ✓ \u{200b}",
+        ];
+        for s in samples {
+            let quoted = format!("{s:?}");
+            assert_eq!(
+                parse_string(&quoted, 1).unwrap(),
+                s,
+                "round trip of {quoted}"
+            );
+        }
+    }
+
+    #[test]
+    fn carriage_return_is_not_the_letter_r() {
+        assert_eq!(parse_string(r#""\r""#, 1).unwrap(), "\r");
+    }
+
+    #[test]
+    fn malformed_unicode_escape_is_an_error() {
+        assert!(parse_string(r#""\u{zz}""#, 1).is_err());
+        assert!(parse_string(r#""\u{110000}""#, 1).is_err());
+    }
 }

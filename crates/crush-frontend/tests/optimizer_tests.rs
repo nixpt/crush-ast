@@ -358,3 +358,43 @@ fn test_extended_constant_folding_string_and_bool() {
         other => panic!("expected bool unary folding, got: {:?}", other),
     }
 }
+
+/// CRUSH-131 / GH #71: a `@lang` block can write any variable back, so a
+/// constant known before the block must not be folded into reads after it.
+#[test]
+fn constants_are_not_folded_across_a_lang_block() {
+    let body = vec![
+        Statement::VarDecl {
+            name: "x".to_string(),
+            value: Expression::IntLiteral {
+                value: 1,
+                meta: create_empty_meta(),
+            },
+            type_hint: crush_cast::CastType::Any,
+            meta: create_empty_meta(),
+        },
+        Statement::LangBlock {
+            lang: "python".to_string(),
+            code: "x = 2".to_string(),
+            variables: vec!["x".to_string()],
+            imports: vec![],
+            deps: vec![],
+            meta: HashMap::from([("polyglot_output".to_string(), serde_json::json!("x"))]),
+        },
+        Statement::Return {
+            value: Some(Expression::Var {
+                name: "x".to_string(),
+                meta: create_empty_meta(),
+            }),
+            meta: create_empty_meta(),
+        },
+    ];
+    let mut program = create_program(body);
+    optimize_program(&mut program);
+    let body = &program.functions["main"].body;
+    assert!(
+        matches!(&body[2], Statement::Return { value: Some(Expression::Var { name, .. }), .. } if name == "x"),
+        "read after the @lang block was folded: {:?}",
+        body[2]
+    );
+}

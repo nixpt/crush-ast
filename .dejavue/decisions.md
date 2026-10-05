@@ -629,3 +629,29 @@ Rejected alternatives:
 Outcome:
 ~50 caps landed with unit + source-pipeline tests; array.push/array.pop lowering and an fs sandbox escape (non-existent ../ paths) fixed on the way; CRUSH-113 (stdlib default-on) left open.
 
+## 2026-10-05T12:00:00+00:00 — #74–#78 language semantics (owner interview): dynamic field access on any, truthy conditions, array<any> + array concat, lexicographic string ordering, lambdas without captures
+
+Reason:
+Decided with the repo owner after triaging GitHub #74–#78 (pranix, while writing a CAISON parser). (1) #74/#77 Field access on an `any` value is a dynamic lookup typed `any`; a missing key is `null` — what every VM's GET_FIELD already does, so only the type checker changes. (2) #74 Conditions (`if`/`while`/`&&`/`!`) accept `any` and use runtime truthiness, which the VMs already implement; a value statically known not to be bool (`if 5`) stays a compile error. (3) #75 Mixed array literals type as `array<any>` (uniform ones keep their precise type), matching maps; `a + b` on arrays returns a new concatenated array, neither operand mutated. (4) #76 `<`/`<=`/`>`/`>=` on two strings compare lexicographically by Unicode code point (= UTF-8 byte order), locale-free and identical on all backends; string vs number stays a runtime type error. (5) #78 Both `|x| => expr` and `|x| { block }` parse; lambdas do not capture outer locals yet — referencing one is a clear compile error — since they compile to top-level functions and closures would need a closure value type in all five backends.
+
+Rejected alternatives:
+- **Missing field → runtime error**: needs every VM's GET_FIELD changed and breaks code relying on null
+- **Strict bool at runtime for `any` conditions**: adds a check to every backend's branch for little gain over truthiness
+- **Case-insensitive string ordering**: surprising for byte-oriented parsing (the reporter's use case)
+- **Closures (capture by value/reference) now**: a closure value type across CVM1, FastVM, JIT and both AOT backends — deferred
+
+Outcome:
+Shipped one PR per issue, in order #76 → #74/#77 → #75 → #78. #76 landed first, together with CRUSH-143 (optimizer dropped `if`-branch assignments), found while testing it.
+
+## 2026-10-05T14:00:00+00:00 — One truthiness rule on every backend (CVM1's): null, false, 0, 0.0, "" and empty collections are falsy
+
+Reason:
+Owner decision 2026-10-05, made while implementing #74's `any` conditions (CRUSH-134). Accepting `any` in `if`/`while` made the backends' differing truthiness reachable from plain source: FastVM treated 0, 0.0, "" and [] as truthy, the JIT treated 0 and 0.0 as truthy, the AOT backends missed floats/strings/maps. CVM1's rule (Value::is_truthy, Python-style) was already the reference interpreter's and the most complete, so the others were aligned to it: FastVM is_truthy reads the arena; the JIT decides immediates inline and sends refs to an OP_TRUTHY helper; AOT Rust truthy, AOT C _truthy and crush-aotc cv_truthy were extended; PortableVm's duplicate now calls Value::is_truthy.
+
+Rejected alternatives:
+- **Strict bool (only true/false)**: would change CVM1, the reference, and break existing `if x` on ints in CVM1 programs
+- **JS-style (NaN falsy, empty collections truthy)**: diverges from CVM1 for no gain; NaN isn't distinguished anywhere else
+- **Leave the backends divergent**: `if v` would give different answers per backend, which the differential harness exists to prevent
+
+Outcome:
+All backends agree on null/false/true/0/7/-1/0.0/1.5/""/"x"/[]/[0] through if, while, !, && and || (differential_aot strict incl. JIT). crush-aotc isn't in the harness: CRUSH-144.

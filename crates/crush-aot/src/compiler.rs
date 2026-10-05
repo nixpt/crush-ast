@@ -74,7 +74,7 @@ impl AotCompiler {
         program: &casm::Program,
         module_name: &str,
     ) -> Result<PathBuf> {
-        let rust_source = crate::codegen::gen_rust_source(program);
+        let rust_source = crate::codegen::gen_rust_source(program)?;
 
         // Content-hash for cache key
         let mut hasher = Sha256::new();
@@ -169,7 +169,7 @@ impl AotCompiler {
         module_name: &str,
         cc: &str,
     ) -> Result<PathBuf> {
-        let c_source = crate::codegen_c::gen_c_source(program);
+        let c_source = crate::codegen_c::gen_c_source(program)?;
 
         let mut hasher = Sha256::new();
         hasher.update(format!("c:{cc}:").as_bytes());
