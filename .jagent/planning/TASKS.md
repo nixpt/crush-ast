@@ -212,6 +212,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-145** (S, P1): SET_FIELD contract diverged — map literals broken on FastVM/JIT/AOT; `m.x = v` leaked a stack slot (found during CRUSH-134). [ticket](tickets/CRUSH-145-set-field-contract-diverged.md)
 - [x] **CRUSH-146** (XS, P1): JIT `arr_set` didn't push the array back — `a[i] = v` corrupted the JIT stack (found during CRUSH-135). [ticket](tickets/CRUSH-146-jit-arr-set-stack-contract.md)
 - [x] **CRUSH-147** (S): salvage + triage of the dirty shared checkout — salvage `salvage/panini/CRUSH-147-20261005-0848`@`c302e83`; the 196 dirty files are a `cargo fmt --all` run (0 unique work; CRUSH-73/19/11 work is not in it). [ticket](tickets/CRUSH-147-shared-checkout-salvage.md)
+- [ ] **CRUSH-148** (S): no fmt gate in CI — 202/319 `.rs` files on `main` aren't rustfmt-clean; pin one rustfmt (CI says 1.85, `rust-toolchain.toml` says stable), one mechanical `cargo fmt --all` commit + `.git-blame-ignore-revs`, then a `cargo fmt --all --check` job. Also: `cargo fmt` fails inside `.jagent/worktrees/*` (sibling `buckets` link lands inside the workspace). [ticket](tickets/CRUSH-148-fmt-ci-gate.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
