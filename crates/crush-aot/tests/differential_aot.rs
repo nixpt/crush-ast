@@ -1119,3 +1119,90 @@ fn short_circuit_in_the_middle_of_an_expression() {
     );
 }
 
+// ── CRUSH-138: call arguments bind in order on every backend ────────────────
+// The compiler pushes arguments last-to-first so the callee's `store <param1>`
+// pops the first one. FastVM and the JIT reversed them again, so every
+// multi-argument call bound its parameters backwards (`sub(10, 3)` was -7);
+// the earlier differential tests only used symmetric calls (`scale(a, 3)`).
+
+#[test]
+fn asymmetric_multi_argument_calls_bind_in_order() {
+    assert_all_backends_return(
+        r#"
+        fn sub(a, b) { return a - b }
+        fn three(a, b, c) { return a * 100 + b * 10 + c }
+        fn main() { return sub(10, 3) * 1000 + three(1, 2, 3) }
+    "#,
+        7123,
+    );
+    let jit = jit_outcome_via_subprocess(
+        "fn sub(a, b) { return a - b }\nfn main() { return sub(10, 3) }",
+    );
+    assert!(
+        matches!(jit, FastOutcome::Finished(Some(Norm::Int(7)))),
+        "JIT: {jit:?}"
+    );
+}
+
+#[derive(Debug)]
+struct TestHal;
+impl Hal for TestHal {}
+
+/// A dotted call to a program function (walker-produced CAST, e.g. a method)
+/// went through a second call site that pushed arguments first-to-last.
+#[test]
+fn dotted_call_to_a_program_function_binds_in_order() {
+    let json = r#"{"cast_version":"1.0","entry":"main","functions":{
+      "m.sub":{"meta":{},"params":[["a","Any"],["b","Any"]],"body":[{"type":"Return","meta":{},"value":{"type":"BinaryOp","meta":{},"operator":"-","left":{"type":"Var","meta":{},"name":"a"},"right":{"type":"Var","meta":{},"name":"b"}}}]},
+      "main":{"meta":{},"params":[],"body":[{"type":"Return","meta":{},"value":{"type":"CapabilityCall","meta":{},"name":"m.sub","args":[{"type":"IntLiteral","meta":{},"value":10},{"type":"IntLiteral","meta":{},"value":3}]}}]}}}"#;
+    let program: crush_cast::Program = serde_json::from_str(json).unwrap();
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let portable = crush_vm::portable_vm::PortableVm::new(vm).run().unwrap();
+    assert_eq!(portable.stack.last(), Some(&crush_vm::vm::Value::Int(7)));
+
+    let lowered = crush_vm::fastvm::lower_program(&casm).unwrap();
+    let fast =
+        crush_vm::fastvm::FastVM::new(lowered, vec![], std::sync::Arc::new(TestHal)).run(100_000);
+    assert!(
+        matches!(fast, FastYield::Finished(Some(RuntimeValue::Int(7)))),
+        "FastVM: {fast:?}"
+    );
+}
+
+// ── CRUSH-139: the JIT's `JumpIfNot` / `!` used a bitwise NOT ──────────────
+// `bnot` of a 0/1 truth value is 0xFE/0xFF — never zero — so every
+// `jmp_if_not` the optimizer couldn't fold away jumped, and `!x` was always
+// true. The harness only *warns* on JIT divergence, so these pin the JIT.
+
+#[test]
+fn jit_branches_on_comparisons_and_negation() {
+    let cases = [
+        (
+            "fn main() { let y = false\n if y == false { return 10 }\n return 20 }",
+            10,
+        ),
+        (
+            "fn main() { let y = 1\n if y == 2 { return 10 }\n return 20 }",
+            20,
+        ),
+        (
+            "fn main() { let x = 4\n let inside = x > 0 && x < 5\n \
+             let outside = x < 0 || x > 9\n if inside && !outside { return 10 }\n return 20 }",
+            10,
+        ),
+        (
+            "fn main() { let x = 3\n let n = 0\n \
+             while x > 0 { n = n + x\n x = x - 1 }\n return n }",
+            6,
+        ),
+    ];
+    for (source, expected) in cases {
+        let jit = jit_outcome_via_subprocess(source);
+        assert!(
+            matches!(jit, FastOutcome::Finished(Some(Norm::Int(v))) if v == expected),
+            "JIT {source:?}: {jit:?}"
+        );
+    }
+}

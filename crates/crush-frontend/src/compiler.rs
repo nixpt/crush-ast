@@ -1699,7 +1699,9 @@ impl Compiler {
                     }
                     instrs.push(self.create_instr(op, serde_json::json!({}), meta));
                 } else if self.local_functions.contains(name) {
-                    for arg in args {
+                    // Last-to-first, like every other `call`: the callee's
+                    // `store <param1>` pops the first argument (CRUSH-138).
+                    for arg in args.iter().rev() {
                         self.compile_expr(arg, instrs)?;
                     }
                     instrs.push(self.create_instr(

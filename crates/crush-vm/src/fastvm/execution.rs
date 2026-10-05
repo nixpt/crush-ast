@@ -107,17 +107,14 @@ pub fn execute_one(
             let argc = instr.arg2 as usize;
             let locals_base = locals.len();
 
-            // Pop args from stack (top = last pushed = last arg)
+            // The arguments stay where the caller put them. The compiler pushes
+            // them last-to-first, so the first argument is on top for the
+            // callee's `store <param1>` — the same convention the CVM1 VMs and
+            // AOT backends follow. FastVM used to reverse them again here, so
+            // every multi-argument call bound its parameters backwards:
+            // `sub(10, 3)` was -7 (CRUSH-138).
             if stack.len() < argc {
                 return Err(FastError::StackUnderflow);
-            }
-            let split_at = stack.len() - argc;
-            let call_args: Vec<RuntimeValue> = stack.drain(split_at..).collect();
-            // call_args is [first_arg, ..., last_arg]
-            // Callee's 'store param1' pops from top, so first_arg must be on top.
-            // Push last_arg first, ..., first_arg last:
-            for arg in call_args.iter().rev() {
-                stack.push(arg.clone());
             }
 
             // Push call frame

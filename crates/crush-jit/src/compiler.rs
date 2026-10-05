@@ -936,15 +936,10 @@ fn emit_one(
         Call => {
             let func_name = &program.symbols.strings[instr.arg as usize];
             if let Some(&(target_pc, _, _arity)) = program.symbols.functions.get(func_name) {
-                let argc = instr.arg2 as usize;
-
-                // Reverse args on stack so first arg is on top (callee pops first).
-                // Same semantics as FastVM's Call handler.
-                if argc > 1 {
-                    let mut args: Vec<ir::Value> = Vec::with_capacity(argc);
-                    for _ in 0..argc { args.push(pop(b, ctx)); }
-                    for &arg in &args { push(b, ctx, arg); }
-                }
+                // Arguments stay as the caller pushed them: last-to-first, so
+                // the first one is on top for the callee's `store <param1>`.
+                // This used to reverse them, mirroring FastVM's Call — both
+                // bound multi-argument calls backwards (CRUSH-138).
 
                 // Guard: check call-stack depth before pushing.
                 // With FRAME_LOCALS=2, only 32 frames fit in the 64-entry
