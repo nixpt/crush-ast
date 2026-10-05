@@ -125,15 +125,29 @@ impl Optimizer {
                     Self::optimize_block_with_consts(eb, &mut else_consts);
                 }
 
-                *consts = parent_consts;
-
                 if let Expression::BoolLiteral { value, .. } = condition {
+                    // Only one branch survives; what it established holds.
                     if value {
+                        *consts = then_consts;
                         then_body
                     } else {
+                        *consts = else_consts;
                         else_body.unwrap_or_default()
                     }
                 } else {
+                    // Either branch may have run: anything either one assigns
+                    // is unknown afterwards. Restoring the pre-`if` constants
+                    // unconditionally folded `let n = 0; if c { n = n + 1 };
+                    // print(n)` to `print(0)` (CRUSH-143).
+                    let mut mutated = HashSet::new();
+                    Self::collect_mutated_vars(&then_body, &mut mutated);
+                    if let Some(eb) = &else_body {
+                        Self::collect_mutated_vars(eb, &mut mutated);
+                    }
+                    *consts = parent_consts;
+                    for var in mutated {
+                        consts.remove(&var);
+                    }
                     vec![Statement::If {
                         condition,
                         then_body,
@@ -494,6 +508,16 @@ impl Optimizer {
             match stmt {
                 Statement::Assign { target, .. } => {
                     out.insert(target.clone());
+                }
+                // A `let` in a nested block, and a `@lang` block's write-back
+                // variable, can also change what a name holds afterwards.
+                Statement::VarDecl { name, .. } => {
+                    out.insert(name.clone());
+                }
+                Statement::LangBlock { meta, .. } => {
+                    if let Some(var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
+                        out.insert(var.to_string());
+                    }
                 }
                 Statement::If { then_body, else_body, .. } => {
                     Self::collect_mutated_vars(then_body, out);
