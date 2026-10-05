@@ -3,7 +3,7 @@
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
 use super::operations::{compare_op, current_locals_base, is_truthy};
-use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_rtv};
+use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
 use crate::memory::{Arena, Object};
@@ -242,22 +242,22 @@ pub fn execute_one(
         FastOp::Lt => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x < y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x < y)?);
         }
         FastOp::Le => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x <= y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x <= y)?);
         }
         FastOp::Gt => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x > y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x > y)?);
         }
         FastOp::Ge => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(compare_rtv(&a, &b, |x, y| x >= y)?);
+            stack.push(compare_ordered(arena, &a, &b, |x, y| x >= y)?);
         }
 
         // ===== Logical =====

@@ -1162,8 +1162,24 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     _ => af >= bf,
                 };
                 ctx.push(JitValue::bool(result));
+            } else if let Some((sa, sb)) = arena_ref(ctx.arena).and_then(|arena| {
+                Some((
+                    jit_val_to_string(a_val, arena)?,
+                    jit_val_to_string(b_val, arena)?,
+                ))
+            }) {
+                // Two strings: lexicographic by code point, like every other
+                // backend (CRUSH-136).
+                let ord = sa.cmp(&sb);
+                let result = match arg {
+                    0 => ord.is_lt(),
+                    1 => ord.is_le(),
+                    2 => ord.is_gt(),
+                    _ => ord.is_ge(),
+                };
+                ctx.push(JitValue::bool(result));
             } else {
-                // Non-numeric: set error (matching FastVM's TypeMismatch).
+                // Otherwise a type error (matching FastVM's TypeMismatch).
                 ctx.error = 1;
                 ctx.push(JitValue::null());
             }

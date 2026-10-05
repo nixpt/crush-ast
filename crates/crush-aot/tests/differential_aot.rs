@@ -635,8 +635,33 @@ fn aot_ordered_comparison_with_bool_rejected() {
 }
 
 #[test]
-fn aot_ordered_comparison_with_string_rejected() {
-    assert_all_backends_agree("fn lt_any(a: any, b: any) { return a < b; }\nfn main() { return lt_any(\"a\", \"b\"); }");
+fn aot_ordered_comparison_of_strings_is_lexicographic() {
+    // CRUSH-136 (#76): code-point order on every backend — uppercase before
+    // lowercase, a prefix before its extensions, "" first.
+    assert_all_backends_return(
+        r#"
+        fn lt(a: any, b: any) { return a < b }
+        fn ge(a: any, b: any) { return a >= b }
+        fn main() {
+            let n = 0
+            if lt("a", "b") == true { n = n + 1 }
+            if lt("b", "a") == false { n = n + 10 }
+            if lt("B", "a") == true { n = n + 100 }
+            if lt("app", "apple") == true { n = n + 1000 }
+            if lt("", "x") == true { n = n + 10000 }
+            if ge("é", "z") == true { n = n + 100000 }
+            return n
+        }
+    "#,
+        111111,
+    );
+}
+
+#[test]
+fn aot_ordered_comparison_of_string_and_number_rejected() {
+    assert_all_backends_agree(
+        "fn lt_any(a: any, b: any) { return a < b; }\nfn main() { return lt_any(\"a\", 1); }",
+    );
 }
 
 // ── Exception handling: multi-function rethrow ─────────────────────────────

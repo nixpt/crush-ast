@@ -259,7 +259,13 @@ fn bin_cmp_eq_ne(stack: &mut Vec<RuntimeValue>, is_eq: bool) {
 
 fn bin_cmp_ordered(stack: &mut Vec<RuntimeValue>, icmp: fn(i64,i64)->bool, fcmp: fn(f64,f64)->bool) {
     let (a, b) = pop2(stack);
-    // lt/gt/le/ge require numeric operands, matching the scheduler.
+    // Two strings order lexicographically by code point (CRUSH-136); fed to
+    // the float predicate as (-1|0|1, 0).
+    if let (RuntimeValue::String(x), RuntimeValue::String(y)) = (&a, &b) {
+        stack.push(RuntimeValue::Bool(fcmp(x.cmp(y) as i8 as f64, 0.0)));
+        return;
+    }
+    // Otherwise lt/gt/le/ge require numeric operands, matching the scheduler.
     if !is_numeric_rtv(&a) || !is_numeric_rtv(&b) {
         cmp_type_error(&a, &b);
     }

@@ -152,6 +152,13 @@ pub fn compare_values<F>(a: &Value, b: &Value, cmp: F) -> Result<Value, VmError>
 where
     F: FnOnce(f64, f64) -> bool,
 {
+    // Two strings order lexicographically by code point (= UTF-8 byte
+    // order), the same on every backend; the ordering is fed to the numeric
+    // predicate as (-1|0|1, 0) so `<`/`<=`/`>`/`>=` need no second closure
+    // (CRUSH-136).
+    if let (Value::Str(x), Value::Str(y)) = (a, b) {
+        return Ok(Value::Bool(cmp(x.cmp(y) as i8 as f64, 0.0)));
+    }
     require_numeric(a, b)?;
     Ok(Value::Bool(cmp(to_f64(a), to_f64(b))))
 }

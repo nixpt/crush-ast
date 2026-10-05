@@ -140,6 +140,36 @@ where
     Ok(RuntimeValue::Bool(cmp(to_f64(a), to_f64(b))))
 }
 
+/// The string a value holds, inline or in the arena.
+fn rtv_str<'a>(v: &'a RuntimeValue, arena: &'a Arena) -> Option<&'a str> {
+    match v {
+        RuntimeValue::String(s) => Some(s),
+        RuntimeValue::Ref(idx) => match arena.get(*idx) {
+            Some(Object::Str(s)) => Some(s),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `<` / `<=` / `>` / `>=`: numbers numerically, two strings
+/// lexicographically by code point, anything else a type error — the same
+/// rule as `crate::arithmetic::compare_values` (CRUSH-136).
+pub fn compare_ordered<F>(
+    arena: &Arena,
+    a: &RuntimeValue,
+    b: &RuntimeValue,
+    cmp: F,
+) -> Result<RuntimeValue, FastError>
+where
+    F: FnOnce(f64, f64) -> bool,
+{
+    if let (Some(x), Some(y)) = (rtv_str(a, arena), rtv_str(b, arena)) {
+        return Ok(RuntimeValue::Bool(cmp(x.cmp(y) as i8 as f64, 0.0)));
+    }
+    compare_rtv(a, b, cmp)
+}
+
 fn rtv_as_text(v: &RuntimeValue, arena: &Arena) -> String {
     match v {
         RuntimeValue::String(s) => s.clone(),

@@ -2339,8 +2339,8 @@ mod tests {
     }
 
     #[test]
-    fn test_lt_string_and_string_should_error() {
-        // "a" < "b" → FastVM returns TypeMismatch error, JIT should too.
+    fn test_lt_string_and_string_orders_lexicographically() {
+        // CRUSH-136: two strings compare by code point on every backend.
         let mut prog = make_prog(vec![
             (FastOp::PushStr, 0, 0),
             (FastOp::PushStr, 1, 0),
@@ -2351,8 +2351,14 @@ mod tests {
         prog.symbols.intern_string("b");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert!(expected.is_err(), "FastVM should return error for 'a' < 'b', got {:?}", expected);
-        assert!(actual.is_err(), "JIT should return error for 'a' < 'b', got {:?}", actual);
+        assert!(
+            matches!(
+                expected,
+                FastYield::Finished(Some(RuntimeValue::Bool(true)))
+            ),
+            "FastVM: {expected:?}"
+        );
+        assert_eq!(expected, actual, "'a' < 'b' should match FastVM");
     }
 
     #[test]

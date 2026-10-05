@@ -469,9 +469,15 @@ static Value _cmp(Value a, Value b, int op) {
             case 2: r = fa <  fb; break; case 3: r = fa <= fb; break;
             case 4: r = fa >  fb; break; case 5: r = fa >= fb; break;
         }
-    } else if (a.tag == TAG_STRING && b.tag == TAG_STRING && (op == 0 || op == 1)) {
+    } else if (a.tag == TAG_STRING && b.tag == TAG_STRING) {
+        /* strcmp compares as unsigned char: UTF-8 byte order = code point
+           order, matching every other backend (CRUSH-136). */
         int c = strcmp(a.s, b.s);
-        r = (op == 0) ? (c == 0) : (c != 0);
+        switch (op) {
+            case 0: r = c == 0; break; case 1: r = c != 0; break;
+            case 2: r = c <  0; break; case 3: r = c <= 0; break;
+            case 4: r = c >  0; break; case 5: r = c >= 0; break;
+        }
     } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL && (op == 0 || op == 1)) {
         r = (op == 0) ? (a.b == b.b) : (a.b != b.b);
     } else if (a.tag == TAG_NULL && b.tag == TAG_NULL && (op == 0 || op == 1)) {
@@ -882,10 +888,10 @@ fn emit_c_instr(
         // ── Comparison ──
         "eq" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,0)); }} _pc={next_pc}; break;\n")); }
         "ne" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_cmp(_a,_b,1)); }} _pc={next_pc}; break;\n")); }
-        "lt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,2)); }} _pc={next_pc}; break;\n")); }
-        "le" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,3)); }} _pc={next_pc}; break;\n")); }
-        "gt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,4)); }} _pc={next_pc}; break;\n")); }
-        "ge" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!_is_num(_a) || !_is_num(_b)) _cmp_type_error(); _push(_cmp(_a,_b,5)); }} _pc={next_pc}; break;\n")); }
+        "lt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,2)); }} _pc={next_pc}; break;\n")); }
+        "le" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,3)); }} _pc={next_pc}; break;\n")); }
+        "gt" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,4)); }} _pc={next_pc}; break;\n")); }
+        "ge" => { out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (!(_is_num(_a) && _is_num(_b)) && !(_a.tag == TAG_STRING && _b.tag == TAG_STRING)) _cmp_type_error(); _push(_cmp(_a,_b,5)); }} _pc={next_pc}; break;\n")); }
 
         // ── Logical ──
         "and" => {
