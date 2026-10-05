@@ -158,9 +158,14 @@ fn jit_outcome_via_subprocess(source: &str) -> FastOutcome {
         Err(e) => return FastOutcome::Err(format!("serialize LoweredProgram: {e}")),
     };
 
-    // Write to a temp file.
+    // Write to a temp file — unique per call, not just per process: the
+    // tests run in parallel threads, and a shared `crush_jit_test_<pid>.json`
+    // let one test's JIT run read another test's program (the "JIT
+    // divergence" warnings on `return -5` / `1 == 1` were that, not the JIT).
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut tmp = std::env::temp_dir();
-    tmp.push(format!("crush_jit_test_{}.json", std::process::id()));
+    tmp.push(format!("crush_jit_test_{}_{n}.json", std::process::id()));
     if let Err(e) = std::fs::write(&tmp, &json) {
         return FastOutcome::Err(format!("write temp file: {e}"));
     }
