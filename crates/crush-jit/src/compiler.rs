@@ -513,12 +513,13 @@ fn truthy(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     band(b, nf, nn)
 }
 fn eint(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
-    let shl = ishl_imm(b, val, 48);
-    sshr_imm(b, shl, 48)
+    // Sign-extend the 48-bit int payload (CRUSH-142; was 16-bit).
+    let shl = ishl_imm(b, val, 16);
+    sshr_imm(b, shl, 16)
 }
 fn tint(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let base = iconst(b, TAG_INT);
-    let low = band_imm(b, val, 0xFFFF);
+    let low = band_imm(b, val, 0x0000_FFFF_FFFF_FFFF);
     iadd(b, base, low)
 }
 fn tbool(b: &mut FunctionBuilder, cond: ir::Value) -> ir::Value {
@@ -711,8 +712,12 @@ fn emit_one(
     use FastOp::*;
     match instr.op {
         PushInt => {
-            let v = (instr.arg as u64) & 0xFFFF;
-            let cv = iconst(b, (TAG_INT as u64 | v) as i64);
+            // A constant outside the 48-bit payload can't be represented:
+            // refuse the program (→ FastVM fallback) rather than truncate it.
+            let Some(v) = crate::value::JitValue::try_int(instr.arg as i64) else {
+                return Err(CompileError::Unsupported(vec![PushInt]));
+            };
+            let cv = iconst(b, v.0 as i64);
             push(b, ctx, cv);
         }
         PushFloat => { let cv = iconst(b, instr.arg as i64); push(b, ctx, cv); }
@@ -1226,14 +1231,22 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     b.switch_to_block(ibb);
     let av = eint(b, a);
     let bv2 = eint(b, bv);
-    // Compute the full i64 result, then check if it fits in 16 bits.
-    // Crush ints are 16-bit sign-extended; overflow = result != sign_extend(low16).
-    // This works for add, sub, mul, and div uniformly.
+    // Compute the full i64 result, then check it fits the 48-bit int
+    // payload: overflow = result != sign_extend(low48). This works for add,
+    // sub, mul, and div uniformly — except that a product of two 48-bit
+    // values can wrap i64 itself, so for mul also require the high half of
+    // the 128-bit product to be the low half's sign extension.
     // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
     let ri = if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
-    let shifted = ishl_imm(b, ri, 48);
-    let low16 = sshr_imm(b, shifted, 48);
-    let of_cond = icmp(b, IntCC::NotEqual, ri, low16);
+    let shifted = ishl_imm(b, ri, 16);
+    let low48 = sshr_imm(b, shifted, 16);
+    let mut of_cond = icmp(b, IntCC::NotEqual, ri, low48);
+    if mul {
+        let hi = b.ins().smulhi(av, bv2);
+        let sign = sshr_imm(b, ri, 63);
+        let wrapped = icmp(b, IntCC::NotEqual, hi, sign);
+        of_cond = bor(b, of_cond, wrapped);
+    }
     let iok = b.create_block();
     let ierr = b.create_block();
     b.ins().brif(of_cond, ierr, &[] as &[BlockArg], iok, &[] as &[BlockArg]);

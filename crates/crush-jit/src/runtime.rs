@@ -1103,8 +1103,8 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 ctx.push(JitValue::from_ref(ptr));
             } else if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
                 // Both ints: checked add with overflow detection.
-                match ai.checked_add(bi) {
-                    Some(sum) => ctx.push(JitValue::int(sum)),
+                match ai.checked_add(bi).and_then(JitValue::try_int) {
+                    Some(sum) => ctx.push(sum),
                     None => {
                         ctx.error = 1;
                         ctx.push(JitValue::null());
