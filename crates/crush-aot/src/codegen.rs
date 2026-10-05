@@ -108,7 +108,17 @@ impl PartialEq for RuntimeValue {
 fn emit_helpers(out: &mut String) {
     out.push_str(r#"#[inline(always)]
 fn truthy(v: &RuntimeValue) -> bool {
-    match v { RuntimeValue::Bool(b) => *b, RuntimeValue::Int(i) => *i != 0, RuntimeValue::Null => false, RuntimeValue::Array(a) => !a.borrow().is_empty(), _ => true }
+    // Canonical rule, same as every backend (CRUSH-134): null, false, 0,
+    // 0.0, "" and empty collections are falsy.
+    match v {
+        RuntimeValue::Bool(b) => *b,
+        RuntimeValue::Int(i) => *i != 0,
+        RuntimeValue::Float(f) => *f != 0.0,
+        RuntimeValue::Null => false,
+        RuntimeValue::String(s) => !s.is_empty(),
+        RuntimeValue::Array(a) => !a.borrow().is_empty(),
+        RuntimeValue::Object(o) => !o.borrow().is_empty(),
+    }
 }
 
 fn pop2(stack: &mut Vec<RuntimeValue>) -> (RuntimeValue, RuntimeValue) {
@@ -752,7 +762,7 @@ fn emit_body(
         }}
         "set_field" => {{
             let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __obj = stack.pop(); if let Some(RuntimeValue::Object(ref o)) = __obj {{ o.borrow_mut().insert(\"{field}\".to_string(), __val); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __obj = stack.pop().unwrap_or(RuntimeValue::Null); if let RuntimeValue::Object(ref o) = __obj {{ o.borrow_mut().insert(\"{field}\".to_string(), __val); }} stack.push(__obj); }}\n"));
             out.push_str(&next_pc_str);
         }}
 

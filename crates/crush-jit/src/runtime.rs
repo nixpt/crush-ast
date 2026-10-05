@@ -100,6 +100,8 @@ pub(crate) const OP_EXIT_TRY: i64 = 36;
 pub(crate) const OP_THROW: i64 = 37;
 pub(crate) const OP_ADD_STR: i64 = 38;
 pub(crate) const OP_CMP_ORDERED: i64 = 39;
+/// Pop a value, push its canonical truthiness as a bool (CRUSH-134).
+pub(crate) const OP_TRUTHY: i64 = 40;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -932,6 +934,8 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     }
                 }
             }
+            // CVM1's contract: push the map back (CRUSH-145).
+            ctx.push(target);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -1128,6 +1132,25 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         // in `arg` (0=LT, 1=LE, 2=GT, 3=GE). Rejects non-numeric types
         // with error flag 1, matching FastVM's TypeMismatch behaviour.
         // ════════════════════════════════════════════════════════════════════
+        OP_TRUTHY => {
+            // Same rule as every backend: null/false/0/0.0, "" and empty
+            // collections are falsy. Refs need the arena to tell.
+            let v = ctx.pop().unwrap_or(JitValue::null());
+            let truthy = match v.to_ref() {
+                Some(idx) => match arena_ref(ctx.arena).and_then(|a| a.get(idx)) {
+                    Some(Object::Str(s)) => !s.is_empty(),
+                    Some(
+                        Object::Array(v) | Object::Tuple(v) | Object::Vector(v) | Object::Set(v),
+                    ) => !v.is_empty(),
+                    Some(Object::List(l)) => !l.is_empty(),
+                    Some(Object::Map(m)) => !m.is_empty(),
+                    _ => true,
+                },
+                None => v.is_truthy(),
+            };
+            ctx.push(JitValue::bool(truthy));
+        }
+
         OP_CMP_ORDERED => {
             let b_val = ctx.pop().unwrap_or(JitValue::null());
             let a_val = ctx.pop().unwrap_or(JitValue::null());

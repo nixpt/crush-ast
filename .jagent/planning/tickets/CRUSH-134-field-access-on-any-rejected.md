@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-134 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-05, branch `claude/crush-134-any-field-access`) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | claude |
 | **Dependencies** | none |
 | **Estimated effort** | M |
 | **GitHub** | [#74](https://github.com/nixpt/crush-ast/issues/74), [#77](https://github.com/nixpt/crush-ast/issues/77) (filed 2026-10-04 by pranix) |
@@ -70,9 +70,9 @@ Array indexing on the `any` result works (`arr[i]`), but field access does not. 
 
 ## Success criteria
 
-- [ ] `fn f(p) { return p.pos }` works with a map argument
-- [ ] `m.outer.inner` works
-- [ ] `if m.flag` works for a bool value (runtime check)
+- [x] `fn f(p) { return p.pos }` works with a map argument
+- [x] `m.outer.inner` works
+- [x] `if m.flag` works for a bool value (runtime check)
 
 ## Technical approach
 
@@ -87,3 +87,14 @@ Array indexing on the `any` result works (`arr[i]`), but field access does not. 
 - Field access on `any` (params, nested maps) is a dynamic lookup typed `any`; a missing key gives `null` — what the VMs already do.
 - `if`/`while`/`&&`/`!` accept `any` with runtime truthiness; a value statically known not to be bool (`if 5`) stays a compile error.
 - Recorded in `.dejavue/decisions.md` (2026-10-05).
+
+## Resolution
+
+- **Type checker** (`semantics.rs`): `.field` on `any` (as on a map) is typed `any`. Every `if`/`while` condition goes through `check_condition`, which accepts `bool` and `any` and rejects anything else (`if 5`, `while "s"` stay compile errors). `&&`/`||`/`!` already accepted `any`.
+- **One truthiness rule on every backend** (decision 2026-10-05: CVM1's): `null`, `false`, `0`, `0.0`, `""` and empty collections are falsy, everything else truthy. Accepting `any` conditions made the backends' disagreement reachable from source, so they were aligned:
+  - CVM1: `Value::is_truthy` (scheduler) — PortableVm's identical copy now calls it.
+  - FastVM: `is_truthy` takes the arena so strings and collections are checked for emptiness (was: `0`, `0.0`, `""`, `[]` all truthy).
+  - JIT: immediates decided inline (`0` and `±0.0` now falsy); refs go through the new `OP_TRUTHY` helper. `JitValue::is_truthy` follows.
+  - AOT Rust: `truthy` adds floats, strings and maps. AOT C (crush-aot): `_truthy` adds floats, strings, arrays, objects. crush-aotc: `cv_truthy` adds floats and strings.
+- **Tests:** `crush-lang-sdk/tests/gh_issue_74_77_field_access_on_any.rs` (the issues' repros, missing key → null, `while` on `any`, `if 5` still rejected); `differential_aot.rs` `aot_truthiness_is_canonical`, `aot_truthiness_through_logical_ops`, `aot_field_access_on_any_is_dynamic`, `aot_set_field_object_literals_and_statements` (strict on every backend incl. the JIT); crush-aotc `truthiness_is_canonical`. Each fails without its fix.
+- Found on the way: map literals were broken on every backend but CVM1 (SET_FIELD contract) — CRUSH-145, fixed here; crush-aotc never got #76's string ordering and isn't in the differential harness — CRUSH-144.

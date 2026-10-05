@@ -278,9 +278,7 @@ impl SemanticAnalyzer {
                 ..
             } => {
                 let cond_type = self.check_expr(condition)?;
-                if cond_type != Type::Bool {
-                    bail!("If condition must be bool, found {}", cond_type);
-                }
+                check_condition("If", &cond_type)?;
                 self.check_block(then_body)?;
                 if let Some(eb) = else_body {
                     self.check_block(eb)?;
@@ -290,9 +288,7 @@ impl SemanticAnalyzer {
                 condition, body, ..
             } => {
                 let cond_type = self.check_expr(condition)?;
-                if cond_type != Type::Bool {
-                    bail!("While condition must be bool, found {}", cond_type);
-                }
+                check_condition("While", &cond_type)?;
                 self.check_block(body)?;
             }
             Statement::ExprStmt { expr, .. } => {
@@ -516,8 +512,11 @@ impl SemanticAnalyzer {
                             struct_name
                         )
                     }
-                } else if matches!(target_type, Type::Map(_, _)) {
-                    // Field access on maps returns the value type (Any for now)
+                } else if matches!(target_type, Type::Map(_, _) | Type::Any) {
+                    // Maps, and values whose type isn't known statically
+                    // (untyped params, `m.outer.inner`), are looked up at run
+                    // time; a missing key is `null`, as every VM's GET_FIELD
+                    // already does (#74/#77, CRUSH-134).
                     Ok(Type::Any)
                 } else {
                     bail!(
@@ -696,9 +695,7 @@ impl SemanticAnalyzer {
                     ..
                 } => {
                     let cond_type = self.check_expr(condition)?;
-                    if cond_type != Type::Bool {
-                        bail!("If condition must be bool, found {}", cond_type);
-                    }
+                    check_condition("If", &cond_type)?;
                     self.enter_scope();
                     self.collect_return_types_in_order(then_body, out)?;
                     self.exit_scope();
@@ -712,9 +709,7 @@ impl SemanticAnalyzer {
                     condition, body, ..
                 } => {
                     let cond_type = self.check_expr(condition)?;
-                    if cond_type != Type::Bool {
-                        bail!("While condition must be bool, found {}", cond_type);
-                    }
+                    check_condition("While", &cond_type)?;
                     self.enter_scope();
                     self.collect_return_types_in_order(body, out)?;
                     self.exit_scope();
@@ -839,6 +834,18 @@ fn collect_called_functions<'a>(stmts: &'a [Statement], out: &mut Vec<&'a str>) 
             | Statement::Continue { .. }
             | Statement::AI(_) => {}
         }
+    }
+}
+
+/// `if` / `while` accept a `bool`, or an `any` whose truthiness is decided at
+/// run time (null/false/0 are falsy — what every backend's branch already
+/// does). A type known not to be `bool`, like `if 5`, is still an error
+/// (#74, CRUSH-134).
+fn check_condition(kind: &str, cond_type: &Type) -> Result<()> {
+    if matches!(cond_type, Type::Bool | Type::Any) {
+        Ok(())
+    } else {
+        bail!("{kind} condition must be bool, found {cond_type}")
     }
 }
 

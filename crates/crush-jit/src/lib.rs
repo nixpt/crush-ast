@@ -1198,20 +1198,19 @@ mod tests {
 
     #[test]
     fn test_new_obj_set_get_field() {
-        // NewObj → Dup → PushInt(42) → SetField(0, "x") → GetField(0) → should return 42
-        // Dup preserves the Ref so SetField consumes the copy and GetField uses the original.
+        // NewObj → PushInt(42) → SetField(0, "x") → GetField(0) → should return 42
+        // SetField pushes the map back (CVM1's contract, CRUSH-145).
         let mut prog = make_prog(vec![
             (FastOp::NewObj, 0, 0),
-            (FastOp::Dup, 0, 0),      // copy Ref so SetField doesn't consume the only reference
             (FastOp::PushInt, 42, 0),
-            (FastOp::SetField, 0, 0), // pop val=42, pop target=obj_copy, set fields["x"]=42
+            (FastOp::SetField, 0, 0), // pop val=42, pop target, set fields["x"]=42, push target
             (FastOp::GetField, 0, 0), // pop target, push fields["x"]
             (FastOp::Halt, 0, 0),
         ]);
         prog.symbols.intern_string("x");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "NewObj+Dup+SetField(x=42)+GetField(x) should match FastVM");
+        assert_eq!(expected, actual, "NewObj+SetField(x=42)+GetField(x) should match FastVM");
     }
 
     #[test]

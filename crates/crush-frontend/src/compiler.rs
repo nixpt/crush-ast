@@ -747,6 +747,8 @@ impl Compiler {
                     serde_json::json!({"name": field}),
                     meta,
                 ));
+                // SET_FIELD pushes the map back; as a statement, drop it.
+                instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
             }
             Statement::Throw { value, meta } => {
                 self.compile_expr(value, instrs)?;

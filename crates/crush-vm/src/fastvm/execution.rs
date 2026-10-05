@@ -84,14 +84,14 @@ pub fn execute_one(
 
         FastOp::JumpIf => {
             let cond = stack.pop().ok_or(FastError::StackUnderflow)?;
-            if is_truthy(&cond) {
+            if is_truthy(&cond, arena) {
                 *pc = instr.arg as usize;
             }
         }
 
         FastOp::JumpIfNot => {
             let cond = stack.pop().ok_or(FastError::StackUnderflow)?;
-            if !is_truthy(&cond) {
+            if !is_truthy(&cond, arena) {
                 *pc = instr.arg as usize;
             }
         }
@@ -264,16 +264,16 @@ pub fn execute_one(
         FastOp::And => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(is_truthy(&a) && is_truthy(&b)));
+            stack.push(RuntimeValue::Bool(is_truthy(&a, arena) && is_truthy(&b, arena)));
         }
         FastOp::Or => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(is_truthy(&a) || is_truthy(&b)));
+            stack.push(RuntimeValue::Bool(is_truthy(&a, arena) || is_truthy(&b, arena)));
         }
         FastOp::Not => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(!is_truthy(&a)));
+            stack.push(RuntimeValue::Bool(!is_truthy(&a, arena)));
         }
 
         // ===== Bitwise =====
@@ -448,7 +448,7 @@ pub fn execute_one(
                     let ptr = arena.alloc(Object::Str(s));
                     RuntimeValue::Ref(ptr)
                 }
-                "bool" => RuntimeValue::Bool(is_truthy(&val)),
+                "bool" => RuntimeValue::Bool(is_truthy(&val, arena)),
                 _ => return Err(FastError::TypeMismatch),
             };
             stack.push(casted);
@@ -697,6 +697,9 @@ pub fn execute_one(
             } else {
                 return Err(FastError::TypeMismatch);
             }
+            // CVM1's contract: the map is pushed back (object literals chain
+            // on it; `m.x = v` pops it). CRUSH-145.
+            stack.push(target);
         }
 
         FastOp::NewArray => {

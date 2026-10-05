@@ -642,3 +642,16 @@ Rejected alternatives:
 
 Outcome:
 Shipped one PR per issue, in order #76 → #74/#77 → #75 → #78. #76 landed first, together with CRUSH-143 (optimizer dropped `if`-branch assignments), found while testing it.
+
+## 2026-10-05T14:00:00+00:00 — One truthiness rule on every backend (CVM1's): null, false, 0, 0.0, "" and empty collections are falsy
+
+Reason:
+Owner decision 2026-10-05, made while implementing #74's `any` conditions (CRUSH-134). Accepting `any` in `if`/`while` made the backends' differing truthiness reachable from plain source: FastVM treated 0, 0.0, "" and [] as truthy, the JIT treated 0 and 0.0 as truthy, the AOT backends missed floats/strings/maps. CVM1's rule (Value::is_truthy, Python-style) was already the reference interpreter's and the most complete, so the others were aligned to it: FastVM is_truthy reads the arena; the JIT decides immediates inline and sends refs to an OP_TRUTHY helper; AOT Rust truthy, AOT C _truthy and crush-aotc cv_truthy were extended; PortableVm's duplicate now calls Value::is_truthy.
+
+Rejected alternatives:
+- **Strict bool (only true/false)**: would change CVM1, the reference, and break existing `if x` on ints in CVM1 programs
+- **JS-style (NaN falsy, empty collections truthy)**: diverges from CVM1 for no gain; NaN isn't distinguished anywhere else
+- **Leave the backends divergent**: `if v` would give different answers per backend, which the differential harness exists to prevent
+
+Outcome:
+All backends agree on null/false/true/0/7/-1/0.0/1.5/""/"x"/[]/[0] through if, while, !, && and || (differential_aot strict incl. JIT). crush-aotc isn't in the harness: CRUSH-144.

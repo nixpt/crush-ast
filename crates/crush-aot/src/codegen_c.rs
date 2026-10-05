@@ -265,7 +265,12 @@ static inline bool _truthy(Value v) {
     switch (v.tag) {
         case TAG_BOOL: return v.b;
         case TAG_INT:  return v.i != 0;
+        case TAG_FLOAT: return v.f != 0.0;
         case TAG_NULL: return false;
+        // Canonical rule (CRUSH-134): "" and empty collections are falsy.
+        case TAG_STRING: return v.s != NULL && v.s[0] != '\0';
+        case TAG_ARRAY: return _arrays[v.array_idx].len != 0;
+        case TAG_OBJECT: return _objects[v.obj_idx].field_count != 0;
         default:       return true;
     }
 }
@@ -1094,7 +1099,7 @@ fn emit_c_instr(
         "set_field" => {{
             let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let escaped = field.escape_default().to_string();
-            out.push_str(&format!("                {{ Value __val = _pop(); Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _obj_set(&_objects[__oi], \"{escaped}\", __val); }} }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __val = _pop(); Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _obj_set(&_objects[__oi], \"{escaped}\", __val); }} }} _push(__obj); }} _pc={next_pc}; break;\n"));
         }}
 
         // ── Cap calls → inline dispatch ──

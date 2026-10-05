@@ -1652,25 +1652,10 @@ pub fn value_to_text(v: &Value) -> String {
     }
 }
 
-/// Check if a Value is truthy (Python-style truthiness).
+/// Truthiness — the one canonical rule lives on `Value::is_truthy`
+/// (shared with the scheduler; CRUSH-134).
 fn value_is_truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Int(i) => *i != 0,
-        Value::Float(f) => *f != 0.0,
-        Value::Str(s) => !s.is_empty(),
-        Value::Array(a) => !a.borrow().is_empty(),
-        Value::Tuple(t) => !t.is_empty(),
-        Value::List(l) => !l.borrow().is_empty(),
-        Value::Vector(v) => !v.borrow().is_empty(),
-        Value::Set(s) => !s.borrow().is_empty(),
-        Value::Map(m) => !m.borrow().is_empty(),
-        Value::Error(_) => true,
-        Value::Bytes(b) => !b.is_empty(),
-        Value::Handle(_) => true,
-        Value::Foreign(_) => true,
-    }
+    v.is_truthy()
 }
 
 #[cfg(test)]

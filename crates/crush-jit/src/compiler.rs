@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -505,12 +505,57 @@ fn is_float(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let or2 = bor(b, or1, eq_r);
     lnot(b, or2)
 }
-fn truthy(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
-    let ft = iconst(b, TAG_FALSE);
-    let nt = iconst(b, TAG_NULL);
-    let nf = icmp_ne(b, val, ft);
-    let nn = icmp_ne(b, val, nt);
-    band(b, nf, nn)
+/// Truthiness of a non-ref value: `null`, `false`, int `0` and float
+/// `±0.0` are falsy (canonical rule, CRUSH-134; `0` used to be truthy here).
+fn truthy_imm(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
+    let f = iconst(b, TAG_FALSE);
+    let mut t = icmp_ne(b, val, f);
+    for falsy in [TAG_NULL, TAG_INT, 0, i64::MIN] {
+        // TAG_INT = int 0; 0 = +0.0; i64::MIN = -0.0
+        let c = iconst(b, falsy);
+        let ne = icmp_ne(b, val, c);
+        t = band(b, t, ne);
+    }
+    t
+}
+
+/// Canonical truthiness of any value. Refs (strings, collections) are falsy
+/// when empty, which needs the arena: they go through `OP_TRUTHY`; every
+/// other value is decided inline.
+fn truthy(
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    val: ir::Value,
+    ptr_ty: types::Type,
+    helper_sig: ir::SigRef,
+) -> ir::Value {
+    let mask = iconst(b, MASK_U64 as i64);
+    let tag = band(b, val, mask);
+    let rt = iconst(b, TAG_REF);
+    let is_ref = icmp_eq(b, tag, rt);
+    let ref_bb = b.create_block();
+    let imm_bb = b.create_block();
+    let merge = b.create_block();
+    b.append_block_param(merge, types::I8);
+    b.ins().brif(is_ref, ref_bb, &[] as &[BlockArg], imm_bb, &[] as &[BlockArg]);
+
+    b.switch_to_block(ref_bb);
+    b.seal_block(ref_bb);
+    push(b, ctx, val);
+    emit_helper_call(b, ctx, OP_TRUTHY, 0, ptr_ty, helper_sig);
+    let r = pop(b, ctx);
+    let tt = iconst(b, TAG_TRUE);
+    let is_true = icmp_eq(b, r, tt);
+    b.ins().jump(merge, &[BlockArg::Value(is_true)]);
+
+    b.switch_to_block(imm_bb);
+    b.seal_block(imm_bb);
+    let t = truthy_imm(b, val);
+    b.ins().jump(merge, &[BlockArg::Value(t)]);
+
+    b.switch_to_block(merge);
+    b.seal_block(merge);
+    b.block_params(merge)[0]
 }
 fn eint(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     // Sign-extend the 48-bit int payload (CRUSH-142; was 16-bit).
@@ -884,8 +929,8 @@ fn emit_one(
         And => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
-            let ta = truthy(b, a);
-            let tb = truthy(b, bv);
+            let ta = truthy(b, ctx, a, _ptr_ty, helper_sig);
+            let tb = truthy(b, ctx, bv, _ptr_ty, helper_sig);
             let r = band(b, ta, tb);
             let rv = tbool(b, r);
             push(b, ctx, rv);
@@ -893,15 +938,15 @@ fn emit_one(
         Or => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
-            let ta = truthy(b, a);
-            let tb = truthy(b, bv);
+            let ta = truthy(b, ctx, a, _ptr_ty, helper_sig);
+            let tb = truthy(b, ctx, bv, _ptr_ty, helper_sig);
             let r = bor(b, ta, tb);
             let rv = tbool(b, r);
             push(b, ctx, rv);
         }
         Not => {
             let a = pop(b, ctx);
-            let ta = truthy(b, a);
+            let ta = truthy(b, ctx, a, _ptr_ty, helper_sig);
             let nb = lnot(b, ta);
             let rv = tbool(b, nb);
             push(b, ctx, rv);
@@ -916,7 +961,7 @@ fn emit_one(
         }
         JumpIf => {
             let cond = pop(b, ctx);
-            let c = truthy(b, cond);
+            let c = truthy(b, ctx, cond, _ptr_ty, helper_sig);
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
@@ -926,7 +971,7 @@ fn emit_one(
         }
         JumpIfNot => {
             let cond = pop(b, ctx);
-            let t = truthy(b, cond);
+            let t = truthy(b, ctx, cond, _ptr_ty, helper_sig);
             let nb = lnot(b, t);
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {

@@ -55,6 +55,8 @@
 | 140–141 | Found during step 3 (CRUSH-130/133): FastVM `ExecLang` sends no variables (140), crushc vs crush-run pipeline differences (141) |
 | 142 | JIT `len` / overflow divergences (found while fixing CRUSH-138/139) |
 | 143 | Optimizer dropped `if`-branch assignments (found during CRUSH-136) |
+| 144 | crush-aotc outside the differential harness; missed #76 string ordering (found during CRUSH-134) |
+| 145 | SET_FIELD contract diverged: map literals broken off CVM1 (found during CRUSH-134) |
 | 121+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index

@@ -65,7 +65,15 @@ static inline const char *cv_as_string(CrushValue v) {
 static inline CrushValue cv_string(const char *s) {
     return TAG_REF | ((uint64_t)(intptr_t)s & (uint64_t)0x0000FFFFFFFFFFFFULL);
 }
-static inline int cv_truthy(CrushValue v)    { return v != CV_NULL && v != CV_FALSE && !(cv_is_int(v) && cv_as_int(v) == 0); }
+/* Canonical truthiness, same on every backend (CRUSH-134): null, false, 0,
+   +-0.0 and "" are falsy (the only refs here are strings). */
+static inline int cv_truthy(CrushValue v) {
+    if (v == CV_NULL || v == CV_FALSE) return 0;
+    if (cv_is_int(v)) return cv_as_int(v) != 0;
+    if (cv_is_string(v)) { const char *s = cv_as_string(v); return s != NULL && s[0] != '\0'; }
+    if (cv_is_float(v)) return cv_as_float(v) != 0.0;
+    return 1;
+}
 
 /* ── Arithmetic error helpers ───────────────────────────────────────────── */
 static inline void crush_arith_error(const char *msg) {

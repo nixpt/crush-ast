@@ -147,8 +147,15 @@ impl JitValue {
     }
 
     #[inline]
+    /// Truthiness of an immediate value: `null`, `false`, `0` and `±0.0`
+    /// are falsy. A ref's truthiness depends on what it points to (empty
+    /// strings/collections are falsy) — that needs the arena; see
+    /// `OP_TRUTHY`. Same rule as every other backend (CRUSH-134).
     pub fn is_truthy(self) -> bool {
-        self.0 != TAG_FALSE && self.0 != TAG_NULL
+        !(self.0 == TAG_FALSE
+            || self.0 == TAG_NULL
+            || self.to_int() == Some(0)
+            || self.to_float() == Some(0.0))
     }
 
     pub fn as_bool(self) -> bool {
@@ -266,8 +273,9 @@ mod tests {
     #[test]
     fn truthy_values() {
         assert!(JitValue::int(1).is_truthy());
-        assert!(JitValue::int(0).is_truthy());
-        assert!(JitValue::float(0.0).is_truthy());
+        assert!(!JitValue::int(0).is_truthy()); // CRUSH-134: 0 is falsy
+        assert!(!JitValue::float(0.0).is_truthy());
+        assert!(JitValue::float(0.5).is_truthy());
         assert!(JitValue::bool(true).is_truthy());
         assert!(!JitValue::bool(false).is_truthy());
         assert!(!JitValue::null().is_truthy());

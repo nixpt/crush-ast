@@ -1291,3 +1291,100 @@ fn jit_int_beyond_48_bits_is_an_error_not_a_wrong_value() {
     assert!(matches!(jit, FastOutcome::Err(_)), "JIT: {jit:?}");
 }
 
+
+#[test]
+fn aot_truthiness_is_canonical() {
+    // CRUSH-134: the one truthiness rule (CVM1's) on every backend — null,
+    // false, 0, 0.0, "" and empty collections are falsy, everything else
+    // truthy — through `if`, `while`, `!`, `&&` and `||`.
+    assert_all_backends_return(
+        r#"
+        fn t(v: any) { if v { return 1 } return 0 }
+        fn main() {
+            let n = 0
+            n = n * 2 + t(null)
+            n = n * 2 + t(false)
+            n = n * 2 + t(true)
+            n = n * 2 + t(0)
+            n = n * 2 + t(7)
+            n = n * 2 + t(-1)
+            n = n * 2 + t(0.0)
+            n = n * 2 + t(1.5)
+            n = n * 2 + t("")
+            n = n * 2 + t("x")
+            n = n * 2 + t([])
+            n = n * 2 + t([0])
+            return n
+        }
+    "#,
+        0b001011010101,
+    );
+}
+
+#[test]
+fn aot_truthiness_through_logical_ops() {
+    assert_all_backends_return(
+        r#"
+        fn nt(v: any) { if !v { return 1 } return 0 }
+        fn both(a: any, b: any) { if a && b { return 1 } return 0 }
+        fn either(a: any, b: any) { if a || b { return 1 } return 0 }
+        fn count(v: any) { let i = 0 while v { i = i + 1 v = v - 1 } return i }
+        fn main() {
+            let n = 0
+            n = n * 2 + nt(0)
+            n = n * 2 + nt("")
+            n = n * 2 + nt("a")
+            n = n * 2 + both(1, "a")
+            n = n * 2 + both(1, 0.0)
+            n = n * 2 + either(0, "")
+            n = n * 2 + either(null, [1])
+            return n * 10 + count(3)
+        }
+    "#,
+        0b1101001 * 10 + 3,
+    );
+}
+
+#[test]
+fn aot_field_access_on_any_is_dynamic() {
+    // CRUSH-134 (#74/#77): `.field` on an `any` value (a param, a nested map)
+    // is a map lookup; a missing key reads as null, which is falsy.
+    assert_all_backends_return(
+        r#"
+        fn getpos(p) { return p.pos }
+        fn has(p) { if p.nope { return 1 } return 0 }
+        fn main() {
+            let m = {"pos": 42, "flag": true, "outer": {"inner": 7}}
+            let n = getpos(m)
+            if m.flag { n = n + 100 }
+            let o = m.outer
+            n = n + o.inner * 1000 + m.outer.inner * 10000
+            if getpos({"x": 1}) == null { n = n + 100000 }
+            return n + has(m)
+        }
+    "#,
+        177142,
+    );
+}
+
+#[test]
+fn aot_set_field_object_literals_and_statements() {
+    // CRUSH-145: SET_FIELD pushes the map back on every backend (CVM1's
+    // contract, which multi-key object literals rely on); `m.x = v` as a
+    // statement pops it, so a loop of field writes leaks nothing.
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let m = {"a": 1, "b": 2, "c": {"d": 3}}
+            m.count = 0
+            let i = 0
+            while i < 5000 {
+                m.count = m.count + 1
+                i = i + 1
+            }
+            return m.a + m.b * 10 + m.c.d * 100 + m.count * 1000
+        }
+    "#,
+        5000321,
+    );
+}
