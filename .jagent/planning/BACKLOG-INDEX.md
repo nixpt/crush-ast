@@ -53,6 +53,7 @@
 | 137 | Scheduler drops `main`'s return value (found during CRUSH-126) |
 | 138–139 | Found during CRUSH-125: FastVM reverses call arguments (138), JIT wrong branch on `a && !b` (139) |
 | 140–141 | Found during step 3 (CRUSH-130/133): FastVM `ExecLang` sends no variables (140), crushc vs crush-run pipeline differences (141) |
+| 142 | JIT `len` / overflow divergences (found while fixing CRUSH-138/139) |
 | 121+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
 
 ## How to dispatch from this index

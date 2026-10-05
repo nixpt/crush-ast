@@ -202,10 +202,11 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [ ] **CRUSH-135** (S): heterogeneous array literals / array `+` — **design decision** — GH #75. [ticket](tickets/CRUSH-135-heterogeneous-arrays-and-array-plus.md)
 - [ ] **CRUSH-136** (S): string `<`/`>` type-check but fail at run time — GH #76. [ticket](tickets/CRUSH-136-string-comparison-runtime-error.md)
 - [ ] **CRUSH-137** (S): the scheduler drops `main`'s return value, so the differential harness never compares the interpreter's return (found during CRUSH-126). [ticket](tickets/CRUSH-137-scheduler-drops-main-return-value.md)
-- [ ] **CRUSH-138** (S–M, P1): FastVM binds call arguments in reverse order — `sub(10, 3)` is `-7` (found during CRUSH-125). [ticket](tickets/CRUSH-138-fastvm-call-arguments-reversed.md)
-- [ ] **CRUSH-139** (S): JIT takes the wrong branch for `if inside && !outside` (found during CRUSH-125). [ticket](tickets/CRUSH-139-jit-wrong-branch-on-and-not.md)
-- [ ] **CRUSH-140** (S): FastVM's `ExecLang` request carries no variables (found during CRUSH-133). [ticket](tickets/CRUSH-140-fastvm-exec-lang-no-variables.md)
+- [x] **CRUSH-138** (S–M, P1): FastVM binds call arguments in reverse order — `sub(10, 3)` is `-7` (found during CRUSH-125). [ticket](tickets/CRUSH-138-fastvm-call-arguments-reversed.md)
+- [x] **CRUSH-139** (S): JIT takes the wrong branch for `if inside && !outside` (found during CRUSH-125). [ticket](tickets/CRUSH-139-jit-wrong-branch-on-and-not.md)
+- [x] **CRUSH-140** (S): FastVM's `ExecLang` request carries no variables (found during CRUSH-133). [ticket](tickets/CRUSH-140-fastvm-exec-lang-no-variables.md)
 - [ ] **CRUSH-141** (S): `crushc` and `crush-run x.crush` still compile differently — no `cast_enrich`, optimizer opt-in (found during CRUSH-130). [ticket](tickets/CRUSH-141-crushc-pipeline-differs-from-crush-run.md)
+- [ ] **CRUSH-142** (S): JIT — `len([1,2,3])` is null; integer overflow returns 0 (the two real JIT divergences left once the harness noise was fixed). [ticket](tickets/CRUSH-142-jit-len-and-overflow.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 

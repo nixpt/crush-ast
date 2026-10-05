@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-139 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-05, branch `claude/fastvm-args-execlang`) |
 | **Phase** | M2 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -30,8 +30,8 @@ FastVM → `10`; JIT (`jit_outcome_via_subprocess`) → `20`.
 
 ## Success criteria
 
-- [ ] JIT returns `10`
-- [ ] a differential test that fails on JIT divergence for this program
+- [x] JIT returns `10`
+- [x] a differential test that fails on JIT divergence for this program
 
 ## Technical approach
 
@@ -40,3 +40,9 @@ FastVM → `10`; JIT (`jit_outcome_via_subprocess`) → `20`.
 ## Files to modify
 
 - `crates/crush-jit/src/compiler.rs`
+
+## Resolution
+
+Root cause: `JumpIfNot` and `Not` negated a 0/1 truth value with `bnot` (bitwise): 1 → 0xFE, 0 → 0xFF, both non-zero, so every unfolded `jmp_if_not` jumped and `!x` was always true. The original repro only *looked* like an `&&`/`!` problem; `let y = false; if y == false` failed too. `is_float` and the float-equality guard had the same pattern. New `lnot` helper (`icmp_imm eq 0`) used in all four places; `BitNot` keeps the integer `bnot`.
+
+Test: `jit_branches_on_comparisons_and_negation` (strict on the JIT — the harness only warns on JIT divergence). While here, the harness's JIT warnings turned out to be mostly noise from a shared temp file between parallel tests (fixed); the two real remaining JIT gaps are CRUSH-142.
