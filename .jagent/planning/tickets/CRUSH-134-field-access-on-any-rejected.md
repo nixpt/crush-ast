@@ -81,3 +81,9 @@ Array indexing on the `any` result works (`arr[i]`), but field access does not. 
 ## Files to modify
 
 - `crates/crush-frontend/src/semantics.rs`
+
+## Decision (owner interview, 2026-10-05)
+
+- Field access on `any` (params, nested maps) is a dynamic lookup typed `any`; a missing key gives `null` — what the VMs already do.
+- `if`/`while`/`&&`/`!` accept `any` with runtime truthiness; a value statically known not to be bool (`if 5`) stays a compile error.
+- Recorded in `.dejavue/decisions.md` (2026-10-05).

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-136 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-05, branch `claude/crush-136-string-compare`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -37,7 +37,7 @@ Either support lexicographic comparison for `<`/`>`/`<=`/`>=` on strings, or rej
 
 ## Success criteria
 
-- [ ] either lexicographic comparison on all backends, or a compile-time error — no run-time type error for code that type-checks
+- [x] either lexicographic comparison on all backends, or a compile-time error — no run-time type error for code that type-checks
 
 ## Technical approach
 
@@ -47,3 +47,23 @@ Either support lexicographic comparison for `<`/`>`/`<=`/`>=` on strings, or rej
 
 - `crates/crush-vm/src/arithmetic.rs`
 - backend equivalents
+
+## Decision (owner interview, 2026-10-05)
+
+Lexicographic by Unicode code point (= UTF-8 byte order) on every backend; string vs number stays a type error.
+
+## Resolution
+
+Reproduced on the branch base first. Each backend gained a two-string branch:
+- **CVM1:** `crush_vm::arithmetic::compare_values`, shared by the scheduler and PortableVm.
+- **FastVM:** a new `compare_ordered`, which reads arena-held strings.
+- **JIT:** the `OP_CMP_ORDERED` helper.
+- **AOT Rust:** `bin_cmp_ordered`.
+- **AOT C:** `_cmp` plus the type guard in front of it.
+
+The two existing "string ordering is rejected" tests now pin the new behaviour. New tests (each fails without the fix):
+- `crush-lang-sdk/tests/gh_issue_76_string_compare.rs` (the issue's repro now prints `lt`);
+- `aot_ordered_comparison_of_strings_is_lexicographic`, which checks every backend strictly, including the JIT;
+- string-vs-number rejection on every backend.
+
+Writing the all-backend test exposed CRUSH-143, a pre-existing optimizer bug, fixed in the same PR.

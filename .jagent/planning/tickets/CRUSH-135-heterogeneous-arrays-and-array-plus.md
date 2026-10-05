@@ -54,3 +54,9 @@ Either support heterogeneous arrays (union element type), or document the restri
 - `crates/crush-frontend/src/semantics.rs`
 - `crates/crush-frontend/src/compiler.rs`
 - VM `ADD`
+
+## Decision (owner interview, 2026-10-05)
+
+- Mixed array literals type as `array<any>`; uniform literals keep their precise element type.
+- `a + b` on two arrays returns a new array (a's elements then b's); neither operand changes. Needs an array-concat path on every backend.
+- Recorded in `.dejavue/decisions.md` (2026-10-05).
