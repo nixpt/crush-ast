@@ -118,7 +118,7 @@ fn extract_block_source(input: &TokenStream) -> Option<String> {
                 // Strip outer `{` and `}` (the macro delimiters)
                 let inner = full.trim();
                 if inner.starts_with('{') && inner.ends_with('}') {
-                    return Some(inner[1..inner.len()-1].to_string());
+                    return Some(inner[1..inner.len() - 1].to_string());
                 }
                 return Some(inner.to_string());
             }
@@ -156,10 +156,7 @@ pub fn crush_file(input: TokenStream) -> TokenStream {
     let source = match std::fs::read_to_string(&full_path) {
         Ok(s) => s,
         Err(e) => {
-            let msg = format!(
-                "crush_file! could not read '{}': {e}",
-                full_path.display()
-            );
+            let msg = format!("crush_file! could not read '{}': {e}", full_path.display());
             return quote! { compile_error!(#msg) }.into();
         }
     };

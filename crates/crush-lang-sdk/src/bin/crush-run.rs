@@ -252,9 +252,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // reorder those warnings before the bail.
     match ext {
         "crush" | "casm" | "cvm1" => {}
-        _ => anyhow::bail!(
-            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"
-        ),
+        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"),
     }
 
     // Build Runtime up-front so the `.cvm1` arm can route through typed
@@ -285,7 +283,11 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
 
     #[allow(unused_mut)]
     let mut builder = HostCapsBuilder::new()
-        .polyglot(if args.polyglot { &["python", "javascript", "bash"] } else { &[] })
+        .polyglot(if args.polyglot {
+            &["python", "javascript", "bash"]
+        } else {
+            &[]
+        })
         .fs(args.fs)
         .fs_root(args.fs_root.to_string_lossy())
         .env(args.env)

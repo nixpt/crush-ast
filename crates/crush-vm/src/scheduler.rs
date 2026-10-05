@@ -105,7 +105,11 @@ pub(crate) fn lang_runtime_error(lang: &str, stderr: &[u8], crush_line: Option<u
 /// failure (dependency resolve/fetch failed, or the sandboxed command itself
 /// could not be built/spawned) — distinct from [`lang_runtime_error`]'s guest
 /// exception: the guest program never got a chance to run at all here.
-pub(crate) fn sandbox_setup_error(lang: &str, message: impl Into<String>, crush_line: Option<u32>) -> VmError {
+pub(crate) fn sandbox_setup_error(
+    lang: &str,
+    message: impl Into<String>,
+    crush_line: Option<u32>,
+) -> VmError {
     VmError::LangRuntimeError {
         lang: lang.to_string(),
         message: message.into(),
@@ -268,7 +272,16 @@ pub(crate) fn run_exec_lang(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (binary, exec_flag, code_str, deps, env_vars, crush_line, gate, max_wall_time_ms);
+        let _ = (
+            binary,
+            exec_flag,
+            code_str,
+            deps,
+            env_vars,
+            crush_line,
+            gate,
+            max_wall_time_ms,
+        );
         return Err(VmError::UnknownCap(format!(
             "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
         )));
@@ -278,7 +291,13 @@ pub(crate) fn run_exec_lang(
     {
         #[cfg(feature = "sandboxed-polyglot")]
         let (cmd, remaining_ms) = crate::bucket_exec::build_sandboxed_command(
-            lang, binary, exec_flag, code_str, deps, env_vars, max_wall_time_ms,
+            lang,
+            binary,
+            exec_flag,
+            code_str,
+            deps,
+            env_vars,
+            max_wall_time_ms,
         )
         .map_err(|msg| sandbox_setup_error(lang, msg, crush_line))?;
 
@@ -328,7 +347,10 @@ pub(crate) fn run_exec_lang(
                     .unwrap_or_else(|_| Value::Str(payload.to_string())),
                 None => Value::Str(visible.clone()),
             };
-            Ok(ExecLangOutcome { visible, result_value })
+            Ok(ExecLangOutcome {
+                visible,
+                result_value,
+            })
         } else {
             Err(lang_runtime_error(lang, &output.stderr, crush_line))
         }
@@ -435,7 +457,8 @@ pub fn run_scheduled(
         if ip >= n {
             return Err(VmError::TruncatedInstruction(ip));
         }
-        let isize = bytecode::instruction_size(code[ip]).ok_or(VmError::UnknownOpcode(code[ip], ip))?;
+        let isize =
+            bytecode::instruction_size(code[ip]).ok_or(VmError::UnknownOpcode(code[ip], ip))?;
         if ip + isize > n {
             return Err(VmError::TruncatedInstruction(ip));
         }
@@ -448,8 +471,16 @@ pub fn run_scheduled(
 
         // Borrow ends when execute_one returns — index access is safe in the match below.
         let action = execute_one(
-            &mut threads[current], code, ip, next_ip, n, program, quotas,
-            &declared, host_caps, &func_entry,
+            &mut threads[current],
+            code,
+            ip,
+            next_ip,
+            n,
+            program,
+            quotas,
+            &declared,
+            host_caps,
+            &func_entry,
         )?;
 
         match action {
@@ -600,15 +631,19 @@ fn execute_one(
             push!(a);
         }
         PICK => {
-            let n = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+            let n = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
             let len = stack.len();
-            if n >= len { return Err(VmError::StackUnderflow); }
+            if n >= len {
+                return Err(VmError::StackUnderflow);
+            }
             push!(stack[len - 1 - n].clone());
         }
         ROLL => {
-            let n = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+            let n = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
             let len = stack.len();
-            if n >= len { return Err(VmError::StackUnderflow); }
+            if n >= len {
+                return Err(VmError::StackUnderflow);
+            }
             let idx = len - 1 - n;
             let v = stack.remove(idx);
             push!(v);
@@ -629,7 +664,10 @@ fn execute_one(
         // is the single most common thing anyone writes, and it was a hard type error.
         // (`"a" + "b"` already worked; only the MIXED case failed.)
         ADD if matches!(stack.last(), Some(Value::Str(_)))
-            || matches!(stack.len().checked_sub(2).and_then(|k| stack.get(k)), Some(Value::Str(_))) =>
+            || matches!(
+                stack.len().checked_sub(2).and_then(|k| stack.get(k)),
+                Some(Value::Str(_))
+            ) =>
         {
             let b = pop!();
             let a = pop!();
@@ -701,13 +739,24 @@ fn execute_one(
                 let len = a_ref.len().min(b_ref.len());
                 let mut res = Vec::with_capacity(len);
                 for i in 0..len {
-                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
-                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let va = match &a_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
+                    let vb = match &b_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
                     res.push(Value::Float(va + vb));
                 }
                 push!(Value::new_array(res));
             } else {
-                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+                return Err(VmError::TypeError {
+                    expected: "array",
+                    got: "non-array".into(),
+                });
             }
         }
         VEC_DOT => {
@@ -719,13 +768,24 @@ fn execute_one(
                 let len = a_ref.len().min(b_ref.len());
                 let mut sum = 0.0;
                 for i in 0..len {
-                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
-                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let va = match &a_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
+                    let vb = match &b_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
                     sum += va * vb;
                 }
                 push!(Value::Float(sum));
             } else {
-                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+                return Err(VmError::TypeError {
+                    expected: "array",
+                    got: "non-array".into(),
+                });
             }
         }
         MAT_MUL => {
@@ -739,15 +799,39 @@ fn execute_one(
                     push!(Value::new_array(vec![]));
                 } else {
                     let rows_a = a_ref.len();
-                    let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
-                    let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
+                    let cols_a = if let Value::Array(first) = &a_ref[0] {
+                        first.borrow().len()
+                    } else {
+                        0
+                    };
+                    let cols_b = if let Value::Array(first) = &b_ref[0] {
+                        first.borrow().len()
+                    } else {
+                        0
+                    };
                     for i in 0..rows_a {
                         let mut row_res = Vec::new();
                         for j in 0..cols_b {
                             let mut sum = 0.0;
                             for k in 0..cols_a {
-                                let va = if let Value::Array(r) = &a_ref[i] { match &r.borrow()[k] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
-                                let vb = if let Value::Array(r) = &b_ref[k] { match &r.borrow()[j] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
+                                let va = if let Value::Array(r) = &a_ref[i] {
+                                    match &r.borrow()[k] {
+                                        Value::Int(x) => *x as f64,
+                                        Value::Float(x) => *x,
+                                        _ => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
+                                let vb = if let Value::Array(r) = &b_ref[k] {
+                                    match &r.borrow()[j] {
+                                        Value::Int(x) => *x as f64,
+                                        Value::Float(x) => *x,
+                                        _ => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
                                 sum += va * vb;
                             }
                             row_res.push(Value::Float(sum));
@@ -757,7 +841,10 @@ fn execute_one(
                     push!(Value::new_array(res));
                 }
             } else {
-                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+                return Err(VmError::TypeError {
+                    expected: "array",
+                    got: "non-array".into(),
+                });
             }
         }
         AND | OR => {
@@ -776,10 +863,16 @@ fn execute_one(
             let bi = to_i64(&b);
             let result = match opcode {
                 BITAND => Value::Int(ai & bi),
-                BITOR  => Value::Int(ai | bi),
+                BITOR => Value::Int(ai | bi),
                 BITXOR => Value::Int(ai ^ bi),
-                SHL    => Value::Int(ai.checked_shl(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
-                SHR    => Value::Int(ai.checked_shr(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
+                SHL => Value::Int(
+                    ai.checked_shl(bi as u32)
+                        .ok_or(VmError::ArithmeticOverflow)?,
+                ),
+                SHR => Value::Int(
+                    ai.checked_shr(bi as u32)
+                        .ok_or(VmError::ArithmeticOverflow)?,
+                ),
                 _ => unreachable!(),
             };
             push!(result);
@@ -798,7 +891,11 @@ fn execute_one(
         }
         CAST => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let type_name = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+            let type_name = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone();
             let v = pop!();
             match type_name.as_str() {
                 "str" | "string" => push!(Value::Str(v.as_text())),
@@ -843,10 +940,19 @@ fn execute_one(
                 Value::Str(s) => {
                     let len = s.chars().count();
                     let actual = wrap_index(idx, len)?;
-                    let ch = s.chars().nth(actual).map(|c| c.to_string()).unwrap_or_default();
+                    let ch = s
+                        .chars()
+                        .nth(actual)
+                        .map(|c| c.to_string())
+                        .unwrap_or_default();
                     push!(Value::Str(ch));
                 }
-                _ => return Err(VmError::TypeError { expected: "array or string", got: arr_v.type_name() }),
+                _ => {
+                    return Err(VmError::TypeError {
+                        expected: "array or string",
+                        got: arr_v.type_name(),
+                    });
+                }
             }
         }
         ARR_SET => {
@@ -994,9 +1100,7 @@ fn execute_one(
                 args.push(pop!());
             }
             args.reverse();
-            let result = dispatch_cap(
-                &cap, args, declared, quotas, out_parts, out_len, host_caps,
-            )?;
+            let result = dispatch_cap(&cap, args, declared, quotas, out_parts, out_len, host_caps)?;
             if let Some(v) = result {
                 push!(v);
             }
@@ -1044,7 +1148,10 @@ fn execute_one(
                 .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
             let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
             let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
-            let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let crush_line = spec
+                .get("crush_line")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
             let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let mut var_names: Vec<String> = Vec::with_capacity(var_count);
             let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
@@ -1059,7 +1166,11 @@ fn execute_one(
             let deps: Vec<String> = spec
                 .get("deps")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             // Validate the language is registered BEFORE the capability gate below — an unknown
             // language should fail with "no executor registered", not a confusing "missing
@@ -1102,8 +1213,9 @@ fn execute_one(
             out_parts.push(outcome.visible);
             push!(outcome.result_value);
         }
-        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
-        | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
+        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP
+        | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE
+        | AI_KNOWLEDGE_SHARING => {
             // CRUSH-32: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`.
             // Callers who grant `ai_native(true)` in their HostCapsBuilder get
             // the stub `Value::Map({ok, kind, echo})` produced by
@@ -1114,11 +1226,7 @@ fn execute_one(
                 .expect("AI opcode byte in combined match arm must map to a known kind");
             let gate = format!("ai_native.{kind}");
             let value = match host_caps.and_then(|h| h.get(&gate)) {
-                Some(handler) => handler
-                    .call(vec![])
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null),
+                Some(handler) => handler.call(vec![]).ok().flatten().unwrap_or(Value::Null),
                 None => Value::Null,
             };
             push!(value);
@@ -1131,17 +1239,13 @@ fn execute_one(
         // `dom_native_kind_for_opcode` switch in `crush_vm/src/bytecode.rs`
         // maps slot -> kind, and `dom_native::KINDS` in `crush-lang-sdk`
         // is the single source of truth for both surfaces.
-        DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
-        | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
+        DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT
+        | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
             let kind = bytecode::dom_native_kind_for_opcode(opcode)
                 .expect("DOM opcode byte in combined match arm must map to a known kind");
             let gate = format!("dom_native.{kind}");
             let value = match host_caps.and_then(|h| h.get(&gate)) {
-                Some(handler) => handler
-                    .call(vec![])
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null),
+                Some(handler) => handler.call(vec![]).ok().flatten().unwrap_or(Value::Null),
                 None => Value::Null,
             };
             push!(value);
@@ -1163,7 +1267,10 @@ fn execute_one(
                 push!(err_val);
                 return Ok(StepAction::Jump);
             }
-            return Err(VmError::UnknownCap(format!("uncaught error: {}", err_val.as_text())));
+            return Err(VmError::UnknownCap(format!(
+                "uncaught error: {}",
+                err_val.as_text()
+            )));
         }
         STR_CONTAINS | STR_STARTS_WITH | STR_ENDS_WITH => {
             let needle = pop!();
@@ -1205,7 +1312,9 @@ fn execute_one(
             let to = pop!();
             let from = pop!();
             let s = pop!();
-            push!(Value::Str(s.as_text().replace(&from.as_text(), &to.as_text())));
+            push!(Value::Str(
+                s.as_text().replace(&from.as_text(), &to.as_text())
+            ));
         }
         STR_JOIN => {
             let delim = pop!();
@@ -1229,11 +1338,21 @@ fn execute_one(
             let start_v = pop!();
             let start = match start_v {
                 Value::Int(i) => i,
-                other => { return Err(VmError::TypeError { expected: "int", got: other.type_name() }); }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "int",
+                        got: other.type_name(),
+                    });
+                }
             };
             let end = match end_v {
                 Value::Int(i) => i,
-                other => { return Err(VmError::TypeError { expected: "int", got: other.type_name() }); }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "int",
+                        got: other.type_name(),
+                    });
+                }
             };
             let mut elems = Vec::new();
             if start < end {
@@ -1248,21 +1367,39 @@ fn execute_one(
         }
         SET_FIELD => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+            let field = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone();
             let val = pop!();
             let map_rc = match pop!() {
                 Value::Map(m) => m,
-                other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "map",
+                        got: other.type_name(),
+                    });
+                }
             };
             map_rc.borrow_mut().insert(field, val);
             push!(Value::Map(map_rc));
         }
         GET_FIELD => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+            let field = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone();
             let map_rc = match pop!() {
                 Value::Map(m) => m,
-                other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "map",
+                        got: other.type_name(),
+                    });
+                }
             };
             let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
             push!(val);
@@ -1332,35 +1469,52 @@ fn trunc_div(a: i64, b: i64) -> i64 {
 fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-        other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "array",
+            got: other.type_name(),
+        }),
     }
 }
 
 fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
     match v {
         Value::Tuple(t) => Ok(t),
-        other => Err(VmError::TypeError { expected: "tuple", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "tuple",
+            got: other.type_name(),
+        }),
     }
 }
 
-fn need_list(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
+fn need_list(
+    v: Value,
+) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
     match v {
         Value::List(l) => Ok(l),
-        other => Err(VmError::TypeError { expected: "list", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "list",
+            got: other.type_name(),
+        }),
     }
 }
 
 fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Vector(v_rc) => Ok(v_rc),
-        other => Err(VmError::TypeError { expected: "vector", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "vector",
+            got: other.type_name(),
+        }),
     }
 }
 
 fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Set(s) => Ok(s),
-        other => Err(VmError::TypeError { expected: "set", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "set",
+            got: other.type_name(),
+        }),
     }
 }
 
@@ -1374,7 +1528,11 @@ fn need_array_index(v: &Value) -> Result<i64, VmError> {
 fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
     let ilen = len as i64;
     if idx >= -ilen && idx < ilen {
-        Ok(if idx < 0 { (ilen + idx) as usize } else { idx as usize })
+        Ok(if idx < 0 {
+            (ilen + idx) as usize
+        } else {
+            idx as usize
+        })
     } else {
         Err(VmError::ArrayBounds { index: idx, len })
     }
@@ -1402,7 +1560,11 @@ fn dispatch_cap(
         if let Some(expected) = spec.argc
             && args.len() != expected
         {
-            return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+            return Err(VmError::CapArity {
+                cap: cap.to_string(),
+                expected,
+                got: args.len(),
+            });
         }
         return match cap {
             "io.print" => {
@@ -1419,7 +1581,11 @@ fn dispatch_cap(
                 .map(|line| Some(Value::Str(line)))
                 .map_err(|error| VmError::Io(error.to_string())),
             "str.concat" => {
-                let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
+                let s: String = args
+                    .iter()
+                    .map(|a| a.as_text())
+                    .collect::<Vec<_>>()
+                    .concat();
                 Ok(Some(Value::Str(s)))
             }
             "str.len" => {
@@ -1451,27 +1617,42 @@ fn dispatch_cap(
                 let delim = args[1].as_text();
                 match &args[0] {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.borrow().iter().map(|v| v.as_text()).collect();
+                        let parts: Vec<String> =
+                            elems.borrow().iter().map(|v| v.as_text()).collect();
                         Ok(Some(Value::Str(parts.join(&delim))))
                     }
-                    other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+                    other => Err(VmError::TypeError {
+                        expected: "array",
+                        got: other.type_name(),
+                    }),
                 }
             }
             "conv.chr" => {
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
-                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: other.type_name(),
+                        });
+                    }
                 };
-                let character = char::from_u32(codepoint as u32).ok_or_else(|| VmError::TypeError {
-                    expected: "valid Unicode codepoint",
-                    got: "invalid codepoint",
-                })?;
+                let character =
+                    char::from_u32(codepoint as u32).ok_or_else(|| VmError::TypeError {
+                        expected: "valid Unicode codepoint",
+                        got: "invalid codepoint",
+                    })?;
                 Ok(Some(Value::Str(character.to_string())))
             }
             "conv.ord" => {
                 let text = match &args[0] {
                     Value::Str(value) => value,
-                    other => return Err(VmError::TypeError { expected: "string", got: other.type_name() }),
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "string",
+                            got: other.type_name(),
+                        });
+                    }
                 };
                 let mut chars = text.chars();
                 let character = chars.next().ok_or_else(|| VmError::TypeError {
@@ -1487,7 +1668,13 @@ fn dispatch_cap(
                 Ok(Some(Value::Int(character as i64)))
             }
             "arr_slice" => {
-                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                if args.len() < 2 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 2,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
                     Value::Array(elems) => {
                         let arr = elems.borrow();
@@ -1495,13 +1682,23 @@ fn dispatch_cap(
                         let start = match &args[1] {
                             Value::Int(i) => *i,
                             Value::Null => 0i64,
-                            _ => return Err(VmError::TypeError { expected: "int or null", got: args[1].type_name() }),
+                            _ => {
+                                return Err(VmError::TypeError {
+                                    expected: "int or null",
+                                    got: args[1].type_name(),
+                                });
+                            }
                         };
                         let end = if args.len() > 2 {
                             match &args[2] {
                                 Value::Int(i) => *i,
                                 Value::Null => len,
-                                _ => return Err(VmError::TypeError { expected: "int or null", got: args[2].type_name() }),
+                                _ => {
+                                    return Err(VmError::TypeError {
+                                        expected: "int or null",
+                                        got: args[2].type_name(),
+                                    });
+                                }
                             }
                         } else {
                             len
@@ -1511,53 +1708,109 @@ fn dispatch_cap(
                         let sliced: Vec<Value> = arr[start as usize..end as usize].to_vec();
                         Ok(Some(Value::new_array(sliced)))
                     }
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             "make_range" => {
                 let (start, end) = match args.len() {
-                    0 => (0i64, 100i64),  // large default, for-loop break handles exit
+                    0 => (0i64, 100i64), // large default, for-loop break handles exit
                     1 => {
-                        let end = match &args[0] { Value::Int(i) => *i, _ => 100 };
+                        let end = match &args[0] {
+                            Value::Int(i) => *i,
+                            _ => 100,
+                        };
                         (0, end.max(0))
                     }
                     _ => {
-                        let s = match &args[0] { Value::Int(i) => *i, _ => 0 };
-                        let e = match &args[1] { Value::Int(i) => *i, _ => 0 };
+                        let s = match &args[0] {
+                            Value::Int(i) => *i,
+                            _ => 0,
+                        };
+                        let e = match &args[1] {
+                            Value::Int(i) => *i,
+                            _ => 0,
+                        };
                         (s, e)
                     }
                 };
                 let mut elems = Vec::new();
-                if start < end { for i in start..end { elems.push(Value::Int(i)); } }
+                if start < end {
+                    for i in start..end {
+                        elems.push(Value::Int(i));
+                    }
+                }
                 Ok(Some(Value::new_array(elems)))
             }
             "append" | "push" => {
-                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                if args.len() < 2 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 2,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
-                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(Some(args[0].clone())) }
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    Value::Array(elems) => {
+                        elems.borrow_mut().push(args[1].clone());
+                        Ok(Some(args[0].clone()))
+                    }
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             "arr_set" => {
-                if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                if args.len() < 3 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 3,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
                     Value::Array(elems) => {
-                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                        let idx = match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        };
                         let mut arr = elems.borrow_mut();
-                        if idx < arr.len() { arr[idx] = args[2].clone(); }
+                        if idx < arr.len() {
+                            arr[idx] = args[2].clone();
+                        }
                         Ok(Some(args[0].clone()))
                     }
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             "arr_get" => {
-                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                if args.len() < 2 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 2,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
                     Value::Array(elems) => {
-                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
-                        Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                        let idx = match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        };
+                        Ok(Some(
+                            elems.borrow().get(idx).cloned().unwrap_or(Value::Null),
+                        ))
                     }
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             _ => Err(VmError::UnknownCap(cap.to_string())),
@@ -1571,7 +1824,11 @@ fn dispatch_cap(
         if let Some(expected) = spec.argc
             && args.len() != expected
         {
-            return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+            return Err(VmError::CapArity {
+                cap: cap.to_string(),
+                expected,
+                got: args.len(),
+            });
         }
         return match handler.call_with_deadline(args, quotas.max_wall_time_ms) {
             Ok(v) => Ok(v),
@@ -1764,7 +2021,8 @@ mod wall_clock_limit_tests {
         // write() and never reach exit, hanging forever regardless of the
         // wall-clock limit.
         let mut cmd = std::process::Command::new("bash");
-        cmd.arg("-c").arg("head -c 1000000 /dev/zero | tr '\\0' 'a'");
+        cmd.arg("-c")
+            .arg("head -c 1000000 /dev/zero | tr '\\0' 'a'");
         let start = std::time::Instant::now();
         match run_with_wall_clock_limit(cmd, 5_000).expect("spawn should succeed") {
             CommandOutcome::Output(output) => {
@@ -1813,7 +2071,12 @@ mod wall_clock_limit_tests {
         host_caps.grant_polyglot(&["bash"]);
 
         match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
-            Err(VmError::LangRuntimeError { lang, message, crush_line, .. }) => {
+            Err(VmError::LangRuntimeError {
+                lang,
+                message,
+                crush_line,
+                ..
+            }) => {
                 assert_eq!(lang, "bash");
                 assert!(
                     message.contains("boom"),
@@ -1971,7 +2234,10 @@ mod wall_clock_limit_tests {
         host_caps.grant_polyglot(&["python"]);
         // Cold pypi resolve+install can be slow; generous headroom without
         // masking a genuine hang.
-        let quotas = Quotas { max_wall_time_ms: 90_000, ..Default::default() };
+        let quotas = Quotas {
+            max_wall_time_ms: 90_000,
+            ..Default::default()
+        };
 
         let result = run_with_caps(&prog, &quotas, Some(&host_caps));
 
@@ -1996,13 +2262,18 @@ mod wall_clock_limit_tests {
                         "expected six.__version__ on stdout, got {s:?}"
                     );
                     assert!(
-                        s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false),
+                        s.chars()
+                            .next()
+                            .map(|c| c.is_ascii_digit())
+                            .unwrap_or(false),
                         "expected a version number, got {s:?}"
                     );
                 }
                 other => panic!("expected Value::Str with sandboxed stdout, got {other:?}"),
             },
-            other => panic!("expected the sandboxed python+pypi:six block to succeed, got {other:?}"),
+            other => {
+                panic!("expected the sandboxed python+pypi:six block to succeed, got {other:?}")
+            }
         }
 
         let _ = std::fs::remove_dir_all(&cache_dir);
@@ -2046,7 +2317,10 @@ mod wall_clock_limit_tests {
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["javascript"]);
-        let quotas = Quotas { max_wall_time_ms: 90_000, ..Default::default() };
+        let quotas = Quotas {
+            max_wall_time_ms: 90_000,
+            ..Default::default()
+        };
 
         let result = run_with_caps(&prog, &quotas, Some(&host_caps));
 
@@ -2101,7 +2375,12 @@ mod wall_clock_limit_tests {
         host_caps.grant_polyglot(&["javascript"]);
 
         match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
-            Err(VmError::LangRuntimeError { lang, message, phase, .. }) => {
+            Err(VmError::LangRuntimeError {
+                lang,
+                message,
+                phase,
+                ..
+            }) => {
                 assert_eq!(lang, "javascript");
                 assert_eq!(phase, LangFailurePhase::SandboxSetup);
                 assert!(

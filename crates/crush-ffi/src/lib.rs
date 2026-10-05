@@ -1,6 +1,6 @@
 #![allow(improper_ctypes_definitions)]
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -84,27 +84,49 @@ impl Default for FfiValue {
 }
 
 impl FfiValue {
-    pub fn null() -> Self { Self::default() }
+    pub fn null() -> Self {
+        Self::default()
+    }
     pub fn from_bool(b: bool) -> Self {
-        FfiValue { tag: FfiType::Bool, data: FfiValueData { boolean: b } }
+        FfiValue {
+            tag: FfiType::Bool,
+            data: FfiValueData { boolean: b },
+        }
     }
     pub fn from_int(i: i64) -> Self {
-        FfiValue { tag: FfiType::Int, data: FfiValueData { integer: i } }
+        FfiValue {
+            tag: FfiType::Int,
+            data: FfiValueData { integer: i },
+        }
     }
     pub fn from_float(f: f64) -> Self {
-        FfiValue { tag: FfiType::Float, data: FfiValueData { float: f } }
+        FfiValue {
+            tag: FfiType::Float,
+            data: FfiValueData { float: f },
+        }
     }
     pub fn from_string(s: &str) -> Self {
-        FfiValue { tag: FfiType::String, data: FfiValueData { string: FfiString::from_str(s) } }
+        FfiValue {
+            tag: FfiType::String,
+            data: FfiValueData {
+                string: FfiString::from_str(s),
+            },
+        }
     }
     pub fn error(msg: &str) -> Self {
-        FfiValue { tag: FfiType::Error, data: FfiValueData { string: FfiString::from_str(msg) } }
+        FfiValue {
+            tag: FfiType::Error,
+            data: FfiValueData {
+                string: FfiString::from_str(msg),
+            },
+        }
     }
 }
 
 /// A standard signature for an FFI exported function.
 /// Returns true if successful, false if it threw an error (which is written to out_result).
-pub type CrushPluginFunc = extern "C" fn(args: *const FfiValue, arg_count: usize, out_result: *mut FfiValue) -> bool;
+pub type CrushPluginFunc =
+    extern "C" fn(args: *const FfiValue, arg_count: usize, out_result: *mut FfiValue) -> bool;
 
 #[repr(C)]
 pub struct CrushPluginExport {

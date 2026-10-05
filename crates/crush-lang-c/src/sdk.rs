@@ -8,8 +8,8 @@
 //! ```
 
 use anyhow::Result;
-use tree_sitter::Parser;
 use crush_walker_core::Walker;
+use tree_sitter::Parser;
 
 use crate::CWalker;
 
@@ -50,8 +50,7 @@ pub fn cast_to_casm(program: &crush_cast::Program) -> Result<casm::Program> {
 
 /// CASM → CVM1 executable (thin wrapper around crush-lang-sdk).
 pub fn casm_to_vm(program: &casm::Program) -> Result<crush_vm::Program> {
-    crush_lang_sdk::compile::casm_to_vm(program)
-        .map_err(|e| anyhow::anyhow!("CASM→CVM1: {e}"))
+    crush_lang_sdk::compile::casm_to_vm(program).map_err(|e| anyhow::anyhow!("CASM→CVM1: {e}"))
 }
 
 /// Full pipeline: C source → CVM1 execution → result string.
@@ -72,31 +71,58 @@ pub fn run_c(source: &str, filename: &str) -> Result<String> {
     struct PrintCap;
     impl HostCap for PrintCap {
         fn spec(&self) -> HostCapSpec {
-            HostCapSpec { name: "io.print".into(), argc: None, returns: false }
+            HostCapSpec {
+                name: "io.print".into(),
+                argc: None,
+                returns: false,
+            }
         }
-        fn call(&self, args: Vec<crush_vm::vm::Value>) -> Result<Option<crush_vm::vm::Value>, String> {
-            for a in &args { print!("{a}"); } println!();
+        fn call(
+            &self,
+            args: Vec<crush_vm::vm::Value>,
+        ) -> Result<Option<crush_vm::vm::Value>, String> {
+            for a in &args {
+                print!("{a}");
+            }
+            println!();
             Ok(None)
         }
     }
 
-    struct NopCap { name: String }
+    struct NopCap {
+        name: String,
+    }
     impl HostCap for NopCap {
         fn spec(&self) -> HostCapSpec {
-            HostCapSpec { name: self.name.clone(), argc: None, returns: true }
+            HostCapSpec {
+                name: self.name.clone(),
+                argc: None,
+                returns: true,
+            }
         }
-        fn call(&self, _args: Vec<crush_vm::vm::Value>) -> Result<Option<crush_vm::vm::Value>, String> {
+        fn call(
+            &self,
+            _args: Vec<crush_vm::vm::Value>,
+        ) -> Result<Option<crush_vm::vm::Value>, String> {
             Ok(Some(crush_vm::vm::Value::Null))
         }
     }
 
     host_caps.register(Box::new(PrintCap));
     for name in &[
-        "append", "push", "make_range", "arr_set", "arr_get",
+        "append",
+        "push",
+        "make_range",
+        "arr_set",
+        "arr_get",
         "str.concat",
-        "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
+        "__crush_deref__",
+        "__crush_addr_of__",
+        "__crush_unary__",
     ] {
-        host_caps.register(Box::new(NopCap { name: name.to_string() }));
+        host_caps.register(Box::new(NopCap {
+            name: name.to_string(),
+        }));
     }
 
     let quotas = crush_vm::Quotas {
@@ -123,15 +149,15 @@ mod tests {
 
     #[test]
     fn test_variable_and_if() {
-        let src = "int main() { int x = 5; if (x > 3) { printf(100); } else { printf(0); } return 0; }";
+        let src =
+            "int main() { int x = 5; if (x > 3) { printf(100); } else { printf(0); } return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "100");
     }
 
     #[test]
     fn test_for_loop_sum() {
-        let src =
-            "int main() { int sum = 0; for (int i = 0; i < 10; i++) { sum = sum + i; } printf(sum); return 0; }";
+        let src = "int main() { int sum = 0; for (int i = 0; i < 10; i++) { sum = sum + i; } printf(sum); return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "45");
     }
@@ -158,24 +184,37 @@ mod tests {
         let so_path = out_dir.join("example_c_plugin.so");
         let plugin_src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../crush-ffi/examples/example_c_plugin.c");
-        let include_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../crush-ffi/include");
+        let include_dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crush-ffi/include");
 
         if !plugin_src.exists() || !include_dir.exists() {
             eprintln!("Skipping test_c_ffi_full_pipeline: plugin src not found");
             return;
         }
         let status = std::process::Command::new("gcc")
-            .args(["-shared", "-fPIC", "-std=c11", "-O2",
-                   "-o", so_path.to_str().unwrap(),
-                   plugin_src.to_str().unwrap(),
-                   "-I", include_dir.to_str().unwrap()])
+            .args([
+                "-shared",
+                "-fPIC",
+                "-std=c11",
+                "-O2",
+                "-o",
+                so_path.to_str().unwrap(),
+                plugin_src.to_str().unwrap(),
+                "-I",
+                include_dir.to_str().unwrap(),
+            ])
             .status();
         let status = match status {
             Ok(s) => s,
-            Err(_) => { eprintln!("Skipping: gcc not found"); return; }
+            Err(_) => {
+                eprintln!("Skipping: gcc not found");
+                return;
+            }
         };
-        if !status.success() { eprintln!("Skipping: gcc failed"); return; }
+        if !status.success() {
+            eprintln!("Skipping: gcc failed");
+            return;
+        }
 
         let path = so_path.to_string_lossy().replace('\\', "/");
         let src = format!(
@@ -184,9 +223,13 @@ mod tests {
 
         // Walk C → CAST
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_c::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_c::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(&src, None).unwrap();
-        let walker = CWalker { file_name: "test_ffi.c".to_string() };
+        let walker = CWalker {
+            file_name: "test_ffi.c".to_string(),
+        };
         let cast = walker.walk(&tree, src.as_bytes()).unwrap();
 
         // CAST → CASM
@@ -200,24 +243,43 @@ mod tests {
         let mut host_caps = crush_vm::HostCaps::new();
         host_caps.register(Box::new(crush_vm::plugin::FfiGatewayCap));
 
-        struct NopCap { name: String }
+        struct NopCap {
+            name: String,
+        }
         impl crush_vm::host::HostCap for NopCap {
             fn spec(&self) -> crush_vm::host::HostCapSpec {
-                crush_vm::host::HostCapSpec { name: self.name.clone(), argc: None, returns: true }
+                crush_vm::host::HostCapSpec {
+                    name: self.name.clone(),
+                    argc: None,
+                    returns: true,
+                }
             }
-            fn call(&self, _: Vec<crush_vm::vm::Value>) -> Result<Option<crush_vm::vm::Value>, String> {
+            fn call(
+                &self,
+                _: Vec<crush_vm::vm::Value>,
+            ) -> Result<Option<crush_vm::vm::Value>, String> {
                 Ok(Some(crush_vm::vm::Value::Null))
             }
         }
         for name in &[
-            "__crush_assign__", "__crush_deref__", "__crush_addr_of__",
-            "__crush_not__", "__crush_neg__", "__crush_pos__",
-            "__crush_subscript__", "__crush_unary__",
+            "__crush_assign__",
+            "__crush_deref__",
+            "__crush_addr_of__",
+            "__crush_not__",
+            "__crush_neg__",
+            "__crush_pos__",
+            "__crush_subscript__",
+            "__crush_unary__",
         ] {
-            host_caps.register(Box::new(NopCap { name: name.to_string() }));
+            host_caps.register(Box::new(NopCap {
+                name: name.to_string(),
+            }));
         }
 
-        let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
+        let quotas = crush_vm::Quotas {
+            max_steps: 10_000_000,
+            ..Default::default()
+        };
         let result = crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps)).unwrap();
         // printf(99) should produce output; the FFI call runs silently
         assert_eq!(result.output.trim(), "99");

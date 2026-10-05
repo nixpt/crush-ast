@@ -5,11 +5,14 @@
 //! registry. Phase-3 caps are synchronous (blocking-accept on the listener
 //! side); the async path is wired through `reactor::Source::try_accept`.
 
-use std::{collections::HashMap, sync::{Arc, Mutex}};
-#[cfg(feature = "tls")]
-use std::sync::OnceLock;
 #[cfg(feature = "tls")]
 use rustls::pki_types::ServerName;
+#[cfg(feature = "tls")]
+use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 /// Cache of leaked SNI `&'static str`s, indexed by the originating `&str`.
 /// Each distinct SNI is leaked at most once across the program lifetime
@@ -56,9 +59,7 @@ pub struct NetState {
     pub tls_client_conns: HashMap<
         ConnId,
         std::sync::Arc<
-            std::sync::Mutex<
-                rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>,
-            >,
+            std::sync::Mutex<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>,
         >,
     >,
 }
@@ -105,13 +106,19 @@ fn id_arg(args: &[Value], i: usize) -> Result<ConnId, String> {
 pub struct NetConnectCap(pub Arc<Mutex<NetState>>);
 impl HostCap for NetConnectCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.connect".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "net.connect".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let uri = str_arg(&args, 0)?;
         let ep = parse_uri(&uri).map_err(|e| format!("net.connect: uri: {e}"))?;
         let mut s = self.0.lock().unwrap();
-        let conn = s.transport.connect_endpoint(&ep)
+        let conn = s
+            .transport
+            .connect_endpoint(&ep)
             .map_err(|e| format!("net.connect: {e}"))?;
         let id = s.next();
         s.conns.insert(id, Arc::new(Mutex::new(conn)));
@@ -122,13 +129,19 @@ impl HostCap for NetConnectCap {
 pub struct NetListenCap(pub Arc<Mutex<NetState>>);
 impl HostCap for NetListenCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.listen".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "net.listen".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let uri = str_arg(&args, 0)?;
         let ep = parse_uri(&uri).map_err(|e| format!("net.listen: uri: {e}"))?;
         let mut s = self.0.lock().unwrap();
-        let listener = s.transport.listen_endpoint(&ep)
+        let listener = s
+            .transport
+            .listen_endpoint(&ep)
             .map_err(|e| format!("net.listen: {e}"))?;
         let id = s.next();
         s.listeners.insert(id, Arc::new(Mutex::new(listener)));
@@ -139,15 +152,24 @@ impl HostCap for NetListenCap {
 pub struct NetAcceptCap(pub Arc<Mutex<NetState>>);
 impl HostCap for NetAcceptCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.accept".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "net.accept".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let listener_id = id_arg(&args, 0)?;
         let s = self.0.lock().unwrap();
-        let listener = s.listeners.get(&listener_id)
+        let listener = s
+            .listeners
+            .get(&listener_id)
             .ok_or_else(|| format!("net.accept: unknown listener {listener_id}"))?
             .clone();
-        let tcp_conn = listener.lock().unwrap().accept_blocking()
+        let tcp_conn = listener
+            .lock()
+            .unwrap()
+            .accept_blocking()
             .map_err(|e| format!("net.accept: {e}"))?;
         drop(s);
         let mut s = self.0.lock().unwrap();
@@ -160,15 +182,24 @@ impl HostCap for NetAcceptCap {
 pub struct NetSendCap(pub Arc<Mutex<NetState>>);
 impl HostCap for NetSendCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.send".into(), argc: Some(2), returns: true }
+        HostCapSpec {
+            name: "net.send".into(),
+            argc: Some(2),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
         let bytes = str_arg(&args, 1)?.into_bytes();
         let s = self.0.lock().unwrap();
-        let conn = s.conns.get(&id)
+        let conn = s
+            .conns
+            .get(&id)
             .ok_or_else(|| format!("net.send: unknown conn {id}"))?;
-        let n = conn.lock().unwrap().blocking_write(&bytes)
+        let n = conn
+            .lock()
+            .unwrap()
+            .blocking_write(&bytes)
             .map_err(|e| format!("net.send: {e}"))?;
         Ok(Some(Value::Int(n as i64)))
     }
@@ -177,15 +208,24 @@ impl HostCap for NetSendCap {
 pub struct NetRecvCap(pub Arc<Mutex<NetState>>);
 impl HostCap for NetRecvCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.recv".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "net.recv".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
         let s = self.0.lock().unwrap();
-        let conn = s.conns.get(&id)
+        let conn = s
+            .conns
+            .get(&id)
             .ok_or_else(|| format!("net.recv: unknown conn {id}"))?;
         let mut buf = vec![0u8; 16 * 1024];
-        let n = conn.lock().unwrap().blocking_read(&mut buf)
+        let n = conn
+            .lock()
+            .unwrap()
+            .blocking_read(&mut buf)
             .map_err(|e| format!("net.recv: {e}"))?;
         buf.truncate(n);
         let s = String::from_utf8(buf).map_err(|e| format!("net.recv: utf8: {e}"))?;
@@ -196,7 +236,11 @@ impl HostCap for NetRecvCap {
 pub struct NetCloseCap(pub Arc<Mutex<NetState>>);
 impl HostCap for NetCloseCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.close".into(), argc: Some(1), returns: false }
+        HostCapSpec {
+            name: "net.close".into(),
+            argc: Some(1),
+            returns: false,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
@@ -209,7 +253,11 @@ impl HostCap for NetCloseCap {
 pub struct NetPingCap;
 impl HostCap for NetPingCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "net.ping".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "net.ping".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
         Ok(Some(Value::Str("pong".to_string())))
@@ -242,7 +290,7 @@ pub struct NetTlsWrapCap {
     /// routes through the public `NetTlsWrapCap::with_extra_roots(...)`
     /// constructor rather than reading this field directly.
     pub(crate) extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
-    }
+}
 
 #[cfg(feature = "tls")]
 impl NetTlsWrapCap {
@@ -288,8 +336,8 @@ impl NetTlsWrapCap {
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        let server_name = ServerName::try_from(sni)
-            .map_err(|e| format!("invalid SNI `{sni}`: {e}"))?;
+        let server_name =
+            ServerName::try_from(sni).map_err(|e| format!("invalid SNI `{sni}`: {e}"))?;
 
         // Take the original conn out of state.conns; clone the TcpStream; drop
         // the lock; drive the handshake; re-take the lock to alloc + insert.

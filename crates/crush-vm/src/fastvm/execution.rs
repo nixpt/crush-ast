@@ -1,14 +1,14 @@
 //! Instruction execution logic for FastVM.
 
+use super::Capability;
+use super::arithmetic::{add_rtv, compare_rtv, div_rtv, mod_rtv, mul_rtv, neg_rtv, sub_rtv};
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
 use super::operations::{compare_op, current_locals_base, is_truthy};
-use super::arithmetic::{add_rtv, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_rtv};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
 use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
-use super::Capability;
 use std::sync::Arc;
 
 /// Execute a single instruction
@@ -221,7 +221,11 @@ pub fn execute_one(
             };
             stack.push(RuntimeValue::Float(base_f.powf(exp_f)));
         }
-        FastOp::MathSqrt | FastOp::MathAbs | FastOp::MathRound | FastOp::MathFloor | FastOp::MathCeil => {
+        FastOp::MathSqrt
+        | FastOp::MathAbs
+        | FastOp::MathRound
+        | FastOp::MathFloor
+        | FastOp::MathCeil => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
             let af = match a {
                 RuntimeValue::Int(x) => x as f64,
@@ -1146,22 +1150,30 @@ pub fn execute_one(
         FastOp::AiAgentDelegation => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiAgentDelegation { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiAgentDelegation {
+                args,
+            })));
         }
         FastOp::AiLearningLoop => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiLearningLoop { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiLearningLoop {
+                args,
+            })));
         }
         FastOp::AiContextAware => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiContextAware { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiContextAware {
+                args,
+            })));
         }
         FastOp::AiSemanticMatch => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiSemanticMatch { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiSemanticMatch {
+                args,
+            })));
         }
         FastOp::AiSynthesize => {
             let json_str = &symbols.strings[instr.arg as usize];
@@ -1171,17 +1183,23 @@ pub fn execute_one(
         FastOp::AiGoalDeclaration => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiGoalDeclaration { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiGoalDeclaration {
+                args,
+            })));
         }
         FastOp::AiProgressUpdate => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiProgressUpdate { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiProgressUpdate {
+                args,
+            })));
         }
         FastOp::AiKnowledgeSharing => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiKnowledgeSharing { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiKnowledgeSharing {
+                args,
+            })));
         }
 
         FastOp::Await => {
@@ -1211,7 +1229,9 @@ pub fn execute_one(
 
             // Call the function via global registry
             // let result = crate::polyglot::call_function_global(&target_lang, &function_name, args);
-            return Err(FastError::ExecutionError("Polyglot execution not supported yet".into()));
+            return Err(FastError::ExecutionError(
+                "Polyglot execution not supported yet".into(),
+            ));
         }
     }
 

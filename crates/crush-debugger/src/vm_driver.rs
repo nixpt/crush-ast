@@ -82,10 +82,7 @@ impl<'a> PortableVmDriver<'a> {
     /// selects which matching breakpoint to return (0 = first, 1 =
     /// second, …). Used when multiple breakpoints share the same
     /// bytecode address.
-    fn bp_at_current_ip(
-        &self,
-        hit_index: usize,
-    ) -> Option<&crate::breakpoint::Breakpoint> {
+    fn bp_at_current_ip(&self, hit_index: usize) -> Option<&crate::breakpoint::Breakpoint> {
         let ip = self.vm.current_ip();
         self.breakpoints
             .as_ref()?
@@ -140,7 +137,10 @@ impl<'a> VmDriver for PortableVmDriver<'a> {
         // report the correct breakpoint ID.
         if yielded.is_some() {
             let ip = self.vm.current_ip();
-            self.breakpoint_hit.entry(ip).and_modify(|c| *c += 1).or_insert(1);
+            self.breakpoint_hit
+                .entry(ip)
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
             // Capture the paused-at location so `state()` reports
             // the correct breakpoint even after the hit counter is
             // cleaned up by `run_until_breakpoint_or_done`.
@@ -246,8 +246,8 @@ impl<'a> VmDriver for PortableVmDriver<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn trait_compiles_and_step_outcome_fields_match_docs() {
@@ -266,7 +266,10 @@ mod tests {
             VmRunResult::HitBreakpoint(crate::breakpoint::BreakpointId(3)).to_string(),
             "hit breakpoint #3"
         );
-        assert_eq!(VmRunResult::QuotaExceeded(5000).to_string(), "quota exceeded (5000)");
+        assert_eq!(
+            VmRunResult::QuotaExceeded(5000).to_string(),
+            "quota exceeded (5000)"
+        );
         assert_eq!(VmRunResult::Paused.to_string(), "paused");
     }
 

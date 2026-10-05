@@ -735,7 +735,10 @@ impl<'a> BoaLower<'a> {
                 if name.is_empty() {
                     CastExpr::NullLiteral { meta: self.meta0() }
                 } else {
-                    CastExpr::Var { name, meta: self.meta0() }
+                    CastExpr::Var {
+                        name,
+                        meta: self.meta0(),
+                    }
                 }
             }
             Expression::Await(a) => CastExpr::Await {

@@ -48,11 +48,11 @@ fn workspace_root() -> PathBuf {
 /// dependents. `no_dylib_crate_is_a_library_dependency` below verifies that
 /// claim rather than trusting it.
 const ALLOWED_NON_RLIB_LEAVES: &[&str] = &[
-    "crush-vm-capi",       // C ABI  -> libcrush_vm_capi.so
-    "crush-python",        // PyO3   -> crush-cast bindings
-    "crush-vm-py",         // PyO3   -> the `crush_vm` wheel
-    "crush-plugin-example",// FFI plugin sample loaded via libloading
-    "crush-web",           // wasm32 target; excluded from the workspace anyway
+    "crush-vm-capi",        // C ABI  -> libcrush_vm_capi.so
+    "crush-python",         // PyO3   -> crush-cast bindings
+    "crush-vm-py",          // PyO3   -> the `crush_vm` wheel
+    "crush-plugin-example", // FFI plugin sample loaded via libloading
+    "crush-web",            // wasm32 target; excluded from the workspace anyway
 ];
 
 /// Every member manifest, as (crate name, raw text).
@@ -75,9 +75,7 @@ fn member_manifests() -> Vec<(String, String)> {
                     .and_then(|r| r.trim_start().strip_prefix('='))
                     .map(|r| r.trim().trim_matches('"').to_string())
             })
-            .unwrap_or_else(|| {
-                entry.file_name().to_string_lossy().to_string()
-            });
+            .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string());
         out.push((name, text));
     }
     out
@@ -107,8 +105,8 @@ fn crush_vm_is_a_plain_lib() {
         .find(|(n, _)| n == "crush-vm")
         .expect("crush-vm manifest");
 
-    let types = declared_crate_types(crush_vm)
-        .expect("crush-vm declares an explicit [lib] crate-type");
+    let types =
+        declared_crate_types(crush_vm).expect("crush-vm declares an explicit [lib] crate-type");
 
     assert_eq!(
         types,

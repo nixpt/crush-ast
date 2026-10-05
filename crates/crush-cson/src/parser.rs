@@ -81,7 +81,9 @@ impl<'a> CsonParser<'a> {
 
         while self.pos < self.input.len() {
             self.skip_whitespace_and_comments();
-            if self.pos >= self.input.len() { break; }
+            if self.pos >= self.input.len() {
+                break;
+            }
 
             let rest = &self.input[self.pos..];
 
@@ -102,8 +104,10 @@ impl<'a> CsonParser<'a> {
             // 2. Sections
             if rest.starts_with('[') {
                 self.pos += 1;
-                let end = self.input[self.pos..].find(']').ok_or_else(|| self.error("Unclosed section"))?;
-                let section_name = self.input[self.pos..self.pos+end].trim().to_string();
+                let end = self.input[self.pos..]
+                    .find(']')
+                    .ok_or_else(|| self.error("Unclosed section"))?;
+                let section_name = self.input[self.pos..self.pos + end].trim().to_string();
                 self.pos += end + 1;
                 current_section = Some(section_name);
                 continue;
@@ -146,14 +150,16 @@ impl<'a> CsonParser<'a> {
                 value: CsonValue::Object(root_obj),
                 confidence: None,
                 annotations: pending_annotations,
-            }
+            },
         })
     }
 
     fn parse_annotation(&mut self) -> Result<CsonAnnotation, String> {
         self.pos += 1; // skip '@'
-        let name_end = self.input[self.pos..].find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(self.input.len() - self.pos);
-        let name = self.input[self.pos..self.pos+name_end].to_string();
+        let name_end = self.input[self.pos..]
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(self.input.len() - self.pos);
+        let name = self.input[self.pos..self.pos + name_end].to_string();
         self.pos += name_end;
 
         self.skip_whitespace_and_comments();
@@ -161,8 +167,10 @@ impl<'a> CsonParser<'a> {
         let mut args = None;
         if self.pos < self.input.len() && self.input[self.pos..].starts_with('(') {
             self.pos += 1;
-            let end = self.input[self.pos..].find(')').ok_or_else(|| self.error("Unclosed annotation args"))?;
-            args = Some(self.input[self.pos..self.pos+end].to_string());
+            let end = self.input[self.pos..]
+                .find(')')
+                .ok_or_else(|| self.error("Unclosed annotation args"))?;
+            args = Some(self.input[self.pos..self.pos + end].to_string());
             self.pos += end + 1;
         }
 
@@ -180,22 +188,26 @@ impl<'a> CsonParser<'a> {
                     self.pos += 1;
                     break;
                 }
-                
-                let key_end = self.input[self.pos..].find(':').ok_or_else(|| self.error("Missing colon in annotation property"))?;
-                let k = self.input[self.pos..self.pos+key_end].trim().to_string();
+
+                let key_end = self.input[self.pos..]
+                    .find(':')
+                    .ok_or_else(|| self.error("Missing colon in annotation property"))?;
+                let k = self.input[self.pos..self.pos + key_end].trim().to_string();
                 self.pos += key_end + 1;
-                
+
                 self.skip_whitespace_and_comments();
                 let v = if self.input[self.pos..].starts_with('"') {
                     self.parse_quoted_string()?
                 } else {
-                    let val_end = self.input[self.pos..].find(|c: char| c == ',' || c == '}').unwrap_or(self.input.len() - self.pos);
-                    let v_str = self.input[self.pos..self.pos+val_end].trim().to_string();
+                    let val_end = self.input[self.pos..]
+                        .find(|c: char| c == ',' || c == '}')
+                        .unwrap_or(self.input.len() - self.pos);
+                    let v_str = self.input[self.pos..self.pos + val_end].trim().to_string();
                     self.pos += val_end;
                     v_str
                 };
                 properties.insert(k, v);
-                
+
                 self.skip_whitespace_and_comments();
                 if self.pos < self.input.len() && self.input[self.pos..].starts_with(',') {
                     self.pos += 1;
@@ -203,13 +215,23 @@ impl<'a> CsonParser<'a> {
             }
         }
 
-        Ok(CsonAnnotation { name, args, properties })
+        Ok(CsonAnnotation {
+            name,
+            args,
+            properties,
+        })
     }
 
     fn parse_kv_pair(&mut self) -> Result<Option<(CsonKey, CsonNode)>, String> {
         self.skip_whitespace_and_comments();
-        if self.pos >= self.input.len() { return Ok(None); }
-        if self.input[self.pos..].starts_with('[') || self.input[self.pos..].starts_with('@') || self.input[self.pos..].starts_with('}') || self.input[self.pos..].starts_with(']') {
+        if self.pos >= self.input.len() {
+            return Ok(None);
+        }
+        if self.input[self.pos..].starts_with('[')
+            || self.input[self.pos..].starts_with('@')
+            || self.input[self.pos..].starts_with('}')
+            || self.input[self.pos..].starts_with(']')
+        {
             return Ok(None);
         }
 
@@ -223,12 +245,18 @@ impl<'a> CsonParser<'a> {
         if self.input[self.pos..].starts_with('"') {
             key_str = self.parse_quoted_string()?;
         } else {
-            let end = self.input[self.pos..].find(':').ok_or_else(|| self.error("Missing colon in kv pair"))?;
-            key_str = self.input[self.pos..self.pos+end].trim().to_string();
+            let end = self.input[self.pos..]
+                .find(':')
+                .ok_or_else(|| self.error("Missing colon in kv pair"))?;
+            key_str = self.input[self.pos..self.pos + end].trim().to_string();
             self.pos += end;
         }
 
-        let key = if is_semantic { CsonKey::Semantic(key_str) } else { CsonKey::Exact(key_str) };
+        let key = if is_semantic {
+            CsonKey::Semantic(key_str)
+        } else {
+            CsonKey::Exact(key_str)
+        };
 
         self.skip_whitespace_and_comments();
         if !self.input[self.pos..].starts_with(':') {
@@ -240,11 +268,14 @@ impl<'a> CsonParser<'a> {
 
         let (value, confidence) = self.parse_value()?;
 
-        Ok(Some((key, CsonNode {
-            value,
-            confidence,
-            annotations: vec![],
-        })))
+        Ok(Some((
+            key,
+            CsonNode {
+                value,
+                confidence,
+                annotations: vec![],
+            },
+        )))
     }
 
     fn parse_value(&mut self) -> Result<(CsonValue, Option<f64>), String> {
@@ -257,19 +288,42 @@ impl<'a> CsonParser<'a> {
         if self.input[self.pos..].starts_with('@') {
             let ann = self.parse_annotation()?;
             if ann.name == "synthesize" {
-                value = CsonValue::Synthesize(ann.args.unwrap_or_default().trim_matches('"').to_string());
+                value = CsonValue::Synthesize(
+                    ann.args.unwrap_or_default().trim_matches('"').to_string(),
+                );
             } else {
                 return Err(self.error("Only @synthesize is supported as a value annotation"));
             }
         } else if self.input[self.pos..].starts_with('"') {
             value = CsonValue::String(self.parse_quoted_string()?);
-        } else if self.input[self.pos..].starts_with("true") && (self.pos + 4 == self.input.len() || !self.input[self.pos+4..self.pos+5].chars().next().unwrap().is_alphanumeric()) {
+        } else if self.input[self.pos..].starts_with("true")
+            && (self.pos + 4 == self.input.len()
+                || !self.input[self.pos + 4..self.pos + 5]
+                    .chars()
+                    .next()
+                    .unwrap()
+                    .is_alphanumeric())
+        {
             value = CsonValue::Boolean(true);
             self.pos += 4;
-        } else if self.input[self.pos..].starts_with("false") && (self.pos + 5 == self.input.len() || !self.input[self.pos+5..self.pos+6].chars().next().unwrap().is_alphanumeric()) {
+        } else if self.input[self.pos..].starts_with("false")
+            && (self.pos + 5 == self.input.len()
+                || !self.input[self.pos + 5..self.pos + 6]
+                    .chars()
+                    .next()
+                    .unwrap()
+                    .is_alphanumeric())
+        {
             value = CsonValue::Boolean(false);
             self.pos += 5;
-        } else if self.input[self.pos..].starts_with("null") && (self.pos + 4 == self.input.len() || !self.input[self.pos+4..self.pos+5].chars().next().unwrap().is_alphanumeric()) {
+        } else if self.input[self.pos..].starts_with("null")
+            && (self.pos + 4 == self.input.len()
+                || !self.input[self.pos + 4..self.pos + 5]
+                    .chars()
+                    .next()
+                    .unwrap()
+                    .is_alphanumeric())
+        {
             value = CsonValue::Null;
             self.pos += 4;
         } else if self.input[self.pos..].starts_with('{') {
@@ -277,8 +331,13 @@ impl<'a> CsonParser<'a> {
             let mut map = HashMap::new();
             loop {
                 self.skip_whitespace_and_comments();
-                if self.pos >= self.input.len() { return Err(self.error("Unclosed object")); }
-                if self.input[self.pos..].starts_with('}') { self.pos += 1; break; }
+                if self.pos >= self.input.len() {
+                    return Err(self.error("Unclosed object"));
+                }
+                if self.input[self.pos..].starts_with('}') {
+                    self.pos += 1;
+                    break;
+                }
                 if let Some((k, v)) = self.parse_kv_pair()? {
                     let k_str = k.to_string();
                     if map.contains_key(&k_str) {
@@ -287,7 +346,9 @@ impl<'a> CsonParser<'a> {
                     map.insert(k_str, v);
                 }
                 self.skip_whitespace_and_comments();
-                if self.pos < self.input.len() && self.input[self.pos..].starts_with(',') { self.pos += 1; }
+                if self.pos < self.input.len() && self.input[self.pos..].starts_with(',') {
+                    self.pos += 1;
+                }
             }
             value = CsonValue::Object(map);
         } else if self.input[self.pos..].starts_with('[') {
@@ -295,12 +356,23 @@ impl<'a> CsonParser<'a> {
             let mut arr = Vec::new();
             loop {
                 self.skip_whitespace_and_comments();
-                if self.pos >= self.input.len() { return Err(self.error("Unclosed array")); }
-                if self.input[self.pos..].starts_with(']') { self.pos += 1; break; }
+                if self.pos >= self.input.len() {
+                    return Err(self.error("Unclosed array"));
+                }
+                if self.input[self.pos..].starts_with(']') {
+                    self.pos += 1;
+                    break;
+                }
                 let (v, c) = self.parse_value()?;
-                arr.push(CsonNode { value: v, confidence: c, annotations: vec![] });
+                arr.push(CsonNode {
+                    value: v,
+                    confidence: c,
+                    annotations: vec![],
+                });
                 self.skip_whitespace_and_comments();
-                if self.pos < self.input.len() && self.input[self.pos..].starts_with(',') { self.pos += 1; }
+                if self.pos < self.input.len() && self.input[self.pos..].starts_with(',') {
+                    self.pos += 1;
+                }
             }
             value = CsonValue::Array(arr);
         } else {
@@ -315,7 +387,7 @@ impl<'a> CsonParser<'a> {
                 }
                 end += c.len_utf8();
             }
-            let raw_str = self.input[self.pos..self.pos+end].trim();
+            let raw_str = self.input[self.pos..self.pos + end].trim();
             value = if let Ok(n) = raw_str.parse::<f64>() {
                 CsonValue::Number(n)
             } else if raw_str == "true" {
@@ -334,11 +406,13 @@ impl<'a> CsonParser<'a> {
         let mut confidence = None;
         if self.pos < self.input.len() && self.input[self.pos..].starts_with('~') {
             // Check if it's a semantic key start, not confidence
-            let after_tilde = &self.input[self.pos+1..];
+            let after_tilde = &self.input[self.pos + 1..];
             if !after_tilde.starts_with('"') && !after_tilde.trim_start().starts_with('"') {
                 self.pos += 1;
-                let end = self.input[self.pos..].find(|c: char| c.is_whitespace() || c == ',' || c == '}' || c == ']').unwrap_or(self.input.len() - self.pos);
-                if let Ok(c) = self.input[self.pos..self.pos+end].parse::<f64>() {
+                let end = self.input[self.pos..]
+                    .find(|c: char| c.is_whitespace() || c == ',' || c == '}' || c == ']')
+                    .unwrap_or(self.input.len() - self.pos);
+                if let Ok(c) = self.input[self.pos..self.pos + end].parse::<f64>() {
                     confidence = Some(c);
                     self.pos += end;
                 }
@@ -396,7 +470,10 @@ mod tests {
         let mut parser = CsonParser::new(input);
         let doc = parser.parse().unwrap();
         if let CsonValue::Object(map) = doc.root.value {
-            assert_eq!(map.get("msg").unwrap().value, CsonValue::String("he said \"hi\"".to_string()));
+            assert_eq!(
+                map.get("msg").unwrap().value,
+                CsonValue::String("he said \"hi\"".to_string())
+            );
         } else {
             panic!();
         }
@@ -409,7 +486,13 @@ mod tests {
         let mut parser = CsonParser::new(input);
         let doc = parser.parse().unwrap();
         if let CsonValue::Object(map) = doc.root.value {
-            assert_eq!(map.get("key").unwrap().annotations[0].properties.get("purpose").unwrap(), "parse a, b, c");
+            assert_eq!(
+                map.get("key").unwrap().annotations[0]
+                    .properties
+                    .get("purpose")
+                    .unwrap(),
+                "parse a, b, c"
+            );
         } else {
             panic!();
         }

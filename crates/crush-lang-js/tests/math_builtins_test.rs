@@ -140,7 +140,11 @@ fn math_random_is_lowered_to_the_seedable_crush_capability() {
     let caps = crush_lang_sdk::HostCapsBuilder::new().stdlib(true).build();
     let result = crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), Some(&caps))
         .expect("Math.random should execute through stdlib");
-    let value: f64 = result.output.trim().parse().expect("Math.random output should be numeric");
+    let value: f64 = result
+        .output
+        .trim()
+        .parse()
+        .expect("Math.random output should be numeric");
     assert!((0.0..1.0).contains(&value), "Math.random returned {value}");
 }
 
@@ -160,7 +164,10 @@ fn math_sin_of_pi_over_two_is_one() {
 /// h=154, i=155, j=465. Before CRUSH-39 `e` came out 0, giving 165.
 #[test]
 fn compute_benchmark_prints_465() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/benchmarks/compute.js");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/benchmarks/compute.js"
+    );
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read the compute.js benchmark at {path}: {e}"));
     assert_prints(&source, 465.0);

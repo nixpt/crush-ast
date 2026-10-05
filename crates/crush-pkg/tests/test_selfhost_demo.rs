@@ -124,10 +124,12 @@ fn crush_selfhost_demo_runs_and_registers_three_commands() {
     // (`CRUSH-SELFHOST-1.md#constraint-4`) — now the integration
     // test exercises the same code path the `crush-pkg run`
     // subcommand takes in production.
-    let runner = CrushRunner { host_caps: Some(caps) };
-    let result = runner
-        .run(&manifest, &payload, &[])
-        .expect("CrushRunner::run must drive main.crush to completion with the host table wired in");
+    let runner = CrushRunner {
+        host_caps: Some(caps),
+    };
+    let result = runner.run(&manifest, &payload, &[]).expect(
+        "CrushRunner::run must drive main.crush to completion with the host table wired in",
+    );
     assert!(
         matches!(result, ExecutionResult::Vm),
         "CrushRunner must hand the program to the VM (ExecutionResult::Vm)"
@@ -138,9 +140,7 @@ fn crush_selfhost_demo_runs_and_registers_three_commands() {
     // evidence — the three `gui.register_command(...)` calls from
     // `main.crush::main()` arrived in the host table with the IDs
     // expected below. Visible in `cargo test -- --nocapture`.
-    eprintln!(
-        "[crush-selfhost-demo] commands captured by host table: {calls:#?}"
-    );
+    eprintln!("[crush-selfhost-demo] commands captured by host table: {calls:#?}");
     assert!(
         calls
             .iter()
@@ -185,9 +185,9 @@ fn crush_selfhost_demo_runtime_dispatch_is_crush_via_language() {
 
 #[test]
 fn test_sno_execution() {
-    use tempfile::tempdir;
-    use casm::{Program, Function, Instruction, Manifest as CasmManifest};
+    use casm::{Function, Instruction, Manifest as CasmManifest, Program};
     use std::collections::HashMap;
+    use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
     let sno_path = dir.path().join("main.sno");
@@ -197,37 +197,40 @@ fn test_sno_execution() {
         lang: Some("sona".to_string()),
         functions: {
             let mut map = HashMap::new();
-            map.insert("main".to_string(), Function {
-                params: vec![],
-                locals: vec![],
-                type_hints: None,
-                body: vec![
-                    Instruction {
-                        op: "push_int".to_string(),
-                        lang: Some("sona".to_string()),
-                        meta: None,
-                        args: serde_json::json!({ "value": 42 }),
-                    },
-                    Instruction {
-                        op: "cap_call".to_string(),
-                        lang: Some("sona".to_string()),
-                        meta: None,
-                        args: serde_json::json!({ "name": "io.print", "argc": 1 }),
-                    },
-                    Instruction {
-                        op: "push_null".to_string(),
-                        lang: Some("sona".to_string()),
-                        meta: None,
-                        args: serde_json::json!({}),
-                    },
-                    Instruction {
-                        op: "ret".to_string(),
-                        lang: Some("sona".to_string()),
-                        meta: None,
-                        args: serde_json::json!({}),
-                    },
-                ],
-            });
+            map.insert(
+                "main".to_string(),
+                Function {
+                    params: vec![],
+                    locals: vec![],
+                    type_hints: None,
+                    body: vec![
+                        Instruction {
+                            op: "push_int".to_string(),
+                            lang: Some("sona".to_string()),
+                            meta: None,
+                            args: serde_json::json!({ "value": 42 }),
+                        },
+                        Instruction {
+                            op: "cap_call".to_string(),
+                            lang: Some("sona".to_string()),
+                            meta: None,
+                            args: serde_json::json!({ "name": "io.print", "argc": 1 }),
+                        },
+                        Instruction {
+                            op: "push_null".to_string(),
+                            lang: Some("sona".to_string()),
+                            meta: None,
+                            args: serde_json::json!({}),
+                        },
+                        Instruction {
+                            op: "ret".to_string(),
+                            lang: Some("sona".to_string()),
+                            meta: None,
+                            args: serde_json::json!({}),
+                        },
+                    ],
+                },
+            );
             map
         },
         manifest: CasmManifest {
@@ -249,8 +252,9 @@ language = "crush"
 
     let manifest = Manifest::from_file(&manifest_path).expect("manifest must parse");
     let runner = CrushRunner::default();
-    let result = runner.run(&manifest, &sno_path, &[]).expect("run must succeed");
+    let result = runner
+        .run(&manifest, &sno_path, &[])
+        .expect("run must succeed");
 
     assert!(matches!(result, ExecutionResult::Vm));
 }
-

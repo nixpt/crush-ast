@@ -185,7 +185,11 @@ str_cap!(StrJoinCap, "join", 2, |args: &[Value]| {
         _ => return Err("str.join: first argument must be an array".to_string()),
     };
     let delim = get_str(args, 1)?;
-    let strings: Result<Vec<String>, String> = arr.borrow().iter().map(|v| Ok(value_to_string(v))).collect();
+    let strings: Result<Vec<String>, String> = arr
+        .borrow()
+        .iter()
+        .map(|v| Ok(value_to_string(v)))
+        .collect();
     let joined = strings?.join(&delim);
     Ok(Some(Value::Str(joined)))
 });
@@ -681,7 +685,11 @@ coll_cap!(CollChunkCap, "chunk", 2, |args: &[Value]| {
     }
     match v {
         Value::Array(a) => {
-            let chunks: Vec<Value> = a.borrow().chunks(size).map(|c| Value::new_array(c.to_vec())).collect();
+            let chunks: Vec<Value> = a
+                .borrow()
+                .chunks(size)
+                .map(|c| Value::new_array(c.to_vec()))
+                .collect();
             Ok(Some(Value::new_array(chunks)))
         }
         _ => Err("collections.chunk: expected array".to_string()),
@@ -778,8 +786,7 @@ json_cap!(JsonParseCap, "parse", 1, |args: &[Value]| {
     // **Canonical path**: route through `impl serde::Deserialize for Value`
     // (defined on `crush_vm::vm::Value`) — no helper. `serde_json::from_str::<Value>`
     // invokes the trait impl directly via the visitor pattern.
-    let parsed: Value =
-        serde_json::from_str(&s).map_err(|e| format!("json.parse: {}", e))?;
+    let parsed: Value = serde_json::from_str(&s).map_err(|e| format!("json.parse: {}", e))?;
     Ok(Some(parsed))
 });
 
@@ -791,8 +798,7 @@ json_cap!(JsonStringifyCap, "stringify", 1, |args: &[Value]| {
     // has been deleted; `serde_json::to_string(&args[0])` invokes the
     // trait impl directly so JSON produced here is identical to JSON
     // produced by `db.query` and `message_bus.publish`.
-    let s = serde_json::to_string(&args[0])
-        .map_err(|e| format!("json.stringify: {}", e))?;
+    let s = serde_json::to_string(&args[0]).map_err(|e| format!("json.stringify: {}", e))?;
     Ok(Some(Value::Str(s)))
 });
 
@@ -1309,8 +1315,15 @@ mod tests {
         let first_caps = setup_caps();
         let second_caps = setup_caps();
         let first_default = first_caps.get("math.random").unwrap().call(vec![]).unwrap();
-        let second_default = second_caps.get("math.random").unwrap().call(vec![]).unwrap();
-        assert_eq!(first_default, second_default, "default seed must be deterministic");
+        let second_default = second_caps
+            .get("math.random")
+            .unwrap()
+            .call(vec![])
+            .unwrap();
+        assert_eq!(
+            first_default, second_default,
+            "default seed must be deterministic"
+        );
 
         let caps = setup_caps();
         let seed = caps.get("math.seed").unwrap();
@@ -1451,7 +1464,8 @@ mod tests {
             Some(Value::Int(0))
         );
         assert_eq!(
-            cap.call(vec![Value::new_array(vec![Value::Int(1)])]).unwrap(),
+            cap.call(vec![Value::new_array(vec![Value::Int(1)])])
+                .unwrap(),
             Some(Value::Int(1))
         );
     }
@@ -1695,7 +1709,12 @@ mod tests {
                 // 2 entries preserved, NOT collapsed to Null under
                 // the deleted `json_to_value`'s `Object(_) => Null`
                 // branch.
-                assert_eq!(m.len(), 2, "expected 2 entries in parsed map, got {}", m.len());
+                assert_eq!(
+                    m.len(),
+                    2,
+                    "expected 2 entries in parsed map, got {}",
+                    m.len()
+                );
                 assert_eq!(
                     m.get("k").cloned().unwrap_or(Value::Null),
                     Value::Int(1),
@@ -1861,12 +1880,7 @@ mod tests {
         match result {
             Some(Value::Map(m_rc)) => {
                 let m = m_rc.borrow();
-                assert_eq!(
-                    m.len(),
-                    1,
-                    "outer map should have 1 entry, got {}",
-                    m.len()
-                );
+                assert_eq!(m.len(), 1, "outer map should have 1 entry, got {}", m.len());
                 let items_value = m
                     .get("items")
                     .cloned()
@@ -2045,9 +2059,7 @@ mod tests {
                 "FAIL: visit_str missed the `error(msg)` tag for `\"error((foo)\"`; \
                  fell through to Value::Str({s:?}) instead of Value::Error(\"(foo\")"
             ),
-            other => panic!(
-                "expected Value::Error for `\"error((foo)\"` input, got {other:?}"
-            ),
+            other => panic!("expected Value::Error for `\"error((foo)\"` input, got {other:?}"),
         }
 
         // 5. `error(foo))` → Value::Error("foo)"). Nested-paren
@@ -2072,9 +2084,7 @@ mod tests {
                 "FAIL: visit_str missed the `error(msg)` tag for `\"error(foo))\"`; \
                  fell through to Value::Str({s:?}) instead of Value::Error(\"foo)\")"
             ),
-            other => panic!(
-                "expected Value::Error for `\"error(foo))\"` input, got {other:?}"
-            ),
+            other => panic!("expected Value::Error for `\"error(foo))\"` input, got {other:?}"),
         }
 
         // 6. Bytes round-trip is LOSSY by design. Canonical
@@ -2121,12 +2131,11 @@ mod tests {
              stripped), got {serialized_str:?}"
         );
         // Pin the Deserialize-side reconstruction: zero-filled.
-        let parsed = cap
-            .call(vec![Value::Str(serialized_str)])
-            .unwrap();
+        let parsed = cap.call(vec![Value::Str(serialized_str)]).unwrap();
         match parsed {
             Some(Value::Bytes(b)) => assert_eq!(
-                b, vec![0u8, 0, 0],
+                b,
+                vec![0u8, 0, 0],
                 "LOSSY ROUND-TRIP: canonical Deserialize for \"<3 bytes>\" \
                  reconstructs a ZERO-FILLED Vec<u8> of length N, NOT the \
                  original byte payload vec![1,2,3]. Got {:?}, expected vec![0,0,0].",
@@ -2204,10 +2213,7 @@ mod tests {
         // the in-memory queue. publish returns `Ok(None)` per its
         // `HostCapSpec` (returns = false).
         let publish_result = publish
-            .call(vec![
-                Value::Str("t_handle".to_string()),
-                Value::Handle(42),
-            ])
+            .call(vec![Value::Str("t_handle".to_string()), Value::Handle(42)])
             .expect("message_bus.publish should succeed");
         assert!(
             publish_result.is_none(),
@@ -2307,7 +2313,9 @@ mod tests {
     fn test_json_stringify_pretty() {
         let caps = setup_caps();
         let cap = caps.get("json.stringify_pretty").unwrap();
-        let result = cap.call(vec![Value::new_array(vec![Value::Int(1)])]).unwrap();
+        let result = cap
+            .call(vec![Value::new_array(vec![Value::Int(1)])])
+            .unwrap();
         let s = match result.unwrap() {
             Value::Str(s) => s,
             _ => String::new(),

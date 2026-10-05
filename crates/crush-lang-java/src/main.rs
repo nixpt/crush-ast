@@ -19,7 +19,9 @@ fn main() -> Result<()> {
     // parse() call will panic at runtime until the real grammar
     // binding is added.
     run_walker_binary(
-        crush_lang_java::JavaWalker { file_name: cli.input.clone() },
+        crush_lang_java::JavaWalker {
+            file_name: cli.input.clone(),
+        },
         "java",
         &[".java"],
         &cli.input,

@@ -27,12 +27,14 @@ fn validate_cast(json: &str) -> PyResult<bool> {
 /// Run a CASM JSON string using the FastVM.
 #[pyfunction]
 fn run_casm(json: &str) -> PyResult<String> {
-    let program: casm::Program = serde_json::from_str(json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid CASM JSON: {}", e)))?;
-        
-    let yield_state = crush_vm::vm::run_fastvm(&program)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("VM Execution Error: {:?}", e)))?;
-        
+    let program: casm::Program = serde_json::from_str(json).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Invalid CASM JSON: {}", e))
+    })?;
+
+    let yield_state = crush_vm::vm::run_fastvm(&program).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("VM Execution Error: {:?}", e))
+    })?;
+
     Ok(format!("{:?}", yield_state))
 }
 
@@ -40,11 +42,15 @@ fn run_casm(json: &str) -> PyResult<String> {
 #[pyfunction]
 fn parse_cson(cson_str: &str) -> PyResult<String> {
     let mut parser = crush_cson::parser::CsonParser::new(cson_str);
-    let doc = parser.parse()
+    let doc = parser
+        .parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
-    
+
     // For now, return a basic repr of the version and root to Python
-    Ok(format!("CsonDocument(version={:?}, root={:?})", doc.version, doc.root))
+    Ok(format!(
+        "CsonDocument(version={:?}, root={:?})",
+        doc.version, doc.root
+    ))
 }
 
 /// List all CAST version strings known to this library.
@@ -104,4 +110,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

@@ -146,10 +146,7 @@ impl HostCap for DbQueryCap {
                     // — no `serde_json::Value` intermediate, no AST
                     // construction. Row composition happens directly
                     // in typed `HashMap<String, Value>` space.
-                    map.insert(
-                        col.clone(),
-                        value_ref_to_crush_value(row.get_ref(i)?)?,
-                    );
+                    map.insert(col.clone(), value_ref_to_crush_value(row.get_ref(i)?)?);
                 }
                 Ok(map)
             })
@@ -263,10 +260,7 @@ mod tests {
                 Value::Str("Alice".to_string()),
                 "name should be Value::Str(\"Alice\")"
             );
-            assert!(
-                row.contains_key("id"),
-                "row missing id column: {row:?}"
-            );
+            assert!(row.contains_key("id"), "row missing id column: {row:?}");
             match row.get("id").cloned().unwrap_or(Value::Null) {
                 Value::Int(n) => assert!(n >= 1, "id should be >= 1, got {n}"),
                 other => panic!("expected Value::Int id, got {other:?}"),
@@ -399,9 +393,7 @@ mod tests {
         .unwrap();
 
         exec.call(vec![
-            Value::Str(
-                "INSERT INTO tokens (handle_col) VALUES (?)".to_string(),
-            ),
+            Value::Str("INSERT INTO tokens (handle_col) VALUES (?)".to_string()),
             Value::Handle(42),
         ])
         .unwrap();
@@ -425,11 +417,7 @@ mod tests {
             let row = arr.borrow();
             let first = row.first().expect("one row in arr").clone();
             match first {
-                Value::Map(m) => m
-                    .borrow()
-                    .get("handle_col")
-                    .cloned()
-                    .unwrap_or(Value::Null),
+                Value::Map(m) => m.borrow().get("handle_col").cloned().unwrap_or(Value::Null),
                 other => panic!("expected Value::Map row, got {other:?}"),
             }
         };
@@ -440,7 +428,8 @@ mod tests {
         // documents the asymmetry AND points at the two viable
         // fix paths.
         assert_eq!(
-            recovered, Value::Handle(42),
+            recovered,
+            Value::Handle(42),
             "DB Handle round-trip asymmetry (audit finding 1, `db.rs`): \
              expected `Value::Handle(42)` after writing then reading back \
              via `db.execute` + `db.query`. Actual: `Value::Str(\"42\")` — \

@@ -1,6 +1,6 @@
 //! Core index data structures and ingestion.
 
-use crate::dejavue::{build_annotation_links, parse_timeline_str, DejavueEvent};
+use crate::dejavue::{DejavueEvent, build_annotation_links, parse_timeline_str};
 use crate::query::{CallSite, CoverageGap};
 use crush_cast::manifest::{ExhaustiveMatchSite, FunctionAnnotations, Invariant};
 use crush_cast::{Annotation, Expression, Program, Statement};
@@ -66,7 +66,7 @@ pub struct CrushIndex {
     temporaries: Vec<(String, crush_cast::manifest::TemporaryNode)>,
     /// (module_path, @decision node) pairs across all programs
     decisions: Vec<(String, crush_cast::manifest::DecisionNode)>,
-    
+
     /// CSON configurations indexed by file path (private; see `cson_configs()` and `cson_doc()`)
     cson_configs: HashMap<String, crush_cson::CsonDocument>,
     /// Flattened semantic keys `(intent, cson_file_path, confidence)` (private; see `semantic_keys()`)
@@ -180,7 +180,8 @@ impl CrushIndex {
             self.wip.insert(module_path.to_string(), wip.clone());
         }
         for tmp in &program.temporaries {
-            self.temporaries.push((module_path.to_string(), tmp.clone()));
+            self.temporaries
+                .push((module_path.to_string(), tmp.clone()));
         }
         for dec in &program.decisions {
             self.decisions.push((module_path.to_string(), dec.clone()));
@@ -258,8 +259,7 @@ impl CrushIndex {
     pub fn uncovered_paths(&self) -> Vec<CoverageGap> {
         // Errors: from `Annotation::Error` in the flat ladder — preserves
         // module context per-ladder (one ladder per add_program call).
-        let mut errors: Vec<(String, String, String)> =
-            Vec::new(); // (module_path, fn_name, variant)
+        let mut errors: Vec<(String, String, String)> = Vec::new(); // (module_path, fn_name, variant)
         for (mod_path, ladders) in &self.flat_annotations {
             for ladder in ladders {
                 for ann in ladder {
@@ -280,8 +280,7 @@ impl CrushIndex {
         // is module-agnostic (an Oracle name closes a variant regardless
         // of which module declared the @errors), so keep a flat set keyed
         // by variant string.
-        let mut covered: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
         for ladders in self.flat_annotations.values() {
             for ladder in ladders {
                 for ann in ladder {
@@ -297,13 +296,11 @@ impl CrushIndex {
         errors
             .into_iter()
             .filter(|(_, _, variant)| !covered.contains(variant))
-            .map(
-                |(module_path, fn_name, error_variant)| CoverageGap {
-                    fn_name,
-                    error_variant,
-                    module_path,
-                },
-            )
+            .map(|(module_path, fn_name, error_variant)| CoverageGap {
+                fn_name,
+                error_variant,
+                module_path,
+            })
             .collect()
     }
 
@@ -424,7 +421,12 @@ impl CrushIndex {
         self.cson_configs.insert(path.to_string(), doc);
     }
 
-    fn extract_semantic_keys(&self, node: &crush_cson::CsonNode, path: &str, keys: &mut Vec<(String, String, Option<f64>)>) {
+    fn extract_semantic_keys(
+        &self,
+        node: &crush_cson::CsonNode,
+        path: &str,
+        keys: &mut Vec<(String, String, Option<f64>)>,
+    ) {
         match &node.value {
             crush_cson::CsonValue::Object(map) => {
                 for (k, v) in map {
@@ -483,8 +485,7 @@ impl CrushIndex {
         }
         let (events, skipped) = parse_timeline_str(&content);
         self.dejavue_events = events;
-        self.annotation_event_links =
-            build_annotation_links(&self.dejavue_events);
+        self.annotation_event_links = build_annotation_links(&self.dejavue_events);
         skipped
     }
 
@@ -630,17 +631,12 @@ fn collect_calls_in_stmts(
     }
 }
 
-fn collect_calls_in_stmt(
-    stmt: &Statement,
-    module: &str,
-    caller_fn: &str,
-    out: &mut Vec<CallSite>,
-) {
+fn collect_calls_in_stmt(stmt: &Statement, module: &str, caller_fn: &str, out: &mut Vec<CallSite>) {
     match stmt {
         Statement::ExprStmt { expr, .. } => collect_calls_in_expr(expr, module, caller_fn, out),
-        Statement::VarDecl { value, .. } | Statement::Assign { value, .. } | Statement::Export { value, .. } => {
-            collect_calls_in_expr(value, module, caller_fn, out)
-        }
+        Statement::VarDecl { value, .. }
+        | Statement::Assign { value, .. }
+        | Statement::Export { value, .. } => collect_calls_in_expr(value, module, caller_fn, out),
         Statement::Return { value, .. } => {
             if let Some(v) = value {
                 collect_calls_in_expr(v, module, caller_fn, out);
@@ -658,7 +654,9 @@ fn collect_calls_in_stmt(
                 collect_calls_in_stmts(eb, module, caller_fn, out);
             }
         }
-        Statement::While { condition, body, .. } => {
+        Statement::While {
+            condition, body, ..
+        } => {
             collect_calls_in_expr(condition, module, caller_fn, out);
             collect_calls_in_stmts(body, module, caller_fn, out);
         }
@@ -671,9 +669,7 @@ fn collect_calls_in_stmt(
             collect_calls_in_stmts(handler, module, caller_fn, out);
         }
         Statement::Throw { value, .. } => collect_calls_in_expr(value, module, caller_fn, out),
-        Statement::FunctionDef { body, .. } => {
-            collect_calls_in_stmts(body, module, caller_fn, out)
-        }
+        Statement::FunctionDef { body, .. } => collect_calls_in_stmts(body, module, caller_fn, out),
         Statement::SetField { target, value, .. } => {
             collect_calls_in_expr(target, module, caller_fn, out);
             collect_calls_in_expr(value, module, caller_fn, out);
@@ -692,7 +688,9 @@ fn collect_calls_in_stmt(
                 collect_calls_in_expr(v, module, caller_fn, out);
             }
         }
-        Statement::DomEventListener { target, callback, .. } => {
+        Statement::DomEventListener {
+            target, callback, ..
+        } => {
             collect_calls_in_expr(target, module, caller_fn, out);
             collect_calls_in_expr(callback, module, caller_fn, out);
         }
@@ -740,9 +738,7 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(s, module, caller_fn, out);
             }
         }
-        Expression::Lambda { body, .. } => {
-            collect_calls_in_stmts(body, module, caller_fn, out)
-        }
+        Expression::Lambda { body, .. } => collect_calls_in_stmts(body, module, caller_fn, out),
         Expression::GetField { target, .. } => {
             collect_calls_in_expr(target, module, caller_fn, out)
         }

@@ -13,18 +13,18 @@ mod tests;
 pub mod memory;
 // FastVM bakes ai_optimizer::VmOptimizer into its state unconditionally —
 // same native-only gate as ai_optimizer itself.
-#[cfg(feature = "native-plugins")]
-pub mod fastvm;
-pub mod value;
+pub mod arithmetic;
 pub mod assembler;
 pub mod bytecode;
-pub mod arithmetic;
 pub mod caps;
+#[cfg(feature = "native-plugins")]
+pub mod fastvm;
 pub mod host;
 pub mod io_print;
 pub mod io_read;
 pub mod portable_vm;
 pub mod scheduler;
+pub mod value;
 pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
@@ -32,9 +32,9 @@ pub use bytecode::Program;
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
-pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 #[cfg(feature = "native-plugins")]
-pub use vm::{run_fastvm, run_fastvm_with_caps, run_casm_json, CrushResultExt};
+pub use vm::{CrushResultExt, run_casm_json, run_fastvm, run_fastvm_with_caps};
+pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 
 pub use memory::{Arena, Object};
 pub use value::RuntimeValue;

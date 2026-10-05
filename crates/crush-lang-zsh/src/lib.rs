@@ -3,8 +3,8 @@ pub mod lowerer;
 pub mod parser;
 
 use crush_cast::Program;
-use std::any::Any;
 use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
+use std::any::Any;
 
 pub struct ZshFrontend;
 
@@ -46,10 +46,5 @@ pub fn zsh_to_cast(source: &str) -> anyhow::Result<Program> {
 
 use crush_walker_core::impl_adapter_from_frontend;
 
-impl_adapter_from_frontend!(
-    ZshAdapter,
-    "zsh",
-    &["zsh"],
-    crate::zsh_to_cast
-);
+impl_adapter_from_frontend!(ZshAdapter, "zsh", &["zsh"], crate::zsh_to_cast);
 pub mod sdk;

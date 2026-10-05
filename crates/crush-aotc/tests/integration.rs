@@ -18,7 +18,12 @@ fn compile_and_run(source: &str) -> anyhow::Result<String> {
     std::fs::write(&c_path, c_source)?;
 
     let status = Command::new("cc")
-        .args([&c_path.to_string_lossy(), "-o", &exe_path.to_string_lossy(), "-lm"])
+        .args([
+            &c_path.to_string_lossy(),
+            "-o",
+            &exe_path.to_string_lossy(),
+            "-lm",
+        ])
         .status()?;
     if !status.success() {
         anyhow::bail!("cc failed with exit code {:?}", status.code());
@@ -26,7 +31,10 @@ fn compile_and_run(source: &str) -> anyhow::Result<String> {
 
     let output = Command::new(&exe_path).output()?;
     if !output.status.success() {
-        anyhow::bail!("executable failed with exit code {:?}", output.status.code());
+        anyhow::bail!(
+            "executable failed with exit code {:?}",
+            output.status.code()
+        );
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -86,7 +94,11 @@ fn bool_equality_and_null_equality() {
     "#;
     let out = compile_and_run(source).expect("compile and run");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines, vec!["true", "true", "false", "true"], "unexpected output: {out}");
+    assert_eq!(
+        lines,
+        vec!["true", "true", "false", "true"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -98,7 +110,11 @@ fn scalar_param_function_add() {
         }
     "#;
     let out = compile_and_run(source).expect("compile and run");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["5"], "unexpected output: {out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["5"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -111,7 +127,11 @@ fn argument_order_is_preserved() {
         }
     "#;
     let out = compile_and_run(source).expect("compile and run");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["2", "-2"], "unexpected output: {out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["2", "-2"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -122,7 +142,11 @@ fn scalar_float_return() {
         }
     "#;
     let out = compile_and_run(source).expect("compile and run");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["2.5"], "unexpected output: {out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["2.5"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -136,7 +160,11 @@ fn mixed_type_arithmetic() {
         }
     "#;
     let out = compile_and_run(source).expect("compile and run");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["7.0", "7.0", "2.5", "1.0"], "unexpected output: {out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["7.0", "7.0", "2.5", "1.0"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -148,7 +176,11 @@ fn mixed_type_comparison() {
         }
     "#;
     let out = compile_and_run(source).expect("compile and run");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["true", "true"], "unexpected output: {out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["true", "true"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -161,7 +193,11 @@ fn capability_argument_order() {
     let out = compile_and_run(source).expect("compile and run");
     // math.pow returns a float (matching FastVM), and io.print formats whole
     // floats with a trailing ".0" (matching runtime_value_to_text in io_print.rs).
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["8.0"], "unexpected output: {out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["8.0"],
+        "unexpected output: {out}"
+    );
 }
 
 #[test]
@@ -173,5 +209,8 @@ fn ordered_comparison_on_string_is_rejected() {
         }
     "#;
     let result = compile_and_run(source);
-    assert!(result.is_err(), "ordered comparison on strings should be rejected");
+    assert!(
+        result.is_err(),
+        "ordered comparison on strings should be rejected"
+    );
 }

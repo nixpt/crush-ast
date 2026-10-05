@@ -174,12 +174,7 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
                 MessageFormat::Json => {
                     let diags: Vec<crush_lang_sdk::theme::JsonDiagnostic> = errors
                         .iter()
-                        .map(|e| {
-                            crush_lang_sdk::theme::JsonDiagnostic::parse_error(
-                                e,
-                                Some(&file),
-                            )
-                        })
+                        .map(|e| crush_lang_sdk::theme::JsonDiagnostic::parse_error(e, Some(&file)))
                         .collect();
                     eprint!(
                         "{}",
@@ -330,5 +325,3 @@ fn emit_text_output(cli: &Cli, content: &str) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-

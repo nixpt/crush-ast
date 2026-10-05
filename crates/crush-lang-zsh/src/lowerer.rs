@@ -1,6 +1,6 @@
 use crush_cast::{CastType, Expression, Function, Program, Statement};
-use std::collections::HashMap;
 use crush_walker_core::LowerCtx;
+use std::collections::HashMap;
 use zshrs_parse::lexer::untokenize;
 use zshrs_parse::parser::*;
 
@@ -46,7 +46,8 @@ pub fn lower_program(program: &ZshProgram, ctx: &LowerCtx) -> anyhow::Result<Pro
 /// by && or ||. Returns extracted function definitions too.
 fn lower_sublist(
     sublist: &ZshSublist,
-    ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let (stmts, funcs) = lower_pipe(&sublist.pipe, ctx)?;
 
     if let Some((op, next)) = &sublist.next {
@@ -77,7 +78,10 @@ fn lower_sublist(
 /// Lower a ZshPipe to statements. A pipe is commands connected by |.
 /// For a single command, return its statements directly.
 /// For a multi-command pipeline, wrap in a Pipeline expression.
-fn lower_pipe(pipe: &ZshPipe, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_pipe(
+    pipe: &ZshPipe,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     if pipe.next.is_none() {
         return lower_command(&pipe.cmd, ctx);
     }
@@ -106,7 +110,10 @@ fn lower_pipe(pipe: &ZshPipe, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>,
     ))
 }
 
-fn lower_command(cmd: &ZshCommand, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_command(
+    cmd: &ZshCommand,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     match cmd {
         ZshCommand::Simple(simple) => lower_simple(simple, ctx),
         ZshCommand::FuncDef(func) => lower_funcdef(func, ctx),
@@ -139,7 +146,10 @@ fn lower_command(cmd: &ZshCommand, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statem
     }
 }
 
-fn lower_simple(simple: &ZshSimple, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_simple(
+    simple: &ZshSimple,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let mut stmts: Vec<Statement> = Vec::new();
 
     for assign in &simple.assigns {
@@ -157,7 +167,10 @@ fn lower_simple(simple: &ZshSimple, ctx: &LowerCtx) -> anyhow::Result<(Vec<State
     }
 
     let cmd_name = &simple.words[0];
-    let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w, ctx)).collect();
+    let args: Vec<Expression> = simple.words[1..]
+        .iter()
+        .map(|w| word_to_expr(w, ctx))
+        .collect();
 
     match cmd_name.as_str() {
         "echo" | "printf" => {
@@ -267,7 +280,10 @@ fn lower_simple(simple: &ZshSimple, ctx: &LowerCtx) -> anyhow::Result<(Vec<State
     Ok((stmts, Vec::new()))
 }
 
-fn lower_funcdef(func: &ZshFuncDef, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_funcdef(
+    func: &ZshFuncDef,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let body_prog = lower_program(func.body.as_ref(), ctx)?;
     let body = body_prog
         .functions
@@ -312,7 +328,10 @@ fn lower_funcdef(func: &ZshFuncDef, ctx: &LowerCtx) -> anyhow::Result<(Vec<State
     Ok((stmts, funcs))
 }
 
-fn lower_if(if_cmd: &ZshIf, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_if(
+    if_cmd: &ZshIf,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let condition = program_to_expr(&if_cmd.cond, ctx);
     let then_prog = lower_program(if_cmd.then.as_ref(), ctx)?;
     let then_body = then_prog
@@ -362,7 +381,10 @@ fn lower_if(if_cmd: &ZshIf, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, V
     ))
 }
 
-fn lower_while(w: &ZshWhile, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_while(
+    w: &ZshWhile,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let condition = program_to_expr(&w.cond, ctx);
     let body_prog = lower_program(w.body.as_ref(), ctx)?;
     let body = body_prog
@@ -381,7 +403,10 @@ fn lower_while(w: &ZshWhile, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, 
     ))
 }
 
-fn lower_until(w: &ZshWhile, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_until(
+    w: &ZshWhile,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let condition = Expression::UnaryOp {
         operator: "!".to_string(),
         operand: Box::new(program_to_expr(&w.cond, ctx)),
@@ -404,7 +429,10 @@ fn lower_until(w: &ZshWhile, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, 
     ))
 }
 
-fn lower_for(f: &ZshFor, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_for(
+    f: &ZshFor,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let iterable = match &f.list {
         ForList::Words(words) => {
             let elements: Vec<Expression> = words.iter().map(|w| word_to_expr(w, ctx)).collect();
@@ -448,7 +476,10 @@ fn lower_for(f: &ZshFor, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<
     ))
 }
 
-fn lower_case(case: &ZshCase, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_case(
+    case: &ZshCase,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let subject = word_to_expr(&case.word, ctx);
     let mut stmts = Vec::new();
 
@@ -510,7 +541,10 @@ fn lower_case(case: &ZshCase, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>,
     Ok((stmts, Vec::new()))
 }
 
-fn lower_repeat(rep: &ZshRepeat, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_repeat(
+    rep: &ZshRepeat,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let count = word_to_expr(&rep.count, ctx);
     let body_prog = lower_program(rep.body.as_ref(), ctx)?;
     let body = body_prog
@@ -567,7 +601,10 @@ fn lower_repeat(rep: &ZshRepeat, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statemen
     ))
 }
 
-fn lower_try(try_cmd: &ZshTry, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_try(
+    try_cmd: &ZshTry,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let try_prog = lower_program(try_cmd.try_block.as_ref(), ctx)?;
     let try_body = try_prog
         .functions
@@ -585,7 +622,10 @@ fn lower_try(try_cmd: &ZshTry, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>
     Ok((body, Vec::new()))
 }
 
-fn lower_cond(cond: &ZshCond, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_cond(
+    cond: &ZshCond,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     let expr = cond_to_expr(cond, ctx);
     Ok((
         vec![Statement::ExprStmt {
@@ -596,7 +636,10 @@ fn lower_cond(cond: &ZshCond, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>,
     ))
 }
 
-fn lower_arith(expr: &str, ctx: &LowerCtx) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+fn lower_arith(
+    expr: &str,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
     Ok((
         vec![Statement::ExprStmt {
             expr: Expression::CapabilityCall {
@@ -692,7 +735,10 @@ fn command_to_expr(cmd: &ZshCommand, ctx: &LowerCtx) -> Expression {
     match cmd {
         ZshCommand::Simple(simple) => {
             let first = simple.words.first().map(|s| s.as_str()).unwrap_or("");
-            let args: Vec<Expression> = simple.words[1..].iter().map(|w| word_to_expr(w, ctx)).collect();
+            let args: Vec<Expression> = simple.words[1..]
+                .iter()
+                .map(|w| word_to_expr(w, ctx))
+                .collect();
 
             match first {
                 "true" | ":" => Expression::BoolLiteral {
@@ -938,7 +984,8 @@ fn wrap_if(
     cond: Expression,
     body: Vec<Statement>,
     else_body: Option<Vec<Statement>>,
-    ctx: &LowerCtx) -> Vec<Statement> {
+    ctx: &LowerCtx,
+) -> Vec<Statement> {
     vec![Statement::If {
         condition: cond,
         then_body: body,

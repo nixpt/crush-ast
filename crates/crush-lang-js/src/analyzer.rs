@@ -1,5 +1,5 @@
-use swc_ecma_ast::*;
 use crush_walker_core::FeatureReport;
+use swc_ecma_ast::*;
 
 fn wtf8_str(a: &swc_atoms::Wtf8Atom) -> &str {
     a.as_str().unwrap_or_default()

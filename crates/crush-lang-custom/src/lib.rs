@@ -1,14 +1,14 @@
 //! `crush-lang-custom` — A meta-frontend that allows anyone to define a custom language
 //! using CSON grammar rules and parse/lower it dynamically to CAST.
 
-use std::any::Any;
-use std::collections::HashMap;
-use regex::Regex;
 use anyhow::{Result, anyhow};
-use crush_cast::{Program, Statement, Expression, Function, CastType};
+use crush_cast::{CastType, Expression, Function, Program, Statement};
 use crush_cson::CsonValue;
 use crush_cson::parser::CsonParser;
-use crush_walker_core::{Frontend, FeatureReport};
+use crush_walker_core::{FeatureReport, Frontend};
+use regex::Regex;
+use std::any::Any;
+use std::collections::HashMap;
 
 /// Rule matching structure mapping a regex to a CAST node type.
 #[derive(Debug, Clone)]
@@ -31,8 +31,10 @@ impl CustomFrontend {
     /// Load a CustomFrontend from a CSON definition string.
     pub fn from_cson(cson_str: &str) -> Result<Self> {
         let mut parser = CsonParser::new(cson_str);
-        let doc = parser.parse().map_err(|e| anyhow!("CSON parse error: {}", e))?;
-        
+        let doc = parser
+            .parse()
+            .map_err(|e| anyhow!("CSON parse error: {}", e))?;
+
         let CsonValue::Object(root_map) = doc.root.value else {
             return Err(anyhow!("Root of custom grammar must be an object"));
         };
@@ -50,9 +52,16 @@ impl CustomFrontend {
                 }
                 if let Some(node) = grammar_map.get("extensions") {
                     if let CsonValue::Array(arr) = &node.value {
-                        extensions = arr.iter().filter_map(|v| {
-                            if let CsonValue::String(s) = &v.value { Some(s.clone()) } else { None }
-                        }).collect();
+                        extensions = arr
+                            .iter()
+                            .filter_map(|v| {
+                                if let CsonValue::String(s) = &v.value {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
                     }
                 }
             }
@@ -126,7 +135,10 @@ impl CustomFrontend {
 
         for (_line_idx, line) in source.lines().enumerate() {
             let line_trimmed = line.trim();
-            if line_trimmed.is_empty() || line_trimmed.starts_with('#') || line_trimmed.starts_with("//") {
+            if line_trimmed.is_empty()
+                || line_trimmed.starts_with('#')
+                || line_trimmed.starts_with("//")
+            {
                 continue;
             }
 
@@ -139,21 +151,34 @@ impl CustomFrontend {
 
                     match rule.node_type.as_str() {
                         "VarDecl" => {
-                            let name_cap = rule.mappings.get("name")
+                            let name_cap = rule
+                                .mappings
+                                .get("name")
                                 .and_then(|key| caps.name(key))
                                 .map(|m| m.as_str().to_string())
                                 .unwrap_or_else(|| "x".to_string());
-                            let val_cap = rule.mappings.get("value")
+                            let val_cap = rule
+                                .mappings
+                                .get("value")
                                 .and_then(|key| caps.name(key))
                                 .map(|m| m.as_str())
                                 .unwrap_or("null");
 
                             let value = if let Ok(i) = val_cap.parse::<i64>() {
-                                Expression::IntLiteral { value: i, meta: meta.clone() }
+                                Expression::IntLiteral {
+                                    value: i,
+                                    meta: meta.clone(),
+                                }
                             } else if let Ok(f) = val_cap.parse::<f64>() {
-                                Expression::FloatLiteral { value: f, meta: meta.clone() }
+                                Expression::FloatLiteral {
+                                    value: f,
+                                    meta: meta.clone(),
+                                }
                             } else {
-                                Expression::StringLiteral { value: val_cap.trim_matches('"').to_string(), meta: meta.clone() }
+                                Expression::StringLiteral {
+                                    value: val_cap.trim_matches('"').to_string(),
+                                    meta: meta.clone(),
+                                }
                             };
 
                             main_body.push(Statement::VarDecl {
@@ -164,15 +189,24 @@ impl CustomFrontend {
                             });
                         }
                         "CapabilityCall" => {
-                            let cap_name = rule.capability.clone().unwrap_or_else(|| "io.print".to_string());
+                            let cap_name = rule
+                                .capability
+                                .clone()
+                                .unwrap_or_else(|| "io.print".to_string());
                             let mut args = Vec::new();
                             if let Some(arg_key) = rule.mappings.get("args") {
                                 if let Some(m) = caps.name(arg_key) {
                                     let arg_val = m.as_str().trim_matches('"');
                                     if let Ok(i) = arg_val.parse::<i64>() {
-                                        args.push(Expression::IntLiteral { value: i, meta: meta.clone() });
+                                        args.push(Expression::IntLiteral {
+                                            value: i,
+                                            meta: meta.clone(),
+                                        });
                                     } else {
-                                        args.push(Expression::StringLiteral { value: arg_val.to_string(), meta: meta.clone() });
+                                        args.push(Expression::StringLiteral {
+                                            value: arg_val.to_string(),
+                                            meta: meta.clone(),
+                                        });
                                     }
                                 }
                             }
@@ -198,13 +232,16 @@ impl CustomFrontend {
         }
 
         let mut functions = HashMap::new();
-        functions.insert("main".to_string(), Function {
-            params: vec![],
-            body: main_body,
-            meta: HashMap::new(),
-            is_async: false,
-            annotations: None,
-        });
+        functions.insert(
+            "main".to_string(),
+            Function {
+                params: vec![],
+                body: main_body,
+                meta: HashMap::new(),
+                is_async: false,
+                annotations: None,
+            },
+        );
 
         Ok(Program {
             cast_version: "0.2".to_string(),
@@ -227,7 +264,9 @@ impl Frontend for CustomFrontend {
     }
 
     fn file_extensions(&self) -> &[&'static str] {
-        let exts: Vec<&'static str> = self.extensions.iter()
+        let exts: Vec<&'static str> = self
+            .extensions
+            .iter()
             .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
             .collect();
         Box::leak(exts.into_boxed_slice())
@@ -288,33 +327,51 @@ mod tests {
         println!("Grammar name: {}", frontend.name);
         println!("Grammar exts: {:?}", frontend.extensions);
         for rule in &frontend.rules {
-            println!("Rule: {}, pattern: {}, node: {}", rule.name, rule.pattern, rule.node_type);
+            println!(
+                "Rule: {}, pattern: {}, node: {}",
+                rule.name, rule.pattern, rule.node_type
+            );
         }
 
         let source = "let x = 42\nsay \"hello\"";
         let program = frontend.parse_to_program(source).unwrap();
-        println!("Program functions main body: {:?}", program.functions.get("main").unwrap().body);
-        
+        println!(
+            "Program functions main body: {:?}",
+            program.functions.get("main").unwrap().body
+        );
+
         assert_eq!(program.entry, "main");
         let main = program.functions.get("main").unwrap();
         assert_eq!(main.body.len(), 2);
-        
+
         // Check first statement: VarDecl (x = 42)
         if let Statement::VarDecl { name, value, .. } = &main.body[0] {
             assert_eq!(name, "x");
             if let Expression::IntLiteral { value: val, .. } = value {
                 assert_eq!(*val, 42);
-            } else { panic!(); }
-        } else { panic!(); }
+            } else {
+                panic!();
+            }
+        } else {
+            panic!();
+        }
 
         // Check second statement: CapabilityCall (io.print "hello")
-        if let Statement::ExprStmt { expr: Expression::CapabilityCall { name, args, .. }, .. } = &main.body[1] {
+        if let Statement::ExprStmt {
+            expr: Expression::CapabilityCall { name, args, .. },
+            ..
+        } = &main.body[1]
+        {
             assert_eq!(name, "io.print");
             assert_eq!(args.len(), 1);
             if let Expression::StringLiteral { value: val, .. } = &args[0] {
                 assert_eq!(val, "hello");
-            } else { panic!(); }
-        } else { panic!(); }
+            } else {
+                panic!();
+            }
+        } else {
+            panic!();
+        }
     }
 
     /// CRUSH-36 Commit 1: regression-resistance for the Frontend ->
@@ -349,9 +406,17 @@ mod tests {
 pub struct CustomAdapter(pub CustomFrontend);
 
 impl crush_walker_core::LanguageAdapter for CustomAdapter {
-    fn language_name(&self) -> &'static str { "custom" }
-    fn file_extensions(&self) -> &[&'static str] { &[] }
-    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+    fn language_name(&self) -> &'static str {
+        "custom"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &[]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        _filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let (report, program) = crush_walker_core::frontend_pipeline(&self.0, source)?;
         Ok((report, program))
     }

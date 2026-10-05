@@ -162,14 +162,20 @@ mod tests {
 
     #[test]
     fn int_add_checked() {
-        assert_eq!(add_values(&Value::Int(2), &Value::Int(3)).unwrap(), Value::Int(5));
+        assert_eq!(
+            add_values(&Value::Int(2), &Value::Int(3)).unwrap(),
+            Value::Int(5)
+        );
     }
 
     #[test]
     fn int_add_overflow_errors() {
         let a = Value::Int(i64::MAX);
         let b = Value::Int(1);
-        assert!(matches!(add_values(&a, &b), Err(VmError::ArithmeticOverflow)));
+        assert!(matches!(
+            add_values(&a, &b),
+            Err(VmError::ArithmeticOverflow)
+        ));
     }
 
     #[test]
@@ -186,23 +192,41 @@ mod tests {
 
     #[test]
     fn div_by_zero_errors() {
-        assert!(matches!(div_values(&Value::Int(1), &Value::Int(0)), Err(VmError::DivByZero)));
-        assert!(matches!(div_values(&Value::Float(1.0), &Value::Float(0.0)), Err(VmError::DivByZero)));
+        assert!(matches!(
+            div_values(&Value::Int(1), &Value::Int(0)),
+            Err(VmError::DivByZero)
+        ));
+        assert!(matches!(
+            div_values(&Value::Float(1.0), &Value::Float(0.0)),
+            Err(VmError::DivByZero)
+        ));
     }
 
     #[test]
     fn int_mod_truncates_toward_zero() {
-        assert_eq!(mod_values(&Value::Int(7), &Value::Int(3)).unwrap(), Value::Int(1));
-        assert_eq!(mod_values(&Value::Int(-7), &Value::Int(3)).unwrap(), Value::Int(-1));
+        assert_eq!(
+            mod_values(&Value::Int(7), &Value::Int(3)).unwrap(),
+            Value::Int(1)
+        );
+        assert_eq!(
+            mod_values(&Value::Int(-7), &Value::Int(3)).unwrap(),
+            Value::Int(-1)
+        );
     }
 
     #[test]
     fn neg_min_int_overflows() {
-        assert!(matches!(neg_value(&Value::Int(i64::MIN)), Err(VmError::ArithmeticOverflow)));
+        assert!(matches!(
+            neg_value(&Value::Int(i64::MIN)),
+            Err(VmError::ArithmeticOverflow)
+        ));
     }
 
     #[test]
     fn compare_mixed_types() {
-        assert_eq!(compare_values(&Value::Int(2), &Value::Float(3.0), |a, b| a < b).unwrap(), Value::Bool(true));
+        assert_eq!(
+            compare_values(&Value::Int(2), &Value::Float(3.0), |a, b| a < b).unwrap(),
+            Value::Bool(true)
+        );
     }
 }

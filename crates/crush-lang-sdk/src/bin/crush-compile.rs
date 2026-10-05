@@ -59,9 +59,7 @@ fn main() {
                 eprintln!("crush-compile: {e:#}");
             }
             MessageFormat::Json => {
-                let diag = if let Some(asm_err) =
-                    e.downcast_ref::<crush_vm::AssemblyError>()
-                {
+                let diag = if let Some(asm_err) = e.downcast_ref::<crush_vm::AssemblyError>() {
                     // `AssemblyError`'s `Display` already includes the line
                     // number (e.g. `line 3: duplicate label \"foo\"`), so
                     // passing it through carries the source position into

@@ -1,7 +1,7 @@
 use crush_cast::Program;
-use std::any::Any;
-use crush_walker_core::{FeatureReport, Frontend};
 use crush_frontend::parse_source;
+use crush_walker_core::{FeatureReport, Frontend};
+use std::any::Any;
 
 pub struct NepaliFrontend;
 
@@ -25,7 +25,7 @@ impl Frontend for NepaliFrontend {
         let program = ast
             .downcast_ref::<Program>()
             .ok_or_else(|| anyhow::anyhow!("expected Program"))?;
-        
+
         let mut report = FeatureReport::default();
         report.lang = "nepcode".to_string();
         report.uses_functions = !program.functions.is_empty();

@@ -56,10 +56,10 @@ use std::sync::{Arc, Mutex};
 
 use crush_lang_sdk::compile::compile_crush_source;
 use crush_lang_sdk::{HostCap, HostCapSpec, HostCaps, Runtime};
-use crush_pkg::manifest::{language_to_capsule_type, CapsuleType, Manifest};
+use crush_pkg::manifest::{CapsuleType, Manifest, language_to_capsule_type};
 use crush_pkg::runners::{CapsuleRunner, CrushRunner, ExecutionResult};
-use crush_vm::{run_with_caps, Quotas};
 use crush_vm::vm::Value;
+use crush_vm::{Quotas, run_with_caps};
 
 mod test_paths;
 
@@ -107,12 +107,7 @@ fn arg_of(v: &Value) -> String {
 // One HostCap per cap-side cell. The cap NAME encodes the cell ID and
 // matches the .crush call syntax (2-segment dotted); the `cell` slug
 // is what's logged into the shared CaptureMap.
-fn make_cap(
-    name: &'static str,
-    cell: &'static str,
-    argc: usize,
-    map: CaptureMap,
-) -> impl HostCap {
+fn make_cap(name: &'static str, cell: &'static str, argc: usize, map: CaptureMap) -> impl HostCap {
     struct Cap {
         name: &'static str,
         cell: &'static str,
@@ -247,24 +242,9 @@ fn sdk_matrix_structural_lockstep() {
     // `HostCaps::get`. Pin the registry pattern by registering three
     // custom caps and asserting each gets looked up by name.
     let mut caps = HostCaps::new();
-    caps.register(Box::new(make_cap(
-        CAP_CELL_1,
-        CAP_CELL_1,
-        1,
-        map.clone(),
-    )));
-    caps.register(Box::new(make_cap(
-        CAP_CELL_3,
-        CAP_CELL_3,
-        2,
-        map.clone(),
-    )));
-    caps.register(Box::new(make_cap(
-        CAP_CELL_5,
-        CAP_CELL_5,
-        2,
-        map.clone(),
-    )));
+    caps.register(Box::new(make_cap(CAP_CELL_1, CAP_CELL_1, 1, map.clone())));
+    caps.register(Box::new(make_cap(CAP_CELL_3, CAP_CELL_3, 2, map.clone())));
+    caps.register(Box::new(make_cap(CAP_CELL_5, CAP_CELL_5, 2, map.clone())));
     assert!(
         caps.get(CAP_CELL_1).is_some(),
         "CELL_5 (registry): caps.get({CAP_CELL_1:?}) must resolve"

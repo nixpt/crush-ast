@@ -17,12 +17,12 @@ pub struct CWalker {
 
 impl Walker for CWalker {
     fn language(&self) -> tree_sitter::Language {
-        let is_cpp = self.file_name.ends_with(".cpp") ||
-                     self.file_name.ends_with(".cc") ||
-                     self.file_name.ends_with(".cxx") ||
-                     self.file_name.ends_with(".c++") ||
-                     self.file_name.ends_with(".hpp");
-        
+        let is_cpp = self.file_name.ends_with(".cpp")
+            || self.file_name.ends_with(".cc")
+            || self.file_name.ends_with(".cxx")
+            || self.file_name.ends_with(".c++")
+            || self.file_name.ends_with(".hpp");
+
         if is_cpp {
             tree_sitter_cpp::LANGUAGE.into()
         } else {
@@ -159,15 +159,21 @@ impl<'a> Visitor<'a> {
                 let expr_node = node.child(0).unwrap();
                 if expr_node.kind() == "assignment_expression" {
                     let left_node = expr_node.child_by_field_name("left").unwrap();
-                    let op_str = self.base.text(expr_node.child_by_field_name("operator").unwrap())?.to_string();
+                    let op_str = self
+                        .base
+                        .text(expr_node.child_by_field_name("operator").unwrap())?
+                        .to_string();
                     let right_node = expr_node.child_by_field_name("right").unwrap();
                     let right_expr = self.visit_expression(right_node)?;
-                    
+
                     if left_node.kind() == "field_expression" {
                         let target_node = left_node.child_by_field_name("argument").unwrap();
                         let target = self.visit_expression(target_node)?;
-                        let field = self.base.text(left_node.child_by_field_name("field").unwrap())?.to_string();
-                        
+                        let field = self
+                            .base
+                            .text(left_node.child_by_field_name("field").unwrap())?
+                            .to_string();
+
                         let value = match op_str.as_str() {
                             "=" => right_expr,
                             _ => Expression::BinaryOp {
@@ -179,9 +185,9 @@ impl<'a> Visitor<'a> {
                                 }),
                                 right: Box::new(right_expr),
                                 meta: meta.clone(),
-                            }
+                            },
                         };
-                        
+
                         return Ok(vec![Statement::SetField {
                             target,
                             field,
@@ -190,7 +196,7 @@ impl<'a> Visitor<'a> {
                         }]);
                     }
                 }
-                
+
                 let expr = self.visit_expression(expr_node)?;
 
                 // Special check for __crush_export__ call
@@ -266,23 +272,26 @@ impl<'a> Visitor<'a> {
             }
             "for_statement" => {
                 let mut for_statements = Vec::new();
-                
+
                 // 1. Initializer
                 if let Some(init_node) = node.child_by_field_name("initializer") {
                     for_statements.extend(self.visit_statement(init_node)?);
                 }
-                
+
                 // 2. Condition
                 let condition = if let Some(cond_node) = node.child_by_field_name("condition") {
                     self.visit_expression(cond_node)?
                 } else {
-                    Expression::BoolLiteral { value: true, meta: meta.clone() }
+                    Expression::BoolLiteral {
+                        value: true,
+                        meta: meta.clone(),
+                    }
                 };
-                
+
                 // 3. Body
                 let body_node = node.child_by_field_name("body").unwrap();
                 let mut while_body = self.visit_block_or_statement(body_node)?;
-                
+
                 // 4. Update
                 if let Some(update_node) = node.child_by_field_name("update") {
                     let update_expr = self.visit_expression(update_node)?;
@@ -291,21 +300,17 @@ impl<'a> Visitor<'a> {
                         meta: self.base.create_meta(update_node, "c", self.file_name),
                     });
                 }
-                
+
                 for_statements.push(Statement::While {
                     condition: Box::new(condition),
                     body: while_body,
                     meta,
                 });
-                
+
                 Ok(for_statements)
             }
-            "break_statement" => {
-                Ok(vec![Statement::Break { meta }])
-            }
-            "continue_statement" => {
-                Ok(vec![Statement::Continue { meta }])
-            }
+            "break_statement" => Ok(vec![Statement::Break { meta }]),
+            "continue_statement" => Ok(vec![Statement::Continue { meta }]),
             "do_statement" => {
                 // do { body } while (condition);
                 let body_node = node.child_by_field_name("body").unwrap();
@@ -380,7 +385,7 @@ impl<'a> Visitor<'a> {
                             cases.push((None, case_body));
                         }
                         "{" | "}" => {} // skip braces
-                        _ => {} // ignore other nodes inside switch body
+                        _ => {}         // ignore other nodes inside switch body
                     }
                 }
 
@@ -461,9 +466,7 @@ impl<'a> Visitor<'a> {
                 }
                 Ok(result_stmts)
             }
-            "compound_statement" => {
-                self.visit_block(node)
-            }
+            "compound_statement" => self.visit_block(node),
             _ => Ok(vec![]),
         }
     }
@@ -498,7 +501,10 @@ impl<'a> Visitor<'a> {
             "field_expression" => {
                 let target_node = node.child_by_field_name("argument").unwrap();
                 let target = self.visit_expression(target_node)?;
-                let field = self.base.text(node.child_by_field_name("field").unwrap())?.to_string();
+                let field = self
+                    .base
+                    .text(node.child_by_field_name("field").unwrap())?
+                    .to_string();
                 Ok(Expression::GetField {
                     target: Box::new(target),
                     field,
@@ -542,22 +548,30 @@ impl<'a> Visitor<'a> {
                 let right_node = node.child_by_field_name("right").unwrap();
                 let name = self.base.text(left_node)?.to_string();
                 let right_expr = self.visit_expression(right_node)?;
-                let op_str = self.base.text(node.child_by_field_name("operator").unwrap())?;
-                
+                let op_str = self
+                    .base
+                    .text(node.child_by_field_name("operator").unwrap())?;
+
                 let value = match op_str {
                     "=" => right_expr,
                     _ => Expression::BinaryOp {
                         operator: op_str.trim_end_matches('=').to_string(),
-                        left: Box::new(Expression::Var { name: name.clone(), meta: meta.clone() }),
+                        left: Box::new(Expression::Var {
+                            name: name.clone(),
+                            meta: meta.clone(),
+                        }),
                         right: Box::new(right_expr),
                         meta: meta.clone(),
-                    }
+                    },
                 };
-                
+
                 Ok(Expression::Call {
                     function: "__crush_assign__".to_string(),
                     args: vec![
-                        Expression::Var { name, meta: meta.clone() },
+                        Expression::Var {
+                            name,
+                            meta: meta.clone(),
+                        },
                         value,
                     ],
                     meta,
@@ -568,8 +582,12 @@ impl<'a> Visitor<'a> {
                 let name = self.base.text(arg_node)?.to_string();
                 let op = self.base.text(node.child(0).unwrap())?;
                 let is_prefix = op == "++" || op == "--";
-                let op_str = if is_prefix { op } else { self.base.text(node.child(1).unwrap())? };
-                
+                let op_str = if is_prefix {
+                    op
+                } else {
+                    self.base.text(node.child(1).unwrap())?
+                };
+
                 let fname = match (op_str, is_prefix) {
                     ("++", true) => "__crush_pre_inc__",
                     ("--", true) => "__crush_pre_dec__",
@@ -577,7 +595,7 @@ impl<'a> Visitor<'a> {
                     ("--", false) => "__crush_post_dec__",
                     _ => "__crush_post_inc__",
                 };
-                
+
                 Ok(Expression::Call {
                     function: fname.to_string(),
                     args: vec![Expression::Var {
@@ -636,7 +654,11 @@ impl<'a> Visitor<'a> {
                 let argument = self.visit_expression(node.child(1).unwrap())?;
                 Ok(Expression::Call {
                     // C parser treats both deref '*' and address-of '&' as pointer or unary expression.
-                    function: if operator == "*" { "__crush_deref__".to_string() } else { "__crush_addr_of__".to_string() },
+                    function: if operator == "*" {
+                        "__crush_deref__".to_string()
+                    } else {
+                        "__crush_addr_of__".to_string()
+                    },
                     args: vec![argument],
                     meta,
                 })
@@ -660,7 +682,8 @@ impl<'a> Visitor<'a> {
                 })
             }
             "subscript_expression" => {
-                let argument = self.visit_expression(node.child_by_field_name("argument").unwrap())?;
+                let argument =
+                    self.visit_expression(node.child_by_field_name("argument").unwrap())?;
                 let index = self.visit_expression(node.child_by_field_name("index").unwrap())?;
                 Ok(Expression::Call {
                     function: "__crush_subscript__".to_string(),
@@ -669,9 +692,12 @@ impl<'a> Visitor<'a> {
                 })
             }
             "conditional_expression" => {
-                let condition = self.visit_expression(node.child_by_field_name("condition").unwrap())?;
-                let consequence = self.visit_expression(node.child_by_field_name("consequence").unwrap())?;
-                let alternative = self.visit_expression(node.child_by_field_name("alternative").unwrap())?;
+                let condition =
+                    self.visit_expression(node.child_by_field_name("condition").unwrap())?;
+                let consequence =
+                    self.visit_expression(node.child_by_field_name("consequence").unwrap())?;
+                let alternative =
+                    self.visit_expression(node.child_by_field_name("alternative").unwrap())?;
                 Ok(Expression::Call {
                     // Ternary expression (a ? b : c) mapped to a conditional functional helper
                     function: "__crush_ternary__".to_string(),
@@ -700,7 +726,6 @@ impl<'a> Visitor<'a> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -708,7 +733,9 @@ mod tests {
 
     fn parse_and_walk(source: &str) -> ast::Program {
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_c::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_c::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(source, None).unwrap();
         let walker = CWalker {
             file_name: "test.c".to_string(),
@@ -738,7 +765,10 @@ mod tests {
         let program = parse_and_walk("void main() { while (x > 0) { x = x - 1; } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::While { condition, body, .. } = &main_func.body[0] {
+        if let Statement::While {
+            condition, body, ..
+        } = &main_func.body[0]
+        {
             if let Expression::BinaryOp { operator, .. } = &**condition {
                 assert_eq!(operator, ">");
             } else {
@@ -755,14 +785,17 @@ mod tests {
         let program = parse_and_walk("void main() { for (int i = 0; i < 10; i++) { printf(i); } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 2);
-        
+
         if let Statement::VarDecl { name, .. } = &main_func.body[0] {
             assert_eq!(name, "i");
         } else {
             panic!("Expected VarDecl initializer");
         }
 
-        if let Statement::While { condition, body, .. } = &main_func.body[1] {
+        if let Statement::While {
+            condition, body, ..
+        } = &main_func.body[1]
+        {
             if let Expression::BinaryOp { operator, .. } = &**condition {
                 assert_eq!(operator, "<");
             }
@@ -786,7 +819,13 @@ mod tests {
         let program = parse_and_walk("void main() { obj.x = 10; }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::SetField { target, field, value, .. } = &main_func.body[0] {
+        if let Statement::SetField {
+            target,
+            field,
+            value,
+            ..
+        } = &main_func.body[0]
+        {
             assert_eq!(field, "x");
             if let Expression::Var { name, .. } = target {
                 assert_eq!(name, "obj");
@@ -822,34 +861,70 @@ mod tests {
         assert_eq!(main_func.body.len(), 6);
 
         // 1. *ptr -> Call __crush_deref__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[0] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[0]
+        {
             assert_eq!(function, "__crush_deref__");
-        } else { panic!("Expected __crush_deref__"); }
+        } else {
+            panic!("Expected __crush_deref__");
+        }
 
         // 2. &var -> Call __crush_addr_of__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[1] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[1]
+        {
             assert_eq!(function, "__crush_addr_of__");
-        } else { panic!("Expected __crush_addr_of__"); }
+        } else {
+            panic!("Expected __crush_addr_of__");
+        }
 
         // 3. -num -> Call __crush_neg__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[2] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[2]
+        {
             assert_eq!(function, "__crush_neg__");
-        } else { panic!("Expected __crush_neg__"); }
+        } else {
+            panic!("Expected __crush_neg__");
+        }
 
         // 4. !flag -> Call __crush_not__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[3] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[3]
+        {
             assert_eq!(function, "__crush_not__");
-        } else { panic!("Expected __crush_not__"); }
+        } else {
+            panic!("Expected __crush_not__");
+        }
 
         // 5. arr[5] -> Call __crush_subscript__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[4] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[4]
+        {
             assert_eq!(function, "__crush_subscript__");
-        } else { panic!("Expected __crush_subscript__"); }
+        } else {
+            panic!("Expected __crush_subscript__");
+        }
 
         // 6. a ? b : c -> Call __crush_ternary__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[5] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[5]
+        {
             assert_eq!(function, "__crush_ternary__");
-        } else { panic!("Expected __crush_ternary__"); }
+        } else {
+            panic!("Expected __crush_ternary__");
+        }
     }
 }
 
@@ -859,22 +934,45 @@ use crush_walker_core::LanguageAdapter;
 
 pub struct CAdapter;
 impl LanguageAdapter for CAdapter {
-    fn language_name(&self) -> &'static str { "c" }
-    fn file_extensions(&self) -> &[&'static str] { &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
-        let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("c");
+    fn language_name(&self) -> &'static str {
+        "c"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("c");
         let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
         let mut parser = tree_sitter::Parser::new();
         if is_cpp {
-            parser.set_language(&tree_sitter_cpp::LANGUAGE.into())
+            parser
+                .set_language(&tree_sitter_cpp::LANGUAGE.into())
                 .map_err(|e| anyhow::anyhow!("tree-sitter-cpp init: {e}"))?;
         } else {
-            parser.set_language(&tree_sitter_c::LANGUAGE.into())
+            parser
+                .set_language(&tree_sitter_c::LANGUAGE.into())
                 .map_err(|e| anyhow::anyhow!("tree-sitter-c init: {e}"))?;
         }
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
-        let walker = crate::CWalker { file_name: filename.to_string() };
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
+        let walker = crate::CWalker {
+            file_name: filename.to_string(),
+        };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((crush_walker_core::FeatureReport { lang: "c".to_string(), ..Default::default() }, program))
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "c".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
     }
 }

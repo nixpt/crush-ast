@@ -24,7 +24,10 @@ fn spawn_creates_handle() {
     HALT";
     let r = run_src(src);
     let top = r.stack.last().expect("should have a value");
-    assert!(matches!(top, Value::Handle(_)), "expected Handle, got {top:?}");
+    assert!(
+        matches!(top, Value::Handle(_)),
+        "expected Handle, got {top:?}"
+    );
 }
 
 #[test]
@@ -65,7 +68,12 @@ fn spawn_with_args() {
     MUL
     HALT";
     let r = run_src(src);
-    assert_eq!(r.stack, vec![Value::Int(198)], "expected 99*2=198, got {:?}", r.stack);
+    assert_eq!(
+        r.stack,
+        vec![Value::Int(198)],
+        "expected 99*2=198, got {:?}",
+        r.stack
+    );
 }
 
 #[test]
@@ -83,5 +91,10 @@ fn spawn_with_multiple_args() {
     ADD
     HALT";
     let r = run_src(src);
-    assert_eq!(r.stack, vec![Value::Int(10)], "expected 3+7=10, got {:?}", r.stack);
+    assert_eq!(
+        r.stack,
+        vec![Value::Int(10)],
+        "expected 3+7=10, got {:?}",
+        r.stack
+    );
 }

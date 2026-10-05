@@ -131,7 +131,9 @@ impl std::fmt::Debug for HostCaps {
 /// `Named("polyglot.<lang>")` capability from a CapabilitySet into `polyglot_gate("<lang>")` and
 /// pushes it, so a capsule's declared polyglot grant becomes a live gate with no crush-vm change.
 pub fn polyglot_gate(lang: &str) -> Box<dyn HostCap> {
-    Box::new(PolyglotGate { lang: lang.to_string() })
+    Box::new(PolyglotGate {
+        lang: lang.to_string(),
+    })
 }
 
 /// Presence-only capability gate for `@<lang>` polyglot blocks. exec_lang checks
@@ -143,7 +145,11 @@ struct PolyglotGate {
 
 impl HostCap for PolyglotGate {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: format!("polyglot.{}", self.lang), argc: None, returns: false }
+        HostCapSpec {
+            name: format!("polyglot.{}", self.lang),
+            argc: None,
+            returns: false,
+        }
     }
     fn call(&self, _args: Vec<crate::vm::Value>) -> Result<Option<crate::vm::Value>, String> {
         Ok(None)

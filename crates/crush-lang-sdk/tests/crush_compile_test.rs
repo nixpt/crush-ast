@@ -64,11 +64,7 @@ fn crush_compile_emits_json_diagnostic_for_assembler_error() {
     std::fs::write(&src, "this is not valid CASM text\n").unwrap();
     let src_str = src.to_str().unwrap().to_string();
 
-    let output = run_crush_compile(&[
-        "--message-format",
-        "json",
-        &src_str,
-    ]);
+    let output = run_crush_compile(&["--message-format", "json", &src_str]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(

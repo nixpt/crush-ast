@@ -47,7 +47,11 @@ fn require_numeric(a: &RuntimeValue, b: &RuntimeValue) -> Result<(), FastError> 
 }
 
 /// ADD with string concatenation when either side is a string.
-pub fn add_rtv(a: &RuntimeValue, b: &RuntimeValue, arena: &Arena) -> Result<RuntimeValue, FastError> {
+pub fn add_rtv(
+    a: &RuntimeValue,
+    b: &RuntimeValue,
+    arena: &Arena,
+) -> Result<RuntimeValue, FastError> {
     if is_string(a, arena) || is_string(b, arena) {
         let s = format!("{}{}", rtv_as_text(a, arena), rtv_as_text(b, arena));
         return Ok(RuntimeValue::String(s));

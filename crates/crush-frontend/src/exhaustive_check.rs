@@ -75,8 +75,8 @@ pub fn check_exhaustiveness(program: &Program) -> Vec<CompilerDiagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Parser;
     use crate::cast_enrich::enrich_cast;
+    use crate::parser::Parser;
 
     fn run(source: &str) -> Vec<CompilerDiagnostic> {
         let mut prog = Parser::parse(source).expect("parse should succeed");
@@ -128,8 +128,14 @@ fn paint(c) {
         let d = &diags[0];
         assert_eq!(d.code, "E-EXH-001");
         assert!(matches!(d.severity, DiagnosticSeverity::Warning));
-        assert!(d.message.contains("paint"), "message should mention fn name");
-        assert!(d.message.contains("Color"), "message should mention tracked type");
+        assert!(
+            d.message.contains("paint"),
+            "message should mention fn name"
+        );
+        assert!(
+            d.message.contains("Color"),
+            "message should mention tracked type"
+        );
         assert!(d.hint.is_some());
     }
 

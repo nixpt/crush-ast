@@ -31,8 +31,7 @@ pub trait AsyncWrite {
 
 pub trait AsyncAccept {
     type Conn;
-    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>)
-        -> Poll<io::Result<Self::Conn>>;
+    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<Self::Conn>>;
 }
 
 pub trait Transport: Send + Sync + 'static {
@@ -47,7 +46,10 @@ pub struct Endpoint(pub IpAddr, pub u16);
 /// caller's responsibility via `std::net::ToSocketAddrs`.
 pub fn parse_uri(uri: &str) -> io::Result<Endpoint> {
     let rest = uri.strip_prefix("tcp://").ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, format!("not a tcp:// URI: {uri}"))
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("not a tcp:// URI: {uri}"),
+        )
     })?;
     let (host_raw, port_raw) = rest.rsplit_once(':').ok_or_else(|| {
         io::Error::new(

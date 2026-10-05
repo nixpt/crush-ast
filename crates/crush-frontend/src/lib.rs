@@ -1,18 +1,18 @@
 pub mod ai_runtime;
-pub mod cson_desugar;
 pub mod cast_enrich;
 pub mod compiler;
+pub mod cson_desugar;
 pub mod diagnostics;
 pub mod exhaustive_check;
 pub mod import_system;
 pub mod language_walkers;
+pub mod mutation_check;
 pub mod optimizer;
 pub mod parser;
 pub mod polyglot_imports;
 pub mod render;
 pub mod semantics;
 pub mod types;
-pub mod mutation_check;
 pub mod wip_check;
 
 use anyhow::Result;
@@ -165,5 +165,8 @@ pub fn extract_symbol(source: &str, name: &str) -> Result<String> {
 /// Returns `None` if no `@module` annotation was declared.
 pub fn extract_manifest(source: &str) -> Result<Option<String>> {
     let program = parse_source(source)?;
-    Ok(program.manifest.as_ref().map(render::render_module_manifest))
+    Ok(program
+        .manifest
+        .as_ref()
+        .map(render::render_module_manifest))
 }

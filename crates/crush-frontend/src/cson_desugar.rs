@@ -1,6 +1,6 @@
-use crush_cast::cson::{CsonKey, CsonNode, CsonValue};
-use crush_cast::{Expression, CastType};
 use crush_cast::ai::AIExpression;
+use crush_cast::cson::{CsonKey, CsonNode, CsonValue};
+use crush_cast::{CastType, Expression};
 use std::collections::HashMap;
 
 /// Converts a CSON AST Node into a fully executable Crush Expression.
@@ -8,20 +8,37 @@ use std::collections::HashMap;
 /// to be compiled directly into executable CAST logic by the frontend.
 pub fn desugar_cson_to_expr(node: &CsonNode) -> Expression {
     match &node.value {
-        CsonValue::Null => Expression::NullLiteral { meta: HashMap::new() },
-        CsonValue::Boolean(b) => Expression::BoolLiteral { value: *b, meta: HashMap::new() },
+        CsonValue::Null => Expression::NullLiteral {
+            meta: HashMap::new(),
+        },
+        CsonValue::Boolean(b) => Expression::BoolLiteral {
+            value: *b,
+            meta: HashMap::new(),
+        },
         CsonValue::Number(n) => {
             if n.fract() == 0.0 && *n <= i64::MAX as f64 && *n >= i64::MIN as f64 {
-                Expression::IntLiteral { value: *n as i64, meta: HashMap::new() }
+                Expression::IntLiteral {
+                    value: *n as i64,
+                    meta: HashMap::new(),
+                }
             } else {
-                Expression::FloatLiteral { value: *n, meta: HashMap::new() }
+                Expression::FloatLiteral {
+                    value: *n,
+                    meta: HashMap::new(),
+                }
             }
         }
-        CsonValue::String(s) => Expression::StringLiteral { value: s.clone(), meta: HashMap::new() },
+        CsonValue::String(s) => Expression::StringLiteral {
+            value: s.clone(),
+            meta: HashMap::new(),
+        },
 
         CsonValue::Array(elements) => {
             let exprs = elements.iter().map(desugar_cson_to_expr).collect();
-            Expression::ArrayLiteral { elements: exprs, meta: HashMap::new() }
+            Expression::ArrayLiteral {
+                elements: exprs,
+                meta: HashMap::new(),
+            }
         }
 
         CsonValue::Object(properties) => {
@@ -54,19 +71,23 @@ pub fn desugar_cson_to_expr(node: &CsonNode) -> Expression {
                 for (k, v) in properties {
                     props.push((k.clone(), desugar_cson_to_expr(v)));
                 }
-                Expression::ObjectLiteral { properties: props, meta: HashMap::new() }
+                Expression::ObjectLiteral {
+                    properties: props,
+                    meta: HashMap::new(),
+                }
             } else {
-                Expression::ArrayLiteral { elements, meta: HashMap::new() }
+                Expression::ArrayLiteral {
+                    elements,
+                    meta: HashMap::new(),
+                }
             }
         }
 
-        CsonValue::Synthesize(prompt) => {
-            Expression::AI(AIExpression::Synthesize {
-                output_type: CastType::Any,
-                constraints: vec![prompt.clone()],
-                context_refs: vec![],
-                examples: None,
-            })
-        }
+        CsonValue::Synthesize(prompt) => Expression::AI(AIExpression::Synthesize {
+            output_type: CastType::Any,
+            constraints: vec![prompt.clone()],
+            context_refs: vec![],
+            examples: None,
+        }),
     }
 }

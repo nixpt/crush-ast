@@ -11,8 +11,8 @@ pub mod types;
 pub mod validate;
 pub use manifest::{
     Annotation, ChangelogEntry, CoverageAnnotation, DecisionNode, ErrorAnnotation, ErrorLikelihood,
-    ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, ReadAnnotation,
-    SourceLoc, TemporaryNode, WeightedError, WriteAnnotation, WipNode,
+    ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, ReadAnnotation, SourceLoc,
+    TemporaryNode, WeightedError, WipNode, WriteAnnotation,
 };
 pub use pack::{CAST_VERSION, Format, PackError};
 pub use types::CastType;

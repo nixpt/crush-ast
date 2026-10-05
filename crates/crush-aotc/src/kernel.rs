@@ -75,7 +75,12 @@ impl<'a> CpuKernelEmitter<'a> {
     }
 
     /// Emit a scalar (non-SIMD) kernel loop.
-    fn emit_scalar_kernel(&self, name: &str, func: &Function, out: &mut String) -> anyhow::Result<()> {
+    fn emit_scalar_kernel(
+        &self,
+        name: &str,
+        func: &Function,
+        out: &mut String,
+    ) -> anyhow::Result<()> {
         writeln!(out, "void __crush_kernel_{}(", name)?;
         writeln!(out, "    const double * __restrict__ in,")?;
         writeln!(out, "    double       * __restrict__ out,")?;
@@ -93,19 +98,33 @@ impl<'a> CpuKernelEmitter<'a> {
         for instr in &func.body {
             match instr.op.as_str() {
                 "push_float" => {
-                    let v = instr.args.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let t = format!("_s{}", tmp_count); tmp_count += 1;
+                    let v = instr
+                        .args
+                        .get("value")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let t = format!("_s{}", tmp_count);
+                    tmp_count += 1;
                     writeln!(out, "        double {} = {:.17e};", t, v)?;
                     stack.push((t, InferredType::Float));
                 }
                 "push_int" => {
-                    let v = instr.args.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let t = format!("_s{}", tmp_count); tmp_count += 1;
+                    let v = instr
+                        .args
+                        .get("value")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let t = format!("_s{}", tmp_count);
+                    tmp_count += 1;
                     writeln!(out, "        double {} = (double){}LL;", t, v)?;
                     stack.push((t, InferredType::Float));
                 }
                 "load" => {
-                    let n = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let n = instr
+                        .args
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     if n == "in" || func.params.contains(&n.to_string()) {
                         stack.push(("_in".to_string(), InferredType::Float));
                     } else {
@@ -113,8 +132,14 @@ impl<'a> CpuKernelEmitter<'a> {
                     }
                 }
                 "store" => {
-                    let n = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let src = stack.pop().unwrap_or(("0.0".to_string(), InferredType::Float));
+                    let n = instr
+                        .args
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let src = stack
+                        .pop()
+                        .unwrap_or(("0.0".to_string(), InferredType::Float));
                     if n == "out" {
                         writeln!(out, "        out[tid] = {};", src.0)?;
                     } else {
@@ -131,13 +156,20 @@ impl<'a> CpuKernelEmitter<'a> {
                     let c = stack.pop().unwrap_or(("0.0".into(), InferredType::Float));
                     let b = stack.pop().unwrap_or(("0.0".into(), InferredType::Float));
                     let a = stack.pop().unwrap_or(("0.0".into(), InferredType::Float));
-                    let t = format!("_s{}", tmp_count); tmp_count += 1;
-                    writeln!(out, "        double {} = fma({}, {}, {});", t, a.0, b.0, c.0)?;
+                    let t = format!("_s{}", tmp_count);
+                    tmp_count += 1;
+                    writeln!(
+                        out,
+                        "        double {} = fma({}, {}, {});",
+                        t, a.0, b.0, c.0
+                    )?;
                     stack.push((t, InferredType::Float));
                 }
                 "ret" => {
                     // in kernel context, ret stores to out[tid]
-                    let src = stack.pop().unwrap_or(("0.0".to_string(), InferredType::Float));
+                    let src = stack
+                        .pop()
+                        .unwrap_or(("0.0".to_string(), InferredType::Float));
                     writeln!(out, "        out[tid] = {};", src.0)?;
                 }
                 _ => {
@@ -146,8 +178,8 @@ impl<'a> CpuKernelEmitter<'a> {
             }
         }
 
-        writeln!(out, "    }}")?;  // end for loop
-        writeln!(out, "}}")?;      // end function
+        writeln!(out, "    }}")?; // end for loop
+        writeln!(out, "}}")?; // end function
         Ok(())
     }
 
@@ -155,7 +187,12 @@ impl<'a> CpuKernelEmitter<'a> {
     ///
     /// Processes 4 doubles per iteration with `__m256d` intrinsics, then
     /// handles the tail with a scalar loop.
-    fn emit_avx2_kernel(&self, name: &str, func: &Function, out: &mut String) -> anyhow::Result<()> {
+    fn emit_avx2_kernel(
+        &self,
+        name: &str,
+        func: &Function,
+        out: &mut String,
+    ) -> anyhow::Result<()> {
         // Extract the scalar body first to understand what the kernel does,
         // then replicate with AVX2 operations.
         // For now we detect the shape by looking at what ops appear.
@@ -174,7 +211,9 @@ impl<'a> CpuKernelEmitter<'a> {
         };
 
         // Get the constants from push_float instructions
-        let consts: Vec<f64> = func.body.iter()
+        let consts: Vec<f64> = func
+            .body
+            .iter()
             .filter(|i| i.op == "push_float")
             .filter_map(|i| i.args.get("value").and_then(|v| v.as_f64()))
             .collect();
@@ -187,18 +226,29 @@ impl<'a> CpuKernelEmitter<'a> {
 
         if avx_op == "avx2_fma" && consts.len() >= 2 {
             let scale = consts[0];
-            let bias  = consts[1];
-            writeln!(out, "    /* AVX2 path: out[i] = fma(in[i], {:.4e}, {:.4e}) */", scale, bias)?;
+            let bias = consts[1];
+            writeln!(
+                out,
+                "    /* AVX2 path: out[i] = fma(in[i], {:.4e}, {:.4e}) */",
+                scale, bias
+            )?;
             writeln!(out, "    __m256d vscale = _mm256_set1_pd({:.17e});", scale)?;
             writeln!(out, "    __m256d vbias  = _mm256_set1_pd({:.17e});", bias)?;
             writeln!(out, "    size_t i = 0;")?;
             writeln!(out, "    for (; i + 4 <= n; i += 4) {{")?;
             writeln!(out, "        __m256d v = _mm256_loadu_pd(&in[i]);")?;
-            writeln!(out, "        __m256d r = _mm256_fmadd_pd(v, vscale, vbias);")?;
+            writeln!(
+                out,
+                "        __m256d r = _mm256_fmadd_pd(v, vscale, vbias);"
+            )?;
             writeln!(out, "        _mm256_storeu_pd(&out[i], r);")?;
             writeln!(out, "    }}")?;
             writeln!(out, "    for (; i < n; i++) {{")?;
-            writeln!(out, "        out[i] = fma(in[i], {:.17e}, {:.17e});", scale, bias)?;
+            writeln!(
+                out,
+                "        out[i] = fma(in[i], {:.17e}, {:.17e});",
+                scale, bias
+            )?;
             writeln!(out, "    }}")?;
         } else if avx_op == "avx2_mul" && !consts.is_empty() {
             let scale = consts[0];
@@ -231,8 +281,8 @@ impl<'a> CpuKernelEmitter<'a> {
 fn is_elementwise_kernel(func: &Function) -> bool {
     for instr in &func.body {
         match instr.op.as_str() {
-            "push_float" | "push_int" | "load" | "store" | "add" | "sub"
-            | "mul" | "div" | "fma" | "neg" | "ret" => {}
+            "push_float" | "push_int" | "load" | "store" | "add" | "sub" | "mul" | "div"
+            | "fma" | "neg" | "ret" => {}
             _ => return false,
         }
     }
@@ -245,8 +295,12 @@ fn binary_kernel_op(
     count: &mut usize,
     op: &str,
 ) -> anyhow::Result<()> {
-    let b = stack.pop().unwrap_or(("0.0".to_string(), InferredType::Float));
-    let a = stack.pop().unwrap_or(("0.0".to_string(), InferredType::Float));
+    let b = stack
+        .pop()
+        .unwrap_or(("0.0".to_string(), InferredType::Float));
+    let a = stack
+        .pop()
+        .unwrap_or(("0.0".to_string(), InferredType::Float));
     let t = format!("_s{}", *count);
     *count += 1;
     writeln!(out, "        double {} = {} {} {};", t, a.0, op, b.0)?;
@@ -263,24 +317,30 @@ mod tests {
             params: vec!["in".to_string()],
             locals: vec![],
             type_hints: None,
-            body: body_ops.into_iter().map(|(op, args)| casm::Instruction {
-                op: op.into(),
-                lang: None,
-                meta: None,
-                args,
-            }).collect(),
+            body: body_ops
+                .into_iter()
+                .map(|(op, args)| casm::Instruction {
+                    op: op.into(),
+                    lang: None,
+                    meta: None,
+                    args,
+                })
+                .collect(),
         }
     }
 
     #[test]
     fn test_scalar_kernel_scale() {
         let func = make_kernel(vec![
-            ("load",       serde_json::json!({"name": "in"})),
+            ("load", serde_json::json!({"name": "in"})),
             ("push_float", serde_json::json!({"value": 0.5})),
-            ("mul",        serde_json::json!({})),
-            ("ret",        serde_json::json!({})),
+            ("mul", serde_json::json!({})),
+            ("ret", serde_json::json!({})),
         ]);
-        let opts = AotcOpts { opt_level: 3, ..Default::default() };
+        let opts = AotcOpts {
+            opt_level: 3,
+            ..Default::default()
+        };
         let emitter = CpuKernelEmitter::new(&opts);
         let c = emitter.emit_kernel("scale_half", &func).unwrap();
         println!("=== scale_half kernel ===\n{}", c);
@@ -292,14 +352,18 @@ mod tests {
     #[test]
     fn test_avx2_kernel_fma() {
         let func = make_kernel(vec![
-            ("push_float", serde_json::json!({"value": 2.0})),   // scale
-            ("push_float", serde_json::json!({"value": 0.5})),   // bias
-            ("load",       serde_json::json!({"name": "in"})),
-            ("mul",        serde_json::json!({})),
-            ("add",        serde_json::json!({})),
-            ("ret",        serde_json::json!({})),
+            ("push_float", serde_json::json!({"value": 2.0})), // scale
+            ("push_float", serde_json::json!({"value": 0.5})), // bias
+            ("load", serde_json::json!({"name": "in"})),
+            ("mul", serde_json::json!({})),
+            ("add", serde_json::json!({})),
+            ("ret", serde_json::json!({})),
         ]);
-        let opts = AotcOpts { opt_level: 3, simd: true, ..Default::default() };
+        let opts = AotcOpts {
+            opt_level: 3,
+            simd: true,
+            ..Default::default()
+        };
         let emitter = CpuKernelEmitter::new(&opts);
         let c = emitter.emit_kernel("scale_bias", &func).unwrap();
         println!("=== scale_bias AVX2 kernel ===\n{}", c);
@@ -312,12 +376,16 @@ mod tests {
         // Simulate: dot(a, b) — element-wise multiply then reduce
         // We model the per-element kernel: out[i] = a[i] * b[i]
         let func = make_kernel(vec![
-            ("load",  serde_json::json!({"name": "in"})),
-            ("load",  serde_json::json!({"name": "in"})),
-            ("mul",   serde_json::json!({})),
-            ("ret",   serde_json::json!({})),
+            ("load", serde_json::json!({"name": "in"})),
+            ("load", serde_json::json!({"name": "in"})),
+            ("mul", serde_json::json!({})),
+            ("ret", serde_json::json!({})),
         ]);
-        let opts = AotcOpts { opt_level: 3, simd: false, ..Default::default() };
+        let opts = AotcOpts {
+            opt_level: 3,
+            simd: false,
+            ..Default::default()
+        };
         let emitter = CpuKernelEmitter::new(&opts);
         let c = emitter.emit_kernel("hadamard", &func).unwrap();
         println!("=== hadamard kernel ===\n{}", c);

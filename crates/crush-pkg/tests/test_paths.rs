@@ -59,8 +59,7 @@
 /// const-evaluable (both `env!` and string literals are valid in
 /// const context, even in edition 2015). The result is a `'static`
 /// `&str` usable wherever a string literal is accepted.
-pub const FIXTURES_BASE: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/");
+pub const FIXTURES_BASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/");
 
 /// Return `<crate-root>/tests/fixtures/<name>` as a `PathBuf`.
 ///

@@ -3,15 +3,18 @@
 //! This is the "hot path" VM—no strings, no HashMap lookups, no debugger.
 //! All name resolution happens at load time via the lowering pass.
 
-pub mod types;
+pub mod arithmetic;
+pub mod execution;
 pub mod instructions;
 pub mod operations;
-pub mod arithmetic;
 pub mod similarity;
-pub mod execution;
+pub mod types;
 
-pub use types::{FastYield, HostRequest, FastError, FastFrame, ROOT_FRAME_PC};
-pub use instructions::{FastInstr, FastOp, LoweredProgram, SymbolTables, HostCallSite, InterfaceCallSite, ExecLangSite, LowerError, lower_program, lower_bytecode_program};
+pub use instructions::{
+    ExecLangSite, FastInstr, FastOp, HostCallSite, InterfaceCallSite, LowerError, LoweredProgram,
+    SymbolTables, lower_bytecode_program, lower_program,
+};
+pub use types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
 
 use crate::{Arena, RuntimeValue};
 use std::sync::Arc;
@@ -20,7 +23,12 @@ pub trait Hal: Send + Sync + std::fmt::Debug {}
 
 pub trait Capability: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str;
-    fn call(&self, arena: &mut Arena, args: Vec<RuntimeValue>, hal: Arc<dyn Hal>) -> anyhow::Result<RuntimeValue>;
+    fn call(
+        &self,
+        arena: &mut Arena,
+        args: Vec<RuntimeValue>,
+        hal: Arc<dyn Hal>,
+    ) -> anyhow::Result<RuntimeValue>;
 }
 
 /// High-performance VM with index-based execution
@@ -52,9 +60,9 @@ pub struct FastVM {
 impl FastVM {
     /// Create a new FastVM from a lowered program
     pub fn new(
-        program: LoweredProgram, 
+        program: LoweredProgram,
         capabilities: Vec<Arc<dyn Capability>>,
-        hal: Arc<dyn Hal>
+        hal: Arc<dyn Hal>,
     ) -> Self {
         Self {
             instructions: program.instructions,
@@ -113,10 +121,10 @@ impl FastVM {
                 locals_count: arity as usize,
                 handlers: Vec::new(),
             });
-            
+
             // Initialize locals with nulls for arity if needed
             self.locals.resize(arity as usize, RuntimeValue::Null);
-            
+
             Ok(())
         } else {
             Err(format!("Function {} not found in symbol table", entry_name))
@@ -147,7 +155,7 @@ impl FastVM {
                 &self.hal,
                 &mut self.arena,
             ) {
-                Ok(None) => {},
+                Ok(None) => {}
                 Ok(Some(yield_reason)) => return yield_reason,
                 Err(e) => return FastYield::Error(e),
             }
@@ -158,14 +166,19 @@ impl FastVM {
                 let current_mem = self.arena.get_memory_usage() as f32;
                 let peak_mem = self.arena.stats().peak_usage as f32;
                 let alloc_rate = 0.0; // Heuristic
-                
-                let inputs = vec![current_mem, peak_mem, self.instructions_since_gc as f32, alloc_rate];
+
+                let inputs = vec![
+                    current_mem,
+                    peak_mem,
+                    self.instructions_since_gc as f32,
+                    alloc_rate,
+                ];
                 if self.optimizer.should_gc(inputs) {
                     self.collect_garbage();
                 }
             }
         }
-        
+
         FastYield::BudgetExhausted
     }
 
@@ -184,7 +197,7 @@ impl FastVM {
                 roots.push(*idx);
             }
         }
-        
+
         self.arena.trace(roots);
         let _freed = self.arena.sweep();
         self.instructions_since_gc = 0;
@@ -217,26 +230,28 @@ pub fn resolve_host_request(
     host_caps: Option<&crate::HostCaps>,
 ) -> Option<RuntimeValue> {
     let (cap_name, kind) = match req {
-        HostRequest::AiQuery            { .. } => ("ai_native.query",             "query"),
-        HostRequest::AiSynthesize       { .. } => ("ai_native.synthesize",        "synthesize"),
-        HostRequest::AiAgentDelegation  { .. } => ("ai_native.agent_delegation",  "agent_delegation"),
-        HostRequest::AiSemanticMatch    { .. } => ("ai_native.semantic_match",    "semantic_match"),
-        HostRequest::AiLearningLoop     { .. } => ("ai_native.learning_loop",     "learning_loop"),
-        HostRequest::AiContextAware     { .. } => ("ai_native.context_aware",     "context_aware"),
-        HostRequest::AiToolchain        { .. } => ("ai_native.toolchain",         "toolchain"),
-        HostRequest::AiGoalDeclaration  { .. } => ("ai_native.goal_declaration",  "goal_declaration"),
-        HostRequest::AiProgressUpdate   { .. } => ("ai_native.progress_update",   "progress_update"),
-        HostRequest::AiKnowledgeSharing { .. } => ("ai_native.knowledge_sharing", "knowledge_sharing"),
-        HostRequest::DomQuery            { .. } => ("dom_native.query",            "query"),
-        HostRequest::DomGet              { .. } => ("dom_native.get",              "get"),
-        HostRequest::DomSet              { .. } => ("dom_native.set",              "set"),
-        HostRequest::DomCreate           { .. } => ("dom_native.create",           "create"),
-        HostRequest::DomRemove           { .. } => ("dom_native.remove",           "remove"),
-        HostRequest::DomChild            { .. } => ("dom_native.child",            "child"),
-        HostRequest::DomParent           { .. } => ("dom_native.parent",           "parent"),
-        HostRequest::DomAttr             { .. } => ("dom_native.attr",             "attr"),
-        HostRequest::DomText             { .. } => ("dom_native.text",             "text"),
-        HostRequest::DomEvent            { .. } => ("dom_native.event",            "event"),
+        HostRequest::AiQuery { .. } => ("ai_native.query", "query"),
+        HostRequest::AiSynthesize { .. } => ("ai_native.synthesize", "synthesize"),
+        HostRequest::AiAgentDelegation { .. } => ("ai_native.agent_delegation", "agent_delegation"),
+        HostRequest::AiSemanticMatch { .. } => ("ai_native.semantic_match", "semantic_match"),
+        HostRequest::AiLearningLoop { .. } => ("ai_native.learning_loop", "learning_loop"),
+        HostRequest::AiContextAware { .. } => ("ai_native.context_aware", "context_aware"),
+        HostRequest::AiToolchain { .. } => ("ai_native.toolchain", "toolchain"),
+        HostRequest::AiGoalDeclaration { .. } => ("ai_native.goal_declaration", "goal_declaration"),
+        HostRequest::AiProgressUpdate { .. } => ("ai_native.progress_update", "progress_update"),
+        HostRequest::AiKnowledgeSharing { .. } => {
+            ("ai_native.knowledge_sharing", "knowledge_sharing")
+        }
+        HostRequest::DomQuery { .. } => ("dom_native.query", "query"),
+        HostRequest::DomGet { .. } => ("dom_native.get", "get"),
+        HostRequest::DomSet { .. } => ("dom_native.set", "set"),
+        HostRequest::DomCreate { .. } => ("dom_native.create", "create"),
+        HostRequest::DomRemove { .. } => ("dom_native.remove", "remove"),
+        HostRequest::DomChild { .. } => ("dom_native.child", "child"),
+        HostRequest::DomParent { .. } => ("dom_native.parent", "parent"),
+        HostRequest::DomAttr { .. } => ("dom_native.attr", "attr"),
+        HostRequest::DomText { .. } => ("dom_native.text", "text"),
+        HostRequest::DomEvent { .. } => ("dom_native.event", "event"),
         _ => return None,
     };
     let caps = host_caps?;
@@ -298,7 +313,9 @@ mod tests {
             symbols.intern_string(name);
         }
         for (name, start, end, arity) in functions {
-            symbols.functions.insert(name.to_string(), (start, end, arity));
+            symbols
+                .functions
+                .insert(name.to_string(), (start, end, arity));
         }
         LoweredProgram {
             instructions: instrs,
@@ -315,10 +332,10 @@ mod tests {
             FastInstr::simple(FastOp::Add),
             FastInstr::simple(FastOp::Halt),
         ]);
-        
+
         let mut vm = make_vm(program);
         let result = vm.run(100);
-        
+
         assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Int(30))));
     }
 
@@ -330,10 +347,10 @@ mod tests {
             FastInstr::simple(FastOp::Lt),
             FastInstr::simple(FastOp::Halt),
         ]);
-        
+
         let mut vm = make_vm(program);
         let result = vm.run(100);
-        
+
         assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Bool(true))));
     }
 
@@ -345,10 +362,10 @@ mod tests {
             FastInstr::new(FastOp::LoadLocal, 0, 0),
             FastInstr::simple(FastOp::Halt),
         ]);
-        
+
         let mut vm = make_vm(program);
         let result = vm.run(100);
-        
+
         assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Int(42))));
     }
 
@@ -360,10 +377,10 @@ mod tests {
             FastInstr::simple(FastOp::Add),
             FastInstr::new(FastOp::Jump, 0, 0), // Infinite loop
         ]);
-        
+
         let mut vm = make_vm(program);
         let result = vm.run(10);
-        
+
         assert_eq!(result, FastYield::BudgetExhausted);
     }
 
@@ -401,29 +418,25 @@ mod tests {
         //   PC 15: Halt            (not reached)
         let program = make_multi_fn(
             vec![
-                FastInstr::new(FastOp::EnterTry, 8, 0),  // 0: main
-                FastInstr::new(FastOp::Call, 0, 0),      // 1: call "a"
-                FastInstr::simple(FastOp::Halt),          // 2: return result
-                FastInstr::simple(FastOp::Halt),          // 3: padding
-                FastInstr::new(FastOp::EnterTry, 8, 0),  // 4: a
-                FastInstr::new(FastOp::Call, 1, 0),      // 5: call "b"
-                FastInstr::simple(FastOp::Halt),          // 6: (not reached)
-                FastInstr::simple(FastOp::Halt),          // 7: (not reached)
-                FastInstr::new(FastOp::PushInt, 42, 0),  // 8: handler
-                FastInstr::simple(FastOp::Return),        // 9: return 42
-                FastInstr::new(FastOp::Call, 2, 0),      // 10: b
-                FastInstr::simple(FastOp::Halt),          // 11: (not reached)
-                FastInstr::simple(FastOp::Return),        // 12: (not reached)
-                FastInstr::new(FastOp::PushInt, 7, 0),   // 13: c
-                FastInstr::simple(FastOp::Throw),         // 14: throw 7
-                FastInstr::simple(FastOp::Halt),          // 15: (not reached)
+                FastInstr::new(FastOp::EnterTry, 8, 0), // 0: main
+                FastInstr::new(FastOp::Call, 0, 0),     // 1: call "a"
+                FastInstr::simple(FastOp::Halt),        // 2: return result
+                FastInstr::simple(FastOp::Halt),        // 3: padding
+                FastInstr::new(FastOp::EnterTry, 8, 0), // 4: a
+                FastInstr::new(FastOp::Call, 1, 0),     // 5: call "b"
+                FastInstr::simple(FastOp::Halt),        // 6: (not reached)
+                FastInstr::simple(FastOp::Halt),        // 7: (not reached)
+                FastInstr::new(FastOp::PushInt, 42, 0), // 8: handler
+                FastInstr::simple(FastOp::Return),      // 9: return 42
+                FastInstr::new(FastOp::Call, 2, 0),     // 10: b
+                FastInstr::simple(FastOp::Halt),        // 11: (not reached)
+                FastInstr::simple(FastOp::Return),      // 12: (not reached)
+                FastInstr::new(FastOp::PushInt, 7, 0),  // 13: c
+                FastInstr::simple(FastOp::Throw),       // 14: throw 7
+                FastInstr::simple(FastOp::Halt),        // 15: (not reached)
             ],
             vec!["a", "b", "c"],
-            vec![
-                ("a", 4, 10, 0),
-                ("b", 10, 13, 0),
-                ("c", 13, 16, 0),
-            ],
+            vec![("a", 4, 10, 0), ("b", 10, 13, 0), ("c", 13, 16, 0)],
             0,
         );
 
@@ -432,9 +445,12 @@ mod tests {
 
         // a's handler catches and returns 42. main's handler at PC 8 is never
         // reached because a's frame (lower in call stack) catches first.
-        assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Int(42))),
+        assert_eq!(
+            result,
+            FastYield::Finished(Some(RuntimeValue::Int(42))),
             "Throw through 3 functions should unwind to a's handler and return 42, got {:?}",
-            result);
+            result
+        );
     }
 
     #[test]
@@ -457,15 +473,15 @@ mod tests {
         //   PC 8: Halt             (not reached)
         let mut program = make_multi_fn(
             vec![
-                FastInstr::new(FastOp::PushStr, 1, 0),    // 0: push "err" (strings[1] after func names)
-                FastInstr::new(FastOp::EnterTry, 5, 0),   // 1: main handler at PC 5
-                FastInstr::new(FastOp::Call, 0, 0),        // 2: call "throws"
-                FastInstr::simple(FastOp::Halt),           // 3: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 4: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 5: handler — pops "err" as result
-                FastInstr::simple(FastOp::Throw),           // 6: throws — caught by main
-                FastInstr::simple(FastOp::Halt),            // 7: (not reached)
-                FastInstr::simple(FastOp::Halt),            // 8: (not reached)
+                FastInstr::new(FastOp::PushStr, 1, 0), // 0: push "err" (strings[1] after func names)
+                FastInstr::new(FastOp::EnterTry, 5, 0), // 1: main handler at PC 5
+                FastInstr::new(FastOp::Call, 0, 0),    // 2: call "throws"
+                FastInstr::simple(FastOp::Halt),       // 3: (not reached)
+                FastInstr::simple(FastOp::Halt),       // 4: (not reached)
+                FastInstr::simple(FastOp::Halt),       // 5: handler — pops "err" as result
+                FastInstr::simple(FastOp::Throw),      // 6: throws — caught by main
+                FastInstr::simple(FastOp::Halt),       // 7: (not reached)
+                FastInstr::simple(FastOp::Halt),       // 8: (not reached)
             ],
             vec!["throws"],
             vec![("throws", 6, 9, 0)],
@@ -544,34 +560,32 @@ mod tests {
         //   PC 11: Halt            (not reached)
         let program = make_multi_fn(
             vec![
-                FastInstr::new(FastOp::Call, 0, 0),        // 0: main
-                FastInstr::simple(FastOp::Halt),            // 1: (not reached)
-                FastInstr::simple(FastOp::Halt),            // 2: (not reached)
-                FastInstr::new(FastOp::Call, 1, 0),        // 3: a
-                FastInstr::simple(FastOp::Halt),            // 4: (not reached)
-                FastInstr::simple(FastOp::Halt),            // 5: (not reached)
-                FastInstr::new(FastOp::Call, 2, 0),        // 6: b
-                FastInstr::simple(FastOp::Halt),            // 7: (not reached)
-                FastInstr::simple(FastOp::Halt),            // 8: (not reached)
-                FastInstr::new(FastOp::PushInt, 7, 0),     // 9: c
-                FastInstr::simple(FastOp::Throw),           // 10: throw — uncaught
-                FastInstr::simple(FastOp::Halt),            // 11: (not reached)
+                FastInstr::new(FastOp::Call, 0, 0),    // 0: main
+                FastInstr::simple(FastOp::Halt),       // 1: (not reached)
+                FastInstr::simple(FastOp::Halt),       // 2: (not reached)
+                FastInstr::new(FastOp::Call, 1, 0),    // 3: a
+                FastInstr::simple(FastOp::Halt),       // 4: (not reached)
+                FastInstr::simple(FastOp::Halt),       // 5: (not reached)
+                FastInstr::new(FastOp::Call, 2, 0),    // 6: b
+                FastInstr::simple(FastOp::Halt),       // 7: (not reached)
+                FastInstr::simple(FastOp::Halt),       // 8: (not reached)
+                FastInstr::new(FastOp::PushInt, 7, 0), // 9: c
+                FastInstr::simple(FastOp::Throw),      // 10: throw — uncaught
+                FastInstr::simple(FastOp::Halt),       // 11: (not reached)
             ],
             vec!["a", "b", "c"],
-            vec![
-                ("a", 3, 6, 0),
-                ("b", 6, 9, 0),
-                ("c", 9, 12, 0),
-            ],
+            vec![("a", 3, 6, 0), ("b", 6, 9, 0), ("c", 9, 12, 0)],
             0,
         );
 
         let mut vm = make_vm(program);
         let result = vm.run(10_000);
 
-        assert!(result.is_err(),
+        assert!(
+            result.is_err(),
             "Uncaught throw through 3 functions should return an error, got {:?}",
-            result);
+            result
+        );
     }
 
     #[test]
@@ -611,33 +625,29 @@ mod tests {
         //   PC 19: Halt            (not reached)
         let program = make_multi_fn(
             vec![
-                FastInstr::new(FastOp::EnterTry, 6, 0),   // 0: main
-                FastInstr::new(FastOp::Call, 0, 0),       // 1: call "a"
-                FastInstr::simple(FastOp::Halt),           // 2: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 3: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 4: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 5: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 6: handler — pops 7
-                FastInstr::new(FastOp::EnterTry, 11, 0),  // 7: a
-                FastInstr::new(FastOp::Call, 1, 0),       // 8: call "b"
-                FastInstr::simple(FastOp::Halt),           // 9: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 10: (not reached)
-                FastInstr::simple(FastOp::Throw),          // 11: handler: re-throw 7
-                FastInstr::simple(FastOp::Halt),           // 12: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 13: (not reached)
-                FastInstr::new(FastOp::Call, 2, 0),       // 14: b
-                FastInstr::simple(FastOp::Halt),           // 15: (not reached)
-                FastInstr::simple(FastOp::Halt),           // 16: (not reached)
-                FastInstr::new(FastOp::PushInt, 7, 0),    // 17: c
-                FastInstr::simple(FastOp::Throw),          // 18: throw 7
-                FastInstr::simple(FastOp::Halt),           // 19: (not reached)
+                FastInstr::new(FastOp::EnterTry, 6, 0),  // 0: main
+                FastInstr::new(FastOp::Call, 0, 0),      // 1: call "a"
+                FastInstr::simple(FastOp::Halt),         // 2: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 3: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 4: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 5: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 6: handler — pops 7
+                FastInstr::new(FastOp::EnterTry, 11, 0), // 7: a
+                FastInstr::new(FastOp::Call, 1, 0),      // 8: call "b"
+                FastInstr::simple(FastOp::Halt),         // 9: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 10: (not reached)
+                FastInstr::simple(FastOp::Throw),        // 11: handler: re-throw 7
+                FastInstr::simple(FastOp::Halt),         // 12: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 13: (not reached)
+                FastInstr::new(FastOp::Call, 2, 0),      // 14: b
+                FastInstr::simple(FastOp::Halt),         // 15: (not reached)
+                FastInstr::simple(FastOp::Halt),         // 16: (not reached)
+                FastInstr::new(FastOp::PushInt, 7, 0),   // 17: c
+                FastInstr::simple(FastOp::Throw),        // 18: throw 7
+                FastInstr::simple(FastOp::Halt),         // 19: (not reached)
             ],
             vec!["a", "b", "c"],
-            vec![
-                ("a", 7, 14, 0),
-                ("b", 14, 17, 0),
-                ("c", 17, 20, 0),
-            ],
+            vec![("a", 7, 14, 0), ("b", 14, 17, 0), ("c", 17, 20, 0)],
             0,
         );
 
@@ -645,8 +655,11 @@ mod tests {
         let result = vm.run(10_000);
 
         // c throws → a catches and re-throws → main catches. Result is Int(7).
-        assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Int(7))),
+        assert_eq!(
+            result,
+            FastYield::Finished(Some(RuntimeValue::Int(7))),
             "Rethrow through 3 functions: expected Int(7), got {:?}",
-            result);
+            result
+        );
     }
 }

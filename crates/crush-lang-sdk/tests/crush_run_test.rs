@@ -24,11 +24,7 @@ fn crush_run_emits_json_diagnostic_for_vm_runtime_error() {
     // `hint` and leave `message` empty to avoid editor-side redundancy.
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("loop.crush");
-    std::fs::write(
-        &src,
-        "fn main() { while true { let x = 1 } }\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "fn main() { while true { let x = 1 } }\n").unwrap();
 
     let output = run_crush_run(&[
         "run",
@@ -116,18 +112,9 @@ fn crush_run_default_message_format_remains_text() {
     // as before this PR.
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("loop.crush");
-    std::fs::write(
-        &src,
-        "fn main() { while true { let x = 1 } }\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "fn main() { while true { let x = 1 } }\n").unwrap();
 
-    let output = run_crush_run(&[
-        "run",
-        src.to_str().unwrap(),
-        "--max-steps",
-        "5",
-    ]);
+    let output = run_crush_run(&["run", src.to_str().unwrap(), "--max-steps", "5"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -154,12 +141,7 @@ fn crush_run_emits_rt01_for_invalid_cvm1_blob() {
     // 4 bytes ≠ the CVM1 magic header (`"CVM1"`) → `BadMagic` error.
     std::fs::write(&src, b"BADM\x00\x00\x00\x00").unwrap();
 
-    let output = run_crush_run(&[
-        "run",
-        "--message-format",
-        "json",
-        src.to_str().unwrap(),
-    ]);
+    let output = run_crush_run(&["run", "--message-format", "json", src.to_str().unwrap()]);
     assert!(
         !output.status.success(),
         "expected non-zero exit on invalid CVM1 blob"
@@ -215,12 +197,7 @@ fn crush_run_accepts_valid_cvm1_blob_for_regression() {
     let src = dir.path().join("hello.cvm1");
     std::fs::write(&src, &blob).unwrap();
 
-    let output = run_crush_run(&[
-        "run",
-        "--cap",
-        "io.print",
-        src.to_str().unwrap(),
-    ]);
+    let output = run_crush_run(&["run", "--cap", "io.print", src.to_str().unwrap()]);
     assert!(
         output.status.success(),
         "expected happy-path exit 0\nstderr: {}\nstdout: {}",

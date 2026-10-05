@@ -81,10 +81,10 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                             Some(elses)
                         }
                         syn::Expr::If(nested_if) => {
-                            let nested = lower_stmt(&syn::Stmt::Expr(
-                                syn::Expr::If(nested_if.clone()),
-                                None,
-                            ), ctx)?;
+                            let nested = lower_stmt(
+                                &syn::Stmt::Expr(syn::Expr::If(nested_if.clone()), None),
+                                ctx,
+                            )?;
                             Some(vec![nested])
                         }
                         _ => {
@@ -127,9 +127,7 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                     meta,
                 })
             }
-            syn::Expr::Break(_) => {
-                Ok(Statement::Break { meta })
-            }
+            syn::Expr::Break(_) => Ok(Statement::Break { meta }),
             _ => {
                 let expr = lower_expr(expr, ctx)?;
                 Ok(Statement::ExprStmt { expr, meta })

@@ -113,19 +113,20 @@ fn collect_bound(stmts: &[py_ast::Stmt], bound: &mut HashSet<String>) {
             }
             py_ast::Stmt::Import(py_ast::StmtImport { names, .. }) => {
                 for alias in names {
-                    let bound_name = alias
-                        .asname
-                        .as_ref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            alias
-                                .name
-                                .to_string()
-                                .split('.')
-                                .next()
-                                .unwrap_or_default()
-                                .to_string()
-                        });
+                    let bound_name =
+                        alias
+                            .asname
+                            .as_ref()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| {
+                                alias
+                                    .name
+                                    .to_string()
+                                    .split('.')
+                                    .next()
+                                    .unwrap_or_default()
+                                    .to_string()
+                            });
                     bound.insert(bound_name);
                 }
             }
@@ -434,7 +435,11 @@ mod free_var_tests {
         // would misfire on both; the real parser must not.
         let src = "# uses base and result nowhere real\nx = \"base result\"\n";
         let fv = free_variables(src).expect("parse");
-        assert!(fv.reads.is_empty(), "reads should be empty, got {:?}", fv.reads);
+        assert!(
+            fv.reads.is_empty(),
+            "reads should be empty, got {:?}",
+            fv.reads
+        );
         assert_eq!(fv.top_level_bound, vec!["x".to_string()]);
     }
 
@@ -443,7 +448,10 @@ mod free_var_tests {
         let src = "y = 1\nresult = y * 2\n";
         let fv = free_variables(src).expect("parse");
         assert!(fv.reads.is_empty(), "y is bound locally, not a free read");
-        assert_eq!(fv.top_level_bound, vec!["y".to_string(), "result".to_string()]);
+        assert_eq!(
+            fv.top_level_bound,
+            vec!["y".to_string(), "result".to_string()]
+        );
     }
 
     #[test]

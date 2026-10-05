@@ -4,8 +4,7 @@
 
 /// JS/TS source -> CVM1 execution -> output string.
 pub fn run_js(source: &str, ext: &str) -> anyhow::Result<String> {
-    let cast = crate::js_to_cast(source, ext)
-        .map_err(|e| anyhow::anyhow!("JS->CAST: {e}"))?;
+    let cast = crate::js_to_cast(source, ext).map_err(|e| anyhow::anyhow!("JS->CAST: {e}"))?;
 
     let mut compiler = crush_frontend::compiler::Compiler::new();
     let casm = compiler
@@ -18,25 +17,44 @@ pub fn run_js(source: &str, ext: &str) -> anyhow::Result<String> {
     use crush_vm::host::{HostCap, HostCapSpec, HostCaps};
     let mut host_caps = HostCaps::new();
 
-    struct NopCap { name: String }
+    struct NopCap {
+        name: String,
+    }
     impl HostCap for NopCap {
         fn spec(&self) -> HostCapSpec {
-            HostCapSpec { name: self.name.clone(), argc: None, returns: true }
+            HostCapSpec {
+                name: self.name.clone(),
+                argc: None,
+                returns: true,
+            }
         }
         fn call(&self, _: Vec<crush_vm::vm::Value>) -> Result<Option<crush_vm::vm::Value>, String> {
             Ok(Some(crush_vm::vm::Value::Null))
         }
     }
     for name in &[
-        "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
-        "__crush_assign__", "__crush_setindex__",
-        "__crush_not__", "__crush_neg__", "__crush_subscript__",
+        "append",
+        "push",
+        "make_range",
+        "arr_set",
+        "arr_get",
+        "str.concat",
+        "__crush_assign__",
+        "__crush_setindex__",
+        "__crush_not__",
+        "__crush_neg__",
+        "__crush_subscript__",
         "__crush_unary__",
     ] {
-        host_caps.register(Box::new(NopCap { name: name.to_string() }));
+        host_caps.register(Box::new(NopCap {
+            name: name.to_string(),
+        }));
     }
 
-    let quotas = crush_vm::vm::Quotas { max_steps: 10_000_000, ..Default::default() };
+    let quotas = crush_vm::vm::Quotas {
+        max_steps: 10_000_000,
+        ..Default::default()
+    };
     let result = crush_vm::vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps))
         .map_err(|e| anyhow::anyhow!("CVM1: {e}"))?;
     Ok(result.output.trim().to_string())
@@ -132,5 +150,8 @@ fn test_polyglot_merge_cast() {
     let mut compiler = crush_frontend::compiler::Compiler::new();
     let casm = compiler.compile(js_cast).unwrap();
     assert!(casm.functions.contains_key("add"), "JS fn should compile");
-    assert!(casm.functions.contains_key("multiply"), "Python fn should compile");
+    assert!(
+        casm.functions.contains_key("multiply"),
+        "Python fn should compile"
+    );
 }

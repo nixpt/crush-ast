@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use crush_lang_wasm::walk_wasm;
 use std::fs;
 use std::path::PathBuf;
-use crush_lang_wasm::walk_wasm;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

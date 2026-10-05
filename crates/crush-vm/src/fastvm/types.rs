@@ -34,39 +34,74 @@ pub enum FastYield {
 /// Request for external action
 #[derive(Debug, Clone, PartialEq)]
 pub enum HostRequest {
-    CallHost { 
-        capsule_name: String, 
-        method_name: String, 
-        ic_id: [u8; 32], 
-        args: Vec<RuntimeValue> 
+    CallHost {
+        capsule_name: String,
+        method_name: String,
+        ic_id: [u8; 32],
+        args: Vec<RuntimeValue>,
     },
-    CallInterface { 
-        handle: RuntimeValue, 
-        method_name: String, 
-        args: Vec<RuntimeValue> 
+    CallInterface {
+        handle: RuntimeValue,
+        method_name: String,
+        args: Vec<RuntimeValue>,
     },
-    ExecLang { 
-        lang: String, 
-        code: String, 
-        variables: HashMap<String, RuntimeValue> 
+    ExecLang {
+        lang: String,
+        code: String,
+        variables: HashMap<String, RuntimeValue>,
     },
-    Spawn { func: String },
-    Restart { task_id: usize },
-    Watchdog { task_id: usize, deadline: u64, action: String },
+    Spawn {
+        func: String,
+    },
+    Restart {
+        task_id: usize,
+    },
+    Watchdog {
+        task_id: usize,
+        deadline: u64,
+        action: String,
+    },
     Gc,
-    ImportVar { name: String },
-    ExportVar { name: String, value: RuntimeValue },
-    Await { event_id: String },
-    AiQuery { args: serde_json::Value },
-    AiToolchain { args: serde_json::Value },
-    AiAgentDelegation { args: serde_json::Value },
-    AiLearningLoop { args: serde_json::Value },
-    AiContextAware { args: serde_json::Value },
-    AiSemanticMatch { args: serde_json::Value },
-    AiSynthesize { args: serde_json::Value },
-    AiGoalDeclaration { args: serde_json::Value },
-    AiProgressUpdate { args: serde_json::Value },
-    AiKnowledgeSharing { args: serde_json::Value },
+    ImportVar {
+        name: String,
+    },
+    ExportVar {
+        name: String,
+        value: RuntimeValue,
+    },
+    Await {
+        event_id: String,
+    },
+    AiQuery {
+        args: serde_json::Value,
+    },
+    AiToolchain {
+        args: serde_json::Value,
+    },
+    AiAgentDelegation {
+        args: serde_json::Value,
+    },
+    AiLearningLoop {
+        args: serde_json::Value,
+    },
+    AiContextAware {
+        args: serde_json::Value,
+    },
+    AiSemanticMatch {
+        args: serde_json::Value,
+    },
+    AiSynthesize {
+        args: serde_json::Value,
+    },
+    AiGoalDeclaration {
+        args: serde_json::Value,
+    },
+    AiProgressUpdate {
+        args: serde_json::Value,
+    },
+    AiKnowledgeSharing {
+        args: serde_json::Value,
+    },
     // CRUSH-33 follow-up: `args` is intentionally DROPPED at the
     // `resolve_host_request` seam (mirror of `AiX` above) because the
     // DOM stub returns the same deterministic `{ok, kind, echo}`
@@ -74,16 +109,36 @@ pub enum HostRequest {
     // `crates/crush-lang-sdk/src/dom_native.rs`) and does not yet
     // consume its args. Revisit once a real DOM backend (browser /
     // jsdom / webview) needs to thread args through the cap gate.
-    DomQuery { args: serde_json::Value },
-    DomGet { args: serde_json::Value },
-    DomSet { args: serde_json::Value },
-    DomCreate { args: serde_json::Value },
-    DomRemove { args: serde_json::Value },
-    DomChild { args: serde_json::Value },
-    DomParent { args: serde_json::Value },
-    DomAttr { args: serde_json::Value },
-    DomText { args: serde_json::Value },
-    DomEvent { args: serde_json::Value },
+    DomQuery {
+        args: serde_json::Value,
+    },
+    DomGet {
+        args: serde_json::Value,
+    },
+    DomSet {
+        args: serde_json::Value,
+    },
+    DomCreate {
+        args: serde_json::Value,
+    },
+    DomRemove {
+        args: serde_json::Value,
+    },
+    DomChild {
+        args: serde_json::Value,
+    },
+    DomParent {
+        args: serde_json::Value,
+    },
+    DomAttr {
+        args: serde_json::Value,
+    },
+    DomText {
+        args: serde_json::Value,
+    },
+    DomEvent {
+        args: serde_json::Value,
+    },
 }
 
 impl FastYield {
@@ -137,7 +192,7 @@ impl std::fmt::Display for FastError {
 #[derive(Debug, Clone)]
 pub struct FastFrame {
     pub return_pc: usize,
-    pub locals_base: usize,  // Start index in locals vec
+    pub locals_base: usize, // Start index in locals vec
     #[allow(dead_code)]
     pub locals_count: usize, // Number of locals in this frame
     pub handlers: Vec<usize>, // Exception handler return addresses (PCs)

@@ -41,7 +41,9 @@ pub fn eval_i64(source: &str) -> anyhow::Result<i64> {
     let so_path = compiler.compile_source(source, "eval")?;
     let module = Module::load(so_path)?;
     let result = module.call_main()?;
-    result.as_int().ok_or_else(|| anyhow::anyhow!("Expected i64, got {:?}", result))
+    result
+        .as_int()
+        .ok_or_else(|| anyhow::anyhow!("Expected i64, got {:?}", result))
 }
 
 /// Compile Crush source to native code, load it, and extract an f64 result.
@@ -63,5 +65,7 @@ pub fn eval_bool(source: &str) -> anyhow::Result<bool> {
     let so_path = compiler.compile_source(source, "eval")?;
     let module = Module::load(so_path)?;
     let result = module.call_main()?;
-    result.as_bool().ok_or_else(|| anyhow::anyhow!("Expected bool, got {:?}", result))
+    result
+        .as_bool()
+        .ok_or_else(|| anyhow::anyhow!("Expected bool, got {:?}", result))
 }

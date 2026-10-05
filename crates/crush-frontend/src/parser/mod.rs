@@ -3,8 +3,8 @@
 //! Recursive descent parser that converts tokens into AST.
 //! Uses Pratt parsing for expressions.
 
-mod lexer;
 pub mod cson;
+mod lexer;
 pub use lexer::{Lexer, ParseError, SourceLocation, Token};
 
 use crush_cast::manifest::{
@@ -297,8 +297,10 @@ impl Parser {
             // @-annotation tokens at top level
             if let Token::AtIdent(id, _) = self.peek().clone() {
                 // Skip if followed by LangBody — that's a polyglot block, handled below
-                let next_is_lang_body =
-                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _)));
+                let next_is_lang_body = matches!(
+                    self.tokens.get(self.pos + 1),
+                    Some(Token::LangBody(_, _, _))
+                );
                 if !next_is_lang_body {
                     match id.as_str() {
                         "module" => {
@@ -322,8 +324,8 @@ impl Parser {
                             continue;
                         }
                         "errors" | "reads" | "writes" | "does-not-write" | "covers"
-                        | "relies-on" | "complexity"
-                        | "invalidates" | "must-call-before" | "must-call-after" => {
+                        | "relies-on" | "complexity" | "invalidates" | "must-call-before"
+                        | "must-call-after" => {
                             self.advance();
                             let ann = pending_fn_annotations.get_or_insert_with(Default::default);
                             self.parse_fn_annotation_body(&id, ann);
@@ -820,7 +822,10 @@ impl Parser {
             Token::Import(_) | Token::Use(_) => self.parse_import_statement(),
             Token::Export(_) => self.parse_export_statement(),
             Token::AtIdent(_, _)
-                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _))) =>
+                if matches!(
+                    self.tokens.get(self.pos + 1),
+                    Some(Token::LangBody(_, _, _))
+                ) =>
             {
                 self.parse_lang_block()
             }
@@ -1324,7 +1329,9 @@ impl Parser {
                 if matches!(self.peek(), Token::Colon(_)) {
                     self.advance(); // consume ':'
                     let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
-                        Expression::NullLiteral { meta: self.make_meta() }
+                        Expression::NullLiteral {
+                            meta: self.make_meta(),
+                        }
                     } else {
                         self.parse_expression()?
                     };
@@ -1334,7 +1341,9 @@ impl Parser {
                         name: "arr_slice".to_string(),
                         args: vec![
                             left,
-                            Expression::NullLiteral { meta: self.make_meta() },
+                            Expression::NullLiteral {
+                                meta: self.make_meta(),
+                            },
                             end_expr,
                         ],
                         meta: self.make_meta(),
@@ -1346,7 +1355,9 @@ impl Parser {
                         // xs[start:end] — slice with start and optional end
                         self.advance(); // consume ':'
                         let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
-                            Expression::NullLiteral { meta: self.make_meta() }
+                            Expression::NullLiteral {
+                                meta: self.make_meta(),
+                            }
                         } else {
                             self.parse_expression()?
                         };
@@ -1354,11 +1365,7 @@ impl Parser {
 
                         Expression::CapabilityCall {
                             name: "arr_slice".to_string(),
-                            args: vec![
-                                left,
-                                index,
-                                end_expr,
-                            ],
+                            args: vec![left, index, end_expr],
                             meta: self.make_meta(),
                         }
                     } else {
@@ -1769,11 +1776,14 @@ impl Parser {
         // Accept either `=>` (FatArrow) or `->` (Arrow) as the match arm separator.
         // FatArrow is preferred; Arrow is kept for backward compat with existing fixtures.
         match self.peek() {
-            Token::FatArrow(_) | Token::Arrow(_) => { self.advance(); }
+            Token::FatArrow(_) | Token::Arrow(_) => {
+                self.advance();
+            }
             _ => {
                 let (line, col) = self.get_location(self.peek());
                 self.errors.push(ParseError::Expected {
-                    line, col,
+                    line,
+                    col,
                     expected: "=> or ->".to_string(),
                     found: self.peek().describe(),
                 });
@@ -1880,7 +1890,10 @@ impl Parser {
                         if matches!(self.peek(), Token::RParen(_)) {
                             self.advance(); // consume )
                         }
-                        Ok(Pattern::Struct { name: n, fields: Vec::new() })
+                        Ok(Pattern::Struct {
+                            name: n,
+                            fields: Vec::new(),
+                        })
                     } else {
                         Ok(Pattern::Identifier { name: n })
                     }
@@ -2405,15 +2418,17 @@ impl Parser {
                     match key.as_str() {
                         "exports" => manifest.exports = items,
                         "related" => manifest.related = items,
-                        "invariants" => manifest.invariants.extend(items.into_iter().map(|n| {
-                            Invariant {
-                                name: n,
-                                description: String::new(),
-                                applies_to: Vec::new(),
-                                consequence: None,
-                                check_source: None,
-                            }
-                        })),
+                        "invariants" => {
+                            manifest
+                                .invariants
+                                .extend(items.into_iter().map(|n| Invariant {
+                                    name: n,
+                                    description: String::new(),
+                                    applies_to: Vec::new(),
+                                    consequence: None,
+                                    check_source: None,
+                                }))
+                        }
                         "exhaustive_types" => manifest.exhaustive_types = items,
                         _ => {} // changelog as string list is a no-op (needs richer type)
                     }
@@ -2587,11 +2602,7 @@ impl Parser {
         } else {
             // Single bare item
             let s = self.parse_at_qualified_ident();
-            if s.is_empty() {
-                Vec::new()
-            } else {
-                vec![s]
-            }
+            if s.is_empty() { Vec::new() } else { vec![s] }
         }
     }
 
@@ -2836,7 +2847,10 @@ impl Parser {
                 "rare" => ErrorLikelihood::Rare,
                 _ => ErrorLikelihood::Possible, // default
             };
-            items.push(WeightedError { variant, likelihood });
+            items.push(WeightedError {
+                variant,
+                likelihood,
+            });
             self.skip_newlines();
             if matches!(self.peek(), Token::Comma(_)) {
                 self.advance();
@@ -3077,7 +3091,11 @@ fn main() {
         let program = Parser::parse(source).unwrap();
         let manifest = program.manifest.expect("manifest should be set");
         assert!(manifest.exhaustive_types.contains(&"Value".to_string()));
-        assert!(manifest.exhaustive_types.contains(&"StepAction".to_string()));
+        assert!(
+            manifest
+                .exhaustive_types
+                .contains(&"StepAction".to_string())
+        );
     }
 
     #[test]
@@ -3094,9 +3112,18 @@ fn execute_one() {
 }
 "#;
         let program = Parser::parse(source).unwrap();
-        let func = program.functions.get("execute_one").expect("function should exist");
-        let ann = func.annotations.as_ref().expect("annotations should be set");
-        assert_eq!(ann.errors, vec!["VmError::StackUnderflow", "VmError::StepQuota"]);
+        let func = program
+            .functions
+            .get("execute_one")
+            .expect("function should exist");
+        let ann = func
+            .annotations
+            .as_ref()
+            .expect("annotations should be set");
+        assert_eq!(
+            ann.errors,
+            vec!["VmError::StackUnderflow", "VmError::StepQuota"]
+        );
         assert_eq!(ann.reads, vec!["thread.ip", "thread.stack"]);
         assert_eq!(ann.writes, vec!["thread.ip", "thread.out_parts"]);
         assert_eq!(ann.does_not_write, vec!["program"]);
@@ -3117,7 +3144,10 @@ fn second() {
 "#;
         let program = Parser::parse(source).unwrap();
         let first = program.functions.get("first").expect("first should exist");
-        let second = program.functions.get("second").expect("second should exist");
+        let second = program
+            .functions
+            .get("second")
+            .expect("second should exist");
         assert!(first.annotations.is_some());
         assert!(second.annotations.is_none());
     }
@@ -3132,7 +3162,10 @@ fn heavy() {
 "#;
         let program = Parser::parse(source).unwrap();
         let func = program.functions.get("heavy").expect("heavy should exist");
-        let ann = func.annotations.as_ref().expect("annotations should be set");
+        let ann = func
+            .annotations
+            .as_ref()
+            .expect("annotations should be set");
         assert_eq!(ann.complexity, Some(75));
     }
 }

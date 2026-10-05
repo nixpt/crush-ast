@@ -34,7 +34,8 @@ fn rust_with_function() {
 
 #[test]
 fn rust_if_else() {
-    let source = "fn main() { let x = 5; if x > 3 { println(\"yes\"); } else { println(\"no\"); } }";
+    let source =
+        "fn main() { let x = 5; if x > 3 { println(\"yes\"); } else { println(\"no\"); } }";
     let cast = rust_to_cast(source).expect("rust to cast");
     let casm = crush_frontend::compile_cast(&cast).expect("cast to casm");
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");

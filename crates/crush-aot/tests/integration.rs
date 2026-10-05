@@ -74,7 +74,10 @@ fn test_aot_io_read_codegen_compiles() {
 fn test_aot_arithmetic_add() {
     let compiler = AotCompiler::new();
     let so_path = compiler
-        .compile_source("fn main() { let x = 40; let y = 2; return x + y; }", "test_add")
+        .compile_source(
+            "fn main() { let x = 40; let y = 2; return x + y; }",
+            "test_add",
+        )
         .expect("compile_source failed");
 
     let module = Module::load(&so_path).expect("Module::load failed");
@@ -323,8 +326,7 @@ fn test_concurrent_compiles_of_same_source_on_cold_cache() {
     // Threads racing on one cold cache entry used to build straight into the
     // cache dir, where rustc's thin-LTO intermediates collide by crate name
     // and the loser fails to link.
-    let cache_dir = std::env::temp_dir()
-        .join(format!("crush-aot-race-{}", std::process::id()));
+    let cache_dir = std::env::temp_dir().join(format!("crush-aot-race-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache_dir);
 
     let source = "fn main() { return 4242; }";

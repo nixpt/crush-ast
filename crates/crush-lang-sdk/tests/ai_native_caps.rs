@@ -8,8 +8,8 @@
 //! later milestones can drop in real impls without re-wiring tests).
 
 use crush_lang_sdk::ai_native;
-use crush_vm::vm::Value;
 use crush_vm::HostCaps;
+use crush_vm::vm::Value;
 
 #[test]
 fn register_inserts_all_ten_ai_native_gates() {
@@ -46,7 +46,8 @@ fn every_cap_call_returns_a_map_with_kind_and_ok() {
         let out = handler
             .call(vec![])
             .expect("stub never errors")
-            .expect("returns Some");        match out {
+            .expect("returns Some");
+        match out {
             Value::Map(m) => {
                 let borrowed = m.borrow();
                 match borrowed.get("kind") {

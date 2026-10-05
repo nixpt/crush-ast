@@ -28,18 +28,16 @@ pub mod tcp;
 pub mod transport;
 
 pub use caps::{
-    build_state, NetAcceptCap, NetCloseCap, NetConnectCap, NetListenCap, NetPingCap,
-    NetRecvCap, NetSendCap, NetState, SharedConn, ConnId,
+    ConnId, NetAcceptCap, NetCloseCap, NetConnectCap, NetListenCap, NetPingCap, NetRecvCap,
+    NetSendCap, NetState, SharedConn, build_state,
 };
 pub use codec::{
-    decode_request, encode_frame, encode_request, try_decode_frame, Frame, NetError,
-    FRAME_TYPE_MESH_REQUEST, MAX_FRAME_SIZE,
+    FRAME_TYPE_MESH_REQUEST, Frame, MAX_FRAME_SIZE, NetError, decode_request, encode_frame,
+    encode_request, try_decode_frame,
 };
 pub use reactor::{PollerHandle, Reactor, Source, SourceId};
 pub use tcp::{TcpConnection, TcpListener, TcpTransport};
-pub use transport::{
-    parse_uri, AsyncAccept, AsyncRead, AsyncWrite, Endpoint, Transport,
-};
+pub use transport::{AsyncAccept, AsyncRead, AsyncWrite, Endpoint, Transport, parse_uri};
 
 use crush_lang_sdk::HostCaps;
 

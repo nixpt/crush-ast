@@ -2,25 +2,25 @@ use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use crush_lang_sdk::MessageFormat;
+use crush_lang_sdk::repl::{ReplConfig, ReplState, evaluate_silent};
+use crush_vm::Quotas;
 use ratatui::{
+    Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, List, ListItem, ListState},
-    Terminal,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
-use std::io;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
-use crush_lang_sdk::repl::{ReplState, ReplConfig, evaluate_silent};
-use crush_lang_sdk::MessageFormat;
-use crush_vm::Quotas;
 
 enum AppEvent {
     Key(crossterm::event::Event),
@@ -40,13 +40,18 @@ fn highlight_line(text: &str) -> Line {
             let word = buf.clone();
             let final_style = if style == Style::default() {
                 match word.as_str() {
-                    "let" | "mut" | "fn" | "return" | "if" | "else" | "for" | "in" | "while" | "struct" | "import" => {
-                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
-                    }
-                    w if w.starts_with('@') => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    "let" | "mut" | "fn" | "return" | "if" | "else" | "for" | "in" | "while"
+                    | "struct" | "import" => Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                    w if w.starts_with('@') => Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                     "true" | "false" | "null" => Style::default().fg(Color::Yellow),
                     _ => {
-                        if word.chars().all(|c| c.is_numeric() || c == '.') && word.chars().any(|c| c.is_numeric()) {
+                        if word.chars().all(|c| c.is_numeric() || c == '.')
+                            && word.chars().any(|c| c.is_numeric())
+                        {
                             Style::default().fg(Color::Yellow)
                         } else {
                             Style::default().fg(Color::White)
@@ -103,7 +108,7 @@ fn highlight_line(text: &str) -> Line {
             spans.push(Span::styled(c.to_string(), symbol_style));
         }
     }
-    
+
     if in_comment {
         push_buf(&mut buf, &mut spans, Style::default().fg(Color::DarkGray));
     } else if in_string {
@@ -128,10 +133,7 @@ fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     terminal.show_cursor()?;
 
     if let Err(err) = res {
@@ -165,7 +167,7 @@ struct AppState {
     next_cell_id: usize,
     vm_state: ReplState,
     vm_config: ReplConfig,
-    
+
     // File Manager
     fm_visible: bool,
     fm_path: PathBuf,
@@ -226,19 +228,20 @@ impl AppState {
             if let Ok(cells) = serde_json::from_str::<Vec<Cell>>(&contents) {
                 self.cells = cells;
                 self.next_cell_id = self.cells.last().map(|c| c.id + 1).unwrap_or(1);
-                
+
                 self.vm_state = ReplState::new();
                 for cell in &self.cells {
                     if cell.status == CellStatus::Success {
                         if !cell.input.trim().starts_with("@") {
-                            let _ = evaluate_silent(&cell.input, &mut self.vm_state, &self.vm_config);
+                            let _ =
+                                evaluate_silent(&cell.input, &mut self.vm_state, &self.vm_config);
                         }
                     }
                 }
             }
         }
     }
-    
+
     fn save_notebook(&self) {
         if let Ok(json) = serde_json::to_string_pretty(&self.cells) {
             let _ = fs::write("notebook.crushnb", json);
@@ -249,7 +252,11 @@ impl AppState {
         if self.cursor_y < self.input_lines.len() {
             let line = &mut self.input_lines[self.cursor_y];
             if self.cursor_x <= line.chars().count() {
-                let byte_idx = line.char_indices().nth(self.cursor_x).map(|(i, _)| i).unwrap_or(line.len());
+                let byte_idx = line
+                    .char_indices()
+                    .nth(self.cursor_x)
+                    .map(|(i, _)| i)
+                    .unwrap_or(line.len());
                 line.insert(byte_idx, c);
                 self.cursor_x += 1;
             }
@@ -259,7 +266,11 @@ impl AppState {
     fn insert_newline(&mut self) {
         if self.cursor_y < self.input_lines.len() {
             let line = &mut self.input_lines[self.cursor_y];
-            let byte_idx = line.char_indices().nth(self.cursor_x).map(|(i, _)| i).unwrap_or(line.len());
+            let byte_idx = line
+                .char_indices()
+                .nth(self.cursor_x)
+                .map(|(i, _)| i)
+                .unwrap_or(line.len());
             let remainder = line.split_off(byte_idx);
             self.input_lines.insert(self.cursor_y + 1, remainder);
             self.cursor_y += 1;
@@ -270,7 +281,11 @@ impl AppState {
     fn backspace(&mut self) {
         if self.cursor_x > 0 {
             let line = &mut self.input_lines[self.cursor_y];
-            let byte_idx = line.char_indices().nth(self.cursor_x - 1).map(|(i, _)| i).unwrap();
+            let byte_idx = line
+                .char_indices()
+                .nth(self.cursor_x - 1)
+                .map(|(i, _)| i)
+                .unwrap();
             line.remove(byte_idx);
             self.cursor_x -= 1;
         } else if self.cursor_y > 0 {
@@ -286,7 +301,7 @@ impl AppState {
         let block = self.input_lines.join("\n");
         if !block.trim().is_empty() {
             let cell_id = self.next_cell_id;
-            
+
             if block.trim().starts_with("@ai.synthesize") {
                 // AI Intercept Mode
                 self.cells.push(Cell {
@@ -295,7 +310,7 @@ impl AppState {
                     output: Some(String::new()),
                     status: CellStatus::AiSynthesizing,
                 });
-                
+
                 let tx_clone = tx.clone();
                 std::thread::spawn(move || {
                     let mock_code = "@python {\n  print(\"Hello, I am the AI synthesized code!\")\n  import json\n  data = {\"status\": \"synthesized\"}\n  print(json.dumps(data))\n}\n";
@@ -313,51 +328,9 @@ impl AppState {
                 } else {
                     block.trim().strip_prefix("@sh").unwrap().trim()
                 };
-                
+
                 let code = if code.starts_with('{') && code.ends_with('}') {
-                    code[1..code.len()-1].trim().to_string()
-                } else {
-                    code.to_string()
-                };
-                
-                self.cells.push(Cell {
-                    id: cell_id,
-                    input: block.clone(),
-                    output: None,
-                    status: CellStatus::Pending,
-                });
-                
-                let tx_clone = tx.clone();
-                std::thread::spawn(move || {
-                    let cmd = if is_python {
-                        std::process::Command::new("python3").arg("-c").arg(&code).output()
-                    } else {
-                        std::process::Command::new("bash").arg("-c").arg(&code).output()
-                    };
-                    
-                    let (success, out_str) = match cmd {
-                        Ok(out) => {
-                            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-                            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-                            let mut res = stdout;
-                            if !stderr.is_empty() {
-                                if !res.is_empty() { res.push_str("\n"); }
-                                res.push_str(&stderr);
-                            }
-                            (out.status.success(), res.trim().to_string())
-                        }
-                        Err(e) => (false, e.to_string()),
-                    };
-                    let _ = tx_clone.send(AppEvent::PolyglotDone(cell_id, success, out_str));
-                });
-            } else if block.trim().starts_with("@dot") || block.trim().starts_with("@graph") || block.trim().starts_with("@serve") {
-                let cmd_str = block.trim().split_whitespace().next().unwrap();
-                let is_dot = cmd_str == "@dot";
-                let is_graph = cmd_str == "@graph";
-                
-                let code = block.trim().strip_prefix(cmd_str).unwrap().trim();
-                let code = if code.starts_with('{') && code.ends_with('}') {
-                    code[1..code.len()-1].trim().to_string()
+                    code[1..code.len() - 1].trim().to_string()
                 } else {
                     code.to_string()
                 };
@@ -368,30 +341,94 @@ impl AppState {
                     output: None,
                     status: CellStatus::Pending,
                 });
-                
+
                 let tx_clone = tx.clone();
                 std::thread::spawn(move || {
-                    let temp_path = std::env::temp_dir().join(format!("cell_{}.crush", cell_id));
-                    let _ = std::fs::write(&temp_path, &code);
-                    
-                    let arg = if is_dot { "dot" } else if is_graph { "graph" } else { "serve" };
-                    let cmd = std::process::Command::new("/build/debug/crush-visuals")
-                        .arg(arg)
-                        .arg(&temp_path)
-                        .output();
-                    
+                    let cmd = if is_python {
+                        std::process::Command::new("python3")
+                            .arg("-c")
+                            .arg(&code)
+                            .output()
+                    } else {
+                        std::process::Command::new("bash")
+                            .arg("-c")
+                            .arg(&code)
+                            .output()
+                    };
+
                     let (success, out_str) = match cmd {
                         Ok(out) => {
                             let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
                             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
                             let mut res = stdout;
                             if !stderr.is_empty() {
-                                if !res.is_empty() { res.push_str("\n"); }
+                                if !res.is_empty() {
+                                    res.push_str("\n");
+                                }
                                 res.push_str(&stderr);
                             }
                             (out.status.success(), res.trim().to_string())
                         }
-                        Err(e) => (false, format!("Failed to execute /build/debug/crush-visuals: {}", e)),
+                        Err(e) => (false, e.to_string()),
+                    };
+                    let _ = tx_clone.send(AppEvent::PolyglotDone(cell_id, success, out_str));
+                });
+            } else if block.trim().starts_with("@dot")
+                || block.trim().starts_with("@graph")
+                || block.trim().starts_with("@serve")
+            {
+                let cmd_str = block.trim().split_whitespace().next().unwrap();
+                let is_dot = cmd_str == "@dot";
+                let is_graph = cmd_str == "@graph";
+
+                let code = block.trim().strip_prefix(cmd_str).unwrap().trim();
+                let code = if code.starts_with('{') && code.ends_with('}') {
+                    code[1..code.len() - 1].trim().to_string()
+                } else {
+                    code.to_string()
+                };
+
+                self.cells.push(Cell {
+                    id: cell_id,
+                    input: block.clone(),
+                    output: None,
+                    status: CellStatus::Pending,
+                });
+
+                let tx_clone = tx.clone();
+                std::thread::spawn(move || {
+                    let temp_path = std::env::temp_dir().join(format!("cell_{}.crush", cell_id));
+                    let _ = std::fs::write(&temp_path, &code);
+
+                    let arg = if is_dot {
+                        "dot"
+                    } else if is_graph {
+                        "graph"
+                    } else {
+                        "serve"
+                    };
+                    let cmd = std::process::Command::new("/build/debug/crush-visuals")
+                        .arg(arg)
+                        .arg(&temp_path)
+                        .output();
+
+                    let (success, out_str) = match cmd {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+                            let mut res = stdout;
+                            if !stderr.is_empty() {
+                                if !res.is_empty() {
+                                    res.push_str("\n");
+                                }
+                                res.push_str(&stderr);
+                            }
+                            (out.status.success(), res.trim().to_string())
+                        }
+                        Err(e) => (
+                            false,
+                            format!("Failed to execute /build/debug/crush-visuals: {}", e),
+                        ),
                     };
                     let _ = std::fs::remove_file(temp_path);
                     let _ = tx_clone.send(AppEvent::PolyglotDone(cell_id, success, out_str));
@@ -399,8 +436,16 @@ impl AppState {
             } else {
                 // Normal Native Mode
                 let result = evaluate_silent(&block, &mut self.vm_state, &self.vm_config);
-                let status = if result.error.is_some() { CellStatus::Error } else { CellStatus::Success };
-                let output = if result.error.is_some() { result.error } else { result.output };
+                let status = if result.error.is_some() {
+                    CellStatus::Error
+                } else {
+                    CellStatus::Success
+                };
+                let output = if result.error.is_some() {
+                    result.error
+                } else {
+                    result.output
+                };
 
                 self.cells.push(Cell {
                     id: cell_id,
@@ -424,16 +469,16 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
     loop {
         terminal.draw(|f| {
             let mut main_area = f.area();
-            
+
             // Render FM if visible
             if state.fm_visible {
                 let h_chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
                     .split(main_area);
-                
+
                 main_area = h_chunks[1];
-                
+
                 let fm_title = format!(" File Manager ({}) ", state.fm_path.display());
                 let mut list_items = Vec::new();
                 for (i, entry) in state.fm_entries.iter().enumerate() {
@@ -446,7 +491,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                     }
                     list_items.push(ListItem::new(entry.clone()).style(style));
                 }
-                
+
                 let list = List::new(list_items)
                     .block(Block::default().borders(Borders::ALL).title(fm_title));
                 f.render_widget(list, h_chunks[0]);
@@ -515,59 +560,95 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
 
             let mut history_lines = Vec::new();
             if state.cells.is_empty() {
-                history_lines.push(Line::from(Span::styled("Welcome to the Crush Polyglot Workspace.", Style::default().fg(Color::DarkGray))));
-                history_lines.push(Line::from(Span::styled("Hit [ESC] to exit, [Ctrl+E] to execute block.", Style::default().fg(Color::DarkGray))));
-                history_lines.push(Line::from(Span::styled("Hit [Ctrl+S] to save, [Ctrl+O] to open notebook.crushnb.", Style::default().fg(Color::DarkGray))));
+                history_lines.push(Line::from(Span::styled(
+                    "Welcome to the Crush Polyglot Workspace.",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                history_lines.push(Line::from(Span::styled(
+                    "Hit [ESC] to exit, [Ctrl+E] to execute block.",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                history_lines.push(Line::from(Span::styled(
+                    "Hit [Ctrl+S] to save, [Ctrl+O] to open notebook.crushnb.",
+                    Style::default().fg(Color::DarkGray),
+                )));
             } else {
                 for cell in &state.cells {
                     // Top border with Cell ID
                     let top_border = format!("╭── [Cell {}] ──────────────────────────", cell.id);
-                    history_lines.push(Line::from(Span::styled(top_border, Style::default().fg(Color::Blue))));
-                    
+                    history_lines.push(Line::from(Span::styled(
+                        top_border,
+                        Style::default().fg(Color::Blue),
+                    )));
+
                     // Input source code
                     for line in cell.input.lines() {
                         let mut hl = highlight_line(line);
-                        hl.spans.insert(0, Span::styled("│ ", Style::default().fg(Color::Blue)));
+                        hl.spans
+                            .insert(0, Span::styled("│ ", Style::default().fg(Color::Blue)));
                         history_lines.push(hl);
                     }
-                    
+
                     // Bottom border
-                    history_lines.push(Line::from(Span::styled("╰───────────────────────────────────────", Style::default().fg(Color::Blue))));
+                    history_lines.push(Line::from(Span::styled(
+                        "╰───────────────────────────────────────",
+                        Style::default().fg(Color::Blue),
+                    )));
 
                     match cell.status {
                         CellStatus::Pending => {
-                            history_lines.push(Line::from(Span::styled("  => [Executing Polyglot Subprocess...]", Style::default().fg(Color::Yellow).add_modifier(Modifier::RAPID_BLINK))));
+                            history_lines.push(Line::from(Span::styled(
+                                "  => [Executing Polyglot Subprocess...]",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::RAPID_BLINK),
+                            )));
                         }
                         CellStatus::AiSynthesizing => {
                             if let Some(out) = &cell.output {
                                 for out_line in out.lines() {
-                                    history_lines.push(Line::from(Span::styled(format!("  {}", out_line), Style::default().fg(Color::LightMagenta))));
+                                    history_lines.push(Line::from(Span::styled(
+                                        format!("  {}", out_line),
+                                        Style::default().fg(Color::LightMagenta),
+                                    )));
                                 }
                             }
-                            history_lines.push(Line::from(Span::styled("  => [AI Streaming...]", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::RAPID_BLINK))));
+                            history_lines.push(Line::from(Span::styled(
+                                "  => [AI Streaming...]",
+                                Style::default()
+                                    .fg(Color::LightMagenta)
+                                    .add_modifier(Modifier::RAPID_BLINK),
+                            )));
                         }
                         CellStatus::Success => {
                             if let Some(out) = &cell.output {
                                 for out_line in out.lines() {
-                                    history_lines.push(Line::from(Span::raw(format!("  {}", out_line))));
+                                    history_lines
+                                        .push(Line::from(Span::raw(format!("  {}", out_line))));
                                 }
                             }
                         }
                         CellStatus::Error => {
                             if let Some(err) = &cell.output {
                                 for err_line in err.lines() {
-                                    history_lines.push(Line::from(Span::styled(format!("  {}", err_line), Style::default().fg(Color::Red))));
+                                    history_lines.push(Line::from(Span::styled(
+                                        format!("  {}", err_line),
+                                        Style::default().fg(Color::Red),
+                                    )));
                                 }
                             }
                         }
                     }
-                    history_lines.push(Line::from("")); 
+                    history_lines.push(Line::from(""));
                 }
             }
 
             let history_text = Text::from(history_lines);
-            let history = Paragraph::new(history_text)
-                .block(Block::default().borders(Borders::ALL).title(" Execution History "));
+            let history = Paragraph::new(history_text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Execution History "),
+            );
             f.render_widget(history, chunks[1]);
 
             let mut editor_lines = Vec::new();
@@ -575,10 +656,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                 editor_lines.push(highlight_line(line));
             }
             let editor_text = Text::from(editor_lines);
-            
+
             let editor = Paragraph::new(editor_text)
                 .style(Style::default().fg(Color::Cyan))
-                .block(Block::default().borders(Borders::ALL).title(" Editor ([Ctrl+E] Execute) "));
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Editor ([Ctrl+E] Execute) "),
+                );
             f.render_widget(editor, chunks[2]);
 
             // Set cursor position manually based on state
@@ -608,8 +693,16 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                 }
                 AppEvent::PolyglotDone(cell_id, success, out_str) => {
                     if let Some(cell) = state.cells.iter_mut().find(|c| c.id == cell_id) {
-                        cell.status = if success { CellStatus::Success } else { CellStatus::Error };
-                        cell.output = if out_str.is_empty() { None } else { Some(out_str) };
+                        cell.status = if success {
+                            CellStatus::Success
+                        } else {
+                            CellStatus::Error
+                        };
+                        cell.output = if out_str.is_empty() {
+                            None
+                        } else {
+                            Some(out_str)
+                        };
                     }
                 }
                 AppEvent::Key(Event::Key(key)) => {
@@ -625,28 +718,47 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                                     return Ok(());
                                 }
                             }
-                            KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('s') | KeyCode::Char('S')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 state.save_notebook();
                             }
-                            KeyCode::Char('o') | KeyCode::Char('O') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('o') | KeyCode::Char('O')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 state.load_notebook();
                             }
-                            KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('f') | KeyCode::Char('F')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 state.fm_visible = !state.fm_visible;
-                                if state.fm_visible { state.refresh_fm(); }
+                                if state.fm_visible {
+                                    state.refresh_fm();
+                                }
                             }
-                            KeyCode::Char('h') | KeyCode::Char('H') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('h') | KeyCode::Char('H')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 state.help_visible = !state.help_visible;
                             }
-                            KeyCode::Char('a') | KeyCode::Char('A') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('a') | KeyCode::Char('A')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 state.agent_visible = !state.agent_visible;
                             }
-                            KeyCode::Char('e') | KeyCode::Char('E') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('e') | KeyCode::Char('E')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 state.execute_block(&tx);
                             }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                return Ok(());
+                            }
                             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                if !state.fm_visible && !state.help_visible && !state.agent_visible { state.insert_char(c); }
+                                if !state.fm_visible && !state.help_visible && !state.agent_visible
+                                {
+                                    state.insert_char(c);
+                                }
                             }
                             KeyCode::Enter => {
                                 if state.fm_visible {
@@ -662,10 +774,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                                     } else {
                                         let file_path = state.fm_path.join(entry);
                                         if let Ok(contents) = fs::read_to_string(file_path) {
-                                            state.input_lines = contents.lines().map(String::from).collect();
-                                            if state.input_lines.is_empty() { state.input_lines.push(String::new()); }
+                                            state.input_lines =
+                                                contents.lines().map(String::from).collect();
+                                            if state.input_lines.is_empty() {
+                                                state.input_lines.push(String::new());
+                                            }
                                             state.cursor_y = state.input_lines.len() - 1;
-                                            state.cursor_x = state.input_lines[state.cursor_y].len();
+                                            state.cursor_x =
+                                                state.input_lines[state.cursor_y].len();
                                             state.fm_visible = false;
                                         }
                                     }
@@ -673,21 +789,28 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                                     state.insert_newline();
                                 }
                             }
-                            KeyCode::Backspace => { if !state.fm_visible { state.backspace(); } }
+                            KeyCode::Backspace => {
+                                if !state.fm_visible {
+                                    state.backspace();
+                                }
+                            }
                             KeyCode::Left => {
                                 if !state.fm_visible {
-                                    if state.cursor_x > 0 { state.cursor_x -= 1; }
-                                    else if state.cursor_y > 0 {
+                                    if state.cursor_x > 0 {
+                                        state.cursor_x -= 1;
+                                    } else if state.cursor_y > 0 {
                                         state.cursor_y -= 1;
-                                        state.cursor_x = state.input_lines[state.cursor_y].chars().count();
+                                        state.cursor_x =
+                                            state.input_lines[state.cursor_y].chars().count();
                                     }
                                 }
                             }
                             KeyCode::Right => {
                                 if !state.fm_visible {
                                     let len = state.input_lines[state.cursor_y].chars().count();
-                                    if state.cursor_x < len { state.cursor_x += 1; }
-                                    else if state.cursor_y < state.input_lines.len() - 1 {
+                                    if state.cursor_x < len {
+                                        state.cursor_x += 1;
+                                    } else if state.cursor_y < state.input_lines.len() - 1 {
                                         state.cursor_y += 1;
                                         state.cursor_x = 0;
                                     }
@@ -695,25 +818,32 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                             }
                             KeyCode::Up => {
                                 if state.fm_visible {
-                                    if state.fm_selected > 0 { state.fm_selected -= 1; }
+                                    if state.fm_selected > 0 {
+                                        state.fm_selected -= 1;
+                                    }
                                 } else {
                                     if state.cursor_y > 0 {
                                         state.cursor_y -= 1;
                                         let len = state.input_lines[state.cursor_y].chars().count();
-                                        if state.cursor_x > len { state.cursor_x = len; }
+                                        if state.cursor_x > len {
+                                            state.cursor_x = len;
+                                        }
                                     }
                                 }
                             }
                             KeyCode::Down => {
                                 if state.fm_visible {
-                                    if state.fm_selected < state.fm_entries.len().saturating_sub(1) {
+                                    if state.fm_selected < state.fm_entries.len().saturating_sub(1)
+                                    {
                                         state.fm_selected += 1;
                                     }
                                 } else {
                                     if state.cursor_y < state.input_lines.len() - 1 {
                                         state.cursor_y += 1;
                                         let len = state.input_lines[state.cursor_y].chars().count();
-                                        if state.cursor_x > len { state.cursor_x = len; }
+                                        if state.cursor_x > len {
+                                            state.cursor_x = len;
+                                        }
                                     }
                                 }
                             }
@@ -726,4 +856,3 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
         }
     }
 }
-

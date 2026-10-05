@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
-use swc_ecma_ast::*;
 use crush_walker_core::LowerCtx;
+use swc_ecma_ast::*;
 
 fn meta(span: &swc_common::Span, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
     let offset = span.lo.0 as usize;
@@ -136,7 +136,9 @@ fn lower_class_decl(class: &ClassDecl, ctx: &LowerCtx) -> anyhow::Result<Stateme
                 let key = prop_name_to_string(&prop.key);
                 let val = match &prop.value {
                     Some(v) => lower_expr(v, ctx)?,
-                    None => Expression::NullLiteral { meta: meta(&prop.span, ctx) },
+                    None => Expression::NullLiteral {
+                        meta: meta(&prop.span, ctx),
+                    },
                 };
                 properties.push((key, val));
             }
@@ -187,7 +189,10 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 let name = fn_decl.ident.sym.to_string();
                 Ok(vec![Statement::Export {
                     name: name.clone(),
-                    value: Expression::Var { name, meta: meta(&fn_decl.function.span, ctx) },
+                    value: Expression::Var {
+                        name,
+                        meta: meta(&fn_decl.function.span, ctx),
+                    },
                     meta: meta(&export.span, ctx),
                 }])
             }
@@ -198,7 +203,10 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                     let name = pat_to_name(&d.name);
                     out.push(Statement::Export {
                         name: name.clone(),
-                        value: Expression::Var { name, meta: meta(&d.span, ctx) },
+                        value: Expression::Var {
+                            name,
+                            meta: meta(&d.span, ctx),
+                        },
                         meta: meta(&export.span, ctx),
                     });
                 }
@@ -208,7 +216,10 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 let name = class.ident.sym.to_string();
                 Ok(vec![Statement::Export {
                     name: name.clone(),
-                    value: Expression::Var { name, meta: meta(&class.class.span, ctx) },
+                    value: Expression::Var {
+                        name,
+                        meta: meta(&class.class.span, ctx),
+                    },
                     meta: meta(&export.span, ctx),
                 }])
             }
@@ -218,7 +229,9 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                     let name = pat_to_name(&d.name);
                     out.push(Statement::Export {
                         name,
-                        value: Expression::NullLiteral { meta: meta(&d.span, ctx) },
+                        value: Expression::NullLiteral {
+                            meta: meta(&d.span, ctx),
+                        },
                         meta: meta(&export.span, ctx),
                     });
                 }
@@ -263,7 +276,10 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                     .unwrap_or_default();
                 Ok(vec![Statement::Export {
                     name: "default".to_string(),
-                    value: Expression::Var { name, meta: meta(&class.class.span, ctx) },
+                    value: Expression::Var {
+                        name,
+                        meta: meta(&class.class.span, ctx),
+                    },
                     meta: meta(&export_default.span, ctx),
                 }])
             }
@@ -401,7 +417,9 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                     let name = pat_to_name(&d.name);
                     let value = match &d.init {
                         Some(init) => lower_expr(init, ctx)?,
-                        None => Expression::NullLiteral { meta: meta(&d.span, ctx) },
+                        None => Expression::NullLiteral {
+                            meta: meta(&d.span, ctx),
+                        },
                     };
                     stmts.push(Statement::VarDecl {
                         name,
@@ -434,7 +452,11 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             meta: meta(span, ctx),
         },
         Stmt::If(IfStmt {
-            test, cons, alt, span, ..
+            test,
+            cons,
+            alt,
+            span,
+            ..
         }) => {
             let condition = lower_expr(test, ctx)?;
             let then_body = block_or_stmt_to_vec(cons, ctx)?;
@@ -449,7 +471,9 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: meta(span, ctx),
             }
         }
-        Stmt::While(WhileStmt { test, body, span, .. }) => {
+        Stmt::While(WhileStmt {
+            test, body, span, ..
+        }) => {
             let condition = lower_expr(test, ctx)?;
             let body = block_or_stmt_to_vec(body, ctx)?;
             Statement::While {
@@ -458,7 +482,9 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: meta(span, ctx),
             }
         }
-        Stmt::DoWhile(DoWhileStmt { test, body, span, .. }) => {
+        Stmt::DoWhile(DoWhileStmt {
+            test, body, span, ..
+        }) => {
             let condition = lower_expr(test, ctx)?;
             let body = block_or_stmt_to_vec(body, ctx)?;
             Statement::While {
@@ -502,7 +528,9 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                         operand: Box::new(test_expr),
                         meta: meta(span, ctx),
                     },
-                    then_body: vec![Statement::Break { meta: meta(span, ctx) }],
+                    then_body: vec![Statement::Break {
+                        meta: meta(span, ctx),
+                    }],
                     else_body: None,
                     meta: meta(span, ctx),
                 },
@@ -519,7 +547,11 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             }
         }
         Stmt::ForIn(ForInStmt {
-            left, right, body, span, ..
+            left,
+            right,
+            body,
+            span,
+            ..
         }) => {
             let variable = for_head_to_var(left);
             let iterable = lower_expr(right, ctx)?;
@@ -531,7 +563,11 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             }
         }
         Stmt::ForOf(ForOfStmt {
-            left, right, body, span, ..
+            left,
+            right,
+            body,
+            span,
+            ..
         }) => {
             let variable = for_head_to_var(left);
             let iterable = lower_expr(right, ctx)?;
@@ -607,12 +643,18 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 });
             }
             Statement::ExprStmt {
-                expr: Expression::NullLiteral { meta: meta(&swc_common::DUMMY_SP, ctx) },
+                expr: Expression::NullLiteral {
+                    meta: meta(&swc_common::DUMMY_SP, ctx),
+                },
                 meta: meta(span, ctx),
             }
         }
-        Stmt::Break(bs) => Statement::Break { meta: meta(&bs.span, ctx) },
-        Stmt::Continue(cs) => Statement::Continue { meta: meta(&cs.span, ctx) },
+        Stmt::Break(bs) => Statement::Break {
+            meta: meta(&bs.span, ctx),
+        },
+        Stmt::Continue(cs) => Statement::Continue {
+            meta: meta(&cs.span, ctx),
+        },
         Stmt::With(_ws) => return Ok(None),
         Stmt::Labeled(LabeledStmt { body, .. }) => {
             return lower_stmt(body, ctx);
@@ -625,7 +667,9 @@ fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<
     let name = pat_to_name(&decl.name);
     let value = match &decl.init {
         Some(init) => lower_expr(init, ctx)?,
-        None => Expression::NullLiteral { meta: meta(&decl.span, ctx) },
+        None => Expression::NullLiteral {
+            meta: meta(&decl.span, ctx),
+        },
     };
     Ok(vec![Statement::VarDecl {
         name,
@@ -776,7 +820,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             })
         }
         Expr::Call(CallExpr { callee, args, .. }) => lower_call_expr(callee, args, m, ctx),
-        Expr::New(NewExpr { callee, args, span: _, .. }) => {
+        Expr::New(NewExpr {
+            callee,
+            args,
+            span: _,
+            ..
+        }) => {
             let callee_str = match callee.as_ref() {
                 Expr::Ident(i) => i.sym.to_string(),
                 _ => "Object".to_string(),
@@ -793,7 +842,9 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
-        Expr::Member(MemberExpr { obj, prop, span: _, .. }) => {
+        Expr::Member(MemberExpr {
+            obj, prop, span: _, ..
+        }) => {
             let target = lower_expr(obj, ctx)?;
             match prop {
                 MemberProp::Ident(ident_name) => Ok(Expression::GetField {
@@ -956,16 +1007,27 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                     let name = assign_target_to_name(left);
                     Expression::BinaryOp {
                         operator: match op {
-                            AssignOp::AddAssign => "+", AssignOp::SubAssign => "-",
-                            AssignOp::MulAssign => "*", AssignOp::DivAssign => "/",
-                            AssignOp::ModAssign => "%", AssignOp::LShiftAssign => "<<",
-                            AssignOp::RShiftAssign => ">>", AssignOp::BitOrAssign => "|",
-                            AssignOp::BitXorAssign => "^", AssignOp::BitAndAssign => "&",
-                            AssignOp::ExpAssign => "**", AssignOp::AndAssign => "&&",
-                            AssignOp::OrAssign => "||", AssignOp::NullishAssign => "??",
+                            AssignOp::AddAssign => "+",
+                            AssignOp::SubAssign => "-",
+                            AssignOp::MulAssign => "*",
+                            AssignOp::DivAssign => "/",
+                            AssignOp::ModAssign => "%",
+                            AssignOp::LShiftAssign => "<<",
+                            AssignOp::RShiftAssign => ">>",
+                            AssignOp::BitOrAssign => "|",
+                            AssignOp::BitXorAssign => "^",
+                            AssignOp::BitAndAssign => "&",
+                            AssignOp::ExpAssign => "**",
+                            AssignOp::AndAssign => "&&",
+                            AssignOp::OrAssign => "||",
+                            AssignOp::NullishAssign => "??",
                             _ => "=",
-                        }.to_string(),
-                        left: Box::new(Expression::Var { name: name.clone(), meta: m.clone() }),
+                        }
+                        .to_string(),
+                        left: Box::new(Expression::Var {
+                            name: name.clone(),
+                            meta: m.clone(),
+                        }),
                         right: Box::new(right),
                         meta: m.clone(),
                     }
@@ -985,7 +1047,10 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             Ok(Expression::Call {
                 function: "__crush_assign__".to_string(),
                 args: vec![
-                    Expression::Var { name, meta: m.clone() },
+                    Expression::Var {
+                        name,
+                        meta: m.clone(),
+                    },
                     value,
                 ],
                 meta: m,
@@ -1087,7 +1152,11 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             }
         }
         Expr::Update(UpdateExpr {
-            op, arg, prefix, span: _, ..
+            op,
+            arg,
+            prefix,
+            span: _,
+            ..
         }) => {
             let name = match arg.as_ref() {
                 Expr::Ident(i) => i.sym.to_string(),
@@ -1108,7 +1177,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
-        Expr::SuperProp(SuperPropExpr { obj: _, prop, span: _, .. }) => {
+        Expr::SuperProp(SuperPropExpr {
+            obj: _,
+            prop,
+            span: _,
+            ..
+        }) => {
             let field = match prop {
                 SuperProp::Ident(i) => i.sym.to_string(),
                 SuperProp::Computed(_) => "[]".to_string(),
@@ -1310,12 +1384,13 @@ fn lower_call_expr(
                 // granted. `sin`/`cos`/`tan` added in CRUSH-69 — they were absent
                 // from CRUSH-65's producer list and still silently miscompiled.
                 "Math.abs" | "Math.floor" | "Math.ceil" | "Math.round" | "Math.sqrt"
-                | "Math.pow" | "Math.min" | "Math.max"
-                | "Math.sin" | "Math.cos" | "Math.tan" => Ok(Expression::CapabilityCall {
-                    name: math_builtin(&func_name),
-                    args: lowered_args,
-                    meta: m,
-                }),
+                | "Math.pow" | "Math.min" | "Math.max" | "Math.sin" | "Math.cos" | "Math.tan" => {
+                    Ok(Expression::CapabilityCall {
+                        name: math_builtin(&func_name),
+                        args: lowered_args,
+                        meta: m,
+                    })
+                }
                 "Math.random" => Ok(Expression::CapabilityCall {
                     name: "math.random".to_string(),
                     args: lowered_args,
@@ -1510,12 +1585,10 @@ fn prop_name_to_string(key: &PropName) -> String {
 /// If the assign target is a subscript (arr[i] = val), returns (obj_expr, idx_expr).
 fn assign_target_subscript_parts(target: &AssignTarget) -> Option<(&Expr, &Expr)> {
     match target {
-        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
-            match &member.prop {
-                MemberProp::Computed(computed) => Some((&member.obj, &computed.expr)),
-                _ => None,
-            }
-        }
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => match &member.prop {
+            MemberProp::Computed(computed) => Some((&member.obj, &computed.expr)),
+            _ => None,
+        },
         _ => None,
     }
 }

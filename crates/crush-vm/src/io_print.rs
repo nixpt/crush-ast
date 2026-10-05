@@ -111,7 +111,10 @@ mod fastvm_print {
             args: Vec<RuntimeValue>,
             _hal: Arc<dyn Hal>,
         ) -> anyhow::Result<RuntimeValue> {
-            let parts: Vec<String> = args.iter().map(|v| runtime_value_to_text(v, arena)).collect();
+            let parts: Vec<String> = args
+                .iter()
+                .map(|v| runtime_value_to_text(v, arena))
+                .collect();
             let line = format_io_print_line(&parts);
             self.output.lock().unwrap().push_str(&line);
             Ok(RuntimeValue::Null)
@@ -126,7 +129,10 @@ mod tests {
     #[test]
     fn format_io_print_line_appends_single_newline() {
         assert_eq!(format_io_print_line(&["hello".to_string()]), "hello\n");
-        assert_eq!(format_io_print_line(&["a".to_string(), "b".to_string()]), "ab\n");
+        assert_eq!(
+            format_io_print_line(&["a".to_string(), "b".to_string()]),
+            "ab\n"
+        );
         assert_eq!(format_io_print_line(&[] as &[String]), "\n");
     }
 
@@ -134,9 +140,15 @@ mod tests {
     fn runtime_value_to_text_matches_canonical_rendering() {
         let arena = crate::memory::Arena::new();
         assert_eq!(runtime_value_to_text(&RuntimeValue::Null, &arena), "null");
-        assert_eq!(runtime_value_to_text(&RuntimeValue::Bool(true), &arena), "true");
+        assert_eq!(
+            runtime_value_to_text(&RuntimeValue::Bool(true), &arena),
+            "true"
+        );
         assert_eq!(runtime_value_to_text(&RuntimeValue::Int(42), &arena), "42");
-        assert_eq!(runtime_value_to_text(&RuntimeValue::String("hi".to_string()), &arena), "hi");
+        assert_eq!(
+            runtime_value_to_text(&RuntimeValue::String("hi".to_string()), &arena),
+            "hi"
+        );
     }
 
     #[cfg(feature = "native-plugins")]

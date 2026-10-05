@@ -488,7 +488,11 @@ impl Optimizer {
                 Statement::Assign { target, .. } => {
                     out.insert(target.clone());
                 }
-                Statement::If { then_body, else_body, .. } => {
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     Self::collect_mutated_vars(then_body, out);
                     if let Some(eb) = else_body {
                         Self::collect_mutated_vars(eb, out);

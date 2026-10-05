@@ -284,7 +284,10 @@ fn math_random_seed_is_deterministic_through_source_pipeline() {
 
     let first = run();
     let second = run();
-    assert_eq!(first, second, "same explicit seed must replay the same sequence");
+    assert_eq!(
+        first, second,
+        "same explicit seed must replay the same sequence"
+    );
 
     let mut lines = first.lines();
     let first_float: f64 = lines.next().unwrap().parse().expect("first random float");

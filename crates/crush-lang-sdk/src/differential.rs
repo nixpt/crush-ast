@@ -159,7 +159,9 @@ impl DiffReport {
         if let Some(rest) = line.strip_prefix("int:") {
             rest.parse::<i64>().ok().map(Norm::Int)
         } else if let Some(rest) = line.strip_prefix("float:") {
-            rest.parse::<f64>().ok().map(|f| Norm::Float(format!("{f:?}")))
+            rest.parse::<f64>()
+                .ok()
+                .map(|f| Norm::Float(format!("{f:?}")))
         } else if let Some(rest) = line.strip_prefix("bool:") {
             Some(Norm::Bool(rest == "true"))
         } else if line == "null:null" {
@@ -186,10 +188,9 @@ fn stack_outcome(r: Result<VmResult, crush_vm::VmError>) -> StackOutcome {
 ///
 /// A compile error is upstream of every backend — returned as `Err`, never a divergence.
 pub fn differential_run(source: &str) -> Result<DiffReport, String> {
-    let casm = crush_frontend::compile_crush_source(source)
-        .map_err(|e| format!("frontend: {e}"))?;
-    let vm_prog = crate::compile::casm_to_vm(&casm)
-        .map_err(|e| format!("casm_to_vm: {e}"))?;
+    let casm =
+        crush_frontend::compile_crush_source(source).map_err(|e| format!("frontend: {e}"))?;
+    let vm_prog = crate::compile::casm_to_vm(&casm).map_err(|e| format!("casm_to_vm: {e}"))?;
     let quotas = Quotas::default();
 
     // A — interpreter (borrows vm_prog), then B — portable (consumes a clone).
@@ -206,7 +207,9 @@ pub fn differential_run(source: &str) -> Result<DiffReport, String> {
         // A bare host request means the program stopped waiting on a capability the harness does
         // not service — treat as an incomplete run, not a result. (The batch harness runs pure
         // programs; a program that blocks on the host is out of its comparison scope.)
-        Ok(FastYield::Request(_)) => FastOutcome::Err("host-request (unserviced by harness)".into()),
+        Ok(FastYield::Request(_)) => {
+            FastOutcome::Err("host-request (unserviced by harness)".into())
+        }
         Err(e) => FastOutcome::Err(format!("{e:?}")),
     };
 
@@ -239,7 +242,9 @@ pub fn differential_run(source: &str) -> Result<DiffReport, String> {
     // capability rejection is a harness limitation, not a language divergence. Do not cry wolf.
     let fastvm_abstains = matches!(&fastvm, FastOutcome::Err(e) if e.contains("Capability") || e.contains("host-request"));
     if fastvm_abstains {
-        notes.push(format!("fastvm ABSTAINED (needs capabilities wired into the harness): {fastvm:?}"));
+        notes.push(format!(
+            "fastvm ABSTAINED (needs capabilities wired into the harness): {fastvm:?}"
+        ));
     } else {
         let a_ok = matches!(interpreter, StackOutcome::Ok { .. });
         let c_ok = matches!(fastvm, FastOutcome::Finished(_) | FastOutcome::Yielded);
@@ -272,7 +277,11 @@ mod tests {
         // Same stdout across backends. (Portable leaves a residual Null on the stack — recorded
         // as a NOTE, not a divergence, because it is not observable program behavior.)
         let r = differential_run("fn main() { print(1 + 2); }").unwrap();
-        assert!(!r.diverged(), "1+2 OBSERVABLY diverged: {:?}", r.divergences);
+        assert!(
+            !r.diverged(),
+            "1+2 OBSERVABLY diverged: {:?}",
+            r.divergences
+        );
     }
 
     #[test]
@@ -280,16 +289,30 @@ mod tests {
         // Both must reject 1/0 identically. If portable ever regresses to a silent 0 (its old
         // `to_f64_p` disease), the TIGHT pair catches it here.
         let r = differential_run("fn main() { print(1 / 0); }").unwrap();
-        let a_b_diff: Vec<_> = r.divergences.iter().filter(|d| d.contains("interpreter vs portable")).collect();
-        assert!(a_b_diff.is_empty(), "interp/portable disagree on 1/0: {a_b_diff:?}");
+        let a_b_diff: Vec<_> = r
+            .divergences
+            .iter()
+            .filter(|d| d.contains("interpreter vs portable"))
+            .collect();
+        assert!(
+            a_b_diff.is_empty(),
+            "interp/portable disagree on 1/0: {a_b_diff:?}"
+        );
     }
 
     #[test]
     fn interpreter_and_portable_agree_on_string_concat() {
         // The `"x: " + N` fix landed in BOTH A and B. The tight pair proves they still match.
         let r = differential_run("fn main() { print(\"x: \" + 5); }").unwrap();
-        let a_b_diff: Vec<_> = r.divergences.iter().filter(|d| d.contains("interpreter vs portable")).collect();
-        assert!(a_b_diff.is_empty(), "interp/portable disagree on string+int: {a_b_diff:?}");
+        let a_b_diff: Vec<_> = r
+            .divergences
+            .iter()
+            .filter(|d| d.contains("interpreter vs portable"))
+            .collect();
+        assert!(
+            a_b_diff.is_empty(),
+            "interp/portable disagree on string+int: {a_b_diff:?}"
+        );
     }
 
     #[test]
@@ -298,9 +321,17 @@ mod tests {
         // spawn a binary literally named "javascript" and errored. Both now share
         // resolve_lang_binary. node must be on PATH for this to be meaningful; if it's absent
         // both fail identically, which is still agreement.
-        let r = differential_run("fn main() { @javascript { const x = 1; } print(\"ok\"); }").unwrap();
-        let obs: Vec<_> = r.divergences.iter().filter(|d| d.contains("interpreter vs portable")).collect();
-        assert!(obs.is_empty(), "interp/portable disagree on @javascript dispatch: {obs:?}");
+        let r =
+            differential_run("fn main() { @javascript { const x = 1; } print(\"ok\"); }").unwrap();
+        let obs: Vec<_> = r
+            .divergences
+            .iter()
+            .filter(|d| d.contains("interpreter vs portable"))
+            .collect();
+        assert!(
+            obs.is_empty(),
+            "interp/portable disagree on @javascript dispatch: {obs:?}"
+        );
     }
 
     #[test]
@@ -330,7 +361,11 @@ mod tests {
     #[test]
     fn arithmetic_div_by_zero_rejected_everywhere() {
         let r = differential_run("fn main() { print(1 / 0); }").unwrap();
-        assert!(!r.diverged(), "1/0 should be rejected consistently: {:?}", r.divergences);
+        assert!(
+            !r.diverged(),
+            "1/0 should be rejected consistently: {:?}",
+            r.divergences
+        );
     }
 
     #[test]
@@ -369,27 +404,50 @@ mod tests {
 
     #[test]
     fn ordered_comparison_with_null_rejected() {
-        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(null, 1); }").unwrap();
-        assert!(!r.diverged(), "null < 1 should be rejected consistently: {:?}", r.divergences);
+        let r = differential_run(
+            "fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(null, 1); }",
+        )
+        .unwrap();
+        assert!(
+            !r.diverged(),
+            "null < 1 should be rejected consistently: {:?}",
+            r.divergences
+        );
     }
 
     #[test]
     fn ordered_comparison_with_bool_rejected() {
-        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(true, false); }").unwrap();
-        assert!(!r.diverged(), "true < false should be rejected consistently: {:?}", r.divergences);
+        let r = differential_run(
+            "fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(true, false); }",
+        )
+        .unwrap();
+        assert!(
+            !r.diverged(),
+            "true < false should be rejected consistently: {:?}",
+            r.divergences
+        );
     }
 
     #[test]
     fn ordered_comparison_with_string_rejected() {
-        let r = differential_run("fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(\"a\", \"b\"); }").unwrap();
-        assert!(!r.diverged(), "\"a\" < \"b\" should be rejected consistently: {:?}", r.divergences);
+        let r = differential_run(
+            "fn lt_any(a: any, b: any) { print(a < b); }\nfn main() { lt_any(\"a\", \"b\"); }",
+        )
+        .unwrap();
+        assert!(
+            !r.diverged(),
+            "\"a\" < \"b\" should be rejected consistently: {:?}",
+            r.divergences
+        );
     }
 
     #[test]
     fn equality_remains_permissive_across_types() {
         // eq/ne are defined for any pair and return false when types differ.
         assert_no_divergence("fn main() { print(1 == 1); }");
-        assert_no_divergence("fn eq_any(a: any, b: any) { print(a == b); }\nfn main() { eq_any(1, \"1\"); }");
+        assert_no_divergence(
+            "fn eq_any(a: any, b: any) { print(a == b); }\nfn main() { eq_any(1, \"1\"); }",
+        );
         assert_no_divergence("fn main() { print(null == null); }");
         assert_no_divergence("fn main() { print(true == true); }");
     }
@@ -397,7 +455,11 @@ mod tests {
     #[test]
     fn arithmetic_overflow_rejected_consistently() {
         let r = differential_run("fn add_any(a: any, b: any) { print(a + b); }\nfn main() { add_any(9223372036854775807, 1); }").unwrap();
-        assert!(!r.diverged(), "i64 overflow should be rejected consistently: {:?}", r.divergences);
+        assert!(
+            !r.diverged(),
+            "i64 overflow should be rejected consistently: {:?}",
+            r.divergences
+        );
     }
 
     // ── CRUSH-11 FastVM multi-function dispatch is a PRE-EXISTING bug ───────
@@ -423,7 +485,11 @@ mod tests {
         // exposes `ai_<kind>(...)` as syntax-level builtin (see deferred
         // note below).
         use crate::ai_native::KINDS;
-        assert_eq!(KINDS.len(), 10, "KINDS size changed - update HARD-CODED list and this test");
+        assert_eq!(
+            KINDS.len(),
+            10,
+            "KINDS size changed - update HARD-CODED list and this test"
+        );
         let mut sorted: Vec<&str> = KINDS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -476,7 +542,11 @@ mod tests {
         // reordered or duplicated KINDS; fix the KINDS const, not the
         // test.
         use crate::dom_native::KINDS;
-        assert_eq!(KINDS.len(), 10, "KINDS size changed - update HARD-CODED list and this test");
+        assert_eq!(
+            KINDS.len(),
+            10,
+            "KINDS size changed - update HARD-CODED list and this test"
+        );
         let mut sorted: Vec<&str> = KINDS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -515,4 +585,3 @@ mod tests {
     //         }
     //     }
 }
-

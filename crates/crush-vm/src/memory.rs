@@ -351,7 +351,10 @@ impl Arena {
                 tag: "__pooled_int".to_string(),
                 value: Box::new(RuntimeValue::Int(i)),
             });
-            debug_assert_eq!(idx, self.small_int_pool_start + (i - SMALL_INT_MIN) as usize);
+            debug_assert_eq!(
+                idx,
+                self.small_int_pool_start + (i - SMALL_INT_MIN) as usize
+            );
         }
         self.bool_false_idx = self.push_permanent(Object::Tagged {
             tag: "__pooled_bool".to_string(),
@@ -390,10 +393,7 @@ impl Arena {
         let base = core::mem::size_of::<Object>();
         base + match obj {
             Object::Str(s) => s.len(),
-            Object::Array(arr)
-            | Object::Tuple(arr)
-            | Object::Vector(arr)
-            | Object::Set(arr) => arr
+            Object::Array(arr) | Object::Tuple(arr) | Object::Vector(arr) | Object::Set(arr) => arr
                 .iter()
                 .map(Self::estimate_runtime_value_size)
                 .sum::<usize>(),
@@ -698,7 +698,8 @@ impl Arena {
                 slot.object = Object::Str(String::new());
                 to_free.push(idx);
                 freed += 1;
-                self.current_allocated_bytes = self.current_allocated_bytes.saturating_sub(freed_size);
+                self.current_allocated_bytes =
+                    self.current_allocated_bytes.saturating_sub(freed_size);
                 self.total_freed_bytes += freed_size;
             }
         }

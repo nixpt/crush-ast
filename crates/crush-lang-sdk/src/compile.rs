@@ -69,11 +69,7 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                 variables,
                 meta,
                 ..
-            } if lang == "python"
-                || lang == "javascript"
-                || lang == "js"
-                || lang == "node" =>
-            {
+            } if lang == "python" || lang == "javascript" || lang == "js" || lang == "node" => {
                 // The lexer captures the `{ ... }` body verbatim, including
                 // whatever leading indentation it happened to sit at inside
                 // `@python { ... }`. Guest `-c`/`-e` tolerates that on its own
@@ -103,8 +99,7 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                             known_locals.insert(output_var.clone());
                         }
                         if !inputs.is_empty() || output_var.is_some() {
-                            *code =
-                                rewrite_python_marshaling(code, &inputs, output_var.as_deref());
+                            *code = rewrite_python_marshaling(code, &inputs, output_var.as_deref());
                         }
                         *variables = inputs;
                     }
@@ -128,11 +123,8 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                             known_locals.insert(output_var.clone());
                         }
                         if !inputs.is_empty() || output_var.is_some() {
-                            *code = rewrite_javascript_marshaling(
-                                code,
-                                &inputs,
-                                output_var.as_deref(),
-                            );
+                            *code =
+                                rewrite_javascript_marshaling(code, &inputs, output_var.as_deref());
                         }
                         *variables = inputs;
                     }
@@ -151,9 +143,7 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                 }
             }
             Statement::While { body, .. } => prepare_stmts(body, known_locals),
-            Statement::For {
-                variable, body, ..
-            } => {
+            Statement::For { variable, body, .. } => {
                 known_locals.insert(variable.clone());
                 prepare_stmts(body, known_locals);
             }
@@ -634,11 +624,8 @@ mod tests {
         "#;
         let casm = crush_frontend::compile_crush_source(source).expect("compile array loop");
         let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower array loop");
-        let mut vm = crush_vm::fastvm::FastVM::new(
-            lowered,
-            Vec::new(),
-            std::sync::Arc::new(TestHal),
-        );
+        let mut vm =
+            crush_vm::fastvm::FastVM::new(lowered, Vec::new(), std::sync::Arc::new(TestHal));
         assert_eq!(
             vm.run(10_000),
             crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(2)))
@@ -659,11 +646,8 @@ mod tests {
         "#;
         let casm = crush_frontend::compile_crush_source(source).expect("compile arithmetic loop");
         let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower arithmetic loop");
-        let mut vm = crush_vm::fastvm::FastVM::new(
-            lowered,
-            Vec::new(),
-            std::sync::Arc::new(TestHal),
-        );
+        let mut vm =
+            crush_vm::fastvm::FastVM::new(lowered, Vec::new(), std::sync::Arc::new(TestHal));
         assert_eq!(
             vm.run(10_000),
             crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(6)))
@@ -715,7 +699,8 @@ mod tests {
         let source = "fn main() {\n    @javascript { const x = 1; }\n    io.print(\"js ok\")\n}\n";
         let prog = compile_crush_source(source).expect("compile js polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run js polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run js polyglot block");
         assert_eq!(result.output, "js ok\n");
     }
 
@@ -756,7 +741,9 @@ mod tests {
         let elapsed = start.elapsed();
         let msg = err.to_string();
         assert!(
-            msg.contains("wall-clock quota") && msg.contains("killed") && msg.contains("polyglot.bash"),
+            msg.contains("wall-clock quota")
+                && msg.contains("killed")
+                && msg.contains("polyglot.bash"),
             "error should name the capability and say it was killed, got: {msg}"
         );
         assert!(
@@ -771,12 +758,11 @@ mod tests {
     // explicit declaration syntax needed. Requires `python3` on PATH.
     #[test]
     fn test_python_polyglot_block_marshals_input_and_output() {
-        let source =
-            "fn main() {\n    let base = 5;\n    @python {\n        result = base * 2\n    }\n    print(result);\n}\n";
+        let source = "fn main() {\n    let base = 5;\n    @python {\n        result = base * 2\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
         assert_eq!(result.output, "10\n");
     }
 
@@ -787,8 +773,8 @@ mod tests {
         let source = "fn main() {\n    let base = 5;\n    @python {\n        import math\n        result = math.pow(base, 3)\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
         // JSON round-trip preserves float-ness (Python's json.dumps(125.0)
         // stays "125.0"), not just the numeric value.
         assert_eq!(result.output, "125.0\n");
@@ -802,8 +788,8 @@ mod tests {
         let source = "fn main() {\n    let base = 5;\n    @python {\n        print(\"debug\")\n        result = base + 1\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
         assert!(
             result.output.contains("debug"),
             "block's own print output should still appear, got: {}",
@@ -823,8 +809,7 @@ mod tests {
         let source = "fn main() {\n    let msg = \"hello\";\n    @python {\n        result = msg + \"!\"\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "hello!\n");
     }
 
@@ -834,8 +819,7 @@ mod tests {
         let source = "fn main() {\n    let xs = [1, 2, 3];\n    @python {\n        result = xs[0] + xs[2]\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "4\n");
     }
 
@@ -845,8 +829,7 @@ mod tests {
         let source = "fn main() {\n    let obj = {a: 10, b: 20};\n    @python {\n        result = obj[\"a\"] + obj[\"b\"]\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "30\n");
     }
 

@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use libloading::{Library, Symbol};
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 use std::path::Path;
 
 /// A loaded AOT-compiled Crush module.
@@ -30,16 +30,21 @@ impl Module {
 
         // Extract function pointers now (they borrow `lib`)
         let crush_run: unsafe extern "C" fn() -> *mut c_char = unsafe {
-            let sym: Symbol<unsafe extern "C" fn() -> *mut c_char> = lib
-                .get(b"crush_run\0")
-                .with_context(|| format!("Module '{}' is missing crush_run symbol", path.display()))?;
+            let sym: Symbol<unsafe extern "C" fn() -> *mut c_char> =
+                lib.get(b"crush_run\0").with_context(|| {
+                    format!("Module '{}' is missing crush_run symbol", path.display())
+                })?;
             *sym
         };
 
         let crush_run_free: unsafe extern "C" fn(*mut c_char) = unsafe {
-            let sym: Symbol<unsafe extern "C" fn(*mut c_char)> = lib
-                .get(b"crush_run_free\0")
-                .with_context(|| format!("Module '{}' is missing crush_run_free symbol", path.display()))?;
+            let sym: Symbol<unsafe extern "C" fn(*mut c_char)> =
+                lib.get(b"crush_run_free\0").with_context(|| {
+                    format!(
+                        "Module '{}' is missing crush_run_free symbol",
+                        path.display()
+                    )
+                })?;
             *sym
         };
 
@@ -85,15 +90,21 @@ fn parse_runtime_value(s: &str) -> Result<crush_vm::RuntimeValue> {
     let s = s.trim();
 
     // Bool
-    if s == "true" { return Ok(crush_vm::RuntimeValue::Bool(true)); }
-    if s == "false" { return Ok(crush_vm::RuntimeValue::Bool(false)); }
+    if s == "true" {
+        return Ok(crush_vm::RuntimeValue::Bool(true));
+    }
+    if s == "false" {
+        return Ok(crush_vm::RuntimeValue::Bool(false));
+    }
 
     // Null
-    if s == "null" { return Ok(crush_vm::RuntimeValue::Null); }
+    if s == "null" {
+        return Ok(crush_vm::RuntimeValue::Null);
+    }
 
     // String (quoted)
     if s.starts_with('"') && s.ends_with('"') {
-        let inner = &s[1..s.len()-1];
+        let inner = &s[1..s.len() - 1];
         return Ok(crush_vm::RuntimeValue::String(inner.to_string()));
     }
 
@@ -119,23 +130,38 @@ mod tests {
 
     #[test]
     fn test_parse_int() {
-        assert_eq!(parse_runtime_value("42").unwrap(), crush_vm::RuntimeValue::Int(42));
+        assert_eq!(
+            parse_runtime_value("42").unwrap(),
+            crush_vm::RuntimeValue::Int(42)
+        );
     }
 
     #[test]
     fn test_parse_float() {
-        assert_eq!(parse_runtime_value("3.14").unwrap(), crush_vm::RuntimeValue::Float(3.14));
+        assert_eq!(
+            parse_runtime_value("3.14").unwrap(),
+            crush_vm::RuntimeValue::Float(3.14)
+        );
     }
 
     #[test]
     fn test_parse_bool() {
-        assert_eq!(parse_runtime_value("true").unwrap(), crush_vm::RuntimeValue::Bool(true));
-        assert_eq!(parse_runtime_value("false").unwrap(), crush_vm::RuntimeValue::Bool(false));
+        assert_eq!(
+            parse_runtime_value("true").unwrap(),
+            crush_vm::RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            parse_runtime_value("false").unwrap(),
+            crush_vm::RuntimeValue::Bool(false)
+        );
     }
 
     #[test]
     fn test_parse_null() {
-        assert_eq!(parse_runtime_value("null").unwrap(), crush_vm::RuntimeValue::Null);
+        assert_eq!(
+            parse_runtime_value("null").unwrap(),
+            crush_vm::RuntimeValue::Null
+        );
     }
 
     #[test]

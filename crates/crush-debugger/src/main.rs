@@ -86,8 +86,7 @@ fn main() -> anyhow::Result<()> {
             let source = std::fs::read_to_string(&args.target)
                 .map_err(|e| anyhow::anyhow!("cannot read {}: {}", args.target, e))?;
             let caps: Vec<&str> = args.capabilities.iter().map(|s| s.as_str()).collect();
-            let permissions: Option<&[&str]> =
-                if caps.is_empty() { None } else { Some(&caps) };
+            let permissions: Option<&[&str]> = if caps.is_empty() { None } else { Some(&caps) };
             let mut program = crush_vm::assemble(&source, permissions, Some(&args.target))
                 .map_err(|e| anyhow::anyhow!("assemble failed: {}", e))?;
             let source_map = std::mem::take(&mut program.source_map);

@@ -1,9 +1,9 @@
-use std::rc::Rc;
-use std::cell::RefCell;
-use crush_vm::host::{HostCap, HostCapSpec};
-use crush_vm::vm::Value;
 use crate::parser::CsonParser;
 use crate::{CsonNode, CsonValue};
+use crush_vm::host::{HostCap, HostCapSpec};
+use crush_vm::vm::Value;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Exposes the `cson.parse` capability to Crush VM.
 pub struct CsonParseCap;
@@ -36,9 +36,7 @@ fn node_to_value(node: CsonNode) -> Value {
         CsonValue::Number(n) => Value::Float(n),
         CsonValue::Boolean(b) => Value::Bool(b),
         CsonValue::Null => Value::Null,
-        CsonValue::Synthesize(s) => {
-            Value::Str(format!("<< SYNTHESIZE: {} >>", s))
-        },
+        CsonValue::Synthesize(s) => Value::Str(format!("<< SYNTHESIZE: {} >>", s)),
         CsonValue::Array(arr) => {
             let vec: Vec<Value> = arr.into_iter().map(node_to_value).collect();
             Value::Array(Rc::new(RefCell::new(vec)))

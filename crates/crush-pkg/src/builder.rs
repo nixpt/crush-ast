@@ -231,11 +231,10 @@ pub fn lint_capsule_toml_with_entry(
                         findings.push(LintFinding {
                             line: line_no,
                             key: key.to_string(),
-                            message: format!(
-                                "obsolete key `{key}` on [{section_root}]"
-                            ),
+                            message: format!("obsolete key `{key}` on [{section_root}]"),
                             hint: format!(
-                                "rename `{key}` to `{}` (or remove the field)", rule.replacement
+                                "rename `{key}` to `{}` (or remove the field)",
+                                rule.replacement
                             ),
                         });
                     }
@@ -332,9 +331,7 @@ pub fn scan_entry_file_references(path: &Path) -> Option<HashSet<String>> {
         //   prev == Some('\n')     → BOL after a newline
         //   prev == Some(c.is_whitespace()) → after whitespace
         //   otherwise              → mid-token (separator)
-        if c == '#'
-            && prev.map_or(true, |p| p == '\n' || p.is_whitespace())
-        {
+        if c == '#' && prev.map_or(true, |p| p == '\n' || p.is_whitespace()) {
             in_comment = true;
             prev = Some(c);
             continue;
@@ -908,8 +905,7 @@ ANOTHER_REAL = \"value\"
     /// be `"Crush" # old key` rather than `"Crush"`.
     #[test]
     fn lint_capsule_toml_inline_comment_does_not_pollute_value() {
-        let content =
-            "[capsule]\nname = \"x\"\ncapsule_type = \"Crush\" # old key\n";
+        let content = "[capsule]\nname = \"x\"\ncapsule_type = \"Crush\" # old key\n";
         let findings = lint_capsule_toml(content);
         assert_eq!(findings.len(), 1, "exactly one finding");
         // The comment would have garbled the rule message; if we
@@ -1020,13 +1016,9 @@ ANOTHER_REAL = \"value\"
     fn scan_entry_file_references_url_fragment_in_string_not_a_comment() {
         let dir = tempfile::tempdir().expect("tempdir creation");
         let path = dir.path().join("main.crush");
-        std::fs::write(
-            &path,
-            "import \"docs.md#install\"\nimport alpha-dep\n",
-        )
-        .expect("write entry file");
-        let refs =
-            scan_entry_file_references(&path).expect("scanner must read the on-disk file");
+        std::fs::write(&path, "import \"docs.md#install\"\nimport alpha-dep\n")
+            .expect("write entry file");
+        let refs = scan_entry_file_references(&path).expect("scanner must read the on-disk file");
         // Tokens that survive the URL-string scan — `#` is a
         // separator inside the string, not a comment. Both
         // surrounding imports must also register their deps.
@@ -1065,8 +1057,7 @@ ANOTHER_REAL = \"value\"
              key # whitespace comment is also stripped\nimport beta-dep\n",
         )
         .expect("write entry file");
-        let refs =
-            scan_entry_file_references(&path).expect("scanner must read the on-disk file");
+        let refs = scan_entry_file_references(&path).expect("scanner must read the on-disk file");
         // Code paths register cleanly.
         assert!(refs.contains("alpha-dep"));
         assert!(refs.contains("beta-dep"));
@@ -1075,7 +1066,16 @@ ANOTHER_REAL = \"value\"
         // Comment bodies must NOT be in the ref set — the
         // `in_comment` flip fires correctly on both BOL (`\n`-then-`#`)
         // and whitespace (`space`-then-`#`) precedents.
-        for banned in ["this", "should", "be", "stripped", "whitespace", "comment", "is", "also"] {
+        for banned in [
+            "this",
+            "should",
+            "be",
+            "stripped",
+            "whitespace",
+            "comment",
+            "is",
+            "also",
+        ] {
             assert!(
                 !refs.contains(banned),
                 "comment body word `{banned}` leaked into refs (refs: {:?})",
@@ -1094,17 +1094,21 @@ ANOTHER_REAL = \"value\"
     fn scan_entry_file_references_hash_in_bare_identifier_splits() {
         let dir = tempfile::tempdir().expect("tempdir creation");
         let path = dir.path().join("main.crush");
-        std::fs::write(
-            &path,
-            "alpha-dep\nbeta#suffix\ngamma\ndelta#epsilon#zeta\n",
-        )
-        .expect("write entry file");
-        let refs =
-            scan_entry_file_references(&path).expect("scanner must read the on-disk file");
+        std::fs::write(&path, "alpha-dep\nbeta#suffix\ngamma\ndelta#epsilon#zeta\n")
+            .expect("write entry file");
+        let refs = scan_entry_file_references(&path).expect("scanner must read the on-disk file");
         // Single-`#` split: `beta` + `suffix`.
         assert!(refs.contains("alpha-dep"));
-        assert!(refs.contains("beta"), "hash split must surface LHS (refs: {:?})", refs);
-        assert!(refs.contains("suffix"), "hash split must surface RHS (refs: {:?})", refs);
+        assert!(
+            refs.contains("beta"),
+            "hash split must surface LHS (refs: {:?})",
+            refs
+        );
+        assert!(
+            refs.contains("suffix"),
+            "hash split must surface RHS (refs: {:?})",
+            refs
+        );
         assert!(refs.contains("gamma"));
         // Multi-`#` split: `delta` + `epsilon` + `zeta` (chained
         // separators), confirming each `#` mid-identifier is a
@@ -1124,13 +1128,9 @@ ANOTHER_REAL = \"value\"
     fn scan_entry_file_references_hash_at_file_bol_strips_comment() {
         let dir = tempfile::tempdir().expect("tempdir creation");
         let path = dir.path().join("main.crush");
-        std::fs::write(
-            &path,
-            "# sole comment at file start\nimport alpha-dep\n",
-        )
-        .expect("write entry file");
-        let refs =
-            scan_entry_file_references(&path).expect("scanner must read the on-disk file");
+        std::fs::write(&path, "# sole comment at file start\nimport alpha-dep\n")
+            .expect("write entry file");
+        let refs = scan_entry_file_references(&path).expect("scanner must read the on-disk file");
         assert!(refs.contains("alpha-dep"));
         assert!(refs.contains("import"));
         // The leading-line body words must NOT be in refs.

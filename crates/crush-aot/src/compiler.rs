@@ -4,7 +4,7 @@
 //! a shared library (`.so`/`.dylib`/`.dll`), and returns the path to the artifact.
 
 use anyhow::{Context, Result};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,8 +27,9 @@ fn publish_artifact(built: &Path, cached: &Path) -> Result<()> {
     match std::fs::rename(built, cached) {
         Ok(()) => Ok(()),
         Err(_) => {
-            std::fs::copy(built, cached)
-                .with_context(|| format!("failed to install {} into the AOT cache", built.display()))?;
+            std::fs::copy(built, cached).with_context(|| {
+                format!("failed to install {} into the AOT cache", built.display())
+            })?;
             let _ = std::fs::remove_file(built);
             Ok(())
         }
@@ -48,10 +49,12 @@ impl AotCompiler {
     ///
     /// The cache directory defaults to `$TMPDIR/crush-aot-cache` or `/tmp/crush-aot-cache`.
     pub fn new() -> Self {
-        let cache_dir = std::env::var("TMPDIR")
-            .unwrap_or_else(|_| "/tmp".to_string());
+        let cache_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
         let cache_dir = PathBuf::from(cache_dir).join("crush-aot-cache");
-        Self { cache_dir, optimize: true }
+        Self {
+            cache_dir,
+            optimize: true,
+        }
     }
 
     /// Enable or disable optimization (default: true).
@@ -69,11 +72,7 @@ impl AotCompiler {
     /// Compile a `casm::Program` to a shared library.
     ///
     /// Returns the path to the compiled `.so` (Linux), `.dylib` (macOS), or `.dll` (Windows).
-    pub fn compile_casm(
-        &self,
-        program: &casm::Program,
-        module_name: &str,
-    ) -> Result<PathBuf> {
+    pub fn compile_casm(&self, program: &casm::Program, module_name: &str) -> Result<PathBuf> {
         let rust_source = crate::codegen::gen_rust_source(program);
 
         // Content-hash for cache key
@@ -123,7 +122,8 @@ impl AotCompiler {
         // Set working directory so any relative paths work
         cmd.current_dir(&work_dir);
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| format!("Failed to run rustc for {module_name}"))?;
 
         if !output.status.success() {
@@ -206,7 +206,8 @@ impl AotCompiler {
 
         cmd.current_dir(&work_dir);
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| format!("Failed to run {cc} for {module_name}"))?;
 
         if !output.status.success() {

@@ -30,4 +30,3 @@ pub struct CoverageGap {
     #[serde(default)]
     pub module_path: String,
 }
-

@@ -44,8 +44,14 @@ fn program_with_fn(fn_name: &str, annotations: Option<FunctionAnnotations>) -> P
 #[test]
 fn test_modules_query() {
     let mut idx = CrushIndex::new();
-    idx.add_program("scheduler", &program_with_manifest("runs green threads", &["run_scheduled"]));
-    idx.add_program("vm.types", &program_with_manifest("value types", &["Value"]));
+    idx.add_program(
+        "scheduler",
+        &program_with_manifest("runs green threads", &["run_scheduled"]),
+    );
+    idx.add_program(
+        "vm.types",
+        &program_with_manifest("value types", &["Value"]),
+    );
 
     let modules = idx.modules();
     assert_eq!(modules.len(), 2);
@@ -64,7 +70,9 @@ fn test_definition_query() {
     let mut idx = CrushIndex::new();
     idx.add_program("scheduler", &program_with_fn("execute_one", Some(ann)));
 
-    let def = idx.definition("execute_one").expect("should find execute_one");
+    let def = idx
+        .definition("execute_one")
+        .expect("should find execute_one");
     assert_eq!(def.name, "execute_one");
     assert_eq!(def.module_path, "scheduler");
     let ann = def.annotations.as_ref().unwrap();
@@ -80,7 +88,13 @@ fn test_callers_query() {
     let mut functions = HashMap::new();
     functions.insert(
         "helper".to_string(),
-        Function { params: Vec::new(), body: Vec::new(), meta: HashMap::new(), annotations: None, ..Default::default() },
+        Function {
+            params: Vec::new(),
+            body: Vec::new(),
+            meta: HashMap::new(),
+            annotations: None,
+            ..Default::default()
+        },
     );
     functions.insert(
         "main".to_string(),
@@ -163,7 +177,11 @@ fn test_exhaustive_sites() {
         ExhaustiveMatchSite {
             type_name: "Value".to_string(),
             function_name: "dispatch".to_string(),
-            location: SourceLoc { file: "vm.crush".to_string(), line: 10, col: 4 },
+            location: SourceLoc {
+                file: "vm.crush".to_string(),
+                line: 10,
+                col: 4,
+            },
             covered_arms: vec!["Int".to_string(), "Str".to_string()],
             missing_arms: Vec::new(),
             has_wildcard: false,
@@ -211,10 +229,7 @@ fn test_add_program_caches_flat_annotations_module_level() {
     // Expect at least Module + 1 Invariant = 2 entries.
     assert!(ladder.len() >= 2);
     // First entry (lowest sort key) should be Module (kind=0).
-    assert!(matches!(
-        ladder[0],
-        crush_cast::Annotation::Module(_)
-    ));
+    assert!(matches!(ladder[0], crush_cast::Annotation::Module(_)));
 }
 
 #[test]
@@ -318,10 +333,7 @@ fn test_cross_module_coverage_closure() {
     // A `@covers` Oracle declared in module `tests` closes an `@errors`
     // variant declared in module `impl` (cross-module Normalization).
     let mut errs = FunctionAnnotations::default();
-    errs.errors = vec![
-        "VmError::Foo".to_string(),
-        "VmError::Bar".to_string(),
-    ];
+    errs.errors = vec!["VmError::Foo".to_string(), "VmError::Bar".to_string()];
 
     let mut cov = FunctionAnnotations::default();
     cov.covers = vec!["VmError::Foo".to_string()];

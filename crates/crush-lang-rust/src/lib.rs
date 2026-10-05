@@ -136,7 +136,7 @@ mod tests {
     //! `lower_expr` does not yet support binary operators — that gap
     //! is out of scope for this test suite.
 
-    use super::{rust_to_cast, RustFrontend};
+    use super::{RustFrontend, rust_to_cast};
     use crush_walker_core::Frontend;
 
     /// Mirror of python's `test_analyze` helper: frontend.parse ->
@@ -154,9 +154,7 @@ mod tests {
     /// of any top-level `fn` keeps `uses_functions` false.
     #[test]
     fn test_rust_analyze_classes_and_ffi() {
-        let report = test_analyze(
-            "struct Foo { x: i32 }\nextern \"C\" { fn bar(); }\n",
-        );
+        let report = test_analyze("struct Foo { x: i32 }\nextern \"C\" { fn bar(); }\n");
         assert!(
             report.uses_classes,
             "expected `struct Foo` to flip uses_classes (rust-native, not python's class)"
@@ -179,9 +177,7 @@ mod tests {
     /// syn 2.0 and would invite an unrelated lint failure later.
     #[test]
     fn test_rust_analyze_imports() {
-        let report = test_analyze(
-            "use std::collections::HashMap;\nuse std::io::Result;\n",
-        );
+        let report = test_analyze("use std::collections::HashMap;\nuse std::io::Result;\n");
         assert_eq!(
             report.uses_imports.len(),
             2,
@@ -253,9 +249,4 @@ mod tests {
 
 use crush_walker_core::impl_adapter_from_frontend;
 
-impl_adapter_from_frontend!(
-    RustAdapter,
-    "rust",
-    &["rs"],
-    crate::rust_to_cast
-);
+impl_adapter_from_frontend!(RustAdapter, "rust", &["rs"], crate::rust_to_cast);

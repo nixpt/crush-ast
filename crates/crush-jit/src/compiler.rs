@@ -3,21 +3,29 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use cranelift_codegen::Context;
+use cranelift_codegen::ir::UserFuncName;
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    self, types, AbiParam, BlockArg, InstBuilder, MemFlagsData, Signature,
+    self, AbiParam, BlockArg, InstBuilder, MemFlagsData, Signature, types,
 };
 use cranelift_codegen::isa::{self, CallConv};
 use cranelift_codegen::settings;
-use cranelift_codegen::Context;
-use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
-use cranelift_codegen::ir::UserFuncName;
 use cranelift_control::ControlPlane;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED};
+use crate::runtime::{
+    JIT_MAX_LOCALS, JitContext, OP_ADD_STR, OP_ARR_SET, OP_ARRAY_POP, OP_ARRAY_PUSH, OP_CAP_CALL,
+    OP_CAST, OP_CMP_ORDERED, OP_ENTER_TRY, OP_EXIT_TRY, OP_GET_FIELD, OP_INDEX, OP_LEN,
+    OP_LIST_PUSH, OP_MAKE_LIST, OP_MAKE_MAP, OP_MAKE_RANGE, OP_NEW_ARRAY, OP_NEW_LIST, OP_NEW_OBJ,
+    OP_NEW_SET, OP_NEW_STRUCT, OP_NEW_TUPLE, OP_NEW_VECTOR, OP_PUSH_STR, OP_SET_FIELD, OP_SET_PUSH,
+    OP_STR_CONTAINS, OP_STR_ENDS_WITH, OP_STR_JOIN, OP_STR_REPLACE, OP_STR_SIM, OP_STR_SPLIT,
+    OP_STR_STARTS_WITH, OP_STR_TO_LOWER, OP_STR_TO_UPPER, OP_STR_TRIM, OP_THROW, OP_TUPLE_PUSH,
+    OP_TYPEOF, OP_VECTOR_PUSH, jit_runtime_helper,
+};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -53,7 +61,9 @@ impl std::fmt::Display for CompileError {
             CompileError::Unsupported(ops) => {
                 write!(f, "JIT unsupported opcodes: ")?;
                 for (i, op) in ops.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{op:?}")?;
                 }
                 Ok(())
@@ -70,10 +80,14 @@ pub struct JitProgram {
 }
 impl JitProgram {
     #[inline]
-    pub fn execute(&self, ctx: &mut JitContext) { unsafe { (self.func)(ctx as *mut JitContext) } }
+    pub fn execute(&self, ctx: &mut JitContext) {
+        unsafe { (self.func)(ctx as *mut JitContext) }
+    }
 }
 
-pub struct JitCompiler { isa: Arc<dyn isa::TargetIsa> }
+pub struct JitCompiler {
+    isa: Arc<dyn isa::TargetIsa>,
+}
 
 impl JitCompiler {
     pub fn new() -> anyhow::Result<Self> {
@@ -85,7 +99,7 @@ impl JitCompiler {
     pub fn compile(&self, program: &LoweredProgram) -> anyhow::Result<JitProgram> {
         let ptr_ty = self.isa.pointer_type();
         let blocks = analyze_blocks(program);
-        let mut func = ir::Function::with_name_signature(UserFuncName::user(0,0), sig(ptr_ty));
+        let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), sig(ptr_ty));
         let mut fctx = FunctionBuilderContext::new();
         let mut bld = FunctionBuilder::new(&mut func, &mut fctx);
         let helper_sig = import_helper_sig(&mut bld, ptr_ty);
@@ -94,32 +108,46 @@ impl JitCompiler {
 
         let mut ctx = Context::for_function(func);
         let mut cp = ControlPlane::default();
-        let compiled = ctx.compile(&*self.isa, &mut cp)
+        let compiled = ctx
+            .compile(&*self.isa, &mut cp)
             .map_err(|e| anyhow::anyhow!("Cranelift error: {e:?}"))?;
         let code = compiled.code_buffer();
-        if code.is_empty() { anyhow::bail!("empty code"); }
+        if code.is_empty() {
+            anyhow::bail!("empty code");
+        }
         let mut mem = region::alloc(code.len(), region::Protection::READ_WRITE)
             .map_err(|e| anyhow::anyhow!("mmap: {e}"))?;
         unsafe {
             std::ptr::copy_nonoverlapping(code.as_ptr(), mem.as_mut_ptr::<u8>(), code.len());
-            region::protect(mem.as_ptr::<u8>(), mem.len(), region::Protection::READ_EXECUTE)
-                .map_err(|e| anyhow::anyhow!("mprotect: {e}"))?;
+            region::protect(
+                mem.as_ptr::<u8>(),
+                mem.len(),
+                region::Protection::READ_EXECUTE,
+            )
+            .map_err(|e| anyhow::anyhow!("mprotect: {e}"))?;
         }
         let ptr = mem.as_mut_ptr::<u8>();
-        let func = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(*mut JitContext)>(ptr) };
+        let func =
+            unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(*mut JitContext)>(ptr) };
         Ok(JitProgram { _mem: mem, func })
     }
 }
-impl Default for JitCompiler { fn default() -> Self { Self::new().unwrap() } }
+impl Default for JitCompiler {
+    fn default() -> Self {
+        Self::new().unwrap()
+    }
+}
 
 fn sig(ptr: types::Type) -> Signature {
-    let mut s = Signature::new(CallConv::SystemV); s.params.push(AbiParam::new(ptr)); s
+    let mut s = Signature::new(CallConv::SystemV);
+    s.params.push(AbiParam::new(ptr));
+    s
 }
 
 /// Signature for the JIT runtime helper function: `extern "C" fn(*mut JitContext, i64, i64)`.
 fn helper_sig(ptr: types::Type) -> Signature {
     let mut s = Signature::new(CallConv::SystemV);
-    s.params.push(AbiParam::new(ptr));       // ctx pointer
+    s.params.push(AbiParam::new(ptr)); // ctx pointer
     s.params.push(AbiParam::new(types::I64)); // opcode
     s.params.push(AbiParam::new(types::I64)); // arg
     s
@@ -136,7 +164,12 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
     let insns = &program.instructions;
     for (i, instr) in insns.iter().enumerate() {
         match instr.op {
-            FastOp::Jump | FastOp::JumpIf | FastOp::JumpIfNot | FastOp::Return | FastOp::Halt | FastOp::Call => {
+            FastOp::Jump
+            | FastOp::JumpIf
+            | FastOp::JumpIfNot
+            | FastOp::Return
+            | FastOp::Halt
+            | FastOp::Call => {
                 starts.insert(i + 1);
                 if matches!(instr.op, FastOp::Jump | FastOp::JumpIf | FastOp::JumpIfNot) {
                     starts.insert(instr.arg as usize);
@@ -151,8 +184,12 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
             }
             // M2 Phase 5 Tier 2: yield ops create block boundaries so the next
             // instruction is a valid resume point.
-            FastOp::CallHost | FastOp::ExecLang | FastOp::Spawn
-            | FastOp::Gc | FastOp::ImportVar | FastOp::Await
+            FastOp::CallHost
+            | FastOp::ExecLang
+            | FastOp::Spawn
+            | FastOp::Gc
+            | FastOp::ImportVar
+            | FastOp::Await
             | FastOp::CrossLangCall => {
                 starts.insert(i + 1);
             }
@@ -163,18 +200,30 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
     let offs: Vec<usize> = starts.into_iter().collect();
     for i in 0..offs.len() {
         let s = offs[i];
-        if s >= insns.len() { continue; }
-        let e = offs.get(i+1).copied().unwrap_or(insns.len());
-        if e > s { out.push((s, insns[s..e].to_vec())); }
+        if s >= insns.len() {
+            continue;
+        }
+        let e = offs.get(i + 1).copied().unwrap_or(insns.len());
+        if e > s {
+            out.push((s, insns[s..e].to_vec()));
+        }
     }
     out
 }
 
 // ── Builder ────────────────────────────────────────────────────────────────
 
-fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef) -> Result<(), CompileError> {
+fn build_fn(
+    bld: &mut FunctionBuilder,
+    blocks: &[(usize, Vec<FastInstr>)],
+    program: &LoweredProgram,
+    ptr_ty: types::Type,
+    helper_sig: ir::SigRef,
+) -> Result<(), CompileError> {
     let mut map: HashMap<usize, ir::Block> = HashMap::new();
-    for &(off, _) in blocks { map.insert(off, bld.create_block()); }
+    for &(off, _) in blocks {
+        map.insert(off, bld.create_block());
+    }
 
     // Collect handler entries (unique handler PCs → CLIF blocks) for Throw dispatch.
     // The analyzer already creates blocks at handler PCs via EnterTry, so each
@@ -209,7 +258,13 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     let init_bb = bld.create_block();
     let merge_bb = bld.create_block();
     bld.append_block_param(merge_bb, ir::types::I64); // target block offset
-    bld.ins().brif(is_resume, resume_bb, &[] as &[BlockArg], init_bb, &[] as &[BlockArg]);
+    bld.ins().brif(
+        is_resume,
+        resume_bb,
+        &[] as &[BlockArg],
+        init_bb,
+        &[] as &[BlockArg],
+    );
 
     // Resume path: jump to saved_pc, then clear it.
     bld.switch_to_block(resume_bb);
@@ -227,7 +282,8 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     bld.switch_to_block(merge_bb);
     let target_pc_val = bld.block_params(merge_bb)[0];
     // Build a dispatch cascade from PC offsets → CLIF blocks.
-    let dispatch_targets: Vec<(i64, ir::Block)> = blocks.iter()
+    let dispatch_targets: Vec<(i64, ir::Block)> = blocks
+        .iter()
         .map(|&(off, _)| (off as i64, map[&off]))
         .collect();
     // If the target is in our map, jump there. Otherwise return null (safety net).
@@ -303,7 +359,19 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
         bld.switch_to_block(block);
         let mut term = false;
         for (i, instr) in instrs.iter().enumerate() {
-            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig)?;
+            term = emit_one(
+                bld,
+                ctx,
+                off + i,
+                instr,
+                &map,
+                program,
+                &ret_blocks,
+                &call_idx_to_ret,
+                &handler_entries,
+                ptr_ty,
+                helper_sig,
+            )?;
         }
         if !term {
             if let Some(&next_block) = next_off_map.get(&off) {
@@ -349,39 +417,105 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
 
 // ── Primitives (single builder.ins() call each) ────────────────────────────
 
-fn iconst(b: &mut FunctionBuilder, v: i64) -> ir::Value { b.ins().iconst(types::I64, v) }
-fn load(b: &mut FunctionBuilder, a: ir::Value) -> ir::Value { b.ins().load(types::I64, MemFlagsData::trusted(), a, 0) }
-fn store(b: &mut FunctionBuilder, a: ir::Value, v: ir::Value) { b.ins().store(MemFlagsData::trusted(), v, a, 0); }
-fn iadd_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().iadd_imm(v, i) }
-fn imul_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().imul_imm(v, i) }
-fn iadd(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().iadd(a, b2) }
-fn band(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().band(a, b2) }
-fn bor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().bor(a, b2) }
-fn bnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().bnot(v) }
-fn band_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().band_imm(v, i) }
-fn icmp_eq(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(IntCC::Equal, a, b2) }
-fn icmp_ne(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(IntCC::NotEqual, a, b2) }
-fn ishl_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().ishl_imm(v, i) }
-fn sshr_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().sshr_imm(v, i) }
-fn ishl(b: &mut FunctionBuilder, v: ir::Value, a: ir::Value) -> ir::Value { b.ins().ishl(v, a) }
-fn sshr(b: &mut FunctionBuilder, v: ir::Value, a: ir::Value) -> ir::Value { b.ins().sshr(v, a) }
-fn bxor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().bxor(a, b2) }
-fn select(b: &mut FunctionBuilder, c: ir::Value, t: ir::Value, f: ir::Value) -> ir::Value { b.ins().select(c, t, f) }
-fn bf64(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().bitcast(types::F64, MemFlagsData::new(), v) }
-fn bi64(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().bitcast(types::I64, MemFlagsData::new(), v) }
-fn iadd2(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().iadd(x, y) }
-fn isub(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().isub(x, y) }
-fn imul(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().imul(x, y) }
-fn sdiv(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().sdiv(x, y) }
-fn srem(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().srem(x, y) }
-fn ineg(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().ineg(v) }
-fn fadd(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().fadd(x, y) }
-fn fsub(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().fsub(x, y) }
-fn fmul(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().fmul(x, y) }
-fn fdiv(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value { b.ins().fdiv(x, y) }
-fn fneg(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().fneg(v) }
-fn icmp(b: &mut FunctionBuilder, cc: IntCC, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(cc, a, b2) }
-fn fcmp(b: &mut FunctionBuilder, cc: FloatCC, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().fcmp(cc, a, b2) }
+fn iconst(b: &mut FunctionBuilder, v: i64) -> ir::Value {
+    b.ins().iconst(types::I64, v)
+}
+fn load(b: &mut FunctionBuilder, a: ir::Value) -> ir::Value {
+    b.ins().load(types::I64, MemFlagsData::trusted(), a, 0)
+}
+fn store(b: &mut FunctionBuilder, a: ir::Value, v: ir::Value) {
+    b.ins().store(MemFlagsData::trusted(), v, a, 0);
+}
+fn iadd_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
+    b.ins().iadd_imm(v, i)
+}
+fn imul_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
+    b.ins().imul_imm(v, i)
+}
+fn iadd(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().iadd(a, b2)
+}
+fn band(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().band(a, b2)
+}
+fn bor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().bor(a, b2)
+}
+fn bnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
+    b.ins().bnot(v)
+}
+fn band_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
+    b.ins().band_imm(v, i)
+}
+fn icmp_eq(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().icmp(IntCC::Equal, a, b2)
+}
+fn icmp_ne(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().icmp(IntCC::NotEqual, a, b2)
+}
+fn ishl_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
+    b.ins().ishl_imm(v, i)
+}
+fn sshr_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
+    b.ins().sshr_imm(v, i)
+}
+fn ishl(b: &mut FunctionBuilder, v: ir::Value, a: ir::Value) -> ir::Value {
+    b.ins().ishl(v, a)
+}
+fn sshr(b: &mut FunctionBuilder, v: ir::Value, a: ir::Value) -> ir::Value {
+    b.ins().sshr(v, a)
+}
+fn bxor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().bxor(a, b2)
+}
+fn select(b: &mut FunctionBuilder, c: ir::Value, t: ir::Value, f: ir::Value) -> ir::Value {
+    b.ins().select(c, t, f)
+}
+fn bf64(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
+    b.ins().bitcast(types::F64, MemFlagsData::new(), v)
+}
+fn bi64(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
+    b.ins().bitcast(types::I64, MemFlagsData::new(), v)
+}
+fn iadd2(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().iadd(x, y)
+}
+fn isub(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().isub(x, y)
+}
+fn imul(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().imul(x, y)
+}
+fn sdiv(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().sdiv(x, y)
+}
+fn srem(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().srem(x, y)
+}
+fn ineg(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
+    b.ins().ineg(v)
+}
+fn fadd(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().fadd(x, y)
+}
+fn fsub(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().fsub(x, y)
+}
+fn fmul(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().fmul(x, y)
+}
+fn fdiv(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
+    b.ins().fdiv(x, y)
+}
+fn fneg(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
+    b.ins().fneg(v)
+}
+fn icmp(b: &mut FunctionBuilder, cc: IntCC, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().icmp(cc, a, b2)
+}
+fn fcmp(b: &mut FunctionBuilder, cc: FloatCC, a: ir::Value, b2: ir::Value) -> ir::Value {
+    b.ins().fcmp(cc, a, b2)
+}
 
 // ── Compound helpers (each builder.ins() call on its own line) ──────────────
 
@@ -583,11 +717,13 @@ fn dispatch_by_eq(b: &mut FunctionBuilder, val: ir::Value, targets: &[(i64, ir::
         let next_bb = chain[i];
         let const_key = iconst(b, *key);
         let cmp = icmp_eq(b, val, const_key);
-        b.ins().brif(cmp, *blk, &[] as &[BlockArg], next_bb, &[] as &[BlockArg]);
+        b.ins()
+            .brif(cmp, *blk, &[] as &[BlockArg], next_bb, &[] as &[BlockArg]);
     }
     // Final chain block: unconditional jump to last target
     b.switch_to_block(*chain.last().unwrap());
-    b.ins().jump(targets[targets.len() - 1].1, &[] as &[BlockArg]);
+    b.ins()
+        .jump(targets[targets.len() - 1].1, &[] as &[BlockArg]);
     // Seal all chain blocks now that they have terminators
     for &cb in &chain {
         b.seal_block(cb);
@@ -596,15 +732,24 @@ fn dispatch_by_eq(b: &mut FunctionBuilder, val: ir::Value, targets: &[(i64, ir::
 
 /// Thin wrapper: converts handler entries (usize PC → Block) to the
 /// unified dispatch format.
-fn emit_handler_dispatch(b: &mut FunctionBuilder, hp_val: ir::Value, entries: &[(usize, ir::Block)]) {
-    let targets: Vec<(i64, ir::Block)> = entries.iter().map(|(pc, blk)| (*pc as i64, *blk)).collect();
+fn emit_handler_dispatch(
+    b: &mut FunctionBuilder,
+    hp_val: ir::Value,
+    entries: &[(usize, ir::Block)],
+) {
+    let targets: Vec<(i64, ir::Block)> =
+        entries.iter().map(|(pc, blk)| (*pc as i64, *blk)).collect();
     dispatch_by_eq(b, hp_val, &targets);
 }
 
 /// Thin wrapper: converts sequential return blocks (0..N → Block) to the
 /// unified dispatch format.
 fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::Block]) {
-    let targets: Vec<(i64, ir::Block)> = targets.iter().enumerate().map(|(i, &blk)| (i as i64, blk)).collect();
+    let targets: Vec<(i64, ir::Block)> = targets
+        .iter()
+        .enumerate()
+        .map(|(i, &blk)| (i as i64, blk))
+        .collect();
     dispatch_by_eq(b, idx, &targets);
 }
 
@@ -647,13 +792,21 @@ fn emit_host_yield(b: &mut FunctionBuilder, ctx: ir::Value, next_pc: usize, requ
 /// Emit a call to the runtime helper function via `call_indirect`.
 /// Does NOT check for errors — use `emit_helper_call_checked` for
 /// helpers that can set `OFF_ERROR`.
-fn emit_helper_call(b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i64, ptr_ty: types::Type, helper_sig: ir::SigRef) {
+fn emit_helper_call(
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    opcode: i64,
+    arg: i64,
+    ptr_ty: types::Type,
+    helper_sig: ir::SigRef,
+) {
     let off_addr = iadd_imm(b, ctx, OFF_HELPER_FN);
     let helper_addr = load(b, off_addr);
     let callee = b.ins().bitcast(ptr_ty, MemFlagsData::new(), helper_addr);
     let op_val = iconst(b, opcode);
     let arg_val = iconst(b, arg);
-    b.ins().call_indirect(helper_sig, callee, &[ctx, op_val, arg_val]);
+    b.ins()
+        .call_indirect(helper_sig, callee, &[ctx, op_val, arg_val]);
 }
 
 /// Emit a checked call to the runtime helper. After `call_indirect`,
@@ -662,8 +815,12 @@ fn emit_helper_call(b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i
 /// the caller continues naturally. The trap path stores null result
 /// and returns.
 fn emit_helper_call_checked(
-    b: &mut FunctionBuilder, ctx: ir::Value, opcode: i64, arg: i64,
-    ptr_ty: types::Type, helper_sig: ir::SigRef,
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    opcode: i64,
+    arg: i64,
+    ptr_ty: types::Type,
+    helper_sig: ir::SigRef,
 ) {
     // Emit the call_indirect (same as emit_helper_call).
     emit_helper_call(b, ctx, opcode, arg, ptr_ty, helper_sig);
@@ -679,7 +836,13 @@ fn emit_helper_call_checked(
     let has_err = icmp_ne(b, err_val, zero);
     let ok_bb = b.create_block();
     let err_bb = b.create_block();
-    b.ins().brif(has_err, err_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+    b.ins().brif(
+        has_err,
+        err_bb,
+        &[] as &[BlockArg],
+        ok_bb,
+        &[] as &[BlockArg],
+    );
 
     // Error path: null result, halt.
     b.switch_to_block(err_bb);
@@ -695,9 +858,13 @@ fn emit_helper_call_checked(
 }
 
 fn emit_one(
-    b: &mut FunctionBuilder, ctx: ir::Value, global_idx: usize,
-    instr: &FastInstr, clif: &HashMap<usize, ir::Block>,
-    program: &LoweredProgram, return_blocks: &[ir::Block],
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    global_idx: usize,
+    instr: &FastInstr,
+    clif: &HashMap<usize, ir::Block>,
+    program: &LoweredProgram,
+    return_blocks: &[ir::Block],
     call_idx_to_ret: &HashMap<usize, usize>,
     handler_entries: &[(usize, ir::Block)],
     _ptr_ty: types::Type,
@@ -710,15 +877,26 @@ fn emit_one(
             let cv = iconst(b, (TAG_INT as u64 | v) as i64);
             push(b, ctx, cv);
         }
-        PushFloat => { let cv = iconst(b, instr.arg as i64); push(b, ctx, cv); }
+        PushFloat => {
+            let cv = iconst(b, instr.arg as i64);
+            push(b, ctx, cv);
+        }
         PushBool => {
             let v = if instr.arg != 0 { TAG_TRUE } else { TAG_FALSE };
             let cv = iconst(b, v);
             push(b, ctx, cv);
         }
-        PushNull => { let cv = iconst(b, TAG_NULL); push(b, ctx, cv); }
-        Dup => { let v = peek(b, ctx, 0); push(b, ctx, v); }
-        Pop => { pop(b, ctx); }
+        PushNull => {
+            let cv = iconst(b, TAG_NULL);
+            push(b, ctx, cv);
+        }
+        Dup => {
+            let v = peek(b, ctx, 0);
+            push(b, ctx, v);
+        }
+        Pop => {
+            pop(b, ctx);
+        }
         Swap => {
             let a = peek(b, ctx, 0);
             let bv = peek(b, ctx, 1);
@@ -736,7 +914,7 @@ fn emit_one(
             push(b, ctx, a);
             push(b, ctx, bv);
             emit_helper_call(b, ctx, OP_ADD_STR, 0, _ptr_ty, helper_sig);
-        },
+        }
         Sub => arith(b, ctx, true, false, _ptr_ty, helper_sig),
         Mul => arith(b, ctx, false, true, _ptr_ty, helper_sig),
         Div => arith(b, ctx, false, false, _ptr_ty, helper_sig),
@@ -750,7 +928,8 @@ fn emit_one(
             let fbb = b.create_block();
             let mbb = b.create_block();
             b.append_block_param(mbb, types::I64);
-            b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
+            b.ins()
+                .brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
             // Int mod: srem(a, b)
             b.switch_to_block(ibb);
@@ -768,7 +947,8 @@ fn emit_one(
             let bf = band(b, fa, fb);
             let ok = b.create_block();
             let err = b.create_block();
-            b.ins().brif(bf, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
+            b.ins()
+                .brif(bf, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
 
             b.switch_to_block(ok);
             // fmod(a, b) = a - trunc(a / b) * b
@@ -813,7 +993,8 @@ fn emit_one(
             let float_bb = b.create_block();
             let merge_bb = b.create_block();
             b.append_block_param(merge_bb, types::I64);
-            b.ins().brif(ii, int_bb, &[] as &[BlockArg], float_bb, &[] as &[BlockArg]);
+            b.ins()
+                .brif(ii, int_bb, &[] as &[BlockArg], float_bb, &[] as &[BlockArg]);
 
             b.switch_to_block(int_bb);
             let ev = eint(b, val);
@@ -848,28 +1029,28 @@ fn emit_one(
             push(b, ctx, a);
             push(b, ctx, bv);
             emit_helper_call(b, ctx, OP_CMP_ORDERED, 0, _ptr_ty, helper_sig);
-        },
+        }
         Le => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
             push(b, ctx, a);
             push(b, ctx, bv);
             emit_helper_call(b, ctx, OP_CMP_ORDERED, 1, _ptr_ty, helper_sig);
-        },
+        }
         Gt => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
             push(b, ctx, a);
             push(b, ctx, bv);
             emit_helper_call(b, ctx, OP_CMP_ORDERED, 2, _ptr_ty, helper_sig);
-        },
+        }
         Ge => {
             let bv = pop(b, ctx);
             let a = pop(b, ctx);
             push(b, ctx, a);
             push(b, ctx, bv);
             emit_helper_call(b, ctx, OP_CMP_ORDERED, 3, _ptr_ty, helper_sig);
-        },
+        }
 
         And => {
             let bv = pop(b, ctx);
@@ -910,7 +1091,8 @@ fn emit_one(
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
-                b.ins().brif(c, tb, &[] as &[BlockArg], eb, &[] as &[BlockArg]);
+                b.ins()
+                    .brif(c, tb, &[] as &[BlockArg], eb, &[] as &[BlockArg]);
                 return Ok(true);
             }
         }
@@ -921,13 +1103,13 @@ fn emit_one(
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
-                b.ins().brif(nb, tb, &[] as &[BlockArg], eb, &[] as &[BlockArg]);
+                b.ins()
+                    .brif(nb, tb, &[] as &[BlockArg], eb, &[] as &[BlockArg]);
                 return Ok(true);
             }
         }
 
         // ── Function calls ────────────────────────────────────────────────────
-
         Call => {
             let func_name = &program.symbols.strings[instr.arg as usize];
             if let Some(&(target_pc, _, _arity)) = program.symbols.functions.get(func_name) {
@@ -937,8 +1119,12 @@ fn emit_one(
                 // Same semantics as FastVM's Call handler.
                 if argc > 1 {
                     let mut args: Vec<ir::Value> = Vec::with_capacity(argc);
-                    for _ in 0..argc { args.push(pop(b, ctx)); }
-                    for &arg in &args { push(b, ctx, arg); }
+                    for _ in 0..argc {
+                        args.push(pop(b, ctx));
+                    }
+                    for &arg in &args {
+                        push(b, ctx, arg);
+                    }
                 }
 
                 // Guard: check call-stack depth before pushing.
@@ -951,7 +1137,13 @@ fn emit_one(
                 let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
                 let ok_bb = b.create_block();
                 let overflow_bb = b.create_block();
-                b.ins().brif(overflow, overflow_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+                b.ins().brif(
+                    overflow,
+                    overflow_bb,
+                    &[] as &[BlockArg],
+                    ok_bb,
+                    &[] as &[BlockArg],
+                );
 
                 // Overflow path: set error, store null result, halt
                 b.switch_to_block(overflow_bb);
@@ -993,7 +1185,13 @@ fn emit_one(
 
             let top_bb = b.create_block();
             let ret_bb = b.create_block();
-            b.ins().brif(is_top, top_bb, &[] as &[BlockArg], ret_bb, &[] as &[BlockArg]);
+            b.ins().brif(
+                is_top,
+                top_bb,
+                &[] as &[BlockArg],
+                ret_bb,
+                &[] as &[BlockArg],
+            );
 
             // Top-level return (no caller) — behave like Halt
             b.switch_to_block(top_bb);
@@ -1011,11 +1209,22 @@ fn emit_one(
             return Ok(true);
         }
 
-        Halt => { let val = pop(b, ctx); sres(b, ctx, val); b.ins().return_(&[] as &[ir::Value]); return Ok(true); }
+        Halt => {
+            let val = pop(b, ctx);
+            sres(b, ctx, val);
+            b.ins().return_(&[] as &[ir::Value]);
+            return Ok(true);
+        }
         Nop => {}
 
-        LoadLocal => { let v = lload(b, ctx, instr.arg as usize); push(b, ctx, v); }
-        StoreLocal => { let v = pop(b, ctx); lstore(b, ctx, instr.arg as usize, v); }
+        LoadLocal => {
+            let v = lload(b, ctx, instr.arg as usize);
+            push(b, ctx, v);
+        }
+        StoreLocal => {
+            let v = pop(b, ctx);
+            lstore(b, ctx, instr.arg as usize, v);
+        }
 
         // ── Stack manipulation ─────────────────────────────────────────────
         Rot => {
@@ -1034,12 +1243,28 @@ fn emit_one(
         }
 
         // ── Bitwise ────────────────────────────────────────────────────────
-        BitAnd => { bitwise_bin(b, ctx, |bb, x, y| band(bb, x, y)); }
-        BitOr  => { bitwise_bin(b, ctx, |bb, x, y| bor(bb, x, y)); }
-        BitXor => { bitwise_bin(b, ctx, |bb, x, y| bxor(bb, x, y)); }
-        BitNot => { let v = pop(b, ctx); let ev = eint(b, v); let r = bnot(b, ev); let tr = tint(b, r); push(b, ctx, tr); }
-        Shl    => { bitwise_bin(b, ctx, |bb, x, y| ishl(bb, x, y)); }
-        Shr    => { bitwise_bin(b, ctx, |bb, x, y| sshr(bb, x, y)); }
+        BitAnd => {
+            bitwise_bin(b, ctx, |bb, x, y| band(bb, x, y));
+        }
+        BitOr => {
+            bitwise_bin(b, ctx, |bb, x, y| bor(bb, x, y));
+        }
+        BitXor => {
+            bitwise_bin(b, ctx, |bb, x, y| bxor(bb, x, y));
+        }
+        BitNot => {
+            let v = pop(b, ctx);
+            let ev = eint(b, v);
+            let r = bnot(b, ev);
+            let tr = tint(b, r);
+            push(b, ctx, tr);
+        }
+        Shl => {
+            bitwise_bin(b, ctx, |bb, x, y| ishl(bb, x, y));
+        }
+        Shr => {
+            bitwise_bin(b, ctx, |bb, x, y| sshr(bb, x, y));
+        }
 
         // ── Loop control ───────────────────────────────────────────────────
         Break | Continue => {
@@ -1051,12 +1276,15 @@ fn emit_one(
         }
 
         // ── Math ───────────────────────────────────────────────────────────
-        MathSqrt  => math_unary(b, ctx, MathOp::Sqrt),
-        MathAbs   => math_unary(b, ctx, MathOp::Abs),
+        MathSqrt => math_unary(b, ctx, MathOp::Sqrt),
+        MathAbs => math_unary(b, ctx, MathOp::Abs),
         MathRound => math_unary(b, ctx, MathOp::Round),
         MathFloor => math_unary(b, ctx, MathOp::Floor),
-        MathCeil  => math_unary(b, ctx, MathOp::Ceil),
-        MathPow   => { let cv = iconst(b, TAG_NULL); push(b, ctx, cv); }, // TODO: runtime pow(f64, f64) helper
+        MathCeil => math_unary(b, ctx, MathOp::Ceil),
+        MathPow => {
+            let cv = iconst(b, TAG_NULL);
+            push(b, ctx, cv);
+        } // TODO: runtime pow(f64, f64) helper
 
         // ── Arena-dependent ops (Phase 3b: runtime helpers) ─────────────────
         PushStr => emit_helper_call(b, ctx, OP_PUSH_STR, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible — arena alloc never errors
@@ -1074,44 +1302,44 @@ fn emit_one(
         }
 
         MakeList => emit_helper_call(b, ctx, OP_MAKE_LIST, instr.arg as i64, _ptr_ty, helper_sig),
-        MakeMap  => emit_helper_call(b, ctx, OP_MAKE_MAP, instr.arg as i64, _ptr_ty, helper_sig),
-        Index    => emit_helper_call(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
-        Len      => emit_helper_call(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
-        TypeOf   => emit_helper_call(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
+        MakeMap => emit_helper_call(b, ctx, OP_MAKE_MAP, instr.arg as i64, _ptr_ty, helper_sig),
+        Index => emit_helper_call(b, ctx, OP_INDEX, 0, _ptr_ty, helper_sig),
+        Len => emit_helper_call(b, ctx, OP_LEN, 0, _ptr_ty, helper_sig),
+        TypeOf => emit_helper_call(b, ctx, OP_TYPEOF, 0, _ptr_ty, helper_sig),
         NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         ArrayPush => emit_helper_call(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
-        ArrayPop  => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
-        ArrSet    => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
+        ArrayPop => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
+        ArrSet => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
 
-        StrContains   => emit_helper_call(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),
+        StrContains => emit_helper_call(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),
         StrStartsWith => emit_helper_call(b, ctx, OP_STR_STARTS_WITH, 0, _ptr_ty, helper_sig),
-        StrEndsWith   => emit_helper_call(b, ctx, OP_STR_ENDS_WITH, 0, _ptr_ty, helper_sig),
-        StrToUpper    => emit_helper_call(b, ctx, OP_STR_TO_UPPER, 0, _ptr_ty, helper_sig),
-        StrToLower    => emit_helper_call(b, ctx, OP_STR_TO_LOWER, 0, _ptr_ty, helper_sig),
-        StrTrim       => emit_helper_call(b, ctx, OP_STR_TRIM, 0, _ptr_ty, helper_sig),
-        StrSplit      => emit_helper_call(b, ctx, OP_STR_SPLIT, 0, _ptr_ty, helper_sig),
-        StrReplace    => emit_helper_call(b, ctx, OP_STR_REPLACE, 0, _ptr_ty, helper_sig),
-        StrJoin       => emit_helper_call(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
+        StrEndsWith => emit_helper_call(b, ctx, OP_STR_ENDS_WITH, 0, _ptr_ty, helper_sig),
+        StrToUpper => emit_helper_call(b, ctx, OP_STR_TO_UPPER, 0, _ptr_ty, helper_sig),
+        StrToLower => emit_helper_call(b, ctx, OP_STR_TO_LOWER, 0, _ptr_ty, helper_sig),
+        StrTrim => emit_helper_call(b, ctx, OP_STR_TRIM, 0, _ptr_ty, helper_sig),
+        StrSplit => emit_helper_call(b, ctx, OP_STR_SPLIT, 0, _ptr_ty, helper_sig),
+        StrReplace => emit_helper_call(b, ctx, OP_STR_REPLACE, 0, _ptr_ty, helper_sig),
+        StrJoin => emit_helper_call(b, ctx, OP_STR_JOIN, 0, _ptr_ty, helper_sig),
 
-        Cast    => emit_helper_call(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
+        Cast => emit_helper_call(b, ctx, OP_CAST, instr.arg as i64, _ptr_ty, helper_sig),
         NewTuple => emit_helper_call(b, ctx, OP_NEW_TUPLE, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         NewList => emit_helper_call(b, ctx, OP_NEW_LIST, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         NewVector => emit_helper_call(b, ctx, OP_NEW_VECTOR, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         NewSet => emit_helper_call(b, ctx, OP_NEW_SET, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         MakeRange => emit_helper_call(b, ctx, OP_MAKE_RANGE, 0, _ptr_ty, helper_sig),
 
-        TuplePush  => emit_helper_call(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
-        ListPush   => emit_helper_call(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
+        TuplePush => emit_helper_call(b, ctx, OP_TUPLE_PUSH, 0, _ptr_ty, helper_sig),
+        ListPush => emit_helper_call(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
         VectorPush => emit_helper_call(b, ctx, OP_VECTOR_PUSH, 0, _ptr_ty, helper_sig),
-        SetPush    => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
-        GetField   => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        SetField   => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        SetPush => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
+        GetField => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        SetField => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
         NewObj => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         NewStruct => emit_helper_call(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
-        StrSim     => emit_helper_call(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
+        StrSim => emit_helper_call(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),
 
-        EnterTry  => emit_helper_call(b, ctx, OP_ENTER_TRY, instr.arg as i64, _ptr_ty, helper_sig),
-        ExitTry   => emit_helper_call(b, ctx, OP_EXIT_TRY, 0, _ptr_ty, helper_sig),
+        EnterTry => emit_helper_call(b, ctx, OP_ENTER_TRY, instr.arg as i64, _ptr_ty, helper_sig),
+        ExitTry => emit_helper_call(b, ctx, OP_EXIT_TRY, 0, _ptr_ty, helper_sig),
 
         Throw => {
             // 1. Call runtime helper — pops error, walks handler stack, sets ctx.error
@@ -1135,14 +1363,21 @@ fn emit_one(
 
             let dispatch_bb = b.create_block();
             let return_bb = b.create_block();
-            b.ins().brif(handler_found, dispatch_bb, &[] as &[BlockArg], return_bb, &[] as &[BlockArg]);
+            b.ins().brif(
+                handler_found,
+                dispatch_bb,
+                &[] as &[BlockArg],
+                return_bb,
+                &[] as &[BlockArg],
+            );
 
             // 3. Handler found — clear ONLY error flag (i32, 4 bytes),
             //    preserving throw_consumed_handler (offset OFF_ERROR+4) for ExitTry.
             b.switch_to_block(dispatch_bb);
             let err_addr2 = iadd_imm(b, ctx, OFF_ERROR);
             let zero_i32 = b.ins().iconst(types::I32, 0);
-            b.ins().store(MemFlagsData::trusted(), zero_i32, err_addr2, 0);
+            b.ins()
+                .store(MemFlagsData::trusted(), zero_i32, err_addr2, 0);
             let hp_addr = iadd_imm(b, ctx, OFF_HANDLER_PC);
             let hp_val = b.ins().load(types::I64, MemFlagsData::new(), hp_addr, 0);
             emit_handler_dispatch(b, hp_val, handler_entries);
@@ -1197,15 +1432,23 @@ fn emit_one(
         }
 
         // Remaining unimplemented ops: refuse to compile (no silent null fabrication).
-        op => { return Err(CompileError::Unsupported(vec![op])); }
+        op => {
+            return Err(CompileError::Unsupported(vec![op]));
+        }
     }
     Ok(false)
 }
 
 // ── Arithmetic dispatch ─────────────────────────────────────────────────────
 
-fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
-          _ptr_ty: types::Type, helper_sig: ir::SigRef) {
+fn arith(
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    sub: bool,
+    mul: bool,
+    _ptr_ty: types::Type,
+    helper_sig: ir::SigRef,
+) {
     let bv = pop(b, ctx);
     let a = pop(b, ctx);
     let ia = is_int(b, a);
@@ -1218,7 +1461,8 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
 
     // Sub/Mul/Div: 2-way branch (int vs float).
     // Add is handled directly in emit_one via OP_ADD_STR.
-    b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
+    b.ins()
+        .brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
     // ── Integer path with overflow checking (Bug 3) ────────────────────
     b.switch_to_block(ibb);
@@ -1228,13 +1472,20 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     // Crush ints are 16-bit sign-extended; overflow = result != sign_extend(low16).
     // This works for add, sub, mul, and div uniformly.
     // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
-    let ri = if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
+    let ri = if sub {
+        isub(b, av, bv2)
+    } else if mul {
+        imul(b, av, bv2)
+    } else {
+        sdiv(b, av, bv2)
+    };
     let shifted = ishl_imm(b, ri, 48);
     let low16 = sshr_imm(b, shifted, 48);
     let of_cond = icmp(b, IntCC::NotEqual, ri, low16);
     let iok = b.create_block();
     let ierr = b.create_block();
-    b.ins().brif(of_cond, ierr, &[] as &[BlockArg], iok, &[] as &[BlockArg]);
+    b.ins()
+        .brif(of_cond, ierr, &[] as &[BlockArg], iok, &[] as &[BlockArg]);
 
     b.switch_to_block(iok);
     let rti = tint(b, ri);
@@ -1258,7 +1509,13 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     let both_numeric = band(b, a_num, b_num);
     let ok = b.create_block();
     let err = b.create_block();
-    b.ins().brif(both_numeric, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
+    b.ins().brif(
+        both_numeric,
+        ok,
+        &[] as &[BlockArg],
+        err,
+        &[] as &[BlockArg],
+    );
 
     b.switch_to_block(ok);
     // Convert each operand to f64: float → bitcast, int → extract+fcvt.
@@ -1270,7 +1527,13 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     let b_fcvt = b.ins().fcvt_from_sint(types::F64, b_int2);
     let b_bits = bf64(b, bv);
     let bf2 = select(b, fb, b_bits, b_fcvt);
-    let rf = if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
+    let rf = if sub {
+        fsub(b, af, bf2)
+    } else if mul {
+        fmul(b, af, bf2)
+    } else {
+        fdiv(b, af, bf2)
+    };
     let rfb = bi64(b, rf);
     b.ins().jump(mb, &[BlockArg::Value(rfb)]);
 
@@ -1293,9 +1556,15 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
 // ── Bitwise helpers ────────────────────────────────────────────────────
 
 /// Pop two values, extract ints, apply binary op, re-tag, push.
-fn bitwise_bin(b: &mut FunctionBuilder, ctx: ir::Value, op: impl Fn(&mut FunctionBuilder, ir::Value, ir::Value) -> ir::Value) {
-    let bv = pop(b, ctx); let bv = eint(b, bv);
-    let av = pop(b, ctx); let av = eint(b, av);
+fn bitwise_bin(
+    b: &mut FunctionBuilder,
+    ctx: ir::Value,
+    op: impl Fn(&mut FunctionBuilder, ir::Value, ir::Value) -> ir::Value,
+) {
+    let bv = pop(b, ctx);
+    let bv = eint(b, bv);
+    let av = pop(b, ctx);
+    let av = eint(b, av);
     let r = op(b, av, bv);
     let tagged = tint(b, r);
     push(b, ctx, tagged);
@@ -1303,7 +1572,13 @@ fn bitwise_bin(b: &mut FunctionBuilder, ctx: ir::Value, op: impl Fn(&mut Functio
 
 // ── Math helpers ───────────────────────────────────────────────────────────
 
-enum MathOp { Sqrt, Abs, Round, Floor, Ceil }
+enum MathOp {
+    Sqrt,
+    Abs,
+    Round,
+    Floor,
+    Ceil,
+}
 
 /// Apply a unary math function: pop val, dispatch int/float, push float result.
 fn math_unary(b: &mut FunctionBuilder, ctx: ir::Value, op: MathOp) {
@@ -1313,7 +1588,8 @@ fn math_unary(b: &mut FunctionBuilder, ctx: ir::Value, op: MathOp) {
     let fbb = b.create_block();
     let mbb = b.create_block();
     b.append_block_param(mbb, types::I64);
-    b.ins().brif(is_i, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
+    b.ins()
+        .brif(is_i, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
     b.switch_to_block(ibb);
     let ev = eint(b, val);
@@ -1347,7 +1623,8 @@ fn math_binary(b: &mut FunctionBuilder, ctx: ir::Value, op: MathOp) {
     let fbb = b.create_block();
     let mbb = b.create_block();
     b.append_block_param(mbb, types::I64);
-    b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
+    b.ins()
+        .brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
     b.switch_to_block(ibb);
     let be = eint(b, base);
@@ -1387,17 +1664,22 @@ fn math_binary(b: &mut FunctionBuilder, ctx: ir::Value, op: MathOp) {
 /// Apply a f64 unary math operation via CLIF instructions.
 fn math_apply_f64(b: &mut FunctionBuilder, v: ir::Value, op: &MathOp) -> ir::Value {
     match op {
-        MathOp::Sqrt  => b.ins().sqrt(v),
-        MathOp::Abs   => b.ins().fabs(v),
+        MathOp::Sqrt => b.ins().sqrt(v),
+        MathOp::Abs => b.ins().fabs(v),
         MathOp::Round => b.ins().nearest(v),
         MathOp::Floor => b.ins().floor(v),
-        MathOp::Ceil  => b.ins().ceil(v),
+        MathOp::Ceil => b.ins().ceil(v),
     }
 }
 
 /// Apply a f64 binary math operation (placeholder — only Pow uses this, but it's
 /// handled by pushing null in emit_one for now; kept for future runtime helper use).
-fn math_apply_f64_bin(b: &mut FunctionBuilder, a: ir::Value, e: ir::Value, _op: &MathOp) -> ir::Value {
+fn math_apply_f64_bin(
+    b: &mut FunctionBuilder,
+    a: ir::Value,
+    e: ir::Value,
+    _op: &MathOp,
+) -> ir::Value {
     // Only called from math_binary for Pow, which currently pushes null instead.
     // If a second binary math op is added, implement it here.
     b.ins().fadd(a, e)
@@ -1428,7 +1710,8 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     let fbb = b.create_block();
     let mb2 = b.create_block();
     b.append_block_param(mb2, types::I64);
-    b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
+    b.ins()
+        .brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
     b.switch_to_block(ibb);
     let av = eint(b, a);
@@ -1441,11 +1724,17 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     // Promote per-operand: int-tagged -> real float conversion; anything else
     // (including a genuine float operand) -> bitcast reinterpretation.
     let raw_a = bf64(b, a);
-    let conv_a = { let iv = eint(b, a); b.ins().fcvt_from_sint(types::F64, iv) };
+    let conv_a = {
+        let iv = eint(b, a);
+        b.ins().fcvt_from_sint(types::F64, iv)
+    };
     let af = select(b, ia, conv_a, raw_a);
 
     let raw_b = bf64(b, bv);
-    let conv_b = { let iv = eint(b, bv); b.ins().fcvt_from_sint(types::F64, iv) };
+    let conv_b = {
+        let iv = eint(b, bv);
+        b.ins().fcvt_from_sint(types::F64, iv)
+    };
     let bf2 = select(b, ib, conv_b, raw_b);
 
     let cmp = fcmp(b, fcc, af, bf2);

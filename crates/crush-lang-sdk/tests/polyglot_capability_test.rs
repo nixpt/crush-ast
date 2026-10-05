@@ -23,7 +23,10 @@ fn run(src: &str, extra: &[&str]) -> (String, String, bool) {
     write!(std::fs::File::create(&f).unwrap(), "{src}").unwrap();
     let mut args = vec!["run", f.to_str().unwrap()];
     args.extend_from_slice(extra);
-    let out = Command::new(crush_run_bin()).args(&args).output().expect("crush-run");
+    let out = Command::new(crush_run_bin())
+        .args(&args)
+        .output()
+        .expect("crush-run");
     (
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
@@ -44,7 +47,10 @@ fn bash_block_refused_without_grant() {
         combined.contains("polyglot.bash") && combined.contains("requires"),
         "expected a loud polyglot-capability refusal, got: {combined}"
     );
-    assert!(!probe.exists(), "SECURITY: @bash escaped the capability gate and wrote a file");
+    assert!(
+        !probe.exists(),
+        "SECURITY: @bash escaped the capability gate and wrote a file"
+    );
     let _ = std::fs::remove_file(&probe);
 }
 
@@ -52,7 +58,10 @@ fn bash_block_refused_without_grant() {
 fn python_block_refused_without_grant() {
     let (out, err, ok) = run("fn main() { @python { x = 1 } }", &[]);
     assert!(!ok);
-    assert!(format!("{out}{err}").contains("polyglot.python"), "expected polyglot.python refusal");
+    assert!(
+        format!("{out}{err}").contains("polyglot.python"),
+        "expected polyglot.python refusal"
+    );
 }
 
 #[test]
@@ -63,5 +72,8 @@ fn python_block_runs_with_grant() {
         &["--stdlib", "--polyglot"],
     );
     assert!(ok, "should succeed with --polyglot");
-    assert!(out.contains("r=10"), "expected marshaled result, got: {out}");
+    assert!(
+        out.contains("r=10"),
+        "expected marshaled result, got: {out}"
+    );
 }

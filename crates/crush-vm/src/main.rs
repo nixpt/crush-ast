@@ -48,9 +48,15 @@ fn main() -> ExitCode {
             } else {
                 eprintln!("crush-vm — standalone CVM1 bytecode runtime\n");
                 eprintln!("Usage:");
-                eprintln!("  crush-vm [--message-format=json] run  <file.cvm1>  execute a compiled program");
-                eprintln!("  crush-vm [--message-format=json] asm  <file.casm>  assemble CASM text to CVM1");
-                eprintln!("  crush-vm [--message-format=json] dis  <file.cvm1>  disassemble CVM1 to CASM text");
+                eprintln!(
+                    "  crush-vm [--message-format=json] run  <file.cvm1>  execute a compiled program"
+                );
+                eprintln!(
+                    "  crush-vm [--message-format=json] asm  <file.casm>  assemble CASM text to CVM1"
+                );
+                eprintln!(
+                    "  crush-vm [--message-format=json] dis  <file.cvm1>  disassemble CVM1 to CASM text"
+                );
             }
             ExitCode::FAILURE
         }
@@ -82,7 +88,7 @@ fn cmd_run(args: &[String], json_mode: bool) -> ExitCode {
         }
     };
     let quotas = crush_vm::Quotas::default();
-    
+
     // Register host capabilities
     #[allow(unused_mut)]
     let mut host_caps = crush_vm::host::HostCaps::new();
@@ -91,7 +97,7 @@ fn cmd_run(args: &[String], json_mode: bool) -> ExitCode {
         host_caps.register(Box::new(crush_vm::cargo_cap::CargoCap));
         host_caps.register(Box::new(crush_vm::plugin::FfiGatewayCap));
     }
-    
+
     match crush_vm::run_with_caps(&program, &quotas, Some(&host_caps)) {
         Ok(result) => {
             print!("{}", result.output);
@@ -185,17 +191,9 @@ fn cmd_dis(args: &[String], json_mode: bool) -> ExitCode {
 /// canonical `crush_diagnostics` crate does NOT expose a stream-
 /// routing helper, so this binary's local `eprintln_or_json` is the
 /// right place to encode the stream choice).
-fn eprintln_or_json(
-    json_mode: bool,
-    code: &str,
-    message: &str,
-    file: Option<&str>,
-) {
+fn eprintln_or_json(json_mode: bool, code: &str, message: &str, file: Option<&str>) {
     if json_mode {
-        eprint!(
-            "{}",
-            diag_line_from(code, "error", message, None, file)
-        );
+        eprint!("{}", diag_line_from(code, "error", message, None, file));
     } else {
         match file {
             Some(f) => eprintln!("{f}: {message}"),

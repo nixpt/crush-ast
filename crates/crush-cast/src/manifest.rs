@@ -218,7 +218,6 @@ pub struct FunctionAnnotations {
     #[serde(default)]
     pub errors: Vec<String>,
 
-
     /// State paths this function reads but does not own.
     /// Helps agents reason about what must be valid before calling this function.
     #[serde(default)]
@@ -442,7 +441,9 @@ impl crate::Program {
         }
 
         for (name, func) in &self.functions {
-            let Some(fa) = &func.annotations else { continue };
+            let Some(fa) = &func.annotations else {
+                continue;
+            };
             if !fa.errors.is_empty() || !fa.errors_weighted.is_empty() {
                 out.push(Annotation::Error(ErrorAnnotation {
                     function_name: name.clone(),

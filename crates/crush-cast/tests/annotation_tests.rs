@@ -5,8 +5,8 @@
 
 use crush_cast::{
     Annotation, CoverageAnnotation, ErrorAnnotation, ErrorLikelihood, ExhaustiveMatchSite,
-    Function, FunctionAnnotations, Invariant, ModuleManifest, Program, ReadAnnotation,
-    SourceLoc, WeightedError, WriteAnnotation,
+    Function, FunctionAnnotations, Invariant, ModuleManifest, Program, ReadAnnotation, SourceLoc,
+    WeightedError, WriteAnnotation,
 };
 
 // ─── Roundtrip tests (Annotation enum + payload struct variants) ────────

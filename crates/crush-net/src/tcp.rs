@@ -14,8 +14,8 @@ use std::{
     net::{SocketAddr, TcpListener as StdTcpListener, TcpStream, ToSocketAddrs},
     pin::Pin,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
 };
@@ -79,10 +79,12 @@ impl TcpConnection {
     /// `rustls::ClientConnection::complete_io` blocks until the handshake
     /// makes progress.
     pub fn clone_stream(&self) -> std::io::Result<std::net::TcpStream> {
-        let s = self
-            .stream
-            .lock()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("conn lock poisoned: {e}")))?;
+        let s = self.stream.lock().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("conn lock poisoned: {e}"),
+            )
+        })?;
         let cloned = s.try_clone()?;
         cloned.set_nonblocking(false)?;
         Ok(cloned)
@@ -122,7 +124,9 @@ impl TcpConnection {
 }
 
 impl Source for TcpConnection {
-    fn id(&self) -> SourceId { self.id }
+    fn id(&self) -> SourceId {
+        self.id
+    }
     fn try_read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.stream.lock().unwrap().read(buf)
     }
@@ -186,7 +190,9 @@ struct TcpClone {
 }
 
 impl Source for TcpClone {
-    fn id(&self) -> SourceId { self.id }
+    fn id(&self) -> SourceId {
+        self.id
+    }
     fn try_read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.stream.lock().unwrap().read(buf)
     }
@@ -202,7 +208,9 @@ pub struct TcpListener {
 }
 
 impl TcpListener {
-    pub fn id(&self) -> SourceId { self.id }
+    pub fn id(&self) -> SourceId {
+        self.id
+    }
 
     /// Non-blocking accept. `Ok(Some(TcpStream))` on a fresh accept, `Ok(None)`
     /// on `WouldBlock`, or `Err` on real I/O errors.
@@ -229,7 +237,9 @@ impl TcpListener {
 }
 
 impl Source for TcpListener {
-    fn id(&self) -> SourceId { self.id }
+    fn id(&self) -> SourceId {
+        self.id
+    }
     fn try_read(&mut self, _: &mut [u8]) -> io::Result<usize> {
         // Listeners don't produce bytes; treat as idle.
         Ok(0)
@@ -244,10 +254,7 @@ impl Source for TcpListener {
 
 impl AsyncAccept for TcpListener {
     type Conn = TcpConnection;
-    fn poll_accept(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<TcpConnection>> {
+    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<TcpConnection>> {
         let me = self.get_mut();
         match me.try_accept() {
             Ok(Some(stream)) => {
@@ -266,7 +273,7 @@ impl AsyncAccept for TcpListener {
                 );
                 Poll::Pending
             }
-            Err(e) => Poll::Ready(Err(e))
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }
@@ -277,9 +284,15 @@ struct TcpListenerClone {
 }
 
 impl Source for TcpListenerClone {
-    fn id(&self) -> SourceId { self.id }
-    fn try_read(&mut self, _: &mut [u8]) -> io::Result<usize> { Ok(0) }
-    fn try_write(&mut self, _: &[u8]) -> io::Result<usize> { Ok(0) }
+    fn id(&self) -> SourceId {
+        self.id
+    }
+    fn try_read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+        Ok(0)
+    }
+    fn try_write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Ok(0)
+    }
     fn try_accept(&mut self) -> io::Result<Option<TcpStream>> {
         let std_l = self.inner.lock().unwrap();
         match std_l.accept() {

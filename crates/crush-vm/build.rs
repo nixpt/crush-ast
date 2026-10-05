@@ -10,9 +10,14 @@ use std::process::Command;
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let plugin_src = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("..").join("crush-ffi").join("examples").join("example_c_plugin.c");
+        .join("..")
+        .join("crush-ffi")
+        .join("examples")
+        .join("example_c_plugin.c");
     let crush_ffi_include = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("..").join("crush-ffi").join("include");
+        .join("..")
+        .join("crush-ffi")
+        .join("include");
 
     if !plugin_src.exists() {
         println!("cargo:warning=example_c_plugin.c not found — skipping");
@@ -22,10 +27,15 @@ fn main() {
     let so_path = out_dir.join("example_c_plugin.so");
     let status = Command::new("gcc")
         .args([
-            "-shared", "-fPIC", "-std=c11", "-O2",
-            "-o", so_path.to_str().unwrap(),
+            "-shared",
+            "-fPIC",
+            "-std=c11",
+            "-O2",
+            "-o",
+            so_path.to_str().unwrap(),
             plugin_src.to_str().unwrap(),
-            "-I", crush_ffi_include.to_str().unwrap(),
+            "-I",
+            crush_ffi_include.to_str().unwrap(),
         ])
         .status();
 
@@ -36,10 +46,16 @@ fn main() {
             println!("cargo:rustc-env=EXAMPLE_C_PLUGIN_SO={}", so_path.display());
         }
         Ok(s) => {
-            println!("cargo:warning=gcc exited with {} — skipping plugin build", s.code().unwrap_or(-1));
+            println!(
+                "cargo:warning=gcc exited with {} — skipping plugin build",
+                s.code().unwrap_or(-1)
+            );
         }
         Err(e) => {
-            println!("cargo:warning=gcc not found ({}) — skipping plugin build", e);
+            println!(
+                "cargo:warning=gcc not found ({}) — skipping plugin build",
+                e
+            );
         }
     }
 }

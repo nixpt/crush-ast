@@ -8,10 +8,10 @@
 
 use anyhow::Result;
 use crush_cast::{self as ast, CastType, Expression, Statement};
+use crush_walker_core::{BaseWalker, Walker};
 use serde_json::json;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
-use crush_walker_core::{BaseWalker, Walker};
 
 pub struct ZigWalker {
     pub file_name: String,
@@ -89,7 +89,13 @@ impl<'a> Visitor<'a> {
                     .child_by_field_name("value")
                     .or_else(|| {
                         node.children(&mut node.walk())
-                            .filter(|c| c.kind() != "identifier" && c.kind() != "const" && c.kind() != "var" && c.kind() != "=" && c.kind() != ";")
+                            .filter(|c| {
+                                c.kind() != "identifier"
+                                    && c.kind() != "const"
+                                    && c.kind() != "var"
+                                    && c.kind() != "="
+                                    && c.kind() != ";"
+                            })
                             .last()
                     })
                     .map(|n| self.visit_expression(n))
@@ -113,15 +119,17 @@ impl<'a> Visitor<'a> {
             "BreakStatement" | "break_statement" => Ok(vec![Statement::Break { meta }]),
             "ContinueStatement" | "continue_statement" => Ok(vec![Statement::Continue { meta }]),
             "WhileExpr" | "while_expression" | "while_statement" => {
-                let condition_node = node.child_by_field_name("condition")
+                let condition_node = node
+                    .child_by_field_name("condition")
                     .or_else(|| node.child_by_field_name("test"))
                     .unwrap_or_else(|| node.child(1).unwrap());
                 let condition = self.visit_expression(condition_node)?;
-                
-                let body_node = node.child_by_field_name("body")
+
+                let body_node = node
+                    .child_by_field_name("body")
                     .unwrap_or_else(|| node.child(node.child_count() - 1).unwrap());
                 let body = self.visit_block_or_statement(body_node)?;
-                
+
                 Ok(vec![Statement::While {
                     condition: Box::new(condition),
                     body,
@@ -129,18 +137,20 @@ impl<'a> Visitor<'a> {
                 }])
             }
             "ForExpr" | "for_expression" | "for_statement" => {
-                let iterable_node = node.child_by_field_name("iterable")
+                let iterable_node = node
+                    .child_by_field_name("iterable")
                     .or_else(|| node.child_by_field_name("inputs"))
                     .unwrap_or_else(|| node.child(1).unwrap());
                 let iterable = self.visit_expression(iterable_node)?;
-                
+
                 let variable = extract_payload_variable(node, self.base.source)
                     .unwrap_or_else(|| "item".to_string());
-                
-                let body_node = node.child_by_field_name("body")
+
+                let body_node = node
+                    .child_by_field_name("body")
                     .unwrap_or_else(|| node.child(node.child_count() - 1).unwrap());
                 let body = self.visit_block_or_statement(body_node)?;
-                
+
                 Ok(vec![Statement::For {
                     variable,
                     iterable: Box::new(iterable),
@@ -148,24 +158,36 @@ impl<'a> Visitor<'a> {
                     meta,
                 }])
             }
-            "Block" | "block" => {
-                self.visit_block(node)
-            }
+            "Block" | "block" => self.visit_block(node),
             _ if node.kind() == "AssignmentExpr" || node.kind() == "assignment_expression" => {
-                let left_node = node.child_by_field_name("left")
+                let left_node = node
+                    .child_by_field_name("left")
                     .unwrap_or_else(|| node.child(0).unwrap());
-                let right_node = node.child_by_field_name("right")
+                let right_node = node
+                    .child_by_field_name("right")
                     .unwrap_or_else(|| node.child(2).unwrap());
                 let right_expr = self.visit_expression(right_node)?;
                 let op_str = self.base.text(node.child(1).unwrap())?.to_string();
-                
-                if left_node.kind() == "MemberAccessExpr" || left_node.kind() == "member_access_expression" || left_node.kind() == "field_expression" {
-                    let obj_node = left_node.child_by_field_name("object")
+
+                if left_node.kind() == "MemberAccessExpr"
+                    || left_node.kind() == "member_access_expression"
+                    || left_node.kind() == "field_expression"
+                {
+                    let obj_node = left_node
+                        .child_by_field_name("object")
                         .or_else(|| left_node.child(0))
                         .unwrap();
                     let target = self.visit_expression(obj_node)?;
-                    let field = self.base.text(left_node.child_by_field_name("member").or_else(|| left_node.child(2)).unwrap())?.to_string();
-                    
+                    let field = self
+                        .base
+                        .text(
+                            left_node
+                                .child_by_field_name("member")
+                                .or_else(|| left_node.child(2))
+                                .unwrap(),
+                        )?
+                        .to_string();
+
                     let value = match op_str.as_str() {
                         "=" => right_expr,
                         _ => Expression::BinaryOp {
@@ -177,9 +199,9 @@ impl<'a> Visitor<'a> {
                             }),
                             right: Box::new(right_expr),
                             meta: meta.clone(),
-                        }
+                        },
                     };
-                    
+
                     return Ok(vec![Statement::SetField {
                         target,
                         field,
@@ -187,7 +209,7 @@ impl<'a> Visitor<'a> {
                         meta,
                     }]);
                 }
-                
+
                 let expr = self.visit_expression(node)?;
                 Ok(vec![Statement::ExprStmt { expr, meta }])
             }
@@ -296,40 +318,56 @@ impl<'a> Visitor<'a> {
                 })
             }
             "AssignmentExpr" | "assignment_expression" => {
-                let left_node = node.child_by_field_name("left")
+                let left_node = node
+                    .child_by_field_name("left")
                     .unwrap_or_else(|| node.child(0).unwrap());
-                let right_node = node.child_by_field_name("right")
+                let right_node = node
+                    .child_by_field_name("right")
                     .unwrap_or_else(|| node.child(2).unwrap());
-                
+
                 let name = self.base.text(left_node)?.to_string();
                 let right_expr = self.visit_expression(right_node)?;
                 let op_str = self.base.text(node.child(1).unwrap())?;
-                
+
                 let value = match op_str {
                     "=" => right_expr,
                     _ => Expression::BinaryOp {
                         operator: op_str.trim_end_matches('=').to_string(),
-                        left: Box::new(Expression::Var { name: name.clone(), meta: meta.clone() }),
+                        left: Box::new(Expression::Var {
+                            name: name.clone(),
+                            meta: meta.clone(),
+                        }),
                         right: Box::new(right_expr),
                         meta: meta.clone(),
-                    }
+                    },
                 };
-                
+
                 Ok(Expression::Call {
                     function: "__crush_assign__".to_string(),
                     args: vec![
-                        Expression::Var { name, meta: meta.clone() },
+                        Expression::Var {
+                            name,
+                            meta: meta.clone(),
+                        },
                         value,
                     ],
                     meta,
                 })
             }
             "MemberAccessExpr" | "member_access_expression" | "field_expression" => {
-                let obj_node = node.child_by_field_name("object")
+                let obj_node = node
+                    .child_by_field_name("object")
                     .or_else(|| node.child(0))
                     .unwrap();
                 let target = self.visit_expression(obj_node)?;
-                let field = self.base.text(node.child_by_field_name("member").or_else(|| node.child(2)).unwrap())?.to_string();
+                let field = self
+                    .base
+                    .text(
+                        node.child_by_field_name("member")
+                            .or_else(|| node.child(2))
+                            .unwrap(),
+                    )?
+                    .to_string();
                 Ok(Expression::GetField {
                     target: Box::new(target),
                     field,
@@ -372,7 +410,11 @@ impl<'a> Visitor<'a> {
                 }
 
                 Ok(Expression::Call {
-                    function: if func_name == "std.debug.print" { "print".to_string() } else { func_name.clone() },
+                    function: if func_name == "std.debug.print" {
+                        "print".to_string()
+                    } else {
+                        func_name.clone()
+                    },
                     args,
                     meta,
                 })
@@ -405,7 +447,6 @@ fn extract_payload_variable(node: Node, source: &[u8]) -> Option<String> {
     None
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -413,7 +454,9 @@ mod tests {
 
     fn parse_and_walk(source: &str) -> ast::Program {
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_zig::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_zig::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(source, None).unwrap();
         println!("AST S-expression: {}", tree.root_node().to_sexp());
         let walker = ZigWalker {
@@ -440,7 +483,10 @@ mod tests {
         let program = parse_and_walk("fn main() void { while (x > 0) { x = x - 1; } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::While { condition, body, .. } = &main_func.body[0] {
+        if let Statement::While {
+            condition, body, ..
+        } = &main_func.body[0]
+        {
             if let Expression::BinaryOp { operator, .. } = &**condition {
                 assert_eq!(operator, ">");
             }
@@ -450,10 +496,17 @@ mod tests {
 
     #[test]
     fn test_for_loop() {
-        let program = parse_and_walk("fn main() void { for (items) |item| { std.debug.print(item); } }");
+        let program =
+            parse_and_walk("fn main() void { for (items) |item| { std.debug.print(item); } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::For { variable, iterable, body, .. } = &main_func.body[0] {
+        if let Statement::For {
+            variable,
+            iterable,
+            body,
+            ..
+        } = &main_func.body[0]
+        {
             assert_eq!(variable, "item");
             if let Expression::Var { name, .. } = &**iterable {
                 assert_eq!(name, "items");
@@ -472,7 +525,13 @@ mod tests {
         let program = parse_and_walk("fn main() void { obj.x = 10; }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::SetField { target, field, value, .. } = &main_func.body[0] {
+        if let Statement::SetField {
+            target,
+            field,
+            value,
+            ..
+        } = &main_func.body[0]
+        {
             assert_eq!(field, "x");
             if let Expression::Var { name, .. } = target {
                 assert_eq!(name, "obj");
@@ -490,16 +549,35 @@ use crush_walker_core::LanguageAdapter;
 
 pub struct ZigAdapter;
 impl LanguageAdapter for ZigAdapter {
-    fn language_name(&self) -> &'static str { "zig" }
-    fn file_extensions(&self) -> &[&'static str] { &["zig"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+    fn language_name(&self) -> &'static str {
+        "zig"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["zig"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_zig::LANGUAGE.into())
+        parser
+            .set_language(&tree_sitter_zig::LANGUAGE.into())
             .map_err(|e| anyhow::anyhow!("tree-sitter-zig init: {e}"))?;
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("Zig parse failed"))?;
-        let walker = crate::ZigWalker { file_name: filename.to_string() };
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow::anyhow!("Zig parse failed"))?;
+        let walker = crate::ZigWalker {
+            file_name: filename.to_string(),
+        };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((crush_walker_core::FeatureReport { lang: "zig".to_string(), ..Default::default() }, program))
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "zig".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
     }
 }
 pub mod sdk;

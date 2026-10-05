@@ -216,11 +216,16 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
         Expr::Range(e) => {
             let start = match &e.start {
                 Some(s) => lower_expr(s, ctx)?,
-                None => Expression::IntLiteral { value: 0, meta: ctx.meta_at(0) },
+                None => Expression::IntLiteral {
+                    value: 0,
+                    meta: ctx.meta_at(0),
+                },
             };
             let end = match &e.end {
                 Some(end) => lower_expr(end, ctx)?,
-                None => Expression::NullLiteral { meta: ctx.meta_at(0) },
+                None => Expression::NullLiteral {
+                    meta: ctx.meta_at(0),
+                },
             };
             Ok(Expression::Range {
                 start: Box::new(start),
@@ -228,9 +233,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 meta,
             })
         }
-        Expr::Cast(e) => {
-            lower_expr(&e.expr, ctx)
-        }
+        Expr::Cast(e) => lower_expr(&e.expr, ctx),
         Expr::Field(e) => {
             let target = lower_expr(&e.base, ctx)?;
             let field = match &e.member {
@@ -244,13 +247,17 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             })
         }
         Expr::Array(e) => {
-            let elements: Vec<Expression> = e.elems.iter()
+            let elements: Vec<Expression> = e
+                .elems
+                .iter()
                 .map(|elem| lower_expr(elem, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         Expr::Closure(e) => {
-            let params: Vec<(String, CastType)> = e.inputs.iter()
+            let params: Vec<(String, CastType)> = e
+                .inputs
+                .iter()
                 .map(|p| {
                     let name = match p {
                         syn::Pat::Ident(pi) => pi.ident.to_string(),
@@ -262,17 +269,18 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             let body_expr = lower_expr(&e.body, ctx)?;
             Ok(Expression::Lambda {
                 params,
-                body: vec![Statement::Return { value: Some(body_expr), meta: meta.clone() }],
+                body: vec![Statement::Return {
+                    value: Some(body_expr),
+                    meta: meta.clone(),
+                }],
                 meta,
             })
         }
-        Expr::Reference(e) => {
-            lower_expr(&e.expr, ctx)
-        }
+        Expr::Reference(e) => lower_expr(&e.expr, ctx),
         _ => {
             eprintln!("unsupported Rust expression: {:#?}", expr);
             anyhow::bail!("unsupported Rust expression")
-        },
+        }
     }
 }
 

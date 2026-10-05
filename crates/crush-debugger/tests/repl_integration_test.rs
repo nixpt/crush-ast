@@ -37,11 +37,30 @@ fn repl_help_shows_commands_banner_and_quit_prints_bye() {
         b"help\nquit\n",
     );
 
-    assert!(stdout.contains("Commands:"), "help output should contain 'Commands:' banner\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stdout.contains("step | s"), "help output should list step command\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stdout.contains("bye."), "quit should print 'bye.'\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(
+        stdout.contains("Commands:"),
+        "help output should contain 'Commands:' banner\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("step | s"),
+        "help output should list step command\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("bye."),
+        "quit should print 'bye.'\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
     assert!(success, "should exit 0");
-    assert!(stderr.is_empty(), "stderr should be empty, got:\n{}", stderr);
+    assert!(
+        stderr.is_empty(),
+        "stderr should be empty, got:\n{}",
+        stderr
+    );
 }
 
 /// Verify that step reports instruction count and yielded status.
@@ -52,8 +71,16 @@ fn repl_step_increments_and_reports() {
         b"step\nstep\nquit\n",
     );
 
-    assert!(stdout.contains("step 1: yielded=false"), "first step should report count 1\nstdout:\n{}", stdout);
-    assert!(stdout.contains("step 2: yielded=false"), "second step should report count 2\nstdout:\n{}", stdout);
+    assert!(
+        stdout.contains("step 1: yielded=false"),
+        "first step should report count 1\nstdout:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("step 2: yielded=false"),
+        "second step should report count 2\nstdout:\n{}",
+        stdout
+    );
     assert!(success);
 }
 
@@ -62,15 +89,41 @@ fn repl_step_increments_and_reports() {
 #[test]
 fn cli_break_flag_sets_breakpoints_visible_in_repl() {
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:1", "--break", "hello.crush:3"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:1",
+            "--break",
+            "hello.crush:3",
+        ],
         b"list\nquit\n",
     );
 
-    assert!(stdout.contains("#0: hello.crush:1"), "list should show breakpoint #0\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stdout.contains("#1: hello.crush:3"), "list should show breakpoint #1\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stderr.contains("breakpoint #0 set at hello.crush:1"), "stderr should confirm breakpoint #0\nstderr:\n{}", stderr);
-    assert!(stderr.contains("breakpoint #1 set at hello.crush:3"), "stderr should confirm breakpoint #1\nstderr:\n{}", stderr);
+    assert!(
+        stdout.contains("#0: hello.crush:1"),
+        "list should show breakpoint #0\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("#1: hello.crush:3"),
+        "list should show breakpoint #1\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stderr.contains("breakpoint #0 set at hello.crush:1"),
+        "stderr should confirm breakpoint #0\nstderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("breakpoint #1 set at hello.crush:3"),
+        "stderr should confirm breakpoint #1\nstderr:\n{}",
+        stderr
+    );
     assert!(success);
 }
 
@@ -82,7 +135,11 @@ fn repl_list_reports_no_breakpoints_when_empty() {
         b"list\nquit\n",
     );
 
-    assert!(stdout.contains("no breakpoints"), "list should report 'no breakpoints'\nstdout:\n{}", stdout);
+    assert!(
+        stdout.contains("no breakpoints"),
+        "list should report 'no breakpoints'\nstdout:\n{}",
+        stdout
+    );
     assert!(success);
 }
 
@@ -94,7 +151,11 @@ fn repl_continue_reports_done() {
         b"continue\nquit\n",
     );
 
-    assert!(stdout.contains("done"), "continue should report 'done'\nstdout:\n{}", stdout);
+    assert!(
+        stdout.contains("done"),
+        "continue should report 'done'\nstdout:\n{}",
+        stdout
+    );
     assert!(success);
 }
 
@@ -103,12 +164,29 @@ fn repl_continue_reports_done() {
 #[test]
 fn max_steps_flag_respects_quota_on_continue() {
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print", "--max-steps", "2"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--max-steps",
+            "2",
+        ],
         b"continue\nquit\n",
     );
 
-    assert!(stdout.contains("quota exceeded (2)"), "should report 'quota exceeded (2)'\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stdout.contains("bye."), "REPL should still be alive after quota exceeded\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(
+        stdout.contains("quota exceeded (2)"),
+        "should report 'quota exceeded (2)'\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("bye."),
+        "REPL should still be alive after quota exceeded\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
     assert!(success);
 }
 
@@ -120,7 +198,14 @@ fn max_steps_flag_respects_quota_on_step() {
     //   step 1: PUSH_STR "hello" (steps 0→1, 0 < 1 OK)
     //   step 2: check quota: 1 >= 1 → StepQuota → error
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print", "--max-steps", "1"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--max-steps",
+            "1",
+        ],
         b"step\nstep\nquit\n",
     );
 
@@ -155,9 +240,24 @@ fn missing_capability_reports_clear_error() {
         b"continue\nquit\n",
     );
 
-    assert!(stdout.contains("error:"), "should print an error line\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stdout.contains("capability not declared"), "error should mention 'capability not declared'\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
-    assert!(stdout.contains("io.print"), "error should name the missing capability 'io.print'\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(
+        stdout.contains("error:"),
+        "should print an error line\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("capability not declared"),
+        "error should mention 'capability not declared'\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("io.print"),
+        "error should name the missing capability 'io.print'\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
     assert!(success, "should exit 0");
 }
 
@@ -169,9 +269,21 @@ fn repl_set_and_delete_breakpoint() {
         b"break hello.crush:1\ndelete 0\nlist\nquit\n",
     );
 
-    assert!(stdout.contains("breakpoint #0 set at hello.crush:1"), "should report breakpoint set\nstdout:\n{}", stdout);
-    assert!(stdout.contains("breakpoint #0 removed"), "should report breakpoint removed\nstdout:\n{}", stdout);
-    assert!(stdout.contains("no breakpoints"), "list after delete should report 'no breakpoints'\nstdout:\n{}", stdout);
+    assert!(
+        stdout.contains("breakpoint #0 set at hello.crush:1"),
+        "should report breakpoint set\nstdout:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("breakpoint #0 removed"),
+        "should report breakpoint removed\nstdout:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("no breakpoints"),
+        "list after delete should report 'no breakpoints'\nstdout:\n{}",
+        stdout
+    );
     assert!(success);
 }
 
@@ -186,8 +298,14 @@ fn cli_break_triggers_vm_hit_on_continue() {
     // With --break hello.crush:2, the sourcemap resolves line 2 →
     // bytecode offset, and continue should hit it after step 1.
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:2"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:2",
+        ],
         b"continue\nquit\n",
     );
 
@@ -239,7 +357,14 @@ fn max_stack_flag_hits_stack_quota_on_continue() {
     // With --max-stack 0, the second step (before the CAP_CALL) will hit
     // the stack quota because the stack has 1 entry and 1 > 0.
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print", "--max-stack", "0"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--max-stack",
+            "0",
+        ],
         b"continue\nquit\n",
     );
 
@@ -265,7 +390,14 @@ fn max_output_flag_hits_output_quota_on_continue() {
     // hello.crush prints "hello" (5 bytes). With --max-output 3,
     // the io.print call should fail with OutputQuota.
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print", "--max-output", "3"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--max-output",
+            "3",
+        ],
         b"continue\nquit\n",
     );
 
@@ -292,7 +424,12 @@ fn max_call_depth_flag_hits_call_depth_quota_on_continue() {
     // call_depth.crush has a recursive function that calls itself.
     // With --max-call-depth 1, the second frame push will fail.
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/call_depth.crush", "--max-call-depth", "1"],
+        &[
+            "run",
+            "tests/fixtures/call_depth.crush",
+            "--max-call-depth",
+            "1",
+        ],
         b"continue\nquit\n",
     );
 
@@ -323,8 +460,16 @@ fn breakpoint_fires_before_step_quota() {
     //   continue #2: resumes through CAP_CALL (step 2), next step check
     //                sees 2 >= 2 → "quota exceeded (2)"
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:2", "--max-steps", "2"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:2",
+            "--max-steps",
+            "2",
+        ],
         b"continue\ncontinue\nquit\n",
     );
 
@@ -361,8 +506,16 @@ fn breakpoint_fires_before_stack_quota() {
     //   continue #2: resumes, check_stack_quota sees 1 > 0
     //                → "quota exceeded (0)"
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:2", "--max-stack", "0"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:2",
+            "--max-stack",
+            "0",
+        ],
         b"continue\ncontinue\nquit\n",
     );
 
@@ -399,8 +552,14 @@ fn cli_and_repl_break_at_same_location_produce_distinct_ids_and_both_fire() {
     //   continue #2 → hit breakpoint #1 (VM fires second BP at this IP)
     //   continue #3 → done (instruction finally executes, runs to HALT)
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:2"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:2",
+        ],
         b"break hello.crush:2\nlist\ncontinue\ncontinue\ncontinue\nquit\n",
     );
 
@@ -461,8 +620,16 @@ fn breakpoint_fires_before_output_quota() {
     //   continue #2: resumes through CAP_CALL, io.print adds 5 bytes,
     //                5 > 3 → "quota exceeded (3)"
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:2", "--max-output", "3"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:2",
+            "--max-output",
+            "3",
+        ],
         b"continue\ncontinue\nquit\n",
     );
 
@@ -495,7 +662,14 @@ fn max_stack_flag_hits_stack_quota_on_step() {
     // --max-stack 0: step 1 pushes "hello" (stack len 0→1, OK at check time).
     // Step 2: check_stack_quota sees 1 > 0 → StackQuota → "quota exceeded (0)".
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print", "--max-stack", "0"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--max-stack",
+            "0",
+        ],
         b"step\nstep\nquit\n",
     );
 
@@ -529,7 +703,14 @@ fn max_output_flag_hits_output_quota_on_step() {
     // Step 1: PUSH_STR "hello" — succeeds.
     // Step 2: CAP_CALL "io.print" → 5 > 3 → OutputQuota → "quota exceeded (3)".
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print", "--max-output", "3"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--max-output",
+            "3",
+        ],
         b"step\nstep\nquit\n",
     );
 
@@ -565,8 +746,14 @@ fn break_on_directive_line_warns_and_runs_to_completion() {
     // should warn that the line can't be resolved but still allow
     // `continue` to run through to HALT.
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:1"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:1",
+        ],
         b"continue\nquit\n",
     );
 
@@ -625,8 +812,14 @@ fn repl_status_reports_instructions_and_no_pause() {
 #[test]
 fn repl_status_after_breakpoint_shows_paused_at() {
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/hello.crush", "--cap", "io.print",
-          "--break", "hello.crush:2"],
+        &[
+            "run",
+            "tests/fixtures/hello.crush",
+            "--cap",
+            "io.print",
+            "--break",
+            "hello.crush:2",
+        ],
         b"continue\nstatus\nquit\n",
     );
 
@@ -661,7 +854,12 @@ fn max_call_depth_flag_hits_call_depth_quota_on_step() {
     // Step 1: CALL recurse pushes second frame → 2 >= 1 → CallDepthQuota
     // → "quota exceeded (1)".
     let (stdout, stderr, success) = spawn_debugger(
-        &["run", "tests/fixtures/call_depth.crush", "--max-call-depth", "1"],
+        &[
+            "run",
+            "tests/fixtures/call_depth.crush",
+            "--max-call-depth",
+            "1",
+        ],
         b"step\nquit\n",
     );
 

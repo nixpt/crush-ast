@@ -152,7 +152,12 @@ fn e2e_temporaries_lists_all_rows_with_metadata_via_parsed_source() {
     // All four reasons must appear in the unfiltered list — this is
     // what differentiates `temporaries()` (rows_with_metadata) from
     // `stale_temporaries()` (rows_filtered_by_age).
-    for reason in ["fresh canary", "boundary canary", "stale canary", "no-added canary"] {
+    for reason in [
+        "fresh canary",
+        "boundary canary",
+        "stale canary",
+        "no-added canary",
+    ] {
         assert!(
             result.output.contains(reason),
             "row {reason:?} must appear in temporaries() output:\n{}",

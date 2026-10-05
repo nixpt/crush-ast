@@ -66,10 +66,7 @@ fn crush_repl_emits_json_diagnostic_for_parse_error() {
     // REPL's run loop intercepts the typed `Vec<ParseError>` (NOT the
     // flattened anyhow path) and emits one NDJSON record per error via
     // `JsonDiagnostic::parse_error(..)`.
-    let output = run_repl_script(
-        &["--message-format", "json"],
-        &["let = 1", ".quit"],
-    );
+    let output = run_repl_script(&["--message-format", "json"], &["let = 1", ".quit"]);
     assert!(output.status.success(), "REPL `.quit` should exit 0");
     let stderr = String::from_utf8_lossy(&output.stderr);
     let json_lines = ndjson_lines(&stderr);
@@ -152,10 +149,7 @@ fn crush_repl_emits_json_diagnostic_for_meta_command_error() {
     // `handle_meta_command`'s `MetaCommandError::Other` arm. The REPL's
     // JSON dispatch routes those to blanket `E-IO` — same convention
     // used by `crush-compile` for its non-assembler errors.
-    let output = run_repl_script(
-        &["--message-format", "json"],
-        &[".bogus", ".quit"],
-    );
+    let output = run_repl_script(&["--message-format", "json"], &[".bogus", ".quit"]);
     assert!(output.status.success(), "REPL `.quit` should exit 0");
     let stderr = String::from_utf8_lossy(&output.stderr);
     let json_lines = ndjson_lines(&stderr);
@@ -223,10 +217,7 @@ fn crush_repl_meta_command_parse_error_default_mode_remains_text() {
     // Parallel lockdown: in default text mode the same meta-command
     // parse error surfaces as a themed `[E-PP*]` badge, NOT as a JSON
     // record. Confirms the text/json split inside `run`'s meta-arm.
-    let output = run_repl_script(
-        &[],
-        &[".type \"unterminated", ".quit"],
-    );
+    let output = run_repl_script(&[], &[".type \"unterminated", ".quit"]);
     assert!(output.status.success(), "REPL `.quit` should exit 0");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -287,10 +278,7 @@ fn crush_repl_happy_path_json_mode_emits_no_diagnostic() {
     // regression where a future contributor moves an `eprintln!` outside
     // the dispatch arm and accidentally surfaces a stray
     // `{"code":"E-IO",...}` record on successful evals.
-    let output = run_repl_script(
-        &["--message-format", "json"],
-        &["42", ".quit"],
-    );
+    let output = run_repl_script(&["--message-format", "json"], &["42", ".quit"]);
     assert!(output.status.success(), "REPL `.quit` should exit 0");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

@@ -1,7 +1,7 @@
 //! Python AST expression → CAST expression lowering.
 
-use py_ast::Ranged;
 use crush_walker_core::LowerCtx;
+use py_ast::Ranged;
 
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -190,12 +190,42 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             let op = &ops[0];
             let right = lower_expr(&comparators[0], ctx)?;
             match op {
-                py_ast::CmpOp::Eq => Ok(Expression::BinaryOp { operator: "==".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::NotEq => Ok(Expression::BinaryOp { operator: "!=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::Lt => Ok(Expression::BinaryOp { operator: "<".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::LtE => Ok(Expression::BinaryOp { operator: "<=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::Gt => Ok(Expression::BinaryOp { operator: ">".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::GtE => Ok(Expression::BinaryOp { operator: ">=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
+                py_ast::CmpOp::Eq => Ok(Expression::BinaryOp {
+                    operator: "==".to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    meta,
+                }),
+                py_ast::CmpOp::NotEq => Ok(Expression::BinaryOp {
+                    operator: "!=".to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    meta,
+                }),
+                py_ast::CmpOp::Lt => Ok(Expression::BinaryOp {
+                    operator: "<".to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    meta,
+                }),
+                py_ast::CmpOp::LtE => Ok(Expression::BinaryOp {
+                    operator: "<=".to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    meta,
+                }),
+                py_ast::CmpOp::Gt => Ok(Expression::BinaryOp {
+                    operator: ">".to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    meta,
+                }),
+                py_ast::CmpOp::GtE => Ok(Expression::BinaryOp {
+                    operator: ">=".to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    meta,
+                }),
                 py_ast::CmpOp::In => Ok(Expression::Call {
                     function: "__crush_contains__".to_string(),
                     args: vec![right, left],
@@ -250,7 +280,10 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         py_ast::Expr::Subscript(py_ast::ExprSubscript { value, slice, .. }) => {
             let target = lower_expr(value, ctx)?;
             // If the subscript is a slice (arr[0:2]), emit __crush_slice__
-            if let py_ast::Expr::Slice(py_ast::ExprSlice { lower, upper, step, .. }) = slice.as_ref() {
+            if let py_ast::Expr::Slice(py_ast::ExprSlice {
+                lower, upper, step, ..
+            }) = slice.as_ref()
+            {
                 let start = match lower {
                     Some(e) => lower_expr(e, ctx)?,
                     None => Expression::NullLiteral { meta: meta.clone() },
@@ -296,7 +329,9 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
-        py_ast::Expr::Slice(py_ast::ExprSlice { lower, upper, step, .. }) => {
+        py_ast::Expr::Slice(py_ast::ExprSlice {
+            lower, upper, step, ..
+        }) => {
             let start = match lower {
                 Some(e) => lower_expr(e, ctx)?,
                 None => Expression::NullLiteral { meta: meta.clone() },
@@ -524,13 +559,7 @@ fn lower_list_or_set_comprehension(
         meta: meta.clone(),
     };
     let loop_stmt = build_comprehension_loop(generators, 0, vec![push_stmt], ctx, &meta)?;
-    Ok((
-        vec![init, loop_stmt],
-        Expression::Var {
-            name: tmp,
-            meta,
-        },
-    ))
+    Ok((vec![init, loop_stmt], Expression::Var { name: tmp, meta }))
 }
 
 /// Recursively build the (possibly nested, for multiple `for` clauses)
@@ -547,7 +576,9 @@ fn build_comprehension_loop(
     // so the obvious variable name doesn't compile. Named `generator` instead.
     let generator = &generators[idx];
     if generator.is_async {
-        anyhow::bail!("async comprehensions (`async for` inside a comprehension) not yet supported");
+        anyhow::bail!(
+            "async comprehensions (`async for` inside a comprehension) not yet supported"
+        );
     }
     let var = match &generator.target {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
@@ -558,7 +589,13 @@ fn build_comprehension_loop(
     };
     let iterable = lower_expr(&generator.iter, ctx)?;
     let mut body = if idx + 1 < generators.len() {
-        vec![build_comprehension_loop(generators, idx + 1, innermost, ctx, meta)?]
+        vec![build_comprehension_loop(
+            generators,
+            idx + 1,
+            innermost,
+            ctx,
+            meta,
+        )?]
     } else {
         innermost
     };
@@ -608,12 +645,12 @@ pub(crate) fn lower_expr_hoist(
     let offset = u32::from(expr.start()) as usize;
     let meta = ctx.meta_at(offset);
     match expr {
-        py_ast::Expr::ListComp(py_ast::ExprListComp { elt, generators, .. }) => {
-            lower_list_or_set_comprehension(elt, generators, ctx, meta)
-        }
-        py_ast::Expr::SetComp(py_ast::ExprSetComp { elt, generators, .. }) => {
-            lower_list_or_set_comprehension(elt, generators, ctx, meta)
-        }
+        py_ast::Expr::ListComp(py_ast::ExprListComp {
+            elt, generators, ..
+        }) => lower_list_or_set_comprehension(elt, generators, ctx, meta),
+        py_ast::Expr::SetComp(py_ast::ExprSetComp {
+            elt, generators, ..
+        }) => lower_list_or_set_comprehension(elt, generators, ctx, meta),
         py_ast::Expr::Call(py_ast::ExprCall {
             func,
             args,
@@ -649,9 +686,16 @@ mod comprehension_lowering_tests {
         let c = ctx();
         let (hoisted, result) = lower_expr_hoist(&expr, &c).expect("comprehension should lower");
 
-        assert_eq!(hoisted.len(), 2, "expected [init, for-loop], got {hoisted:?}");
+        assert_eq!(
+            hoisted.len(),
+            2,
+            "expected [init, for-loop], got {hoisted:?}"
+        );
         match &hoisted[0] {
-            Statement::VarDecl { value: Expression::ArrayLiteral { elements, .. }, .. } => {
+            Statement::VarDecl {
+                value: Expression::ArrayLiteral { elements, .. },
+                ..
+            } => {
                 assert!(elements.is_empty());
             }
             other => panic!("expected VarDecl(empty array) init, got {other:?}"),
@@ -661,7 +705,10 @@ mod comprehension_lowering_tests {
                 assert_eq!(variable, "i");
                 assert_eq!(body.len(), 1);
                 match &body[0] {
-                    Statement::ExprStmt { expr: Expression::Call { function, args, .. }, .. } => {
+                    Statement::ExprStmt {
+                        expr: Expression::Call { function, args, .. },
+                        ..
+                    } => {
                         assert!(function.ends_with(".append"));
                         assert_eq!(args.len(), 1);
                     }
@@ -684,7 +731,11 @@ mod comprehension_lowering_tests {
         let (hoisted, _) = lower_expr_hoist(&expr, &c).expect("comprehension should lower");
         match &hoisted[1] {
             Statement::For { body, .. } => match &body[0] {
-                Statement::If { then_body, else_body, .. } => {
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     assert!(else_body.is_none());
                     assert_eq!(then_body.len(), 1);
                 }

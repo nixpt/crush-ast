@@ -23,21 +23,15 @@ HALT
 "#;
 
     // permissions list must include `net.ping` for the cap to fire.
-    let program =
-        crush_lang_sdk::assemble(src, Some(&["net.ping"]), Some("net_ping_capsule"))
-            .expect("crush assembler accepts the capsule");
+    let program = crush_lang_sdk::assemble(src, Some(&["net.ping"]), Some("net_ping_capsule"))
+        .expect("crush assembler accepts the capsule");
 
-    let mut caps: HostCaps = HostCapsBuilder::new()
-        .build();
+    let mut caps: HostCaps = HostCapsBuilder::new().build();
     crush_net::register(&mut caps);
 
     // run_with_caps signature is (&Program, &Quotas, Option<&HostCaps>).
-    let result = crush_lang_sdk::run_with_caps(
-        &program,
-        &Quotas::default(),
-        Some(&caps),
-    )
-    .expect("crush runtime executes the capsule successfully");
+    let result = crush_lang_sdk::run_with_caps(&program, &Quotas::default(), Some(&caps))
+        .expect("crush runtime executes the capsule successfully");
 
     // Defense-in-depth: ensure HALT actually ran.
     assert!(result.halted, "expected HALT to fire; got {:?}", result);

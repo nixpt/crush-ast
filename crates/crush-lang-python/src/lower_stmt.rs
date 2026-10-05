@@ -1,7 +1,7 @@
 //! Python AST statement → CAST statement lowering.
 
-use py_ast::Ranged;
 use crush_walker_core::LowerCtx;
+use py_ast::Ranged;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -527,7 +527,10 @@ fn exception_type_names(expr: &py_ast::Expr) -> anyhow::Result<Vec<String>> {
             .into_iter()
             .flatten()
             .collect()),
-        _ => anyhow::bail!("unsupported exception-type expression in `except`: {:?}", expr),
+        _ => anyhow::bail!(
+            "unsupported exception-type expression in `except`: {:?}",
+            expr
+        ),
     }
 }
 
@@ -545,7 +548,9 @@ fn build_type_match_cond(
         meta: meta.clone(),
     };
     let mut names = type_names.iter();
-    let first = names.next().expect("exception_type_names never returns empty");
+    let first = names
+        .next()
+        .expect("exception_type_names never returns empty");
     let mut cond = Expression::BinaryOp {
         operator: "==".to_string(),
         left: Box::new(tag.clone()),
@@ -594,7 +599,12 @@ mod try_lowering_tests {
     fn simple_try_except_produces_trycatch() {
         let stmt = lower_one("try:\n    x = 1\nexcept ValueError as e:\n    x = 2\n");
         match stmt {
-            Statement::TryCatch { body, error_var, handler, .. } => {
+            Statement::TryCatch {
+                body,
+                error_var,
+                handler,
+                ..
+            } => {
                 assert_eq!(body.len(), 1);
                 assert!(!error_var.is_empty());
                 // A *typed* handler (even the only one) still compiles to a
@@ -643,14 +653,20 @@ mod try_lowering_tests {
             Statement::TryCatch { handler, .. } => {
                 assert_eq!(handler.len(), 1);
                 match &handler[0] {
-                    Statement::If { condition, else_body, .. } => {
+                    Statement::If {
+                        condition,
+                        else_body,
+                        ..
+                    } => {
                         // condition should reference __exc_type__
                         let s = format!("{condition:?}");
                         assert!(s.contains("__exc_type__"));
                         assert!(s.contains("ValueError"));
                         assert!(else_body.is_some());
                     }
-                    other => panic!("expected an If chain for multiple typed handlers, got {other:?}"),
+                    other => {
+                        panic!("expected an If chain for multiple typed handlers, got {other:?}")
+                    }
                 }
             }
             other => panic!("expected Statement::TryCatch, got {other:?}"),
@@ -662,10 +678,9 @@ mod try_lowering_tests {
         // A bare `except:` that ISN'T last shadows everything after it in
         // real Python (unreachable code) — bail loud rather than silently
         // dropping the unreachable `except ValueError:` handler.
-        let stmts = parse_source(
-            "try:\n    f()\nexcept:\n    a = 2\nexcept ValueError:\n    a = 1\n",
-        )
-        .unwrap();
+        let stmts =
+            parse_source("try:\n    f()\nexcept:\n    a = 2\nexcept ValueError:\n    a = 1\n")
+                .unwrap();
         let c = ctx();
         let err = lower_stmt(&stmts[0], &c).unwrap_err();
         assert!(err.to_string().contains("last handler"));
@@ -674,9 +689,7 @@ mod try_lowering_tests {
     #[test]
     fn bare_except_as_last_of_several_handlers_is_fine() {
         // Bare `except:` *is* allowed as the terminal handler.
-        let stmt = lower_one(
-            "try:\n    f()\nexcept ValueError:\n    a = 1\nexcept:\n    a = 2\n",
-        );
+        let stmt = lower_one("try:\n    f()\nexcept ValueError:\n    a = 1\nexcept:\n    a = 2\n");
         assert!(matches!(stmt, Statement::TryCatch { .. }));
     }
 
@@ -684,7 +697,10 @@ mod try_lowering_tests {
     fn raise_call_lowers_to_throw_of_tagged_object() {
         let stmt = lower_one("raise ValueError(\"bad\")\n");
         match stmt {
-            Statement::Throw { value: Expression::ObjectLiteral { properties, .. }, .. } => {
+            Statement::Throw {
+                value: Expression::ObjectLiteral { properties, .. },
+                ..
+            } => {
                 let tag = properties
                     .iter()
                     .find(|(k, _)| k == "__exc_type__")
@@ -808,7 +824,9 @@ fn lower_match_pattern(pattern: &py_ast::Pattern) -> anyhow::Result<crush_cast::
             ..
         }) => match (inner, name) {
             (None, None) => Ok(crush_cast::Pattern::Wildcard),
-            (None, Some(id)) => Ok(crush_cast::Pattern::Identifier { name: id.to_string() }),
+            (None, Some(id)) => Ok(crush_cast::Pattern::Identifier {
+                name: id.to_string(),
+            }),
             (Some(inner_pat), None) => lower_match_pattern(inner_pat),
             (Some(_), Some(_)) => anyhow::bail!(
                 "`case <pattern> as <name>:` (binding a name to a sub-pattern match) not \
@@ -889,7 +907,10 @@ fn lower_match_literal(expr: &py_ast::Expr) -> anyhow::Result<Expression> {
                 value: -f,
                 meta: HashMap::new(),
             }),
-            _ => anyhow::bail!("unsupported negative literal in match pattern: {:?}", operand),
+            _ => anyhow::bail!(
+                "unsupported negative literal in match pattern: {:?}",
+                operand
+            ),
         },
         _ => anyhow::bail!(
             "match-value pattern must be a literal constant, got: {:?}",
@@ -916,14 +937,17 @@ mod match_lowering_tests {
 
     #[test]
     fn match_statement_wraps_expression_match_in_exprstmt() {
-        let stmt = lower_one(
-            "match x:\n    case 1:\n        y = 10\n    case _:\n        y = 0\n",
-        );
+        let stmt = lower_one("match x:\n    case 1:\n        y = 10\n    case _:\n        y = 0\n");
         match stmt {
-            Statement::ExprStmt { expr: Expression::Match { arms, .. }, .. } => {
+            Statement::ExprStmt {
+                expr: Expression::Match { arms, .. },
+                ..
+            } => {
                 assert_eq!(arms.len(), 2);
                 match &arms[0].pattern {
-                    crush_cast::Pattern::Literal { value: Expression::IntLiteral { value, .. } } => {
+                    crush_cast::Pattern::Literal {
+                        value: Expression::IntLiteral { value, .. },
+                    } => {
                         assert_eq!(*value, 1);
                     }
                     other => panic!("expected literal pattern `1`, got {other:?}"),
@@ -938,7 +962,10 @@ mod match_lowering_tests {
                 for arm in &arms {
                     assert!(matches!(
                         arm.body.last(),
-                        Some(Statement::ExprStmt { expr: Expression::NullLiteral { .. }, .. })
+                        Some(Statement::ExprStmt {
+                            expr: Expression::NullLiteral { .. },
+                            ..
+                        })
                     ));
                 }
             }
@@ -950,12 +977,13 @@ mod match_lowering_tests {
     fn match_capture_pattern_binds_identifier() {
         let stmt = lower_one("match x:\n    case n:\n        y = n\n");
         match stmt {
-            Statement::ExprStmt { expr: Expression::Match { arms, .. }, .. } => {
-                match &arms[0].pattern {
-                    crush_cast::Pattern::Identifier { name } => assert_eq!(name, "n"),
-                    other => panic!("expected capture pattern, got {other:?}"),
-                }
-            }
+            Statement::ExprStmt {
+                expr: Expression::Match { arms, .. },
+                ..
+            } => match &arms[0].pattern {
+                crush_cast::Pattern::Identifier { name } => assert_eq!(name, "n"),
+                other => panic!("expected capture pattern, got {other:?}"),
+            },
             other => panic!("expected ExprStmt(Match), got {other:?}"),
         }
     }
@@ -986,21 +1014,20 @@ mod match_lowering_tests {
 
     #[test]
     fn match_class_pattern_keyword_form_lowers_to_struct_pattern() {
-        let stmt = lower_one(
-            "match p:\n    case Point(x=px, y=py):\n        z = px\n",
-        );
+        let stmt = lower_one("match p:\n    case Point(x=px, y=py):\n        z = px\n");
         match stmt {
-            Statement::ExprStmt { expr: Expression::Match { arms, .. }, .. } => {
-                match &arms[0].pattern {
-                    crush_cast::Pattern::Struct { name, fields } => {
-                        assert_eq!(name, "Point");
-                        assert_eq!(fields.len(), 2);
-                        assert_eq!(fields[0].0, "x");
-                        assert_eq!(fields[1].0, "y");
-                    }
-                    other => panic!("expected Struct pattern, got {other:?}"),
+            Statement::ExprStmt {
+                expr: Expression::Match { arms, .. },
+                ..
+            } => match &arms[0].pattern {
+                crush_cast::Pattern::Struct { name, fields } => {
+                    assert_eq!(name, "Point");
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].0, "x");
+                    assert_eq!(fields[1].0, "y");
                 }
-            }
+                other => panic!("expected Struct pattern, got {other:?}"),
+            },
             other => panic!("expected ExprStmt(Match), got {other:?}"),
         }
     }

@@ -45,13 +45,17 @@ impl TypeMap {
                 "push_int" => stack.push(InferredType::Int),
                 "push_float" => stack.push(InferredType::Float),
                 "push_bool" | "push_null" | "push_str" => stack.push(InferredType::Dynamic),
-                "pop" => { stack.pop(); }
+                "pop" => {
+                    stack.pop();
+                }
                 "dup" => {
                     let t = stack.last().cloned().unwrap_or(InferredType::Dynamic);
                     stack.push(t);
                 }
                 "store" => {
-                    let name = instr.args.get("name")
+                    let name = instr
+                        .args
+                        .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let t = stack.pop().unwrap_or(InferredType::Dynamic);
@@ -62,7 +66,9 @@ impl TypeMap {
                     }
                 }
                 "load" => {
-                    let name = instr.args.get("name")
+                    let name = instr
+                        .args
+                        .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let t = locals.get(name).cloned().unwrap_or(InferredType::Dynamic);
@@ -71,7 +77,11 @@ impl TypeMap {
                 "add" | "sub" | "mul" | "div" | "mod" => {
                     let b = stack.pop().unwrap_or(InferredType::Dynamic);
                     let a = stack.pop().unwrap_or(InferredType::Dynamic);
-                    let result = if a == b && a != InferredType::Dynamic { a } else { InferredType::Dynamic };
+                    let result = if a == b && a != InferredType::Dynamic {
+                        a
+                    } else {
+                        InferredType::Dynamic
+                    };
                     stack.push(result);
                 }
                 "neg" => {
@@ -83,10 +93,14 @@ impl TypeMap {
                     stack.pop();
                     stack.push(InferredType::Dynamic); // boolean result, but we model as Dynamic
                 }
-                "ret" => { stack.clear(); }
+                "ret" => {
+                    stack.clear();
+                }
                 // conservative: anything else → clear stack type info
                 _ => {
-                    for t in stack.iter_mut() { *t = InferredType::Dynamic; }
+                    for t in stack.iter_mut() {
+                        *t = InferredType::Dynamic;
+                    }
                 }
             }
         }
@@ -95,9 +109,9 @@ impl TypeMap {
 
     pub fn ctype_for(&self, name: &str) -> &'static str {
         match self.locals.get(name) {
-            Some(InferredType::Int)   => "int64_t",
+            Some(InferredType::Int) => "int64_t",
             Some(InferredType::Float) => "double",
-            _                         => "CrushValue",
+            _ => "CrushValue",
         }
     }
 }
@@ -109,7 +123,12 @@ mod tests {
     use serde_json::json;
 
     fn instr(op: &str, args: serde_json::Value) -> Instruction {
-        Instruction { op: op.into(), lang: None, meta: None, args }
+        Instruction {
+            op: op.into(),
+            lang: None,
+            meta: None,
+            args,
+        }
     }
 
     #[test]
@@ -119,9 +138,9 @@ mod tests {
             instr("store", json!({"name": "x"})),
             instr("push_int", json!({"value": 20})),
             instr("store", json!({"name": "y"})),
-            instr("load",  json!({"name": "x"})),
-            instr("load",  json!({"name": "y"})),
-            instr("add",   json!({})),
+            instr("load", json!({"name": "x"})),
+            instr("load", json!({"name": "y"})),
+            instr("add", json!({})),
             instr("store", json!({"name": "z"})),
         ];
         let tm = TypeMap::infer(&body);
@@ -145,7 +164,7 @@ mod tests {
     #[test]
     fn test_dynamic_on_mixed() {
         let body = vec![
-            instr("push_int",   json!({"value": 1})),
+            instr("push_int", json!({"value": 1})),
             instr("push_float", json!({"value": 1.0})),
             instr("add", json!({})),
             instr("store", json!({"name": "mixed"})),

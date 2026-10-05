@@ -49,6 +49,4 @@ pub use vm_driver::{PortableVmDriver, StepOutcome, VmDriver, VmError, VmRunResul
 // ParseRecordError) now lives canonically in `crush_diagnostics::wire_consumer`.
 // Re-export from here for back-compat with existing `crush_debugger::*`
 // call sites.
-pub use crush_diagnostics::{
-    consume_stream, parse_record, OwnedDiagRecord, ParseRecordError,
-};
+pub use crush_diagnostics::{OwnedDiagRecord, ParseRecordError, consume_stream, parse_record};

@@ -76,7 +76,7 @@ fn modulo() {
 #[test]
 fn mod_negative_values() {
     let r = run_src("PUSH -7\nPUSH 3\nMOD\nHALT");
-    assert_eq!(r.stack, vec![Value::Int(-1)]);  // Rust-style truncation: -7 - 3*(-2) = -1
+    assert_eq!(r.stack, vec![Value::Int(-1)]); // Rust-style truncation: -7 - 3*(-2) = -1
 }
 
 #[test]
@@ -211,11 +211,11 @@ fn pop_removes_top() {
 
 #[test]
 fn bitwise_and_or_xor() {
-    let r = run_src("PUSH 12\nPUSH 10\nBITAND\nHALT");  // 12&10 = 8
+    let r = run_src("PUSH 12\nPUSH 10\nBITAND\nHALT"); // 12&10 = 8
     assert_eq!(r.stack, vec![Value::Int(8)]);
-    let r = run_src("PUSH 12\nPUSH 10\nBITOR\nHALT");   // 12|10 = 14
+    let r = run_src("PUSH 12\nPUSH 10\nBITOR\nHALT"); // 12|10 = 14
     assert_eq!(r.stack, vec![Value::Int(14)]);
-    let r = run_src("PUSH 12\nPUSH 10\nBITXOR\nHALT");  // 12^10 = 6
+    let r = run_src("PUSH 12\nPUSH 10\nBITXOR\nHALT"); // 12^10 = 6
     assert_eq!(r.stack, vec![Value::Int(6)]);
 }
 
@@ -223,8 +223,8 @@ fn bitwise_and_or_xor() {
 fn bitwise_not_shift() {
     let r = run_src("PUSH 0\nBITNOT\nHALT");
     assert_eq!(r.stack, vec![Value::Int(-1)]);
-    let r = run_src("PUSH 1\nPUSH 4\nSHL\nHALT");  // 1<<4 = 16
+    let r = run_src("PUSH 1\nPUSH 4\nSHL\nHALT"); // 1<<4 = 16
     assert_eq!(r.stack, vec![Value::Int(16)]);
-    let r = run_src("PUSH 16\nPUSH 2\nSHR\nHALT");  // 16>>2 = 4
+    let r = run_src("PUSH 16\nPUSH 2\nSHR\nHALT"); // 16>>2 = 4
     assert_eq!(r.stack, vec![Value::Int(4)]);
 }

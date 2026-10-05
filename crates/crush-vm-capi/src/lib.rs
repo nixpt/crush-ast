@@ -12,7 +12,7 @@
 //! Generate the C header via cbindgen or use the handwritten `crush_vm.h`.
 
 use std::ffi::{CStr, c_char};
-use std::sync::{Mutex, LazyLock};
+use std::sync::{LazyLock, Mutex};
 
 /// Opaque VM state.
 struct CrushVmState {

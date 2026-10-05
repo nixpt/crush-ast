@@ -192,7 +192,10 @@ mod tests {
 
     #[test]
     fn parses_delete_id() {
-        assert_eq!(parse_command("delete 3").unwrap(), Command::Delete { id: 3 });
+        assert_eq!(
+            parse_command("delete 3").unwrap(),
+            Command::Delete { id: 3 }
+        );
         assert_eq!(parse_command("d 12").unwrap(), Command::Delete { id: 12 });
     }
 

@@ -232,16 +232,11 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
             }
             super::repl::Command::Status => {
                 let state = self.driver.state();
-                let mut lines = vec![format!(
-                    "instructions: {}",
-                    state.instruction_count
-                )];
+                let mut lines = vec![format!("instructions: {}", state.instruction_count)];
                 match &state.paused_at {
-                    Some(loc) => lines.push(format!(
-                        "paused at: {}:{}",
-                        loc.file.display(),
-                        loc.line
-                    )),
+                    Some(loc) => {
+                        lines.push(format!("paused at: {}:{}", loc.file.display(), loc.line))
+                    }
                     None => lines.push("paused at: (none)".to_string()),
                 }
                 Ok(Some(lines.join("\n")))
@@ -261,9 +256,7 @@ struct MockVmDriver {
 
 #[cfg(test)]
 impl VmDriver for MockVmDriver {
-    fn step(
-        &mut self,
-    ) -> Result<super::vm_driver::StepOutcome, super::vm_driver::VmError> {
+    fn step(&mut self) -> Result<super::vm_driver::StepOutcome, super::vm_driver::VmError> {
         self.step_count += 1;
         Ok(super::vm_driver::StepOutcome {
             yielded: false,
@@ -321,8 +314,14 @@ mod tests {
         let id_a = s.add_breakpoint("main.crush", 7);
         let id_b = s.add_breakpoint("main.crush", 12);
         assert_eq!(s.breakpoint_count(), 2);
-        assert!(s.breakpoints().matches(std::path::Path::new("main.crush"), 7));
-        assert!(s.breakpoints().matches(std::path::Path::new("main.crush"), 12));
+        assert!(
+            s.breakpoints()
+                .matches(std::path::Path::new("main.crush"), 7)
+        );
+        assert!(
+            s.breakpoints()
+                .matches(std::path::Path::new("main.crush"), 12)
+        );
         assert_eq!(id_a.0, 0);
         assert_eq!(id_b.0, 1);
     }
@@ -365,10 +364,7 @@ mod tests {
     #[test]
     fn handle_command_continue_reports_done() {
         let mut s = session();
-        let out = s
-            .handle_command(Command::Continue)
-            .unwrap()
-            .unwrap();
+        let out = s.handle_command(Command::Continue).unwrap().unwrap();
         assert_eq!(out, "done");
     }
 
@@ -500,8 +496,7 @@ mod tests {
         assert_eq!(id.0, 0);
         let bp = &s.breakpoints().list()[0];
         assert_eq!(
-            bp.bytecode_address,
-            None,
+            bp.bytecode_address, None,
             "line 99 should NOT resolve (not in sourcemap)"
         );
     }

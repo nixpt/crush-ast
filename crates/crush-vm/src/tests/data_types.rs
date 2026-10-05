@@ -246,24 +246,30 @@ fn arr_pop_removes_last() {
 
 #[test]
 fn str_contains_native() {
-    let r = run_src(r#"PUSH_STR "hello world"
+    let r = run_src(
+        r#"PUSH_STR "hello world"
     PUSH_STR "world"
     STR_CONTAINS
-    HALT"#);
+    HALT"#,
+    );
     assert_eq!(r.stack, vec![Value::Bool(true)]);
-    let r = run_src(r#"PUSH_STR "hello"
+    let r = run_src(
+        r#"PUSH_STR "hello"
     PUSH_STR "xyz"
     STR_CONTAINS
-    HALT"#);
+    HALT"#,
+    );
     assert_eq!(r.stack, vec![Value::Bool(false)]);
 }
 
 #[test]
 fn str_split_native() {
-    let r = run_src(r#"PUSH_STR "a,b,c"
+    let r = run_src(
+        r#"PUSH_STR "a,b,c"
     PUSH_STR ","
     STR_SPLIT
-    HALT"#);
+    HALT"#,
+    );
     if let Some(Value::Array(arr)) = r.stack.first() {
         assert_eq!(arr.borrow().len(), 3);
         assert_eq!(arr.borrow()[0], Value::Str("a".to_string()));
@@ -276,23 +282,27 @@ fn str_split_native() {
 
 #[test]
 fn str_replace_native() {
-    let r = run_src(r#"PUSH_STR "hello world"
+    let r = run_src(
+        r#"PUSH_STR "hello world"
     PUSH_STR "world"
     PUSH_STR "there"
     STR_REPLACE
-    HALT"#);
+    HALT"#,
+    );
     assert_eq!(r.stack, vec![Value::Str("hello there".to_string())]);
 }
 
 #[test]
 fn str_join_native() {
-    let r = run_src(r#"PUSH_STR "a"
+    let r = run_src(
+        r#"PUSH_STR "a"
     PUSH_STR "b"
     PUSH_STR "c"
     NEW_ARRAY 3
     PUSH_STR ","
     STR_JOIN
-    HALT"#);
+    HALT"#,
+    );
     assert_eq!(r.stack, vec![Value::Str("a,b,c".to_string())]);
 }
 
@@ -306,6 +316,6 @@ fn make_range_native() {
     } else {
         panic!("expected array");
     }
-    let r = run_src("PUSH 5\nPUSH 3\nMAKE_RANGE\nHALT");  // empty range
+    let r = run_src("PUSH 5\nPUSH 3\nMAKE_RANGE\nHALT"); // empty range
     assert_eq!(r.stack, vec![Value::new_array(vec![])]);
 }

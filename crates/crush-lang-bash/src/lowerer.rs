@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use brush_parser::ast::{self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline, SourceLocation};
+use brush_parser::ast::{
+    self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline, SourceLocation,
+};
 use crush_cast::{CastType, Expression, Function, Program, Statement};
 use crush_walker_core::LowerCtx;
 
@@ -169,7 +171,10 @@ fn lower_command(cmd: &Command, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>
     }
 }
 
-fn lower_simple_command(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
+fn lower_simple_command(
+    simple: &ast::SimpleCommand,
+    ctx: &LowerCtx,
+) -> anyhow::Result<Vec<Statement>> {
     let mut stmts: Vec<Statement> = Vec::new();
 
     if let Some(prefix) = &simple.prefix {
@@ -363,7 +368,10 @@ fn lower_simple_command(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> anyhow::
     Ok(stmts)
 }
 
-fn lower_compound_command(compound: &CompoundCommand, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
+fn lower_compound_command(
+    compound: &CompoundCommand,
+    ctx: &LowerCtx,
+) -> anyhow::Result<Vec<Statement>> {
     match compound {
         CompoundCommand::IfClause(if_cmd) => {
             let condition = compound_list_to_expr(&if_cmd.condition, ctx);
@@ -411,7 +419,8 @@ fn lower_compound_command(compound: &CompoundCommand, ctx: &LowerCtx) -> anyhow:
         }
         CompoundCommand::ForClause(for_cmd) => {
             let iterable = if let Some(values) = &for_cmd.values {
-                let elements: Vec<Expression> = values.iter().map(|w| word_to_expr(w, ctx)).collect();
+                let elements: Vec<Expression> =
+                    values.iter().map(|w| word_to_expr(w, ctx)).collect();
                 Expression::ArrayLiteral {
                     elements,
                     meta: node_meta(compound, ctx),
@@ -877,7 +886,9 @@ fn cap_meta(namespace: &str, method: &str) -> HashMap<String, serde_json::Value>
 
 fn lower_compound_for_body(compound: &CompoundCommand, ctx: &LowerCtx) -> Vec<Statement> {
     match compound {
-        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list, ctx).unwrap_or_default(),
+        CompoundCommand::BraceGroup(group) => {
+            lower_compound_list(&group.list, ctx).unwrap_or_default()
+        }
         _ => lower_compound_command(compound, ctx).unwrap_or_default(),
     }
 }

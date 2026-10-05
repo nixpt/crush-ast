@@ -23,24 +23,22 @@
 //! # Ok(()) }
 //! ```
 
-pub mod akg;
 pub mod ai_native;
+pub mod akg;
 pub mod builder;
-pub mod concurrency_native;
-pub mod dom_native;
 pub mod bus;
 pub mod caps;
 pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
+pub mod concurrency_native;
+pub mod dom_native;
 // Compares against crush-vm's FastVM backend — native-plugins only.
-#[cfg(feature = "native-plugins")]
-pub mod differential;
 #[cfg(feature = "db")]
 pub mod db;
-#[cfg(any(feature = "db", feature = "stdlib"))]
-mod util;
+#[cfg(feature = "native-plugins")]
+pub mod differential;
 #[cfg(feature = "graphics")]
 pub mod graphics;
 pub mod host_caps;
@@ -54,6 +52,8 @@ pub mod runtime;
 pub mod stdlib;
 pub mod task;
 pub mod theme;
+#[cfg(any(feature = "db", feature = "stdlib"))]
+mod util;
 
 // Re-export the core crush-vm types a host author needs.
 pub use crush_vm::run as run_program;

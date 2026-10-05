@@ -246,14 +246,13 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
-        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE
-        | YIELD | AWAIT | HALT
-        | TYPEOF
-        | ADD | SUB | MUL | DIV | MOD
-        | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT
-        | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP
-        | TUPLE_PUSH | LIST_PUSH | VECTOR_PUSH | SET_PUSH => Some(OperandKind::None),
+        NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW
+        | STR_CONTAINS | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | YIELD | AWAIT | HALT
+        | TYPEOF | ADD | SUB | MUL | DIV | MOD | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND
+        | OR | BITAND | BITOR | BITXOR | BITNOT | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN
+        | ARR_PUSH | ARR_POP | TUPLE_PUSH | LIST_PUSH | VECTOR_PUSH | SET_PUSH => {
+            Some(OperandKind::None)
+        }
         SPAWN => Some(OperandKind::Count),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
@@ -262,8 +261,13 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
-        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
-        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
+        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE
+        | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE
+        | AI_TOOLCHAIN | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD
+        | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
+        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL
+        | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER
+        | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
         NEW_ARRAY | NEW_TUPLE | NEW_LIST | NEW_VECTOR | NEW_SET => Some(OperandKind::Count),
         _ => None,

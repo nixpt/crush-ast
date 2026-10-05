@@ -1155,7 +1155,11 @@ impl Renderer {
             } => {
                 self.push_str("ai_semantic_match(");
                 self.render_expression(target, 0);
-                self.push_str(&format!(", \"{}\", {})", escape_string(concept), confidence_threshold));
+                self.push_str(&format!(
+                    ", \"{}\", {})",
+                    escape_string(concept),
+                    confidence_threshold
+                ));
             }
             AIExpression::Synthesize {
                 output_type,
@@ -1164,10 +1168,18 @@ impl Renderer {
                 examples: _,
             } => {
                 self.push_str(&format!("ai_synthesize({:?}, constraints=[", output_type));
-                self.push_str(&constraints.iter().map(|c| format!("\"{}\"", escape_string(c))).collect::<Vec<_>>().join(", "));
+                self.push_str(
+                    &constraints
+                        .iter()
+                        .map(|c| format!("\"{}\"", escape_string(c)))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
                 self.push_str("], ctx=[");
                 for (i, expr) in context_refs.iter().enumerate() {
-                    if i > 0 { self.push_str(", "); }
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
                     self.render_expression(expr, 0);
                 }
                 self.push_str("])");

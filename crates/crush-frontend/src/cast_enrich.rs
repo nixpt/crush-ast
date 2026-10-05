@@ -10,8 +10,8 @@
 //!
 //! The pass is a pure CAST → CAST transformation; it does not produce CASM.
 
-use crush_cast::{Expression, Function, Pattern, Program, Statement};
 use crush_cast::manifest::{ExhaustiveMatchSite, SourceLoc};
+use crush_cast::{Expression, Function, Pattern, Program, Statement};
 use std::collections::HashMap;
 
 /// Enrich `program` in place by populating `Program.exhaustive_sites`.
@@ -34,11 +34,7 @@ fn collect_sites_in_fn(fn_name: &str, func: &Function, out: &mut Vec<ExhaustiveM
     collect_sites_in_stmts(fn_name, &func.body, out);
 }
 
-fn collect_sites_in_stmts(
-    fn_name: &str,
-    stmts: &[Statement],
-    out: &mut Vec<ExhaustiveMatchSite>,
-) {
+fn collect_sites_in_stmts(fn_name: &str, stmts: &[Statement], out: &mut Vec<ExhaustiveMatchSite>) {
     for stmt in stmts {
         collect_sites_in_stmt(fn_name, stmt, out);
     }
@@ -49,7 +45,9 @@ fn collect_sites_in_stmt(fn_name: &str, stmt: &Statement, out: &mut Vec<Exhausti
         Statement::ExprStmt { expr, .. } => {
             collect_sites_in_expr(fn_name, expr, out);
         }
-        Statement::VarDecl { value, .. } | Statement::Assign { value, .. } | Statement::Export { value, .. } => {
+        Statement::VarDecl { value, .. }
+        | Statement::Assign { value, .. }
+        | Statement::Export { value, .. } => {
             collect_sites_in_expr(fn_name, value, out);
         }
         Statement::Return { value, .. } => {
@@ -69,7 +67,9 @@ fn collect_sites_in_stmt(fn_name: &str, stmt: &Statement, out: &mut Vec<Exhausti
                 collect_sites_in_stmts(fn_name, eb, out);
             }
         }
-        Statement::While { condition, body, .. } => {
+        Statement::While {
+            condition, body, ..
+        } => {
             collect_sites_in_expr(fn_name, condition, out);
             collect_sites_in_stmts(fn_name, body, out);
         }
@@ -105,7 +105,9 @@ fn collect_sites_in_stmt(fn_name: &str, stmt: &Statement, out: &mut Vec<Exhausti
                 collect_sites_in_expr(fn_name, v, out);
             }
         }
-        Statement::DomEventListener { target, callback, .. } => {
+        Statement::DomEventListener {
+            target, callback, ..
+        } => {
             collect_sites_in_expr(fn_name, target, out);
             collect_sites_in_expr(fn_name, callback, out);
         }
@@ -131,7 +133,9 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
                 .iter()
                 .filter_map(|arm| arm_pattern_name(&arm.pattern))
                 .collect();
-            let has_wildcard = arms.iter().any(|arm| matches!(arm.pattern, Pattern::Wildcard));
+            let has_wildcard = arms
+                .iter()
+                .any(|arm| matches!(arm.pattern, Pattern::Wildcard));
 
             let location = meta_to_source_loc(meta);
 
@@ -161,7 +165,9 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
         Expression::UnaryOp { operand, .. } => {
             collect_sites_in_expr(fn_name, operand, out);
         }
-        Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } => {
+        Expression::Call { args, .. }
+        | Expression::CapabilityCall { args, .. }
+        | Expression::Spawn { args, .. } => {
             for a in args {
                 collect_sites_in_expr(fn_name, a, out);
             }
@@ -241,14 +247,8 @@ fn arm_pattern_name(pattern: &Pattern) -> Option<String> {
 /// compiler's `meta_at` helpers in test fixtures, or by the parser from
 /// `SourceLocation`).
 fn meta_to_source_loc(meta: &HashMap<String, serde_json::Value>) -> SourceLoc {
-    let line = meta
-        .get("line")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
-    let col = meta
-        .get("col")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+    let line = meta.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let col = meta.get("col").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let file = meta
         .get("file")
         .and_then(|v| v.as_str())
@@ -284,7 +284,10 @@ fn classify(val) {
         assert_eq!(site.function_name, "classify");
         assert!(site.covered_arms.contains(&"Int".to_string()));
         assert!(site.covered_arms.contains(&"Str".to_string()));
-        assert!(site.type_name.is_empty(), "type_name resolved by crush-index, not here");
+        assert!(
+            site.type_name.is_empty(),
+            "type_name resolved by crush-index, not here"
+        );
     }
 
     #[test]
@@ -319,7 +322,12 @@ fn dispatch(a, b) {
         let program = parse_and_enrich(source);
         assert_eq!(program.exhaustive_sites.len(), 2);
         // Both sites come from the same function
-        assert!(program.exhaustive_sites.iter().all(|s| s.function_name == "dispatch"));
+        assert!(
+            program
+                .exhaustive_sites
+                .iter()
+                .all(|s| s.function_name == "dispatch")
+        );
         // First site: Spawn, Done
         let a_site = &program.exhaustive_sites[0];
         assert!(a_site.covered_arms.contains(&"Spawn".to_string()));
@@ -369,10 +377,16 @@ fn run() {
 }
 "#;
         let program = parse_and_enrich(source);
-        let manifest = program.manifest.as_ref().expect("manifest should survive enrich");
+        let manifest = program
+            .manifest
+            .as_ref()
+            .expect("manifest should survive enrich");
         assert_eq!(manifest.purpose, "enrich test");
         let func = program.functions.get("run").expect("run should exist");
-        let ann = func.annotations.as_ref().expect("annotations should survive enrich");
+        let ann = func
+            .annotations
+            .as_ref()
+            .expect("annotations should survive enrich");
         assert_eq!(ann.errors, vec!["Foo::Bar"]);
         // And the match site was also recorded
         assert_eq!(program.exhaustive_sites.len(), 1);

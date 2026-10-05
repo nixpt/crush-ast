@@ -1,8 +1,8 @@
 use crush_diagnostics::DiagRecord;
 use ort::session::Session;
+use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 pub const LINT_MODEL_PATH: &str = "crates/crush-lint/models/lint_model.onnx";
 const DEFAULT_DEJAVUE_DIR: &str = ".dejavue";
@@ -116,9 +116,7 @@ impl AiLinter {
         let sess = ort::session::Session::builder()
             .map_err(|e| Error::other(format!("ORT builder: {e}")))?
             .commit_from_file(path)
-            .map_err(|e| {
-                Error::other(format!("ORT commit_from_file({path}): {e}"))
-            })?;
+            .map_err(|e| Error::other(format!("ORT commit_from_file({path}): {e}")))?;
         Ok(Arc::new(Mutex::new(sess)))
     }
 
@@ -136,7 +134,11 @@ impl AiLinter {
     /// [`DiagRecord<'a>`] borrows from the caller — synthesized `String`
     /// hints cannot outlive this function without an arena. Future
     /// work: integrate embeddings via `self.session` (currently a stub).
-    pub fn augment_diagnostic<'a>(&self, diag: DiagRecord<'a>, source_context: &str) -> DiagRecord<'a> {
+    pub fn augment_diagnostic<'a>(
+        &self,
+        diag: DiagRecord<'a>,
+        source_context: &str,
+    ) -> DiagRecord<'a> {
         if !self.enabled {
             return diag;
         }
@@ -152,12 +154,24 @@ impl AiLinter {
         // All three arms always produce a hint, so the `Option<String>`
         // wrapper would be pointless ceremony — use a plain `String`.
         let hint = if diag.message.contains("Missing semicolon") {
-            format!("Hint: It looks like you forgot a semicolon after '{}'.{}", source_context.trim(), dejavue_context)
+            format!(
+                "Hint: It looks like you forgot a semicolon after '{}'.{}",
+                source_context.trim(),
+                dejavue_context
+            )
         } else if diag.message.contains("Unexpected token") {
-            format!("Hint: Check for unmatched brackets near '{}'.{}", source_context.trim(), dejavue_context)
+            format!(
+                "Hint: Check for unmatched brackets near '{}'.{}",
+                source_context.trim(),
+                dejavue_context
+            )
         } else {
             // General embedding-based similarity hint
-            format!("Hint: Based on typical patterns, you might need to refactor '{}'.{}", source_context.trim(), dejavue_context)
+            format!(
+                "Hint: Based on typical patterns, you might need to refactor '{}'.{}",
+                source_context.trim(),
+                dejavue_context
+            )
         };
         // ------------------------------
 
@@ -216,11 +230,17 @@ impl AiLinter {
             summary,
             hint,
         };
-        let Ok(json) = serde_json::to_string(&entry) else { return };
+        let Ok(json) = serde_json::to_string(&entry) else {
+            return;
+        };
         use std::io::Write;
         let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true).append(true).open(&timeline)
-        else { return };
+            .create(true)
+            .append(true)
+            .open(&timeline)
+        else {
+            return;
+        };
         writeln!(file, "{}", json).ok();
     }
 }
@@ -245,7 +265,10 @@ mod tests {
         // — it should silently fall back to enabled-but-no-session.
         let linter = AiLinter::new(true);
         assert!(linter.enabled);
-        assert!(linter.session.is_none(), "should fall back when model file is absent");
+        assert!(
+            linter.session.is_none(),
+            "should fall back when model file is absent"
+        );
     }
 
     #[test]
@@ -381,9 +404,18 @@ mod tests {
         // Dejavue write path operates end-to-end without pollution.
         let timeline = std::fs::read_to_string(scratch.join("timeline.jsonl"))
             .expect("scratch timeline.jsonl must exist");
-        assert!(timeline.contains("\"event\":\"lint_error\""), "missing lint_error event in: {timeline}");
-        assert!(timeline.contains("\"path\":\"src/example.crush\""), "missing source path in: {timeline}");
-        assert!(timeline.contains("Missing semicolon"), "missing summary in: {timeline}");
+        assert!(
+            timeline.contains("\"event\":\"lint_error\""),
+            "missing lint_error event in: {timeline}"
+        );
+        assert!(
+            timeline.contains("\"path\":\"src/example.crush\""),
+            "missing source path in: {timeline}"
+        );
+        assert!(
+            timeline.contains("Missing semicolon"),
+            "missing summary in: {timeline}"
+        );
 
         std::fs::remove_dir_all(&scratch).ok();
     }
@@ -416,7 +448,10 @@ mod tests {
         assert!(json.contains("\\\\backslashes\\\\"));
         // And it must round-trip back into an equivalent value.
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["summary"], "issue with \"quotes\" and \\backslashes\\");
+        assert_eq!(
+            parsed["summary"],
+            "issue with \"quotes\" and \\backslashes\\"
+        );
         assert_eq!(parsed["hint"], "line1\nline2\ttabbed");
     }
 }

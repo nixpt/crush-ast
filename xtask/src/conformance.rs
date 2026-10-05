@@ -72,10 +72,7 @@ enum Outcome {
     /// Program was expected to fail (xfail) and did.
     XPass,
     /// Program output did not match expectations.
-    Fail {
-        file: PathBuf,
-        reason: String,
-    },
+    Fail { file: PathBuf, reason: String },
     /// xfail program unexpectedly passed — regression.
     FailXPassRegression {
         file: PathBuf,
@@ -231,7 +228,7 @@ fn evaluate_file(path: &Path, verbose: bool) -> Outcome {
                         file: path.to_path_buf(),
                         reason: format!(
                             "error did not match expected substring.\n  expected: {expected_error}\n  got: {error}",
-                        )
+                        ),
                     };
                 }
             }
@@ -336,9 +333,7 @@ fn main() -> ExitCode {
             Outcome::PassExpectedError => {
                 *stats.entry("pass (expected error)".into()).or_insert(0) += 1
             }
-            Outcome::XPass => {
-                *stats.entry("xpass (known failure)".into()).or_insert(0) += 1
-            }
+            Outcome::XPass => *stats.entry("xpass (known failure)".into()).or_insert(0) += 1,
             Outcome::Fail { .. } => {
                 *stats.entry("FAIL".into()).or_insert(0) += 1;
                 failures.push(o);

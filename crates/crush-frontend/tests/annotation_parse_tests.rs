@@ -121,7 +121,10 @@ fn test_stack() {}
     let p = parse(src).expect("should parse");
     let func = p.functions.get("test_stack").expect("function present");
     let ann = func.annotations.as_ref().expect("annotations attached");
-    assert_eq!(ann.covers, vec!["VmError::StackUnderflow", "VmError::DivByZero"]);
+    assert_eq!(
+        ann.covers,
+        vec!["VmError::StackUnderflow", "VmError::DivByZero"]
+    );
 }
 
 #[test]

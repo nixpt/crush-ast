@@ -84,13 +84,19 @@ pub struct CsonDocument {
     pub root: CsonNode,
 }
 
-fn default_version() -> String { "1.0".to_string() }
+fn default_version() -> String {
+    "1.0".to_string()
+}
 
 // ── Convenience constructors ───────────────────────────────────────────────
 
 impl CsonNode {
     pub fn new(value: CsonValue) -> Self {
-        Self { value, confidence: None, annotations: vec![] }
+        Self {
+            value,
+            confidence: None,
+            annotations: vec![],
+        }
     }
 
     pub fn with_confidence(mut self, c: f64) -> Self {
@@ -106,11 +112,17 @@ impl CsonNode {
 
 impl CsonValue {
     /// Convenience: create a string value.
-    pub fn string(s: impl Into<String>) -> Self { CsonValue::String(s.into()) }
+    pub fn string(s: impl Into<String>) -> Self {
+        CsonValue::String(s.into())
+    }
     /// Convenience: create a number value.
-    pub fn number(n: f64) -> Self { CsonValue::Number(n) }
+    pub fn number(n: f64) -> Self {
+        CsonValue::Number(n)
+    }
     /// Convenience: create a boolean value.
-    pub fn bool_value(b: bool) -> Self { CsonValue::Boolean(b) }
+    pub fn bool_value(b: bool) -> Self {
+        CsonValue::Boolean(b)
+    }
 }
 
 // ── JSON serialization ─────────────────────────────────────────────────────
@@ -183,7 +195,10 @@ mod tests {
         let doc = CsonDocument {
             version: "1.0".into(),
             root: CsonNode::new(CsonValue::Object(HashMap::from([
-                ("name".into(), CsonNode::new(CsonValue::string("test")).with_confidence(0.95)),
+                (
+                    "name".into(),
+                    CsonNode::new(CsonValue::string("test")).with_confidence(0.95),
+                ),
                 ("count".into(), CsonNode::new(CsonValue::number(42.0))),
             ]))),
         };
@@ -215,8 +230,11 @@ mod tests {
         props.insert("owner".into(), "foreman".into());
         let doc = CsonDocument {
             version: "1.0".into(),
-            root: CsonNode::new(CsonValue::Null)
-                .with_annotation(CsonAnnotation { name: "wip".into(), args: None, properties: props }),
+            root: CsonNode::new(CsonValue::Null).with_annotation(CsonAnnotation {
+                name: "wip".into(),
+                args: None,
+                properties: props,
+            }),
         };
 
         let json = doc.to_json().unwrap();
@@ -248,7 +266,7 @@ impl CsonDocument {
         if self.version != "1.0" {
             out.push_str(&format!("@cson {{ version: \"{}\" }}\n", self.version));
         }
-        
+
         if let CsonValue::Object(obj) = &self.root.value {
             let mut items: Vec<_> = obj.iter().collect();
             items.sort_by_key(|(k, _)| *k);
@@ -267,7 +285,7 @@ impl CsonDocument {
             out.push_str(&self.root.to_cson(0));
             out.push('\n');
         }
-        
+
         out
     }
 }
@@ -285,7 +303,9 @@ impl CsonNode {
                 let mut props: Vec<_> = ann.properties.iter().collect();
                 props.sort_by_key(|(k, _)| *k);
                 for (i, (k, v)) in props.iter().enumerate() {
-                    if i > 0 { out.push_str(","); }
+                    if i > 0 {
+                        out.push_str(",");
+                    }
                     out.push_str(&format!(" {}: \"{}\"", k, v.replace('"', "\\\"")));
                 }
                 out.push_str(" }");
@@ -293,9 +313,9 @@ impl CsonNode {
             out.push('\n');
             out.push_str(&" ".repeat(indent * 4));
         }
-        
+
         out.push_str(&self.value.to_cson(indent));
-        
+
         if let Some(c) = self.confidence {
             out.push_str(&format!(" ~{}", c));
         }
@@ -306,7 +326,14 @@ impl CsonNode {
 impl CsonValue {
     pub fn to_cson(&self, indent: usize) -> String {
         match self {
-            CsonValue::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")),
+            CsonValue::String(s) => format!(
+                "\"{}\"",
+                s.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t")
+            ),
             CsonValue::Number(n) => n.to_string(),
             CsonValue::Boolean(b) => b.to_string(),
             CsonValue::Null => "null".to_string(),

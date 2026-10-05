@@ -13,8 +13,8 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
-use rustpython_ast as py_ast;
 use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
+use rustpython_ast as py_ast;
 
 /// Python language frontend implementing the `Frontend` trait.
 pub struct PythonFrontend;

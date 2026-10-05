@@ -324,10 +324,7 @@ mod tests {
         // covered `vm.rs::visit_str`'s analogous Error branch via the
         // serde path; restored here so the canonical parser-side
         // contract remains explicitly locked).
-        assert_eq!(
-            text_as_value("error(foo)"),
-            Value::Error("foo".to_string())
-        );
+        assert_eq!(text_as_value("error(foo)"), Value::Error("foo".to_string()));
         assert_eq!(
             text_as_value("error((foo)"),
             Value::Error("(foo".to_string()) // s[6..10] = "(foo"

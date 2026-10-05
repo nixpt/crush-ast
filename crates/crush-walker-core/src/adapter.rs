@@ -33,17 +33,30 @@ mod adapter_tests {
     }
 
     impl LanguageAdapter for MockAdapter {
-        fn language_name(&self) -> &'static str { self.lang }
-        fn file_extensions(&self) -> &[&'static str] { self.exts }
+        fn language_name(&self) -> &'static str {
+            self.lang
+        }
+        fn file_extensions(&self) -> &[&'static str] {
+            self.exts
+        }
         fn walk(&self, _source: &str, _filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
-            Ok((FeatureReport { lang: self.lang.to_string(), ..Default::default() }, Program::default()))
+            Ok((
+                FeatureReport {
+                    lang: self.lang.to_string(),
+                    ..Default::default()
+                },
+                Program::default(),
+            ))
         }
     }
 
     #[test]
     fn test_registry_walk_by_extension() {
         let mut registry = AdapterRegistry::new();
-        registry.register(Box::new(MockAdapter { lang: "testlang", exts: &["tl", "test"] }));
+        registry.register(Box::new(MockAdapter {
+            lang: "testlang",
+            exts: &["tl", "test"],
+        }));
 
         let (report, _program) = registry.walk("dummy source", "hello.tl").unwrap();
         assert_eq!(report.lang, "testlang");
@@ -54,14 +67,23 @@ mod adapter_tests {
         let registry = AdapterRegistry::new();
         let result = registry.walk("source", "file.unknown");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no walker registered"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("no walker registered"));
     }
 
     #[test]
     fn test_registry_multiple_adapters() {
         let mut registry = AdapterRegistry::new();
-        registry.register(Box::new(MockAdapter { lang: "python", exts: &["py"] }));
-        registry.register(Box::new(MockAdapter { lang: "rust", exts: &["rs"] }));
+        registry.register(Box::new(MockAdapter {
+            lang: "python",
+            exts: &["py"],
+        }));
+        registry.register(Box::new(MockAdapter {
+            lang: "rust",
+            exts: &["rs"],
+        }));
 
         let (r1, _) = registry.walk("x = 1", "test.py").unwrap();
         let (r2, _) = registry.walk("fn main(){}", "test.rs").unwrap();
@@ -72,7 +94,10 @@ mod adapter_tests {
     #[test]
     fn test_registry_can_handle() {
         let mut registry = AdapterRegistry::new();
-        registry.register(Box::new(MockAdapter { lang: "go", exts: &["go"] }));
+        registry.register(Box::new(MockAdapter {
+            lang: "go",
+            exts: &["go"],
+        }));
 
         assert!(registry.walk("", "test.go").is_ok());
         assert!(registry.walk("", "test.rs").is_err());
@@ -81,8 +106,14 @@ mod adapter_tests {
     #[test]
     fn test_registry_languages() {
         let mut registry = AdapterRegistry::new();
-        registry.register(Box::new(MockAdapter { lang: "a", exts: &["a"] }));
-        registry.register(Box::new(MockAdapter { lang: "b", exts: &["b"] }));
+        registry.register(Box::new(MockAdapter {
+            lang: "a",
+            exts: &["a"],
+        }));
+        registry.register(Box::new(MockAdapter {
+            lang: "b",
+            exts: &["b"],
+        }));
 
         let langs = registry.languages();
         assert!(langs.contains(&"a"));
@@ -108,8 +139,12 @@ mod adapter_tests {
     struct MockFrontend;
 
     impl Frontend for MockFrontend {
-        fn language_name(&self) -> &'static str { "mock_frontend" }
-        fn file_extensions(&self) -> &[&'static str] { &["mockfe"] }
+        fn language_name(&self) -> &'static str {
+            "mock_frontend"
+        }
+        fn file_extensions(&self) -> &[&'static str] {
+            &["mockfe"]
+        }
         fn parse(&self, _source: &str) -> anyhow::Result<Box<dyn std::any::Any>> {
             Ok(Box::new(()))
         }
@@ -216,11 +251,11 @@ mod adapter_tests {
     // Commit B.
     crate::impl_both_for_walker!(
         MacroGenAdapter,
-        "test_lang",      // LanguageWalker::language() return
-        &["testl"],        // LanguageWalker::extensions() return
-        unreachable!(),    // Walker::language() return -- test-side dummy
-        NoopWalker,        // walker type (must impl crate::Walker)
-        |_fname| NoopWalker // walker constructor (filename ignored in test)
+        "test_lang",         // LanguageWalker::language() return
+        &["testl"],          // LanguageWalker::extensions() return
+        unreachable!(),      // Walker::language() return -- test-side dummy
+        NoopWalker,          // walker type (must impl crate::Walker)
+        |_fname| NoopWalker  // walker constructor (filename ignored in test)
     );
 
     #[test]

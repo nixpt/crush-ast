@@ -33,8 +33,7 @@ fn net_tls_wrap_performs_handshake_and_probe() {
     // ---- server-side: mint self-signed cert, accept, handshake, send probe ----
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let cert_der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
-    let key_der =
-        rustls::pki_types::PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
+    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
 
     // Clone for the test-side trust anchor (server uses it via with_single_cert).
     let cert_der_for_store = cert_der.clone();
@@ -52,8 +51,7 @@ fn net_tls_wrap_performs_handshake_and_probe() {
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], key_der)
             .expect("server config");
-        let conn = rustls::ServerConnection::new(std::sync::Arc::new(cfg))
-            .expect("server conn");
+        let conn = rustls::ServerConnection::new(std::sync::Arc::new(cfg)).expect("server conn");
         let mut owned = rustls::StreamOwned::new(conn, sock);
         // Drive TLS handshake to completion.
         while owned.conn.is_handshaking() {
@@ -102,8 +100,14 @@ fn net_tls_wrap_performs_handshake_and_probe() {
     assert_ne!(new_id, pre_id, "tls_wrap must return a fresh ConnId");
 
     let gs = state.lock().unwrap();
-    assert!(!gs.conns.contains_key(&pre_id), "after wrap, original conn-id {pre_id} must NOT be in state.conns");
-    assert!(gs.tls_client_conns.contains_key(&new_id), "tls_client_conns must contain the new conn-id {new_id}");
+    assert!(
+        !gs.conns.contains_key(&pre_id),
+        "after wrap, original conn-id {pre_id} must NOT be in state.conns"
+    );
+    assert!(
+        gs.tls_client_conns.contains_key(&new_id),
+        "tls_client_conns must contain the new conn-id {new_id}"
+    );
 
     // Drive the application-layer ping/pong round-trip OUTSIDE the cap.
     // Order matters: do the ping/pong exchange first; join the server thread after,

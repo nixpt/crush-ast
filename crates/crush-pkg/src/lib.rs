@@ -96,5 +96,3 @@ pub mod site; // Static-site builder. Wraps [`ecap`].
 // and round-2 blocker #3 (orphaned modules) at once.
 mod bundle;
 mod merkle;
-
-

@@ -167,9 +167,7 @@ impl PartialEq for Value {
             // not exact, so this comparison can disagree with true integer
             // equality at the extremes of i64's range -- same caveat as
             // Python's `int == float`.
-            (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
-                *i as f64 == *f
-            }
+            (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => *i as f64 == *f,
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
@@ -393,18 +391,10 @@ impl serde::Serialize for Value {
                 }
                 map.end()
             }
-            Value::Error(e) => {
-                serializer.serialize_str(&format!("error({e})"))
-            }
-            Value::Bytes(b) => {
-                serializer.serialize_str(&format!("<{} bytes>", b.len()))
-            }
-            Value::Handle(id) => {
-                serializer.serialize_str(&format!("<handle {id}>"))
-            }
-            Value::Foreign(id) => {
-                serializer.serialize_str(&format!("<foreign {id}>"))
-            }
+            Value::Error(e) => serializer.serialize_str(&format!("error({e})")),
+            Value::Bytes(b) => serializer.serialize_str(&format!("<{} bytes>", b.len())),
+            Value::Handle(id) => serializer.serialize_str(&format!("<handle {id}>")),
+            Value::Foreign(id) => serializer.serialize_str(&format!("<foreign {id}>")),
         }
     }
 }
@@ -473,10 +463,7 @@ impl<'de> serde::Deserialize<'de> for Value {
         impl<'de> serde::de::Visitor<'de> for ValueVisitor {
             type Value = Value;
 
-            fn expecting(
-                &self,
-                formatter: &mut std::fmt::Formatter<'_>,
-            ) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 // Short hint — full enumeration lives in the
                 // impl-level doc-comment above. Trim that redundancy
                 // here so that serde error messages citing
@@ -489,24 +476,15 @@ impl<'de> serde::Deserialize<'de> for Value {
                 Ok(Value::Null)
             }
 
-            fn visit_bool<E: serde::de::Error>(
-                self,
-                v: bool,
-            ) -> Result<Self::Value, E> {
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
                 Ok(Value::Bool(v))
             }
 
-            fn visit_i64<E: serde::de::Error>(
-                self,
-                v: i64,
-            ) -> Result<Self::Value, E> {
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
                 Ok(Value::Int(v))
             }
 
-            fn visit_u64<E: serde::de::Error>(
-                self,
-                v: u64,
-            ) -> Result<Self::Value, E> {
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
                 // `serde_json` only emits `visit_u64` for positive
                 // integers exceeding i64::MAX — guard against overflow.
                 if v <= i64::MAX as u64 {
@@ -516,23 +494,15 @@ impl<'de> serde::Deserialize<'de> for Value {
                     // (use the bound `E` rather than `serde::de::Error::custom(...)`
                     // which relies on Rust inferring `Self` — sometimes
                     // fragile across inference versions).
-                    Err(E::custom(format!(
-                        "Value: u64 {v} exceeds i64::MAX"
-                    )))
+                    Err(E::custom(format!("Value: u64 {v} exceeds i64::MAX")))
                 }
             }
 
-            fn visit_f64<E: serde::de::Error>(
-                self,
-                v: f64,
-            ) -> Result<Self::Value, E> {
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
                 Ok(Value::Float(v))
             }
 
-            fn visit_str<E: serde::de::Error>(
-                self,
-                v: &str,
-            ) -> Result<Self::Value, E> {
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 // Tagged-form disambiguation — order matters:
                 //   1. `<handle N>` (most specific prefix)
                 //   2. `<N bytes>`   (general `<...>` shape)
@@ -559,10 +529,7 @@ impl<'de> serde::Deserialize<'de> for Value {
                 Ok(Value::Str(v.to_string()))
             }
 
-            fn visit_string<E: serde::de::Error>(
-                self,
-                v: String,
-            ) -> Result<Self::Value, E> {
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
                 // Defer to visit_str so the tagged-form logic stays
                 // in one place. serde_json calls visit_string for
                 // owned strings; routing through visit_str keeps the
@@ -617,7 +584,10 @@ impl GreenThread {
         Self {
             ip,
             stack: Vec::new(),
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            call_stack: vec![Frame {
+                return_ip: None,
+                memory: HashMap::new(),
+            }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -634,7 +604,10 @@ impl GreenThread {
         Self {
             ip,
             stack: args,
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            call_stack: vec![Frame {
+                return_ip: None,
+                memory: HashMap::new(),
+            }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -657,7 +630,9 @@ impl Value {
     }
 
     pub fn new_list(v: Vec<Value>) -> Self {
-        Value::List(std::rc::Rc::new(std::cell::RefCell::new(v.into_iter().collect())))
+        Value::List(std::rc::Rc::new(std::cell::RefCell::new(
+            v.into_iter().collect(),
+        )))
     }
 
     pub fn new_vector(v: Vec<Value>) -> Self {
@@ -760,15 +735,14 @@ pub fn run_fastvm_with_caps(
     capabilities: Vec<std::sync::Arc<dyn crate::fastvm::Capability>>,
 ) -> Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
     use std::sync::Arc;
-    let lowered = crate::fastvm::lower_program(casm_program).map_err(|e| {
-        crate::fastvm::FastError::ExecutionError(e.to_string())
-    })?;
-    
+    let lowered = crate::fastvm::lower_program(casm_program)
+        .map_err(|e| crate::fastvm::FastError::ExecutionError(e.to_string()))?;
+
     // Create dummy HAL for now (since host calls are stubbed)
     let hal = Arc::new(DummyHal {});
 
     let mut vm = crate::fastvm::FastVM::new(lowered, capabilities, hal);
-    
+
     // Give it a large budget to run to completion
     Ok(vm.run(1_000_000))
 }
@@ -855,4 +829,3 @@ impl CrushResultExt for Result<crate::fastvm::FastYield, crate::fastvm::FastErro
         }
     }
 }
-

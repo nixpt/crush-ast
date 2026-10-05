@@ -157,7 +157,6 @@ fn run_src_with_perms(src: &str, perms: &[&str]) -> crate::vm::VmResult {
     run(&prog, &Quotas::default()).expect("vm run")
 }
 
-
 // ---- Sub-module declarations ----
 
 #[cfg(test)]
@@ -180,4 +179,3 @@ mod async_green;
 
 #[cfg(test)]
 mod matrix;
-

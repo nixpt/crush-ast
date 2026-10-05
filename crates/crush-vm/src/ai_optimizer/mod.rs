@@ -30,14 +30,14 @@ impl VmOptimizer {
             telemetry_log: Vec::new(),
             log_enabled: false,
         };
-        
+
         // Attempt to auto-load the default model if it exists
         if std::path::Path::new(GC_MODEL_PATH).exists() {
             let _ = opt.load_gc_model(GC_MODEL_PATH);
         } else if std::path::Path::new(GC_MODEL_FALLBACK_PATH).exists() {
             let _ = opt.load_gc_model(GC_MODEL_FALLBACK_PATH);
         }
-        
+
         opt
     }
 
@@ -52,7 +52,10 @@ impl VmOptimizer {
         for (inputs, label) in &self.telemetry_log {
             let row = format!(
                 "{},{},{},{},{}\n",
-                inputs[0], inputs[1], inputs[2], inputs[3],
+                inputs[0],
+                inputs[1],
+                inputs[2],
+                inputs[3],
                 if *label { 1 } else { 0 }
             );
             csv.push_str(&row);
@@ -67,18 +70,17 @@ impl VmOptimizer {
 
     /// Load the target GC prediction model.
     pub fn load_gc_model(&mut self, path: &str) -> Result<()> {
-        let session = Session::builder()?
-            .commit_from_file(path)?;
+        let session = Session::builder()?.commit_from_file(path)?;
         self.gc_session = Some(Arc::new(Mutex::new(session)));
         Ok(())
     }
 
     /// Predict if a GC cycle should be triggered based on current VM state.
-    /// 
+    ///
     /// inputs: [current_memory, peak_memory, instructions_since_gc, alloc_rate]
     pub fn should_gc(&mut self, inputs: Vec<f32>) -> bool {
         if self.log_enabled {
-            // Heuristic labels for training: 
+            // Heuristic labels for training:
             // If instructions > 500 or memory > 70% of peak, suggest GC
             let label = inputs[2] > 512.0 || (inputs[0] > 0.7 * inputs[1] && inputs[0] > 1024.0);
             self.telemetry_log.push((inputs.clone(), label));
@@ -93,32 +95,32 @@ impl VmOptimizer {
             Some(s) => s,
             None => return false,
         };
-        
+
         let mut session = session_lock.lock();
-        
+
         // Prepare input tensor [1, 4]
         let input_tensor = match Tensor::from_array((vec![1, 4], inputs.clone())) {
             Ok(t) => t,
             Err(_) => return false,
         };
-        
+
         // Run inference
         let outputs = match session.run(ort::inputs!["float_input" => input_tensor]) {
             Ok(out) => out,
             Err(_) => return false,
         };
-        
+
         // Extract predicted label (usually the first output)
         if let Some(label_value) = outputs.get("output_label") {
             if let Ok((_shape, data)) = label_value.try_extract_tensor::<i64>() {
                 return data.first().cloned().unwrap_or(0) == 1;
             }
         } else if let Some(label_value) = outputs.get("label") {
-             if let Ok((_shape, data)) = label_value.try_extract_tensor::<i64>() {
+            if let Ok((_shape, data)) = label_value.try_extract_tensor::<i64>() {
                 return data.first().cloned().unwrap_or(0) == 1;
             }
         }
-        
+
         false
     }
 }

@@ -89,7 +89,7 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "join array elements with delimiter",
         });
-                reg(CapabilitySpec {
+        reg(CapabilitySpec {
             name: "append",
             argc: None,
             returns: true,
@@ -126,7 +126,7 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
         });
         reg(CapabilitySpec {
             name: "make_range",
-            argc: None,  // variadic: 0, 1, or 2 args
+            argc: None, // variadic: 0, 1, or 2 args
             returns: true,
             privileged: false,
             summary: "create an integer range [start..end)",

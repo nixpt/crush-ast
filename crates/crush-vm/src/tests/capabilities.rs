@@ -150,7 +150,10 @@ fn cap_conv_chr_ord_reject_invalid_values() {
         "PUSH_STR \"ab\"\nCAP_CALL \"conv.ord\" 1\nHALT",
     ] {
         let program = assemble(source, Some(&["conv.chr", "conv.ord"]), Some("test")).unwrap();
-        assert!(run(&program, &Quotas::default()).is_err(), "expected rejection: {source}");
+        assert!(
+            run(&program, &Quotas::default()).is_err(),
+            "expected rejection: {source}"
+        );
     }
 }
 

@@ -71,11 +71,7 @@ pub fn register(caps: &mut HostCaps) {
 /// `concurrency_native_kind_for_opcode` switch in
 /// `crush-vm/src/bytecode.rs` handles bytes-to-kinds; the gate
 /// registration here is kinds-to-handler.
-pub const KINDS: &[&str] = &[
-    "spawn",
-    "yield",
-    "await",
-];
+pub const KINDS: &[&str] = &["spawn", "yield", "await"];
 
 /// Build the stub Map: `{ok: true, kind: "<name>", echo: <args>}`.
 ///
@@ -92,10 +88,7 @@ fn stub_map(kind: &str, args: &[Value]) -> Value {
     let mut obj: HashMap<String, Value> = HashMap::with_capacity(3);
     obj.insert("ok".to_string(), Value::Bool(true));
     obj.insert("kind".to_string(), Value::Str(kind.to_string()));
-    obj.insert(
-        "echo".to_string(),
-        Value::new_array(args.to_vec()),
-    );
+    obj.insert("echo".to_string(), Value::new_array(args.to_vec()));
     Value::Map(Rc::new(RefCell::new(obj)))
 }
 
@@ -121,10 +114,7 @@ macro_rules! concurrency_native_cap {
                     returns: true,
                 }
             }
-            fn call(
-                &self,
-                args: Vec<Value>,
-            ) -> Result<Option<Value>, String> {
+            fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
                 Ok(Some(stub_map($kind, &args)))
             }
         }
@@ -147,7 +137,11 @@ mod tests {
         // both auto-routes through the macro. Failure here = someone
         // reordered or duplicated KINDS; fix the KINDS const, not the
         // test.
-        assert_eq!(KINDS.len(), 3, "KINDS size changed - update HARD-CODED list and this test");
+        assert_eq!(
+            KINDS.len(),
+            3,
+            "KINDS size changed - update HARD-CODED list and this test"
+        );
         let mut sorted: Vec<&str> = KINDS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -168,10 +162,8 @@ mod tests {
             &ConcurrencyNativeYieldCap,
             &ConcurrencyNativeAwaitCap,
         ];
-        let names: std::collections::HashSet<_> = caps
-            .iter()
-            .map(|c| c.spec().name.clone())
-            .collect();
+        let names: std::collections::HashSet<_> =
+            caps.iter().map(|c| c.spec().name.clone()).collect();
         assert_eq!(
             names.len(),
             3,
@@ -205,10 +197,7 @@ mod tests {
         };
         let borrowed = m.borrow();
         assert_eq!(borrowed.get("ok"), Some(&Value::Bool(true)));
-        assert_eq!(
-            borrowed.get("kind"),
-            Some(&Value::Str("spawn".to_string()))
-        );
+        assert_eq!(borrowed.get("kind"), Some(&Value::Str("spawn".to_string())));
         assert!(borrowed.contains_key("echo"), "echo key must be set");
         // Echo is a Value::Array containing the input args.
         // Value::Array carries `Rc<RefCell<Vec<Value>>>` (parallels
@@ -224,7 +213,9 @@ mod tests {
     #[test]
     fn stub_map_with_no_args_produces_empty_echo_array() {
         let v = stub_map("yield", &[]);
-        let Value::Map(m) = v else { panic!("expected Map") };
+        let Value::Map(m) = v else {
+            panic!("expected Map")
+        };
         let borrowed = m.borrow();
         // `Value::new_array(vec![])` — the type-name `Array` (not
         // `Vec`) is canonical for crush-runtime; verify by shape
@@ -253,10 +244,7 @@ mod tests {
         register(&mut caps);
         for kind in KINDS {
             let name = format!("concurrency_native.{kind}");
-            assert!(
-                caps.get(&name).is_some(),
-                "register() missed cap `{name}`",
-            );
+            assert!(caps.get(&name).is_some(), "register() missed cap `{name}`",);
         }
     }
 }

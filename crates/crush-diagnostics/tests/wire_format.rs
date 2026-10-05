@@ -20,8 +20,7 @@ use std::borrow::Cow;
 
 use crush_diagnostics::{
     BorrowedDiagRecord, DiagRecord, OwnedDiagRecord, consume_stream, consume_stream_borrowed,
-    diag_line, diag_line_from, parse_record, parse_record_borrowed, strict_downgrade,
-    wants_json,
+    diag_line, diag_line_from, parse_record, parse_record_borrowed, strict_downgrade, wants_json,
 };
 
 // ----------------------------------------------------------------
@@ -249,7 +248,9 @@ fn diag_record_accepts_all_per_binary_wire_codes() {
         // canonical surface accepts the code and produces the
         // expected field position (code is the FIRST field).
         let line = diag_line_from(code, "error", "msg", None, None);
-        let expected_prefix = format!(r#"{{"code":"{code}","level":"error","file":null,"line":null,"col":null,"message":"msg","hint":null"#);
+        let expected_prefix = format!(
+            r#"{{"code":"{code}","level":"error","file":null,"line":null,"col":null,"message":"msg","hint":null"#
+        );
         assert!(
             line.starts_with(&expected_prefix),
             "diag_line_from must accept arbitrary per-binary code (got: {line:?})"
@@ -506,9 +507,18 @@ fn parse_record_borrowed_zero_copy_for_unescaped_strings() {
     let rec = parse_record_borrowed(line).expect("unescaped line must parse");
 
     // Required fields: must be Borrowed (zero-copy).
-    assert!(matches!(rec.code, Cow::Borrowed(_)), "code must be Borrowed");
-    assert!(matches!(rec.level, Cow::Borrowed(_)), "level must be Borrowed");
-    assert!(matches!(rec.message, Cow::Borrowed(_)), "message must be Borrowed");
+    assert!(
+        matches!(rec.code, Cow::Borrowed(_)),
+        "code must be Borrowed"
+    );
+    assert!(
+        matches!(rec.level, Cow::Borrowed(_)),
+        "level must be Borrowed"
+    );
+    assert!(
+        matches!(rec.message, Cow::Borrowed(_)),
+        "message must be Borrowed"
+    );
 
     // Optional fields: serde_json doesn't propagate borrows through
     // Option<Cow>, so these are Owned (allocated). Values are correct.
@@ -519,7 +529,8 @@ fn parse_record_borrowed_zero_copy_for_unescaped_strings() {
     let code_ptr = rec.code.as_ptr();
     let line_code_start = line.find("\"E-LINT\"").unwrap() + 1;
     assert_eq!(
-        code_ptr, line[line_code_start..].as_ptr(),
+        code_ptr,
+        line[line_code_start..].as_ptr(),
         "code must point into the input buffer (zero-copy)"
     );
 }
@@ -558,18 +569,31 @@ fn parse_record_borrowed_roundtrips_diag_line() {
     assert_eq!(parsed.line, Some(7));
     assert_eq!(parsed.col, None);
     assert_eq!(parsed.message, rec.message);
-    assert_eq!(parsed.hint.as_deref(), Some("set TEMP in your shell before running"));
+    assert_eq!(
+        parsed.hint.as_deref(),
+        Some("set TEMP in your shell before running")
+    );
 }
 
 #[test]
 fn consume_stream_borrowed_skips_blanks_and_yields_records() {
     let rec1 = DiagRecord {
-        code: "E-LINT", level: "error", file: None, line: None, col: None,
-        message: "first", hint: None,
+        code: "E-LINT",
+        level: "error",
+        file: None,
+        line: None,
+        col: None,
+        message: "first",
+        hint: None,
     };
     let rec2 = DiagRecord {
-        code: "E-LINT", level: "error", file: Some("x.crush"), line: Some(1), col: Some(2),
-        message: "second", hint: None,
+        code: "E-LINT",
+        level: "error",
+        file: Some("x.crush"),
+        line: Some(1),
+        col: Some(2),
+        message: "second",
+        hint: None,
     };
     let stream = format!(
         "\n{}\n\n{}\n",

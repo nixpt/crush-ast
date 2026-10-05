@@ -90,7 +90,10 @@ fn all_traits_round_trip_for_every_variant() {
         ),
         ("Handle 42 (tagged-form lockstep)", Value::Handle(42)),
         ("Foreign 42 (tagged-form lockstep)", Value::Foreign(42)),
-        ("Error oops (tagged-form lockstep)", Value::Error("oops".to_string())),
+        (
+            "Error oops (tagged-form lockstep)",
+            Value::Error("oops".to_string()),
+        ),
         (
             "Array [1, 2] (single-level)",
             Value::new_array(vec![Value::Int(1), Value::Int(2)]),
@@ -112,8 +115,14 @@ fn all_traits_round_trip_for_every_variant() {
                 m
             }),
         ),
-        ("Map nested (locks visit_map recursion)", Value::new_map(nested_outer)),
-        ("Map empty (edge case)", Value::new_map(std::collections::HashMap::<String, Value>::new())),
+        (
+            "Map nested (locks visit_map recursion)",
+            Value::new_map(nested_outer),
+        ),
+        (
+            "Map empty (edge case)",
+            Value::new_map(std::collections::HashMap::<String, Value>::new()),
+        ),
     ];
 
     for (label, v) in variants {
@@ -138,8 +147,8 @@ fn all_traits_round_trip_for_every_variant() {
         );
 
         // Invariant 3: Deserialize ∘ Serialize == identity.
-        let json_str = serde_json::to_string(&v)
-            .unwrap_or_else(|e| panic!("{label}: Serialize failed: {e}"));
+        let json_str =
+            serde_json::to_string(&v).unwrap_or_else(|e| panic!("{label}: Serialize failed: {e}"));
         let parsed_via_json: Value = serde_json::from_str(&json_str)
             .unwrap_or_else(|e| panic!("{label}: Deserialize failed for {json_str:?}: {e}"));
         assert_eq!(
@@ -207,190 +216,183 @@ fn all_traits_round_trip_for_every_variant() {
     }
 }
 
-    #[test]
-    fn test_json_parse_bytes_lossy_round_trip_inline() {
-        // **Trait-layer lock for the `<N bytes>` lossy round-trip**:
-        // The canonical `impl Serialize for Value::Bytes(b)` emits
-        // ONLY the length-prefix inner-content `<{N} bytes>` (e.g.
-        // `<3 bytes>` for `vec![1,2,3]`); actual byte contents are
-        // NOT preserved through the JSON wire. `serde_json::to_string`
-        // wraps that inner tag in surrounding JSON quotes before
-        // returning the 11-char Rust String `r#""<3 bytes>""#`.
-        // Re-parsing the recovered JSON-quoted tag via canonical
-        // `impl Deserialize for Value::visit_str` reconstructs a
-        // ZERO-FILLED `Vec<u8>` of length N — NOT the original
-        // byte payload.
-        //
-        // This TRAIT-LAYER test pins the lossiness contract
-        // end-to-end through the canonical `serde` trait impls
-        // (NOT through the `json.parse`/`json.stringify` cap layer,
-        // which is locked separately in
-        // `crush-lang-sdk::tests::test_json_parse_tagged_forms::
-        // fixture 6`). Drift in either trait impl would surface
-        // here as an `assert_eq!` mismatch, NOT silently pass
-        // through either path layer.
+#[test]
+fn test_json_parse_bytes_lossy_round_trip_inline() {
+    // **Trait-layer lock for the `<N bytes>` lossy round-trip**:
+    // The canonical `impl Serialize for Value::Bytes(b)` emits
+    // ONLY the length-prefix inner-content `<{N} bytes>` (e.g.
+    // `<3 bytes>` for `vec![1,2,3]`); actual byte contents are
+    // NOT preserved through the JSON wire. `serde_json::to_string`
+    // wraps that inner tag in surrounding JSON quotes before
+    // returning the 11-char Rust String `r#""<3 bytes>""#`.
+    // Re-parsing the recovered JSON-quoted tag via canonical
+    // `impl Deserialize for Value::visit_str` reconstructs a
+    // ZERO-FILLED `Vec<u8>` of length N — NOT the original
+    // byte payload.
+    //
+    // This TRAIT-LAYER test pins the lossiness contract
+    // end-to-end through the canonical `serde` trait impls
+    // (NOT through the `json.parse`/`json.stringify` cap layer,
+    // which is locked separately in
+    // `crush-lang-sdk::tests::test_json_parse_tagged_forms::
+    // fixture 6`). Drift in either trait impl would surface
+    // here as an `assert_eq!` mismatch, NOT silently pass
+    // through either path layer.
 
-        let bytes_value = Value::Bytes(vec![1u8, 2, 3]);
+    let bytes_value = Value::Bytes(vec![1u8, 2, 3]);
 
-        // Step A: `serde_json::to_string(&Value::Bytes(vec![1,2,3]))`
-        // emits the JSON-quoted length-only tag `r#""<3 bytes>""#` —
-        // byte CONTENTS dropped, length preserved. The trait impl
-        // emits the bare inner tag `<3 bytes>` (9 chars); serde_json
-        // wraps it in surrounding `"`s before returning the 11-char
-        // String.
-        let serialized_json = serde_json::to_string(&bytes_value)
-            .expect("Serialize for Value::Bytes should not fail");
-        assert_eq!(
-            serialized_json, r#""<3 bytes>""#,
-            "canonical Serialize for Value::Bytes(vec![1,2,3]) at the trait layer \
+    // Step A: `serde_json::to_string(&Value::Bytes(vec![1,2,3]))`
+    // emits the JSON-quoted length-only tag `r#""<3 bytes>""#` —
+    // byte CONTENTS dropped, length preserved. The trait impl
+    // emits the bare inner tag `<3 bytes>` (9 chars); serde_json
+    // wraps it in surrounding `"`s before returning the 11-char
+    // String.
+    let serialized_json =
+        serde_json::to_string(&bytes_value).expect("Serialize for Value::Bytes should not fail");
+    assert_eq!(
+        serialized_json, r#""<3 bytes>""#,
+        "canonical Serialize for Value::Bytes(vec![1,2,3]) at the trait layer \
              should emit the JSON-quoted length-only tag \"<3 bytes>\" (byte \
              contents intentionally stripped), got {serialized_json:?}"
-        );
+    );
 
-        // Step B: `serde_json::from_str::<Value>(&"\"<3 bytes>\"")`
-        // reconstructs a ZERO-FILLED Vec<u8> of length N — NOT the
-        // original `vec![1, 2, 3]` payload. Documented length-only
-        // caveat; byte preservation through JSON wire format is
-        // NOT a goal.
-        let parsed: Value = serde_json::from_str(&serialized_json)
-            .expect("Deserialize for \"<3 bytes>\" should not fail");
-        match parsed {
-            Value::Bytes(reconstructed) => assert_eq!(
-                reconstructed, vec![0u8, 0, 0],
-                "LOSSY ROUND-TRIP: canonical Deserialize for \"<3 bytes>\" \
+    // Step B: `serde_json::from_str::<Value>(&"\"<3 bytes>\"")`
+    // reconstructs a ZERO-FILLED Vec<u8> of length N — NOT the
+    // original `vec![1, 2, 3]` payload. Documented length-only
+    // caveat; byte preservation through JSON wire format is
+    // NOT a goal.
+    let parsed: Value = serde_json::from_str(&serialized_json)
+        .expect("Deserialize for \"<3 bytes>\" should not fail");
+    match parsed {
+        Value::Bytes(reconstructed) => assert_eq!(
+            reconstructed,
+            vec![0u8, 0, 0],
+            "LOSSY ROUND-TRIP: canonical Deserialize for \"<3 bytes>\" \
                  reconstructs a ZERO-FILLED Vec<u8> of length N (NOT the \
                  original byte payload vec![1,2,3]). Got {:?}, expected \
                  vec![0,0,0].",
-                reconstructed
-            ),
-            other => panic!(
-                "FAIL: canonical Deserialize for \"<3 bytes>\" should produce \
+            reconstructed
+        ),
+        other => panic!(
+            "FAIL: canonical Deserialize for \"<3 bytes>\" should produce \
                  Value::Bytes(vec![0,0,0]) (zero-filled per the length-only \
                  caveat), got {other:?}"
-            ),
-        }        // No Step C: Steps A+B jointly prove `parsed != bytes_value` (Step A
-        // pins Serialize's exact `<3 bytes>` form, Step B pins
-        // Deserialize's exact `vec![0,0,0]` reconstruction). An
-        // `assert_ne!` here would also move-conflict with Step B's
-        // `Value::Bytes(reconstructed)` binding.
-    }
+        ),
+    } // No Step C: Steps A+B jointly prove `parsed != bytes_value` (Step A
+    // pins Serialize's exact `<3 bytes>` form, Step B pins
+    // Deserialize's exact `vec![0,0,0]` reconstruction). An
+    // `assert_ne!` here would also move-conflict with Step B's
+    // `Value::Bytes(reconstructed)` binding.
+}
 
-    // ── cross-parser matrix ────────────────────────────────────────
+// ── cross-parser matrix ────────────────────────────────────────
+//
+// Locks the JSON-text-vs-Crush-text inverse parallelism for the
+// FOUR boundary fixtures that historically are the parser-drift
+// surface. Each fixture is fed through BOTH the Crush-text path
+// (the inlined `parse_crush_text` mirror of canonical
+// `caps::parse_value` — see its docstring for the Cargo-cycle
+// rationale that prevents direct `caps::parse_value` invocation
+// from `crush-vm::tests`) AND the JSON path (canonical
+// `impl Deserialize for Value::visit_str`, exercised via
+// `serde_json::from_str::<Value>(&serde_json::to_string(
+// &serde_json::Value::String(content.to_string()))?)`). The
+// third assertion on each fixture is the cross-parity lock —
+// if ONE side drifts from the other, the panic names the
+// affected fixture and which side produced the divergent value.
+//
+// Companion to `all_traits_round_trip_for_every_variant` (which
+// locks `text_as_value ∘ Display == id` and `Deserialize ∘
+// Serialize == id` separately for every variant). THIS test
+// adds the linkage: text-path output === JSON-path output for
+// the SAME canonical content at the parser-drift boundary.
+// Without this linkage, `caps::parse_value` could drift from
+// `impl Deserialize::visit_str` (or vice-versa) silently — a
+// `json.parse("error((foo)")` could land on one canonical form
+// while `crush -e 'error((foo)'` (text path) lands on another.
+//
+// Drift sources caught:
+//  • `impl Deserialize::visit_str` → `accept ! (1)` fails.
+//  • `caps::parse_value` (via mirror drift) → `accept ! (1)`
+//    fails; reader compared `from_json` to canonical-expected
+//    and panic names JSON-side first (canonical) before text.
+//  • `Value::Display` for the tagged forms → on Display round-
+//    trip, neither path would reach the boundary fixture's
+//    expected output; this also catches that drift.
+#[test]
+fn test_text_vs_json_inverse_parser_matrix() {
+    // (canonical_content, expected_value_after_parse)
     //
-    // Locks the JSON-text-vs-Crush-text inverse parallelism for the
-    // FOUR boundary fixtures that historically are the parser-drift
-    // surface. Each fixture is fed through BOTH the Crush-text path
-    // (the inlined `parse_crush_text` mirror of canonical
-    // `caps::parse_value` — see its docstring for the Cargo-cycle
-    // rationale that prevents direct `caps::parse_value` invocation
-    // from `crush-vm::tests`) AND the JSON path (canonical
-    // `impl Deserialize for Value::visit_str`, exercised via
-    // `serde_json::from_str::<Value>(&serde_json::to_string(
-    // &serde_json::Value::String(content.to_string()))?)`). The
-    // third assertion on each fixture is the cross-parity lock —
-    // if ONE side drifts from the other, the panic names the
-    // affected fixture and which side produced the divergent value.
-    //
-    // Companion to `all_traits_round_trip_for_every_variant` (which
-    // locks `text_as_value ∘ Display == id` and `Deserialize ∘
-    // Serialize == id` separately for every variant). THIS test
-    // adds the linkage: text-path output === JSON-path output for
-    // the SAME canonical content at the parser-drift boundary.
-    // Without this linkage, `caps::parse_value` could drift from
-    // `impl Deserialize::visit_str` (or vice-versa) silently — a
-    // `json.parse("error((foo)")` could land on one canonical form
-    // while `crush -e 'error((foo)'` (text path) lands on another.
-    //
-    // Drift sources caught:
-    //  • `impl Deserialize::visit_str` → `accept ! (1)` fails.
-    //  • `caps::parse_value` (via mirror drift) → `accept ! (1)`
-    //    fails; reader compared `from_json` to canonical-expected
-    //    and panic names JSON-side first (canonical) before text.
-    //  • `Value::Display` for the tagged forms → on Display round-
-    //    trip, neither path would reach the boundary fixture's
-    //    expected output; this also catches that drift.
-    #[test]
-    fn test_text_vs_json_inverse_parser_matrix() {
-        // (canonical_content, expected_value_after_parse)
-        //
-        // Each entry is parsed via `parse_crush_text(content)`
-        // (the inlined mirror of canonical `caps::text_as_value`)
-        // AND `serde_json::from_str::<Value>(&serde_json::to_string(
-        // &serde_json::Value::String(content.to_string())).unwrap())`
-        // — JSON-quoting via the canonical `serde_json::Value::String`
-        // pipeline matches the wire-form the cap layer
-        // (`json.stringify` → `json.parse`) produces end-to-end.
-        let fixtures: &[(&str, Value)] = &[
-            // Boundary 1: `<handle N>` tagged form. Both paths
-            // extract the integer `N` from inside the brackets.
-            ("<handle 42>", Value::Handle(42)),
-            ("<foreign 42>", Value::Foreign(42)),
-            // Boundary 2: `<N bytes>` length-tag. Both paths
-            // reconstruct a zero-filled `Vec<u8>` of length N
-            // (documented length-only caveat — actual byte payload
-            // is NOT preserved through either path).
-            ("<3 bytes>", Value::Bytes(vec![0u8, 0, 0])),
-            // Boundary 3: `error((foo)` nested-open. The
-            // `s[6..s.len() - 1]` slice formula strips ONE leading
-            // wrap and ONE trailing `)`, preserving the
-            // inner-most opening paren. NOT a balanced-paren walk.
-            (
-                "error((foo)",
-                Value::Error("(foo".to_string()),
-            ),
-            // Boundary 4: `error(foo))` nested-close. Same slice,
-            // preserves the inner-most closing paren.
-            (
-                "error(foo))",
-                Value::Error("foo)".to_string()),
-            ),
-        ];
+    // Each entry is parsed via `parse_crush_text(content)`
+    // (the inlined mirror of canonical `caps::text_as_value`)
+    // AND `serde_json::from_str::<Value>(&serde_json::to_string(
+    // &serde_json::Value::String(content.to_string())).unwrap())`
+    // — JSON-quoting via the canonical `serde_json::Value::String`
+    // pipeline matches the wire-form the cap layer
+    // (`json.stringify` → `json.parse`) produces end-to-end.
+    let fixtures: &[(&str, Value)] = &[
+        // Boundary 1: `<handle N>` tagged form. Both paths
+        // extract the integer `N` from inside the brackets.
+        ("<handle 42>", Value::Handle(42)),
+        ("<foreign 42>", Value::Foreign(42)),
+        // Boundary 2: `<N bytes>` length-tag. Both paths
+        // reconstruct a zero-filled `Vec<u8>` of length N
+        // (documented length-only caveat — actual byte payload
+        // is NOT preserved through either path).
+        ("<3 bytes>", Value::Bytes(vec![0u8, 0, 0])),
+        // Boundary 3: `error((foo)` nested-open. The
+        // `s[6..s.len() - 1]` slice formula strips ONE leading
+        // wrap and ONE trailing `)`, preserving the
+        // inner-most opening paren. NOT a balanced-paren walk.
+        ("error((foo)", Value::Error("(foo".to_string())),
+        // Boundary 4: `error(foo))` nested-close. Same slice,
+        // preserves the inner-most closing paren.
+        ("error(foo))", Value::Error("foo)".to_string())),
+    ];
 
-        for &(content, ref expected) in fixtures {
-            // Crush-text path: direct canonical content via the
-            // inlined mirror of `caps::text_as_value`.
-            let from_text = parse_crush_text(content);
-            assert_eq!(
-                from_text, *expected,
-                "TEXT-side drift on fixture {:?}: parse_crush_text({:?}) \
+    for &(content, ref expected) in fixtures {
+        // Crush-text path: direct canonical content via the
+        // inlined mirror of `caps::text_as_value`.
+        let from_text = parse_crush_text(content);
+        assert_eq!(
+            from_text, *expected,
+            "TEXT-side drift on fixture {:?}: parse_crush_text({:?}) \
                  produced {:?}, expected {:?}",
-                content, content, from_text, *expected
-            );
+            content, content, from_text, *expected
+        );
 
-            // JSON path: route through canonical
-            // `serde_json::Value::String(content).to_string()` to
-            // produce a JSON-quoted envelope, then parse back
-            // through canonical `impl Deserialize for Value`. This
-            // mirrors the wire-form the cap layer produces.
-            let json_quoted = serde_json::to_string(
-                &serde_json::Value::String(content.to_string()),
-            )
+        // JSON path: route through canonical
+        // `serde_json::Value::String(content).to_string()` to
+        // produce a JSON-quoted envelope, then parse back
+        // through canonical `impl Deserialize for Value`. This
+        // mirrors the wire-form the cap layer produces.
+        let json_quoted = serde_json::to_string(&serde_json::Value::String(content.to_string()))
             .expect("serde_json::Value::String always serializes");
-            let from_json: Value = serde_json::from_str(&json_quoted)
-                .expect("JSON-quoted canonical content always parses");
-            assert_eq!(
-                from_json, *expected,
-                "JSON-side drift on fixture {:?}: \
+        let from_json: Value = serde_json::from_str(&json_quoted)
+            .expect("JSON-quoted canonical content always parses");
+        assert_eq!(
+            from_json, *expected,
+            "JSON-side drift on fixture {:?}: \
                  serde_json::from_str::<Value>({}) produced {:?}, \
                  expected {:?}",
-                content, json_quoted, from_json, *expected
-            );
+            content, json_quoted, from_json, *expected
+        );
 
-            // CROSS-PARSER PARITY: text-path output MUST equal
-            // JSON-path output for the same canonical content. If
-            // ONE side drifts from the other, this assertion
-            // pinpoints which side diverged. The panic message
-            // also dumps `*expected` so a future debugger can
-            // identify the drifter BY INSPECTION: the side
-            // (text vs json) that differs from `expected` is the
-            // one that drifted. This is the regression lock that
-            // the user's audit flagged as missing — without
-            // this assertion, `caps::parse_value` and
-            // `impl Deserialize::visit_str` could drift
-            // independently without CI catching it.
-            assert_eq!(
-                from_text, from_json,
-                "CROSS-PARSER DRIFT on canonical content {:?}: \
+        // CROSS-PARSER PARITY: text-path output MUST equal
+        // JSON-path output for the same canonical content. If
+        // ONE side drifts from the other, this assertion
+        // pinpoints which side diverged. The panic message
+        // also dumps `*expected` so a future debugger can
+        // identify the drifter BY INSPECTION: the side
+        // (text vs json) that differs from `expected` is the
+        // one that drifted. This is the regression lock that
+        // the user's audit flagged as missing — without
+        // this assertion, `caps::parse_value` and
+        // `impl Deserialize::visit_str` could drift
+        // independently without CI catching it.
+        assert_eq!(
+            from_text, from_json,
+            "CROSS-PARSER DRIFT on canonical content {:?}: \
                  text-path={:?}, JSON-path={:?}, expected={:?}. \
                  Either `caps::parse_value` (and its test-mirror \
                  `parse_crush_text`) OR `impl Deserialize::visit_str` \
@@ -398,7 +400,7 @@ fn all_traits_round_trip_for_every_variant() {
                  that differs from `expected` is the drifter. \
                  Companion matrices: see the doc-comment on this test \
                  function and on `parse_crush_text`.",
-                content, from_text, from_json, *expected,
-            );
-        }
+            content, from_text, from_json, *expected,
+        );
     }
+}

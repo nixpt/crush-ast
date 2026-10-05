@@ -44,7 +44,11 @@ pub enum ParseError {
     /// variants — flat `(name, line, col)` rather than a `SourceLocation`
     /// struct — so destructuring patterns stay consistent.
     #[error("Unknown annotation: @{name} at line {line}, column {col}")]
-    UnknownAnnotation { name: String, line: usize, col: usize },
+    UnknownAnnotation {
+        name: String,
+        line: usize,
+        col: usize,
+    },
 }
 
 /// Source location information
@@ -134,7 +138,7 @@ pub enum Token {
     Newline(SourceLocation),
     EOF(SourceLocation),
     Comment(String, SourceLocation),
-    AtIdent(String, SourceLocation),  // @mcp, @cap, @lang, etc
+    AtIdent(String, SourceLocation), // @mcp, @cap, @lang, etc
     /// Raw body of `@python { ... }`, `@javascript { ... }`, etc, plus the
     /// optional `@lang[dep1, dep2]` dependency list (CRUSH-20) — empty if
     /// the block had no bracketed annotation.
@@ -507,15 +511,31 @@ impl Lexer {
         // must be parsed by the normal token stream, not consumed as a LangBody.
         const IMPORT_KEYWORDS: &[&str] = &[
             // import / capability keywords
-            "mcp", "cap", "lang", "git", "http", "file",
+            "mcp",
+            "cap",
+            "lang",
+            "git",
+            "http",
+            "file",
             // AI-native annotation keywords (Step 2 — manifest + function annotations)
-            "module", "invariant", "exhaustive-match-sites",
-            "errors", "reads", "writes", "does-not-write",
-            "covers", "relies-on", "complexity",
+            "module",
+            "invariant",
+            "exhaustive-match-sites",
+            "errors",
+            "reads",
+            "writes",
+            "does-not-write",
+            "covers",
+            "relies-on",
+            "complexity",
             // Phase 2a additions
-            "wip", "temporary", "decision",
+            "wip",
+            "temporary",
+            "decision",
             // Phase 2b additions — mutation surface
-            "invalidates", "must-call-before", "must-call-after",
+            "invalidates",
+            "must-call-before",
+            "must-call-after",
         ];
         if IMPORT_KEYWORDS.contains(&id.as_str()) {
             return Ok(Token::AtIdent(id, at_location));
@@ -663,7 +683,10 @@ impl Lexer {
     /// list — use a single contiguous constraint.
     fn is_dep_spec_char(ch: char) -> bool {
         ch.is_alphanumeric()
-            || matches!(ch, '_' | '-' | '.' | ':' | '@' | '/' | '^' | '~' | '*' | '=' | '<' | '>')
+            || matches!(
+                ch,
+                '_' | '-' | '.' | ':' | '@' | '/' | '^' | '~' | '*' | '=' | '<' | '>'
+            )
     }
 
     /// Read the raw body of a polyglot block starting at depth 1 (caller
@@ -1172,8 +1195,7 @@ mod tests {
     /// in order, comma-separated.
     #[test]
     fn test_lex_lang_block_with_multiple_mixed_deps() {
-        let mut lexer =
-            Lexer::new("@python[pypi:numpy@1.26, scipy, openssl@^1.1] { pass }");
+        let mut lexer = Lexer::new("@python[pypi:numpy@1.26, scipy, openssl@^1.1] { pass }");
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })

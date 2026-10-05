@@ -1,7 +1,13 @@
-use crush_ffi::{CrushPlugin, CrushPluginExport, CrushPluginFunc, FfiType, FfiValue, FfiValueData, FfiString};
+use crush_ffi::{
+    CrushPlugin, CrushPluginExport, CrushPluginFunc, FfiString, FfiType, FfiValue, FfiValueData,
+};
 use std::ffi::CString;
 
-extern "C" fn greet_impl(args: *const FfiValue, arg_count: usize, out_result: *mut FfiValue) -> bool {
+extern "C" fn greet_impl(
+    args: *const FfiValue,
+    arg_count: usize,
+    out_result: *mut FfiValue,
+) -> bool {
     let name = if arg_count > 0 {
         let first_arg = unsafe { &*args };
         if let FfiType::String = first_arg.tag {
@@ -26,19 +32,17 @@ extern "C" fn greet_impl(args: *const FfiValue, arg_count: usize, out_result: *m
         *out_result = FfiValue {
             tag: FfiType::String,
             data: FfiValueData {
-                string: FfiString { ptr, len }
-            }
+                string: FfiString { ptr, len },
+            },
         };
     }
     true
 }
 
-static EXPORTS: &[CrushPluginExport] = &[
-    CrushPluginExport {
-        name: c"greet".as_ptr(),
-        func: greet_impl,
-    },
-];
+static EXPORTS: &[CrushPluginExport] = &[CrushPluginExport {
+    name: c"greet".as_ptr(),
+    func: greet_impl,
+}];
 
 static PLUGIN: CrushPlugin = CrushPlugin {
     plugin_name: c"example_plugin".as_ptr(),

@@ -8,15 +8,14 @@ pub mod compiler;
 pub mod runtime;
 pub mod value;
 
+use crate::compiler::{CompileError, JitCompiler, JitProgram};
+use crate::runtime::{JitContext, jit_runtime_helper};
+use crate::value::JitValue;
 use crush_vm::fastvm::{Capability, FastVM, FastYield, Hal, LoweredProgram};
 use crush_vm::memory::Arena;
 use crush_vm::value::RuntimeValue;
 use std::cell::RefCell;
 use std::sync::Arc;
-use crate::compiler::{CompileError, JitCompiler, JitProgram};
-use crate::runtime::{JitContext, jit_runtime_helper};
-use crate::value::JitValue;
-
 
 /// JIT execution engine.
 pub struct JitEngine {
@@ -93,7 +92,9 @@ impl JitEngine {
             self.compilation_count.set(self.compilation_count.get() + 1);
             *self.cached.borrow_mut() = Some(compiled);
         }
-        Ok(std::cell::Ref::map(self.cached.borrow(), |c| c.as_ref().unwrap()))
+        Ok(std::cell::Ref::map(self.cached.borrow(), |c| {
+            c.as_ref().unwrap()
+        }))
     }
 
     /// Number of times `self.compiler.compile()` has been called.
@@ -106,11 +107,7 @@ impl JitEngine {
     /// because of unsupported opcodes (CRUSH-72).
     fn fallback_to_fastvm(&self, program: &LoweredProgram) -> anyhow::Result<FastYield> {
         let budget = std::cmp::min(self.budget, u32::MAX as u64) as u32;
-        let mut vm = FastVM::new(
-            program.clone(),
-            self.capabilities.clone(),
-            self.hal.clone(),
-        );
+        let mut vm = FastVM::new(program.clone(), self.capabilities.clone(), self.hal.clone());
         Ok(vm.run(budget))
     }
 
@@ -157,7 +154,8 @@ impl JitEngine {
         ctx.strings_ptr = &program.symbols.strings as *const Vec<String> as *const std::ffi::c_void;
 
         // Store pointer to capabilities and hal (alive for duration of run())
-        ctx.capabilities = &self.capabilities as *const Vec<Arc<dyn Capability>> as *mut std::ffi::c_void;
+        ctx.capabilities =
+            &self.capabilities as *const Vec<Arc<dyn Capability>> as *mut std::ffi::c_void;
         ctx.hal = &self.hal as *const Arc<dyn Hal> as *mut std::ffi::c_void;
 
         // Set the runtime helper dispatch function
@@ -231,7 +229,8 @@ impl JitEngine {
         ctx.budget = budget;
         ctx.arena = arena as *mut Arena as *mut std::ffi::c_void;
         ctx.strings_ptr = &program.symbols.strings as *const Vec<String> as *const std::ffi::c_void;
-        ctx.capabilities = &self.capabilities as *const Vec<Arc<dyn Capability>> as *mut std::ffi::c_void;
+        ctx.capabilities =
+            &self.capabilities as *const Vec<Arc<dyn Capability>> as *mut std::ffi::c_void;
         ctx.hal = &self.hal as *const Arc<dyn Hal> as *mut std::ffi::c_void;
         ctx.helper_fn = jit_runtime_helper as *mut std::ffi::c_void;
 
@@ -317,8 +316,10 @@ mod tests {
     impl crush_vm::fastvm::Hal for DummyHal {}
 
     fn make_prog(instrs: Vec<(FastOp, u64, u32)>) -> LoweredProgram {
-        let instructions: Vec<FastInstr> =
-            instrs.into_iter().map(|(op, a, b)| FastInstr::new(op, a, b)).collect();
+        let instructions: Vec<FastInstr> = instrs
+            .into_iter()
+            .map(|(op, a, b)| FastInstr::new(op, a, b))
+            .collect();
         LoweredProgram {
             instructions,
             symbols: SymbolTables::new(),
@@ -338,14 +339,18 @@ mod tests {
         functions: Vec<(&str, usize, usize, u32)>,
         entry: usize,
     ) -> LoweredProgram {
-        let instructions: Vec<FastInstr> =
-            instrs.into_iter().map(|(op, a, b)| FastInstr::new(op, a, b)).collect();
+        let instructions: Vec<FastInstr> = instrs
+            .into_iter()
+            .map(|(op, a, b)| FastInstr::new(op, a, b))
+            .collect();
         let mut symbols = SymbolTables::new();
         for &name in &func_strings {
             symbols.intern_string(name);
         }
         for (name, start, end, arity) in functions {
-            symbols.functions.insert(name.to_string(), (start, end, arity));
+            symbols
+                .functions
+                .insert(name.to_string(), (start, end, arity));
         }
         LoweredProgram {
             instructions,
@@ -355,11 +360,7 @@ mod tests {
     }
 
     fn run_fastvm(prog: &LoweredProgram) -> FastYield {
-        let mut vm = FastVM::new(
-            prog.clone(),
-            vec![],
-            Arc::new(DummyHal),
-        );
+        let mut vm = FastVM::new(prog.clone(), vec![], Arc::new(DummyHal));
         vm.run(10_000)
     }
 
@@ -456,7 +457,11 @@ mod tests {
             (FastOp::Mod, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_fastvm(&prog), run_jit(&prog), "7 % 3 should match FastVM");
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "7 % 3 should match FastVM"
+        );
     }
 
     #[test]
@@ -468,7 +473,11 @@ mod tests {
             (FastOp::Mod, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_fastvm(&prog), run_jit(&prog), "(-7) % 3 should match FastVM");
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "(-7) % 3 should match FastVM"
+        );
     }
 
     #[test]
@@ -482,7 +491,11 @@ mod tests {
             (FastOp::Mod, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_fastvm(&prog), run_jit(&prog), "7.5 % 2.5 should match FastVM");
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "7.5 % 2.5 should match FastVM"
+        );
     }
 
     #[test]
@@ -496,8 +509,11 @@ mod tests {
             (FastOp::Mod, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_fastvm(&prog), run_jit(&prog),
-            "(-7.5) % 2.0 should match FastVM (trunc fmod)");
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "(-7.5) % 2.0 should match FastVM (trunc fmod)"
+        );
 
         // -7.5 % -2.0 == -1.5
         let a = f64::to_bits(-7.5);
@@ -508,8 +524,11 @@ mod tests {
             (FastOp::Mod, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_fastvm(&prog), run_jit(&prog),
-            "(-7.5) % (-2.0) should match FastVM");
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "(-7.5) % (-2.0) should match FastVM"
+        );
 
         // 7.5 % -2.0 == 1.5
         let a = f64::to_bits(7.5);
@@ -520,13 +539,20 @@ mod tests {
             (FastOp::Mod, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_fastvm(&prog), run_jit(&prog),
-            "7.5 % (-2.0) should match FastVM");
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "7.5 % (-2.0) should match FastVM"
+        );
     }
 
     #[test]
     fn test_neg_int() {
-        let prog = make_prog(vec![(FastOp::PushInt, 7, 0), (FastOp::Neg, 0, 0), (FastOp::Halt, 0, 0)]);
+        let prog = make_prog(vec![
+            (FastOp::PushInt, 7, 0),
+            (FastOp::Neg, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
 
@@ -568,8 +594,15 @@ mod tests {
             (FastOp::Eq, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
-        assert_eq!(run_fastvm(&prog), run_jit(&prog), "JIT must agree with FastVM");
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(true)))
+        );
+        assert_eq!(
+            run_fastvm(&prog),
+            run_jit(&prog),
+            "JIT must agree with FastVM"
+        );
     }
 
     #[test]
@@ -583,7 +616,10 @@ mod tests {
             (FastOp::Eq, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(true)))
+        );
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
 
@@ -598,7 +634,10 @@ mod tests {
             (FastOp::Ne, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(true)))
+        );
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
 
         let b = f64::to_bits(2.0);
@@ -608,7 +647,10 @@ mod tests {
             (FastOp::Ne, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(
+            run_jit(&prog2),
+            FastYield::Finished(Some(RuntimeValue::Bool(false)))
+        );
         assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
     }
 
@@ -622,7 +664,10 @@ mod tests {
             (FastOp::Eq, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(false)))
+        );
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
 
@@ -640,7 +685,10 @@ mod tests {
             (FastOp::Lt, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(true)))
+        );
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
 
         let prog2 = make_prog(vec![
@@ -649,7 +697,10 @@ mod tests {
             (FastOp::Gt, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(
+            run_jit(&prog2),
+            FastYield::Finished(Some(RuntimeValue::Bool(true)))
+        );
         assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
     }
 
@@ -662,7 +713,10 @@ mod tests {
             (FastOp::Eq, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(false)))
+        );
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
 
         let prog2 = make_prog(vec![
@@ -671,7 +725,10 @@ mod tests {
             (FastOp::Eq, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog2), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(
+            run_jit(&prog2),
+            FastYield::Finished(Some(RuntimeValue::Bool(false)))
+        );
         assert_eq!(run_fastvm(&prog2), run_jit(&prog2));
 
         // Mirror case: NaN != NaN must be TRUE for bit-identical NaNs too —
@@ -682,7 +739,10 @@ mod tests {
             (FastOp::Ne, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog3), FastYield::Finished(Some(RuntimeValue::Bool(true))));
+        assert_eq!(
+            run_jit(&prog3),
+            FastYield::Finished(Some(RuntimeValue::Bool(true)))
+        );
         assert_eq!(run_fastvm(&prog3), run_jit(&prog3));
     }
 
@@ -696,7 +756,10 @@ mod tests {
             (FastOp::Eq, 0, 0),
             (FastOp::Halt, 0, 0),
         ]);
-        assert_eq!(run_jit(&prog), FastYield::Finished(Some(RuntimeValue::Bool(false))));
+        assert_eq!(
+            run_jit(&prog),
+            FastYield::Finished(Some(RuntimeValue::Bool(false)))
+        );
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
 
@@ -735,7 +798,11 @@ mod tests {
 
     #[test]
     fn test_not_bool() {
-        let prog = make_prog(vec![(FastOp::PushBool, 0, 0), (FastOp::Not, 0, 0), (FastOp::Halt, 0, 0)]);
+        let prog = make_prog(vec![
+            (FastOp::PushBool, 0, 0),
+            (FastOp::Not, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
 
@@ -816,11 +883,11 @@ mod tests {
         // Push the result FIRST, then condition.
         // PushBool(false) → JumpIfNot(target=4) → taken → Halt at 4 pops 99.
         let prog = make_prog(vec![
-            (FastOp::PushInt, 99, 0),    // 0: result
-            (FastOp::PushBool, 0, 0),    // 1: false (falsy)
-            (FastOp::JumpIfNot, 4, 0),   // 2: pop false, !truthy → jump to 4
-            (FastOp::Halt, 0, 0),        // 3: not reached
-            (FastOp::Halt, 0, 0),        // 4: target — pop 99
+            (FastOp::PushInt, 99, 0),  // 0: result
+            (FastOp::PushBool, 0, 0),  // 1: false (falsy)
+            (FastOp::JumpIfNot, 4, 0), // 2: pop false, !truthy → jump to 4
+            (FastOp::Halt, 0, 0),      // 3: not reached
+            (FastOp::Halt, 0, 0),      // 4: target — pop 99
         ]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
@@ -830,12 +897,12 @@ mod tests {
         // Push result FIRST, then condition.
         // PushBool(true) → JumpIfNot(target=5) → not taken → fallthrough to Halt(3).
         let prog = make_prog(vec![
-            (FastOp::PushInt, 42, 0),    // 0: result
-            (FastOp::PushBool, 1, 0),    // 1: true (truthy)
-            (FastOp::JumpIfNot, 5, 0),   // 2: pop true, truthy → fallthrough to 3
-            (FastOp::Halt, 0, 0),        // 3: pop 42
-            (FastOp::PushInt, 99, 0),    // 4: not reached (block boundary)
-            (FastOp::Halt, 0, 0),        // 5: not reached
+            (FastOp::PushInt, 42, 0),  // 0: result
+            (FastOp::PushBool, 1, 0),  // 1: true (truthy)
+            (FastOp::JumpIfNot, 5, 0), // 2: pop true, truthy → fallthrough to 3
+            (FastOp::Halt, 0, 0),      // 3: pop 42
+            (FastOp::PushInt, 99, 0),  // 4: not reached (block boundary)
+            (FastOp::Halt, 0, 0),      // 5: not reached
         ]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
@@ -846,15 +913,15 @@ mod tests {
         // PushInt(1) is stack base, PushBool(false) is the condition.
         // JumpIfNot pops false → jump taken → PushInt(99);Halt
         let prog = make_prog(vec![
-            (FastOp::PushInt, 7, 0),     // 0
-            (FastOp::PushBool, 0, 0),    // 1: condition = false
-            (FastOp::JumpIfNot, 6, 0),   // 2: pop false → jump to 6
-            (FastOp::Pop, 0, 0),         // 3: not reached
-            (FastOp::PushInt, 1, 0),     // 4: not reached
-            (FastOp::Halt, 0, 0),        // 5: not reached
-            (FastOp::Pop, 0, 0),         // 6: pop the leftover 7
-            (FastOp::PushInt, 99, 0),    // 7
-            (FastOp::Halt, 0, 0),        // 8
+            (FastOp::PushInt, 7, 0),   // 0
+            (FastOp::PushBool, 0, 0),  // 1: condition = false
+            (FastOp::JumpIfNot, 6, 0), // 2: pop false → jump to 6
+            (FastOp::Pop, 0, 0),       // 3: not reached
+            (FastOp::PushInt, 1, 0),   // 4: not reached
+            (FastOp::Halt, 0, 0),      // 5: not reached
+            (FastOp::Pop, 0, 0),       // 6: pop the leftover 7
+            (FastOp::PushInt, 99, 0),  // 7
+            (FastOp::Halt, 0, 0),      // 8
         ]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
@@ -1009,15 +1076,15 @@ mod tests {
                 (FastOp::Return, 0, 0),
             ],
             vec!["double", "triple"],
-            vec![
-                ("double", 4, 9, 1),
-                ("triple", 9, 14, 1),
-            ],
+            vec![("double", 4, 9, 1), ("triple", 9, 14, 1)],
             0,
         );
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "multiple calls to different functions should match FastVM");
+        assert_eq!(
+            expected, actual,
+            "multiple calls to different functions should match FastVM"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1027,20 +1094,30 @@ mod tests {
     #[test]
     fn test_push_str() {
         // PushStr(str_idx=0) via a program with interned string
-        let mut prog = make_prog(vec![
-            (FastOp::PushStr, 0, 0),
-            (FastOp::Halt, 0, 0),
-        ]);
+        let mut prog = make_prog(vec![(FastOp::PushStr, 0, 0), (FastOp::Halt, 0, 0)]);
         prog.symbols.intern_string("hello");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
         // Both return RuntimeValue::Ref(idx) — different arena pointers, but both are Ref with valid indices.
         // We check that both are Ref and neither is Null.
-        if let (&FastYield::Finished(Some(ref a)), &FastYield::Finished(Some(ref b))) = (&expected, &actual) {
-            assert!(matches!(a, RuntimeValue::Ref(_)), "Expected Ref from FastVM, got {:?}", a);
-            assert!(matches!(b, RuntimeValue::Ref(_)), "Expected Ref from JIT, got {:?}", b);
+        if let (&FastYield::Finished(Some(ref a)), &FastYield::Finished(Some(ref b))) =
+            (&expected, &actual)
+        {
+            assert!(
+                matches!(a, RuntimeValue::Ref(_)),
+                "Expected Ref from FastVM, got {:?}",
+                a
+            );
+            assert!(
+                matches!(b, RuntimeValue::Ref(_)),
+                "Expected Ref from JIT, got {:?}",
+                b
+            );
         } else {
-            panic!("PushStr: expected Finished(Some(Ref)), got FastVM={:?}, JIT={:?}", expected, actual);
+            panic!(
+                "PushStr: expected Finished(Some(Ref)), got FastVM={:?}, JIT={:?}",
+                expected, actual
+            );
         }
     }
 
@@ -1055,11 +1132,19 @@ mod tests {
         ]);
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        if let (&FastYield::Finished(Some(ref a)), &FastYield::Finished(Some(ref b))) = (&expected, &actual) {
-            assert!(matches!(a, RuntimeValue::Ref(_)), "Expected Ref from FastVM");
+        if let (&FastYield::Finished(Some(ref a)), &FastYield::Finished(Some(ref b))) =
+            (&expected, &actual)
+        {
+            assert!(
+                matches!(a, RuntimeValue::Ref(_)),
+                "Expected Ref from FastVM"
+            );
             assert!(matches!(b, RuntimeValue::Ref(_)), "Expected Ref from JIT");
         } else {
-            panic!("MakeList: expected Finished(Some(Ref)), got FastVM={:?}, JIT={:?}", expected, actual);
+            panic!(
+                "MakeList: expected Finished(Some(Ref)), got FastVM={:?}, JIT={:?}",
+                expected, actual
+            );
         }
     }
 
@@ -1074,11 +1159,24 @@ mod tests {
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
         // Both return a Ref to "int" string — different arena indices but both are Ref
-        if let (&FastYield::Finished(Some(ref a)), &FastYield::Finished(Some(ref b))) = (&expected, &actual) {
-            assert!(matches!(a, RuntimeValue::Ref(_)), "Expected Ref from FastVM, got {:?}", a);
-            assert!(matches!(b, RuntimeValue::Ref(_)), "Expected Ref from JIT, got {:?}", b);
+        if let (&FastYield::Finished(Some(ref a)), &FastYield::Finished(Some(ref b))) =
+            (&expected, &actual)
+        {
+            assert!(
+                matches!(a, RuntimeValue::Ref(_)),
+                "Expected Ref from FastVM, got {:?}",
+                a
+            );
+            assert!(
+                matches!(b, RuntimeValue::Ref(_)),
+                "Expected Ref from JIT, got {:?}",
+                b
+            );
         } else {
-            panic!("TypeOf: expected Finished(Some(Ref)), got FastVM={:?}, JIT={:?}", expected, actual);
+            panic!(
+                "TypeOf: expected Finished(Some(Ref)), got FastVM={:?}, JIT={:?}",
+                expected, actual
+            );
         }
     }
 
@@ -1118,15 +1216,15 @@ mod tests {
                 (FastOp::Return, 0, 0),
             ],
             vec!["inc", "add_one"],
-            vec![
-                ("inc", 3, 7, 1),
-                ("add_one", 7, 12, 1),
-            ],
+            vec![("inc", 3, 7, 1), ("add_one", 7, 12, 1)],
             0,
         );
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "nested calls (main → inc → add_one) should match FastVM");
+        assert_eq!(
+            expected, actual,
+            "nested calls (main → inc → add_one) should match FastVM"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1137,8 +1235,15 @@ mod tests {
     #[derive(Debug)]
     struct DoubleCap;
     impl Capability for DoubleCap {
-        fn name(&self) -> &str { "double" }
-        fn call(&self, _arena: &mut Arena, args: Vec<RuntimeValue>, _hal: Arc<dyn Hal>) -> anyhow::Result<RuntimeValue> {
+        fn name(&self) -> &str {
+            "double"
+        }
+        fn call(
+            &self,
+            _arena: &mut Arena,
+            args: Vec<RuntimeValue>,
+            _hal: Arc<dyn Hal>,
+        ) -> anyhow::Result<RuntimeValue> {
             match args.as_slice() {
                 [RuntimeValue::Int(x)] => Ok(RuntimeValue::Int(x * 2)),
                 _ => Ok(RuntimeValue::Null),
@@ -1147,7 +1252,8 @@ mod tests {
     }
 
     fn run_jit_with_caps(prog: &LoweredProgram, caps: Vec<Arc<dyn Capability>>) -> FastYield {
-        let engine = JitEngine::new().expect("JitEngine::new")
+        let engine = JitEngine::new()
+            .expect("JitEngine::new")
             .with_capabilities(caps);
         engine.run(prog).expect("JIT execution should not fail")
     }
@@ -1157,18 +1263,14 @@ mod tests {
         // CapCall(cap_idx=0, argc=1): push 7, call cap[0] with 1 arg
         let prog = make_prog(vec![
             (FastOp::PushInt, 7, 0),
-            (FastOp::CapCall, 0, 1),  // cap_idx=0, argc=1
+            (FastOp::CapCall, 0, 1), // cap_idx=0, argc=1
             (FastOp::Halt, 0, 0),
         ]);
 
         let caps: Vec<Arc<dyn Capability>> = vec![Arc::new(DoubleCap)];
 
         // FastVM with this capability should return 14
-        let mut vm = FastVM::new(
-            prog.clone(),
-            caps.clone(),
-            Arc::new(DummyHal),
-        );
+        let mut vm = FastVM::new(prog.clone(), caps.clone(), Arc::new(DummyHal));
         let expected = vm.run(10_000);
 
         // JIT with same capability should also return 14
@@ -1193,7 +1295,10 @@ mod tests {
         prog.symbols.intern_string("name");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "NewObj+GetField(empty) should match FastVM");
+        assert_eq!(
+            expected, actual,
+            "NewObj+GetField(empty) should match FastVM"
+        );
     }
 
     #[test]
@@ -1202,7 +1307,7 @@ mod tests {
         // Dup preserves the Ref so SetField consumes the copy and GetField uses the original.
         let mut prog = make_prog(vec![
             (FastOp::NewObj, 0, 0),
-            (FastOp::Dup, 0, 0),      // copy Ref so SetField doesn't consume the only reference
+            (FastOp::Dup, 0, 0), // copy Ref so SetField doesn't consume the only reference
             (FastOp::PushInt, 42, 0),
             (FastOp::SetField, 0, 0), // pop val=42, pop target=obj_copy, set fields["x"]=42
             (FastOp::GetField, 0, 0), // pop target, push fields["x"]
@@ -1211,7 +1316,10 @@ mod tests {
         prog.symbols.intern_string("x");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "NewObj+Dup+SetField(x=42)+GetField(x) should match FastVM");
+        assert_eq!(
+            expected, actual,
+            "NewObj+Dup+SetField(x=42)+GetField(x) should match FastVM"
+        );
     }
 
     #[test]
@@ -1241,7 +1349,10 @@ mod tests {
         prog.symbols.intern_string("hello");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual, "StrSim(hello, hello)=1.0 should match FastVM");
+        assert_eq!(
+            expected, actual,
+            "StrSim(hello, hello)=1.0 should match FastVM"
+        );
     }
 
     #[test]
@@ -1277,8 +1388,15 @@ mod tests {
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
         // Both should return an error for uncaught throw
-        assert!(expected.is_err(), "FastVM should return error for uncaught throw");
-        assert!(actual.is_err(), "JIT should return error for uncaught throw, got {:?}", actual);
+        assert!(
+            expected.is_err(),
+            "FastVM should return error for uncaught throw"
+        );
+        assert!(
+            actual.is_err(),
+            "JIT should return error for uncaught throw, got {:?}",
+            actual
+        );
     }
 
     #[test]
@@ -1302,9 +1420,11 @@ mod tests {
 
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Caught throw at top level: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1317,8 +1437,11 @@ mod tests {
         ]);
         let result = run_jit(&prog);
         // Should not crash — capability lookup will fail and push null
-        assert!(matches!(result, FastYield::Finished(Some(RuntimeValue::Null))),
-            "CapCall without caps should push null, got {:?}", result);
+        assert!(
+            matches!(result, FastYield::Finished(Some(RuntimeValue::Null))),
+            "CapCall without caps should push null, got {:?}",
+            result
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1345,9 +1468,11 @@ mod tests {
         ]);
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "EnterTry->ExitTry normal flow: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1374,9 +1499,11 @@ mod tests {
 
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Nested inner catch: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1405,9 +1532,11 @@ mod tests {
 
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Nested outer catch: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1456,9 +1585,11 @@ mod tests {
         let actual = run_jit(&prog);
 
         // Both backends should now agree: the handler block executes, returns 99.
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Caught throw in callee: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1488,10 +1619,15 @@ mod tests {
         );
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert!(expected.is_err(),
-            "FastVM should return error for uncaught throw in callee");
-        assert!(actual.is_err(),
-            "JIT should return error for uncaught throw in callee, got {:?}", actual);
+        assert!(
+            expected.is_err(),
+            "FastVM should return error for uncaught throw in callee"
+        );
+        assert!(
+            actual.is_err(),
+            "JIT should return error for uncaught throw in callee, got {:?}",
+            actual
+        );
     }
 
     #[test]
@@ -1530,9 +1666,11 @@ mod tests {
 
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Main handler catching throw from callee: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1576,9 +1714,11 @@ mod tests {
         let actual = run_jit(&prog);
 
         // Both backends should now agree: the handler block at PC 8 executes, returns 42.
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Callee handler catches: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1612,9 +1752,11 @@ mod tests {
 
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "Multi-nested try/exit chain: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     #[test]
@@ -1663,9 +1805,11 @@ mod tests {
         let jit = run_jit(&prog);
 
         // Both backends should now agree: the inner handler executes, returns 42.
-        assert_eq!(fastvm, jit,
+        assert_eq!(
+            fastvm, jit,
             "Nested try inside callee: JIT ({:?}) should match FastVM ({:?})",
-            jit, fastvm);
+            jit, fastvm
+        );
     }
 
     #[test]
@@ -1711,10 +1855,7 @@ mod tests {
                 (FastOp::Halt, 0, 0),
             ],
             vec!["middle", "throws"],
-            vec![
-                ("middle", 3, 10, 0),
-                ("throws", 10, 13, 0),
-            ],
+            vec![("middle", 3, 10, 0), ("throws", 10, 13, 0)],
             0,
         );
 
@@ -1722,9 +1863,11 @@ mod tests {
         let jit = run_jit(&prog);
 
         // Both backends should now agree: middle's handler executes, returns 42.
-        assert_eq!(fastvm, jit,
+        assert_eq!(
+            fastvm, jit,
             "Handler in middle catches throw from callee: JIT ({:?}) should match FastVM ({:?})",
-            jit, fastvm);
+            jit, fastvm
+        );
     }
 
     #[test]
@@ -1770,10 +1913,7 @@ mod tests {
                 (FastOp::Halt, 0, 0),
             ],
             vec!["level1", "level2"],
-            vec![
-                ("level1", 7, 11, 0),
-                ("level2", 11, 14, 0),
-            ],
+            vec![("level1", 7, 11, 0), ("level2", 11, 14, 0)],
             0,
         );
 
@@ -1781,9 +1921,11 @@ mod tests {
         let jit = run_jit(&prog);
 
         // Both backends now agree: main's handler catches, returns 42.
-        assert_eq!(fastvm, jit,
+        assert_eq!(
+            fastvm, jit,
             "Deep unwind through 2 functions: JIT ({:?}) should match FastVM ({:?})",
-            jit, fastvm);
+            jit, fastvm
+        );
     }
 
     #[test]
@@ -1819,29 +1961,25 @@ mod tests {
         //   PC 15: Halt            (not reached)
         let prog = make_multi_fn(
             vec![
-                (FastOp::EnterTry, 8, 0),  // 0: main
-                (FastOp::Call, 0, 0),      // 1: call "a"
-                (FastOp::Halt, 0, 0),      // 2: return result
-                (FastOp::Halt, 0, 0),      // 3: padding
-                (FastOp::EnterTry, 8, 0),  // 4: a
-                (FastOp::Call, 1, 0),      // 5: call "b"
-                (FastOp::Halt, 0, 0),      // 6: (not reached)
-                (FastOp::Halt, 0, 0),      // 7: (not reached)
-                (FastOp::PushInt, 42, 0),  // 8: handler
-                (FastOp::Return, 0, 0),    // 9: return 42
-                (FastOp::Call, 2, 0),      // 10: b
-                (FastOp::Halt, 0, 0),      // 11: (not reached)
-                (FastOp::Return, 0, 0),    // 12: (not reached)
-                (FastOp::PushInt, 7, 0),   // 13: c
-                (FastOp::Throw, 0, 0),     // 14: throw 7
-                (FastOp::Halt, 0, 0),      // 15: (not reached)
+                (FastOp::EnterTry, 8, 0), // 0: main
+                (FastOp::Call, 0, 0),     // 1: call "a"
+                (FastOp::Halt, 0, 0),     // 2: return result
+                (FastOp::Halt, 0, 0),     // 3: padding
+                (FastOp::EnterTry, 8, 0), // 4: a
+                (FastOp::Call, 1, 0),     // 5: call "b"
+                (FastOp::Halt, 0, 0),     // 6: (not reached)
+                (FastOp::Halt, 0, 0),     // 7: (not reached)
+                (FastOp::PushInt, 42, 0), // 8: handler
+                (FastOp::Return, 0, 0),   // 9: return 42
+                (FastOp::Call, 2, 0),     // 10: b
+                (FastOp::Halt, 0, 0),     // 11: (not reached)
+                (FastOp::Return, 0, 0),   // 12: (not reached)
+                (FastOp::PushInt, 7, 0),  // 13: c
+                (FastOp::Throw, 0, 0),    // 14: throw 7
+                (FastOp::Halt, 0, 0),     // 15: (not reached)
             ],
             vec!["a", "b", "c"],
-            vec![
-                ("a", 4, 10, 0),
-                ("b", 10, 13, 0),
-                ("c", 13, 16, 0),
-            ],
+            vec![("a", 4, 10, 0), ("b", 10, 13, 0), ("c", 13, 16, 0)],
             0,
         );
 
@@ -1850,9 +1988,11 @@ mod tests {
 
         // Both backends agree: a's handler catches (skipping b and c's empty
         // handler stacks), executes PushInt(42); Return, giving Int(42).
-        assert_eq!(fastvm, jit,
+        assert_eq!(
+            fastvm, jit,
             "Throw through 3 functions to middle handler: JIT ({:?}) should match FastVM ({:?})",
-            jit, fastvm);
+            jit, fastvm
+        );
     }
 
     #[test]
@@ -1893,33 +2033,29 @@ mod tests {
         //   PC 19: Halt            (not reached)
         let prog = make_multi_fn(
             vec![
-                (FastOp::EnterTry, 6, 0),    // 0: main
-                (FastOp::Call, 0, 0),         // 1: call "a"
-                (FastOp::Halt, 0, 0),          // 2: (not reached)
-                (FastOp::Halt, 0, 0),          // 3: (not reached)
-                (FastOp::Halt, 0, 0),          // 4: (not reached)
-                (FastOp::Halt, 0, 0),          // 5: (not reached)
-                (FastOp::Halt, 0, 0),          // 6: handler — pops 7
-                (FastOp::EnterTry, 11, 0),    // 7: a
-                (FastOp::Call, 1, 0),         // 8: call "b"
-                (FastOp::Halt, 0, 0),          // 9: (not reached)
-                (FastOp::Halt, 0, 0),          // 10: (not reached)
-                (FastOp::Throw, 0, 0),        // 11: handler: re-throw 7
-                (FastOp::Halt, 0, 0),          // 12: (not reached)
-                (FastOp::Halt, 0, 0),          // 13: (not reached)
-                (FastOp::Call, 2, 0),         // 14: b
-                (FastOp::Halt, 0, 0),          // 15: (not reached)
-                (FastOp::Halt, 0, 0),          // 16: (not reached)
-                (FastOp::PushInt, 7, 0),      // 17: c
-                (FastOp::Throw, 0, 0),        // 18: throw 7
-                (FastOp::Halt, 0, 0),          // 19: (not reached)
+                (FastOp::EnterTry, 6, 0),  // 0: main
+                (FastOp::Call, 0, 0),      // 1: call "a"
+                (FastOp::Halt, 0, 0),      // 2: (not reached)
+                (FastOp::Halt, 0, 0),      // 3: (not reached)
+                (FastOp::Halt, 0, 0),      // 4: (not reached)
+                (FastOp::Halt, 0, 0),      // 5: (not reached)
+                (FastOp::Halt, 0, 0),      // 6: handler — pops 7
+                (FastOp::EnterTry, 11, 0), // 7: a
+                (FastOp::Call, 1, 0),      // 8: call "b"
+                (FastOp::Halt, 0, 0),      // 9: (not reached)
+                (FastOp::Halt, 0, 0),      // 10: (not reached)
+                (FastOp::Throw, 0, 0),     // 11: handler: re-throw 7
+                (FastOp::Halt, 0, 0),      // 12: (not reached)
+                (FastOp::Halt, 0, 0),      // 13: (not reached)
+                (FastOp::Call, 2, 0),      // 14: b
+                (FastOp::Halt, 0, 0),      // 15: (not reached)
+                (FastOp::Halt, 0, 0),      // 16: (not reached)
+                (FastOp::PushInt, 7, 0),   // 17: c
+                (FastOp::Throw, 0, 0),     // 18: throw 7
+                (FastOp::Halt, 0, 0),      // 19: (not reached)
             ],
             vec!["a", "b", "c"],
-            vec![
-                ("a", 7, 14, 0),
-                ("b", 14, 17, 0),
-                ("c", 17, 20, 0),
-            ],
+            vec![("a", 7, 14, 0), ("b", 14, 17, 0), ("c", 17, 20, 0)],
             0,
         );
 
@@ -1928,9 +2064,11 @@ mod tests {
 
         // Both backends agree: c throws → a catches and re-throws → main catches.
         // Result is Int(7) from main's handler.
-        assert_eq!(fastvm, jit,
+        assert_eq!(
+            fastvm, jit,
             "Rethrow through 3 functions: JIT ({:?}) should match FastVM ({:?})",
-            jit, fastvm);
+            jit, fastvm
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1972,8 +2110,12 @@ mod tests {
             (FastOp::Halt, 0, 0),
         ]);
         let result = run_jit_with_budget(&prog, 3);
-        assert_eq!(result, FastYield::BudgetExhausted,
-            "Budget(3) should exhaust after 4 dec_budget calls, got {:?}", result);
+        assert_eq!(
+            result,
+            FastYield::BudgetExhausted,
+            "Budget(3) should exhaust after 4 dec_budget calls, got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1991,8 +2133,12 @@ mod tests {
             (FastOp::Halt, 0, 0),
         ]);
         let result = run_jit_with_budget(&prog, 100);
-        assert_eq!(result, FastYield::Finished(Some(RuntimeValue::Int(42))),
-            "Budget(100) should allow normal completion, got {:?}", result);
+        assert_eq!(
+            result,
+            FastYield::Finished(Some(RuntimeValue::Int(42))),
+            "Budget(100) should allow normal completion, got {:?}",
+            result
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -2027,20 +2173,41 @@ mod tests {
         ctx.budget = 1000;
 
         // First run: should yield at Spawn
-        let yield_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let yield_result = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("first run should not error");
-        assert_eq!(yield_result, FastYield::Yielded,
-            "Spawn should cause a yield, got {:?}", yield_result);
-        assert_eq!(ctx.saved_pc, 2, "saved_pc should be 2 (next instruction after Spawn)");
-        assert_eq!(ctx.host_request_tag, 2, "host_request_tag should be 2 (HOST_REQ_SPAWN)");
+        assert_eq!(
+            yield_result,
+            FastYield::Yielded,
+            "Spawn should cause a yield, got {:?}",
+            yield_result
+        );
+        assert_eq!(
+            ctx.saved_pc, 2,
+            "saved_pc should be 2 (next instruction after Spawn)"
+        );
+        assert_eq!(
+            ctx.host_request_tag, 2,
+            "host_request_tag should be 2 (HOST_REQ_SPAWN)"
+        );
 
         // Simulate host processing: push result and resume
-        let final_result = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(5)), 1000)
+        let final_result = engine
+            .resume(
+                &prog,
+                &mut ctx,
+                &mut arena,
+                Some(RuntimeValue::Int(5)),
+                1000,
+            )
             .expect("resume should not error");
 
-        assert_eq!(final_result, FastYield::Finished(Some(RuntimeValue::Int(25))),
-            "After resume, 20 + 5 should = 25, got {:?}", final_result);
+        assert_eq!(
+            final_result,
+            FastYield::Finished(Some(RuntimeValue::Int(25))),
+            "After resume, 20 + 5 should = 25, got {:?}",
+            final_result
+        );
     }
 
     #[test]
@@ -2066,18 +2233,36 @@ mod tests {
         let mut ctx = JitContext::new();
         ctx.budget = 1000;
 
-        let yield_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let yield_result = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("first run should not error");
-        assert_eq!(yield_result, FastYield::Yielded,
-            "CallHost should yield, got {:?}", yield_result);
+        assert_eq!(
+            yield_result,
+            FastYield::Yielded,
+            "CallHost should yield, got {:?}",
+            yield_result
+        );
         assert_eq!(ctx.saved_pc, 2, "saved_pc should be 2");
-        assert_eq!(ctx.host_request_tag, 0, "host_request_tag should be 0 (HOST_REQ_CALL_HOST)");
+        assert_eq!(
+            ctx.host_request_tag, 0,
+            "host_request_tag should be 0 (HOST_REQ_CALL_HOST)"
+        );
 
-        let final_result = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(7)), 1000)
+        let final_result = engine
+            .resume(
+                &prog,
+                &mut ctx,
+                &mut arena,
+                Some(RuntimeValue::Int(7)),
+                1000,
+            )
             .expect("resume should not error");
-        assert_eq!(final_result, FastYield::Finished(Some(RuntimeValue::Int(27))),
-            "20 + 7 should = 27, got {:?}", final_result);
+        assert_eq!(
+            final_result,
+            FastYield::Finished(Some(RuntimeValue::Int(27))),
+            "20 + 7 should = 27, got {:?}",
+            final_result
+        );
     }
 
     #[test]
@@ -2109,26 +2294,43 @@ mod tests {
         ctx.budget = 1000;
 
         // Yield #1: CallHost
-        let y1 = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let y1 = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("first run");
         assert_eq!(y1, FastYield::Yielded, "first yield should be Yielded");
         assert_eq!(ctx.saved_pc, 2, "saved_pc after first yield");
         assert_eq!(ctx.host_request_tag, 0, "tag should be CallHost");
 
         // Resume #1 → push Int(5), continue to Spawn
-        let y2 = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(5)), 1000)
+        let y2 = engine
+            .resume(
+                &prog,
+                &mut ctx,
+                &mut arena,
+                Some(RuntimeValue::Int(5)),
+                1000,
+            )
             .expect("first resume");
         assert_eq!(y2, FastYield::Yielded, "second yield should be Yielded");
         assert_eq!(ctx.saved_pc, 4, "saved_pc after second yield");
         assert_eq!(ctx.host_request_tag, 2, "tag should be Spawn");
 
         // Resume #2 → push Int(3), continue to finish
-        let final_result = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(3)), 1000)
+        let final_result = engine
+            .resume(
+                &prog,
+                &mut ctx,
+                &mut arena,
+                Some(RuntimeValue::Int(3)),
+                1000,
+            )
             .expect("second resume");
-        assert_eq!(final_result, FastYield::Finished(Some(RuntimeValue::Int(33))),
-            "30 + 3 should = 33, got {:?}", final_result);
+        assert_eq!(
+            final_result,
+            FastYield::Finished(Some(RuntimeValue::Int(33))),
+            "30 + 3 should = 33, got {:?}",
+            final_result
+        );
     }
 
     #[test]
@@ -2170,18 +2372,23 @@ mod tests {
         ctx.budget = 1000;
 
         // First run: yield at CallHost
-        let y1 = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let y1 = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("first run");
         assert_eq!(y1, FastYield::Yielded, "should yield at CallHost");
         assert_eq!(ctx.saved_pc, 1, "saved_pc should be 1");
 
         // Resume with budget=3 — budget reaches 0 by the time Halt completes,
         // so the engine reports BudgetExhausted instead of Finished.
-        let exhausted = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(7)), 3)
+        let exhausted = engine
+            .resume(&prog, &mut ctx, &mut arena, Some(RuntimeValue::Int(7)), 3)
             .expect("resume with tight budget");
-        assert_eq!(exhausted, FastYield::BudgetExhausted,
-            "Budget(3) should exhaust after 3 dec_budget calls, got {:?}", exhausted);
+        assert_eq!(
+            exhausted,
+            FastYield::BudgetExhausted,
+            "Budget(3) should exhaust after 3 dec_budget calls, got {:?}",
+            exhausted
+        );
 
         // saved_pc is cleared after resume — the capsule completed.
         assert_eq!(ctx.saved_pc, 0, "saved_pc should be cleared after entry");
@@ -2228,28 +2435,53 @@ mod tests {
         ctx.budget = 1000;
 
         // Initial run: compiles fresh, yields at CallHost
-        let y1 = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let y1 = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("first run");
         assert_eq!(y1, FastYield::Yielded, "first yield");
-        assert_eq!(engine.compilation_count(), 1,
-            "run_with_ctx should trigger exactly 1 compilation");
+        assert_eq!(
+            engine.compilation_count(),
+            1,
+            "run_with_ctx should trigger exactly 1 compilation"
+        );
 
         // First resume: should reuse cache (no recompile), yields at Spawn
-        let y2 = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(5)), 1000)
+        let y2 = engine
+            .resume(
+                &prog,
+                &mut ctx,
+                &mut arena,
+                Some(RuntimeValue::Int(5)),
+                1000,
+            )
             .expect("first resume");
         assert_eq!(y2, FastYield::Yielded, "second yield");
-        assert_eq!(engine.compilation_count(), 1,
-            "resume #1 should reuse cache, compilation_count still 1");
+        assert_eq!(
+            engine.compilation_count(),
+            1,
+            "resume #1 should reuse cache, compilation_count still 1"
+        );
 
         // Second resume: should reuse cache, finishes normally
-        let final_result = engine.resume(&prog, &mut ctx, &mut arena,
-            Some(RuntimeValue::Int(3)), 1000)
+        let final_result = engine
+            .resume(
+                &prog,
+                &mut ctx,
+                &mut arena,
+                Some(RuntimeValue::Int(3)),
+                1000,
+            )
             .expect("second resume");
-        assert_eq!(final_result, FastYield::Finished(Some(RuntimeValue::Int(33))),
-            "20 + 3 should = 33 after double yield");
-        assert_eq!(engine.compilation_count(), 1,
-            "resume #2 should reuse cache, compilation_count still 1");
+        assert_eq!(
+            final_result,
+            FastYield::Finished(Some(RuntimeValue::Int(33))),
+            "20 + 3 should = 33 after double yield"
+        );
+        assert_eq!(
+            engine.compilation_count(),
+            1,
+            "resume #2 should reuse cache, compilation_count still 1"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -2271,7 +2503,8 @@ mod tests {
         let mut arena = Arena::new();
         let mut ctx = JitContext::new();
         ctx.budget = u64::MAX;
-        let jit_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let jit_result = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("JIT execution should not fail");
 
         match &jit_result {
@@ -2280,8 +2513,11 @@ mod tests {
                     Some(Object::Str(s)) => s.clone(),
                     other => panic!("JIT result should be a string ref, got {:?}", other),
                 };
-                assert_eq!(jit_str, "x: 5",
-                    "JIT OP_ADD_STR should produce 'x: 5', got '{}'", jit_str);
+                assert_eq!(
+                    jit_str, "x: 5",
+                    "JIT OP_ADD_STR should produce 'x: 5', got '{}'",
+                    jit_str
+                );
             }
             other => panic!("JIT should return Finished(Some(Ref)), got {:?}", other),
         }
@@ -2303,7 +2539,8 @@ mod tests {
         let mut arena = Arena::new();
         let mut ctx = JitContext::new();
         ctx.budget = u64::MAX;
-        let jit_result = engine.run_with_ctx(&prog, &mut ctx, &mut arena)
+        let jit_result = engine
+            .run_with_ctx(&prog, &mut ctx, &mut arena)
             .expect("JIT execution should not fail");
 
         match &jit_result {
@@ -2312,8 +2549,11 @@ mod tests {
                     Some(Object::Str(s)) => s.clone(),
                     other => panic!("JIT result should be a string ref, got {:?}", other),
                 };
-                assert_eq!(jit_str, "ab",
-                    "JIT OP_ADD_STR should produce 'ab', got '{}'", jit_str);
+                assert_eq!(
+                    jit_str, "ab",
+                    "JIT OP_ADD_STR should produce 'ab', got '{}'",
+                    jit_str
+                );
             }
             other => panic!("JIT should return Finished(Some(Ref)), got {:?}", other),
         }
@@ -2334,8 +2574,16 @@ mod tests {
         let actual = run_jit(&prog);
         // Both should be errors — FastVM returns TypeMismatch, JIT returns
         // ExecutionError(flag=1). We check for error-ness, not exact match.
-        assert!(expected.is_err(), "FastVM should return error for null < 1, got {:?}", expected);
-        assert!(actual.is_err(), "JIT should return error for null < 1, got {:?}", actual);
+        assert!(
+            expected.is_err(),
+            "FastVM should return error for null < 1, got {:?}",
+            expected
+        );
+        assert!(
+            actual.is_err(),
+            "JIT should return error for null < 1, got {:?}",
+            actual
+        );
     }
 
     #[test]
@@ -2351,8 +2599,16 @@ mod tests {
         prog.symbols.intern_string("b");
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert!(expected.is_err(), "FastVM should return error for 'a' < 'b', got {:?}", expected);
-        assert!(actual.is_err(), "JIT should return error for 'a' < 'b', got {:?}", actual);
+        assert!(
+            expected.is_err(),
+            "FastVM should return error for 'a' < 'b', got {:?}",
+            expected
+        );
+        assert!(
+            actual.is_err(),
+            "JIT should return error for 'a' < 'b', got {:?}",
+            actual
+        );
     }
 
     #[test]
@@ -2366,8 +2622,16 @@ mod tests {
         ]);
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert!(expected.is_err(), "FastVM should return error for true < false, got {:?}", expected);
-        assert!(actual.is_err(), "JIT should return error for true < false, got {:?}", actual);
+        assert!(
+            expected.is_err(),
+            "FastVM should return error for true < false, got {:?}",
+            expected
+        );
+        assert!(
+            actual.is_err(),
+            "JIT should return error for true < false, got {:?}",
+            actual
+        );
     }
 
     #[test]
@@ -2382,8 +2646,11 @@ mod tests {
         ]);
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
-            "2 < 3.0: JIT ({:?}) should match FastVM ({:?})", actual, expected);
+        assert_eq!(
+            expected, actual,
+            "2 < 3.0: JIT ({:?}) should match FastVM ({:?})",
+            actual, expected
+        );
     }
 
     #[test]
@@ -2398,8 +2665,11 @@ mod tests {
         ]);
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
-            "3 <= 3.0: JIT ({:?}) should match FastVM ({:?})", actual, expected);
+        assert_eq!(
+            expected, actual,
+            "3 <= 3.0: JIT ({:?}) should match FastVM ({:?})",
+            actual, expected
+        );
     }
 
     // ── Recursive string concat diagnostic (CRUSH-17 gap 2) ───────────────
@@ -2431,50 +2701,48 @@ mod tests {
         let prog = make_multi_fn(
             vec![
                 // ── cell (PC 0-8, arity 1) ──
-                (FastOp::StoreLocal, 0, 0),     // 0: pop arg → local[0]
-                (FastOp::LoadLocal, 0, 0),       // 1: push x
+                (FastOp::StoreLocal, 0, 0), // 0: pop arg → local[0]
+                (FastOp::LoadLocal, 0, 0),  // 1: push x
                 (FastOp::PushInt, 1, 0),
                 (FastOp::Eq, 0, 0),
                 (FastOp::JumpIfNot, 7, 0),
-                (FastOp::PushStr, 3, 0),       // "T"
+                (FastOp::PushStr, 3, 0), // "T"
                 (FastOp::Return, 0, 0),
-                (FastOp::PushStr, 4, 0),       // "."
+                (FastOp::PushStr, 4, 0), // "."
                 (FastOp::Return, 0, 0),
                 // ── build (PC 9-23, arity 1) ──
-                (FastOp::StoreLocal, 0, 0),      // 9: pop arg → local[0]
+                (FastOp::StoreLocal, 0, 0), // 9: pop arg → local[0]
                 (FastOp::LoadLocal, 0, 0),
                 (FastOp::PushInt, 3, 0),
                 (FastOp::Ge, 0, 0),
                 (FastOp::JumpIfNot, 16, 0),
-                (FastOp::PushStr, 5, 0),       // ""
+                (FastOp::PushStr, 5, 0), // ""
                 (FastOp::Return, 0, 0),
                 (FastOp::LoadLocal, 0, 0),
-                (FastOp::Call, 0, 1),          // call cell
+                (FastOp::Call, 0, 1), // call cell
                 (FastOp::LoadLocal, 0, 0),
                 (FastOp::PushInt, 1, 0),
-                (FastOp::Add, 0, 0),           // x + 1
-                (FastOp::Call, 1, 1),          // call build
-                (FastOp::Add, 0, 0),           // string concat
+                (FastOp::Add, 0, 0),  // x + 1
+                (FastOp::Call, 1, 1), // call build
+                (FastOp::Add, 0, 0),  // string concat
                 (FastOp::Return, 0, 0),
                 // ── main (PC 24-26, arity 0) ──
                 (FastOp::PushInt, 0, 0),
-                (FastOp::Call, 1, 1),          // call build
+                (FastOp::Call, 1, 1), // call build
                 (FastOp::Halt, 0, 0),
             ],
             vec!["cell", "build", "main", "T", ".", ""],
-            vec![
-                ("cell", 0, 9, 1),
-                ("build", 9, 24, 1),
-                ("main", 24, 27, 0),
-            ],
+            vec![("cell", 0, 9, 1), ("build", 9, 24, 1), ("main", 24, 27, 0)],
             24,
         );
 
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "recursive string concat: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     /// Integer-only recursive test: sum(5) = 5+4+3+2+1+0 = 15.
@@ -2527,7 +2795,7 @@ mod tests {
                 (FastOp::LoadLocal, 0, 0),
                 (FastOp::PushInt, 1, 0),
                 (FastOp::Sub, 0, 0),
-                (FastOp::Call, 0, 1),  // call sum (strings[0] = "sum")
+                (FastOp::Call, 0, 1), // call sum (strings[0] = "sum")
                 (FastOp::Add, 0, 0),
                 (FastOp::Return, 0, 0),
                 // main (PC 14-16, arity 0)
@@ -2536,17 +2804,16 @@ mod tests {
                 (FastOp::Halt, 0, 0),
             ],
             vec!["sum", "main"],
-            vec![
-                ("sum", 0, 14, 1),
-                ("main", 14, 17, 0),
-            ],
+            vec![("sum", 0, 14, 1), ("main", 14, 17, 0)],
             14,
         );
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
-        assert_eq!(expected, actual,
+        assert_eq!(
+            expected, actual,
             "recursive int sum(5)=15: JIT ({:?}) should match FastVM ({:?})",
-            actual, expected);
+            actual, expected
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -2565,52 +2832,116 @@ mod tests {
         // When a new op is implemented, move it from UNSUPPORTED to IMPLEMENTED.
         let implemented: &[FastOp] = &[
             // Stack
-            FastOp::PushInt, FastOp::PushFloat, FastOp::PushBool, FastOp::PushNull,
-            FastOp::PushStr, FastOp::Pop, FastOp::Dup, FastOp::Swap,
+            FastOp::PushInt,
+            FastOp::PushFloat,
+            FastOp::PushBool,
+            FastOp::PushNull,
+            FastOp::PushStr,
+            FastOp::Pop,
+            FastOp::Dup,
+            FastOp::Swap,
             // Locals
-            FastOp::LoadLocal, FastOp::StoreLocal,
+            FastOp::LoadLocal,
+            FastOp::StoreLocal,
             // Control flow
-            FastOp::Jump, FastOp::JumpIf, FastOp::JumpIfNot, FastOp::Call, FastOp::Return,
-            FastOp::Halt, FastOp::Nop,
+            FastOp::Jump,
+            FastOp::JumpIf,
+            FastOp::JumpIfNot,
+            FastOp::Call,
+            FastOp::Return,
+            FastOp::Halt,
+            FastOp::Nop,
             // Arithmetic
-            FastOp::Add, FastOp::Sub, FastOp::Mul, FastOp::Div, FastOp::Mod, FastOp::Neg,
+            FastOp::Add,
+            FastOp::Sub,
+            FastOp::Mul,
+            FastOp::Div,
+            FastOp::Mod,
+            FastOp::Neg,
             // Comparison
-            FastOp::Eq, FastOp::Ne, FastOp::Lt, FastOp::Le, FastOp::Gt, FastOp::Ge,
+            FastOp::Eq,
+            FastOp::Ne,
+            FastOp::Lt,
+            FastOp::Le,
+            FastOp::Gt,
+            FastOp::Ge,
             // Logical
-            FastOp::And, FastOp::Or, FastOp::Not,
+            FastOp::And,
+            FastOp::Or,
+            FastOp::Not,
             // Stack manipulation
-            FastOp::Rot, FastOp::Pick, FastOp::Roll,
+            FastOp::Rot,
+            FastOp::Pick,
+            FastOp::Roll,
             // Bitwise
-            FastOp::BitAnd, FastOp::BitOr, FastOp::BitXor, FastOp::BitNot,
-            FastOp::Shl, FastOp::Shr,
+            FastOp::BitAnd,
+            FastOp::BitOr,
+            FastOp::BitXor,
+            FastOp::BitNot,
+            FastOp::Shl,
+            FastOp::Shr,
             // Math
-            FastOp::MathSqrt, FastOp::MathAbs, FastOp::MathRound,
-            FastOp::MathFloor, FastOp::MathCeil, FastOp::MathPow,
+            FastOp::MathSqrt,
+            FastOp::MathAbs,
+            FastOp::MathRound,
+            FastOp::MathFloor,
+            FastOp::MathCeil,
+            FastOp::MathPow,
             // Arena (runtime helpers)
-            FastOp::MakeList, FastOp::MakeMap, FastOp::Index, FastOp::Len,
-            FastOp::TypeOf, FastOp::NewArray, FastOp::ArrayPush, FastOp::ArrayPop,
+            FastOp::MakeList,
+            FastOp::MakeMap,
+            FastOp::Index,
+            FastOp::Len,
+            FastOp::TypeOf,
+            FastOp::NewArray,
+            FastOp::ArrayPush,
+            FastOp::ArrayPop,
             FastOp::ArrSet,
             // String (runtime helpers)
-            FastOp::StrContains, FastOp::StrStartsWith, FastOp::StrEndsWith,
-            FastOp::StrToUpper, FastOp::StrToLower, FastOp::StrTrim,
-            FastOp::StrSplit, FastOp::StrReplace, FastOp::StrJoin, FastOp::StrSim,
+            FastOp::StrContains,
+            FastOp::StrStartsWith,
+            FastOp::StrEndsWith,
+            FastOp::StrToUpper,
+            FastOp::StrToLower,
+            FastOp::StrTrim,
+            FastOp::StrSplit,
+            FastOp::StrReplace,
+            FastOp::StrJoin,
+            FastOp::StrSim,
             // Object/collection (runtime helpers)
-            FastOp::Cast, FastOp::NewTuple, FastOp::NewList, FastOp::NewVector,
-            FastOp::NewSet, FastOp::MakeRange, FastOp::TuplePush, FastOp::ListPush,
-            FastOp::VectorPush, FastOp::SetPush, FastOp::GetField, FastOp::SetField,
-            FastOp::NewObj, FastOp::NewStruct,
+            FastOp::Cast,
+            FastOp::NewTuple,
+            FastOp::NewList,
+            FastOp::NewVector,
+            FastOp::NewSet,
+            FastOp::MakeRange,
+            FastOp::TuplePush,
+            FastOp::ListPush,
+            FastOp::VectorPush,
+            FastOp::SetPush,
+            FastOp::GetField,
+            FastOp::SetField,
+            FastOp::NewObj,
+            FastOp::NewStruct,
             // Exception (runtime helpers)
-            FastOp::EnterTry, FastOp::ExitTry, FastOp::Throw,
+            FastOp::EnterTry,
+            FastOp::ExitTry,
+            FastOp::Throw,
             // Capability
             FastOp::CapCall,
             // Host yield (trampoline escape)
-            FastOp::CallHost, FastOp::ExecLang, FastOp::Spawn, FastOp::Gc,
-            FastOp::ImportVar, FastOp::Await,
+            FastOp::CallHost,
+            FastOp::ExecLang,
+            FastOp::Spawn,
+            FastOp::Gc,
+            FastOp::ImportVar,
+            FastOp::Await,
         ];
 
         let unsupported: &[FastOp] = &[
             // Control flow — compile but cause Cranelift panics (not yet properly handled)
-            FastOp::Break, FastOp::Continue,
+            FastOp::Break,
+            FastOp::Continue,
             // VM control — not yet implemented in JIT
             FastOp::Yield,
             FastOp::Restart,
@@ -2658,9 +2989,16 @@ mod tests {
                     make_prog(vec![(op, 0, 0), (FastOp::Halt, 0, 0)])
                 }
                 // Ops that reference the string table need interned strings.
-                FastOp::PushStr | FastOp::Cast | FastOp::GetField | FastOp::SetField
-                | FastOp::NewStruct | FastOp::StrSim | FastOp::NewTuple
-                | FastOp::NewList | FastOp::NewVector | FastOp::NewSet => {
+                FastOp::PushStr
+                | FastOp::Cast
+                | FastOp::GetField
+                | FastOp::SetField
+                | FastOp::NewStruct
+                | FastOp::StrSim
+                | FastOp::NewTuple
+                | FastOp::NewList
+                | FastOp::NewVector
+                | FastOp::NewSet => {
                     let mut p = make_prog(vec![
                         (FastOp::PushInt, 42, 0),
                         (op, 0, 0),
@@ -2684,9 +3022,9 @@ mod tests {
                 FastOp::Index => {
                     let mut p = make_prog(vec![
                         (FastOp::PushInt, 42, 0),
-                        (FastOp::PushInt, 0, 0), // key
+                        (FastOp::PushInt, 0, 0),  // key
                         (FastOp::PushInt, 42, 0), // obj placeholder
-                        (FastOp::Swap, 0, 0),    // obj, key
+                        (FastOp::Swap, 0, 0),     // obj, key
                         (FastOp::Index, 0, 0),
                         (FastOp::Halt, 0, 0),
                     ]);
@@ -2720,9 +3058,15 @@ mod tests {
                     0,
                 ),
                 // String ops that pop from stack.
-                FastOp::StrContains | FastOp::StrStartsWith | FastOp::StrEndsWith
-                | FastOp::StrToUpper | FastOp::StrToLower | FastOp::StrTrim
-                | FastOp::StrSplit | FastOp::StrReplace | FastOp::StrJoin => {
+                FastOp::StrContains
+                | FastOp::StrStartsWith
+                | FastOp::StrEndsWith
+                | FastOp::StrToUpper
+                | FastOp::StrToLower
+                | FastOp::StrTrim
+                | FastOp::StrSplit
+                | FastOp::StrReplace
+                | FastOp::StrJoin => {
                     let mut p = make_prog(vec![
                         (FastOp::PushInt, 42, 0), // placeholder val
                         (FastOp::PushInt, 42, 0), // placeholder val
@@ -2757,14 +3101,15 @@ mod tests {
         // But we can't easily enumerate all enum variants programmatically.
         // Instead, assert we have reasonable coverage: all ops we know about.
         let total_covered = seen.len();
-        assert!(total_covered >= 90,
-            "only {total_covered} FastOp variants covered by test lists; expected >= 90");
+        assert!(
+            total_covered >= 90,
+            "only {total_covered} FastOp variants covered by test lists; expected >= 90"
+        );
 
         for &op in implemented {
             let prog = prog_for(op);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler.compile(&prog)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiler.compile(&prog)));
             match result {
                 Ok(Ok(_)) => {
                     // Compilation succeeded — op is handled.
@@ -2786,18 +3131,15 @@ mod tests {
                     } else {
                         format!("{:?}", panic_info)
                     };
-                    panic!(
-                        "FastOp::{op:?} caused a compilation panic: {msg}"
-                    );
+                    panic!("FastOp::{op:?} caused a compilation panic: {msg}");
                 }
             }
         }
 
         for &op in unsupported {
             let prog = prog_for(op);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler.compile(&prog)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiler.compile(&prog)));
             match result {
                 Ok(Ok(_)) => {
                     panic!(
@@ -2857,7 +3199,9 @@ mod tests {
         let expected = run_fastvm(&prog);
         let actual = run_jit(&prog);
 
-        assert_eq!(expected, actual,
-            "simple supported program should match FastVM");
+        assert_eq!(
+            expected, actual,
+            "simple supported program should match FastVM"
+        );
     }
 }

@@ -167,8 +167,7 @@ impl SemanticAnalyzer {
                     let mut changed = false;
                     for &i in &scc {
                         let depth = self.scopes.len();
-                        match self
-                            .infer_function_return_type(&program.functions[names[i].as_str()])
+                        match self.infer_function_return_type(&program.functions[names[i].as_str()])
                         {
                             Ok(inferred) => {
                                 if let Some((_, ret)) = self.functions.get_mut(names[i].as_str())
@@ -200,7 +199,8 @@ impl SemanticAnalyzer {
             CastType::Null => Ok(Type::Null),
             CastType::Array(inner) => Ok(Type::Array(Box::new(self.parse_cast_type(inner)?))),
             CastType::Tuple(types) => {
-                let parsed: Result<Vec<_>> = types.iter().map(|t| self.parse_cast_type(t)).collect();
+                let parsed: Result<Vec<_>> =
+                    types.iter().map(|t| self.parse_cast_type(t)).collect();
                 Ok(Type::Tuple(parsed?))
             }
             CastType::List(inner) => Ok(Type::List(Box::new(self.parse_cast_type(inner)?))),
@@ -431,9 +431,12 @@ impl SemanticAnalyzer {
                 }
             }
             Expression::Call { function, args, .. } => {
-                let func_type = if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {
+                let func_type = if let Some((arg_types, ret_type)) =
+                    self.functions.get(function).cloned()
+                {
                     Some((arg_types, ret_type))
-                } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function) {
+                } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function)
+                {
                     Some((arg_types, *ret_type))
                 } else {
                     None
@@ -737,8 +740,7 @@ impl SemanticAnalyzer {
                     // (meta["polyglot_output"]) is real and must be
                     // declared, or any read of it later in this same
                     // return-type-inference walk reports as undefined.
-                    if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str())
-                    {
+                    if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
                         self.define_var(output_var, Type::Any);
                     }
                 }

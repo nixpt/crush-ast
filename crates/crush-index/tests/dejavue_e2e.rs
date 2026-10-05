@@ -7,8 +7,8 @@
 //! in parallel).
 
 use chrono::FixedOffset;
-use crush_index::dejavue::{build_annotation_links, parse_timeline_str, DejavueEvent};
 use crush_index::CrushIndex;
+use crush_index::dejavue::{DejavueEvent, build_annotation_links, parse_timeline_str};
 use std::collections::HashMap;
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -64,7 +64,10 @@ final-event-malformed-timestamp-only
     // 2 valid events; skipped = the 2 malformed lines (JSON parse AND
     // timestamp parse failures are both counted). The final "line" is
     // ALSO not valid JSON so it counts. The empty line doesn't.
-    assert_eq!(skipped, 2, "expected 2 malformed lines to be silently skipped, got {skipped}");
+    assert_eq!(
+        skipped, 2,
+        "expected 2 malformed lines to be silently skipped, got {skipped}"
+    );
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].decision_title.as_deref(), Some("a"));
     assert_eq!(events[1].decision_title.as_deref(), Some("a"));
@@ -79,7 +82,10 @@ fn parse_timeline_str_skips_events_with_unparseable_timestamps() {
 {"ts":"2026-06-01T00:00:00Z","event":"decision","decision_title":"b"}
 "#;
     let (events, skipped) = parse_timeline_str(timeline);
-    assert_eq!(skipped, 1, "expected 1 event with bad timestamp to be silently skipped, got {skipped}");
+    assert_eq!(
+        skipped, 1,
+        "expected 1 event with bad timestamp to be silently skipped, got {skipped}"
+    );
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].decision_title.as_deref(), Some("b"));
 }
@@ -284,8 +290,11 @@ fn load_dejavue_verbose_handles_zero_skipped_and_malformed() {
     // ─── Scenario 1: zero-skip when no .dejavue/timeline.jsonl ───
     // Process PID suffixes each tmpdir so this test function is
     // re-runnable without manual cleanup.
-    let empty_tmp = std::env::temp_dir()
-        .join(format!("crush-dejavue-empty-{}-{}", std::process::id(), line!()));
+    let empty_tmp = std::env::temp_dir().join(format!(
+        "crush-dejavue-empty-{}-{}",
+        std::process::id(),
+        line!()
+    ));
     let _ = std::fs::remove_dir_all(&empty_tmp);
     std::fs::create_dir_all(&empty_tmp).expect("create empty tmpdir");
 
@@ -328,8 +337,7 @@ fn load_dejavue_verbose_handles_zero_skipped_and_malformed() {
 {"ts":"2026-05-01T00:00:00-05:00","event":"decision","decision_title":"kept-b"}
 { this is not valid json }
 "#;
-    std::fs::write(dejavue_dir.join("timeline.jsonl"), malformed_body)
-        .expect("write timeline");
+    std::fs::write(dejavue_dir.join("timeline.jsonl"), malformed_body).expect("write timeline");
 
     let mut idx_malformed = CrushIndex::new();
     let skipped_malformed = {
