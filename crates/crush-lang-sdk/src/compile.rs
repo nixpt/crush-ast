@@ -354,6 +354,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "push_null" => "PUSH_NULL".to_string(),
                 "pop" => "POP".to_string(),
                 "dup" => "DUP".to_string(),
+                "swap" => "SWAP".to_string(),
                 "load" => {
                     let name = instr.args["name"]
                         .as_str()

@@ -1698,6 +1698,15 @@ impl Compiler {
                         self.compile_expr(arg, instrs)?;
                     }
                     instrs.push(self.create_instr(op, serde_json::json!({}), meta));
+                    if op == "array_pop" {
+                        // ARR_POP leaves the array *and* the value (every
+                        // backend); the expression's value is just the
+                        // element, so drop the array under it. Without this
+                        // `let v = array.pop(a)` leaked the array on the stack
+                        // (found by CRUSH-142's strict differential test).
+                        instrs.push(self.create_instr("swap", serde_json::json!({}), meta));
+                        instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                    }
                 } else if self.local_functions.contains(name) {
                     // Last-to-first, like every other `call`: the callee's
                     // `store <param1>` pops the first argument (CRUSH-138).
