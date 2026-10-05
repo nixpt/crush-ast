@@ -2604,7 +2604,7 @@ mod tests {
             // Capability
             FastOp::CapCall,
             // Host yield (trampoline escape)
-            FastOp::CallHost, FastOp::ExecLang, FastOp::Spawn, FastOp::Gc,
+            FastOp::CallHost, FastOp::Spawn, FastOp::Gc,
             FastOp::ImportVar, FastOp::Await,
         ];
 
@@ -2619,6 +2619,8 @@ mod tests {
             FastOp::ExportVar,
             // Host interaction — not yet implemented
             FastOp::CallInterface,
+            // Polyglot — falls back to FastVM, which yields the full request (CRUSH-133)
+            FastOp::ExecLang,
             FastOp::CrossLangCall,
             // AI opcodes — all NOP at runtime
             FastOp::AiQuery,

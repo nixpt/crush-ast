@@ -613,6 +613,7 @@ fn emit_return_dispatch(b: &mut FunctionBuilder, idx: ir::Value, targets: &[ir::
 /// Tag values for `host_request_tag` in JitContext.
 /// Must match the variant ordering in `HostRequest` enum.
 const HOST_REQ_CALL_HOST: i64 = 0;
+#[allow(dead_code)] // reserved: ExecLang is not JIT-compiled (CRUSH-133)
 const HOST_REQ_EXEC_LANG: i64 = 1;
 const HOST_REQ_SPAWN: i64 = 2;
 const HOST_REQ_GC: i64 = 3;
@@ -1175,10 +1176,12 @@ fn emit_one(
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_CALL_HOST);
             return Ok(true);
         }
-        ExecLang => {
-            emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_EXEC_LANG);
-            return Ok(true);
-        }
+        // Not compiled (CRUSH-133, #73): the yield carried only a tag — no
+        // language, code or variables — so nothing could service it, and a
+        // string result resumed as null. Refusing it here sends the program
+        // to the FastVM fallback, which yields a full
+        // `HostRequest::ExecLang { lang, code, variables }`.
+        ExecLang => return Err(CompileError::Unsupported(vec![ExecLang])),
         Spawn => {
             emit_host_yield(b, ctx, global_idx + 1, HOST_REQ_SPAWN);
             return Ok(true);
