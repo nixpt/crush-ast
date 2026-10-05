@@ -229,6 +229,20 @@ fn pick_c_compiler() -> Option<&'static str> {
 /// Dedicated JIT tests (e.g. `jit_rethrow_through_three_functions_agrees_fastvm`)
 /// use `jit_outcome()` directly with programs known to compile safely.
 fn assert_all_backends_agree(source: &str) {
+    check_all_backends(source, true);
+}
+
+/// Every backend except the JIT must agree. Only for a JIT gap that has its
+/// own ticket — name it in `why` so the exemption can be removed with it.
+fn assert_all_backends_agree_except_jit(source: &str, why: &str) {
+    assert!(
+        why.contains("CRUSH-"),
+        "name the ticket tracking the JIT gap"
+    );
+    check_all_backends(source, false);
+}
+
+fn check_all_backends(source: &str, compare_jit: bool) {
     let cc = pick_c_compiler().expect("no C compiler (gcc or clang) available on PATH");
 
     let mut report = crush_lang_sdk::differential::differential_run(source)
@@ -249,11 +263,14 @@ fn assert_all_backends_agree(source: &str) {
     let rust_ok = matches!(report.aot_rust, Some(FastOutcome::Finished(_)));
     let c_ok = matches!(report.aot_c, Some(FastOutcome::Finished(_)));
     let jit_ok = matches!(report.jit, Some(FastOutcome::Finished(_)));
-    // Detect JIT unavailability or known JIT gaps: any JIT error or
-    // unexpected result is non-fatal — the JIT is under active development
-    // and this harness provides safe comparison without breaking the suite.
-    let jit_skip = !matches!(&report.jit, Some(FastOutcome::Finished(_)));
-
+    // The JIT is held to the same bar as every other backend (CRUSH-142:
+    // once the harness noise and the JIT's 16-bit ints / array_push were
+    // fixed, no divergence was left). Only a missing jit-runner binary skips it.
+    let jit_unavailable = !compare_jit
+        || matches!(
+            &report.jit,
+            Some(FastOutcome::Err(e)) if e.contains("jit-runner binary not found")
+        );
     if vm_ok != rust_ok {
         panic!(
             "FastVM vs AOT Rust outcome divergence for {source:?}\n  fastvm={:?}\n  aot_rust={:?}",
@@ -266,27 +283,15 @@ fn assert_all_backends_agree(source: &str) {
             report.fastvm, report.aot_c
         );
     }
-    // JIT comparison is best-effort — warn on divergence rather than
-    // panicking. The JIT is under active development; known gaps include
-    // ordered comparisons with non-numeric types, recursive string concat,
-    // and multi-function exception handling.
-    if !jit_skip && vm_ok != jit_ok {
-        eprintln!(
-            "warning: FastVM vs JIT outcome divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
+    if !jit_unavailable && vm_ok != jit_ok {
+        panic!(
+            "FastVM vs JIT outcome divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
             report.fastvm, report.jit
-        );
-    }
-    // When JIT fails but FastVM succeeds, log the gap for visibility into
-    // active JIT development gaps.
-    if jit_skip && vm_ok {
-        eprintln!(
-            "warning: JIT failed for {:?} (FastVM succeeded): {:?}",
-            source, report.jit
         );
     }
 
     // When all succeed, compare the returned scalar values across every backend.
-    if vm_ok && rust_ok && c_ok && (jit_ok || jit_skip) {
+    if vm_ok && rust_ok && c_ok {
         let vm_val = report.fastvm_return().cloned();
         let rust_val = match &report.aot_rust {
             Some(FastOutcome::Finished(Some(v))) => v.clone(),
@@ -320,13 +325,11 @@ fn assert_all_backends_agree(source: &str) {
                 vm_val, Some(c_val.clone()),
                 "FastVM vs AOT C return value divergence for {source:?}"
             );
-            if let Some(ref jv) = jit_val {
-                if vm_val != Some(jv.clone()) {
-                    eprintln!(
-                        "warning: FastVM vs JIT return value divergence for {source:?}\n  fastvm={:?}\n  jit={:?}",
-                        vm_val, jit_val
-                    );
-                }
+            if !jit_unavailable {
+                assert_eq!(
+                    vm_val, jit_val,
+                    "FastVM vs JIT return value divergence for {source:?}"
+                );
             }
         }
 
@@ -566,7 +569,8 @@ fn assert_fastvm_agrees(source: &str) {
 /// then render_frame concatenates them. All 5 backends now agree.
 #[test]
 fn aot_turtle_runner_render_agrees() {
-    assert_all_backends_agree(r##"
+    assert_all_backends_agree_except_jit(
+        r##"
         fn cell_a(x: Int) {
             if x == 3 { return "T" }
             return "."
@@ -588,7 +592,9 @@ fn aot_turtle_runner_render_agrees() {
             let row_b = build_b(0)
             return row_a + "|" + row_b
         }
-    "##);
+    "##,
+        "recursive JIT calls: Cranelift GVN/LICM issue, CRUSH-87",
+    );
 }
 
 /// Multi-function recursive string concat — ALL five backends now agree.
@@ -1211,3 +1217,52 @@ fn jit_branches_on_comparisons_and_negation() {
         );
     }
 }
+
+// ── CRUSH-142: JIT array literals and integer range ─────────────────────────
+// The JIT's `array_push` dropped the array (so `len([1, 2, 3])` was null), and
+// its ints were 16-bit: anything past ±32767 was truncated, so
+// `i64::MAX + 1` "returned" 0. Ints are now 48-bit; the harness is strict on
+// the JIT, so these run it like every other backend.
+
+#[test]
+fn array_literals_and_pop_agree_on_every_backend() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let a = [1, 2, 3]
+            let v = array.pop(a)
+            return v * 10 + len(a)
+        }
+    "#,
+        32,
+    );
+}
+
+#[test]
+fn ints_past_16_bits_agree_on_every_backend() {
+    assert_all_backends_return(
+        r#"
+        fn main() {
+            let x = 1000
+            let big = x * x
+            let neg = 0 - 40000
+            let i = 0
+            let n = 0
+            while i < 300 { n = n + i
+                i = i + 1 }
+            return big + neg + n
+        }
+    "#,
+        1_000_000 - 40_000 + 44_850,
+    );
+}
+
+/// Past the 48-bit payload the JIT must fail loudly, never wrap.
+#[test]
+fn jit_int_beyond_48_bits_is_an_error_not_a_wrong_value() {
+    let source = "fn main() { let x = 3\n let i = 0\n \
+                  while i < 30 { x = x * 3\n i = i + 1 }\n return x }";
+    let jit = jit_outcome_via_subprocess(source);
+    assert!(matches!(jit, FastOutcome::Err(_)), "JIT: {jit:?}");
+}
+
