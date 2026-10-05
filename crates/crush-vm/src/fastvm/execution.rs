@@ -1110,19 +1110,23 @@ pub fn execute_one(
             let lang = symbols.strings[site.lang_idx as usize].clone();
             let code = symbols.strings[site.code_idx as usize].clone();
 
-            let mut variables = std::collections::HashMap::new();
-
-            let locals_base = current_locals_base(call_stack);
-            for name_idx in &site.var_names {
-                let name_str = &symbols.strings[*name_idx as usize];
-                // lookup local slot
-                if let Some(&local_slot) = symbols.locals.get(name_str) {
-                    let val_idx = locals_base + local_slot as usize;
-                    if let Some(val) = locals.get(val_idx) {
-                        variables.insert(name_str.clone(), val.clone());
-                    }
-                }
+            // The compiler loaded each input's value just before this op, in
+            // `var_names` order, so they're the top `n` stack entries. Pop
+            // them (they used to be left behind) and pair them with their
+            // names. Looking names up in `symbols.locals` instead found
+            // nothing — that table only describes the last function lowered
+            // (CRUSH-140).
+            let n = site.var_names.len();
+            if stack.len() < n {
+                return Err(FastError::StackUnderflow);
             }
+            let values = stack.split_off(stack.len() - n);
+            let variables: std::collections::HashMap<String, RuntimeValue> = site
+                .var_names
+                .iter()
+                .map(|idx| symbols.strings[*idx as usize].clone())
+                .zip(values)
+                .collect();
 
             return Ok(Some(FastYield::Request(HostRequest::ExecLang {
                 lang,

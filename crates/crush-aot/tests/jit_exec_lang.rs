@@ -2,7 +2,7 @@
 //! carried only a tag — no language, code or variables — and a string result
 //! resumed as null. It now refuses to compile `ExecLang`, so `JitEngine`
 //! falls back to FastVM and the host gets the same full request FastVM
-//! yields.
+//! yields — including the block's input variables (CRUSH-140).
 
 use crush_vm::fastvm::{FastVM, FastYield, Hal, HostRequest};
 use crush_vm::value::RuntimeValue;
@@ -49,8 +49,8 @@ fn jit_yields_the_same_exec_lang_request_as_fastvm() {
     let jit = crush_jit::JitEngine::new().expect("JitEngine::new");
     let from_jit = python_request(jit.run(&program).expect("jit runs"), "JIT");
 
-    // Same request as FastVM. (FastVM itself doesn't marshal the block's
-    // input variables — noted on CRUSH-133 — so this pins agreement, not a
-    // particular variable set.)
+    // Same full request on both: the block's input travels with it
+    // (FastVM used to send an empty variable map — CRUSH-140).
+    assert_eq!(from_fastvm.2, "base=Int(5)");
     assert_eq!(from_jit, from_fastvm);
 }
