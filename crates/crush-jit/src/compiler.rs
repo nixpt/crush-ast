@@ -358,6 +358,10 @@ fn iadd(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.i
 fn band(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().band(a, b2) }
 fn bor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().bor(a, b2) }
 fn bnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().bnot(v) }
+/// Logical not of a 0/1 truth value (an `icmp` result). Not `bnot`: the
+/// bitwise NOT of 1 is 0xFE, which is still non-zero, so `brif`/`select` read
+/// it as true — `JumpIfNot` always jumped and `!x` was always true (CRUSH-139).
+fn lnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value { b.ins().icmp_imm(IntCC::Equal, v, 0) }
 fn band_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value { b.ins().band_imm(v, i) }
 fn icmp_eq(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(IntCC::Equal, a, b2) }
 fn icmp_ne(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value { b.ins().icmp(IntCC::NotEqual, a, b2) }
@@ -499,7 +503,7 @@ fn is_float(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let eq_r = icmp_eq(b, masked, r_tag);
     let or1 = bor(b, eq_s, eq_i);
     let or2 = bor(b, or1, eq_r);
-    bnot(b, or2)
+    lnot(b, or2)
 }
 fn truthy(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let ft = iconst(b, TAG_FALSE);
@@ -893,7 +897,7 @@ fn emit_one(
         Not => {
             let a = pop(b, ctx);
             let ta = truthy(b, a);
-            let nb = bnot(b, ta);
+            let nb = lnot(b, ta);
             let rv = tbool(b, nb);
             push(b, ctx, rv);
         }
@@ -918,7 +922,7 @@ fn emit_one(
         JumpIfNot => {
             let cond = pop(b, ctx);
             let t = truthy(b, cond);
-            let nb = bnot(b, t);
+            let nb = lnot(b, t);
             let ft = global_idx + 1;
             if let (Some(&tb), Some(&eb)) = (clif.get(&(instr.arg as usize)), clif.get(&ft)) {
                 dec_budget(b, ctx);
@@ -1473,7 +1477,7 @@ fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
     } else {
         iconst(b, TAG_FALSE)
     };
-    let not_both_floats = bnot(b, both_floats);
+    let not_both_floats = lnot(b, both_floats);
     let override_on = band(b, bits_eq, not_both_floats);
     let result = select(b, override_on, identity_result, raw_result);
     push(b, ctx, result);
