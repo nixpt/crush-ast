@@ -27,10 +27,18 @@ fn cap_returns_value(name: &str) -> bool {
 }
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
+    casm_to_vm(&compile_crush_to_casm(source)?)
+}
+
+/// Crush source → CASM, including [`prepare_polyglot_blocks`]. Use this,
+/// not `crush_frontend::compile_crush_source`, from any tool that compiles
+/// Crush source: the frontend can't run the polyglot pass itself (it needs
+/// the Python analyzer), so the bare frontend entry point leaves `@lang`
+/// blocks unmarshaled (CRUSH-130).
+pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
     let mut program = crush_frontend::parse_source(source)?;
     prepare_polyglot_blocks(&mut program);
-    let casm_program = crush_frontend::compile_cast(&program)?;
-    casm_to_vm(&casm_program)
+    crush_frontend::compile_cast_owned(program)
 }
 
 /// Every path from Crush source to bytecode must run this — `crushc` used to

@@ -187,7 +187,7 @@ fn load_casm_program(source: &str, path: &std::path::Path) -> anyhow::Result<cas
             compiler.compile(program)
                 .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))
         }
-        _ => crush_frontend::compile_crush_source(source)
+        _ => crush_lang_sdk::compile::compile_crush_to_casm(source)
             .map_err(|e| anyhow::anyhow!("Crush→CASM: {e}")),
     }
 }
