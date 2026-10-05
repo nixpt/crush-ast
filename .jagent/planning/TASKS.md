@@ -194,16 +194,18 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-127** (XS): uncaught `throw` reported as `unknown capability`; compile errors labelled `[runtime]` — GH #67. [ticket](tickets/CRUSH-127-uncaught-throw-mislabeled-unknown-capability.md)
 - [x] **CRUSH-128** (S): prefix `!`/`-` bind tighter than call/index/field (`!f(x)`, `-f(x)` fail) — GH #68. [ticket](tickets/CRUSH-128-unary-prefix-binds-tighter-than-postfix.md)
 - [x] **CRUSH-129** (S): top-level `main()` + `fn main` → infinite recursion — GH #69. [ticket](tickets/CRUSH-129-toplevel-main-call-infinite-recursion.md)
-- [ ] **CRUSH-130** (S): `crushc → .cvm1` skips polyglot marshaling — GH #70. [ticket](tickets/CRUSH-130-crushc-skips-polyglot-marshaling.md)
+- [x] **CRUSH-130** (S): `crushc → .cvm1` skips polyglot marshaling — GH #70. [ticket](tickets/CRUSH-130-crushc-skips-polyglot-marshaling.md)
 - [x] **CRUSH-131** (XS): optimizer folds constants across `@lang` blocks — GH #71. [ticket](tickets/CRUSH-131-optimizer-folds-across-lang-blocks.md)
-- [ ] **CRUSH-132** (S): `crush-aotc --emit rust` silently drops unsupported ops — GH #72. [ticket](tickets/CRUSH-132-aotc-rust-drops-unsupported-ops.md)
-- [ ] **CRUSH-133** (S): JIT `ExecLang` is inert — GH #73. [ticket](tickets/CRUSH-133-jit-exec-lang-inert.md)
+- [x] **CRUSH-132** (S): `crush-aotc --emit rust` silently drops unsupported ops — GH #72. [ticket](tickets/CRUSH-132-aotc-rust-drops-unsupported-ops.md)
+- [x] **CRUSH-133** (S): JIT `ExecLang` is inert — GH #73. [ticket](tickets/CRUSH-133-jit-exec-lang-inert.md)
 - [ ] **CRUSH-134** (M): field access on `any` rejected (params, nested maps); `any` in conditions — **design decision** — GH #74, #77. [ticket](tickets/CRUSH-134-field-access-on-any-rejected.md)
 - [ ] **CRUSH-135** (S): heterogeneous array literals / array `+` — **design decision** — GH #75. [ticket](tickets/CRUSH-135-heterogeneous-arrays-and-array-plus.md)
 - [ ] **CRUSH-136** (S): string `<`/`>` type-check but fail at run time — GH #76. [ticket](tickets/CRUSH-136-string-comparison-runtime-error.md)
 - [ ] **CRUSH-137** (S): the scheduler drops `main`'s return value, so the differential harness never compares the interpreter's return (found during CRUSH-126). [ticket](tickets/CRUSH-137-scheduler-drops-main-return-value.md)
 - [ ] **CRUSH-138** (S–M, P1): FastVM binds call arguments in reverse order — `sub(10, 3)` is `-7` (found during CRUSH-125). [ticket](tickets/CRUSH-138-fastvm-call-arguments-reversed.md)
 - [ ] **CRUSH-139** (S): JIT takes the wrong branch for `if inside && !outside` (found during CRUSH-125). [ticket](tickets/CRUSH-139-jit-wrong-branch-on-and-not.md)
+- [ ] **CRUSH-140** (S): FastVM's `ExecLang` request carries no variables (found during CRUSH-133). [ticket](tickets/CRUSH-140-fastvm-exec-lang-no-variables.md)
+- [ ] **CRUSH-141** (S): `crushc` and `crush-run x.crush` still compile differently — no `cast_enrich`, optimizer opt-in (found during CRUSH-130). [ticket](tickets/CRUSH-141-crushc-pipeline-differs-from-crush-run.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 

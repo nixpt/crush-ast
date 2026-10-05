@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-130 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-05, branch `claude/polyglot-fail-loud`) |
 | **Phase** | M4 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -33,7 +33,7 @@ Both compilation paths should run the polyglot preparation pass, or `crushc` sho
 
 ## Success criteria
 
-- [ ] the same `@python` program behaves identically via `crush-run run x.crush` and `crushc x.crush -o x.cvm1 && crush-run run x.cvm1`
+- [x] the same `@python` program behaves identically via `crush-run run x.crush` and `crushc x.crush -o x.cvm1 && crush-run run x.cvm1`
 
 ## Technical approach
 
@@ -43,3 +43,11 @@ Both compilation paths should run the polyglot preparation pass, or `crushc` sho
 
 - `crates/crush-lang-sdk/src/bin/crushc.rs`
 - `crates/crush-lang-sdk/src/compile.rs`
+
+## Resolution
+
+Reproduced on the branch base first — worse than reported: `crushc` rejected the program at type-check (`Undefined variable: result`), because the pass is also what declares a block's output variable. `prepare_polyglot_blocks` is now public and `crushc` runs it right after parsing. Root cause was wider: `crush_frontend::compile_crush_source` can't run the pass (it needs the Python analyzer — a dependency cycle), and `crush-aotc` and `crush-pkg check` called it directly too; they now go through the new `crush_lang_sdk::compile::compile_crush_to_casm`, which `compile_crush_source` also uses.
+
+Live: `crushc p.crush -o p.cvm1 && crush-run run p.cvm1 --polyglot` → `r=10` (with and without `--optimize`), same as `crush-run run p.crush`. Test: `crush-lang-sdk/tests/crushc_polyglot.rs` (fails without the fix).
+
+Not changed here (filed as CRUSH-141): crushc still skips `cast_enrich` and runs the optimizer only with `--optimize`, unlike `crush-run`.

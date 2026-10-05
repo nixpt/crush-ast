@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-133 |
 | **Priority** | P3 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-05, branch `claude/polyglot-fail-loud`) |
 | **Phase** | M2 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -29,7 +29,7 @@ Either wire the JIT `ExecLang` path through to the polyglot executor (like the i
 
 ## Success criteria
 
-- [ ] JIT either executes `@lang` blocks like the interpreter, or refuses them with a clear "not supported" error
+- [x] JIT either executes `@lang` blocks like the interpreter, or refuses them with a clear "not supported" error
 
 ## Technical approach
 
@@ -39,3 +39,9 @@ Either wire the JIT `ExecLang` path through to the polyglot executor (like the i
 
 - `crates/crush-jit/src/compiler.rs`
 - `crates/crush-jit/src/runtime.rs`
+
+## Resolution
+
+Took the short-term option: the JIT refuses `ExecLang` at compile time (`CompileError::Unsupported`), so `JitEngine` uses its existing FastVM fallback and the caller gets FastVM's full `HostRequest::ExecLang { lang, code, variables }` instead of a payload-less yield that resumed as null. Test: `crush-aot/tests/jit_exec_lang.rs` (JIT and FastVM yield the same request; without the fix the JIT returns a bare `Yielded`).
+
+Limits: the fallback FastVM isn't resumable through `JitEngine` (same as any other fallback), and FastVM itself sends an empty `variables` map for the block — filed as CRUSH-140.
