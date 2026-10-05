@@ -1,7 +1,10 @@
 //! CASM → Rust source code generator.
 
 /// Transpile a CASM program to Rust source code.
-pub fn gen_rust_source(program: &casm::Program) -> String {
+///
+/// Fails with [`crate::UnsupportedOps`] if any instruction has no Rust
+/// translation.
+pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     let mut out = String::new();
 
     emit_header(&mut out);
@@ -10,12 +13,19 @@ pub fn gen_rust_source(program: &casm::Program) -> String {
     emit_ai_stub(&mut out);
     emit_dom_stub(&mut out);
 
+    let mut unsupported = Vec::new();
     for (name, func) in &program.functions {
-        emit_function(&mut out, name, func, program);
+        emit_function(&mut out, name, func, program, &mut unsupported);
+    }
+    if !unsupported.is_empty() {
+        return Err(crate::UnsupportedOps {
+            backend: "Rust",
+            ops: unsupported,
+        });
     }
 
     emit_entry_point(&mut out);
-    out
+    Ok(out)
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -327,6 +337,7 @@ fn emit_function(
     name: &str,
     func: &casm::Function,
     _program: &casm::Program,
+    unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
     let is_main = name == "main";
@@ -361,7 +372,9 @@ fn emit_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            {i} => {{\n"));
-        emit_body(out, instr, i, n);
+        if let Some(op) = emit_body(out, instr, i, n) {
+            unsupported.push(format!("{op} (fn {name}, instruction {i})"));
+        }
         out.push_str("            }\n");
     }
 
@@ -380,12 +393,15 @@ fn sanitize_fn_name(name: &str) -> String {
 
 // ── Instruction body emission ───────────────────────────────────────────────
 
+/// Emits one instruction; returns a description of it if it has no Rust
+/// translation.
 fn emit_body(
     out: &mut String,
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
-) {
+) -> Option<String> {
+    let mut unsupported = None;
     let args = &instr.args;
     let next = this_pc + 1;
     let next_pc = if next < total_instrs { next } else { total_instrs }; // fall-through
@@ -771,18 +787,14 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
                 }
-                _ => {
-                    out.push_str(&format!("{ind}for _ in 0..{argc} {{ stack.pop(); }} stack.push(RuntimeValue::Null); // cap_call '{0}' stubbed\n", cap_name.escape_debug()));
-                    out.push_str(&next_pc_str);
-                }
+                _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
         }
 
-        // ── Unknown / NOP ──
-        _ => {
-            out.push_str(&next_pc_str);
-        }
+        "nop" => out.push_str(&next_pc_str),
+        _ => unsupported = Some(format!("`{}`", instr.op)),
     }
+    unsupported
 }
 
 // ── AI stub helper ────────────────────────────────────────────────────────

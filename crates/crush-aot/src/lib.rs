@@ -31,6 +31,18 @@ pub mod compiler;
 pub mod loader;
 
 pub use compiler::AotCompiler;
+
+/// CASM a backend can't translate. Each entry names the op (or
+/// `cap_call '<name>'`), the function and the instruction index. Generation
+/// fails on these instead of emitting a no-op or a null stub, which compiled
+/// fine and then silently did nothing — e.g. a dropped `@python` block
+/// (CRUSH-132, #72).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the {backend} AOT backend cannot compile: {}", .ops.join("; "))]
+pub struct UnsupportedOps {
+    pub backend: &'static str,
+    pub ops: Vec<String>,
+}
 pub use loader::Module;
 
 /// Compile Crush source to native code, load it, and extract an i64 result.

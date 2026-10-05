@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 
 /// Transpile a CASM program to C source code.
-pub fn gen_c_source(program: &casm::Program) -> String {
+/// Fails with [`crate::UnsupportedOps`] if any instruction has no C
+/// translation.
+pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     let mut out = String::new();
 
     emit_c_header(&mut out);
@@ -25,12 +27,19 @@ pub fn gen_c_source(program: &casm::Program) -> String {
     }
     out.push_str("\n");
 
+    let mut unsupported = Vec::new();
     for (name, func) in &program.functions {
-        emit_c_function(&mut out, name, func, program);
+        emit_c_function(&mut out, name, func, program, &mut unsupported);
+    }
+    if !unsupported.is_empty() {
+        return Err(crate::UnsupportedOps {
+            backend: "C",
+            ops: unsupported,
+        });
     }
 
     emit_c_entry_point(&mut out);
-    out
+    Ok(out)
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -490,6 +499,7 @@ fn emit_c_function(
     name: &str,
     func: &casm::Function,
     _program: &casm::Program,
+    unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
     let n = func.body.len();
@@ -514,7 +524,9 @@ fn emit_c_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            case {i}: {{\n"));
-        emit_c_instr(out, instr, i, n, &local_index);
+        if let Some(op) = emit_c_instr(out, instr, i, n, &local_index) {
+            unsupported.push(format!("{op} (fn {name}, instruction {i})"));
+        }
         out.push_str("            }\n");
     }
 
@@ -676,13 +688,16 @@ fn discover_locals(body: &[casm::Instruction], params: &[String], type_hints: Op
 
 // ── Instruction emission ────────────────────────────────────────────────────
 
+/// Emits one instruction; returns a description of it if it has no C
+/// translation.
 fn emit_c_instr(
     out: &mut String,
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
     locals: &HashMap<String, LocalMeta>,
-) {
+) -> Option<String> {
+    let mut unsupported = None;
     let args = &instr.args;
     let next = this_pc + 1;
     let next_pc = if next < total_instrs { next } else { total_instrs };
@@ -1106,12 +1121,7 @@ fn emit_c_instr(
                 "io.print" | "print" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); switch (__pv.tag) {{ case TAG_INT: printf(\"%ld\\n\", (long)__pv.i); break; case TAG_FLOAT: printf(\"%g\\n\", __pv.f); break; case TAG_BOOL: printf(\"%s\\n\", __pv.b ? \"true\" : \"false\"); break; case TAG_NULL: printf(\"null\\n\"); break; case TAG_STRING: printf(\"%s\\n\", __pv.s); break; default: printf(\"[array#%d]\\n\", __pv.array_idx); break; }} }} _pc={next_pc}; break; // cap_call io.print\n"));
                 }
-                _ => {
-                    if argc > 0 {
-                        out.push_str(&format!("                for (int __i=0; __i<{argc}; __i++) _pop();\n"));
-                    }
-                    out.push_str(&format!("                _push(mk_null()); _pc={next_pc}; break; // cap_call '{}' stubbed\n", cap_name.escape_default()));
-                }
+                _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
         }
 
@@ -1136,16 +1146,12 @@ fn emit_c_instr(
         "str_trim" => {{
             out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; const char* __start = __src; while (*__start && isspace((unsigned char)*__start)) __start++; const char* __end = __src + strlen(__src); while (__end > __start && isspace((unsigned char)*(__end-1))) __end--; size_t __len = (size_t)(__end - __start); int __pos = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__start)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __start = _sv + (__start - _strbuf); }} if (__len >= (size_t)(STRBUF_SIZE - __pos)) {{ __pos = 0; }} memcpy(&_strbuf[__pos], __start, __len); _strbuf[__pos + __len] = '\\0'; _strbuf_idx = __pos + (int)__len + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__pos])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
         }}
-        // Complex string ops: emit as cap_call stubs (need dynamic allocation)
-        "str_split" | "str_replace" | "str_join" => {{
-            out.push_str(&format!("                _pop(); _pop(); _push(mk_null()); _pc={next_pc}; break; // str_* stubbed (needs dynamic strings)\n"));
-        }}
-
-        // ── Unknown / NOP ──
-        _ => {
-            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
-        }
+        // `str_split` / `str_replace` / `str_join` need dynamic strings this
+        // backend doesn't have; they used to compile to a null stub.
+        "nop" => out.push_str(&format!("                _pc = {next_pc}; break;\n")),
+        _ => unsupported = Some(format!("`{}`", instr.op)),
     }
+    unsupported
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────

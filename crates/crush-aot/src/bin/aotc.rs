@@ -236,11 +236,11 @@ fn cmd_compile(args: &CompileArgs) -> anyhow::Result<()> {
 
     // ── Emit source only ──
     if args.emit == EmitKind::Rust {
-        let src = crush_aot::codegen::gen_rust_source(&program);
+        let src = crush_aot::codegen::gen_rust_source(&program)?;
         return emit_text(args, &src);
     }
     if args.emit == EmitKind::CSource {
-        let src = crush_aot::codegen_c::gen_c_source(&program);
+        let src = crush_aot::codegen_c::gen_c_source(&program)?;
         return emit_text(args, &src);
     }
 
