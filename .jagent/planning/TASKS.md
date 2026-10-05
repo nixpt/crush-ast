@@ -211,6 +211,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [ ] **CRUSH-144** (S): crush-aotc is outside the differential harness; it missed #76 string ordering (found during CRUSH-134). [ticket](tickets/CRUSH-144-crush-aotc-outside-differential-harness.md)
 - [x] **CRUSH-145** (S, P1): SET_FIELD contract diverged — map literals broken on FastVM/JIT/AOT; `m.x = v` leaked a stack slot (found during CRUSH-134). [ticket](tickets/CRUSH-145-set-field-contract-diverged.md)
 - [x] **CRUSH-146** (XS, P1): JIT `arr_set` didn't push the array back — `a[i] = v` corrupted the JIT stack (found during CRUSH-135). [ticket](tickets/CRUSH-146-jit-arr-set-stack-contract.md)
+- [x] **CRUSH-147** (S): salvage + triage of the dirty shared checkout — salvage `salvage/panini/CRUSH-147-20261005-0848`@`c302e83`; the 196 dirty files are a `cargo fmt --all` run (0 unique work; CRUSH-73/19/11 work is not in it). [ticket](tickets/CRUSH-147-shared-checkout-salvage.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
