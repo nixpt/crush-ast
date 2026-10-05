@@ -206,7 +206,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-139** (S): JIT takes the wrong branch for `if inside && !outside` (found during CRUSH-125). [ticket](tickets/CRUSH-139-jit-wrong-branch-on-and-not.md)
 - [x] **CRUSH-140** (S): FastVM's `ExecLang` request carries no variables (found during CRUSH-133). [ticket](tickets/CRUSH-140-fastvm-exec-lang-no-variables.md)
 - [ ] **CRUSH-141** (S): `crushc` and `crush-run x.crush` still compile differently — no `cast_enrich`, optimizer opt-in (found during CRUSH-130). [ticket](tickets/CRUSH-141-crushc-pipeline-differs-from-crush-run.md)
-- [ ] **CRUSH-142** (S): JIT — `len([1,2,3])` is null; integer overflow returns 0 (the two real JIT divergences left once the harness noise was fixed). [ticket](tickets/CRUSH-142-jit-len-and-overflow.md)
+- [x] **CRUSH-142** (S): JIT — `len([1,2,3])` is null; integer overflow returns 0 (the two real JIT divergences left once the harness noise was fixed). [ticket](tickets/CRUSH-142-jit-len-and-overflow.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
