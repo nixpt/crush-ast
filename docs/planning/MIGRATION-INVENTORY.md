@@ -260,8 +260,8 @@ UnknownCap` → "[runtime] unknown capability: <name>" and exit 1; `crush-repl` 
 so workspace-wide builds may unify it on and hide the gap in tests.
 
 **Proposal: default-on, and stop gating stdcaps behind `--stdlib` at runtime.** The stdlib is pure
-(stdcap — no I/O, nothing to grant), its only extra dependency is `regex` (already in the tree via
-`crush-lang-js`), and the capability model's promise is "no *ambient authority*", which pure functions
+(stdcap — no I/O, nothing to grant), its only extra dependency is `regex` (already compiled in workspace
+builds: `crush-lang-js/Cargo.toml:37` and `xtask` enable `stdlib`), and the capability model's promise is "no *ambient authority*", which pure functions
 do not confer. Keep the cargo feature so `crush-web`/embedded builds can opt out, but make a missing
 feature a **hard error** when `--stdlib` (or a stdlib cap) is requested, and fix the `stdlib.rs` header.
 I/O halves (`text.head…`, `time.now…`, `fs.*`) stay behind their grants. This is decision **C-1**; the
@@ -293,13 +293,13 @@ in-tree engine is frozen, not migrated; new capsule execution goes through CVM1/
 
 | Runtime (source) | LOC | What it does that ast's CVM1 / PortableVm / FastVM / JIT / AOT / crush-web don't | Verdict |
 |---|---:|---|---|
-| **nanovm** `exo:crates/core/vm/nanovm` | 26.2k src + 8.0k tests/examples | (1) a complete debugger — step into/over/out by frame depth, watchpoints with scopes, event sinks, visibility levels (redacted values), frame snapshots (`src/debug/`, 3.2k), used live by vortex's shell; (2) an AI tool-chain strategy engine (`src/vm/ai.rs`, sequential/parallel/conditional/retry × fail-fast/continue/retry/fallback); (3) in-process Lua (mlua, restricted stdlib) and QuickJS executors; (4) a FastVM host driver that services `call_host`/`exec_lang`/`spawn`/`await` yields; (5) `secure_mem` paged ECASM decryption; (6) `wasi_bridge` value codec; (7) VM pool / lifecycle / supervision (restart, watchdog); (8) Wave3 identity-gated caps | **Adapt concepts, don't copy code.** Port (1) → `crush-debugger` (CRUSH-153), (2) → `crush-lang-sdk::ai_native` (CRUSH-151/152), (3) Lua only, feature-gated, *captain decision* (CRUSH-160). (4) only if FastVM stays a sanctioned engine — lane-guarded `fastvm/` (CRUSH-161, decision). (5)(6)(7)(8) **stay out**: dead in exosphere (5, 6), belong to mandala (7) or exo-light (8, EXO-194 D2) |
+| **nanovm** `exo:crates/core/vm/nanovm` | 26.2k src + 8.0k tests/examples | (1) a complete debugger — step into/over/out by frame depth, watchpoints with scopes, event sinks, visibility levels (redacted values), frame snapshots (`src/debug/`, 3.2k), used live by vortex's shell; (2) an AI tool-chain strategy engine (`src/vm/ai.rs`, sequential/parallel/conditional/retry × fail-fast/continue/retry/fallback); (3) in-process Lua (mlua, restricted stdlib) and QuickJS executors; (4) a FastVM host driver that services `call_host`/`exec_lang`/`spawn`/`await` yields; (5) `secure_mem` paged ECASM decryption; (6) `wasi_bridge` value codec; (7) VM pool / lifecycle / supervision (restart, watchdog); (8) Wave3 identity-gated caps | **Adapt concepts, don't copy code.** Port (1) → `crush-debugger` (CRUSH-159/160), (2) → `crush-lang-sdk::ai_native` (CRUSH-156–158), (3) Lua only, feature-gated, *captain decision* (CRUSH-162). (4) only if FastVM stays a sanctioned engine — lane-guarded `fastvm/` (CRUSH-163, decision). (5)(6)(7)(8) **stay out**: dead in exosphere (5, 6), belong to mandala (7) or exo-light (8, EXO-194 D2) |
 | nanovm `sbl_core.{crush,casm}` | 25 + 241 | "System Bytecode Layer" — stdlib bootstrap written in Crush; the `.casm` was a stub (`path_normalize` returned its input) and never wired | **Ported** (CRUSH-122): `ast:crates/crush-lang-sdk/sbl/sbl_core.crush` (19-line diff: adds `format_info` + provenance comment) run by `ast:crates/crush-lang-sdk/src/sbl.rs` — compiled once, each `system.*` call in a fresh quota-bounded PortableVm with only the pure stdlib. vm-runtime's copy is byte-identical to nanovm's |
-| **vm-runtime** `exo:crates/platform/sdk/vm-runtime` | ~3.5k own + re-exports | `pub use nanovm::*` facade + unwired `enforcement.rs` (scope wildcards `fs.*`, expiry), stub `CapabilityHandle::call` (→ `Null`), `vm_debug/` (older fork of nanovm `debug`), `capsule_main!` C-ABI macro | **Drop** with nanovm. Two ideas only: scope wildcard + expiry in `Quotas::allowed_caps` (CRUSH-162, optional XS) and redacted debug values (folded into CRUSH-153) |
-| **vortex crush** `exo:crates/exo/vortex/src/crush/mod.rs` | 10 | one call to exo `crush_lang::repl::run()` | **Superseded** by `ast:crates/crush-lang-sdk/src/repl.rs` (`run(ReplConfig)`). Exosphere-side repoint, not crush-ast work; vortex's real coupling is its shell debugger on nanovm `Debugger` (`exo:crates/exo/vortex/src/shell/mod.rs`) → blocked on CRUSH-153 |
+| **vm-runtime** `exo:crates/platform/sdk/vm-runtime` | ~3.5k own + re-exports | `pub use nanovm::*` facade + unwired `enforcement.rs` (scope wildcards `fs.*`, expiry), stub `CapabilityHandle::call` (→ `Null`), `vm_debug/` (older fork of nanovm `debug`), `capsule_main!` C-ABI macro | **Drop** with nanovm. Two ideas only: scope wildcard + expiry in `Quotas::allowed_caps` (CRUSH-164, optional XS) and redacted debug values (folded into CRUSH-160) |
+| **vortex crush** `exo:crates/exo/vortex/src/crush/mod.rs` | 10 | one call to exo `crush_lang::repl::run()` | **Superseded** by `ast:crates/crush-lang-sdk/src/repl.rs` (`run(ReplConfig)`). Exosphere-side repoint, not crush-ast work; vortex's real coupling is its shell debugger on nanovm `Debugger` (`exo:crates/exo/vortex/src/shell/mod.rs`) → blocked on CRUSH-159 |
 | **capsule-ui crush** `exo:crates/platform/sdk/capsule-ui/src/crush/` | 248 (tsx/ts) | React `CrushMarkup` that renders arniko-crush HTML | **Not a runtime, not crush-ast's.** Stays in exosphere/arniko. ⚠ renders the raw `html` prop via `dangerouslySetInnerHTML` with no sanitizer (`crush-markup.tsx:175`) — captured for exosphere, not a crush-ast ticket |
 | **abi-c** `exo:crates/platform/abi-c` + `include/crush/{capsule.h,capsule_generated.h}` | 719 + 841 headers | capsule-side C ABI; cap entry points return `NotImplemented`; fs/env calls are ambient libc passthroughs; hand-written `capsule.h` declares 17 functions with no implementation | **Drop.** `ast:crates/crush-vm-capi` (embed the VM from C) and `ast:crates/crush-ffi` (plugin ABI) are the sanctioned C surfaces; the ambient calls contradict the cap model |
-| **platform/runtimes/*** `exo:crates/platform/runtimes/{python,js,c,go,rust,zig,lua,jvm,swift,ai}` | ~12.5k | per-language execution crates registered as nanovm capabilities | python/js/c/go → **superseded** by `EXEC_LANG` (`ast:crates/crush-vm/src/scheduler.rs`) + buckets (`bucket_exec.rs`) + walkers; rust/zig/jvm/swift/bun → **dead** (never executes / broken / thin unsandboxed subprocess); lua → CRUSH-160 decision; **ai → port engine only** (CRUSH-151/152). One design idea worth a ticket: python worker's guest→host callback bridge protocol (CRUSH-163, design note) |
+| **platform/runtimes/*** `exo:crates/platform/runtimes/{python,js,c,go,rust,zig,lua,jvm,swift,ai}` | ~12.5k | per-language execution crates registered as nanovm capabilities | python/js/c/go → **superseded** by `EXEC_LANG` (`ast:crates/crush-vm/src/scheduler.rs`) + buckets (`bucket_exec.rs`) + walkers; rust/zig/jvm/swift/bun → **dead** (never executes / broken / thin unsandboxed subprocess); lua → CRUSH-162 decision; **ai → port engine only** (CRUSH-156–158). One design idea worth a ticket: python worker's guest→host callback bridge protocol (CRUSH-166, design note) |
 | **docs** `exo:docs/crush/EXO-205-divergence-inventory.md`, `exo:docs/runtime/exo-92-stub-audit.md` | 313 + 167 | exosphere-side divergence inventory; packman/nanovm stub audit | **Superseded** by CRUSH-55 (EXO-205) / historical (EXO-92). Stay in exosphere |
 
 **crush-ast runtimes, for contrast** (what already exists and is the go-forward home): CVM1 scheduler
@@ -315,7 +315,7 @@ the gaps are debugger semantics, AI engine, and (optionally) in-process Lua.
 `push_const_array`, casts `int/float/bool/string`, `ai_adaptation_request`, `ai_capability_discovery`,
 and the AI spellings `ai_goal_decl`/`ai_knowledge_share`/`ai_tool_chain` (ast: `ai_goal_declaration`/
 `ai_knowledge_sharing`/`ai_toolchain`). None carries semantics worth porting except as FastVM-lowerer
-aliases, which only matter if exo-emitted CASM is ever fed to ast's FastVM (folded into CRUSH-161).
+aliases, which only matter if exo-emitted CASM is ever fed to ast's FastVM (folded into CRUSH-163).
 Value model: nanovm `RuntimeValue` is byte-identical to `ast:crates/crush-vm/src/value.rs`; CVM1's
 `Value` (`vm.rs:128`) is a strict superset of nanovm's heap objects.
 
@@ -350,7 +350,7 @@ the dep is dead (tracked with `ast:` CRUSH-86).
 `crush-buckets` 0.1.0; **`crush-pkg` not published**):
 1. Publish `crush-pkg` — it is the only blocker. Its deps are all published; nothing in its manifest
    says `publish = false`; it is simply missing from CRUSH-104's publish set. Pre-flight: `cargo
-   publish --dry-run -p crush-pkg` (check its `readme` path and the `buckets` dep's `version`). → CRUSH-170.
+   publish --dry-run -p crush-pkg` (check its `readme` path and the `buckets` dep's `version`). → CRUSH-161.
 2. Drop the dead `crush-vm` dep (SQUEEZE-7).
 3. Raise the requirement to `crush-pkg = "0.3.9"` (`^0.3.0` would accept an older, API-incompatible
    release if one is ever published).
@@ -363,6 +363,93 @@ crush-pkg's diagnostics and args pass-through, and makes SQUEEZE-5 (re-wrapping 
 moot. The case for staying separate is brand + a cargo-shaped stable CLI contract on its own release
 cadence; if that matters, keep `squeeze` as a binary-only crate that re-exports crush-pkg's CLI under
 its name. Either way, steps 1–2 come first. **Captain decision** (it is a public repo with its own
-name) → CRUSH-171 is written to work for either outcome.
+name) → CRUSH-167 is written to work for either outcome.
 
-<!-- §5-6 -->
+## 5. Phase-2 plan — dependency order
+
+Tickets are filed as `.jagent/planning/tickets/CRUSH-1NN-*.md` with scope, files, done-condition and a
+turn estimate; this section is the ordering. Lanes are independent of each other unless an arrow says
+otherwise, so up to five builders can run in parallel — but the box usually carries 1–2 build lanes
+(`derby gate`), so the default is **one builder taking lanes in the order A → C → B → D → E**.
+🔒 = needs a captain decision first (§5.1). ⚠ = touches a lane-guarded path (`crush-vm/src/fastvm/`).
+
+| Lane | Order | Ticket | Scope | Turns | Runs alone? |
+|---|---|---|---|---:|---|
+| **A — capabilities** (`crush-lang-sdk`) | 1 | CRUSH-113 (existing) 🔒C-1 | stdlib default-on; `--stdlib` without the feature = hard error; repl parity; fix `stdlib.rs` header | 20 | yes |
+| | 2 | CRUSH-151 | fs coreutils host caps `fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find` under `--fs` sandbox (🔒C-5 for `fs.cd`) | 60 | yes |
+| | 3 | CRUSH-152 | `async.sleep` → shared `time.sleep` impl under `--time` | 15 | yes |
+| | 4 | CRUSH-153 | `env.all`/`env.home_dir` (env grant); `http.put/delete/request` (`net` feature) | 30 | yes |
+| | 5 | CRUSH-154 🔒C-6 | `storage.*` handle-based store caps — or record the decline in favour of `db.*` | 40 | yes |
+| | 6 | CRUSH-155 (optional) | `effects` metadata on `HostCapSpec` | 20 | yes |
+| **B — AI engine** (`ai_native`) | 1 | CRUSH-156 ⚠ | real argc / arg pass-through for `ai_native.*` (incl. `fastvm::resolve_host_request`) | 40 | yes |
+| | 2 | CRUSH-157 | `ai_native.toolchain` strategy engine, each step dispatched through `HostCaps` | 60 | after 156 |
+| | 3 | CRUSH-158 | `QueryProvider` / `DelegationBackend` traits + delegation selection | 30 | after 156 |
+| **C — debugger** (`crush-debugger`, `PortableVm`) | 1 | CRUSH-159 | step over/out by frame depth, watchpoints; fix stale `todo!()` docs | 70 | yes |
+| | 2 | CRUSH-160 | debug event sink, redacted value views, cap-gated `debug.*` scopes | 50 | after 159 |
+| **D — packaging** (`crush-pkg`, squeeze) | 1 | CRUSH-161 | make `crush-pkg` publishable (dry-run green, added to the publish lane); **the publish itself is foreman's** | 20 | yes |
+| | 2 | CRUSH-167 🔒C-4 | fold squeeze's build-then-run + non-Crush guard + args into `crush-pkg` (or the thin-wrapper variant) | 40 | after 161 |
+| | 3 | CRUSH-170 | capability inference: diff caps a package's CAST uses vs `capsule.toml [capabilities]` (`crush-pkg check`) | 60 | after A2–A4 (needs the final cap list) |
+| | 4 | CRUSH-171 | manifest category/platform metadata | 25 | yes |
+| **E — docs, examples, hygiene** | 1 | CRUSH-168 | stale in-code docs: `casm/src/lib.rs` ecasm comment, `crush-cast/STATUS.md` exo paths, CRUSH-55/EXO-205 pointers | 15 | yes |
+| | 2 | CRUSH-169 | planning hygiene: close CRUSH-56/57/88–97/108 as superseded (foreman approves) | 10 | yes |
+| | 3 | CRUSH-172 | `examples/crush/capsules/squad-bridge-peek` (scrubbed) | 15 | after 151 |
+| | 4 | CRUSH-173 | design notes: import system (vs CRUSH-110), compile pipeline, walker authoring, SBL/corecap layering, WIT note | 40 | yes |
+| | 5 | CRUSH-175 | `crush doctor` (python3/node/bash/bwrap/buckets presence + versions) | 25 | yes |
+| | 6 | CRUSH-174 | browser playground: check foreman's CRUSH-118 follow-up first; port the old IDE shell only if nothing exists | 20 (+40) | yes |
+| **F — gated runtime work** | — | CRUSH-162 🔒C-2 | in-process Lua `EXEC_LANG` (feature `lua`, restricted stdlib, `polyglot.lua` gate) | 50 | yes |
+| | — | CRUSH-163 🔒C-3 ⚠ | FastVM yield-servicing host loop + nanovm AI op aliases + watchdog/restart servicing | 70 | yes |
+| | — | CRUSH-164 (optional) | wildcard + expiry in `Quotas::allowed_caps` | 15 | yes |
+| | — | CRUSH-165 (optional) | CVM1 execution transcript (opcodes + cap calls, hash-chained), feature-gated | 30 | yes |
+| | — | CRUSH-166 | design note: guest→host cap callbacks during `EXEC_LANG` (python worker bridge protocol) | 15 | yes |
+
+Total ≈ 950 turns if everything runs; lanes A + C + D1 + E (the ungated, highest-evidence work) ≈ 455.
+CRUSH-176..179 are left unassigned for phase-2/3 fallout.
+
+### 5.1 Decisions needed before tickets are dispatched
+
+| # | Decision | Recommendation | Gates |
+|---|---|---|---|
+| C-1 | stdlib default-on? | **Yes** — pure, no authority, `regex` already compiled; hard error when absent (§2.4) | CRUSH-113 |
+| C-2 | Revive in-process Lua (exosphere's CRUSH-55 W11 verdict was *retire*; adds `mlua`, a C dep) | **No, for now** — no live consumer once exo runtimes retire; re-open with a consumer | CRUSH-162 |
+| C-3 | Is FastVM a sanctioned engine that needs a host loop (CRUSH-55 D-4)? | **Defer** — CVM1 is production; decide with CRUSH-77 (four-engine differential) | CRUSH-163 |
+| C-4 | squeeze: fold into crush-pkg, or keep as a public repo? | **Fold**, optionally keep `squeeze` as a binary-only re-export (§4) | CRUSH-167 |
+| C-5 | `fs.cd`: decline, or a VM-local cwd that `fs.*` resolves against? | **VM-local cwd** inside the `--fs-root` sandbox; never `chdir` the process | CRUSH-151 |
+| C-6 | `storage.*` (handle-based) vs existing `db.*` | **Decline** unless a consumer appears; `db.*` covers persistence | CRUSH-154 |
+| C-7 | Publish `crush-pkg` to crates.io (irreversible) | **Yes**, after CRUSH-161's dry-run — foreman/captain action | CRUSH-161 → squeeze |
+| C-8 | RustPython | **No change.** Nothing in any source needs it; exo's python runtime's rustpython backend is superseded by `EXEC_LANG` + buckets. The ADOPTED "no embedded RustPython VM" decision stands; CRUSH-47 still needs its own decision before work | — |
+
+**Licence/provenance rule for phase 2** (not a decision, a constraint): `crushed-book`, `walker` and
+`joker-coordinator` carry no licence, and `incubator` is private — **re-implement from the summaries
+here, never copy text or code**. `nixpt/crush` is MIT/Apache like crush-ast, but its code is
+dependency-cyclic and an older API, so re-implementation is the practical route anyway. Scrub personal
+absolute paths from anything moved (found in `crushed-book`, `joker-*`, `crush-capsules`).
+
+### 5.2 Not crush-ast tickets (handed back to their owners)
+
+- exosphere: `capsule-ui/src/crush/crush-markup.tsx:175` unsanitized HTML injection; two `casm` crates
+  in one lockfile (EXO-194 hazard 1); vortex REPL repoint to `crush_lang_sdk::repl`; vortex's
+  `shell/bridge.rs` import may break `--no-default-features` (unbuilt); mirror `joker-protocol`'s
+  `specs/ACP.md` into `ai-protocols/`.
+- crush-vscode: `crush.svg`/`casm.svg` icons from `crush-sdk/assets/icons` (licence check first).
+- squeeze: SQUEEZE-7 (dead `crush-vm` dep), stale README/CHANGELOG/STATE/RELEASE, SQUEEZE-5's
+  non-existent `crush_pkg::ops` — moot if C-4 = fold.
+
+## 6. Dead weight — do NOT move
+
+| What | Why |
+|---|---|
+| exo `crush-lang`, `crush-cast`, `casm`, `errors`, nanovm's FastVM/memory/value/registry | ast is a strict superset (CRUSH-55 App. A/B) |
+| `ecasm.rs`, nanovm `secure_mem` | encrypted execution: exo-owned at-rest crypto with live exo consumers; never enabled in the VM; no ast consumer (CRUSH-80) |
+| nanovm `wasi_bridge`, `bytecode`, `runtime`, `capsule`, `interface`, `codec`, `events`, `ipc`, `RichValue` | no consumer / parallel unused format / always-`None` hooks |
+| nanovm `lifecycle`, `pool`, `task` supervision, `phases`; Wave3 kernel; `ScopedHal`/`CapEngine` | belong to antarikshya mandala / x-ray / exo-light (EXO-194 D2); `phases` metrics are fabricated |
+| vm-runtime, crush-common (`hal`, `icbf`, `abi`, `lifecycle`, `event_loop`), crush-sdk + `wave3.rs`, abi-c | facades and capsule-packaging types; stub cap handles; ambient libc calls that contradict the cap model |
+| exo runtimes rust / zig / jvm / swift / bun, and python's pyo3/rustpython backends | never executes / likely broken / unsandboxed; `EXEC_LANG` + buckets is stronger isolation |
+| exo stdlib `polyglot_bridge`, `ai_capabilities` impls, `dom.rs`, `task.rs`, `data.*`, `print`/`text.echo`, `missing_capabilities`/`implementation_plan`/`bin/analysis` | mocks, placeholders, always-error stubs, duplicates, uncompiled scaffolding (§2.2) |
+| exo `archive/archived-stdlib`, `tests/stdlib` Rust tests, `exosphere-1.0.zip` restore plan | older snapshot of the already-ported live crate; tests never assert (§2.3, §2.5) |
+| `anc:crush` `benchmarks/`, `examples/{types,memory}`, old `.cast`/`.casm` goldens, `bin/crush`, `exo-core`, `mesh`, `exo-metrics`, `nexus-privacy`, `crush-web-dashboard` | simulated benchmarks; syntax never implemented; obsolete format; exosphere/OS scope |
+| `crushed-book` chapters `configuration`, `nanovm`, `encrypted_execution`, `stdlib_*`, getting-started/CLI | **overclaims** — describe a config loader, packman/`exo` CLI, trust engine and cap names crush-ast does not have. Porting them would make the public docs less true |
+| `walker/*`, `crush-sdk` (all), `joker-coordinator`, `joker-protocol` (except two design notes) | superseded by ast walkers / absorbed by exosphere / agent coordination, not Crush |
+| `crush-capsules` except `squad-bridge-peek` and the category metadata idea | path-deps don't resolve; exo SDK capsule model; games already ported; `teddy` moved to its own repo |
+| `_rama-archive` | OS capsules, not Crush |
+| `incubator` except the shadow-capsule *idea* | private, transcripts, superseded runners/registries |
+
