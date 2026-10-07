@@ -31,8 +31,10 @@ CRUSH-55 claims re-checked against today's `ast:`:
   `ast:crates/crush-vm/src/`).
 - AI tool-chain engine + arg plumbing (CRUSH-55 PORT #1) — **still open**: `ai_native.*` caps still
   declare `argc: Some(0)` (`ast:crates/crush-lang-sdk/src/ai_native.rs:87-103`).
-- Debugger semantics (CRUSH-55 PORT #2) — **still open**: `crush-debugger` still documents its
-  hook points as deliberate `todo!()` (`ast:crates/crush-debugger/src/lib.rs:27`).
+- Debugger semantics (CRUSH-55 PORT #2) — **still open**: the `todo!()` panics are gone
+  (`ast:crates/crush-debugger/src/session.rs:346` replaced them), but there is no step-over/out or
+  watchpoint anywhere in `crush-debugger/src` — only bytecode breakpoints (`portable_vm.rs:121-279`).
+  Its `README.md:11,43` and `lib.rs:27` still describe the old `todo!()` hook points (stale).
 - CRUSH-113 — **still open**: `stdlib` is not in `crush-lang-sdk`'s `default` features
   (`ast:crates/crush-lang-sdk/Cargo.toml` `[features]`), and `crush-run --stdlib` without it only
   warns (`ast:crates/crush-lang-sdk/src/bin/crush-run.rs:368-370`).
@@ -84,4 +86,44 @@ both its in-tree `casm 0.1.0` and crates.io `casm 0.3.0` — EXO-194's "rename b
 guard has been overtaken (harmless while the versions differ). ~20 exosphere crates still path-dep
 nanovm; that is exosphere's to retire, not a crush-ast task.
 
-<!-- §4-6 -->
+## 4. squeeze
+
+**State** (`sq:` `master` `f451789`): v0.1.0, never published, no tags, no tests, no CI. One source
+file, `src/main.rs` (227 lines). Its own logic is ~60 lines of composition over `crush-pkg`'s public
+API: a bare `squeeze` does check → build → write `target/` → run, and `build`/`check` refuse non-Crush
+capsules with a clear message (`require_crush_buildable`). Everything else it does, `crush-pkg` already
+does — and `crush-pkg` has more (`run` args pass-through, `--message-format text|json|strict` NDJSON,
+`pack`/`unpack`, `generate-keys`/`sign`/`verify`, `site`, `show`, `lint`). README/CHANGELOG ("Script/
+Native refused"), STATE.md ("M2 unmerged") and RELEASE.md (deleted worktree) are stale; SQUEEZE-5
+names a `crush_pkg::ops` module that does not exist (the real modules are `packer`, `signer`, `site`,
+`ecap`).
+
+**Dependencies:** `crush-pkg` and `crush-vm`, both `path = "../../crush-ast/crates/…"` + `version =
+"0.3.0"`. Every `crush_pkg` item it uses (`Manifest`, `builder::PackageBuilder`,
+`runners::{ExecutionResult, get_runner_for_payload}`, `manifest::{manifest_path, scaffold_package}`)
+still exists on `ast:` main.
+
+**SQUEEZE-7 still applies:** `crush_vm` is referenced nowhere in `sq:src/` (no features or cfg either);
+the dep is dead (tracked with `ast:` CRUSH-86).
+
+**What it needs now that crush-* 0.3.9 is on crates.io** (checked live 2026-10-07: `crush-vm`,
+`crush-frontend`, `casm`, `crush-lang-sdk`, `crush-lang-python`, `crush-lang-js` at 0.3.9;
+`crush-buckets` 0.1.0; **`crush-pkg` not published**):
+1. Publish `crush-pkg` — it is the only blocker. Its deps are all published; nothing in its manifest
+   says `publish = false`; it is simply missing from CRUSH-104's publish set. Pre-flight: `cargo
+   publish --dry-run -p crush-pkg` (check its `readme` path and the `buckets` dep's `version`). → CRUSH-170.
+2. Drop the dead `crush-vm` dep (SQUEEZE-7).
+3. Raise the requirement to `crush-pkg = "0.3.9"` (`^0.3.0` would accept an older, API-incompatible
+   release if one is ever published).
+4. Fix the stale docs, then `cargo package --list` + `--dry-run`.
+
+**Separate repo or fold into crush-pkg? Recommendation: fold.** squeeze's unique behaviour (default
+build-then-run, the non-Crush guard) is ~60 lines that belong next to the API they compose; folding
+removes a cross-repo publish dependency (squeeze cannot ship before crush-pkg anyway), gives users
+crush-pkg's diagnostics and args pass-through, and makes SQUEEZE-5 (re-wrapping pack/sign/verify)
+moot. The case for staying separate is brand + a cargo-shaped stable CLI contract on its own release
+cadence; if that matters, keep `squeeze` as a binary-only crate that re-exports crush-pkg's CLI under
+its name. Either way, steps 1–2 come first. **Captain decision** (it is a public repo with its own
+name) → CRUSH-171 is written to work for either outcome.
+
+<!-- §5-6 -->
