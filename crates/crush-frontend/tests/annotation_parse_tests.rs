@@ -3,8 +3,12 @@
 //! data into the dedicated AST slots (Program.{manifest,wip,temporaries,
 //! decisions} + Function.annotations), and that malformed `@<unknown>`
 //! forms emit `ParseError::UnknownAnnotation` instead of silently dropping.
+//!
+//! Also covers AI soft-keyword parsing: `semantic_switch`, named-arg
+//! stripping in `ai_synthesize(…, constraints=[…])`, and `ai_semantic_match`.
 
-use crush_cast::Program;
+use crush_cast::ai::AIStatement;
+use crush_cast::{Program, Statement};
 use crush_frontend::parser::{ParseError, Parser};
 
 fn parse(src: &str) -> Result<Program, Vec<ParseError>> {
@@ -200,6 +204,47 @@ fn main() {}
     assert_eq!(p.decisions[0].over, vec!["Arc<Mutex>"]);
 }
 
+/// Regression test for github.com/nixpt/crush-ast#38.
+/// `revisit-if` caused an infinite loop because the lexer emits `if` as a
+/// keyword token and the parser's annotation key reader only accepted plain
+/// identifiers.  After the fix, the field must be parsed and its value stored.
+#[test]
+fn parse_decision_revisit_if_field_does_not_hang() {
+    let src = r#"
+@decision "test" {
+    chose: "a"
+    revisit-if: ["never"]
+}
+fn main() {}
+"#;
+    let p = parse(src).expect("should parse");
+    assert_eq!(p.decisions.len(), 1);
+    assert_eq!(p.decisions[0].revisit_if, vec!["never"]);
+}
+
+/// Full `@decision` block with all four documented fields (chose, over,
+/// because, revisit-if) to ensure nothing regresses together.
+#[test]
+fn parse_decision_all_fields() {
+    let src = r#"
+@decision "use-semantic-switch-routing" {
+    chose: "semantic_switch"
+    over: ["regex matching", "LLM zero-shot prompt"]
+    because: "embeddings cover common intents"
+    revisit-if: ["user intents become too highly contextual"]
+}
+fn main() {}
+"#;
+    let p = parse(src).expect("should parse");
+    assert_eq!(p.decisions.len(), 1);
+    let d = &p.decisions[0];
+    assert_eq!(d.name, "use-semantic-switch-routing");
+    assert_eq!(d.chose, "semantic_switch");
+    assert_eq!(d.over, vec!["regex matching", "LLM zero-shot prompt"]);
+    assert_eq!(d.because, "embeddings cover common intents");
+    assert_eq!(d.revisit_if, vec!["user intents become too highly contextual"]);
+}
+
 #[test]
 fn parse_wip_block_attaches_to_program() {
     let src = r#"
@@ -285,4 +330,90 @@ fn main() {}
         }
         Ok(_) => panic!("expected @bogus to fail"),
     }
+}
+
+// ─── AI soft-keyword parse tests ────────────────────────────────────────────
+
+#[test]
+fn parse_semantic_switch_produces_ai_statement() {
+    let src = r#"
+fn route(intent) {
+    semantic_switch intent {
+        case "refund":
+            return "refund_handler"
+        case "cancel":
+            return "cancel_handler"
+        fallback:
+            return "default_handler"
+    }
+}
+"#;
+    let p = parse(src).expect("should parse");
+    let func = p.functions.get("route").expect("function present");
+    let switch_stmt = func.body.iter().find(|s| {
+        matches!(s, Statement::AI(AIStatement::SemanticSwitch { .. }))
+    });
+    assert!(switch_stmt.is_some(), "expected a SemanticSwitch AI statement in function body");
+
+    if let Some(Statement::AI(AIStatement::SemanticSwitch { cases, fallback, .. })) = switch_stmt {
+        assert_eq!(cases.len(), 2, "expected 2 cases");
+        assert_eq!(cases[0].0, "refund");
+        assert_eq!(cases[1].0, "cancel");
+        assert!(fallback.is_some(), "expected fallback block");
+    }
+}
+
+#[test]
+fn parse_named_arg_stripped_in_ai_synthesize_call() {
+    // constraints=["polite"] — named arg must be stripped so the call parses
+    // without error and the array literal is used as the second positional arg.
+    let src = r#"
+fn gen() {
+    let r = ai_synthesize("RefundResponse", constraints=["polite", "brief"])
+    return r
+}
+"#;
+    let p = parse(src).expect("named-arg call should parse without error");
+    assert!(p.functions.contains_key("gen"), "function present");
+}
+
+#[test]
+fn parse_ai_agent_ops_example_parses_cleanly() {
+    // Full example from examples/crush/ai_agent_ops.crush (minus the TIMEOUT marker
+    // which was removed after the @decision revisit-if fix).
+    let src = r#"
+@module {
+    purpose: "AI agent ops demo"
+    exports: [process_user_intent, escalate_issue]
+}
+@decision "use-semantic-switch-routing" {
+    chose: "semantic_switch"
+    over: ["regex matching", "LLM zero-shot prompt"]
+    because: "embeddings cover common intents"
+    revisit-if: ["user intents become too highly contextual for basic embeddings"]
+}
+@errors {
+    NetworkTimeout: likely
+}
+fn process_user_intent(intent_text) {
+    semantic_switch intent_text {
+        case "User is asking for a refund or billing help":
+            return ai_synthesize("RefundResponse", constraints=["polite"])
+        fallback:
+            return "I'm not sure how to help."
+    }
+}
+fn escalate_issue(details) {
+    print("Escalating: ", details)
+}
+"#;
+    let p = parse(src).expect("ai_agent_ops example should parse cleanly");
+    assert_eq!(p.decisions.len(), 1);
+    assert_eq!(p.decisions[0].revisit_if, vec!["user intents become too highly contextual for basic embeddings"]);
+
+    let func = p.functions.get("process_user_intent").expect("function present");
+    let has_switch = func.body.iter().any(|s| {
+        matches!(s, Statement::AI(AIStatement::SemanticSwitch { .. }))
+    });
+    assert!(has_switch, "expected semantic_switch in process_user_intent body");
 }
