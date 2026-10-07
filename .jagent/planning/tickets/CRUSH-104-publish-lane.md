@@ -105,6 +105,7 @@ SDK's default behaviour and public API unchanged, so no halt was needed.
 - [x] Every crate in the set packages and verifies (method + evidence below)
 - [x] Gate test present and passing; `cargo test -p crush-lang-sdk` green
 - [x] `Test (sdk)` CI job added (SDK tests were not in CI)
+- [x] Internal path-dep version reqs raised `0.3.0` → `0.3.8` (see below)
 - [x] Publish + yank commands written down, in order (below)
 - [ ] Foreman merges; release workflow bumps + tags
 - [ ] Foreman/captain publish the 13 crates in order
@@ -235,7 +236,23 @@ cargo yank --version 0.2.0 crush-errors
 with fixed walker names such as `python_walker`, not a name taken from user
 source. 0.3.0 has the same code, so it isn't a 0.2.x-specific issue.)
 
+## Dependency requirement lower bounds
+
+Every internal `path` dep that also carries `version = "0.3.0"` (the
+`[workspace.dependencies]` table plus inline deps in 18 crate manifests;
+`crush-buckets` excluded) now says `"0.3.8"`. A `0.3.0` requirement claims the
+crates.io 0.3.0 releases are compatible, and they are not: row 7 above shows
+`crush-lang-js` failing against `crush-cast` 0.3.0. A downstream lockfile that
+already holds `crush-cast` 0.3.0 would keep it and fail to build. Cargo.lock
+is unchanged, `cargo check --workspace` passes, and the 13-crate
+`cargo package` re-verifies with the packaged manifests showing
+`version = "0.3.8"`. `bump-version.sh` doesn't touch dependency requirements,
+so these lower bounds stay put on later bumps. They only need raising again
+when a dependent starts using a newer API.
+
 ## Files in scope
+
+- Root `Cargo.toml` + 18 `crates/*/Cargo.toml` (dependency requirements only)
 
 - `crates/crush-lang-sdk/tests/polyglot_capability_test.rs`
 - `.github/workflows/ci.yml` (`Test (sdk)` job)

@@ -14,6 +14,24 @@ add its entry after yours.
 
 ## [Unreleased]
 
+### Security
+
+- **The polyglot capability gate now ships in the SDK (CRUSH-104).**
+  `crush-lang-sdk` 0.2.x (crates.io, via `crush-vm` 0.2.0) runs `@lang`
+  blocks ungated: any `@word { code }` spawns `word -c code` from `PATH` with
+  the host's authority, with no capability check and no language allowlist.
+  The next SDK release requires a `polyglot.<lang>` grant for every block
+  (`crush-run --polyglot`, `HostCapsBuilder::polyglot`) and refuses languages
+  outside the python/javascript/bash allowlist even when granted. Upgrade off
+  0.2.x; those versions are scheduled to be yanked.
+- `crush-lang-python` and `crush-lang-js` are now publishable, so the SDK keeps
+  its default `polyglot-python`/`polyglot-javascript` features (typed
+  variable marshaling into and out of `@python`/`@javascript` blocks).
+- Internal dependency requirements now say `0.3.8` instead of `0.3.0`; several
+  0.3.0 releases on crates.io predate APIs their dependents use.
+- CI: new `Test (sdk)` job runs `cargo test -p crush-lang-sdk`, including the
+  gate tests.
+
 ## [0.3.8] - 2026-08-25
 
 - chore(security): ignore agent/MCP artifacts and secret-shaped files
