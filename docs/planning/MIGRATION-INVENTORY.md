@@ -39,7 +39,128 @@ CRUSH-55 claims re-checked against today's `ast:`:
   (`ast:crates/crush-lang-sdk/Cargo.toml` `[features]`), and `crush-run --stdlib` without it only
   warns (`ast:crates/crush-lang-sdk/src/bin/crush-run.rs:368-370`).
 
-<!-- §1 module map, §2 stdlib -->
+## 1. Module map
+
+Status vocabulary: **ported** (ast has it — evidence path given) · **partial** (what's missing named) ·
+**superseded** (by what) · **unique** (worth porting) · **dead** (why) · **out** (not Crush; belongs
+elsewhere). The "→" column names the phase-2 ticket (§5) or "—". Effort S/M/L, risk L/M/H.
+
+### 1a. exosphere in-tree Crush (`exo:` `c7ee194c`)
+
+Zero delta since CRUSH-55's base `8d52996` for every path below, so per-file detail is in that
+inventory's Appendices A–C; one row per module group here.
+
+| Source | What | LOC | ast equivalent | Status | → | Eff | Risk |
+|---|---|---:|---|---|---|---|---|
+| `crates/core/crush-lang` | parser/semantics/optimizer/compiler, imports, walkers registry, REPL | ~9k | `crates/crush-frontend`, `crush-lang-sdk/src/repl.rs` | **superseded** — zero exo-only fn/token/node (CRUSH-55 App. A); walker PATH fallback already ported (`crush-frontend/src/language_walkers.rs:179`) | — | — | L |
+| `crates/core/crush-cast` (1.0.0) | CAST IR | ~5k | `crates/crush-cast` | **superseded** (strict subset; `ai_meta` on both) | — | — | L |
+| `crates/core/vm/casm` | CASM format | ~1.5k | `crates/casm` | **superseded** (65 vs 113 ops, 0 exo-only) | — | — | L |
+| `crates/core/vm/casm/src/ecasm.rs` | encrypted CASM pages | 1,014 | none (deleted by CRUSH-80) | **out** — live exo consumer (`ant crush encrypt`, `.ecap` loader); stays exo-owned | — | — | — |
+| `crates/core/base/errors` | error types | 937 | `crates/crush-errors` | **ported** (byte-identical modulo `ResultExt`, 0 callers) | — | — | L |
+| `crates/core/vm/nanovm/src/debug/` | step into/over/out, watchpoints, event sinks, visibility, snapshots | 3,166 | `crates/crush-debugger` (breakpoints + REPL only) | **unique** — re-implement over `PortableVm`, don't copy | 159, 160 | M | M |
+| `crates/core/vm/nanovm/src/vm/ai.rs` + `platform/runtimes/ai/src/{toolchain,delegation}.rs` | AI tool-chain strategies; delegation selection | 596 + 898 | `crush-lang-sdk/src/ai_native.rs` (argc-0 echo stubs) | **unique (engine only)**; backends (joker-mcp, foreman-dispatch, box paths) **out** | 156–158 | M | M |
+| `crates/core/vm/nanovm/src/polyglot` (Lua/QuickJS in-process) | restricted-stdlib Lua, JS console capture | 2,282 | `EXEC_LANG` subprocess + buckets; no Lua | **unique (Lua only)**, captain decision | 162 | M | M |
+| `crates/core/vm/nanovm/src/vm/mod.rs:932-1080` | FastVM host driver servicing yields | ~150 | `crush-vm/src/vm.rs:774-794` (`DummyHal`) | **unique**, only if FastVM stays sanctioned (lane-guarded) | 163 | M | M |
+| `crates/core/vm/nanovm/src/audit.rs` | instruction transcript hash | 288 | none | **unique (idea)** — `record_cap_call` never wired; design fresh in CVM1 | 165 | S | L |
+| `crates/core/vm/nanovm/src/{fastvm,memory,value,registry,traits,ai_optimizer}` | FastVM, arena, values, cap registry | ~6.9k | `crush-vm/src/{fastvm/,memory.rs,value.rs,host.rs,caps.rs,ai_optimizer/}` | **superseded** (`value.rs` identical; ast ahead elsewhere) | — | — | L |
+| `crates/core/vm/nanovm/src/{secure_mem,wasi_bridge,bytecode,runtime,capsule,interface,codec,events,ipc}` + `RichValue` | encrypted exec, CBV codec, parallel bytecode, dead runtime hooks | ~6.0k | none | **dead** (never enabled / no consumer / parallel unused format) | — | — | — |
+| `crates/core/vm/nanovm/src/{lifecycle,pool,task,phases}` | VM lifecycle, pool, supervision, phase metrics | ~4.5k | `scheduler.rs` green threads | **out** → antarikshya mandala/x-ray (`phases` metrics are fabricated) | — | — | — |
+| `crates/core/vm/nanovm/src/sbl_core.{crush,casm}` | System Bytecode Layer | 266 | `crush-lang-sdk/sbl/sbl_core.crush`, `src/sbl.rs` | **ported** (CRUSH-122). `.casm`'s `fs_cp` not carried — superseded by CRUSH-151's `fs.cp` | — | — | L |
+| `crates/core/vm/nanovm/{examples,models}` | phase demos; ONNX GC model checksum (model file absent) | 5,128 + 52 | — | **dead** (`autoexamples = false`, bitrotted; model missing) | — | — | — |
+| `crates/platform/sdk/vm-runtime` | nanovm facade + unwired enforcement/debug forks | ~3.5k | `crush-vm` | **superseded**; ideas → 160 (redaction), 164 (wildcards) | 160, 164 | — | L |
+| `crates/platform/runtimes/{python,js,c,go}` | per-language runtimes | ~7.9k | `EXEC_LANG` + `bucket_exec.rs` + walkers | **superseded**; python worker bridge protocol → design note | 166 | S | L |
+| `crates/platform/runtimes/{rust,zig,jvm,swift,js/bun}` | thin / non-executing runtimes | ~2.7k | `cargo_cap.rs`, walkers | **dead** (never runs binary / no WASI imports / unsandboxed subprocess) | — | — | — |
+| `crates/platform/runtimes/lua` | mlua runtime, no-op sandbox | 391 | none | **dead as-is**; see 162 | 162 | — | — |
+| `crates/core/base/common` (crush-common) | HAL traits, ICBF, capsule ABI/lifecycle, event loop | 3,498 | `HostCap`/`HostCapSpec` | **superseded** (icbf, host_dispatch) / **out** (abi, capability, lifecycle → capsule-contract; event_loop → exo-hal) | — | — | — |
+| `crates/platform/sdk/crush-sdk` (+ `wave3.rs`) | Rust capsule SDK on stub `CapabilityHandle::call` | 737 | none needed | **out** (capsule-contract replaces) | — | — | — |
+| `crates/platform/abi-c` + `include/crush/*.h` | capsule-side C ABI | 719 + 841 | `crush-vm-capi`, `crush-ffi` | **dead** (cap entry points `NotImplemented`; ambient libc; 17 declared-unimplemented fns) | — | — | — |
+| `crates/exo/vortex/src/crush/mod.rs` | REPL shim | 10 | `crush-lang-sdk/src/repl.rs` | **superseded** (exo-side repoint) | — | — | — |
+| `crates/platform/sdk/capsule-ui/src/crush/` | React `CrushMarkup` renderer | 248 | none | **out** (UI host); unsanitized HTML injection captured for exosphere | — | — | H (exo) |
+| `crates/core/base/stdlib`, `archive/archived-stdlib`, `tests/stdlib`, `crates/capabilities/corecaps`, `crates/exo/core-utils` | stdlib / stdcap / corecap | see §2 | `crush-lang-sdk/src/stdlib*` | see §2 | 151–155 | | |
+| `docs/crush/EXO-205-*.md`, `docs/runtime/exo-92-*.md` | divergence inventory; stub audit | 480 | CRUSH-55 inventory | **superseded** / historical (stay in exo) | — | — | — |
+
+### 1b. `nixpt/crush` and `nixpt/crush-language` (`anc:crush/`, archived 2026-05-17)
+
+Dual MIT/Apache (same as ast). Dormant banner: canonical pieces went to exosphere (`crates/core/*`,
+`crates/exo/*`, `crates/platform/sdk/crush-sdk`, `docs/crushed-book`). `crush-language` is a README only.
+The core crates form a dependency cycle (`crush-lang` ↔ `nanovm`, both → `exo-core`): nothing lifts out
+without rewiring, so everything below is port-by-reimplementation.
+
+| Source | What | LOC | ast equivalent | Status | → | Eff | Risk |
+|---|---|---:|---|---|---|---|---|
+| `core/crush-errors`, `core/casm` (+ `specs/casm_v1.0.md`) | errors, CASM | ~1.5k | `crates/crush-errors`, `crates/casm` (spec byte-identical) | **ported** | — | — | L |
+| `core/casm/src/{ecasm,polyglot}.rs` | encrypted CASM; "enhanced" polyglot op set | 1,613 | CVM1 `opcodes.json`, `EXEC_LANG` | **dead** / **superseded** | — | — | — |
+| `core/crush-lang` (compiler, semantics, optimizer, imports, `ai_ast`, `ai_native`, specs, `walkers/go_walker`) | front end | ~6.1k | `crates/crush-frontend` (2–3× larger), `crush-cast/src/ai.rs`, `crush-frontend/src/ai_runtime.rs`, `crates/crush-lang-go` | **superseded** (ast CAST is a strict superset incl. `Lambda`, `Match`) | — | — | L |
+| `core/nanovm` (vm, scheduler, fast_vm, arena, registry, …) | VM | ~7.7k | `crates/crush-vm` | **superseded**; supervision types/tests have no ast equivalent → fold into 163 | 163 | — | M |
+| `core/nanovm/src/debug/` | debugger engine | 1,880 | `crates/crush-debugger` | **unique** (older copy of exo's; use exo's as reference) | 159, 160 | M | M |
+| `core/nanovm/src/audit.rs` | hash-chained instruction/event log | 99 + 133 test | none | **unique (small)** | 165 | S | L |
+| `core/nanovm/src/{secure_mem,wasi_bridge,native_runtime}.rs`, `vm.rs_stub`, `specs/vm_v1.0.md` | | ~2.6k | `crush-web`, `EXEC_LANG` | **dead** / **superseded** | — | — | — |
+| `core/crush-stdlib` pure families (`binary bytes buffer result text math`) | | ~1.5k | `crush-lang-sdk/src/stdlib/*` | **ported** (= exo `archived-stdlib`) | — | — | L |
+| `core/crush-stdlib/src/{fs,ics}.rs` (`fs.ls/cp/mv/mkdir/find/cd/pwd/cat/touch`) | coreutils fs caps | ~660 | `fs.read/write/exists/list` only | **unique** — 3 ast examples are `expect-error` on these (`examples/crush/{fs_test,repl_test,phase2_3_test}.crush`) | 151 | M | M |
+| `core/crush-stdlib/src/async_cap.rs` | `async.sleep` | 62 | `time.sleep` | **unique (alias)** — `examples/crush/async_test.crush` is `expect-error: async.sleep` | 152 | XS | L |
+| `core/crush-stdlib/src/{storage,ai_capabilities,polyglot_bridge,task,gfx,missing_capabilities,implementation_plan}.rs` | | ~3.6k | see §2 | see §2 (exo's live copy is the newer source) | 154 | | |
+| `core/crush-common` | HAL, event loops, ICBF | ~3.1k | `crush-vm/src/{caps,host}.rs`, `crates/crush-net` | **superseded** / **out** | — | — | — |
+| `core/{exo-core,mesh,exo-metrics,nexus-privacy}`, `infra/*`, `examples/acp-ai-client`, `web/crush-web-dashboard` | exokernel, libp2p mesh, metrics, browser privacy, ops UI | ~58k | `crates/crush-net` replaces mesh; `crush-pkg/src/{ecap,signer,merkle}.rs` replace signing | **out** (exosphere) / **dead** | — | — | — |
+| `tools/crush-cli` | old `crush` CLI | 5,131 | `crush-lang-sdk` bins, `crush-pkg`, `crush-installer`, `crush-tui` | **superseded**, except `doctor`'s polyglot-runtime checks | 175 | S | L |
+| `web/crush-web` (`browser_capsules.rs`) | WASM runtime + PWA capsule loader | 998 | `crates/crush-web` (`execute`, `run_blob`, `Session`) | **partial** — browser capsule manifest/permissions only; no consumer yet | — | M | M |
+| `web/crush-web-ide` | browser IDE/playground shell | ~1.9k | none in-repo | **unique** — check foreman's crush-web playground work first (CRUSH-118 follow-up) | 174 | M | M |
+| `tests/` | `.crush`/`.cast`/`.casm` goldens | 1.1k rs + 12k golden | `examples/crush/*` (11/11 `.crush` present) | **ported** (`.crush`); old-format goldens **dead** | — | — | — |
+| `benchmarks/` | "benchmarks" | 3,508 | `benches/`, `docs/benchmarks/` | **dead** (`tokio::time::sleep` simulations) | — | — | — |
+| `examples/{types,memory}/*.crush` | classes, pointers | ~600 | none | **dead** — aspirational syntax the compiler never supported | — | — | — |
+| `docs/architecture/import-system.md` | import system spec | 296 | none in-repo (impl: `crush-frontend/src/import_system.rs`) | **unique (doc)** — re-verify against impl (CRUSH-110: `import` is a no-op) | 173 | S | L |
+| `infra/deploy/docker` | Dockerfile/compose | 108 | none | **unique, low value** | — | S | L |
+
+### 1c. Other ancestors (`anc:crush-sdk`, `crushed-book`, `walker`, `joker-coordinator`, `joker-protocol`)
+
+Licences: only `joker-protocol` has one (MIT, with an unusual copyright line); `crush-sdk` declares MIT
+in `py/Cargo.toml`; `crushed-book`, `walker`, `joker-coordinator` have **none** → rewrite, don't copy
+text. Several files contain personal absolute paths — scrub anything that moves.
+
+| Source | What | LOC | ast equivalent | Status | → |
+|---|---|---:|---|---|---|
+| `crush-sdk/{rust,abi-c,py,js}` | capsule-authoring SDK + C ABI | ~5.2k | exo `capsule-sdk`/`crush-sdk`/`abi-c` | **out** (absorbed by exosphere) | — |
+| `crush-sdk/{go,zig,swift,jvm,c}` | stub SDKs | ~1.7k | none | **dead** | — |
+| `crush-sdk/assets/icons` (`crush.svg`, `casm.svg`) | file icons | — | none in `crush-workspace/crush-vscode` | **unique** — crush-vscode, not crush-ast (licence check first) | — |
+| `crushed-book/src/reference/{crush,casm,appendix}` | language reference | ~5.2k | `crush-workspace/crush-language-guide/src/*` | **ported** (guide is newer) | — |
+| `crushed-book/src/reference/advanced/{compilation,walkers}.md` | pipeline; walker authoring | 138 | none / `crush-walker-core/README.md` | **unique (rewrite)** against real `crushc` pipeline and `Frontend`/`LanguageAdapter` | 173 |
+| `crushed-book/src/{configuration,nanovm,stdlib_*,getting_started,installation,cli_usage}.md`, `encrypted_execution.md` | | ~1.1k | — | **dead — overclaims** (no `~/.crush/config.json`, no packman/`exo` CLI, cap names drift from `host_caps.rs`) | — |
+| `crushed-book/src/{vision,architecture,exo_core,vortex,…}` | Exosphere platform | ~1.4k | — | **out** (exosphere `docs/crushed-book` is canonical and a superset) | — |
+| `walker/*` | `walker-core`, 7 walkers, cli, tree-sitter-crush | ~4.2k (+12.5k generated) | `crush-walker-core`, `crush-lang-*`, `crates/cli`, `crates/tree-sitter-crush` | **superseded** (every ast walker ≥ ancestor; Go identical node set) | — |
+| `joker-coordinator/*` | agent coordinator; capsule-registry/runner | ~38.6k (60% nested dupes) | `crush-pkg/src/{ecap,runners}.rs` | **out** (→ exo joker-core) / **dead** (registry/runner never compiled) | — |
+| `joker-protocol/*` | MCP server, agent tooling, specs | ~23.9k | — | **out** (→ exo joker-mcp, `ai-protocols/`) | — |
+| `joker-protocol/docs/{research_casm_utilities,sbl_corecap_integration}.md`, `specs/rfcs/RFC-029-*` | SBL/corecap layering; WIT idea | ~150 | `crush-lang-sdk/src/sbl.rs` | **unique (design-note summary)** | 173 |
+
+### 1d. `nixpt/crush-capsules` (`caps:` `174c934`)
+
+Almost all of it targets exosphere's in-process `crush-sdk`/`nanovm` capsule model, not crush-ast's
+file-manifest capsules (`crush-pkg`). Its own `SALVAGE_NOTES.md` names that split as the open question.
+
+| Source | What | LOC | ast equivalent | Status | → |
+|---|---|---:|---|---|---|
+| `games/snake`, `games/turtle-runner` | games | 3.1k | `examples/crush/snake.crush`, `examples/js-walked/turtle_runner.js` | **ported** (headers say so; `examples/README.md:21,40`) | — |
+| `squad-bridge-peek/{main.crush,capsule.toml}` | first pure-Crush capsule (`fs.cat`) | 52 | `crush-pkg` manifest shape matches | **unique (XS)** — needs `fs.cat` (CRUSH-151) and a scrubbed path | 172 |
+| `services/sqlite-provider` | SQLite cap provider on exo SDK | 1,281 | `crush-lang-sdk` `db` feature | **superseded** for ast (alive exo-side) | — |
+| `tui/teddy` | editor | 4,281 | moved to `nixpt/teddy` 2026-07-15 | **dead dup** here | — |
+| `hub.json`, `CAPSULE_CATEGORIES.md`, `STANDARDS` | category/platform metadata | — | `crush-pkg` `Manifest` has none | **unique (idea)** | 171 |
+| `tools/*`, `learn`, `archive/RFC`, `templates`, `demos/*`, `examples/*`, `standalone/*`, `demo/hello-wave3` | coreutil/agent/demo capsules on missing paths | ~10k | `crush-pkg new`/`runners.rs` | **dead** (path-deps don't resolve; made-up traits) | — |
+| `gui/*`, `webui/*`, `vscode-exosphere` | Tauri apps, Monaco editor, Joker VS Code ext | ~35k | — | **out** (exosphere/Joker UI) | — |
+| `docs/universal-capsule-design.md` | native/browser/WASI capsule design | 844 | `crush-web` + `crush-pkg` site | **idea only** | — |
+| `system/` (broken symlink, committed ELF cache) | | — | — | **junk** | — |
+
+### 1e. Archives (`_rama-archive`, `incubator`)
+
+`_rama-archive`: 41 hits, all OS-level "capsules" (namespaces/cgroups/zram) — **not Crush**, nothing to
+move. `incubator` is a **local-only, private** repo (raw agent transcripts) — summarized, nothing copied:
+
+| Source | What | LOC | Status | → |
+|---|---|---:|---|---|
+| `parked/crates/ai/services/shadow-capsule` | infers required caps from a CAST program's imports/calls and diffs against declared caps | 595 | **unique (idea)** — no capability inference in ast; fits `crush-pkg check` / crush-lint | 170 |
+| `parked/crates/ai/services/aspect-weaver` | before/after injection over CAST | ~260 | **dead** (curiosity) | — |
+| `parked/crates/services/{capsule-runner,registry/app-registry}` | | ~400 | **superseded** (`crush-pkg/src/runners.rs`; exo `app-registry`) | — |
+| `recovered/ai-native-lsp-server-for-crush.recovered.md` | Crush LSP design | 442 | **superseded** by peer repo `crush-workspace/crush-lsp` | — |
+| `recovered/*` (other), `prim_linux*` | exosphere specs, transcripts | — | **out** / private | — |
+
+<!-- §2 stdlib -->
 
 ## 3. Runtimes
 
