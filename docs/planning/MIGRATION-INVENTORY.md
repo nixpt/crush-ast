@@ -402,7 +402,7 @@ otherwise, so up to five builders can run in parallel — but the box usually ca
 | | — | CRUSH-165 (optional) | CVM1 execution transcript (opcodes + cap calls, hash-chained), feature-gated | 30 | yes |
 | | — | CRUSH-166 | design note: guest→host cap callbacks during `EXEC_LANG` (python worker bridge protocol) | 15 | yes |
 
-Total ≈ 950 turns if everything runs; lanes A + C + D1 + E (the ungated, highest-evidence work) ≈ 455.
+Total ≈ 885 turns if everything runs (+40 if CRUSH-174 has to port the IDE shell); lanes A + C + D1 + E (the ungated, highest-evidence work) ≈ 450.
 CRUSH-176..179 are left unassigned for phase-2/3 fallout.
 
 ### 5.1 Decisions needed before tickets are dispatched

@@ -214,6 +214,36 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-147** (S): salvage + triage of the dirty shared checkout — salvage `salvage/panini/CRUSH-147-20261005-0848`@`c302e83`; the 196 dirty files are a `cargo fmt --all` run (0 unique work; CRUSH-73/19/11 work is not in it). [ticket](tickets/CRUSH-147-shared-checkout-salvage.md)
 - [ ] **CRUSH-148** (S): no fmt gate in CI — 202/319 `.rs` files on `main` aren't rustfmt-clean; pin one rustfmt (CI says 1.85, `rust-toolchain.toml` says stable), one mechanical `cargo fmt --all` commit + `.git-blame-ignore-revs`, then a `cargo fmt --all --check` job. Also: `cargo fmt` fails inside `.jagent/worktrees/*` (sibling `buckets` link lands inside the workspace). [ticket](tickets/CRUSH-148-fmt-ci-gate.md)
 
+## Filed 2026-10-07 — CRUSH-150 migration inventory (derby phase 2)
+
+Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/planning/MIGRATION-INVENTORY.md) §5; 🔒 = captain decision first (§5.1 C-1…C-8). Lane A starts with existing **CRUSH-113** (decision C-1: stdlib default-on). Supersession proposal for CRUSH-56/57/88–97/108 is CRUSH-169.
+
+- [ ] **CRUSH-151** (M (~60 turns), lane A2): fs coreutils host capabilities (`fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find`). [ticket](tickets/CRUSH-151-fs-coreutils-host-caps.md)
+- [ ] **CRUSH-152** (XS (~15 turns), lane A3): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
+- [ ] **CRUSH-153** (S (~30 turns), lane A4): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
+- [ ] **CRUSH-154** (S (~40 turns), lane A5 🔒): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
+- [ ] **CRUSH-155** (S (~20 turns), lane A6): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)
+- [ ] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
+- [ ] **CRUSH-157** (M (~60 turns), lane B2): `ai_native.toolchain` strategy engine. [ticket](tickets/CRUSH-157-ai-toolchain-engine.md)
+- [ ] **CRUSH-158** (S (~30 turns), lane B3): `QueryProvider` / `DelegationBackend` traits + delegation selection. [ticket](tickets/CRUSH-158-ai-provider-traits.md)
+- [ ] **CRUSH-159** (M (~70 turns), lane C1): Debugger: step over/out and watchpoints over `PortableVm`. [ticket](tickets/CRUSH-159-debugger-step-watch.md)
+- [ ] **CRUSH-160** (M (~50 turns), lane C2): Debugger: event sink, redacted value views, cap-gated debug scopes. [ticket](tickets/CRUSH-160-debugger-events-redaction.md)
+- [ ] **CRUSH-161** (S (~20 turns), lane D1): Make `crush-pkg` publishable (unblocks squeeze). [ticket](tickets/CRUSH-161-crush-pkg-publishable.md)
+- [ ] **CRUSH-162** (M (~50 turns), lane F 🔒): In-process Lua `EXEC_LANG` (decision-gated). [ticket](tickets/CRUSH-162-in-process-lua-exec-lang.md)
+- [ ] **CRUSH-163** (M (~70 turns), lane F 🔒): FastVM yield-servicing host loop (decision-gated, lane-guarded). [ticket](tickets/CRUSH-163-fastvm-host-loop.md)
+- [ ] **CRUSH-164** (XS (~15 turns), lane F): Wildcard + expiry in `Quotas::allowed_caps` (optional). [ticket](tickets/CRUSH-164-allowed-caps-wildcards.md)
+- [ ] **CRUSH-165** (S (~30 turns), lane F): CVM1 execution transcript (hash-chained), feature-gated (optional). [ticket](tickets/CRUSH-165-cvm1-execution-transcript.md)
+- [ ] **CRUSH-166** (S (~15 turns), lane F): Design note: guest→host capability callbacks during `EXEC_LANG`. [ticket](tickets/CRUSH-166-exec-lang-callback-design.md)
+- [ ] **CRUSH-167** (S (~40 turns), lane D2 🔒): Fold squeeze's build-then-run flow into crush-pkg (decision-gated). [ticket](tickets/CRUSH-167-fold-squeeze-into-crush-pkg.md)
+- [ ] **CRUSH-168** (XS (~15 turns), lane E1): Fix stale in-code docs pointing at exosphere/ecasm. [ticket](tickets/CRUSH-168-stale-cross-repo-docs.md)
+- [ ] **CRUSH-169** (XS (~10 turns), lane E2): Close the archive-zip stdlib restoration tickets as superseded. [ticket](tickets/CRUSH-169-close-superseded-stdlib-restore.md)
+- [ ] **CRUSH-170** (M (~60 turns), lane D3): Capability inference: diff used vs declared caps (`crush-pkg check`). [ticket](tickets/CRUSH-170-capability-inference-check.md)
+- [ ] **CRUSH-171** (S (~25 turns), lane D4): Package manifest category / platform metadata. [ticket](tickets/CRUSH-171-manifest-category-metadata.md)
+- [ ] **CRUSH-172** (XS (~15 turns), lane E3): Example capsule: `squad-bridge-peek` (first pure-Crush capsule). [ticket](tickets/CRUSH-172-example-squad-bridge-peek.md)
+- [ ] **CRUSH-173** (S (~40 turns), lane E4): Design notes recovered from the ancestors. [ticket](tickets/CRUSH-173-design-notes-from-ancestors.md)
+- [ ] **CRUSH-174** (S (~20 turns), lane E6): Browser playground on `crush-web` — check, then port only if missing. [ticket](tickets/CRUSH-174-browser-playground-check.md)
+- [ ] **CRUSH-175** (S (~25 turns), lane E5): `crush doctor` — polyglot runtime health check. [ticket](tickets/CRUSH-175-crush-doctor.md)
+
 ## M9 — Cross-project convergence & STDLIB restoration
 
 **Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); STDLIB clean-restore of **103** capabilities from `exosphere-1.0.zip` with zero mock markers (each gated by an M5 `@covers` test, not hand-verified); STDLIB mock-rewrite of **46** mock-tainted capabilities from spec (one CRUSH ticket per cap, because rewrites touch behavior). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.
