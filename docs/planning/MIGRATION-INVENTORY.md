@@ -160,7 +160,125 @@ move. `incubator` is a **local-only, private** repo (raw agent transcripts) — 
 | `recovered/ai-native-lsp-server-for-crush.recovered.md` | Crush LSP design | 442 | **superseded** by peer repo `crush-workspace/crush-lsp` | — |
 | `recovered/*` (other), `prim_linux*` | exosphere specs, transcripts | — | **out** / private | — |
 
-<!-- §2 stdlib -->
+## 2. stdlib, stdcap, corecap
+
+### 2.1 Definitions (from the sources)
+
+- **stdcap** — a *classification label*, not a crate: pure, side-effect-free utility capabilities that
+  need no grant. exosphere uses it as section comments in `exo:crates/core/base/stdlib/src/lib.rs`
+  ("stdcap: str") and as the "Kind" column of `exo:crates/capabilities/corecaps/src/lib.rs`;
+  `exo:crates/core/crush-cast/STATUS.md` lists the members: *str / collections / math / json / conv /
+  path / regex / bytes / buffer / binary / result / data*. crush-ast adopted the word
+  (`ast:crates/crush-lang-sdk/src/stdlib.rs` header: "These are stdcaps — always available, no
+  capability gate required" — **inaccurate today**, see §2.4).
+- **corecap** — two meanings; keep them apart:
+  1. *(current, label)* system-access capability namespaces: STATUS.md lists *env / time / http / fs /
+     text / storage / task / gfx / ai / agent / learn / async / polyglot / python / js / dom*. The crate
+     `exo:crates/capabilities/corecaps` (lib.rs 482 L, workspace member, created 2026-02-15) contains
+     **no implementations**: `register_corecaps()` re-registers every `stdlib::*` type (28 namespaces,
+     179 caps, stdcap + corecap) into a `nanovm::Registry` — and **nothing calls it**. Live exosphere
+     consumers (`exo/cli/src/loader_bridge.rs`, `exo/runtime-core/src/runners.rs`,
+     `exo/vortex/src/shell/mod.rs`) call `stdlib::create_std_registry` instead.
+  2. *(older, crate)* `exo:crates/exo/core-utils` (package name `corecap`, ~2.2k L): capability-aware
+     coreutils (`ls cat stat chmod chown mkdir mv pwd rm`) on an `ExoUtility` trait, injected into the
+     vortex shell (v1.2 SHELL-02). The 2026-01-22 proposal
+     `exo:crates/ai/core/protocol/ai-protocols/docs/sbl_corecap_integration.md` layers it as
+     HAL → SBL (CASM) → stdlib → corecap(2) and plans to rewrite corecap in Crush; only the stub
+     `sbl_core.casm` ever existed.
+- **SBL** (System Bytecode Layer) — stdlib bootstrap written in Crush (`exo:crates/core/vm/nanovm/src/
+  sbl_core.{crush,casm}`). Ported (CRUSH-122) as `system.*`.
+- **Grants** — osmosis's `HostCapability` (`name()` + `call(Vec<HostValue>)`, gated by
+  `CapabilityAuthority::authorize`) has no fixed catalogue: `OsContext::grant(name)` accepts any Crush
+  permission string validated by capsule-contract's `CapabilitySet::from_crush_permissions`. `fs.*` /
+  `store.*` / `net.*` are convention. Note osmosis's `HostValue` is **scalar-only**, so families that
+  return arrays/maps cannot cross the osmosis ABI — another reason pure families stay in-VM.
+
+**Working rule** (consistent with CRUSH-122 and the capability model): *stdcap → in-VM, no grant,
+in `crush-lang-sdk`'s stdlib. corecap(1) → host capability behind a named grant (`--fs`, `--time`,
+`--env`, `net` feature, …). Execution semantics (scheduling, watchdog, polyglot) → crush-vm.*
+corecap(2) is a shell-utility layer and is **out** — its useful surface is the fs family below.
+
+### 2.2 Family classification (every family found in any source)
+
+| Family | Kind | Where in ast today | Gap → ticket |
+|---|---|---|---|
+| `str` (18), `collections` (16), `conv` (7), `json` (3), `path` (7), `regex` (5), `math` (15 incl. random/seed) | stdcap | `crush-lang-sdk/src/stdlib.rs`, `stdlib/collections_ext.rs` | none |
+| `bytes`, `buffer`, `binary` (12), `result` | stdcap | `stdlib/{bytes,binary,result}.rs` | none |
+| `text.sort/uniq`, `time.format/parse`, `env.os/arch`, `system.*` (SBL) | stdcap | `stdlib/{text,time_fmt,env_info}.rs`, `src/sbl.rs` | none |
+| `data.parse_json/filter/map/groupby/reduce` | labelled stdcap, but a toy | — | **drop** (only named predicates; unknown ones return the input silently). Closures/loops + `json.parse` supersede |
+| `fs.read/write/exists/list` | corecap (fs grant) | `crush-lang-sdk/src/host_caps.rs` (`--fs`, `--fs-root` sandbox) | — |
+| `fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find` | corecap (fs grant) | **missing** | **CRUSH-151** (`fs.cd` declined: process-wide state; see decision C-5) |
+| `text.head/tail/wc/cut/grep` | corecap (fs grant) | `src/text_tools.rs` | none |
+| `time.now/now_ms/now_iso/elapsed/sleep` | corecap (time grant) | `host_caps.rs` (`--time`). ⚠ `time.now` = seconds in ast, ms in exo | none (document the unit) |
+| `async.sleep` | corecap (time grant) | missing; `time.sleep` exists | **CRUSH-152** (alias) |
+| `env.get` | corecap (env grant) | `host_caps.rs` (`--env`) | — |
+| `env.all`, `env.home_dir` | corecap (env grant) | missing | **CRUSH-153** |
+| `http.get/post` ≈ `net.http_get/post` | corecap (net grant) | `src/net.rs` (`net` feature); raw TCP/TLS in `crates/crush-net` | — |
+| `http.put/delete/request` | corecap (net grant) | missing | **CRUSH-153** |
+| `storage.open/read/write/size/close` | corecap (store grant), handle-based | missing; ast has `db.query/execute` (`db` feature) | **CRUSH-154** — decision C-6 (port vs decline in favour of `db.*`) |
+| `process.*`, `crypto.*` | corecap | ast-only (`host_caps.rs`) | — |
+| `ai.*`, `agent.*`, `learn.*`, `ai.embed/tokenize` | corecap → ai-core host | `ai_native.*` stubs | engine only: **CRUSH-156–158**; exo impls are mocks (`ai.embed` from char codes, `agent.spawn` mock id) → dead |
+| `dom.*` (21), `gfx.*` | corecap → UI host (surfer/arniko) | `dom_native.*` stubs, `graphics.*` (SVG) | **out** (exo impls are placeholders returning `Int(0)`/Null) |
+| `polyglot.lib/call/transfer`, `python.stdlib`, `js.stdlib` | corecap | `polyglot.<lang>` gates + `EXEC_LANG` | **dead** (mock values) |
+| `task.restart/watchdog` | crush-vm (opcode) | FastVM lowers `watchdog`/`restart`; nothing services them | folded into **CRUSH-163**; exo caps always error → dead |
+| `ics` (IC records), `EffectRecord` | metadata | `HostCapSpec` (name/argc/returns), no effects | **CRUSH-155** (optional: `effects` on `HostCapSpec`) |
+| `print`, `text.echo` | duplicates | `io.print` | **dead** |
+
+### 2.3 CRUSH-122 re-verification (against `4034d92`)
+
+Every cap CRUSH-122 says landed exists under the stated name (collections_ext 9, bytes/buffer 8, binary
+12, result 4, `text.*`, `time.*`, `env.os/arch`, `system.*`); `PortableVm::push_entry_args`
+(`portable_vm.rs:251`) and `Value::type_name` (`vm.rs:194`) are public; `crush-frontend/tests/
+array_intrinsics.rs` exists. exosphere's stdlib, archived-stdlib, tests/stdlib, corecaps and SBL files
+are **unchanged** since CRUSH-122's source commit `06b68057`. Deltas:
+
+1. Counts drifted: `stdlib.rs` is 2,569 lines (ticket: 2,523); math 15 / str 18 (ticket's pre-port
+   table: 21 / 16). CRUSH-113's `crush-run.rs:335` is now `:368-370`.
+2. "SBL never wired up" is true for *crush-ast's* sense only: exo-cli's `register_sbl_into_registry`
+   (`exo:crates/exo/cli/src/loader_bridge.rs`, called from `handlers/run.rs:81`) loads the stub `.casm`
+   from home/cwd paths. The `.casm`'s `fs_cp` (over `storage.open`) was not ported — superseded by
+   CRUSH-151.
+3. Missed by CRUSH-122's "homes recorded": `env.all`, `env.home_dir`, `http.put/delete/request` (→ 153);
+   the 6 `crush_ai_runtime` caps (`ai.query`, `ai.agent_delegation`, `ai.goal_declaration`,
+   `ai.progress_update`, `ai.knowledge_sharing`, `ai.adaptation_request`) that `create_std_registry`
+   registers (→ 156–158); `EffectRecord` metadata (→ 155).
+4. `archive/archived-stdlib` is an older snapshot of the live crate (not built, unresolvable paths);
+   its only extra content, an uncompiled `create_std_registry.rs` naming undefined `io.*`/`crypto.*`/
+   `system.*`, is covered by ast's `crypto.*`, crush-net and `env.*`. **Dead.**
+5. `exo:tests/stdlib`: the `.crush` files are already in `examples/crush/` (`math_test`, `logging_test`,
+   `text_tools_test`); the Rust tests reference a commented-out import and only `println!` on failure.
+   **Dead.**
+
+### 2.4 CRUSH-113 — current state and proposed default
+
+Still **off by default**: `crush-lang-sdk`'s `default = ["native-plugins", "polyglot-python",
+"polyglot-javascript"]`. `pub mod stdlib` always compiles, but registration (`HostCapsBuilder::
+stdlib(true)`) exists only under `cfg(feature = "stdlib")`. Without it: `crush-run --stdlib` prints a
+warning and continues (`bin/crush-run.rs:368-370`); the first stdlib cap call fails as `VmError::
+UnknownCap` → "[runtime] unknown capability: <name>" and exit 1; `crush-repl` silently ignores
+`config.stdlib` (`repl.rs:420,488`). Unverified caveat: `crush-lang-js` and `xtask` enable `stdlib`,
+so workspace-wide builds may unify it on and hide the gap in tests.
+
+**Proposal: default-on, and stop gating stdcaps behind `--stdlib` at runtime.** The stdlib is pure
+(stdcap — no I/O, nothing to grant), its only extra dependency is `regex` (already in the tree via
+`crush-lang-js`), and the capability model's promise is "no *ambient authority*", which pure functions
+do not confer. Keep the cargo feature so `crush-web`/embedded builds can opt out, but make a missing
+feature a **hard error** when `--stdlib` (or a stdlib cap) is requested, and fix the `stdlib.rs` header.
+I/O halves (`text.head…`, `time.now…`, `fs.*`) stay behind their grants. This is decision **C-1**; the
+implementation is the existing CRUSH-113 ticket (S, ~20 turns), placed first in the relay (§5).
+
+### 2.5 The archive-zip restoration tickets are superseded
+
+`CRUSH-56` (tracker), `CRUSH-57` (46 mock-tainted caps), `CRUSH-88..97` (ten identical shard templates
+with no cap lists) and `CRUSH-108` (reconcile source) planned a restore from `exosphere-1.0.zip`
+(present at a local scratch path, 700 MB). That zip's `crates/core/base/stdlib` is the same crate as
+exosphere's live tree, and its `archive/archived-stdlib` is the older snapshot; CRUSH-122 already
+restored the clean families **from the live tree**, and the 46 "mock-tainted" caps map onto exactly the
+families classified *dead/out* above (polyglot, ai/agent/learn, dom, task). The genuine remainder is
+CRUSH-151–155. **Recommend closing CRUSH-56/57/88–97/108 as superseded by CRUSH-122 + this
+inventory** (foreman's call — I have only added pointers).
+
+
 
 ## 3. Runtimes
 
