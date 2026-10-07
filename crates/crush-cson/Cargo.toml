@@ -12,7 +12,7 @@ rust-version.workspace = true
 [dependencies]
 # Only needs host::{HostCap, HostCapSpec} + vm::Value for the cson.parse
 # capability (vm_cap.rs) — none of the native-only extras.
-crush-vm = { path = "../crush-vm", version = "0.3.0", default-features = false }
+crush-vm = { path = "../crush-vm", version = "0.3.8", default-features = false }
 # CAISON (formerly CSON) canonical types/parser/printer — extracted from this
 # crate into the standalone https://github.com/nixpt/caison and since diverged
 # (spec fixes, printer, metadata-order changes). NOT YET on crates.io as of

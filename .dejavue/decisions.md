@@ -655,3 +655,15 @@ Rejected alternatives:
 
 Outcome:
 All backends agree on null/false/true/0/7/-1/0.0/1.5/""/"x"/[]/[0] through if, while, !, && and || (differential_aot strict incl. JIT). crush-aotc isn't in the harness: CRUSH-144.
+
+## 2026-10-07T10:16:53-05:00 — CRUSH-104: ship the SDK by publishing crush-lang-python + crush-lang-js, not by dropping them from crush-lang-sdk's default features
+
+Reason:
+Both crates package and verify (cargo 1.98 multi-package cargo package, local overlay) and their names are unclaimed on crates.io. Dropping polyglot-python/polyglot-javascript from defaults would silently stop compile.rs::prepare_polyglot_blocks from marshaling Crush locals into @python/@javascript blocks and the last binding back out, changing what cargo add crush-lang-sdk gets. Publishing keeps default behaviour and public API unchanged.
+
+
+## 2026-10-07T10:16:54-05:00 — CRUSH-104: internal path-dep version requirements raised from 0.3.0 to 0.3.8
+
+Reason:
+crates.io's 0.3.0 releases predate APIs their dependents use (crush-lang-js fails against crush-cast 0.3.0: Statement::LangBlock has no deps field). A ^0.3.0 requirement lets a lockfile already holding 0.3.0 keep it and break. bump-version.sh never raises dep requirements, so the lower bound must be raised by hand when a dependent starts using a newer API.
+
