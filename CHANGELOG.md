@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
+  `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
+  and keeps output printed before an error; new `Session` pauses when the
+  program needs a line and resumes on `provide(line)`, so
+  `examples/crush/blackjack_interactive.crush` is playable in a page.
+  `execute()` is unchanged. Backed by `crush_vm::InputSource` on `PortableVm`
+  (`set_input` / `provide_input` / `close_input` / `take_output`); native
+  `io.read` still reads process stdin. New CI job runs it in headless Chromium.
+
 ## [0.3.9] - 2026-10-07
 
 - Merge pull request #90 from nixpt/agent/panini/CRUSH-104

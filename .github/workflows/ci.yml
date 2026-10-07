@@ -280,3 +280,42 @@ jobs:
             --exclude crush-python \
             --exclude crush-lang-custom \
             ${{ matrix.args }} 2>&1
+
+  # ── crush-web: native tests + headless Chromium (blocking) ────────────────
+  # crush-web is excluded from the workspace (own Cargo.lock, wasm32 target),
+  # so no other job builds it. The browser run plays
+  # examples/crush/blackjack_interactive.crush through `Session` (pause on
+  # io.read, resume on provide) and `execute_with({ stdin })` — wasm32-only
+  # behaviour (no process stdin) that native tests can't see.
+  web:
+    name: crush-web (native tests + headless Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/crush-web
+      - name: Native tests
+        working-directory: crates/crush-web
+        run: cargo test
+      # The CLI must match the wasm-bindgen version in crush-web's Cargo.lock.
+      - name: Install the matching wasm-bindgen CLI
+        run: |
+          v=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3 }' crates/crush-web/Cargo.lock)
+          cargo install wasm-bindgen-cli --version "${v}" --locked
+      - name: Install playwright + Chromium
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+      - name: Play blackjack in headless Chromium
+        run: crates/crush-web/scripts/browser-test.sh

@@ -1,0 +1,280 @@
+# Blackjack — interactive card game with real player decisions.
+#
+# What's new vs the original self-playing blackjack.crush:
+#   - io.read()  — player chooses hit/stand and sets the bet each round
+#   - card_text() uses ranks[]/suits[] array lookup (no more 13-arm if/else)
+#   - show_hand() uses str.split + for-loop to display cards — for loops!
+#   - Hand state threads through recursion as a space-separated string
+#   - LCG advances the deck seed each round so deals vary
+#   - Natural 21 on deal pays 3:2; dealer stands on all 17s
+#   - Play until $0 or player bets 0 to leave
+
+# --- random ----------------------------------------------------------------
+
+fn lcg_next(state) {
+    return (state * 1103515245 + 12345) % 2147483648;
+}
+
+# --- deck ------------------------------------------------------------------
+
+fn card_at(seed, index) {
+    # 17 is coprime with 52, so every card visited once per cycle.
+    return (seed + 17 * index) % 52;
+}
+
+fn card_value(card) {
+    let rank = card % 13;
+    if rank == 0  { return 1;  }   # Ace: hard 1; soft upgrade in blackjack_total
+    if rank >= 10 { return 10; }
+    return rank + 1;
+}
+
+fn is_ace(card) {
+    if card % 13 == 0 { return 1; }
+    return 0;
+}
+
+# Array lookup replaces the 13-branch if/else from the original.
+fn card_text(card) {
+    let ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+    let suits = ["♣", "♦", "♥", "♠"];
+    return ranks[card % 13] + suits[card / 13];
+}
+
+# --- scoring ---------------------------------------------------------------
+
+fn blackjack_total(hard, aces) {
+    if aces > 0 {
+        if hard + 10 <= 21 {
+            return hard + 10;
+        }
+    }
+    return hard;
+}
+
+# --- display ---------------------------------------------------------------
+
+# Hand is a space-separated string of card names; str.split gives an array
+# we iterate with a for loop — the clean "for loops working" showcase.
+fn show_hand(label, hand_str, total) {
+    io.print(label + ":");
+    let cards = str.split(hand_str, " ");
+    for c in cards {
+        io.print("  " + c);
+    }
+    io.print("  = " + total);
+}
+
+fn sep() { io.print("─────────────────────────"); }
+
+# --- input parsing ---------------------------------------------------------
+
+fn digit_val(c) {
+    if c == "0" { return 0; }
+    if c == "1" { return 1; }
+    if c == "2" { return 2; }
+    if c == "3" { return 3; }
+    if c == "4" { return 4; }
+    if c == "5" { return 5; }
+    if c == "6" { return 6; }
+    if c == "7" { return 7; }
+    if c == "8" { return 8; }
+    if c == "9" { return 9; }
+    return 0 - 1;    # non-digit sentinel
+}
+
+fn parse_bet(s) {
+    let n = str.len(s);
+    let result = 0;
+    let i = 0;
+    while i < n {
+        let d = digit_val(s[i]);
+        if d >= 0 { result = result * 10 + d; }
+        i = i + 1;
+    }
+    return result;
+}
+
+fn get_bet(bankroll) {
+    sep();
+    io.print("Bankroll: $" + bankroll);
+    io.print("Bet (1-" + bankroll + ") — 0 or q to leave:");
+    let input = io.read();
+    if input == ""  { return 0; }
+    if input == "q" { return 0; }
+    if input == "Q" { return 0; }
+    let bet = parse_bet(input);
+    if bet <= 0 { return 0; }
+    if bet > bankroll { return bankroll; }
+    return bet;
+}
+
+# --- packing util ----------------------------------------------------------
+# Encodes both the final total and the next deck index as one integer,
+# so player_turn / dealer_turn each return a single value.
+
+fn pack(total, idx) { return total * 100 + idx; }
+
+# --- player turn (recursive, interactive) ----------------------------------
+
+fn player_turn(seed, next_idx, hard, aces, hand_str) {
+    let total = blackjack_total(hard, aces);
+    sep();
+    show_hand("Your hand", hand_str, total);
+
+    if total > 21 {
+        io.print("Bust!");
+        return pack(total, next_idx);
+    }
+    if total == 21 {
+        io.print("21 — standing automatically.");
+        return pack(total, next_idx);
+    }
+
+    io.print("[h]it or [s]tand?");
+    let choice = io.read();
+
+    if choice == "s" { io.print("You stand at " + total + "."); return pack(total, next_idx); }
+    if choice == "S" { io.print("You stand at " + total + "."); return pack(total, next_idx); }
+
+    # Hit: draw next card, append to hand string, recurse.
+    let card = card_at(seed, next_idx);
+    let ct = card_text(card);
+    io.print("Drew: " + ct);
+    let new_hand = hand_str + " " + ct;
+    let new_hard = hard + card_value(card);
+    let new_aces = aces + is_ace(card);
+    return player_turn(seed, next_idx + 1, new_hard, new_aces, new_hand);
+}
+
+# --- dealer turn (automated, hits on 16 or less) ---------------------------
+
+fn dealer_turn(seed, next_idx, hard, aces, hand_str) {
+    let total = blackjack_total(hard, aces);
+
+    if total > 21 {
+        sep();
+        show_hand("Dealer's hand", hand_str, total);
+        io.print("Dealer busts!");
+        return total;
+    }
+    if total >= 17 {
+        sep();
+        show_hand("Dealer's hand", hand_str, total);
+        io.print("Dealer stands at " + total + ".");
+        return total;
+    }
+
+    let card = card_at(seed, next_idx);
+    let ct = card_text(card);
+    io.print("Dealer draws: " + ct);
+    let new_hand = hand_str + " " + ct;
+    let new_hard = hard + card_value(card);
+    let new_aces = aces + is_ace(card);
+    return dealer_turn(seed, next_idx + 1, new_hard, new_aces, new_hand);
+}
+
+# --- round -----------------------------------------------------------------
+
+fn play_round(seed, bankroll) {
+    let bet = get_bet(bankroll);
+    if bet <= 0 { return 0 - 1; }    # sentinel: player chose to leave
+
+    io.print("");
+    io.print("Dealing (bet: $" + bet + ")...");
+
+    let p1     = card_at(seed, 0);
+    let p2     = card_at(seed, 1);
+    let d_up   = card_at(seed, 2);
+    let d_hole = card_at(seed, 3);
+
+    let ph = card_value(p1) + card_value(p2);
+    let pa = is_ace(p1) + is_ace(p2);
+    let player_hand = card_text(p1) + " " + card_text(p2);
+
+    let dh = card_value(d_up) + card_value(d_hole);
+    let da = is_ace(d_up) + is_ace(d_hole);
+
+    io.print("Dealer shows: " + card_text(d_up) + " [hidden]");
+
+    # Natural blackjack → 3:2 payout, skip further turns.
+    let player_start = blackjack_total(ph, pa);
+    if player_start == 21 {
+        sep();
+        show_hand("Your hand", player_hand, 21);
+        let payout = bet + bet / 2;
+        io.print("Blackjack! You win $" + payout + " (3:2).");
+        return bankroll + payout;
+    }
+
+    # Interactive player turn.
+    let player_packed = player_turn(seed, 4, ph, pa, player_hand);
+    let player_total  = player_packed / 100;
+    let dealer_idx    = player_packed % 100;
+
+    if player_total > 21 {
+        io.print("You lose $" + bet + ".");
+        return bankroll - bet;
+    }
+
+    # Dealer reveals and plays.
+    io.print("");
+    io.print("Dealer reveals: " + card_text(d_up) + " + " + card_text(d_hole));
+    let dealer_hand = card_text(d_up) + " " + card_text(d_hole);
+    let dealer_total = dealer_turn(seed, dealer_idx, dh, da, dealer_hand);
+
+    # Result.
+    sep();
+    io.print("You: " + player_total + "   Dealer: " + dealer_total);
+    if dealer_total > 21 {
+        io.print("Dealer busted — you win $" + bet + "!");
+        return bankroll + bet;
+    }
+    if player_total > dealer_total {
+        io.print("You win $" + bet + "!");
+        return bankroll + bet;
+    }
+    if player_total < dealer_total {
+        io.print("Dealer wins. You lose $" + bet + ".");
+        return bankroll - bet;
+    }
+    io.print("Push — bet returned.");
+    return bankroll;
+}
+
+# --- game loop -------------------------------------------------------------
+
+fn game_loop(seed, bankroll, round) {
+    if bankroll <= 0 {
+        io.print("");
+        io.print("You're out of money. Better luck next time!");
+        return 0;
+    }
+
+    io.print("");
+    io.print("╔ Round " + round + " ╗");
+
+    let new_bankroll = play_round(seed, bankroll);
+
+    if new_bankroll < 0 {
+        io.print("");
+        io.print("You leave the table with $" + bankroll + ".");
+        return bankroll;
+    }
+
+    let next_seed = lcg_next(seed + round * 7);
+    return game_loop(next_seed, new_bankroll, round + 1);
+}
+
+fn main() {
+    io.print("╔════════════════════════╗");
+    io.print("║   B L A C K J A C K   ║");
+    io.print("║  Dealer stands on 17   ║");
+    io.print("║  Blackjack pays 3:2    ║");
+    io.print("╚════════════════════════╝");
+    io.print("h = hit   s = stand   0 = leave table");
+    io.print("Starting bankroll: $100");
+    io.print("");
+    game_loop(42, 100, 1);
+    return;
+}

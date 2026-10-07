@@ -116,8 +116,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "caison"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8547b3c34be6c145c55ad272a0e5f17b656a064d590777cb2e9c9d05d1ad3ce0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casm"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -238,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "crush-cast"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "cbor4ii",
  "crush-cson",
@@ -252,8 +262,9 @@ dependencies = [
 
 [[package]]
 name = "crush-cson"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
+ "caison",
  "crush-vm",
  "serde",
  "serde_json",
@@ -261,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "crush-diagnostics"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -269,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "crush-errors"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "regex",
  "serde",
@@ -278,7 +289,7 @@ dependencies = [
 
 [[package]]
 name = "crush-frontend"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
@@ -294,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "crush-index"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -306,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-sdk"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64",
@@ -330,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "crush-vm"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
