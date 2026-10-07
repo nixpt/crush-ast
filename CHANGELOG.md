@@ -14,6 +14,72 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-10-07
+
+- Merge pull request #90 from nixpt/agent/panini/CRUSH-104
+- docs: CRUSH-104 changelog security entry, ticket evidence, decisions
+- fix(deps): CRUSH-104 raise internal dep requirements 0.3.0 -> 0.3.8
+- test(sdk): CRUSH-104 pin the polyglot gate for unknown @lang + embedders; run SDK tests in CI
+- docs(planning): CRUSH-104 rescope — SDK publish set, order, design call
+- Merge pull request #58 from nixpt/claude/status-check-zaai3m
+- Merge pull request #89 from nixpt/agent/foreman/CRUSH-148
+- tickets: file CRUSH-148 — format the workspace once, then gate cargo fmt --check in CI
+- Merge pull request #88 from nixpt/agent/panini/CRUSH-147
+- docs(planning): capture fmt-gate gap and missing CRUSH-73/19/11 work
+- docs(planning): CRUSH-147 shared-checkout salvage triage
+- Merge pull request #87 from nixpt/claude/crush-135-array-any-concat
+- feat: mixed array literals are array<any>; `a + b` concatenates arrays (CRUSH-135, #75)
+- feat: field access on `any` and `any` conditions; one truthiness rule on every backend (CRUSH-134, #74, #77)
+- docs: record the #74–#78 language decisions; close CRUSH-136, CRUSH-143
+- feat: `<` `>` `<=` `>=` order two strings lexicographically (CRUSH-136, #76)
+- fix(frontend): optimizer dropped assignments made inside `if` branches (CRUSH-143)
+- docs(planning): close CRUSH-142
+- test(aot): the differential harness is strict on the JIT (CRUSH-142)
+- fix(frontend): `array.pop(a)` leaked the array on the stack
+- fix(jit): 48-bit ints, not 16-bit (CRUSH-142)
+- fix(jit): array_push/array_pop keep FastVM's stack contract (CRUSH-142)
+- docs(planning): close CRUSH-138/139/140; file CRUSH-142
+- test(aot): unique temp file per JIT subprocess run
+- fix(fastvm): ExecLang requests carry the block's input variables (CRUSH-140)
+- fix(fastvm, jit, frontend): call arguments bound in reverse (CRUSH-138)
+- fix(jit): logical not, not bitwise, for `!` and JumpIfNot (CRUSH-139)
+- docs(planning): close CRUSH-130/132/133; file CRUSH-140, CRUSH-141
+- fix(jit): don't compile ExecLang to a payload-less yield (CRUSH-133, #73)
+- fix(aot): unsupported ops are a compile error, not a silent no-op (CRUSH-132, #72)
+- fix(aotc, pkg): compile Crush source with the polyglot pass too (CRUSH-130)
+- fix(crushc): run the polyglot marshaling pass (CRUSH-130, #70)
+- docs(planning): close CRUSH-125; file CRUSH-138, CRUSH-139
+- fix(frontend): `&&` / `||` short-circuit (CRUSH-125, #65)
+- docs(planning): close CRUSH-126; file CRUSH-137
+- fix(vm): unwind to the try's frame when a throw is caught (CRUSH-126, #66)
+- docs(planning): close CRUSH-124/127/128/129/131; fix TASKS ticket links
+- test(sdk): source-level regressions for #64, #67, #68, #69
+- fix(frontend): don't fold constants across `@lang` blocks (CRUSH-131, #71)
+- fix(frontend): top-level `main()` next to `fn main` runs main once (CRUSH-129, #69)
+- fix(frontend): prefix `!` / `-` apply to the whole postfix chain (CRUSH-128, #68)
+- fix: uncaught throw is not an "unknown capability"; compile errors not `[runtime]` (CRUSH-127, #67)
+- fix(vm): CASM assembler decodes every escape `{:?}` emits (CRUSH-124, #64)
+- docs(planning): file CRUSH-124…136 for GitHub issues #64–#77
+- refactor(crush-cson): repoint onto standalone caison crate (#63)
+- fix(walkers): go/zig/wasm walker binaries were never found; add PATH fallback (#62)
+- tickets: CRUSH-121 kitchen-shaped GC + CRUSH-123 conformance timeout; CRUSH-122 status after #61 (#59)
+- chore: gitignore .jagent/worktrees/ (squadron SQ-204) (#60)
+- Merge pull request #61 from nixpt/claude/stdlib-nanovm-crush-ast-port-477gv7
+- docs(planning): CRUSH-55 exosphere ↔ crush-ast delta inventory
+- docs(planning): CRUSH-122 landed record + dejavue decision
+- test(conformance): `// caps:` annotation, file selection; nanovm corpus now passes
+- feat(sdk): absorb exosphere's stdlib and nanovm's SBL (CRUSH-122, W10)
+- feat(vm): PortableVm::push_entry_args; make Value::type_name public
+- fix(sdk): fs sandbox escape via `..` on paths that do not exist yet
+- fix(frontend): lower array.push / array.pop to ARR_PUSH / ARR_POP
+- Merge pull request #57 from nixpt/agent/nixp/CRUSH-114
+- feat(ai-opcodes): parser + compiler support for semantic_switch, ai_synthesize, ai_semantic_match
+- fix(parser): handle keyword tokens in annotation field names (issue #38)
+- fix(vm): CRUSH-114 len() accepts strings via shared str_len helper
+- ops: release workflow on dispatch only (Actions-usage trim) (#56)
+
+
+
 ### Security
 
 - **The polyglot capability gate now ships in the SDK (CRUSH-104).**
