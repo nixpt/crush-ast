@@ -110,3 +110,13 @@ from expected-failure to verified output; the conformance runner gained
 
 **Still open**: step 1 (CRUSH-113 — stdlib stays off by default) and step 5
 (the atlas row + playbook W10 note live outside this repo).
+
+## Follow-up (2026-10-07, CRUSH-150)
+
+Re-verified against `4034d92` in [`docs/planning/MIGRATION-INVENTORY.md`](../../../docs/planning/MIGRATION-INVENTORY.md)
+§2 — every landed cap is present; exosphere's stdlib is unchanged since `06b68057`. That section also
+defines stdcap/corecap from the sources and classifies every family. Gaps this ticket's "homes
+recorded" list missed are filed as CRUSH-151 (fs coreutils), 152 (`async.sleep`), 153 (`env.all`/
+`home_dir`, `http.put/delete/request`), 154 (`storage.*`, decision-gated), 155 (effect metadata); the
+AI runtime caps as CRUSH-156–158. Step 1 (CRUSH-113) is placed first in that relay with a
+default-on recommendation (§2.4). CRUSH-169 proposes closing CRUSH-56/57/88–97/108 as superseded.

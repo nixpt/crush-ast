@@ -67,3 +67,13 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-55.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Follow-up (2026-10-07, CRUSH-150)
+
+exosphere has **zero delta** on every path this inventory covered between `8d52996` and `c7ee194c`, so
+the verdicts stand. [`docs/planning/MIGRATION-INVENTORY.md`](../../../docs/planning/MIGRATION-INVENTORY.md)
+§0 re-checks the crush-ast side: reconcile slice 1 (walker binary names, orphaned
+`crush-vm/src/polyglot/`) and PORT #3 (walker PATH fallback) **landed** in #62 (`90fc53f`). The
+remaining slices are filed: PORT #1 → CRUSH-156–158, PORT #2 → CRUSH-159/160, PORT #4 → CRUSH-164,
+D-3 (Lua) → CRUSH-162, D-4 (FastVM host loop + AI op aliases) → CRUSH-163. D-1/D-2 still need the
+exosphere lane owner / captain.

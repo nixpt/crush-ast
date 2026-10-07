@@ -1,7 +1,7 @@
 # Migration inventory — what is left to move into crush-ast
 
 **Ticket:** CRUSH-150 (derby relay, phase 1 — scout) · **Date:** 2026-10-07 ·
-**Baseline:** crush-ast `origin/main` `4034d92` (tag `v0.3.9`) · exosphere `origin/main` `c7ee194c`
+**Baseline:** crush-ast `origin/main` `4034d92` (tag `v0.3.9`; `be3ed23` since adds only CRUSH-118) · exosphere `origin/main` `c7ee194c`
 
 This is the baton for phase 2: a builder should be able to pick up a CRUSH-151+ ticket from §5
 and start without re-reading the sources. Method: read-only (`git show` / `git ls-tree` /

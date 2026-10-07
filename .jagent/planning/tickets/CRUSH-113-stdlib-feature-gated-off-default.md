@@ -64,3 +64,9 @@ crushc /tmp/c.crush -o /tmp/c.cvm1 && crush-run run /tmp/c.cvm1 --stdlib --cap i
 
 - Implementing new conversion/collection capabilities (they already exist in `stdlib.rs`).
 - The broader M9 stdlib restoration (CRUSH-56/88..97).
+
+## Update (2026-10-07, CRUSH-150)
+
+Still open at `4034d92` (warning now at `crush-run.rs:368-370`; `crush-repl` silently ignores
+`config.stdlib`). [`docs/planning/MIGRATION-INVENTORY.md`](../../../docs/planning/MIGRATION-INVENTORY.md)
+§2.4 recommends **default-on** (decision C-1) and puts this ticket first in phase-2 relay lane A.
