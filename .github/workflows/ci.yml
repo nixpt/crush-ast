@@ -97,6 +97,32 @@ jobs:
             -p crush-lang-dart \
             2>&1
 
+  # ── crush-lang-sdk tests (blocking) — CRUSH-104 ───────────────────────────
+  # The SDK is what embedders pull from crates.io, and its suite carries the
+  # polyglot capability-gate tests (tests/polyglot_capability_test.rs): no
+  # `@lang` block spawns without a `polyglot.<lang>` grant, and a language
+  # outside the allowlist is refused even with every grant. crates.io's 0.2.0
+  # SDK shipped without that gate; nothing ran these tests in CI, so a
+  # regression would have shipped the same way. Default features on purpose:
+  # that is the feature set `cargo add crush-lang-sdk` gets.
+  test-sdk:
+    name: Test (sdk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo test -p crush-lang-sdk --lib --tests 2>&1
+
   # ── Whole-workspace test build (blocking) ─────────────────────────────────
   # The job that did not exist, and whose absence let a fixed bug come back.
   #
