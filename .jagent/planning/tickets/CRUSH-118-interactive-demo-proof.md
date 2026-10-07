@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-118 |
 | **Priority** | P3 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-07) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | nimbus |
 | **Dependencies** | CRUSH-115 |
 | **Estimated effort** | S |
 
@@ -40,11 +40,42 @@ program by hand rather than trusting a "done" claim).
 
 ## Definition of done
 
-- [ ] A real program exercises `io.read` for actual control flow (not just a
+- [x] A real program exercises `io.read` for actual control flow (not just a
       capability-registration smoke test)
-- [ ] Verified with piped stdin input against expected output, documented in
+- [x] Verified with piped stdin input against expected output, documented in
       the commit/PR
-- [ ] Added to `examples/crush/`
+- [x] Added to `examples/crush/`
+
+## Outcome (2026-10-07, nimbus — crush-ast#91 §3/§4a/§4b)
+
+The demo is awesome-crush's `games/blackjack_interactive.crush` (bet, hit or
+stand, leave), copied to `examples/crush/`. Captain's ask was to make it
+playable on crushlang.org/playground, where `io.read` had no stdin and
+returned `""` on every read, so the game left the table after 92 steps.
+
+- **crush-vm:** `crush_vm::InputSource` (`io_read.rs`) — `Stdin` (default,
+  native behaviour unchanged), `Supplied(text)` (lines, then `""` EOF), and
+  `Interactive` (host feeds lines). `PortableVm::set_input` /
+  `provide_input` / `close_input` / `take_output` / `steps`. In interactive
+  mode, `step()` checks *before* executing a `CAP_CALL "io.read"`: with no
+  line pending it returns `VmYield::HostCall { capability: "io.read" }` and
+  leaves IP, stack and the step count untouched, so after `provide_input` the
+  next `step()` just runs the read. Nothing re-executes and no output is lost.
+  An undeclared or denied `io.read` doesn't pause; it errors as before.
+- **crush-web:** `execute_with(source, { stdin?, max_steps? })` →
+  `{ ok, output, error?, steps }` (output before an error kept, #91 §3) and
+  `new Session(source, { max_steps? })` with `run()` / `provide(line)` /
+  `close()` / `transcript()`, each returning
+  `{ status: need_input|done|error, output, error?, steps }` (`output` is what
+  that call printed). `execute()` is unchanged.
+- **Verified:** native `crush run` with piped `10/h/s/0` (1620 steps) is
+  byte-identical to headless Chromium's `execute_with` output, and the
+  Session transcript equals both (`crates/crush-web/scripts/browser-test.sh`,
+  CI job `web`). Unit tests: `io_read` (supplied/interactive/EOF),
+  `portable_vm` (supplied + EOF, pause/resume with IP/steps unchanged,
+  undeclared doesn't pause), and crush-web `tests/io_read.rs` (7).
+- **Not done:** the scheduler (`crush_vm::run`, used by `crush-run` and
+  crush-web `execute()`) still reads process stdin only — gap filed in TASKS.
 
 ## Files to modify
 

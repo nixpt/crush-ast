@@ -1,0 +1,68 @@
+<!doctype html>
+<!--
+  crush-web interactive io.read demo + browser-test harness.
+
+  Plain load: a small terminal that plays fixtures/blackjack_interactive.crush
+  (examples/crush/blackjack_interactive.crush, staged by scripts/browser-test.sh)
+  through `Session` (type a line, press Enter; empty Enter sends "").
+  `?auto`: plays one scripted round through `Session` and the same answers
+  through `execute_with({ stdin })`, then publishes window.__crushResults for
+  scripts/browser_test.py.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>crush-web · io.read</title>
+<style>
+  body { font: 14px/1.4 ui-monospace, monospace; margin: 2rem; background: #111; color: #ddd; }
+  #term { white-space: pre-wrap; min-height: 20rem; }
+  #line { font: inherit; width: 20rem; background: #222; color: #fff; border: 1px solid #555; }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<form id="form"><span id="prompt">&gt; </span><input id="line" autocomplete="off" disabled></form>
+<script type="module">
+import init, { Session, execute_with } from "./pkg/crush_web.js";
+
+const ANSWERS = ["10", "h", "s", "0"];
+
+await init();
+const source = await (await fetch("fixtures/blackjack_interactive.crush")).text();
+const term = document.getElementById("term");
+const line = document.getElementById("line");
+
+if (new URLSearchParams(location.search).has("auto")) {
+  const session = new Session(source, { max_steps: 1_000_000 });
+  const reports = [session.run()];
+  for (const answer of ANSWERS) {
+    if (reports.at(-1).status !== "need_input") break;
+    reports.push(session.provide(answer));
+  }
+  const oneShot = execute_with(source, { stdin: ANSWERS.join("\n") + "\n" });
+  window.__crushResults = {
+    answers: ANSWERS,
+    session: { reports, transcript: session.transcript() },
+    executeWith: oneShot,
+  };
+  term.textContent = session.transcript();
+} else {
+  const session = new Session(source, {});
+  const show = (r) => {
+    term.textContent += r.output;
+    if (r.status === "need_input") { line.disabled = false; line.focus(); return; }
+    line.disabled = true;
+    term.textContent += r.status === "error" ? `\n[error] ${r.error}\n` : `\n[done in ${r.steps} steps]\n`;
+  };
+  document.getElementById("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = line.value;
+    line.value = "";
+    term.textContent += `> ${text}\n`;
+    show(session.provide(text));
+  });
+  show(session.run());
+}
+</script>
+</body>
+</html>

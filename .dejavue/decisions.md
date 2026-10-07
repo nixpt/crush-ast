@@ -667,3 +667,9 @@ Both crates package and verify (cargo 1.98 multi-package cargo package, local ov
 Reason:
 crates.io's 0.3.0 releases predate APIs their dependents use (crush-lang-js fails against crush-cast 0.3.0: Statement::LangBlock has no deps field). A ^0.3.0 requirement lets a lockfile already holding 0.3.0 keep it and break. bump-version.sh never raises dep requirements, so the lower bound must be raised by hand when a dependent starts using a newer API.
 
+
+## 2026-10-07T18:13:09-05:00 — CRUSH-118: io.read input source is a host-chosen InputSource on PortableVm; interactive mode pauses BEFORE the CAP_CALL
+
+Reason:
+Browsers have no stdin, so io.read returned EOF on every read and blackjack_interactive left the table. crush_vm::InputSource (io_read.rs, the shared io.read module) = Stdin (default, native unchanged) | Supplied(text) | Interactive{pending, closed}; every variant reads through read_io_line_from so terminator/EOF semantics are one implementation. In Interactive mode PortableVm::step() checks before executing a CAP_CALL whose const is io.read (and only if it is declared + allowed): no pending line -> return VmYield::HostCall{capability:'io.read'} with IP/stack/steps untouched; provide_input then the next step executes the read normally. No mid-instruction state, nothing re-executed, output kept (take_output drains a cursor, VmResult.output still full). Rejected: (a) yield from inside dispatch_cap after popping args — would need to stash a half-executed instruction and push the result on resume; (b) a new opcode or Program/bytecode change — affects every client; (c) breakpoints at every io.read CAP_CALL (exo-light's trick) — host would have to scan bytecode and still feed the value. Scope kept to PortableVm (crush-web's stepped runner); scheduler.rs still reads process stdin — gap filed.
+
