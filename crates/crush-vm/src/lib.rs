@@ -32,6 +32,7 @@ pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
+pub use io_read::InputSource;
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
 pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 #[cfg(feature = "native-plugins")]

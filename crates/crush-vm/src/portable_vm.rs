@@ -104,6 +104,10 @@ pub struct PortableVm {
     out_parts: Vec<String>,
     /// Current output length.
     out_len: usize,
+    /// How many `out_parts` entries `take_output()` has already returned.
+    out_taken: usize,
+    /// Where `io.read` lines come from (process stdin unless the host says otherwise).
+    input: crate::io_read::InputSource,
     /// Instruction pointer.
     ip: usize,
     /// Total instruction steps executed.
@@ -173,6 +177,8 @@ impl PortableVm {
             stack: Vec::new(),
             out_parts: Vec::new(),
             out_len: 0,
+            out_taken: 0,
+            input: crate::io_read::InputSource::Stdin,
             ip: start_ip,
             steps: 0,
             halted: false,
@@ -194,6 +200,41 @@ impl PortableVm {
     /// Register host capabilities.
     pub fn set_host_caps(&mut self, host_caps: HostCaps) {
         self.host_caps = Some(host_caps);
+    }
+
+    /// Choose where `io.read` lines come from. The default is process stdin.
+    ///
+    /// With [`InputSource::Interactive`], an `io.read` that finds no pending
+    /// line makes `step()` return `VmYield::HostCall { capability: "io.read",
+    /// args: [] }` *before* executing the `CAP_CALL`: IP, stack and step count
+    /// are untouched, so after [`PortableVm::provide_input`] the next `step()`
+    /// executes the read normally. Nothing is re-executed and no output is lost.
+    pub fn set_input(&mut self, input: crate::io_read::InputSource) {
+        self.input = input;
+    }
+
+    /// Queue a line for an interactive input source (see [`PortableVm::set_input`]).
+    pub fn provide_input(&mut self, line: &str) -> Result<(), &'static str> {
+        self.input.provide(line)
+    }
+
+    /// Signal EOF to an interactive input source: pending lines are still
+    /// served, after which `io.read` returns `""` instead of pausing.
+    pub fn close_input(&mut self) {
+        self.input.close();
+    }
+
+    /// Output printed since the previous `take_output()` call (or since the
+    /// start). Does not affect the full transcript in `VmResult::output`.
+    pub fn take_output(&mut self) -> String {
+        let fresh = self.out_parts[self.out_taken..].concat();
+        self.out_taken = self.out_parts.len();
+        fresh
+    }
+
+    /// Total instruction steps executed so far.
+    pub fn steps(&self) -> usize {
+        self.steps
     }
 
     /// Allow or disallow privileged capabilities.
@@ -294,6 +335,16 @@ impl PortableVm {
 
         let opcode = code[ip];
         let next_ip = ip + instruction_size(opcode).ok_or(VmError::UnknownOpcode(opcode, ip))?;
+
+        if opcode == crate::bytecode::CAP_CALL
+            && self.input.would_block()
+            && self.awaits_io_read(ip)
+        {
+            return Ok(Some(VmYield::HostCall {
+                capability: "io.read".to_string(),
+                args: Vec::new(),
+            }));
+        }
 
         // Save IP before execution to detect control flow changes
         let ip_before = self.ip;
@@ -1226,6 +1277,25 @@ impl PortableVm {
         Ok(())
     }
 
+    /// Whether the `CAP_CALL` at `ip` is a permitted `io.read`. A denied one
+    /// must not pause: it falls through so `dispatch_cap` reports the denial.
+    fn awaits_io_read(&self, ip: usize) -> bool {
+        let Some(idx) = self.program.code.get(ip + 1..ip + 3) else {
+            return false;
+        };
+        let idx = u16::from_be_bytes([idx[0], idx[1]]) as usize;
+        self.program
+            .consts
+            .get(idx)
+            .is_some_and(|cap| cap == "io.read")
+            && self.declared_caps.contains("io.read")
+            && self
+                .quotas
+                .allowed_caps
+                .as_ref()
+                .is_none_or(|allowed| allowed.iter().any(|a| a == "io.read"))
+    }
+
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
         // Check permission
         if !self.declared_caps.contains(cap) {
@@ -1259,7 +1329,9 @@ impl PortableVm {
                     self.out_parts.push(line);
                     Ok(None)
                 }
-                "io.read" => crate::io_read::read_io_line()
+                "io.read" => self
+                    .input
+                    .read_line()
                     .map(|line| Some(Value::Str(line)))
                     .map_err(|error| VmError::Io(error.to_string())),
                 "str.concat" => {
@@ -2153,5 +2225,71 @@ HALT"#;
             }
             other => panic!("expected VmError::LangRuntimeError, got {other:?}"),
         }
+    }
+
+    const READ_TWICE: &str = "PUSH_STR \"name?\"\nCAP_CALL \"io.print\" 1\nCAP_CALL \"io.read\" 0\nCAP_CALL \"io.print\" 1\nCAP_CALL \"io.read\" 0\nCAP_CALL \"io.print\" 1\nHALT";
+
+    /// Step until the VM yields or halts.
+    fn step_until_pause(vm: &mut PortableVm) -> Result<Option<VmYield>, VmError> {
+        while !vm.is_halted() {
+            if let Some(y) = vm.step()? {
+                return Ok(Some(y));
+            }
+        }
+        Ok(None)
+    }
+
+    fn read_twice_vm() -> PortableVm {
+        let program = assemble(READ_TWICE, Some(&["io.print", "io.read"]), Some("test")).unwrap();
+        PortableVm::new(program)
+    }
+
+    #[test]
+    fn test_portable_io_read_supplied_input_then_eof() {
+        let mut vm = read_twice_vm();
+        vm.set_input(crate::io_read::InputSource::supplied("alice\r\n"));
+        let result = vm.run().unwrap();
+        assert!(result.halted);
+        // Second read ran past the supplied text: EOF is "".
+        assert_eq!(result.output, "name?\nalice\n\n");
+    }
+
+    #[test]
+    fn test_portable_io_read_interactive_pauses_and_resumes() {
+        let mut vm = read_twice_vm();
+        vm.set_input(crate::io_read::InputSource::interactive());
+
+        let y = step_until_pause(&mut vm).unwrap();
+        assert!(
+            matches!(&y, Some(VmYield::HostCall { capability, args }) if capability == "io.read" && args.is_empty()),
+            "expected an io.read pause, got {y:?}"
+        );
+        assert_eq!(vm.take_output(), "name?\n");
+        let (ip, steps) = (vm.current_ip(), vm.steps());
+
+        // Without input the VM stays paused on the same instruction.
+        assert!(matches!(vm.step().unwrap(), Some(VmYield::HostCall { .. })));
+        assert_eq!((vm.current_ip(), vm.steps()), (ip, steps));
+
+        vm.provide_input("alice").unwrap();
+        let y = step_until_pause(&mut vm).unwrap();
+        assert!(matches!(y, Some(VmYield::HostCall { .. })));
+        assert_eq!(vm.take_output(), "alice\n");
+        assert_eq!(vm.take_output(), "");
+
+        // EOF after close: the pending read returns "" and the program finishes.
+        vm.close_input();
+        assert!(step_until_pause(&mut vm).unwrap().is_none());
+        assert!(vm.is_halted());
+        assert_eq!(vm.take_output(), "\n");
+        assert_eq!(vm.take_result().output, "name?\nalice\n\n");
+    }
+
+    #[test]
+    fn test_portable_io_read_interactive_does_not_pause_when_undeclared() {
+        let program = assemble("CAP_CALL \"io.read\" 0\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        vm.set_input(crate::io_read::InputSource::interactive());
+        assert!(matches!(vm.step(), Err(VmError::CapNotDeclared(cap)) if cap == "io.read"));
     }
 }
