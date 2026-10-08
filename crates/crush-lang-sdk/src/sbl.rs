@@ -16,7 +16,8 @@
 //!    capabilities are the pure stdlib families — no fs/net/env/process, so
 //!    the SBL cannot reach anything the stdlib itself cannot.
 //!
-//! Registered from [`crate::stdlib::register`], i.e. behind `--stdlib`.
+//! Registered from [`crate::stdlib::register`], i.e. with the rest of the stdlib
+//! (on by default in `crush-run` / `crush-repl`, off with `--no-stdlib`).
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps, PortableVm, Program, Quotas};

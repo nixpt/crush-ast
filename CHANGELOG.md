@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Standard library on by default (CRUSH-113).** The `stdlib` cargo feature
+  of `crush-lang-sdk` is now in `default`, and `crush-run` / `crush-repl`
+  register the pure stdcaps (`str.*`, `math.*`, `conv.*`, `collections.*`,
+  `json.*`, `path.*`, `regex.*`, …) without a flag — they do no I/O and grant
+  no authority. `--stdlib` still parses; `--no-stdlib` turns them off. In a
+  build without the feature (`default-features = false`), `--stdlib` is now a
+  hard error instead of a warning, and `ReplConfig { stdlib: true, .. }` is
+  refused instead of silently ignored. `HostCapsBuilder` itself is unchanged:
+  embedders still opt in with `.stdlib(true)`. I/O families (`text.head`,
+  `time.now`, `fs.*`, …) stay behind their grants.
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

@@ -29,7 +29,8 @@
 //!   expect-error mode.
 //! - `// caps: <cap>[, <cap>...]` — host capabilities to grant, from
 //!   `stdlib` (`--stdlib`) and `fs` (`--fs`, sandboxed to the workspace root,
-//!   so paths in the program are repo-relative). Default: none.
+//!   so paths in the program are repo-relative). Default: the stdlib only,
+//!   like `crush-run` (CRUSH-113), so `stdlib` is accepted but redundant.
 //! - `// xfail: <reason>` — expected failure; test is INVERTED: if it passes
 //!   (unexpectedly), the runner reports it as a regression-to-fix. If it
 //!   fails for the documented reason, the test is XPASS (diagnostic only).
@@ -117,19 +118,19 @@ fn parse_budget_annotation(source: &str) -> Option<u32> {
     None
 }
 
-/// Build the host capabilities a `// caps:` annotation asks for, or `None`
-/// when the file asks for none.
+/// Build the host capabilities a `// caps:` annotation asks for, on top of
+/// the stdlib every program gets (as under `crush-run`, CRUSH-113).
 fn parse_caps_annotation(
     source: &str,
     workspace_root: &Path,
 ) -> Result<Option<crush_vm::HostCaps>, String> {
+    let mut builder = crush_lang_sdk::HostCapsBuilder::new().stdlib(true);
     let Some(list) = source
         .lines()
         .find_map(|line| line.trim_start().strip_prefix("// caps: "))
     else {
-        return Ok(None);
+        return Ok(Some(builder.build()));
     };
-    let mut builder = crush_lang_sdk::HostCapsBuilder::new();
     for cap in list.split(',').map(str::trim).filter(|c| !c.is_empty()) {
         builder = match cap {
             "stdlib" => builder.stdlib(true),

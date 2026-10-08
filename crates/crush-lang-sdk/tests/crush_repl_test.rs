@@ -316,3 +316,55 @@ fn crush_repl_default_message_format_remains_text() {
         "expected themed `[E-PP*]` badge in text mode, got: {stderr}"
     );
 }
+
+// CRUSH-113: REPL parity with crush-run — stdlib on without a flag,
+// withheld by `--no-stdlib`. Output is a few lines, so unlike
+// `run_repl_script` this captures stdout.
+fn repl_output(args: &[&str], line: &str) -> (String, String) {
+    let mut child = Command::new(repl_bin())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn crush-repl");
+    writeln!(child.stdin.as_mut().unwrap(), "{line}\n.quit").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn crush_repl_registers_stdlib_by_default() {
+    let line = "io.print(conv.to_str(41 + 1))";
+    let (stdout, stderr) = repl_output(&[], line);
+    assert!(stdout.contains("42"), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(!stderr.contains("conv.to_str"), "stderr: {stderr}");
+
+    let (_, stderr) = repl_output(&["--no-stdlib"], line);
+    assert!(
+        stderr.contains("conv.to_str"),
+        "--no-stdlib must withhold conv.*: {stderr}"
+    );
+}
+
+#[test]
+fn repl_config_refuses_stdlib_when_the_build_lacks_it() {
+    use crush_lang_sdk::repl::{ReplConfig, ReplState, evaluate_silent};
+    let config = ReplConfig {
+        stdlib: true,
+        ..ReplConfig::default()
+    };
+    let result = evaluate_silent("1", &mut ReplState::new(), &config);
+    if cfg!(feature = "stdlib") {
+        assert!(result.error.is_none(), "{:?}", result.error);
+    } else {
+        let err = result
+            .error
+            .expect("stdlib without the feature must be refused");
+        assert!(err.contains("'stdlib' feature"), "{err}");
+    }
+}

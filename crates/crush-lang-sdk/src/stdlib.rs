@@ -1,7 +1,11 @@
 //! Standard library capabilities for CRUSH runtime.
 //!
 //! Pure computation capabilities ported from exosphere's stdlib.
-//! These are stdcaps — always available, no capability gate required.
+//! These are stdcaps: no I/O and no authority, so nothing to grant. They are
+//! still opt-in at the API level — a registry gets them only through
+//! [`register`] or `HostCapsBuilder::stdlib(true)` — and the `stdlib` cargo
+//! feature (default-on since CRUSH-113) is what compiles the builder hook.
+//! `crush-run` and `crush-repl` register them unless given `--no-stdlib`.
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};

@@ -673,3 +673,9 @@ crates.io's 0.3.0 releases predate APIs their dependents use (crush-lang-js fail
 Reason:
 Browsers have no stdin, so io.read returned EOF on every read and blackjack_interactive left the table. crush_vm::InputSource (io_read.rs, the shared io.read module) = Stdin (default, native unchanged) | Supplied(text) | Interactive{pending, closed}; every variant reads through read_io_line_from so terminator/EOF semantics are one implementation. In Interactive mode PortableVm::step() checks before executing a CAP_CALL whose const is io.read (and only if it is declared + allowed): no pending line -> return VmYield::HostCall{capability:'io.read'} with IP/stack/steps untouched; provide_input then the next step executes the read normally. No mid-instruction state, nothing re-executed, output kept (take_output drains a cursor, VmResult.output still full). Rejected: (a) yield from inside dispatch_cap after popping args — would need to stash a half-executed instruction and push the result on resume; (b) a new opcode or Program/bytecode change — affects every client; (c) breakpoints at every io.read CAP_CALL (exo-light's trick) — host would have to scan bytecode and still feed the value. Scope kept to PortableVm (crush-web's stepped runner); scheduler.rs still reads process stdin — gap filed.
 
+
+## 2026-10-07T20:06:36-05:00 — CRUSH-113: stdlib default-on in the binaries, not in HostCapsBuilder
+
+Reason:
+Decision C-1 (captain s474). The stdcaps are pure (no I/O, no authority), so crush-run/crush-repl/the conformance runner register them without a flag and --no-stdlib opts out; the cargo feature joins default so the shipped toolchain has conv/collections/regex/json. HostCapsBuilder's default stays off: flipping it would silently grow every embedder's registry (exo-light, crush-notebook, crush-web), which the ticket did not sanction. Without the feature, --stdlib and ReplConfig{stdlib:true} are hard errors instead of the old warning + 'unknown capability'.
+

@@ -96,9 +96,13 @@ struct RunArgs {
     #[arg(long)]
     graphics: bool,
 
-    /// Enable standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*, bytes.*, buffer.*, binary.*, result.*, text.sort/uniq, time.format/parse, env.os/arch, system.* SBL).
-    #[arg(long)]
+    /// Standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*, bytes.*, buffer.*, binary.*, result.*, text.sort/uniq, time.format/parse, env.os/arch, system.* SBL) are on by default; this flag is kept for compatibility. It is an error in a build without the `stdlib` feature.
+    #[arg(long, conflicts_with = "no_stdlib")]
     stdlib: bool,
+
+    /// Do not register the standard library capabilities.
+    #[arg(long)]
+    no_stdlib: bool,
 
     /// Enable network host capabilities (net.http_get, net.http_post).
     #[arg(long)]
@@ -254,7 +258,7 @@ fn list_caps() {
     }
     #[cfg(feature = "stdlib")]
     {
-        println!("Standard library capabilities (enable with --stdlib):");
+        println!("Standard library capabilities (on by default; --no-stdlib to disable):");
         println!(
             "  str.len/split/join/trim/replace/contains/starts_with/ends_with/to_upper/to_lower"
         );
@@ -361,13 +365,18 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         eprintln!("warning: --db requires the 'db' feature (not enabled in this build)");
     }
 
+    // Stdcaps are pure (no I/O, no authority), so they are on unless the
+    // caller opts out (CRUSH-113). Asking for them in a build that lacks them
+    // is an error rather than a warning followed by "unknown capability".
     #[cfg(feature = "stdlib")]
-    if args.stdlib {
-        builder = builder.stdlib(true);
+    {
+        builder = builder.stdlib(!args.no_stdlib);
     }
     #[cfg(not(feature = "stdlib"))]
     if args.stdlib {
-        eprintln!("warning: --stdlib requires the 'stdlib' feature (not enabled in this build)");
+        anyhow::bail!(
+            "--stdlib requires the 'stdlib' feature, which this build of crush-run was compiled without"
+        );
     }
 
     let runtime = Runtime::with_quotas(quotas).with_host_caps(builder.build());

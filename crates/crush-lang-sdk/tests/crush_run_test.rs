@@ -270,3 +270,44 @@ fn crush_run_reads_piped_stdin_through_source_pipeline() {
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "piped input\n");
 }
+
+// CRUSH-113: the stdlib is on by default — a conv.* call needs no flag —
+// and `--no-stdlib` takes it away again.
+#[test]
+fn crush_run_registers_stdlib_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("conv.crush");
+    std::fs::write(&src, "fn main() { io.print(conv.to_str(42)); return 0; }\n").unwrap();
+
+    let output = run_crush_run(&["run", src.to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert_eq!(stdout.trim(), "42");
+
+    // The old flag still parses and changes nothing.
+    let output = run_crush_run(&["run", "--stdlib", src.to_str().unwrap()]);
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+
+    let output = run_crush_run(&["run", "--no-stdlib", src.to_str().unwrap()]);
+    assert!(
+        !output.status.success(),
+        "--no-stdlib must withhold conv.to_str"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("conv.to_str"), "stderr: {stderr}");
+}
+
+#[test]
+fn crush_run_caps_lists_stdlib_as_default() {
+    let output = run_crush_run(&["caps"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("on by default; --no-stdlib to disable"),
+        "{stdout}"
+    );
+}

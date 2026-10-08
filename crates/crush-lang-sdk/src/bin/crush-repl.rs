@@ -7,9 +7,15 @@ use crush_vm::Quotas;
 #[command(name = "crush-repl")]
 #[command(about = "Interactive REPL for the Crush language")]
 struct Args {
-    /// Enable standard library capabilities (str.*, math.*, conv.*, ...)
-    #[arg(long)]
+    /// Standard library capabilities (str.*, math.*, conv.*, ...) are on by
+    /// default; this flag is kept for compatibility. It is an error in a build
+    /// without the `stdlib` feature.
+    #[arg(long, conflicts_with = "no_stdlib")]
     stdlib: bool,
+
+    /// Do not register the standard library capabilities.
+    #[arg(long)]
+    no_stdlib: bool,
 
     /// Maximum instruction steps.
     #[arg(long, default_value = "100000")]
@@ -47,7 +53,7 @@ fn main() -> anyhow::Result<()> {
             max_call_depth: args.max_call_depth,
             ..Default::default()
         },
-        stdlib: args.stdlib,
+        stdlib: !args.no_stdlib && (args.stdlib || cfg!(feature = "stdlib")),
         message_format: args.message_format,
     };
 

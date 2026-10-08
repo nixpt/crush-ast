@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-113 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-07) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | nimbus (lane A1, derby phase 2) |
 | **Dependencies** | none (see CRUSH-108 for the stdlib source-reconciliation ticket) |
 | **Estimated effort** | S |
 
@@ -45,9 +45,9 @@ crushc /tmp/c.crush -o /tmp/c.cvm1 && crush-run run /tmp/c.cvm1 --stdlib --cap i
 
 ## Success criteria
 
-- [ ] Decide whether `stdlib` should be default-on; if it stays opt-in, `--stdlib` must **error** (not warn) when the feature is absent.
-- [ ] `conv.to_int`/`conv.to_str`/`conv.parse_int` (and the rest of `stdlib.rs`) are available in the default build, or gated behind a loud, documented error.
-- [ ] `crush-run --help` / the README state the feature requirement.
+- [x] Decide whether `stdlib` should be default-on; if it stays opt-in, `--stdlib` must **error** (not warn) when the feature is absent.
+- [x] `conv.to_int`/`conv.to_str`/`conv.parse_int` (and the rest of `stdlib.rs`) are available in the default build, or gated behind a loud, documented error.
+- [x] `crush-run --help` / the README state the feature requirement.
 
 ## Technical approach
 
@@ -70,3 +70,24 @@ crushc /tmp/c.crush -o /tmp/c.cvm1 && crush-run run /tmp/c.cvm1 --stdlib --cap i
 Still open at `4034d92` (warning now at `crush-run.rs:368-370`; `crush-repl` silently ignores
 `config.stdlib`). [`docs/planning/MIGRATION-INVENTORY.md`](../../../docs/planning/MIGRATION-INVENTORY.md)
 §2.4 recommends **default-on** (decision C-1) and puts this ticket first in phase-2 relay lane A.
+
+## Resolution (2026-10-07, nimbus — lane A1)
+
+Decision C-1 (captain, s474): default-on.
+
+- `crush-lang-sdk`: `stdlib` added to `default`. `crush-run` and `crush-repl` register the stdcaps
+  unless given `--no-stdlib`; `--stdlib` still parses (compatibility, now redundant). Built with
+  `default-features = false`, `--stdlib` is a hard error (`crush-run`: exit 1, "--stdlib requires the
+  'stdlib' feature…"), and `repl::run` / `evaluate_silent` refuse `ReplConfig { stdlib: true }`
+  instead of ignoring it. `ReplConfig::default()` follows the feature.
+- `HostCapsBuilder` is **unchanged** (`.stdlib(true)` stays opt-in for embedders) — no library API
+  change for crush-lang-sdk clients.
+- `xtask` conformance gives every program the stdlib, like `crush-run`; `examples/crush/math_test.crush`
+  moves from `expect-error` to real `// expect:` lines.
+- `stdlib.rs` / `sbl.rs` headers corrected; `crush-run caps` says "on by default; --no-stdlib to
+  disable"; crate README documents the flag and the feature.
+
+Evidence: `cargo test -p crush-lang-sdk` all green (new: `crush_run_registers_stdlib_by_default`,
+`crush_run_caps_lists_stdlib_as_default`, `crush_repl_registers_stdlib_by_default`,
+`repl_config_refuses_stdlib_when_the_build_lacks_it`); live: default build prints `42` for
+`io.print(conv.to_str(42))` with no flag; `--no-default-features` build exits 1 on `--stdlib`.
