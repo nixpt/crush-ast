@@ -237,7 +237,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [x] **CRUSH-167** (S (~40 turns), lane D2 🔒): Fold squeeze's build-then-run flow into crush-pkg (decision-gated). Bare `crush-pkg` = build → run, `132ddd4` (panini-d). [ticket](tickets/CRUSH-167-fold-squeeze-into-crush-pkg.md)
 - [ ] **CRUSH-168** (XS (~15 turns), lane E1): Fix stale in-code docs pointing at exosphere/ecasm. [ticket](tickets/CRUSH-168-stale-cross-repo-docs.md)
 - [ ] **CRUSH-169** (XS (~10 turns), lane E2): Close the archive-zip stdlib restoration tickets as superseded. [ticket](tickets/CRUSH-169-close-superseded-stdlib-restore.md)
-- [ ] **CRUSH-170** (M (~60 turns), lane D3): Capability inference: diff used vs declared caps (`crush-pkg check`). [ticket](tickets/CRUSH-170-capability-inference-check.md)
+- [ ] **CRUSH-170** (M (~60 turns), lane D3): Capability inference: diff used vs declared caps (`crush-pkg check`). Waiting on lane A (CRUSH-151–153) merging; see ticket note. [ticket](tickets/CRUSH-170-capability-inference-check.md)
 - [x] **CRUSH-171** (S (~25 turns), lane D4): Package manifest category / platform metadata. `[capsule] category` + `platforms`, `4d9e03b` (panini-d). [ticket](tickets/CRUSH-171-manifest-category-metadata.md)
 - [ ] **CRUSH-172** (XS (~15 turns), lane E3): Example capsule: `squad-bridge-peek` (first pure-Crush capsule). [ticket](tickets/CRUSH-172-example-squad-bridge-peek.md)
 - [ ] **CRUSH-173** (S (~40 turns), lane E4): Design notes recovered from the ancestors. [ticket](tickets/CRUSH-173-design-notes-from-ancestors.md)
