@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-108 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Superseded (2026-10-07) — CRUSH-122 + MIGRATION-INVENTORY §2.5 (CRUSH-169) |
 | **Phase** | M9 |
 
 ## Problem
@@ -69,3 +69,19 @@ things CRUSH-56's plan doesn't currently account for:
 
 None — this can run before or alongside CRUSH-56 step 1; it changes CRUSH-56's
 inputs, not its blockers.
+
+## Resolution — Superseded (2026-10-07, CRUSH-169)
+
+Closed by foreman-approved planning hygiene (CRUSH-169, lane E2 of the phase-2 relay). The
+`exosphere-1.0.zip` restore plan is superseded:
+
+- `exosphere-1.0.zip`'s `crates/core/base/stdlib` is the same crate as exosphere's live tree, and its
+  `archive/archived-stdlib` an older snapshot of it. **CRUSH-122** already restored the clean families
+  from the live tree (collections, bytes/buffer, binary, result, text.sort/uniq, time.format/parse,
+  env.os/arch, `system.*` SBL) with tests.
+- The "46 mock-tainted" caps are exactly the families `docs/planning/MIGRATION-INVENTORY.md` §2.2
+  classifies **dead/out** (polyglot bridge, ai/agent/learn mocks, dom, task, data.*, print/text.echo).
+- The genuine remainder is filed as **CRUSH-151..155** (fs coreutils, async.sleep, env.all/home_dir +
+  http verbs, storage.* decision, effects metadata).
+
+See MIGRATION-INVENTORY §2.3–§2.5. Ticket file kept (not deleted) for history.

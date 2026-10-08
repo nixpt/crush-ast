@@ -37,7 +37,7 @@
 | **M6** | **Walker parity & multi-language completeness**    | 11 walker lowering gaps closed; LanguageAdapter unification; Java/Kotlin                | Proposed |
 | **M7** | **Runtime hardening & ops tooling**                | Fuel + determinism + firewall + snapshot + V8/RustPython lanes                         | Proposed |
 | **M8** | **Platform & architecture maturation (CRUSH-22)**  | CI multi-OS + multi-arch; Android API; `wasm32` first-class                              | Proposed |
-| **M9** | **Cross-project convergence & STDLIB restoration** | Surfer migrated; exosphere/nakshatra converged; 103 caps restored; 46 rewritten        | Proposed |
+| **M9** | **Cross-project convergence & STDLIB restoration** | Surfer migrated; exosphere/nakshatra converged; stdlib remainder CRUSH-151..155 landed | Proposed |
 | **M10** | **Performance ceiling & optimization**            | JIT miscompile closure; Phase 6/7 optimization; conservative→precise GC                | Proposed |
 | **M11** | **Universal native & WASM catalyst**               | WASM walker→AOT; cross-language inlining; notebook self-hosting                         | Proposed |
 
@@ -304,25 +304,21 @@ its behavior, not just a smoke test.
 - [ ] CRUSH-23: Nakshatra half finalized (no sandboxed Crush engine in
       nakshatra, but `tools/build.crush` artifact on exosphere's path is
       recorded as the canonical artifact; deferred to exosphere-side)
-- [ ] **103** of 137 archived capabilities cleanly restored from
-      `exosphere-1.0.zip` with **zero** mock markers (each passed through the
-      M5 coverage map requirement so restoration is verified by `@covers`
-      test, not by hand)
-- [ ] **46** mock-tainted archived capabilities rewritten from spec (not
-      verbatim-restored) under their own tickets, with spec provenance
-      recorded in `dejavue decision`
-- [ ] STDLIB RESTORATION MAP turned into a tracker (linked from chronicle
-      ticket and from the M5-`codebase.modules` query)
+- [x] ~~Archive-zip STDLIB restoration (the "103 clean / 46 mock-tainted"
+      plan)~~ — **superseded** (CRUSH-169, 2026-10-07): CRUSH-122 restored the
+      clean families from exosphere's live stdlib; the mock-tainted families
+      are dead/out (`docs/planning/MIGRATION-INVENTORY.md` §2.2, §2.5)
+- [ ] stdlib remainder from the migration inventory landed: CRUSH-151
+      (fs coreutils), 152 (`async.sleep`), 153 (`env.all`/`env.home_dir`, http
+      verbs), 154 (`storage.*` — declined, C-6), 155 (effects metadata)
 
 **Proposed tickets** (`CRUSH-54+`):
 
 - [CRUSH-54] Surfer migration wave 1: in-tree runtime → `crush-ast`
   (re-export, drop-in, no behavior change); wave 2: replace in-tree forks
 - [CRUSH-55] Exosphere divergence reconcile (cross-tree)
-- [CRUSH-56] STDLIB clean-restore tracker (103 caps; one CRUSH ticket per 10
-  caps so granular blame stays tractable)
-- [CRUSH-57] STDLIB mock-rewrite tracker (46 caps; one CRUSH ticket per cap —
-  rewrites touch behavior, not just code reuse)
+- ~~[CRUSH-56] STDLIB clean-restore tracker~~ / ~~[CRUSH-57] STDLIB
+  mock-rewrite tracker~~ — superseded by CRUSH-122 + CRUSH-151..155 (CRUSH-169)
 - [CRUSH-58] Nakshatra artifact canonicalization (companion to CRUSH-23)
 
 **File ownership.**
@@ -499,10 +495,10 @@ section above.
 - **M11 is the headline but takes longest.** Plan to ship individual
   milestones (M5-M10) as concrete release candidates along the way — don't
   hold the whole arc hostage to M11.
-- **STDLIB restoration scale.** 103 + 46 = 149 caps. Treat as a separate
-  workstream with its own tracker tickets (CRUSH-56, CRUSH-57). Restoring
-  silent corruption is worse than not restoring; the M5 `@covers`
-  requirement is the safety net, not a nice-to-have.
+- **STDLIB restoration** (was "103 + 46 = 149 caps", CRUSH-56/57) — superseded
+  by CRUSH-122 + the migration inventory (CRUSH-169). The principle stands:
+  restoring silent corruption is worse than not restoring — mock-tainted
+  sources are re-implemented from spec or dropped, never copied.
 - **Ticket ID gaps (`CRUSH-3` `CRUSH-4` `CRUSH-5` `CRUSH-6`).** Twenty-six is
   the highest existing in `planning/tickets/`, but the IDs are not contiguous
   (3-6 missing; 17 used twice in two adjacent files). Verify-before-fix rule

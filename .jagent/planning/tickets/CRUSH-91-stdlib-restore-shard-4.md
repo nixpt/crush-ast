@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-91 |
 | **Priority** | P3 |
-| **Status** | Backlog — cap list assigned at CRUSH-56 execution |
+| **Status** | Superseded (2026-10-07) — CRUSH-122 + MIGRATION-INVENTORY §2.5 (CRUSH-169) |
 | **Phase** | M9 |
 
 ## Scope
@@ -49,3 +49,19 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-91.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Resolution — Superseded (2026-10-07, CRUSH-169)
+
+Closed by foreman-approved planning hygiene (CRUSH-169, lane E2 of the phase-2 relay). The
+`exosphere-1.0.zip` restore plan is superseded:
+
+- `exosphere-1.0.zip`'s `crates/core/base/stdlib` is the same crate as exosphere's live tree, and its
+  `archive/archived-stdlib` an older snapshot of it. **CRUSH-122** already restored the clean families
+  from the live tree (collections, bytes/buffer, binary, result, text.sort/uniq, time.format/parse,
+  env.os/arch, `system.*` SBL) with tests.
+- The "46 mock-tainted" caps are exactly the families `docs/planning/MIGRATION-INVENTORY.md` §2.2
+  classifies **dead/out** (polyglot bridge, ai/agent/learn mocks, dom, task, data.*, print/text.echo).
+- The genuine remainder is filed as **CRUSH-151..155** (fs coreutils, async.sleep, env.all/home_dir +
+  http verbs, storage.* decision, effects metadata).
+
+See MIGRATION-INVENTORY §2.3–§2.5. Ticket file kept (not deleted) for history.

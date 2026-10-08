@@ -229,24 +229,24 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **CRUSH-159** (M (~70 turns), lane C1): Debugger: step over/out and watchpoints over `PortableVm`. [ticket](tickets/CRUSH-159-debugger-step-watch.md)
 - [ ] **CRUSH-160** (M (~50 turns), lane C2): Debugger: event sink, redacted value views, cap-gated debug scopes. [ticket](tickets/CRUSH-160-debugger-events-redaction.md)
 - [ ] **CRUSH-161** (S (~20 turns), lane D1): Make `crush-pkg` publishable (unblocks squeeze). [ticket](tickets/CRUSH-161-crush-pkg-publishable.md)
-- [ ] **CRUSH-162** (M (~50 turns), lane F 🔒): In-process Lua `EXEC_LANG` (decision-gated). [ticket](tickets/CRUSH-162-in-process-lua-exec-lang.md)
-- [ ] **CRUSH-163** (M (~70 turns), lane F 🔒): FastVM yield-servicing host loop (decision-gated, lane-guarded). [ticket](tickets/CRUSH-163-fastvm-host-loop.md)
+- [x] ~~**CRUSH-162** (M (~50 turns), lane F 🔒): In-process Lua `EXEC_LANG` (decision-gated).~~ **Declined** (C-2: no Lua unless someone asks; CRUSH-169). [ticket](tickets/CRUSH-162-in-process-lua-exec-lang.md)
+- [ ] **CRUSH-163** (M (~70 turns), lane F 🔒): FastVM yield-servicing host loop (decision-gated, lane-guarded). **Deferred** (C-3: decide with CRUSH-77; CRUSH-169). [ticket](tickets/CRUSH-163-fastvm-host-loop.md)
 - [ ] **CRUSH-164** (XS (~15 turns), lane F): Wildcard + expiry in `Quotas::allowed_caps` (optional). [ticket](tickets/CRUSH-164-allowed-caps-wildcards.md)
 - [ ] **CRUSH-165** (S (~30 turns), lane F): CVM1 execution transcript (hash-chained), feature-gated (optional). [ticket](tickets/CRUSH-165-cvm1-execution-transcript.md)
 - [ ] **CRUSH-166** (S (~15 turns), lane F): Design note: guest→host capability callbacks during `EXEC_LANG`. [ticket](tickets/CRUSH-166-exec-lang-callback-design.md)
 - [ ] **CRUSH-167** (S (~40 turns), lane D2 🔒): Fold squeeze's build-then-run flow into crush-pkg (decision-gated). [ticket](tickets/CRUSH-167-fold-squeeze-into-crush-pkg.md)
 - [x] **CRUSH-168** (XS (~15 turns), lane E1, panini-e — PR pending): Fix stale in-code docs pointing at exosphere/ecasm. [ticket](tickets/CRUSH-168-stale-cross-repo-docs.md)
-- [ ] **CRUSH-169** (XS (~10 turns), lane E2): Close the archive-zip stdlib restoration tickets as superseded. [ticket](tickets/CRUSH-169-close-superseded-stdlib-restore.md)
+- [x] **CRUSH-169** (XS (~10 turns), lane E2, panini-e — PR pending): Close the archive-zip stdlib restoration tickets as superseded. [ticket](tickets/CRUSH-169-close-superseded-stdlib-restore.md)
 - [ ] **CRUSH-170** (M (~60 turns), lane D3): Capability inference: diff used vs declared caps (`crush-pkg check`). [ticket](tickets/CRUSH-170-capability-inference-check.md)
 - [ ] **CRUSH-171** (S (~25 turns), lane D4): Package manifest category / platform metadata. [ticket](tickets/CRUSH-171-manifest-category-metadata.md)
 - [ ] **CRUSH-172** (XS (~15 turns), lane E3): Example capsule: `squad-bridge-peek` (first pure-Crush capsule). [ticket](tickets/CRUSH-172-example-squad-bridge-peek.md)
 - [ ] **CRUSH-173** (S (~40 turns), lane E4): Design notes recovered from the ancestors. [ticket](tickets/CRUSH-173-design-notes-from-ancestors.md)
-- [ ] **CRUSH-174** (S (~20 turns), lane E6): Browser playground on `crush-web` — check, then port only if missing. [ticket](tickets/CRUSH-174-browser-playground-check.md)
+- [x] ~~**CRUSH-174** (S (~20 turns), lane E6): Browser playground on `crush-web` — check, then port only if missing.~~ **Superseded** by crushlang.org/playground + CRUSH-118 (#93; CRUSH-169). [ticket](tickets/CRUSH-174-browser-playground-check.md)
 - [ ] **CRUSH-175** (S (~25 turns), lane E5): `crush doctor` — polyglot runtime health check. [ticket](tickets/CRUSH-175-crush-doctor.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
-**Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); STDLIB clean-restore of **103** capabilities from `exosphere-1.0.zip` with zero mock markers (each gated by an M5 `@covers` test, not hand-verified); STDLIB mock-rewrite of **46** mock-tainted capabilities from spec (one CRUSH ticket per cap, because rewrites touch behavior). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.
+**Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); stdlib remainder CRUSH-151..155 from the migration inventory (the archive-zip "103 clean / 46 mock" restore, CRUSH-56/57/88–97/108, is superseded by CRUSH-122 — CRUSH-169). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.
 
 ## M10 — Performance ceiling & optimization
 
@@ -295,7 +295,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] Import firewall (now: M7 / CRUSH-43), fuel budgets (now: M7 / CRUSH-41), deterministic mode (now: M7 / CRUSH-42), snapshot/replay (now: M7 / CRUSH-44)
 - [ ] Unified capsule-aware GC + ML "GC policy brain" — *now: M10 / [CRUSH-62]+[CRUSH-63]*
 - [ ] `Program::serialize(Format::Binary)` (rmp-serde) is broken for any Program with an Instruction (`#[serde(flatten)]` incompatibility) — `Format::Json` works fine, this is binary-wire-format only, 2 tests `#[ignore]`d in `casm/src/ecasm.rs` — *still small backlog, post-M11*
-- [ ] STDLIB RESTORATION MAP — 103 of 137 archived capabilities (exosphere-1.0.zip) are clean/restorable with zero mock markers; 46 are mock-tainted and must be rewritten, not restored verbatim (they return plausible-looking fake values). Full breakdown in dejavue. — *now: M9 / [CRUSH-56]+[CRUSH-57]*
+- [x] ~~STDLIB RESTORATION MAP (exosphere-1.0.zip restore)~~ — **superseded** (CRUSH-169): CRUSH-122 restored the clean families from exosphere's live tree; the mock-tainted ones are dead/out per `docs/planning/MIGRATION-INVENTORY.md` §2.2; the remainder is CRUSH-151..155.
 - [ ] **CRUSH-21**: Java/Kotlin language family — *now: M6 / [CRUSH-37]+[CRUSH-38] for the Java/Kotlin walkers; ticket kept for the JVM/Android-API bridge sub-shard (deferred; M8 / [CRUSH-52] covers Android host-cap surface but the JVM-guest bridge itself is a separate post-M5 ticket)*
 - [ ] **CRUSH-22**: Build platforms & architectures — *now: M8 / [CRUSH-49]+[CRUSH-50]+[CRUSH-51]+[CRUSH-52]+[CRUSH-53]*
 
@@ -340,3 +340,4 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **issue** — exosphere capsule-ui crates/platform/sdk/capsule-ui/src/crush/crush-markup.tsx:175 passes raw html prop to dangerouslySetInnerHTML with no sanitizer despite header claiming 'safely' — XSS risk; exosphere-owned (found by CRUSH-150 scout)  _(nimbus-scout, 2026-10-07)_
 - [ ] **issue** — EXO-194 hazard 1 has happened: exosphere Cargo.lock holds both in-tree casm 0.1.0 and crates.io casm 0.3.0 (via exo-light -> crush-vm 0.3.6), plus two crush-errors; exo-light also lags crush-ast 0.3.9 (found by CRUSH-150)  _(nimbus-scout, 2026-10-07)_
 - [ ] **gap** — crush-debugger README.md:11,43 and lib.rs:27 still describe todo!() hook points that no longer exist (session.rs:346 replaced them) — stale docs  _(nimbus-scout, 2026-10-07)_
+- [ ] **issue** — Ticket ID CRUSH-108 is used twice: tickets/CRUSH-108-jit-nan-eq-test-failing-main.md and CRUSH-108-stdlib-reconcile-source-and-dedupe.md. Only the stdlib one was closed by CRUSH-169; the JIT NaN one needs a renumber or explicit status so references to 'CRUSH-108' stay unambiguous.  _(panini-e, 2026-10-07)_
