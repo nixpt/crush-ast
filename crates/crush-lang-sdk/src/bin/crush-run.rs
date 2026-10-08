@@ -64,7 +64,7 @@ struct RunArgs {
     #[arg(long, value_name = "DIR", default_value = ".")]
     fs_root: PathBuf,
 
-    /// Enable environment-variable host capability (env.get).
+    /// Enable environment-variable host capabilities (env.get, env.all, env.home_dir).
     #[arg(long)]
     env: bool,
 
@@ -104,7 +104,7 @@ struct RunArgs {
     #[arg(long)]
     no_stdlib: bool,
 
-    /// Enable network host capabilities (net.http_get, net.http_post).
+    /// Enable network host capabilities (net.http_get/post/put/delete, net.http_request).
     #[arg(long)]
     net: bool,
 
@@ -231,6 +231,8 @@ fn list_caps() {
     println!("  text.cut PATH DELIM COL  1-based column of every line");
     println!("  text.grep PAT PATH [RECURSIVE [IGNORE_CASE]]  (also needs the stdlib feature)");
     println!("  env.get NAME           read environment variable");
+    println!("  env.all                map of every environment variable");
+    println!("  env.home_dir           home directory (HOME / USERPROFILE), or null");
     println!("  time.now               return Unix timestamp (seconds)");
     println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
@@ -264,6 +266,11 @@ fn list_caps() {
         println!("Network capabilities (enable with --net):");
         println!("  net.http_get URL       HTTP GET request");
         println!("  net.http_post URL BODY HTTP POST request");
+        println!("  net.http_put URL BODY  HTTP PUT request");
+        println!("  net.http_delete URL    HTTP DELETE request");
+        println!(
+            "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, body}}"
+        );
     }
     #[cfg(feature = "db")]
     {

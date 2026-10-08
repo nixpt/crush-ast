@@ -685,3 +685,9 @@ Decision C-1 (captain s474). The stdcaps are pure (no I/O, no authority), so cru
 Reason:
 Decision C-5 (captain s474): VM-local cwd inside --fs-root, never chdir. Implemented as host_caps::FsSandbox {root, Arc<Mutex<cwd>>} built once per HostCapsBuilder::build and cloned into every file cap (fs.*, text.*), so the cwd is per registry = per VM, and two VMs never share one. Paths are cwd-joined lexically and then confined exactly as before. fs.pwd answers root-relative ('.' at the root) rather than a host path (no leak) or a '/'-anchored chroot path (would need absolute paths to mean root-relative everywhere, changing fs.read's 'absolute paths are not allowed' contract). rm/mv resolve the last component without following symlinks; mutating fs caps join fs.write in crush-vm's PRIVILEGED_PREFIXES.
 
+
+## 2026-10-07T20:27:12-05:00 — CRUSH-153: one deadline-aware request() behind every net.* verb; http_request returns {status, body}; no http.* aliases
+
+Reason:
+The ticket asked for http_put/delete/request with 'the same timeout/deadline behaviour as http_get', but http_get had none (no call_with_deadline override), so a slow server could hold the VM past max_wall_time_ms. All five verbs now share net::request(), which sets the ureq agent timeout from the CAP_CALL deadline and maps I/O timeouts to HostCapError::Timeout. http_request is the general verb, so it reports the status (map {status, body}) instead of failing on 4xx/5xx; the fixed verbs keep their body-or-error contract. exosphere's http.* spellings are not aliased: one name per capability. env.all exposes exactly what --env already exposed to env.get (the host env + injected overrides).
+

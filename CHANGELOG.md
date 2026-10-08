@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`env.all` / `env.home_dir` and more HTTP verbs (CRUSH-153).** With
+  `--env`: `env.all()` (map of the variables the grant exposes — the host
+  environment plus injected values) and `env.home_dir()` (`HOME` /
+  `USERPROFILE`, or null). With the `net` feature + `--net`: `net.http_put`,
+  `net.http_delete`, and `net.http_request(method, url, body, headers)`, which
+  returns `{status, body}` instead of failing on a non-2xx status. All five
+  `net.*` verbs now share one request path and honour the VM's wall-clock
+  quota (`CapTimeout`) — previously `net.http_get`/`http_post` could block
+  past it. exosphere's `http.*` names are not aliased (one name per
+  capability).
 - **`async.sleep` (CRUSH-152).** Registered with `--time` next to `time.sleep`
   and backed by the same function, so `await async.sleep(ms)` (the exosphere
   / nanovm spelling) works and honours the wall-clock quota (`CapTimeout`). It

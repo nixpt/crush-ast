@@ -71,7 +71,9 @@ impl HostCapsBuilder {
         self
     }
 
-    /// Enable environment variable access (`env.get`).
+    /// Enable environment variable access (`env.get`, `env.all`, `env.home_dir`).
+    /// The grant exposes the host process environment, with any
+    /// [`with_env_var`](Self::with_env_var) values layered on top.
     pub fn env(mut self, enable: bool) -> Self {
         self.env = enable;
         self
@@ -197,6 +199,12 @@ impl HostCapsBuilder {
             crate::text_tools::register(&mut caps, &fs);
         }
         if self.env {
+            caps.register(Box::new(EnvAllCap {
+                overrides: self.env_vars.clone(),
+            }));
+            caps.register(Box::new(EnvHomeDirCap {
+                overrides: self.env_vars.clone(),
+            }));
             caps.register(Box::new(EnvGetCap::new(self.env_vars)));
         }
         if self.time {
@@ -582,6 +590,59 @@ impl HostCap for EnvGetCap {
     }
 }
 
+/// `env.all()` — every variable the `--env` grant exposes, as a map: the
+/// host environment with the builder's injected values on top (CRUSH-153).
+/// Variables whose name or value is not valid Unicode are skipped.
+pub struct EnvAllCap {
+    overrides: HashMap<String, String>,
+}
+
+impl HostCap for EnvAllCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "env.all".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let mut all: HashMap<String, Value> = std::env::vars_os()
+            .filter_map(|(k, v)| Some((k.into_string().ok()?, Value::Str(v.into_string().ok()?))))
+            .collect();
+        for (k, v) in &self.overrides {
+            all.insert(k.clone(), Value::Str(v.clone()));
+        }
+        Ok(Some(Value::new_map(all)))
+    }
+}
+
+/// `env.home_dir()` — the user's home directory (`HOME`, or `USERPROFILE` on
+/// Windows) as the `--env` grant sees it, or null when unset.
+pub struct EnvHomeDirCap {
+    overrides: HashMap<String, String>,
+}
+
+impl HostCap for EnvHomeDirCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "env.home_dir".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let home = self
+            .overrides
+            .get(key)
+            .cloned()
+            .or_else(|| std::env::var(key).ok());
+        Ok(Some(home.map_or(Value::Null, Value::Str)))
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Time helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -901,6 +962,48 @@ mod tests {
             Err(HostCapError::Timeout)
         ));
         assert!(cap.call(vec![Value::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn env_all_and_home_dir_follow_the_env_grant() {
+        let caps = HostCapsBuilder::new()
+            .env(true)
+            .with_env_var("CRUSH_153_INJECTED", "yes")
+            .with_env_var("HOME", "/sandbox/home")
+            .build();
+        let Some(Value::Map(all)) = caps.get("env.all").unwrap().call(vec![]).unwrap() else {
+            panic!("env.all must return a map");
+        };
+        let all = all.borrow();
+        assert_eq!(all["CRUSH_153_INJECTED"], Value::Str("yes".into()));
+        assert_eq!(all["HOME"], Value::Str("/sandbox/home".into()));
+        if let Ok(path) = std::env::var("PATH") {
+            assert_eq!(all["PATH"], Value::Str(path));
+        }
+        assert_eq!(
+            caps.get("env.home_dir").unwrap().call(vec![]).unwrap(),
+            Some(Value::Str("/sandbox/home".into()))
+        );
+
+        let ungranted = HostCapsBuilder::new().stdlib(true).time(true).build();
+        for cap in ["env.get", "env.all", "env.home_dir"] {
+            assert!(ungranted.get(cap).is_none(), "{cap} without --env");
+        }
+    }
+
+    // Source → VM for one env cap.
+    #[test]
+    fn env_home_dir_through_the_source_pipeline() {
+        let prog = crate::compile::compile_crush_source("io.print(env.home_dir())\n").unwrap();
+        let caps = HostCapsBuilder::new()
+            .env(true)
+            .with_env_var("HOME", "/sandbox/home")
+            .build();
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&caps)).unwrap();
+        assert_eq!(result.output, "/sandbox/home\n");
+        let refused = crush_vm::run_with_caps(&prog, &quotas, None).unwrap_err();
+        assert!(refused.to_string().contains("env.home_dir"), "{refused}");
     }
 
     #[test]

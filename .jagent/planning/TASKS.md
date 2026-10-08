@@ -220,7 +220,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 
 - [x] **CRUSH-151** (M (~60 turns), lane A2; **done 2026-10-07, nimbus** — 10 coreutils + VM-local `fs.cd` (C-5), shared `FsSandbox`): fs coreutils host capabilities (`fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find`). [ticket](tickets/CRUSH-151-fs-coreutils-host-caps.md)
 - [x] **CRUSH-152** (XS (~15 turns), lane A3; **done 2026-10-07, nimbus** — `AsyncSleepCap` over the shared `sleep_ms`): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
-- [ ] **CRUSH-153** (S (~30 turns), lane A4): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
+- [x] **CRUSH-153** (S (~30 turns), lane A4; **done 2026-10-07, nimbus** — `env.all/home_dir`, `net.http_put/delete/request`, one deadline-aware request path): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
 - [ ] **CRUSH-154** (S (~40 turns), lane A5 🔒): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
 - [ ] **CRUSH-155** (S (~20 turns), lane A6): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)
 - [ ] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
@@ -341,3 +341,4 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **issue** — EXO-194 hazard 1 has happened: exosphere Cargo.lock holds both in-tree casm 0.1.0 and crates.io casm 0.3.0 (via exo-light -> crush-vm 0.3.6), plus two crush-errors; exo-light also lags crush-ast 0.3.9 (found by CRUSH-150)  _(nimbus-scout, 2026-10-07)_
 - [ ] **gap** — crush-debugger README.md:11,43 and lib.rs:27 still describe todo!() hook points that no longer exist (session.rs:346 replaced them) — stale docs  _(nimbus-scout, 2026-10-07)_
 - [ ] **gap** — xtask conformance corpus: 23 of 48 annotated examples/crush files fail on main — expect-error headers say '[runtime] …' but the runner reports 'runtime error: …'/'compile error: …', plus truncated '...' headers. The runner is not in CI, so the drift is invisible; fix headers (or normalize prefixes) and gate it  _(nimbus-a, 2026-10-07)_
+- [ ] **issue** — crush-lang-sdk's crush-diff bin does not compile with --no-default-features (uses crush_lang_sdk::differential, which is native-plugins-only) — needs required-features = ["native-plugins"] on the [[bin]]. CI's workspace-level feature-gates job hides it via feature unification  _(nimbus-a, 2026-10-07)_
