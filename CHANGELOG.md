@@ -14,6 +14,153 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush-cson` renamed to `crush-caison`; VM capability `caison.parse` (CRUSH-149).**
+  CAISON was renamed from CSON on 2026-09-27 ("CSON" already means
+  CoffeeScript Object Notation); the crate and capability now match.
+  `crates/crush-cson` → `crates/crush-caison` (package `crush-caison`,
+  `CsonParseCap` → `CaisonParseCap`); `crush_cast::cson` → `crush_cast::caison`.
+  Migration: depend on `crush-caison`; call `caison.parse` from Crush.
+  `crush_cast::cson` (a `#[deprecated]` module) and the `cson.parse`
+  capability (same handler) keep working until 0.4. The `crush-cson` crate
+  name is retired: `crates/crush-cson-shim` publishes a final `crush-cson`
+  that only re-exports `crush-caison`. Mechanical rename — no change to the
+  value mapping or parser.
+
+- **Capability effects (CRUSH-155).** `crush_vm::HostCap` gains a defaulted
+  `effects() -> Option<&'static [&'static str]>` (`None` = undeclared,
+  `Some(&[])` = pure; labels like `"fs/read"`, `"env/read"`, `"time/sleep"`,
+  `"net/http"`, `"process/spawn"`) — existing implementations compile
+  unchanged. Every capability `HostCapsBuilder` registers now declares its
+  effects (the stdlib as pure), polyglot gates declare `process/spawn`, and
+  `crush-run caps --json` lists name, argc, returns, effects and the granting
+  flag for every capability. Informational only: grants still decide access.
+  New `HostCaps::into_handlers()`.
+- **`env.all` / `env.home_dir` and more HTTP verbs (CRUSH-153).** With
+  `--env`: `env.all()` (map of the variables the grant exposes — the host
+  environment plus injected values) and `env.home_dir()` (`HOME` /
+  `USERPROFILE`, or null). With the `net` feature + `--net`: `net.http_put`,
+  `net.http_delete`, and `net.http_request(method, url, body, headers)`, which
+  returns `{status, body}` instead of failing on a non-2xx status. All five
+  `net.*` verbs now share one request path and honour the VM's wall-clock
+  quota (`CapTimeout`) — previously `net.http_get`/`http_post` could block
+  past it. exosphere's `http.*` names are not aliased (one name per
+  capability).
+- **`async.sleep` (CRUSH-152).** Registered with `--time` next to `time.sleep`
+  and backed by the same function, so `await async.sleep(ms)` (the exosphere
+  / nanovm spelling) works and honours the wall-clock quota (`CapTimeout`). It
+  blocks like `time.sleep`; it does not yield to the scheduler. The
+  conformance runner learned `// caps: time`; `examples/crush/async_test.crush`
+  now passes.
+- **fs coreutils + a VM-local working directory (CRUSH-151).** Under `--fs`,
+  `crush-lang-sdk` now also registers `fs.ls`, `fs.cat`, `fs.pwd`, `fs.cd`,
+  `fs.mkdir`, `fs.rm`, `fs.cp`, `fs.mv`, `fs.touch` and `fs.find`. `fs.cd`
+  moves a working directory that belongs to the capability registry (one per
+  VM) and that every `fs.*` and `text.*` file cap resolves against; it never
+  leaves `--fs-root` and never `chdir`s the process. `fs.pwd` answers relative
+  to the root (`.` at the root). Directories need an explicit flag to be
+  removed or copied recursively; `fs.rm`/`fs.mv` act on a symlink itself, and
+  a recursive `fs.cp` refuses symlinks. `fs.list` now returns sorted names, and
+  fs errors show sandbox-relative paths instead of host paths. PortableVm's
+  privileged tier now covers `fs.mkdir/rm/cp/mv/touch` as well as `fs.write`.
+- **Standard library on by default (CRUSH-113).** The `stdlib` cargo feature
+  of `crush-lang-sdk` is now in `default`, and `crush-run` / `crush-repl`
+  register the pure stdcaps (`str.*`, `math.*`, `conv.*`, `collections.*`,
+  `json.*`, `path.*`, `regex.*`, …) without a flag — they do no I/O and grant
+  no authority. `--stdlib` still parses; `--no-stdlib` turns them off. In a
+  build without the feature (`default-features = false`), `--stdlib` is now a
+  hard error instead of a warning, and `ReplConfig { stdlib: true, .. }` is
+  refused instead of silently ignored. `HostCapsBuilder` itself is unchanged:
+  embedders still opt in with `.stdlib(true)`. I/O families (`text.head`,
+  `time.now`, `fs.*`, …) stay behind their grants.
+- **Debugger: grants, redaction and events (CRUSH-160).** Debugging is now a
+  granted capability: `debug.step` (control), `debug.inspect.redacted` (values
+  as type + per-session hash) and `debug.inspect` (values in full), via
+  `HostCaps::grant_debug` or `crush-debugger run --cap debug.*`. **Without a
+  debug grant the debugger REPL refuses to run the program** — pass
+  `--cap debug.step --cap debug.inspect` for the old behaviour. New
+  `DebugEvent`/`DebugEventSink` (a channel sender works) for embedding hosts;
+  `PortableVm::frame_snapshot` returns redacted frames. The REPL now shows the
+  program's own output.
+- **Debugger: step over/out and watchpoints (CRUSH-159).** `PortableVm` gains
+  `request_step(StepMode::{Into, Over, Out})` (by call depth),
+  `add_watchpoint(slot, WatchScope::{Frame(depth), Top})`, `call_depth()`,
+  `local(depth, slot)` and `last_stop()`; stops still surface as
+  `VmYield::DebugBreak`. `crush-debugger` adds `next`, `finish`, `watch`,
+  `unwatch` and a working `print <slot>`. Bytecode-level: locals are slots
+  until the frontend emits a source map.
+- **Fix: `PortableVm` diverged from the scheduler on recursive programs
+  (CRUSH-176, #94).** A jump that lands on the instruction it came from — a
+  recursive call in tail position returning to the caller's own `RET`, or
+  `loop: JMP loop` — was treated as "no jump" and fell through. awesome-crush's
+  tictactoe, lights_out, blackjack and multi-round blackjack_interactive now
+  run the same on `PortableVm` (crush-web `Session`/`execute_with`, the
+  debugger, exo-light) as on `crush_vm::run`.
+- **Manifest `category` and `platforms` (CRUSH-171).** `[capsule]` takes an
+  optional `category` (`cli`, `library`, `app`, `service`, `game`,
+  `dev-tool`, `language`, `example`) and `platforms` (any of `linux`,
+  `macos`, `windows`, `web`). Unknown values, duplicate platforms, and `web` on
+  a non-Crush capsule are load errors that name the accepted values.
+  `crush-pkg show` prints both. Manifests without them load as before. The
+  schema is documented in `crates/crush-pkg/MANIFEST.md`.
+
+- **`crush-pkg` with no subcommand builds and runs (CRUSH-167, squeeze folded
+  in).** A bare `crush-pkg` builds the package (entry + path deps), writes
+  `target/<name>.cvm` + `.casm.json`, then runs the program it just built;
+  `crush-pkg -- ARGS` passes ARGS through (Script/Native capsules receive
+  them; Crush programs have no argv channel yet). Script and native capsules
+  skip the build and go straight to the runner. `crush-pkg build`/`check` now
+  refuse Script/Native capsules with a clear message (`E-BUILDER`) instead of
+  feeding Python or JavaScript to the Crush compiler. Replaces the separate
+  `squeeze` tool. New library surface: `crush_pkg::flow` and
+  `CrushRunner::run_program`.
+
+- **crush-pkg is publishable (CRUSH-161).** `cargo publish --dry-run -p
+  crush-pkg` now verifies against crates.io as it is (every dependency,
+  including `crush-buckets` 0.1.0, is live). The script runner's buckets
+  sandbox profile no longer names fields that only exist in the unpublished
+  buckets checkout. The publish itself is the maintainers' step; see the
+  publish lane in `.jagent/planning/tickets/CRUSH-104-publish-lane.md`.
+- **`crush doctor` (CRUSH-175).** Reports whether the interpreters polyglot
+  blocks spawn (`python3`, `node`, `bash` — taken from `EXEC_LANG`'s own
+  allowlist) and the sandbox tools (`bwrap`, `buckets`) are on `PATH`, with
+  their versions, plus this build's polyglot features. `--json` for tooling;
+  exits 1 when a runtime that `crush run --polyglot` grants is missing (`bwrap`
+  counts only in a `sandboxed-polyglot` build). Read-only: it runs `--version`
+  and nothing else. New in `crush-vm`: `resolve_lang_binary` is public and
+  `SANDBOXED_POLYGLOT` reports that feature.
+- **Host backends for `ai_native.query` and `ai_native.agent_delegation`
+  (CRUSH-158).** New `ai_native::providers::{QueryProvider,
+  DelegationBackend}` traits; `HostCapsBuilder::query_provider(..)` /
+  `.delegation_backend(..)` put them behind the gates in place of the echo
+  stubs (they take effect only with `ai_native(true)` — a backend is not a
+  grant). Delegation picks agents (`first_available`, `broadcast`, `best`,
+  `round_robin`; others are an error) from the backend's reported status and
+  validates each result against `expected_format` (`json`, `structured`,
+  `text`). No real backend ships; `ai_native::register_with` is the
+  non-builder entry point.
+
+- **`ai_native.toolchain` runs tool chains (CRUSH-157).** With `ai_native`
+  granted, the toolchain cap is now a strategy engine (sequential, parallel,
+  conditional, retry × fail-fast, continue-on-error, retry, fallback) that
+  returns `{results, aborted, abort_reason}`. Every step is dispatched
+  through the program's own `HostCaps`: a tool (or its
+  `required_capability`) that wasn't granted fails its step and never runs.
+  Tool arguments come from `parameters.args` (positional) or the parameters
+  map; `"$name"` refers to an earlier step's `result_binding`. `HostCaps` is
+  now `Clone` (clones share handlers) and `Value::is_truthy` is public.
+
+- **`ai_native.*` caps receive their compiled arguments (CRUSH-156).** Each
+  AI opcode now calls its cap with `[payload, operands…]`: the compiled
+  payload as a map, then the values the frontend pushed for that kind
+  (`context_aware`'s expression, `semantic_match`'s target, `synthesize`'s
+  context refs and examples). Specs declare real arities (1, 2, or variadic
+  for `synthesize`). Crush programs compiled to CVM1 now execute the ten AI
+  ops (they were lowered to `NOP`); statement forms pop their result.
+  Ungranted ops still yield `null`, operands consumed. FastVM's
+  `resolve_host_request` passes the payload through the same contract
+  (`crush_vm::ai_args`) and returns map results as JSON text. Tool lists
+  carry `required_capability`, and the `fallback` policy carries its tools.
+
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

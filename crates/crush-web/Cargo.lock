@@ -247,27 +247,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "crush-cast"
-version = "0.3.9"
-dependencies = [
- "cbor4ii",
- "crush-cson",
- "crush-errors",
- "indexmap",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "uuid",
-]
-
-[[package]]
-name = "crush-cson"
+name = "crush-caison"
 version = "0.3.9"
 dependencies = [
  "caison",
  "crush-vm",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "crush-cast"
+version = "0.3.9"
+dependencies = [
+ "cbor4ii",
+ "crush-caison",
+ "crush-errors",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "uuid",
 ]
 
 [[package]]
@@ -309,8 +309,8 @@ version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
+ "crush-caison",
  "crush-cast",
- "crush-cson",
  "serde",
  "serde_json",
 ]
@@ -324,8 +324,8 @@ dependencies = [
  "casm",
  "chrono",
  "clap",
+ "crush-caison",
  "crush-cast",
- "crush-cson",
  "crush-errors",
  "crush-frontend",
  "crush-index",

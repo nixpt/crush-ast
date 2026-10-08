@@ -39,3 +39,11 @@ A package declares `[capabilities] required` in `capsule.toml`, but nothing chec
 ## Source (reference only — re-implement, don't copy)
 
 - incubator `parked/crates/ai/services/shadow-capsule` (private, idea only)
+
+## Lane D note (panini-d, 2026-10-07)
+
+Not started. The dispatch said to take this only if lane A's caps (CRUSH-151–153) were already merged on `main`. They aren't: `origin/main` is still `9abf05b`, and #97/#98/#99/#100 are open. The final capability list isn't settled yet, so this waits.
+
+Two things for whoever picks this up, found while doing CRUSH-167/171:
+- `PackageBuilder::check` compiles each file on its own and fails on any package whose entry calls a path-dep function (captured in TASKS.md). Fix that first, or do the inference over the combined program `build` compiles, or every package with deps will report spurious errors.
+- CRUSH-171 added `[capsule] platforms`. A natural extension here is a warning when a `web` capsule uses a capability the browser doesn't grant (crush-web grants `io.print`, `str.*`, `conv.chr/ord` only).

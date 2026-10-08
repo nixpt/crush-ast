@@ -1,0 +1,16 @@
+[package]
+name = "crush-cson"
+description = "RETIRED — renamed to `crush-caison`. This crate only re-exports it; depend on `crush-caison` instead."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["crush", "caison", "deprecated"]
+
+[dependencies]
+# Nothing in the workspace depends on this crate; it exists only to publish a
+# final `crush-cson` release that points people at `crush-caison`.
+crush-caison = { path = "../crush-caison", version = "0.3.8" }

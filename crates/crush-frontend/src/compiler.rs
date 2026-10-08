@@ -2180,17 +2180,19 @@ impl Compiler {
                 error_handling,
             } => {
                 // Compile tool chain - serialize tools and strategy
-                let tools_json: Vec<serde_json::Value> = tools
-                    .iter()
-                    .map(|t| {
-                        serde_json::json!({
-                            "tool_name": t.tool_name,
-                            "parameters": t.parameters,
-                            "result_binding": t.result_binding,
-                            "condition": t.condition
-                        })
+                // CRUSH-156: one tool shape for the chain and its fallbacks
+                // (`tool_name`, `parameters`, `result_binding`, `condition`,
+                // `required_capability`), read back by the toolchain engine.
+                let tool_json = |t: &ToolCall| {
+                    serde_json::json!({
+                        "tool_name": t.tool_name,
+                        "parameters": t.parameters,
+                        "result_binding": t.result_binding,
+                        "condition": t.condition,
+                        "required_capability": t.required_capability
                     })
-                    .collect();
+                };
+                let tools_json: Vec<serde_json::Value> = tools.iter().map(tool_json).collect();
 
                 let strategy_json = match strategy {
                     ExecutionStrategy::Sequential => serde_json::json!({"type": "sequential"}),
@@ -2231,7 +2233,8 @@ impl Compiler {
                     ErrorHandling::Fallback { fallback_tools } => {
                         serde_json::json!({
                             "type": "fallback",
-                            "fallback_count": fallback_tools.len()
+                            "fallback_count": fallback_tools.len(),
+                            "fallback_tools": fallback_tools.iter().map(tool_json).collect::<Vec<_>>()
                         })
                     }
                 };
@@ -2351,7 +2354,8 @@ impl Compiler {
                     "ai_context_aware",
                     serde_json::json!({
                         "requires_context": requires_context,
-                        "provides_context": provides_context
+                        "provides_context": provides_context,
+                        "stack_args": 1
                     }),
                     meta,
                 ));
@@ -2366,7 +2370,8 @@ impl Compiler {
                     "ai_semantic_match",
                     serde_json::json!({
                         "concept": concept,
-                        "confidence_threshold": confidence_threshold
+                        "confidence_threshold": confidence_threshold,
+                        "stack_args": 1
                     }),
                     meta,
                 ));
@@ -2391,7 +2396,9 @@ impl Compiler {
                     "ai_synthesize",
                     serde_json::json!({
                         "output_type": format!("{:?}", output_type),
-                        "constraints": constraints
+                        "constraints": constraints,
+                        "context_refs": context_refs.len(),
+                        "stack_args": context_refs.len() + examples.as_ref().map_or(0, |e| e.len())
                     }),
                     meta,
                 ));

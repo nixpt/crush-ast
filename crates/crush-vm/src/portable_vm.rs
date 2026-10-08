@@ -112,6 +112,8 @@ pub struct PortableVm {
     ip: usize,
     /// Total instruction steps executed.
     steps: usize,
+    /// Set by `jump_to` when the current instruction chose the next IP.
+    jumped: bool,
     /// Whether the VM has halted.
     halted: bool,
     /// Whether privileged capabilities are allowed.
@@ -134,6 +136,13 @@ pub struct PortableVm {
     /// hot path in `step()` is an O(1) lookup instead of O(n)
     /// `.filter().count()`.
     breakpoint_count: std::collections::HashMap<usize, usize>,
+    /// Pending `request_step`, cleared when it completes or another stop wins.
+    step_request: Option<crate::debug::StepRequest>,
+    /// Watched local slots (`add_watchpoint`).
+    watches: Vec<crate::debug::Watch>,
+    next_watch_id: u32,
+    /// Why the last `DebugBreak` happened.
+    last_stop: Option<crate::debug::DebugStop>,
 }
 
 impl PortableVm {
@@ -181,6 +190,7 @@ impl PortableVm {
             input: crate::io_read::InputSource::Stdin,
             ip: start_ip,
             steps: 0,
+            jumped: false,
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
@@ -189,6 +199,10 @@ impl PortableVm {
             breakpoints: Vec::new(),
             breakpoint_hit: std::collections::HashMap::new(),
             breakpoint_count: std::collections::HashMap::new(),
+            step_request: None,
+            watches: Vec::new(),
+            next_watch_id: 0,
+            last_stop: None,
         }
     }
 
@@ -285,6 +299,176 @@ impl PortableVm {
         self.ip
     }
 
+    /// Number of frames on the call stack (1 = running the entry function).
+    pub fn call_depth(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    /// The value in local `slot` of the frame at call depth `depth`
+    /// (1 = entry frame), if that frame exists and the slot is assigned.
+    pub fn local(&self, depth: usize, slot: u16) -> Option<&Value> {
+        self.call_stack
+            .get(depth.checked_sub(1)?)
+            .and_then(|f| f.memory.get(&slot))
+    }
+
+    /// Pause again after a step of the given kind (see [`StepMode`]).
+    /// `step()` then returns `DebugBreak` *before* the instruction where
+    /// the step ends, with [`DebugStop::Step`] in [`last_stop`]. A
+    /// breakpoint or watchpoint hit on the way ends the step early.
+    /// Replaces any pending request.
+    ///
+    /// [`StepMode`]: crate::debug::StepMode
+    /// [`DebugStop::Step`]: crate::debug::DebugStop::Step
+    /// [`last_stop`]: Self::last_stop
+    pub fn request_step(&mut self, mode: crate::debug::StepMode) {
+        self.step_request = Some(crate::debug::StepRequest {
+            mode,
+            depth: self.call_stack.len(),
+            executed: false,
+        });
+    }
+
+    /// Drop a pending `request_step`.
+    pub fn cancel_step(&mut self) {
+        self.step_request = None;
+    }
+
+    /// Watch local `slot` in `scope`. After an instruction changes the
+    /// slot's value (assignment, or an in-place edit of an array/map it
+    /// holds), `step()` returns `DebugBreak` with [`DebugStop::Watch`] in
+    /// [`last_stop`]; unlike a breakpoint, the changing instruction has
+    /// already run. The first assignment of an unset slot counts as a
+    /// change.
+    ///
+    /// [`DebugStop::Watch`]: crate::debug::DebugStop::Watch
+    /// [`last_stop`]: Self::last_stop
+    pub fn add_watchpoint(
+        &mut self,
+        slot: u16,
+        scope: crate::debug::WatchScope,
+    ) -> crate::debug::WatchId {
+        let id = crate::debug::WatchId(self.next_watch_id);
+        self.next_watch_id += 1;
+        let mut watch = crate::debug::Watch {
+            id,
+            slot,
+            scope,
+            seen: None,
+        };
+        watch.seen = self.observe(&watch);
+        self.watches.push(watch);
+        id
+    }
+
+    /// Remove a watchpoint. Returns whether it existed.
+    pub fn remove_watchpoint(&mut self, id: crate::debug::WatchId) -> bool {
+        let before = self.watches.len();
+        self.watches.retain(|w| w.id != id);
+        self.watches.len() != before
+    }
+
+    /// Registered watchpoints as `(id, slot, scope)`, in creation order.
+    pub fn watchpoints(
+        &self,
+    ) -> impl Iterator<Item = (crate::debug::WatchId, u16, crate::debug::WatchScope)> + '_ {
+        self.watches.iter().map(|w| (w.id, w.slot, w.scope))
+    }
+
+    /// What a debug client of this VM may do, from the `debug.*` grants in
+    /// its host capabilities (`None` without any; see
+    /// `HostCaps::grant_debug`).
+    pub fn debug_visibility(&self) -> crate::debug::DebugVisibility {
+        crate::debug::DebugVisibility::granted(self.host_caps.as_ref())
+    }
+
+    /// The frame at call `depth` (1 = entry), with its locals rendered by
+    /// `redactor`: the snapshot never holds a raw value, so it carries no
+    /// more than the redactor's visibility allows.
+    pub fn frame_snapshot(
+        &self,
+        depth: usize,
+        redactor: &crate::debug::Redactor,
+    ) -> Option<crate::debug::FrameSnapshot> {
+        let frame = self.call_stack.get(depth.checked_sub(1)?)?;
+        // Below the top, a frame is parked at its callee's return address.
+        let ip = match self.call_stack.get(depth) {
+            Some(callee) => callee.return_ip?,
+            None => self.ip,
+        };
+        let mut slots: Vec<u16> = frame.memory.keys().copied().collect();
+        slots.sort_unstable();
+        Some(crate::debug::FrameSnapshot {
+            depth,
+            function: self.function_at(ip).map(str::to_string),
+            ip,
+            locals: slots
+                .into_iter()
+                .map(|slot| (slot, redactor.view(&frame.memory[&slot])))
+                .collect(),
+        })
+    }
+
+    /// The function whose code contains `ip`: the one with the highest
+    /// entry at or below it (functions are laid out one after another).
+    pub fn function_at(&self, ip: usize) -> Option<&str> {
+        self.func_entry
+            .iter()
+            .filter(|&(_, &entry)| entry <= ip)
+            .max_by_key(|&(_, &entry)| entry)
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// Why the most recent `VmYield::DebugBreak` happened. Cleared when
+    /// the next instruction executes.
+    pub fn last_stop(&self) -> Option<&crate::debug::DebugStop> {
+        self.last_stop.as_ref()
+    }
+
+    /// `(depth, snapshot)` of a watch's slot right now, `None` when the
+    /// watched frame doesn't exist.
+    fn observe(
+        &self,
+        watch: &crate::debug::Watch,
+    ) -> Option<(usize, Option<crate::debug::Snapshot>)> {
+        let depth = match watch.scope {
+            crate::debug::WatchScope::Frame(d) => d,
+            crate::debug::WatchScope::Top => self.call_stack.len(),
+        };
+        let frame = self.call_stack.get(depth.checked_sub(1)?)?;
+        Some((
+            depth,
+            frame
+                .memory
+                .get(&watch.slot)
+                .map(crate::debug::Snapshot::of),
+        ))
+    }
+
+    /// Re-read every watch after an instruction; report the first change.
+    fn check_watches(&mut self) -> Option<crate::debug::DebugStop> {
+        let mut hit = None;
+        for i in 0..self.watches.len() {
+            let now = self.observe(&self.watches[i]);
+            let watch = &mut self.watches[i];
+            if hit.is_none()
+                && let (Some((d0, old)), Some((d1, Some(new)))) = (&watch.seen, &now)
+                && d0 == d1
+                && old.as_ref() != Some(new)
+            {
+                hit = Some(crate::debug::DebugStop::Watch {
+                    id: watch.id,
+                    slot: watch.slot,
+                    depth: *d1,
+                    old: old.as_ref().map(|s| s.value.clone()),
+                    new: new.value.clone(),
+                });
+            }
+            watch.seen = now;
+        }
+        hit
+    }
+
     /// Execute a single instruction.
     ///
     /// If a breakpoint is set at the current IP, returns
@@ -317,10 +501,25 @@ impl PortableVm {
                 self.breakpoint_hit.remove(&self.ip);
             } else {
                 *hit += 1;
+                self.step_request = None;
+                self.last_stop = Some(crate::debug::DebugStop::Breakpoint { ip: self.ip });
                 return Ok(Some(VmYield::DebugBreak {
                     reason: format!("breakpoint at ip {}", self.ip),
                 }));
             }
+        }
+
+        if let Some(req) = self.step_request
+            && req.done_at(self.call_stack.len())
+        {
+            self.step_request = None;
+            self.last_stop = Some(crate::debug::DebugStop::Step {
+                mode: req.mode,
+                ip: self.ip,
+            });
+            return Ok(Some(VmYield::DebugBreak {
+                reason: format!("step at ip {}", self.ip),
+            }));
         }
 
         self.check_step_quota()?;
@@ -346,16 +545,35 @@ impl PortableVm {
             }));
         }
 
-        // Save IP before execution to detect control flow changes
-        let ip_before = self.ip;
+        // Control-flow ops (CALL, RET, JMP/JZ/JNZ taken, THROW, AWAIT) set
+        // the next IP through `jump_to`, which raises `jumped`. Comparing
+        // `self.ip` before and after is not enough: a jump can land on the
+        // instruction it came from — a `RET` back to the caller's own `RET`
+        // (a recursive call in tail position, #94) or `loop: JMP loop`.
+        self.jumped = false;
         self.execute_instruction(opcode, next_ip)?;
-
-        // Only advance IP if execute_instruction didn't change it
-        // (CALL, RET, JMP, JZ, JNZ set self.ip themselves)
-        if self.ip == ip_before {
+        if !self.jumped {
             self.ip = next_ip;
         }
         self.steps += 1;
+        self.last_stop = None;
+        if let Some(req) = self.step_request.as_mut() {
+            req.executed = true;
+        }
+
+        if !self.watches.is_empty()
+            && let Some(stop) = self.check_watches()
+        {
+            let reason = match &stop {
+                crate::debug::DebugStop::Watch { id, slot, .. } => {
+                    format!("watchpoint {} on slot {slot}", id.0)
+                }
+                _ => unreachable!("check_watches only reports watch stops"),
+            };
+            self.step_request = None;
+            self.last_stop = Some(stop);
+            return Ok(Some(VmYield::DebugBreak { reason }));
+        }
 
         Ok(None)
     }
@@ -371,6 +589,12 @@ impl PortableVm {
                 return Ok(self.take_result());
             }
         }
+    }
+
+    /// Make `ip` the next instruction instead of the one after the current.
+    fn jump_to(&mut self, ip: usize) {
+        self.ip = ip;
+        self.jumped = true;
     }
 
     /// Execute a single instruction at the current IP.
@@ -733,7 +957,7 @@ impl PortableVm {
                     _ => unreachable!(),
                 };
                 if take {
-                    self.ip = target;
+                    self.jump_to(target);
                 }
             }
             PRINT => {
@@ -790,7 +1014,7 @@ impl PortableVm {
                 // Arguments stay on the stack (main VM convention).
                 // Callee accesses them via stack operations or LOAD/STORE slots.
                 self.call_stack.push(Frame::new(Some(next_ip)));
-                self.ip = func_entry;
+                self.jump_to(func_entry);
             }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -803,7 +1027,7 @@ impl PortableVm {
                         self.halted = true;
                     }
                     Some(ret_ip) => {
-                        self.ip = ret_ip;
+                        self.jump_to(ret_ip);
                     }
                 }
             }
@@ -1021,7 +1245,7 @@ impl PortableVm {
                     // Unwind to the frame and stack height that entered the try.
                     self.call_stack.truncate(handler.call_depth);
                     self.stack.truncate(handler.stack_len);
-                    self.ip = handler.handler_ip;
+                    self.jump_to(handler.handler_ip);
                     self.push(err_val);
                     return Ok(());
                 }
@@ -1192,19 +1416,33 @@ impl PortableVm {
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
             | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
-                // CRUSH-32: gate the AI opcodes through `self.host_caps.get("ai_native.<kind>")`
-                // (mirrors scheduler.rs — see that file for the rationale).
+                // CRUSH-32/156: gate the AI opcodes through `self.host_caps.get("ai_native.<kind>")`
+                // with payload + stack operands (mirrors scheduler.rs; contract in `crate::ai_args`).
                 let kind = crate::bytecode::ai_native_kind_for_opcode(opcode)
                     .expect("AI opcode byte in combined match arm must map to a known kind");
-                let gate = format!("ai_native.{kind}");
-                let value = match self.host_caps.as_ref().and_then(|h| h.get(&gate)) {
-                    Some(handler) => handler
-                        .call(vec![])
-                        .ok()
-                        .flatten()
-                        .unwrap_or(Value::Null),
-                    None => Value::Null,
-                };
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                let raw = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?;
+                let payload = crate::ai_args::parse_payload(raw)?;
+                let n = crate::ai_args::stack_argc(&payload);
+                if self.stack.len() < n {
+                    return Err(VmError::StackUnderflow);
+                }
+                let operands = self.stack.split_off(self.stack.len() - n);
+                let value = crate::ai_args::dispatch(
+                    kind,
+                    &payload,
+                    operands,
+                    self.host_caps.as_ref(),
+                    self.quotas.max_wall_time_ms,
+                )?;
                 self.push(value);
             }
             // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.
@@ -1261,7 +1499,7 @@ impl PortableVm {
                             self.stack.extend(args);
                             self.call_stack
                                 .push(Frame::new(Some(next_ip)));
-                            self.ip = entry;
+                            self.jump_to(entry);
                             return Ok(());
                         }
                     }
@@ -2291,5 +2529,49 @@ HALT"#;
         let mut vm = PortableVm::new(program);
         vm.set_input(crate::io_read::InputSource::interactive());
         assert!(matches!(vm.step(), Err(VmError::CapNotDeclared(cap)) if cap == "io.read"));
+    }
+
+    // #94: a jump that lands on the instruction it came from used to look
+    // like "no jump" and fall through to the next instruction.
+    #[test]
+    fn test_portable_recursive_tail_call_returns_through_same_ret() {
+        // The inner `f` returns to `done`, the very `RET` it is executing.
+        let source = r#"
+            .func main
+            PUSH 1
+            CALL f
+            PUSH 7
+            CAP_CALL "io.print" 1
+            HALT
+            .func f
+            JZ done
+            PUSH 0
+            CALL f
+            done:
+            RET
+        "#;
+        let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
+        let expected = crate::vm::run(&program, &Quotas::default()).unwrap();
+        let result = PortableVm::new(program).run().unwrap();
+        assert_eq!(result.output, "7\n");
+        assert_eq!(
+            (result.output, result.stack, result.steps),
+            (expected.output, expected.stack, expected.steps)
+        );
+    }
+
+    #[test]
+    fn test_portable_self_jump_loops_until_step_quota() {
+        let program = assemble("loop:\nJMP loop\nPUSH 1\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        vm.set_quotas(Quotas {
+            max_steps: 10,
+            ..Default::default()
+        });
+        assert!(
+            matches!(vm.run(), Err(VmError::StepQuota(_))),
+            "fell through the self-jump"
+        );
+        assert_eq!(vm.current_ip(), 0);
     }
 }

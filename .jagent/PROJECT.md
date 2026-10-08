@@ -19,7 +19,8 @@ crush-ast/
 ├── crates/
 │   ├── casm/                  # CASM bytecode format
 │   ├── crush-cast/            # CAST AST (serializable, ts-export)
-│   ├── crush-cson/            # CSON semantic data format
+│   ├── crush-caison/          # CAISON (formerly CSON) semantic data format
+│   ├── crush-cson-shim/       # retired crush-cson name (re-exports crush-caison)
 │   ├── crush-errors/          # Error types
 │   ├── tree-sitter-crush/     # Tree-sitter grammar
 │   ├── walker-core/           # Walker trait framework

@@ -1,4 +1,11 @@
-// expect-error: [runtime] unknown capability: async.sleep
+// caps: time
+// expect: Testing MVP async/await
+// expect: Test 1: Simple await with sleep
+// expect: Slept for 100ms
+// expect: Test 2: Sequential awaits
+// expect: First sleep done
+// expect: Second sleep done
+// expect: Async/await MVP tests passed!
 # Test: Async/Await
 # Description: Verifies async function execution, task spawning, and awaiting results.
 

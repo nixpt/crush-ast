@@ -1,4 +1,14 @@
-// expect-error: [runtime] unknown capability: math.sqrt
+// expect: Testing math library
+// expect: 4.0
+// expect: 256.0
+// expect: 3.141592653589793
+// expect: 42.0
+// expect: 3.0
+// expect: 4.0
+// expect: 4.0
+// expect: 3.0
+// expect: 5.0
+// expect: Math library tests passed!
 # Test: Math Library
 # Description: Verifies mathematical functions and operations.
 

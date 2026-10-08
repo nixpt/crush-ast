@@ -15,7 +15,7 @@
 | Compiler (compiler.rs) | 🟢 | 1905L | `__crush_assign__`, `__crush_ternary__` lowering added. Loops, functions, arrays all wired. | Low |
 | CASM (casm) | 🟢 | 13 | ecasm tests pre-existing failure (type_hints field). Not a regression. | Low |
 | Optimizer (optimizer.rs) | 🟡 | 0 | 460 lines of optimization passes. No unit tests. Inline/const-fold untested. | Medium |
-| CSON (crush-cson) | 🟡 | 9 | Parser-only (no serializer). String escapes unsupported. Comments inside values issue. | Low |
+| CAISON (crush-caison, formerly CSON) | 🟡 | 9 | Parser-only (no serializer). String escapes unsupported. Comments inside values issue. | Low |
 
 ---
 

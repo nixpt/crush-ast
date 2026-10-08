@@ -18,8 +18,10 @@ pub mod fastvm;
 pub mod value;
 pub mod assembler;
 pub mod bytecode;
+pub mod ai_args;
 pub mod arithmetic;
 pub mod caps;
+pub mod debug;
 pub mod host;
 pub mod io_print;
 pub mod io_read;
@@ -31,10 +33,19 @@ pub mod vm;
 pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
+pub use debug::{
+    DebugStop, DebugVisibility, FrameSnapshot, Redactor, StepMode, ValueView, WatchId, WatchScope,
+};
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use io_read::InputSource;
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
 pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
+pub use scheduler::resolve_lang_binary;
+
+/// Whether this build runs `@lang[deps]` blocks in a buckets-provisioned bwrap
+/// sandbox (cargo feature `sandboxed-polyglot`). Lets host tooling report it.
+pub const SANDBOXED_POLYGLOT: bool = cfg!(feature = "sandboxed-polyglot");
+
 #[cfg(feature = "native-plugins")]
 pub use vm::{run_fastvm, run_fastvm_with_caps, run_casm_json, CrushResultExt};
 

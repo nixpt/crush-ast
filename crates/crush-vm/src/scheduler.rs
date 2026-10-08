@@ -71,8 +71,9 @@ pub(crate) fn canonical_lang(lang: &str) -> Option<&'static str> {
 
 /// The @lang → (binary, exec-flag) allowlist. SHARED with portable_vm so the two backends can
 /// never drift on which languages run or how (found drifting by crush-diff: portable used the raw
-/// tag `javascript` with `-c`, scheduler mapped it to `node -e`).
-pub(crate) fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static str)> {
+/// tag `javascript` with `-c`, scheduler mapped it to `node -e`). Public so host tooling
+/// (`crush doctor`) checks for exactly the binaries `EXEC_LANG` will spawn.
+pub fn resolve_lang_binary(lang: &str) -> Option<(&'static str, &'static str)> {
     match lang {
         "python" | "python3" | "py" => Some(("python3", "-c")),
         "javascript" | "js" | "es6" | "ecmascript" | "node" => Some(("node", "-e")),
@@ -1121,23 +1122,30 @@ fn execute_one(
         }
         AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
         | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
-            // CRUSH-32: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`.
-            // Callers who grant `ai_native(true)` in their HostCapsBuilder get
-            // the stub `Value::Map({ok, kind, echo})` produced by
-            // `crush-lang-sdk::ai_native`. Callers that DON'T grant it (the
-            // default — pre-CRUSH-32 callers preserved) fall through to a
-            // `Value::Null` stub, matching the f49ece5 behavior.
+            // CRUSH-32/156: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`
+            // with the compiled payload + stack operands (`crate::ai_args` is
+            // the shared contract). Ungranted → `Value::Null`, operands still
+            // consumed so the stack stays balanced.
             let kind = bytecode::ai_native_kind_for_opcode(opcode)
                 .expect("AI opcode byte in combined match arm must map to a known kind");
-            let gate = format!("ai_native.{kind}");
-            let value = match host_caps.and_then(|h| h.get(&gate)) {
-                Some(handler) => handler
-                    .call(vec![])
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null),
-                None => Value::Null,
-            };
+            let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let raw = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?;
+            let payload = crate::ai_args::parse_payload(raw)?;
+            let n = crate::ai_args::stack_argc(&payload);
+            if stack.len() < n {
+                return Err(VmError::StackUnderflow);
+            }
+            let operands = stack.split_off(stack.len() - n);
+            let value = crate::ai_args::dispatch(
+                kind,
+                &payload,
+                operands,
+                host_caps,
+                quotas.max_wall_time_ms,
+            )?;
             push!(value);
         }
         // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.

@@ -5,6 +5,7 @@
 //! additional capabilities here without forking the VM.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::vm::Value;
 
@@ -70,12 +71,29 @@ pub trait HostCap: Send + Sync {
         let _ = deadline_ms;
         self.call(args).map_err(HostCapError::Message)
     }
+
+    /// What the capability touches outside the VM, as `"<resource>/<action>"`
+    /// labels (`"fs/read"`, `"env/read"`, `"time/sleep"`, `"net/http"`, …),
+    /// so tooling — capability inference, audit, grant review — can ask
+    /// without running it (CRUSH-155).
+    ///
+    /// `Some(&[])` declares a pure capability; the default `None` means the
+    /// capability has not declared its effects, which a cautious caller should
+    /// treat as "could touch anything". Purely informational: the VM never
+    /// consults it to allow or refuse a call.
+    fn effects(&self) -> Option<&'static [&'static str]> {
+        None
+    }
 }
 
 /// Registry of host-provided capabilities.
-#[derive(Default)]
+///
+/// Cloning is cheap and shares the handler instances (CRUSH-157): a clone is
+/// a snapshot of which capabilities are granted, not a copy of their state —
+/// `ai_native.toolchain` dispatches its steps through one.
+#[derive(Default, Clone)]
 pub struct HostCaps {
-    handlers: HashMap<String, Box<dyn HostCap>>,
+    handlers: HashMap<String, Arc<dyn HostCap>>,
 }
 
 impl HostCaps {
@@ -96,7 +114,26 @@ impl HostCaps {
         self
     }
 
+    /// Grant a debug client `level` (CRUSH-160): registers the
+    /// presence-only `debug.*` gates that make it up (see
+    /// [`DebugVisibility::grants`](crate::debug::DebugVisibility::grants)).
+    /// Program code can't use them: calling one is an error.
+    pub fn grant_debug(&mut self, level: crate::debug::DebugVisibility) -> &mut Self {
+        for &name in level.grants() {
+            self.register(Box::new(DebugGate { name }));
+        }
+        self
+    }
+
     pub fn register(&mut self, handler: Box<dyn HostCap>) -> &mut Self {
+        let name = handler.spec().name.clone();
+        self.handlers.insert(name, Arc::from(handler));
+        self
+    }
+
+    /// Register a handler that is already shared, e.g. one taken out of
+    /// another registry with [`HostCaps::into_handlers`].
+    pub fn register_shared(&mut self, handler: Arc<dyn HostCap>) -> &mut Self {
         let name = handler.spec().name.clone();
         self.handlers.insert(name, handler);
         self
@@ -116,6 +153,12 @@ impl HostCaps {
     pub fn spec(&self, name: &str) -> Option<HostCapSpec> {
         self.handlers.get(name).map(|h| h.spec())
     }
+
+    /// Take every registered handler out of the registry, e.g. to wrap or
+    /// re-register them into another one.
+    pub fn into_handlers(self) -> impl Iterator<Item = Arc<dyn HostCap>> {
+        self.handlers.into_values()
+    }
 }
 
 impl std::fmt::Debug for HostCaps {
@@ -134,6 +177,28 @@ pub fn polyglot_gate(lang: &str) -> Box<dyn HostCap> {
     Box::new(PolyglotGate { lang: lang.to_string() })
 }
 
+/// Presence-only `debug.*` grant. A debugger checks for its registration;
+/// a program that declares and calls it gets an error, not a no-op.
+struct DebugGate {
+    name: &'static str,
+}
+
+impl HostCap for DebugGate {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: self.name.to_string(),
+            argc: None,
+            returns: false,
+        }
+    }
+    fn call(&self, _args: Vec<crate::vm::Value>) -> Result<Option<crate::vm::Value>, String> {
+        Err(format!(
+            "{} authorizes a debugger; program code can't call it",
+            self.name
+        ))
+    }
+}
+
 /// Presence-only capability gate for `@<lang>` polyglot blocks. exec_lang checks
 /// `host_caps.get("polyglot.<lang>")` before spawning; this handler's mere registration is the
 /// authorization. `call()` is never reached through normal execution.
@@ -147,5 +212,8 @@ impl HostCap for PolyglotGate {
     }
     fn call(&self, _args: Vec<crate::vm::Value>) -> Result<Option<crate::vm::Value>, String> {
         Ok(None)
+    }
+    fn effects(&self) -> Option<&'static [&'static str]> {
+        Some(&["process/spawn"])
     }
 }

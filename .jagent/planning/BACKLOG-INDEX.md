@@ -39,7 +39,7 @@
 | 105   | JVM/Android guest bridge (the unfiled CRUSH-21 sub-shard; gates CRUSH-52) |
 | 106   | Typed OpCode emission (audit finding #1 — 4–6 allocs/instruction via serde_json) |
 | 107   | CAST meta → packed Span (audit finding #2 — contract-coordinated; reshapes CRUSH-74's mechanism) |
-| 108   | Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
+| 108   | ~~superseded (CRUSH-169)~~ Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
 | 109   | Disambiguate top-level `stdlib/` (polyglot transpiled modules) from CRUSH-56/57's native HostCap restoration work — includes an already-observed string-function naming overlap |
 | 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
 | 115   | `io.read` — interactive stdin input capability | **Done 2026-08-21** — canonical implementation merged in #52 and released in v0.3.5; verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
@@ -58,7 +58,7 @@
 | 144 | crush-aotc outside the differential harness; missed #76 string ordering (found during CRUSH-134) |
 | 145 | SET_FIELD contract diverged: map literals broken off CVM1 (found during CRUSH-134) |
 | 146 | JIT `arr_set` stack contract: `a[i] = v` corrupted the JIT stack (found during CRUSH-135) |
-| 121+  | free (CRUSH-57's per-cap rewrite tickets mint here) |
+| 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
 
 ## How to dispatch from this index
 
@@ -169,16 +169,16 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-52 | Android host cap shard | CRUSH-105 (JVM bridge) |
 | CRUSH-53 | Installer Pi-class default | — |
 
-## M9 — Convergence + STDLIB (54–58 + shards 88–97)
+## M9 — Convergence + STDLIB (54–58; stdlib restore 56/57/88–97/108 superseded by CRUSH-169)
 
 | ID | Title | Gate |
 |----|-------|------|
 | CRUSH-54 | Surfer migration waves 1+2 | M5–M7 surface stable |
 | CRUSH-55 | Exosphere divergence reconcile | coordinate w/ exo [main]/buffy + EXO-194 |
-| CRUSH-56 | STDLIB clean-restore tracker (meta over 88–97; step 1 = locate/recreate the RESTORATION MAP) | CRUSH-31 join (done) |
-| CRUSH-57 | STDLIB mock-rewrite tracker (46 caps, minted on demand) | CRUSH-56 |
+| CRUSH-56 | ~~STDLIB clean-restore tracker~~ — **superseded** (CRUSH-122 + MIGRATION-INVENTORY §2.5) | — |
+| CRUSH-57 | ~~STDLIB mock-rewrite tracker~~ — **superseded** (mock families are dead/out, §2.2) | — |
 | CRUSH-58 | Nakshatra artifact canonicalization | — |
-| CRUSH-88..97 | Clean-restore shards 1–10 | CRUSH-56 |
+| CRUSH-88..97 | ~~Clean-restore shards 1–10~~ — **superseded**; real remainder is CRUSH-151..155 | — |
 
 ## M10 — Performance ceiling (59–63)
 

@@ -39,7 +39,12 @@ enum Commands {
     Run(RunArgs),
 
     /// List built-in portable capabilities.
-    Caps,
+    Caps {
+        /// Print every capability as JSON (name, argc, returns, effects, and
+        /// the grant that unlocks it) instead of the human-readable list.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -51,7 +56,7 @@ struct RunArgs {
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
 
-    /// Enable filesystem host capabilities (fs.read, fs.write, fs.exists, fs.list, text.head/tail/wc/cut/grep).
+    /// Enable filesystem host capabilities (fs.read/write/exists/list, fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find, text.head/tail/wc/cut/grep), confined to --fs-root.
     #[arg(long)]
     fs: bool,
 
@@ -64,11 +69,11 @@ struct RunArgs {
     #[arg(long, value_name = "DIR", default_value = ".")]
     fs_root: PathBuf,
 
-    /// Enable environment-variable host capability (env.get).
+    /// Enable environment-variable host capabilities (env.get, env.all, env.home_dir).
     #[arg(long)]
     env: bool,
 
-    /// Enable time host capabilities (time.now, time.now_ms, time.now_iso, time.elapsed, time.sleep).
+    /// Enable time host capabilities (time.now, time.now_ms, time.now_iso, time.elapsed, time.sleep, async.sleep).
     #[arg(long)]
     time: bool,
 
@@ -96,11 +101,15 @@ struct RunArgs {
     #[arg(long)]
     graphics: bool,
 
-    /// Enable standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*, bytes.*, buffer.*, binary.*, result.*, text.sort/uniq, time.format/parse, env.os/arch, system.* SBL).
-    #[arg(long)]
+    /// Standard library capabilities (str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*, bytes.*, buffer.*, binary.*, result.*, text.sort/uniq, time.format/parse, env.os/arch, system.* SBL) are on by default; this flag is kept for compatibility. It is an error in a build without the `stdlib` feature.
+    #[arg(long, conflicts_with = "no_stdlib")]
     stdlib: bool,
 
-    /// Enable network host capabilities (net.http_get, net.http_post).
+    /// Do not register the standard library capabilities.
+    #[arg(long)]
+    no_stdlib: bool,
+
+    /// Enable network host capabilities (net.http_get/post/put/delete, net.http_request).
     #[arg(long)]
     net: bool,
 
@@ -139,7 +148,8 @@ fn main() {
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
     match cli.command {
-        Commands::Caps => list_caps(),
+        Commands::Caps { json: false } => list_caps(),
+        Commands::Caps { json: true } => list_caps_json(),
         Commands::Run(args) => {
             if let Err(e) = run_file(&args) {
                 match args.message_format {
@@ -196,6 +206,70 @@ impl std::error::Error for CompileFailed {
     }
 }
 
+/// `crush-run caps --json`: every capability this build can register, with
+/// its effects (CRUSH-155) and the flag that grants it.
+fn list_caps_json() {
+    use crush_lang_sdk::HostCapsBuilder;
+    let new = HostCapsBuilder::new;
+    #[allow(unused_mut)]
+    let mut grants: Vec<(&str, HostCapsBuilder)> = vec![
+        ("always", new()),
+        ("stdlib (default; --no-stdlib)", new().stdlib(true)),
+        ("--fs", new().fs(true)),
+        ("--env", new().env(true)),
+        ("--time", new().time(true)),
+        ("--bus", new().bus(true)),
+        ("--task", new().task(true)),
+        ("--akg", new().akg(true)),
+        ("--process", new().process(true)),
+        ("--crypto", new().crypto(true)),
+    ];
+    #[cfg(feature = "graphics")]
+    grants.push(("--graphics", new().graphics(true)));
+    #[cfg(feature = "net")]
+    grants.push(("--net", new().net(true)));
+    #[cfg(feature = "db")]
+    grants.push(("--db PATH", new().db(":memory:")));
+
+    let mut out = std::collections::BTreeMap::new();
+    for spec in crush_vm::capabilities().values() {
+        let effects: &[&str] = match spec.name {
+            "io.print" => &["stdout/write"],
+            "io.read" => &["stdin/read"],
+            _ => &[],
+        };
+        out.insert(
+            spec.name.to_string(),
+            serde_json::json!({
+                "name": spec.name, "argc": spec.argc, "returns": spec.returns,
+                "effects": effects, "grant": "portable",
+            }),
+        );
+    }
+    for (grant, builder) in grants {
+        let caps = builder.build();
+        for name in caps.names() {
+            if out.contains_key(name) {
+                continue;
+            }
+            let cap = caps.get(name).expect("listed name");
+            let spec = cap.spec();
+            out.insert(
+                name.to_string(),
+                serde_json::json!({
+                    "name": spec.name, "argc": spec.argc, "returns": spec.returns,
+                    "effects": cap.effects(), "grant": grant,
+                }),
+            );
+        }
+    }
+    let list: Vec<_> = out.into_values().collect();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&list).expect("serializable")
+    );
+}
+
 fn list_caps() {
     println!("Built-in portable capabilities:");
     println!("  io.print      write args to stdout");
@@ -207,16 +281,33 @@ fn list_caps() {
     println!("  fs.read PATH           read file contents");
     println!("  fs.write PATH DATA     write file contents");
     println!("  fs.exists PATH         return 1 if file exists, else 0");
-    println!("  fs.list DIR            list directory entries");
+    println!("  fs.list DIR            list directory entries (sorted)");
+    println!("  fs.ls [DIR]            same as fs.list; DIR defaults to the working directory");
+    println!("  fs.cat PATH            same as fs.read");
+    println!(
+        "  fs.pwd                 working directory, relative to --fs-root (\".\" at the root)"
+    );
+    println!(
+        "  fs.cd DIR              move the working directory (VM-local, never leaves --fs-root)"
+    );
+    println!("  fs.mkdir PATH [PARENTS]  create a directory (PARENTS=true: like mkdir -p)");
+    println!("  fs.rm PATH [RECURSIVE]   remove a file; a directory needs RECURSIVE=true");
+    println!("  fs.cp SRC DST [RECURSIVE]  copy a file; a directory needs RECURSIVE=true");
+    println!("  fs.mv SRC DST          move / rename");
+    println!("  fs.touch PATH          create an empty file or update its mtime");
+    println!("  fs.find DIR [GLOB]     every entry below DIR, optionally filtered by a name glob");
     println!("  text.head/tail PATH N  first / last N lines of a file");
     println!("  text.wc PATH           {{lines, words, chars}} of a file");
     println!("  text.cut PATH DELIM COL  1-based column of every line");
     println!("  text.grep PAT PATH [RECURSIVE [IGNORE_CASE]]  (also needs the stdlib feature)");
     println!("  env.get NAME           read environment variable");
+    println!("  env.all                map of every environment variable");
+    println!("  env.home_dir           home directory (HOME / USERPROFILE), or null");
     println!("  time.now               return Unix timestamp (seconds)");
     println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
     println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
+    println!("  async.sleep MS         same as time.sleep (blocking; does not yield)");
     println!("Message-bus capabilities (enable with --bus):");
     println!("  message_bus.publish TOPIC PAYLOAD");
     println!("  message_bus.subscribe TOPIC");
@@ -245,6 +336,11 @@ fn list_caps() {
         println!("Network capabilities (enable with --net):");
         println!("  net.http_get URL       HTTP GET request");
         println!("  net.http_post URL BODY HTTP POST request");
+        println!("  net.http_put URL BODY  HTTP PUT request");
+        println!("  net.http_delete URL    HTTP DELETE request");
+        println!(
+            "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, body}}"
+        );
     }
     #[cfg(feature = "db")]
     {
@@ -254,7 +350,7 @@ fn list_caps() {
     }
     #[cfg(feature = "stdlib")]
     {
-        println!("Standard library capabilities (enable with --stdlib):");
+        println!("Standard library capabilities (on by default; --no-stdlib to disable):");
         println!(
             "  str.len/split/join/trim/replace/contains/starts_with/ends_with/to_upper/to_lower"
         );
@@ -361,13 +457,18 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         eprintln!("warning: --db requires the 'db' feature (not enabled in this build)");
     }
 
+    // Stdcaps are pure (no I/O, no authority), so they are on unless the
+    // caller opts out (CRUSH-113). Asking for them in a build that lacks them
+    // is an error rather than a warning followed by "unknown capability".
     #[cfg(feature = "stdlib")]
-    if args.stdlib {
-        builder = builder.stdlib(true);
+    {
+        builder = builder.stdlib(!args.no_stdlib);
     }
     #[cfg(not(feature = "stdlib"))]
     if args.stdlib {
-        eprintln!("warning: --stdlib requires the 'stdlib' feature (not enabled in this build)");
+        anyhow::bail!(
+            "--stdlib requires the 'stdlib' feature, which this build of crush-run was compiled without"
+        );
     }
 
     let runtime = Runtime::with_quotas(quotas).with_host_caps(builder.build());

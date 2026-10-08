@@ -673,3 +673,85 @@ crates.io's 0.3.0 releases predate APIs their dependents use (crush-lang-js fail
 Reason:
 Browsers have no stdin, so io.read returned EOF on every read and blackjack_interactive left the table. crush_vm::InputSource (io_read.rs, the shared io.read module) = Stdin (default, native unchanged) | Supplied(text) | Interactive{pending, closed}; every variant reads through read_io_line_from so terminator/EOF semantics are one implementation. In Interactive mode PortableVm::step() checks before executing a CAP_CALL whose const is io.read (and only if it is declared + allowed): no pending line -> return VmYield::HostCall{capability:'io.read'} with IP/stack/steps untouched; provide_input then the next step executes the read normally. No mid-instruction state, nothing re-executed, output kept (take_output drains a cursor, VmResult.output still full). Rejected: (a) yield from inside dispatch_cap after popping args — would need to stash a half-executed instruction and push the result on resume; (b) a new opcode or Program/bytecode change — affects every client; (c) breakpoints at every io.read CAP_CALL (exo-light's trick) — host would have to scan bytecode and still feed the value. Scope kept to PortableVm (crush-web's stepped runner); scheduler.rs still reads process stdin — gap filed.
 
+
+## 2026-10-07T20:06:36-05:00 — CRUSH-113: stdlib default-on in the binaries, not in HostCapsBuilder
+
+Reason:
+Decision C-1 (captain s474). The stdcaps are pure (no I/O, no authority), so crush-run/crush-repl/the conformance runner register them without a flag and --no-stdlib opts out; the cargo feature joins default so the shipped toolchain has conv/collections/regex/json. HostCapsBuilder's default stays off: flipping it would silently grow every embedder's registry (exo-light, crush-notebook, crush-web), which the ticket did not sanction. Without the feature, --stdlib and ReplConfig{stdlib:true} are hard errors instead of the old warning + 'unknown capability'.
+
+
+## 2026-10-07T20:15:27-05:00 — CRUSH-151: fs.cd is registry-local state in a shared FsSandbox; fs.pwd is root-relative
+
+Reason:
+Decision C-5 (captain s474): VM-local cwd inside --fs-root, never chdir. Implemented as host_caps::FsSandbox {root, Arc<Mutex<cwd>>} built once per HostCapsBuilder::build and cloned into every file cap (fs.*, text.*), so the cwd is per registry = per VM, and two VMs never share one. Paths are cwd-joined lexically and then confined exactly as before. fs.pwd answers root-relative ('.' at the root) rather than a host path (no leak) or a '/'-anchored chroot path (would need absolute paths to mean root-relative everywhere, changing fs.read's 'absolute paths are not allowed' contract). rm/mv resolve the last component without following symlinks; mutating fs caps join fs.write in crush-vm's PRIVILEGED_PREFIXES.
+
+
+## 2026-10-07T20:27:12-05:00 — CRUSH-153: one deadline-aware request() behind every net.* verb; http_request returns {status, body}; no http.* aliases
+
+Reason:
+The ticket asked for http_put/delete/request with 'the same timeout/deadline behaviour as http_get', but http_get had none (no call_with_deadline override), so a slow server could hold the VM past max_wall_time_ms. All five verbs now share net::request(), which sets the ureq agent timeout from the CAP_CALL deadline and maps I/O timeouts to HostCapError::Timeout. http_request is the general verb, so it reports the status (map {status, body}) instead of failing on 4xx/5xx; the fixed verbs keep their body-or-error contract. exosphere's http.* spellings are not aliased: one name per capability. env.all exposes exactly what --env already exposed to env.get (the host env + injected overrides).
+
+
+## 2026-10-07T20:34:09-05:00 — CRUSH-154: storage.* declined — db.* covers persistence
+
+Reason:
+Decision C-6 (captain s474). exosphere's handle-based storage.open/read/write/size/close would add a new kind of per-VM state (handle scoping, cleanup on drop, use-after-close) across all five backends for a family with no Crush consumer; db.query/db.execute (--db PATH) and fs.* (--fs) already cover persistence. Mapping in docs/design/storage-caps-declined.md; reopen only for a consumer db/fs can't serve, behind its own --store grant.
+
+
+## 2026-10-07T20:41:09-05:00 — CRUSH-155: capability effects are a defaulted HostCap::effects() method plus one SDK table, not a HostCapSpec field
+
+Reason:
+HostCapSpec is built by struct literal in every HostCap impl across the workspace and in clients (exo-light, crush-notebook, crush-web); adding a field breaks them all, contradicting the ticket's 'existing impls don't change'. A default trait method returning Option<&'static [&'static str]> is additive: None = undeclared (treat as could-touch-anything), Some(&[]) = pure. Rather than override it in ~130 SDK types, HostCapsBuilder::build wraps handlers with labels from effects::effects_of (stdlib registered as a pure family) behind a delegating wrapper; a test with every grant on fails if any builder cap is undeclared. Informational only — grants still decide access.
+## 2026-10-07T20:27:49-05:00 — CRUSH-176 (#94): PortableVm advances the IP unless the instruction called jump_to (explicit flag), not when the IP is unchanged
+
+Reason:
+step() compared self.ip before/after execute_instruction to decide whether a control-flow op had jumped. A jump can legitimately land on the instruction it came from: a recursive call in tail position returns to the caller's own RET (same address), and 'loop: JMP loop' targets itself. Both were treated as 'no jump' and fell through — skipping the caller's RET (stack underflow / type error / main re-running in awesome-crush tictactoe, lights_out, blackjack, blackjack_interactive). Rejected: setting self.ip = next_ip before dispatch (every operand read uses self.ip + k, so all ~60 arms would need rewriting); per-opcode is-control-flow table (AWAIT/THROW only sometimes jump). Chosen: jump_to(ip) sets ip + a jumped flag; step() advances only when the flag is clear. Pinned by crush-lang-sdk tests/gh_issue_94_portable_vm_parity.rs (scheduler/crush-run differential over the four games) and two bytecode-level tests in portable_vm.rs.
+
+
+## 2026-10-07T20:38:58-05:00 — CRUSH-159: debugger step/watch live in PortableVm (not the debugger driver), bytecode-level, reported through last_stop()
+
+Reason:
+Step over/out and watchpoints are stop conditions checked inside PortableVm::step() so every host that steps the VM (crush-web Session, exo-light, crush-debugger) gets them; a driver-only implementation in crush-debugger would be invisible to crush-web, which doesn't depend on it. Stops keep using the existing VmYield::DebugBreak (no new variant, so exhaustive matches in hosts don't break) and the structured reason is a new accessor, last_stop() -> DebugStop. Steps go by call depth (Over: depth <= start, Out: depth < start, never where it started); a breakpoint/watch hit cancels a pending step (gdb semantics). Watchpoints are by local slot with scope Frame(depth)|Top because CVM1 has no globals and compiled programs drop slot names; they compare a deep, type-exact snapshot (Rc-shared arrays would hide in-place edits; Value == treats 2 and 2.0 as equal) and pause after the changing instruction. Rejected: new VmYield variants (breaks host matches); comparing only on STORE (misses ARR_PUSH/SET_FIELD/cap edits of a shared array); adding slot names to Program (public struct change, and the frontend source map is a separate M3 item).
+
+
+## 2026-10-07T20:48:03-05:00 — CRUSH-160: debug access is a HostCaps grant (debug.step / debug.inspect.redacted / debug.inspect), enforced in DebugSession; values leave only as ValueViews
+
+Reason:
+Follows the fleet capability model: a presence-only HostCap registered under the grant's name is the authorization (same as polyglot.*), and calling it from program code is an error. Three grants instead of the ticket's two because the visibility ladder has three non-None rungs (control / redacted / full); inspection without debug.step grants nothing. The gate sits in DebugSession — the boundary a debug client (REPL, IDE adapter, remote agent) talks to — not in PortableVm's methods: those are host APIs and exo-light already uses set_breakpoints for output capture, so gating them would break a client. Values are redacted at the source: Redactor turns Value into ValueView before anything is stored in a snapshot or event, events contain no Value (so they are Send and a channel works), and the redacted hash is SipHash keyed per session (RandomState) so equal values compare equal within a session but can't be dictionary-attacked or linked across sessions (caveat: std may use a fixed key on wasm32-unknown-unknown). Rejected: unkeyed content hash (a hash of a bool or small int is trivially reversible); gating inside PortableVm (breaks exo-light and crush-web hosts); a DebugSession constructor that defaults to Full (ambient authority) — VmDriver::debug_visibility defaults to None, so the CLI now requires --cap debug.* (a deliberate, CHANGELOG'd behaviour change).
+## 2026-10-07T21:06:21-05:00 — CRUSH-167: fold squeeze into crush-pkg as bare 'crush-pkg' = build → target/ → run the built program; no squeeze binary
+
+Reason:
+Captain C-4 = fold. Bare crush-pkg was a clap error, so making the subcommand optional is purely additive; '-- ARGS' passes args the same way 'crush-pkg run -- ARGS' does. Two deliberate departures from squeeze: (1) the run step executes the Program PackageBuilder::build produced (entry + path deps) via a new CrushRunner::run_program, because squeeze's re-dispatch through get_runner_for_payload recompiled the entry alone and failed on any package that calls a dependency's function; (2) no separate check pass, because PackageBuilder::check compiles each file alone and rejects the same packages (captured as an issue) — build compiles everything and is the stronger check. Non-Crush guard (crush_pkg::flow::buildability/require_crush_buildable) keys on language_to_capsule_type, then entry extension, then magic bytes; anything not recognisably Script/Native stays Crush so unknown entries still get the compiler's error. args_conflicts_with_subcommands was tried and dropped: it broke 'crush-pkg --message-format=json lint' (caught by an existing test). No thin squeeze [[bin]]: it isn't free — cargo install crush-pkg would put a second name on every user's PATH and a second CLI surface to keep in sync — so squeeze's repo should point at crush-pkg and archive.
+
+
+## 2026-10-07T21:10:21-05:00 — CRUSH-171: [capsule] category (one of 8) + platforms (linux/macos/windows/web), validated on load; web is Crush-only
+
+Reason:
+Re-implemented from the crush-capsules sketch's idea, not its scheme: the sketch's 6 categories were exosphere-desktop shaped (system-service, core-utility…) and its platform model was web_compatible/desktop_only booleans + a [platform] table. crush-pkg capsules are Crush/Script/Native file manifests, so: category ∈ {cli, library, app, service, game, dev-tool, language, example} and platforms ⊆ {linux, macos, windows, web} where web = crush-web's wasm VM. Both live under [capsule] as String/Vec<String> (not enums) so serde never rejects before validate() can name the known values. Unknown values hard-error (ticket asks for validation); old sketch names auto-migrate like the manifest's other legacy keys; empty platforms = no claim. Only real cross-field rule: web requires a Crush capsule (the browser can't run python/node/native). platforms is NOT checked against used capabilities — that is CRUSH-170 territory.
+## 2026-10-07T20:59:25-05:00 — CRUSH-169: close the exosphere-1.0.zip stdlib restore (CRUSH-56/57/88-97/108) as superseded
+
+Reason:
+The zip's stdlib is the same crate as exosphere's live tree (archived-stdlib an older snapshot); CRUSH-122 already restored the clean families from the live tree with tests; the 46 'mock-tainted' caps map exactly onto families MIGRATION-INVENTORY 2.2 classifies dead/out (polyglot bridge, ai/agent/learn mocks, dom, task, data.*). Genuine remainder = CRUSH-151..155. Same PR records captain s474 decisions: CRUSH-162 declined (C-2, no Lua unless someone asks), CRUSH-163 deferred to CRUSH-77 (C-3), CRUSH-174 superseded by crushlang.org/playground + CRUSH-118; CRUSH-154 declined (C-6) is recorded by lane A (#102). Ticket files kept for history, not deleted.
+
+
+## 2026-10-07T21:11:37-05:00 — CRUSH-175: crush doctor reads EXEC_LANG's allowlist; required = what --polyglot grants
+
+Reason:
+doctor must check exactly the binaries EXEC_LANG will spawn, so crush-vm's resolve_lang_binary went pub (was pub(crate)) instead of a second hard-coded table in crush-lang-sdk; a public SANDBOXED_POLYGLOT const reports the crush-vm feature, which crush-lang-sdk cannot see via cfg. Exit 1 iff python3/node/bash (the set crush run --polyglot grants) is missing; bwrap counts only in a sandboxed-polyglot build (it is what bucket_exec spawns); the buckets CLI is informational (the VM uses the buckets library). Implemented in the crush umbrella itself, since there is no sibling tool to dispatch to.
+## 2026-10-07T21:41:01-05:00 — CRUSH-156: ai_native caps take [payload, operands...]; operand count rides in the payload as stack_args
+
+Reason:
+AI opcodes carry a compiled JSON payload (string operand) and some kinds also consume values the frontend pushes (context_aware, semantic_match, synthesize with a variable count). CVM1 AI opcodes have one Str operand, so the count goes in the payload (stack_args, stripped before the call) rather than a new operand encoding. One shared module crush_vm::ai_args is called by scheduler, PortableVm and fastvm::resolve_host_request so engines can't diverge. Rejected: a per-kind static arity table in the VM (synthesize is variable); passing only the payload (drops the operands, which then leaked on the stack); erroring when ungranted (changes pre-CRUSH-32 null behaviour).
+
+
+## 2026-10-07T21:51:13-05:00 — CRUSH-157: ai_native.toolchain dispatches through a HostCaps snapshot; HostCaps handlers became Arc so the registry is Clone
+
+Reason:
+The ticket asks for registry access by construction. HostCaps held Box<dyn HostCap> and could not be shared, and the VM consumes it. Making handlers Arc<dyn HostCap> (register/get signatures unchanged) makes a clone a cheap snapshot of the grant set sharing the same cap instances, so a tool step sees the same RNG/bus/db state as direct CAP_CALLs. ai_native::register snapshots at call time and the builder registers ai_native last. Rejected: building the registry twice from a cloned builder (duplicates stateful caps — two RNG streams, two db connections); a forwarding wrapper per cap (loses any future defaulted HostCap methods such as effects()); giving the VM's AI dispatch special registry access (bypasses the HostCap interface). Values cross into tools as JSON so parallel steps can run on threads (Value is not Send) and every strategy gives identical results.
+
+
+## 2026-10-07T21:55:43-05:00 — CRUSH-158: delegation selection is pure over a two-method DelegationBackend (status, dispatch); a backend is not a grant
+
+Reason:
+Exosphere's delegation read agent status from files in a fixed directory and dispatched through fleet tooling. The reusable part is selection + format validation, so the backend is reduced to status(agent) and dispatch(agent, task) and everything else is pure, testable code in crush-lang-sdk. Supplying a backend to HostCapsBuilder does not register anything without ai_native(true), keeping capabilities opt-in. Rejected: falling back to the first agent when none is available (dispatches to a busy agent behind the caller's back); silently treating unsupported strategies/formats as first_available/skip (hides mistakes).
+

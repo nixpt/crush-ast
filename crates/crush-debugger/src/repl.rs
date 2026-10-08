@@ -1,7 +1,5 @@
-//! Command parser for the interactive REPL front door. The *parser* is
-//! real and unit-tested below; the *eval* loop that drives `VmDriver`
-//! from parsed `Command`s is `todo!()` until the upstream
-//! `crush-vm::PortableVm` breakpoint pause hook lands (see `vm_driver.rs`).
+//! Command parser for the interactive REPL front door. Parsing only;
+//! `session.rs` evaluates the parsed `Command`s against a `VmDriver`.
 
 use std::path::PathBuf;
 
@@ -13,8 +11,20 @@ pub enum Command {
     Break { file: PathBuf, line: u32 },
     /// `delete <id>` — remove a breakpoint by `BreakpointId`.
     Delete { id: u32 },
-    /// `step` — single-step the VM.
+    /// `step` — execute one instruction (enters calls).
     Step,
+    /// `next` — step over: one instruction, running any call to completion.
+    Next,
+    /// `finish` — step out: run until the current function returns.
+    Finish,
+    /// `watch <slot> [top | frame <depth>]` — stop when a local slot
+    /// changes. No scope means the current frame.
+    Watch {
+        slot: u16,
+        scope: Option<crush_vm::WatchScope>,
+    },
+    /// `unwatch <id>` — remove a watchpoint.
+    Unwatch { id: u32 },
     /// `continue` — run until the next breakpoint or termination.
     Continue,
     /// `list` — print all registered breakpoints.
@@ -39,6 +49,8 @@ pub enum ParseCommandError {
     BadBreakpoint(String),
     /// A `delete <id>` had a non-numeric ID.
     BadId(String),
+    /// A `watch` argument wasn't `<slot> [top | frame <depth>]`.
+    BadWatch(String),
     /// An unknown command verb.
     Unknown(String),
 }
@@ -50,7 +62,11 @@ impl std::fmt::Display for ParseCommandError {
             Self::BadBreakpoint(arg) => {
                 write!(f, "expected `<file>:<line>` for `break`, got `{arg}`")
             }
-            Self::BadId(arg) => write!(f, "expected numeric breakpoint id, got `{arg}`"),
+            Self::BadId(arg) => write!(f, "expected numeric id, got `{arg}`"),
+            Self::BadWatch(arg) => write!(
+                f,
+                "expected `watch <slot> [top | frame <depth>]`, got `{arg}`"
+            ),
             Self::Unknown(verb) => write!(f, "unknown command `{verb}`"),
         }
     }
@@ -101,6 +117,16 @@ pub fn parse_command(input: &str) -> Result<Command, ParseCommandError> {
             Ok(Command::Delete { id: n })
         }
         "step" | "s" => Ok(Command::Step),
+        "next" | "n" => Ok(Command::Next),
+        "finish" | "fin" => Ok(Command::Finish),
+        "watch" | "w" => parse_watch(&rest),
+        "unwatch" => {
+            let n: u32 = rest_str
+                .trim()
+                .parse()
+                .map_err(|_| ParseCommandError::BadId(rest_str))?;
+            Ok(Command::Unwatch { id: n })
+        }
         "continue" | "c" => Ok(Command::Continue),
         "list" | "l" => Ok(Command::List),
         "print" | "p" => Ok(Command::Print {
@@ -111,6 +137,21 @@ pub fn parse_command(input: &str) -> Result<Command, ParseCommandError> {
         "status" | "info" | "i" => Ok(Command::Status),
         other => Err(ParseCommandError::Unknown(other.to_string())),
     }
+}
+
+fn parse_watch(args: &[&str]) -> Result<Command, ParseCommandError> {
+    let bad = || ParseCommandError::BadWatch(args.join(" "));
+    let slot: u16 = args.first().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    let scope = match &args[1..] {
+        [] => None,
+        ["top"] => Some(crush_vm::WatchScope::Top),
+        ["frame", d] => match d.parse::<usize>() {
+            Ok(d) if d >= 1 => Some(crush_vm::WatchScope::Frame(d)),
+            _ => return Err(bad()),
+        },
+        _ => return Err(bad()),
+    };
+    Ok(Command::Watch { slot, scope })
 }
 
 #[cfg(test)]
@@ -200,6 +241,59 @@ mod tests {
     fn rejects_delete_with_non_numeric_id() {
         let err = parse_command("delete abc").unwrap_err();
         assert!(matches!(err, ParseCommandError::BadId(_)));
+    }
+
+    #[test]
+    fn parses_next_finish_and_aliases() {
+        assert_eq!(parse_command("next").unwrap(), Command::Next);
+        assert_eq!(parse_command("n").unwrap(), Command::Next);
+        assert_eq!(parse_command("finish").unwrap(), Command::Finish);
+        assert_eq!(parse_command("fin").unwrap(), Command::Finish);
+    }
+
+    #[test]
+    fn parses_watch_scopes() {
+        assert_eq!(
+            parse_command("watch 3").unwrap(),
+            Command::Watch {
+                slot: 3,
+                scope: None
+            }
+        );
+        assert_eq!(
+            parse_command("w 0 top").unwrap(),
+            Command::Watch {
+                slot: 0,
+                scope: Some(crush_vm::WatchScope::Top)
+            }
+        );
+        assert_eq!(
+            parse_command("watch 2 frame 1").unwrap(),
+            Command::Watch {
+                slot: 2,
+                scope: Some(crush_vm::WatchScope::Frame(1))
+            }
+        );
+        assert_eq!(
+            parse_command("unwatch 4").unwrap(),
+            Command::Unwatch { id: 4 }
+        );
+    }
+
+    #[test]
+    fn rejects_bad_watch_args() {
+        for bad in [
+            "watch",
+            "watch x",
+            "watch 1 frame",
+            "watch 1 frame 0",
+            "watch 1 everywhere",
+        ] {
+            assert!(
+                matches!(parse_command(bad), Err(ParseCommandError::BadWatch(_))),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

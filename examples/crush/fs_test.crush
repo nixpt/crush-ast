@@ -1,4 +1,18 @@
-// expect-error: [runtime] unknown capability: fs.pwd
+// caps: fs
+// expect: Testing fs capabilities
+// expect: Test 1: fs.pwd
+// expect: .
+// expect: Test 2: fs.mkdir
+// expect: Created test_dir
+// expect: Test 3: fs.cd
+// expect: test_dir
+// expect: Test 4: fs.touch
+// expect: Created test.txt
+// expect: Test 5: fs.cd back
+// expect: .
+// expect: Test 6: fs.rm
+// expect: Removed test_dir
+// expect: All tests passed!
 io.print("Testing fs capabilities")
 
 io.print("Test 1: fs.pwd")

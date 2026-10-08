@@ -49,9 +49,18 @@ impl CapsuleRunner for CrushRunner {
             let source = std::fs::read_to_string(payload_path)?;
             crush_lang_sdk::compile::compile_crush_source(&source)?
         };
+        self.run_program(&program)
+    }
+}
 
+impl CrushRunner {
+    /// Run an already-compiled program under this runner's capability
+    /// registry and print its output. `crush-pkg`'s build-then-run flow
+    /// uses this to run the program `PackageBuilder::build` produced
+    /// (entry + path deps) instead of recompiling the entry file alone.
+    pub fn run_program(&self, program: &crush_vm::Program) -> anyhow::Result<ExecutionResult> {
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(&program, &quotas, self.host_caps.as_ref())?;
+        let result = crush_vm::run_with_caps(program, &quotas, self.host_caps.as_ref())?;
 
         if !result.output.is_empty() {
             println!("{}", result.output);
@@ -154,9 +163,12 @@ impl ScriptRunner {
         let profile = buckets::sandbox::SandboxProfile {
             project_dir: Some(cwd.to_path_buf()),
             extra_ro_binds: resolved.installations.iter().map(|i| i.path.clone()).collect(),
-            extra_rw_binds: vec![],
             allow_network: false,
-            net_ns: None,
+            // The remaining fields (`extra_rw_binds`, `net_ns`) exist in the
+            // buckets checkout but not in crates.io `crush-buckets` 0.1.0,
+            // which shares the version number. Defaulting them compiles
+            // against both, so a published crush-pkg builds (CRUSH-161).
+            ..Default::default()
         };
         Some(buckets::sandbox::sandboxed_command(
             runtime_bin,

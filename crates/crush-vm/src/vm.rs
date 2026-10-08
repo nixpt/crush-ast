@@ -211,7 +211,7 @@ impl Value {
         }
     }
 
-    pub(crate) fn is_truthy(&self) -> bool {
+    pub fn is_truthy(&self) -> bool {
         match self {
             Value::Null => false,
             Value::Bool(b) => *b,

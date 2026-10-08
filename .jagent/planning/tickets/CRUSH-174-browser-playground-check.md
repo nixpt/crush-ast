@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-174 |
 | **Priority** | P4 |
-| **Status** | Backlog |
+| **Status** | Superseded (2026-10-07) — crushlang.org/playground + CRUSH-118 |
 | **Phase** | M8 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -18,7 +18,7 @@
 
 ## Success criteria
 
-- [ ] confirm whether a playground already exists (crush-ast, crush-website, crush-language-guide) and record it here
+- [x] confirm whether a playground already exists (crush-ast, crush-website, crush-language-guide) and record it here
 - [ ] only if none: a static HTML/JS shell under `crates/crush-web/www/` using `Session`, verified in headless Chromium (+40 turns)
 
 ## Technical approach
@@ -36,3 +36,9 @@
 ## Source (reference only — re-implement, don't copy)
 
 - `nixpt/crush` `web/crush-web-ide`
+
+## Resolution — Superseded (2026-10-07, captain s474, recorded by CRUSH-169)
+
+A playground already exists: **https://crushlang.org/playground/** (HTTP 200 on 2026-10-07), built on
+crush-web's `Session` / `execute_with` from **CRUSH-118** (crush-ast#93). Per this ticket's own rule
+("port only if missing"), nothing is ported from `nixpt/crush`'s `web/crush-web-ide`.

@@ -36,8 +36,8 @@ jobs:
   # ── Core VM + compiler tests ───────────────────────────────────────────────
   # `--lib --tests` (not bare `cargo test`): unit + `tests/*.rs` integration,
   # but skip doctests. Bare `cargo test` also runs rustdoc, and crush-cast's
-  # `pub use crush_cson::…` re-export hits intermittent E0463 ("can't find
-  # crate for crush_cson") under the multi `-p` invocation on CI runners —
+  # `pub use crush_caison::…` re-export hits intermittent E0463 ("can't find
+  # crate for crush_caison") under the multi `-p` invocation on CI runners —
   # green locally, red here. Integration coverage is the honesty goal
   # (CRUSH-65 math_builtins_test, crush-cast format_tests); doctests are not.
   # Prior `--lib`-only skipped those and let silent-wrong-answer bugs ship

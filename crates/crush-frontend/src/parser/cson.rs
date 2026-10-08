@@ -1,9 +1,9 @@
 //! CSON parser for the crush-frontend crate.
 //!
-//! Parses CSON text into the canonical `crush_cson` types.
-//! Uses the unified type definitions from `crush-cson`.
+//! Parses CSON text into the canonical `crush_caison` types.
+//! Uses the unified type definitions from `crush-caison`.
 
-use crush_cast::cson::{CaisonDocument, CaisonKey, CaisonNode, CaisonValue};
+use crush_cast::caison::{CaisonDocument, CaisonKey, CaisonNode, CaisonValue};
 use std::collections::HashMap;
 
 #[derive(Debug)]

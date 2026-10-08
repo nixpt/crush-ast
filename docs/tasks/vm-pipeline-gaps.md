@@ -263,7 +263,7 @@ Total: 60 opcodes assigned, ~195 free slots remaining.
 1. **[HIGH] Fix MOD remainder sign in portable_vm** — match canonical VM behavior
 2. **[HIGH] Remove dead NE arm in vm.rs line 326** — unreachable code
 3. **[MEDIUM] Add EXEC_LANG to portable VM** — currently missing
-4. **[MEDIUM] Wire ecasm.rs into pipeline** — encrypted CASM exists but unused
+4. ~~**[MEDIUM] Wire ecasm.rs into pipeline**~~ — obsolete: `ecasm.rs` was deleted by CRUSH-80 (encrypted CASM stays exosphere-owned; `docs/planning/MIGRATION-INVENTORY.md` §6)
 5. **[LOW] Add test coverage for error paths** — 18 error paths untested
 6. **[LOW] Add test coverage for new opcodes** — 8 opcodes untested
 7. **[LOW] Add test coverage for capabilities** — 5 caps untested

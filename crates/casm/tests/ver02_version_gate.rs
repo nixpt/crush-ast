@@ -2,8 +2,7 @@
 //!
 //! Exercises [`casm::Program::deserialize`]'s load-time version check against
 //! [`casm::CASM_VERSION`] via the public API. Lives as an integration test so it
-//! compiles in its own crate against casm's public surface — sidestepping the
-//! pre-existing uncompilable inline `ecasm.rs` tests (tracked as EXO-151).
+//! compiles in its own crate against casm's public surface only.
 
 use casm::{CASM_VERSION, Format, Program};
 

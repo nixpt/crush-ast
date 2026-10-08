@@ -28,12 +28,15 @@ pub mod ai_native;
 pub mod builder;
 pub mod concurrency_native;
 pub mod dom_native;
+pub mod effects;
 pub mod bus;
 pub mod caps;
 pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod doctor;
 // Compares against crush-vm's FastVM backend — native-plugins only.
 #[cfg(feature = "native-plugins")]
 pub mod differential;
@@ -43,6 +46,7 @@ pub mod db;
 mod util;
 #[cfg(feature = "graphics")]
 pub mod graphics;
+mod fs_tools;
 pub mod host_caps;
 #[cfg(feature = "net")]
 pub mod net;

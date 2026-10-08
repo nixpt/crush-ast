@@ -1,47 +1,43 @@
 //! crush-debugger: interactive runtime debugger for Crush packages.
 //!
-//! # Status: SCAFFOLD (initial commit)
+//! Drives `crush_vm::PortableVm` through a [`VmDriver`] and pauses on the
+//! VM's own hooks: every stop is a `VmYield::DebugBreak`, with the reason
+//! in `PortableVm::last_stop()`.
 //!
-//! This crate ships five composable modules that together form the
-//! skeleton of a runtime debugger for Crush packages. The surface is
-//! real; what is intentionally wired behind `todo!()` (with documented
-//! hook points) is whatever requires a companion change upstream:
+//! - [`breakpoint`]: breakpoints keyed by `<file>:<line>`, resolved to a
+//!   bytecode offset through the assembler's source map.
+//! - [`repl`]: the command parser (`break`, `step`, `next`, `finish`,
+//!   `continue`, `watch`, `unwatch`, `print`, `list`, `status`, `quit`).
+//! - [`vm_driver`]: the `VmDriver` seam over `PortableVm`, so the session
+//!   doesn't bind to a concrete VM.
+//! - [`session`]: the session lifecycle and the REPL loop.
+//! - NDJSON diagnostics: [`OwnedDiagRecord`] / [`parse_record`] /
+//!   [`consume_stream`], re-exported from `crush_diagnostics::wire_consumer`.
 //!
-//! - NDJSON diagnostic consume side: [`OwnedDiagRecord`] /
-//!   [`parse_record`] / [`consume_stream`] (re-exported from
-//!   `crush_diagnostics::wire_consumer` — the canonical parser now
-//!   lives in the peer crate so the wire shape is owned bidirectionally
-//!   in one place, not duplicated here).
-//! - [`breakpoint`]: a breakpoint registry keyed by `<file>:<line>`,
-//!   URL-fragment-aware thanks to the upstream `scan_entry_file_references`
-//!   fix (see agent/buffy/network @ 2f2b2f5).
-//! - [`repl`]: command parser for the interactive REPL
-//!   (`break`, `step`, `continue`, `print`, `list`, `quit`, `help`).
-//! - [`vm_driver`]: the abstraction seam (`VmDriver` trait) over
-//!   `crush-vm::PortableVm` so REPL + session don't bind to a concrete VM.
-//! - [`session`]: owns the debugger session lifecycle (target capsule,
-//!   attached driver, breakpoint registry, REPL invocation). The REPL
-//!   eval loop is wired end-to-end; breakpoint pause is hooked into
-//!   `crush_vm::PortableVm::step()` via `VmYield::DebugBreak`.
+//! - [`events`]: [`DebugEvent`]s for embedding hosts, through a
+//!   [`DebugEventSink`] (a channel sender, or [`CollectingSink`]).
 //!
-//! # Hook points that deliberately use `todo!()`
+//! Debugging is grant-gated (CRUSH-160): the session reads its
+//! `DebugVisibility` from the VM's `debug.*` host-capability grants once,
+//! at construction. Without `debug.step` every command that controls the
+//! program is refused; values are hidden unless `debug.inspect.redacted`
+//! (type + keyed hash) or `debug.inspect` (in full) is granted too.
 //!
-//! 1. **Source `file:line` -> bytecode address.** A breakpoint request
-//!    is stored by source location; the bytecode-coord mapping will land
-//!    alongside an upcoming `crush-frontend` sourcemap. Until then,
-//!    only breakpoints with `bytecode_address` set (cast.json or manual)
-//!    will trigger in the VM.
-//! 2. **Programmatic breakpoint at bytecode offset.** The VM hook in
-//!    `portable_vm.rs` supports `set_breakpoints(&[usize])` for bytecode-
-//!    level pause; a future `crush-frontend` sourcemap will close the
-//!    `file:line -> offset` gap.
+//! Stepping and watchpoints are bytecode-level (CRUSH-159): `step` runs one
+//! instruction, `next` runs a call to completion, `finish` runs until the
+//! current function returns, all by call depth; `watch <slot>` stops after
+//! an instruction changes a local slot. Line-level stepping and watching by
+//! variable name need a source map from `crush-frontend` (today only the
+//! assembler produces one, for breakpoints in `.crush` assembly).
 
 pub mod breakpoint;
+pub mod events;
 pub mod repl;
 pub mod session;
 pub mod vm_driver;
 
 pub use breakpoint::{BreakpointId, BreakpointSet, Location};
+pub use events::{CollectingSink, DebugEvent, DebugEventSink, StopReason};
 pub use repl::{Command, ParseCommandError, parse_breakpoint_arg, parse_command};
 pub use session::DebugSession;
 pub use vm_driver::{PortableVmDriver, StepOutcome, VmDriver, VmError, VmRunResult, VmState};

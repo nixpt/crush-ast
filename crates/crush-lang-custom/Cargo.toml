@@ -13,7 +13,7 @@ name = "crush_lang_custom"
 [dependencies]
 crush-cast = { workspace = true }
 crush-walker-core = { workspace = true }
-crush-cson = { path = "../crush-cson", version = "0.3.8" }
+crush-caison = { path = "../crush-caison", version = "0.3.8" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
