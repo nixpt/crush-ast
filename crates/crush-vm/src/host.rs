@@ -5,6 +5,7 @@
 //! additional capabilities here without forking the VM.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::vm::Value;
 
@@ -86,9 +87,13 @@ pub trait HostCap: Send + Sync {
 }
 
 /// Registry of host-provided capabilities.
-#[derive(Default)]
+///
+/// Cloning is cheap and shares the handler instances (CRUSH-157): a clone is
+/// a snapshot of which capabilities are granted, not a copy of their state —
+/// `ai_native.toolchain` dispatches its steps through one.
+#[derive(Default, Clone)]
 pub struct HostCaps {
-    handlers: HashMap<String, Box<dyn HostCap>>,
+    handlers: HashMap<String, Arc<dyn HostCap>>,
 }
 
 impl HostCaps {
@@ -122,7 +127,7 @@ impl HostCaps {
 
     pub fn register(&mut self, handler: Box<dyn HostCap>) -> &mut Self {
         let name = handler.spec().name.clone();
-        self.handlers.insert(name, handler);
+        self.handlers.insert(name, Arc::from(handler));
         self
     }
 

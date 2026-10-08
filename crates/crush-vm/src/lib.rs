@@ -18,6 +18,7 @@ pub mod fastvm;
 pub mod value;
 pub mod assembler;
 pub mod bytecode;
+pub mod ai_args;
 pub mod arithmetic;
 pub mod caps;
 pub mod debug;

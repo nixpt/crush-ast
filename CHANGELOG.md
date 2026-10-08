@@ -128,6 +128,38 @@ add its entry after yours.
   counts only in a `sandboxed-polyglot` build). Read-only: it runs `--version`
   and nothing else. New in `crush-vm`: `resolve_lang_binary` is public and
   `SANDBOXED_POLYGLOT` reports that feature.
+- **Host backends for `ai_native.query` and `ai_native.agent_delegation`
+  (CRUSH-158).** New `ai_native::providers::{QueryProvider,
+  DelegationBackend}` traits; `HostCapsBuilder::query_provider(..)` /
+  `.delegation_backend(..)` put them behind the gates in place of the echo
+  stubs (they take effect only with `ai_native(true)` — a backend is not a
+  grant). Delegation picks agents (`first_available`, `broadcast`, `best`,
+  `round_robin`; others are an error) from the backend's reported status and
+  validates each result against `expected_format` (`json`, `structured`,
+  `text`). No real backend ships; `ai_native::register_with` is the
+  non-builder entry point.
+
+- **`ai_native.toolchain` runs tool chains (CRUSH-157).** With `ai_native`
+  granted, the toolchain cap is now a strategy engine (sequential, parallel,
+  conditional, retry × fail-fast, continue-on-error, retry, fallback) that
+  returns `{results, aborted, abort_reason}`. Every step is dispatched
+  through the program's own `HostCaps`: a tool (or its
+  `required_capability`) that wasn't granted fails its step and never runs.
+  Tool arguments come from `parameters.args` (positional) or the parameters
+  map; `"$name"` refers to an earlier step's `result_binding`. `HostCaps` is
+  now `Clone` (clones share handlers) and `Value::is_truthy` is public.
+
+- **`ai_native.*` caps receive their compiled arguments (CRUSH-156).** Each
+  AI opcode now calls its cap with `[payload, operands…]`: the compiled
+  payload as a map, then the values the frontend pushed for that kind
+  (`context_aware`'s expression, `semantic_match`'s target, `synthesize`'s
+  context refs and examples). Specs declare real arities (1, 2, or variadic
+  for `synthesize`). Crush programs compiled to CVM1 now execute the ten AI
+  ops (they were lowered to `NOP`); statement forms pop their result.
+  Ungranted ops still yield `null`, operands consumed. FastVM's
+  `resolve_host_request` passes the payload through the same contract
+  (`crush_vm::ai_args`) and returns map results as JSON text. Tool lists
+  carry `required_capability`, and the `fallback` policy carries its tools.
 
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string

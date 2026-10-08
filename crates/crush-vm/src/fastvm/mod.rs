@@ -208,10 +208,14 @@ impl FastVM {
 /// (or `crush_lang_sdk::ai_native::register(&mut caps)`) and call this
 /// helper after each `FastYield::Request(_)` yield.
 ///
-/// Args ride on `HostRequest::{args}` (a `serde_json::Value`) and are
-/// intentionally DROPPED here -- the AI stub in `crush_lang_sdk::ai_native`
-/// takes no VM-stack args. Real bridges that carry args across the tier
-/// boundary are out of scope for this follow-up.
+/// CRUSH-156: the AI requests' payload (`HostRequest::{args}`) is passed to
+/// the cap through `crate::ai_args` — the same `[payload, operands…]` contract
+/// the scheduler and PortableVm use. FastVM's AI ops don't pop stack operands
+/// (`execution.rs`), so a payload declaring `stack_args > 0` cannot be
+/// serviced here and returns `None`. The cap's result comes back as a
+/// `RuntimeValue`: scalars map directly; arrays/maps (which `RuntimeValue`
+/// cannot model) as their JSON text, keys sorted. A cap error is also `None`.
+/// DOM requests still drop their args (CRUSH-33 follow-up).
 pub fn resolve_host_request(
     req: &HostRequest,
     host_caps: Option<&crate::HostCaps>,
@@ -240,19 +244,39 @@ pub fn resolve_host_request(
         _ => return None,
     };
     let caps = host_caps?;
-    if caps.get(cap_name).is_none() {
-        return None;
+    caps.get(cap_name)?;
+    let ai_payload = match req {
+        HostRequest::AiQuery { args }
+        | HostRequest::AiSynthesize { args }
+        | HostRequest::AiAgentDelegation { args }
+        | HostRequest::AiSemanticMatch { args }
+        | HostRequest::AiLearningLoop { args }
+        | HostRequest::AiContextAware { args }
+        | HostRequest::AiToolchain { args }
+        | HostRequest::AiGoalDeclaration { args }
+        | HostRequest::AiProgressUpdate { args }
+        | HostRequest::AiKnowledgeSharing { args } => Some(args),
+        _ => None,
+    };
+    if let Some(payload) = ai_payload {
+        if crate::ai_args::stack_argc(payload) > 0 {
+            return None;
+        }
+        let deadline = crate::vm::Quotas::default().max_wall_time_ms;
+        let value =
+            crate::ai_args::dispatch(kind, payload, Vec::new(), Some(caps), deadline).ok()?;
+        return Some(match value {
+            crate::vm::Value::Null => RuntimeValue::Null,
+            crate::vm::Value::Bool(b) => RuntimeValue::Bool(b),
+            crate::vm::Value::Int(i) => RuntimeValue::Int(i),
+            crate::vm::Value::Float(f) => RuntimeValue::Float(f),
+            crate::vm::Value::Str(s) => RuntimeValue::String(s),
+            other => RuntimeValue::String(serde_json::to_value(&other).ok()?.to_string()),
+        });
     }
-    // `crate::value::RuntimeValue` (the flat value layer used by fastvm dispatch)
-    // does NOT have `Map` / `Object` / `Array` variants -- those live only in the
-    // AOT-emit (codegen.rs inlined) `RuntimeValue` type that lives inside generated
-    // source code, not at runtime in crush-vm.
-    //
-    // Mirror the {ok: true, kind, echo: []} stub shape from
-    // `crush_lang_sdk::ai_native::stub_map` as a deterministic String so callers
-    // can inspect the kind without constructing intermediates the type does not
-    // model. Returning `None` when the cap is not registered preserves the
-    // "keep yielding" semantics for un-honored AI requests.
+    // DOM: `crate::value::RuntimeValue` (the flat value layer used by fastvm
+    // dispatch) has no Map variant, so mirror the {ok: true, kind, echo: []}
+    // stub shape from `crush_lang_sdk::dom_native` as a deterministic String.
     Some(RuntimeValue::String(format!(
         "{{ok:true,kind:{},echo:[]}}",
         kind

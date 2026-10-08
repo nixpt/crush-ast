@@ -22,6 +22,9 @@
 //! AND the gate names (ai_native.<kind>) are stable; the implementation
 //! under those gates is what later milestones will swap.
 
+pub mod providers;
+pub mod toolchain;
+
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::cell::RefCell;
@@ -33,7 +36,23 @@ use std::rc::Rc;
 /// Idempotent in practice: `HostCaps::register` re-keys by name, so a
 /// second call replaces any prior handler for the same gate. Used by
 /// the `HostCapsBuilder::ai_native(bool)` toggle and by tests.
+///
+/// CRUSH-157: `ai_native.toolchain` is the real engine
+/// ([`toolchain::ToolchainCap`]); its steps dispatch through a snapshot of
+/// `caps` as it stands at this call, so register `ai_native` **after** every
+/// capability a tool chain may use. The other nine stay echo stubs.
 pub fn register(caps: &mut HostCaps) {
+    register_with(caps, None, None);
+}
+
+/// [`register`], with host backends for `ai_native.query` and
+/// `ai_native.agent_delegation` (CRUSH-158) in place of their echo stubs.
+/// The toolchain's snapshot is taken last, so tool steps see the backends.
+pub fn register_with(
+    caps: &mut HostCaps,
+    query: Option<std::sync::Arc<dyn providers::QueryProvider>>,
+    delegation: Option<std::sync::Arc<dyn providers::DelegationBackend>>,
+) {
     caps.register(Box::new(AiNativeQueryCap));
     caps.register(Box::new(AiNativeSynthesizeCap));
     caps.register(Box::new(AiNativeAgentDelegationCap));
@@ -44,6 +63,14 @@ pub fn register(caps: &mut HostCaps) {
     caps.register(Box::new(AiNativeGoalDeclarationCap));
     caps.register(Box::new(AiNativeProgressUpdateCap));
     caps.register(Box::new(AiNativeKnowledgeSharingCap));
+    if let Some(q) = query {
+        caps.register(Box::new(providers::QueryCap::new(q)));
+    }
+    if let Some(d) = delegation {
+        caps.register(Box::new(providers::DelegationCap::new(d)));
+    }
+    let tools = std::sync::Arc::new(caps.clone());
+    caps.register(Box::new(toolchain::ToolchainCap::new(tools)));
 }
 
 /// All 10 kind strings in registration order. Reused by tests + the
@@ -84,23 +111,25 @@ fn stub_map(kind: &str, args: &[Value]) -> Value {
     Value::Map(Rc::new(RefCell::new(obj)))
 }
 
-/// Single-cap declaration. `argc: Some(0)` (each AI cap takes no stack
-/// args today; the JSON payload is carried inline at bytecode parse time,
-/// not via VM stack — real backends can override this later by registering
-/// a different impl under the same gate); `returns: true` (always pushes
-/// the stub Map onto the VM stack).
+/// Single-cap declaration. CRUSH-156: a cap receives `[payload, operands…]`
+/// (`crush_vm::ai_args`) — the compiled payload Map, then the values the
+/// frontend pushed for that kind — so `argc` is `1` for payload-only kinds,
+/// `2` for `context_aware` (wrapped expression) and `semantic_match`
+/// (target), and variadic (`None`) for `synthesize` (context refs +
+/// examples). `returns: true` (always pushes the stub Map onto the VM
+/// stack). Real backends replace these by registering under the same gate.
 ///
 /// `HostCap::spec` returns OWNED `HostCapSpec` (per the actual trait
 /// signature in `crush-vm/src/host.rs`), so no static caching / `Box::leak`
 /// dance needed — each call produces a fresh owned value.
 macro_rules! ai_native_cap {
-    ($name:ident, $kind:literal) => {
+    ($name:ident, $kind:literal, $argc:expr) => {
         pub struct $name;
         impl HostCap for $name {
             fn spec(&self) -> HostCapSpec {
                 HostCapSpec {
                     name: format!("ai_native.{}", $kind),
-                    argc: Some(0),
+                    argc: $argc,
                     returns: true,
                 }
             }
@@ -114,16 +143,16 @@ macro_rules! ai_native_cap {
     };
 }
 
-ai_native_cap!(AiNativeQueryCap, "query");
-ai_native_cap!(AiNativeSynthesizeCap, "synthesize");
-ai_native_cap!(AiNativeAgentDelegationCap, "agent_delegation");
-ai_native_cap!(AiNativeSemanticMatchCap, "semantic_match");
-ai_native_cap!(AiNativeLearningLoopCap, "learning_loop");
-ai_native_cap!(AiNativeContextAwareCap, "context_aware");
-ai_native_cap!(AiNativeToolchainCap, "toolchain");
-ai_native_cap!(AiNativeGoalDeclarationCap, "goal_declaration");
-ai_native_cap!(AiNativeProgressUpdateCap, "progress_update");
-ai_native_cap!(AiNativeKnowledgeSharingCap, "knowledge_sharing");
+ai_native_cap!(AiNativeQueryCap, "query", Some(1));
+ai_native_cap!(AiNativeSynthesizeCap, "synthesize", None);
+ai_native_cap!(AiNativeAgentDelegationCap, "agent_delegation", Some(1));
+ai_native_cap!(AiNativeSemanticMatchCap, "semantic_match", Some(2));
+ai_native_cap!(AiNativeLearningLoopCap, "learning_loop", Some(1));
+ai_native_cap!(AiNativeContextAwareCap, "context_aware", Some(2));
+ai_native_cap!(AiNativeToolchainCap, "toolchain", Some(1));
+ai_native_cap!(AiNativeGoalDeclarationCap, "goal_declaration", Some(1));
+ai_native_cap!(AiNativeProgressUpdateCap, "progress_update", Some(1));
+ai_native_cap!(AiNativeKnowledgeSharingCap, "knowledge_sharing", Some(1));
 
 #[cfg(test)]
 mod tests {
@@ -252,10 +281,13 @@ mod tests {
     }
 
     #[test]
-    fn spec_includes_argc_zero_and_returns_true() {
+    fn spec_declares_real_argc_and_returns_true() {
         let spec = AiNativeQueryCap.spec();
-        assert_eq!(spec.argc, Some(0));
+        assert_eq!(spec.argc, Some(1));
         assert!(spec.returns);
         assert_eq!(spec.name, "ai_native.query");
+        assert_eq!(AiNativeContextAwareCap.spec().argc, Some(2));
+        assert_eq!(AiNativeSemanticMatchCap.spec().argc, Some(2));
+        assert_eq!(AiNativeSynthesizeCap.spec().argc, None);
     }
 }

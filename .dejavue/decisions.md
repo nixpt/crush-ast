@@ -738,4 +738,20 @@ The zip's stdlib is the same crate as exosphere's live tree (archived-stdlib an 
 
 Reason:
 doctor must check exactly the binaries EXEC_LANG will spawn, so crush-vm's resolve_lang_binary went pub (was pub(crate)) instead of a second hard-coded table in crush-lang-sdk; a public SANDBOXED_POLYGLOT const reports the crush-vm feature, which crush-lang-sdk cannot see via cfg. Exit 1 iff python3/node/bash (the set crush run --polyglot grants) is missing; bwrap counts only in a sandboxed-polyglot build (it is what bucket_exec spawns); the buckets CLI is informational (the VM uses the buckets library). Implemented in the crush umbrella itself, since there is no sibling tool to dispatch to.
+## 2026-10-07T21:41:01-05:00 — CRUSH-156: ai_native caps take [payload, operands...]; operand count rides in the payload as stack_args
+
+Reason:
+AI opcodes carry a compiled JSON payload (string operand) and some kinds also consume values the frontend pushes (context_aware, semantic_match, synthesize with a variable count). CVM1 AI opcodes have one Str operand, so the count goes in the payload (stack_args, stripped before the call) rather than a new operand encoding. One shared module crush_vm::ai_args is called by scheduler, PortableVm and fastvm::resolve_host_request so engines can't diverge. Rejected: a per-kind static arity table in the VM (synthesize is variable); passing only the payload (drops the operands, which then leaked on the stack); erroring when ungranted (changes pre-CRUSH-32 null behaviour).
+
+
+## 2026-10-07T21:51:13-05:00 — CRUSH-157: ai_native.toolchain dispatches through a HostCaps snapshot; HostCaps handlers became Arc so the registry is Clone
+
+Reason:
+The ticket asks for registry access by construction. HostCaps held Box<dyn HostCap> and could not be shared, and the VM consumes it. Making handlers Arc<dyn HostCap> (register/get signatures unchanged) makes a clone a cheap snapshot of the grant set sharing the same cap instances, so a tool step sees the same RNG/bus/db state as direct CAP_CALLs. ai_native::register snapshots at call time and the builder registers ai_native last. Rejected: building the registry twice from a cloned builder (duplicates stateful caps — two RNG streams, two db connections); a forwarding wrapper per cap (loses any future defaulted HostCap methods such as effects()); giving the VM's AI dispatch special registry access (bypasses the HostCap interface). Values cross into tools as JSON so parallel steps can run on threads (Value is not Send) and every strategy gives identical results.
+
+
+## 2026-10-07T21:55:43-05:00 — CRUSH-158: delegation selection is pure over a two-method DelegationBackend (status, dispatch); a backend is not a grant
+
+Reason:
+Exosphere's delegation read agent status from files in a fixed directory and dispatched through fleet tooling. The reusable part is selection + format validation, so the backend is reduced to status(agent) and dispatch(agent, task) and everything else is pure, testable code in crush-lang-sdk. Supplying a backend to HostCapsBuilder does not register anything without ai_native(true), keeping capabilities opt-in. Rejected: falling back to the first agent when none is available (dispatches to a busy agent behind the caller's back); silently treating unsupported strategies/formats as first_available/skip (hides mistakes).
 
