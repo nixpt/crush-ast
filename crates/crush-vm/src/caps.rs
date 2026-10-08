@@ -150,8 +150,12 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
 }
 
 /// Privileged cap namespace prefixes — caps with these prefixes require an
-/// elevated sandbox grant even if registered by the host.
-const PRIVILEGED_PREFIXES: &[&str] = &["net.", "fs.write", "wallet.", "vm.fork", "vm.exec"];
+/// elevated sandbox grant even if registered by the host. Every `fs.*` cap
+/// that changes the filesystem is here, not just `fs.write` (CRUSH-151).
+const PRIVILEGED_PREFIXES: &[&str] = &[
+    "net.", "fs.write", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch", "wallet.", "vm.fork",
+    "vm.exec",
+];
 
 pub fn is_privileged(cap: &str) -> bool {
     if let Some(spec) = capabilities().get(cap) {
@@ -159,4 +163,23 @@ pub fn is_privileged(cap: &str) -> bool {
     }
     let base = cap.split(':').next().unwrap_or(cap);
     PRIVILEGED_PREFIXES.iter().any(|p| base.starts_with(p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_privileged;
+
+    #[test]
+    fn filesystem_mutations_are_privileged_reads_are_not() {
+        for cap in [
+            "fs.write", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch",
+        ] {
+            assert!(is_privileged(cap), "{cap}");
+        }
+        for cap in [
+            "fs.read", "fs.cat", "fs.ls", "fs.list", "fs.find", "fs.pwd", "fs.cd",
+        ] {
+            assert!(!is_privileged(cap), "{cap}");
+        }
+    }
 }

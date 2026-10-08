@@ -49,7 +49,6 @@ impl HostCapsBuilder {
         Self::default()
     }
 
-    /// Enable filesystem capabilities (`fs.read`, `fs.write`, `fs.exists`, `fs.list`).
     /// Grant polyglot execution for the given languages (canonical: "python", "javascript",
     /// "bash"). Each becomes a `polyglot.<lang>` gate in the registry. Without this, @lang blocks
     /// refuse to spawn — polyglot is NOT ambient.
@@ -58,6 +57,9 @@ impl HostCapsBuilder {
         self
     }
 
+    /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.exists`,
+    /// `fs.list`, the coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`,
+    /// and the `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
     pub fn fs(mut self, enable: bool) -> Self {
         self.fs = enable;
         self
@@ -183,12 +185,15 @@ impl HostCapsBuilder {
         caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
         caps.grant_polyglot(&self.polyglot);
         if self.fs {
-            let root = self.fs_root.unwrap_or_else(|| ".".to_string());
-            caps.register(Box::new(FsReadCap::new(&root)));
-            caps.register(Box::new(FsWriteCap::new(&root)));
-            caps.register(Box::new(FsExistsCap::new(&root)));
-            caps.register(Box::new(FsListCap::new(&root)));
-            crate::text_tools::register(&mut caps, &root);
+            // One sandbox, so `fs.cd` moves the working directory every
+            // file cap in this registry resolves against.
+            let fs = FsSandbox::new(self.fs_root.as_deref().unwrap_or("."));
+            caps.register(Box::new(FsReadCap { fs: fs.clone() }));
+            caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
+            caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
+            caps.register(Box::new(FsListCap { fs: fs.clone() }));
+            crate::fs_tools::register(&mut caps, &fs);
+            crate::text_tools::register(&mut caps, &fs);
         }
         if self.env {
             caps.register(Box::new(EnvGetCap::new(self.env_vars)));
@@ -251,8 +256,16 @@ impl HostCapsBuilder {
 // Filesystem helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
-    use std::path::{Component, Path, PathBuf};
+/// Resolve `path` against `cwd` (relative to `root`) and confine it to
+/// `root`. With `follow` false the last component is not resolved through a
+/// symlink, so `fs.rm`/`fs.mv` act on a link rather than on what it names.
+fn resolve_in(
+    root: &str,
+    cwd: &std::path::Path,
+    path: &Value,
+    follow: bool,
+) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, Path};
 
     let s = crate::caps::value_as_text(path);
     let p = Path::new(&s);
@@ -267,7 +280,7 @@ pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBu
     // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
     // compares components, so `<root>/../x` used to pass the check below and
     // let `fs.write("../x", ..)` write outside the sandbox.
-    let mut relative = PathBuf::new();
+    let mut relative = cwd.to_path_buf();
     for component in p.components() {
         match component {
             Component::CurDir => {}
@@ -280,15 +293,34 @@ pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBu
             Component::RootDir | Component::Prefix(_) => return Err(escapes()),
         }
     }
-    let joined = root_canonical.join(&relative);
 
-    // Then resolve symlinks through the deepest ancestor that exists, so a
-    // symlink inside the root cannot point a new file outside it either.
+    // Not following the last component: confine its parent, keep the name.
+    if !follow && let Some(name) = relative.file_name().map(|n| n.to_os_string()) {
+        let parent = relative.parent().unwrap_or(Path::new("")).to_path_buf();
+        let dir = confine(&root_canonical, &parent).ok_or_else(escapes)?;
+        return Ok(dir.join(name));
+    }
+    confine(&root_canonical, &relative).ok_or_else(escapes)
+}
+
+/// Join `relative` onto the canonical root, resolving symlinks through the
+/// deepest ancestor that exists, so a symlink inside the root cannot point a
+/// new file outside it either. `None` if the result leaves the root.
+fn confine(
+    root_canonical: &std::path::Path,
+    relative: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let joined = root_canonical.join(relative);
     let mut existing = joined.as_path();
     let mut rest = Vec::new();
     let resolved = loop {
         if let Ok(canonical) = existing.canonicalize() {
-            break rest.iter().rev().fold(canonical, |acc: PathBuf, part| acc.join(part));
+            break rest
+                .iter()
+                .rev()
+                .fold(canonical, |acc: PathBuf, part| acc.join(part));
         }
         match (existing.parent(), existing.file_name()) {
             (Some(parent), Some(name)) => {
@@ -298,20 +330,110 @@ pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBu
             _ => break joined.clone(),
         }
     };
-    if !resolved.starts_with(&root_canonical) {
-        return Err(escapes());
+    resolved.starts_with(root_canonical).then_some(resolved)
+}
+
+/// The `--fs` sandbox one registry's file caps share: the root, plus the
+/// working directory `fs.cd` moves (CRUSH-151, decision C-5). The working
+/// directory is per-registry — local to the VM the registry serves — always
+/// inside the root, and never the host process's cwd.
+#[derive(Clone)]
+pub(crate) struct FsSandbox {
+    root: String,
+    /// Relative to the canonical root; empty = the root itself.
+    cwd: Arc<std::sync::Mutex<std::path::PathBuf>>,
+}
+
+impl FsSandbox {
+    pub(crate) fn new(root: &str) -> Self {
+        Self {
+            root: root.to_string(),
+            cwd: Arc::default(),
+        }
     }
-    Ok(resolved)
+
+    fn cwd(&self) -> std::path::PathBuf {
+        self.cwd.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn root_canonical(&self) -> std::path::PathBuf {
+        let root = std::path::Path::new(&self.root);
+        root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+    }
+
+    /// Resolve a program path against the working directory, inside the root.
+    pub(crate) fn resolve(&self, path: &Value) -> Result<std::path::PathBuf, String> {
+        resolve_in(&self.root, &self.cwd(), path, true)
+    }
+
+    /// Like [`resolve`](Self::resolve), but a symlink in the last component
+    /// is the target itself rather than what it points to.
+    pub(crate) fn resolve_nofollow(&self, path: &Value) -> Result<std::path::PathBuf, String> {
+        resolve_in(&self.root, &self.cwd(), path, false)
+    }
+
+    /// `fs.cd`: move the working directory to an existing directory.
+    pub(crate) fn cd(&self, path: &Value) -> Result<(), String> {
+        let target = self.resolve(path)?;
+        if !target.is_dir() {
+            return Err(format!("fs.cd {}: not a directory", self.display(&target)));
+        }
+        let relative = target
+            .strip_prefix(self.root_canonical())
+            .map_err(|_| format!("fs.cd {}: outside the sandbox", self.display(&target)))?
+            .to_path_buf();
+        *self.cwd.lock().unwrap_or_else(|e| e.into_inner()) = relative;
+        Ok(())
+    }
+
+    /// `fs.pwd`: the working directory relative to the root, `.` at the root.
+    pub(crate) fn pwd(&self) -> String {
+        let cwd = self.cwd();
+        if cwd.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            cwd.to_string_lossy().into_owned()
+        }
+    }
+
+    /// A resolved path as the program sees it (relative to the root), so
+    /// error messages never print the host's absolute path.
+    pub(crate) fn display(&self, path: &std::path::Path) -> String {
+        match path.strip_prefix(self.root_canonical()) {
+            Ok(p) if p.as_os_str().is_empty() => ".".to_string(),
+            Ok(p) => p.to_string_lossy().into_owned(),
+            Err(_) => path.to_string_lossy().into_owned(),
+        }
+    }
+
+    /// Refuse to remove or move the root, the working directory, or any
+    /// directory containing it — the sandbox would lose its footing.
+    pub(crate) fn refuse_working_dir(
+        &self,
+        cap: &str,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let cwd = self.root_canonical().join(self.cwd());
+        if cwd.starts_with(path) {
+            return Err(format!(
+                "{cap} {}: refusing to remove or move the sandbox root or the working directory",
+                self.display(path)
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct FsReadCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsReadCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -326,21 +448,23 @@ impl HostCap for FsReadCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
+        let path = self.fs.resolve(&args[0])?;
         let data = std::fs::read_to_string(&path)
-            .map_err(|e| format!("fs.read {}: {e}", path.display()))?;
+            .map_err(|e| format!("fs.read {}: {e}", self.fs.display(&path)))?;
         Ok(Some(Value::Str(data)))
     }
 }
 
 pub struct FsWriteCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsWriteCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -355,21 +479,24 @@ impl HostCap for FsWriteCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
+        let path = self.fs.resolve(&args[0])?;
         let data = crate::caps::value_as_text(&args[1]);
-        std::fs::write(&path, data).map_err(|e| format!("fs.write {}: {e}", path.display()))?;
+        std::fs::write(&path, data)
+            .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
 }
 
 pub struct FsExistsCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsExistsCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -384,19 +511,21 @@ impl HostCap for FsExistsCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
+        let path = self.fs.resolve(&args[0])?;
         Ok(Some(Value::Int(if path.exists() { 1 } else { 0 })))
     }
 }
 
 pub struct FsListCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsListCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -411,13 +540,8 @@ impl HostCap for FsListCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
-        let entries: Vec<Value> = std::fs::read_dir(&path)
-            .map_err(|e| format!("fs.list {}: {e}", path.display()))?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_name().into_string().ok().map(Value::Str))
-            .collect();
-        Ok(Some(Value::new_array(entries)))
+        let path = self.fs.resolve(&args[0])?;
+        crate::fs_tools::list_dir("fs.list", &path, &self.fs).map(Some)
     }
 }
 

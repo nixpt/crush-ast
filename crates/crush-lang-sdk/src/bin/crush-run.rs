@@ -51,7 +51,7 @@ struct RunArgs {
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
 
-    /// Enable filesystem host capabilities (fs.read, fs.write, fs.exists, fs.list, text.head/tail/wc/cut/grep).
+    /// Enable filesystem host capabilities (fs.read/write/exists/list, fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find, text.head/tail/wc/cut/grep), confined to --fs-root.
     #[arg(long)]
     fs: bool,
 
@@ -211,7 +211,21 @@ fn list_caps() {
     println!("  fs.read PATH           read file contents");
     println!("  fs.write PATH DATA     write file contents");
     println!("  fs.exists PATH         return 1 if file exists, else 0");
-    println!("  fs.list DIR            list directory entries");
+    println!("  fs.list DIR            list directory entries (sorted)");
+    println!("  fs.ls [DIR]            same as fs.list; DIR defaults to the working directory");
+    println!("  fs.cat PATH            same as fs.read");
+    println!(
+        "  fs.pwd                 working directory, relative to --fs-root (\".\" at the root)"
+    );
+    println!(
+        "  fs.cd DIR              move the working directory (VM-local, never leaves --fs-root)"
+    );
+    println!("  fs.mkdir PATH [PARENTS]  create a directory (PARENTS=true: like mkdir -p)");
+    println!("  fs.rm PATH [RECURSIVE]   remove a file; a directory needs RECURSIVE=true");
+    println!("  fs.cp SRC DST [RECURSIVE]  copy a file; a directory needs RECURSIVE=true");
+    println!("  fs.mv SRC DST          move / rename");
+    println!("  fs.touch PATH          create an empty file or update its mtime");
+    println!("  fs.find DIR [GLOB]     every entry below DIR, optionally filtered by a name glob");
     println!("  text.head/tail PATH N  first / last N lines of a file");
     println!("  text.wc PATH           {{lines, words, chars}} of a file");
     println!("  text.cut PATH DELIM COL  1-based column of every line");

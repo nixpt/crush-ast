@@ -218,7 +218,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 
 Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/planning/MIGRATION-INVENTORY.md) §5; 🔒 = captain decision first (§5.1 C-1…C-8). Lane A starts with existing **CRUSH-113** (decision C-1: stdlib default-on). Supersession proposal for CRUSH-56/57/88–97/108 is CRUSH-169.
 
-- [ ] **CRUSH-151** (M (~60 turns), lane A2): fs coreutils host capabilities (`fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find`). [ticket](tickets/CRUSH-151-fs-coreutils-host-caps.md)
+- [x] **CRUSH-151** (M (~60 turns), lane A2; **done 2026-10-07, nimbus** — 10 coreutils + VM-local `fs.cd` (C-5), shared `FsSandbox`): fs coreutils host capabilities (`fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find`). [ticket](tickets/CRUSH-151-fs-coreutils-host-caps.md)
 - [ ] **CRUSH-152** (XS (~15 turns), lane A3): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
 - [ ] **CRUSH-153** (S (~30 turns), lane A4): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
 - [ ] **CRUSH-154** (S (~40 turns), lane A5 🔒): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
@@ -340,3 +340,4 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **issue** — exosphere capsule-ui crates/platform/sdk/capsule-ui/src/crush/crush-markup.tsx:175 passes raw html prop to dangerouslySetInnerHTML with no sanitizer despite header claiming 'safely' — XSS risk; exosphere-owned (found by CRUSH-150 scout)  _(nimbus-scout, 2026-10-07)_
 - [ ] **issue** — EXO-194 hazard 1 has happened: exosphere Cargo.lock holds both in-tree casm 0.1.0 and crates.io casm 0.3.0 (via exo-light -> crush-vm 0.3.6), plus two crush-errors; exo-light also lags crush-ast 0.3.9 (found by CRUSH-150)  _(nimbus-scout, 2026-10-07)_
 - [ ] **gap** — crush-debugger README.md:11,43 and lib.rs:27 still describe todo!() hook points that no longer exist (session.rs:346 replaced them) — stale docs  _(nimbus-scout, 2026-10-07)_
+- [ ] **gap** — xtask conformance corpus: 23 of 48 annotated examples/crush files fail on main — expect-error headers say '[runtime] …' but the runner reports 'runtime error: …'/'compile error: …', plus truncated '...' headers. The runner is not in CI, so the drift is invisible; fix headers (or normalize prefixes) and gate it  _(nimbus-a, 2026-10-07)_

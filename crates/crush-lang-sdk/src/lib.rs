@@ -43,6 +43,7 @@ pub mod db;
 mod util;
 #[cfg(feature = "graphics")]
 pub mod graphics;
+mod fs_tools;
 pub mod host_caps;
 #[cfg(feature = "net")]
 pub mod net;

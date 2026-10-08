@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **fs coreutils + a VM-local working directory (CRUSH-151).** Under `--fs`,
+  `crush-lang-sdk` now also registers `fs.ls`, `fs.cat`, `fs.pwd`, `fs.cd`,
+  `fs.mkdir`, `fs.rm`, `fs.cp`, `fs.mv`, `fs.touch` and `fs.find`. `fs.cd`
+  moves a working directory that belongs to the capability registry (one per
+  VM) and that every `fs.*` and `text.*` file cap resolves against; it never
+  leaves `--fs-root` and never `chdir`s the process. `fs.pwd` answers relative
+  to the root (`.` at the root). Directories need an explicit flag to be
+  removed or copied recursively; `fs.rm`/`fs.mv` act on a symlink itself, and
+  a recursive `fs.cp` refuses symlinks. `fs.list` now returns sorted names, and
+  fs errors show sandbox-relative paths instead of host paths. PortableVm's
+  privileged tier now covers `fs.mkdir/rm/cp/mv/touch` as well as `fs.write`.
 - **Standard library on by default (CRUSH-113).** The `stdlib` cargo feature
   of `crush-lang-sdk` is now in `default`, and `crush-run` / `crush-repl`
   register the pure stdcaps (`str.*`, `math.*`, `conv.*`, `collections.*`,

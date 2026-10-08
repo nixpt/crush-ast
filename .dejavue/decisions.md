@@ -679,3 +679,9 @@ Browsers have no stdin, so io.read returned EOF on every read and blackjack_inte
 Reason:
 Decision C-1 (captain s474). The stdcaps are pure (no I/O, no authority), so crush-run/crush-repl/the conformance runner register them without a flag and --no-stdlib opts out; the cargo feature joins default so the shipped toolchain has conv/collections/regex/json. HostCapsBuilder's default stays off: flipping it would silently grow every embedder's registry (exo-light, crush-notebook, crush-web), which the ticket did not sanction. Without the feature, --stdlib and ReplConfig{stdlib:true} are hard errors instead of the old warning + 'unknown capability'.
 
+
+## 2026-10-07T20:15:27-05:00 — CRUSH-151: fs.cd is registry-local state in a shared FsSandbox; fs.pwd is root-relative
+
+Reason:
+Decision C-5 (captain s474): VM-local cwd inside --fs-root, never chdir. Implemented as host_caps::FsSandbox {root, Arc<Mutex<cwd>>} built once per HostCapsBuilder::build and cloned into every file cap (fs.*, text.*), so the cwd is per registry = per VM, and two VMs never share one. Paths are cwd-joined lexically and then confined exactly as before. fs.pwd answers root-relative ('.' at the root) rather than a host path (no leak) or a '/'-anchored chroot path (would need absolute paths to mean root-relative everywhere, changing fs.read's 'absolute paths are not allowed' contract). rm/mv resolve the last component without following symlinks; mutating fs caps join fs.write in crush-vm's PRIVILEGED_PREFIXES.
+
