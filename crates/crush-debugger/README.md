@@ -5,6 +5,23 @@ Interactive runtime debugger for Crush programs. It drives
 steps and watchpoints all surface as `VmYield::DebugBreak`, and
 `PortableVm::last_stop()` says which one fired.
 
+## Grants
+
+Debugging a program is a capability like any other: nothing is ambient.
+The session reads its level once, from `debug.*` grants in the VM's
+`HostCaps` (`HostCaps::grant_debug(level)`; the CLI takes them as `--cap`):
+
+| Grants | Level | Allows |
+|--------|-------|--------|
+| none | `None` | `help`, `list`, `status`, `quit` only; everything else is refused, naming the missing grant |
+| `debug.step` | `ControlOnly` | breakpoints, steps, `continue`, watchpoints; every value shows as `<hidden>` |
+| `+ debug.inspect.redacted` | `InspectRedacted` | `print`, values as `<type #hash>`: equal values hash equal within one session, the key changes per session |
+| `+ debug.inspect` | `Full` | values in full |
+
+`debug.inspect*` without `debug.step` grants nothing. The `debug.*` gates
+are for the debugger: a program that declares and calls one gets an error.
+The program's own output is not inspection and always shows.
+
 ## Commands
 
 | Command | What it does |
@@ -39,8 +56,28 @@ stepping need a source map from `crush-frontend`.
 
 The same hooks are public on `PortableVm` (`request_step`, `cancel_step`,
 `add_watchpoint`, `remove_watchpoint`, `call_depth`, `local`,
-`last_stop`), so any host that steps the VM, such as crush-web's
-`Session`, can use them without this crate.
+`last_stop`, and `frame_snapshot` / `debug_visibility` for redacted views),
+so any host that steps the VM, such as crush-web's `Session`, can use
+them without this crate. Those are host APIs; the grant check sits in
+`DebugSession`, the boundary a debug client talks to.
+
+## Events
+
+A host that embeds the debugger instead of using the REPL drives
+`DebugSession::handle_command` and attaches a sink:
+
+```rust
+let (tx, rx) = std::sync::mpsc::channel();
+session.set_event_sink(tx);            // or a CollectingSink
+session.handle_command(parse_command("continue")?)?;
+for event in rx.try_iter() { /* DebugEvent */ }
+```
+
+Events: `Stopped { reason, frames }` (reason: breakpoint, step, watchpoint
+with old/new, paused; frames innermost first, each with function name, IP
+and locals), `Output`, `Finished`, `QuotaExceeded`, `Error`, `Refused`.
+Every value in an event is a `ValueView` rendered at the session's level,
+never a raw VM value, and events are `Send`.
 
 ## CLI
 
@@ -53,7 +90,8 @@ $ crush-debugger version
 `run` loads a CASM text file (`crush_vm::assemble`), not Crush source.
 
 ```text
-$ crush-debugger run tests/fixtures/calls.crush --cap io.print
+$ crush-debugger run tests/fixtures/calls.crush --cap io.print \
+    --cap debug.step --cap debug.inspect
 cru-s-debugger> watch 0
 watchpoint #0 set on slot 0 in frame 1
 cru-s-debugger> continue
@@ -66,7 +104,9 @@ cru-s-debugger> next
 stopped at ip 24 (depth 1)
 ```
 
-(The second `next` ran the whole `CALL inc`.)
+(The second `next` ran the whole `CALL inc`.) With `--cap
+debug.inspect.redacted` instead of `debug.inspect`, the same session shows
+`(unset) -> <int #f1f2057bd1863c82>` and `slot 0 = <int #f1f2057bd1863c82>`.
 
 ## Library
 

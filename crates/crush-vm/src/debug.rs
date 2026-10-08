@@ -9,8 +9,163 @@
 //!
 //! The VM reports every stop as `VmYield::DebugBreak` and records the
 //! structured reason, readable through `PortableVm::last_stop`.
+//!
+//! What a debug *client* may see is a separate, grant-gated question
+//! (CRUSH-160): [`DebugVisibility`] is derived from `debug.*` grants in the
+//! VM's [`HostCaps`](crate::HostCaps), and [`Redactor`] turns values into
+//! [`ValueView`]s at that level, so a snapshot never carries more than the
+//! grants allow.
 
 use crate::vm::Value;
+
+/// Grant: control a paused program (breakpoints, steps, watchpoints).
+pub const DEBUG_STEP: &str = "debug.step";
+/// Grant: see values as type + keyed hash, never content. Needs `debug.step`.
+pub const DEBUG_INSPECT_REDACTED: &str = "debug.inspect.redacted";
+/// Grant: see values in full. Needs `debug.step`.
+pub const DEBUG_INSPECT: &str = "debug.inspect";
+
+/// How much a debug client may do and see, lowest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum DebugVisibility {
+    /// No debugging at all.
+    #[default]
+    None,
+    /// Pause, step, breakpoints and watchpoints; every value is hidden.
+    ControlOnly,
+    /// As `ControlOnly`, plus values as type + keyed hash.
+    InspectRedacted,
+    /// As `ControlOnly`, plus values in full.
+    Full,
+}
+
+impl DebugVisibility {
+    /// The level the `debug.*` grants in `caps` add up to. No registry, or
+    /// no `debug.step`, is `None`: inspecting without control is not a level.
+    pub fn granted(caps: Option<&crate::HostCaps>) -> Self {
+        let Some(caps) = caps else {
+            return Self::None;
+        };
+        let has = |name| caps.get(name).is_some();
+        if !has(DEBUG_STEP) {
+            Self::None
+        } else if has(DEBUG_INSPECT) {
+            Self::Full
+        } else if has(DEBUG_INSPECT_REDACTED) {
+            Self::InspectRedacted
+        } else {
+            Self::ControlOnly
+        }
+    }
+
+    /// The grants that make up this level (see `HostCaps::grant_debug`).
+    pub fn grants(self) -> &'static [&'static str] {
+        match self {
+            Self::None => &[],
+            Self::ControlOnly => &[DEBUG_STEP],
+            Self::InspectRedacted => &[DEBUG_STEP, DEBUG_INSPECT_REDACTED],
+            Self::Full => &[DEBUG_STEP, DEBUG_INSPECT],
+        }
+    }
+
+    /// Whether control operations (step, breakpoints, watchpoints) are allowed.
+    pub fn can_control(self) -> bool {
+        self >= Self::ControlOnly
+    }
+
+    /// Whether values may be shown at all (redacted or in full).
+    pub fn can_inspect(self) -> bool {
+        self >= Self::InspectRedacted
+    }
+}
+
+/// A value as a debug client may see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueView {
+    /// Inspection not granted.
+    Hidden,
+    /// Type and a hash of the content, keyed per [`Redactor`]: equal values
+    /// hash equal within one session (so a change is visible) but the hash
+    /// can't be looked up or compared across sessions.
+    Redacted { type_name: &'static str, hash: u64 },
+    /// The value's text (strings quoted).
+    Plain { type_name: &'static str, text: String },
+}
+
+impl std::fmt::Display for ValueView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hidden => f.write_str("<hidden>"),
+            Self::Redacted { type_name, hash } => write!(f, "<{type_name} #{hash:016x}>"),
+            Self::Plain { text, .. } => f.write_str(text),
+        }
+    }
+}
+
+/// Renders values for one debug session at one [`DebugVisibility`].
+///
+/// The redaction key comes from std's `RandomState`. On targets where std
+/// has no randomness source (wasm32-unknown-unknown) that key may be the
+/// same every time, making hashes linkable across sessions there; use
+/// `ControlOnly` when that matters. Low-entropy values (a bool, a small
+/// int) are hidden by the key, not by the hash, so the key must stay
+/// with the session.
+#[derive(Debug, Clone)]
+pub struct Redactor {
+    visibility: DebugVisibility,
+    key: std::hash::RandomState,
+}
+
+impl Redactor {
+    /// A redactor with a fresh hash key.
+    pub fn new(visibility: DebugVisibility) -> Self {
+        Redactor {
+            visibility,
+            key: std::hash::RandomState::new(),
+        }
+    }
+
+    pub fn visibility(&self) -> DebugVisibility {
+        self.visibility
+    }
+
+    /// `v` as this session may see it.
+    pub fn view(&self, v: &Value) -> ValueView {
+        use std::hash::BuildHasher;
+        match self.visibility {
+            DebugVisibility::None | DebugVisibility::ControlOnly => ValueView::Hidden,
+            DebugVisibility::InspectRedacted => {
+                let mut content = String::new();
+                canonical(v, &mut content);
+                ValueView::Redacted {
+                    type_name: v.type_name(),
+                    hash: self.key.hash_one(content),
+                }
+            }
+            DebugVisibility::Full => ValueView::Plain {
+                type_name: v.type_name(),
+                text: match v {
+                    Value::Str(s) => format!("{s:?}"),
+                    other => crate::value_to_text(other),
+                },
+            },
+        }
+    }
+}
+
+/// One call frame as a debug client may see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameSnapshot {
+    /// Call depth, 1 = entry frame.
+    pub depth: usize,
+    /// The function this frame is running, if the manifest names it.
+    pub function: Option<String>,
+    /// Where the frame is: the current IP for the top frame, the return
+    /// address of its callee for the others.
+    pub ip: usize,
+    /// Assigned local slots, ascending, rendered by the session's redactor.
+    pub locals: Vec<(u16, ValueView)>,
+}
 
 /// How far a requested step runs before the VM pauses again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,5 +594,135 @@ mod tests {
     fn snapshot_distinguishes_int_from_float() {
         assert!(Snapshot::of(&Value::Int(2)) != Snapshot::of(&Value::Float(2.0)));
         assert!(Snapshot::of(&Value::Int(2)) == Snapshot::of(&Value::Int(2)));
+    }
+
+    // ── CRUSH-160: grants, visibility, redaction, snapshots ──────────────
+
+    fn caps(level: DebugVisibility) -> crate::HostCaps {
+        let mut caps = crate::HostCaps::new();
+        caps.grant_debug(level);
+        caps
+    }
+
+    #[test]
+    fn visibility_comes_from_debug_grants() {
+        assert_eq!(DebugVisibility::granted(None), DebugVisibility::None);
+        assert_eq!(
+            DebugVisibility::granted(Some(&crate::HostCaps::new())),
+            DebugVisibility::None
+        );
+        for level in [
+            DebugVisibility::None,
+            DebugVisibility::ControlOnly,
+            DebugVisibility::InspectRedacted,
+            DebugVisibility::Full,
+        ] {
+            assert_eq!(DebugVisibility::granted(Some(&caps(level))), level);
+        }
+        // Inspection without control grants nothing.
+        let mut only_inspect = crate::HostCaps::new();
+        only_inspect.register(Box::new(OnlyName(DEBUG_INSPECT)));
+        assert_eq!(
+            DebugVisibility::granted(Some(&only_inspect)),
+            DebugVisibility::None
+        );
+    }
+
+    /// Any handler registered under a name counts as its grant.
+    struct OnlyName(&'static str);
+    impl crate::HostCap for OnlyName {
+        fn spec(&self) -> crate::HostCapSpec {
+            crate::HostCapSpec {
+                name: self.0.to_string(),
+                argc: None,
+                returns: false,
+            }
+        }
+        fn call(&self, _: Vec<Value>) -> Result<Option<Value>, String> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn each_level_shows_values_as_documented() {
+        let secret = Value::Str("hunter2".into());
+        assert_eq!(
+            Redactor::new(DebugVisibility::None).view(&secret),
+            ValueView::Hidden
+        );
+        assert_eq!(
+            Redactor::new(DebugVisibility::ControlOnly).view(&secret),
+            ValueView::Hidden
+        );
+        let redacted = Redactor::new(DebugVisibility::InspectRedacted).view(&secret);
+        assert!(matches!(redacted, ValueView::Redacted { type_name: "str", .. }));
+        assert!(!redacted.to_string().contains("hunter2"), "{redacted}");
+        assert_eq!(
+            Redactor::new(DebugVisibility::Full).view(&secret).to_string(),
+            "\"hunter2\""
+        );
+    }
+
+    #[test]
+    fn redacted_hashes_are_stable_in_a_session_and_unlinkable_across() {
+        let a = Redactor::new(DebugVisibility::InspectRedacted);
+        let b = Redactor::new(DebugVisibility::InspectRedacted);
+        let v = Value::Int(42);
+        assert_eq!(a.view(&v), a.view(&v));
+        assert_ne!(a.view(&v), a.view(&Value::Int(43)));
+        // Same content, different session key.
+        assert_ne!(a.view(&v), b.view(&v));
+        // Type-exact: 2 and 2.0 don't collide.
+        assert_ne!(a.view(&Value::Int(2)), a.view(&Value::Float(2.0)));
+    }
+
+    #[test]
+    fn frame_snapshot_names_frames_and_redacts_locals() {
+        let mut vm = vm(PROG);
+        run_to(&mut vm, CALL);
+        do_step(&mut vm, StepMode::Into).unwrap();
+        vm.step().unwrap(); // inc: STORE 0 (its argument, 1)
+
+        let full = Redactor::new(DebugVisibility::Full);
+        let top = vm.frame_snapshot(2, &full).unwrap();
+        assert_eq!(top.function.as_deref(), Some("inc"));
+        assert_eq!(top.ip, vm.current_ip());
+        assert_eq!(top.locals, vec![(0, full.view(&Value::Int(1)))]);
+
+        let main = vm.frame_snapshot(1, &full).unwrap();
+        assert_eq!(main.function.as_deref(), Some("main"));
+        // Parked at the instruction after its CALL.
+        assert_eq!(vm.program().code[main.ip], STORE);
+        assert_eq!(main.locals, vec![(0, full.view(&Value::Int(5)))]);
+        assert!(vm.frame_snapshot(3, &full).is_none());
+        assert!(vm.frame_snapshot(0, &full).is_none());
+
+        let control = Redactor::new(DebugVisibility::ControlOnly);
+        let hidden = vm.frame_snapshot(1, &control).unwrap();
+        assert_eq!(hidden.locals, vec![(0, ValueView::Hidden)]);
+    }
+
+    #[test]
+    fn vm_reports_the_visibility_its_host_granted() {
+        let mut vm = vm(PROG);
+        assert_eq!(vm.debug_visibility(), DebugVisibility::None);
+        vm.set_host_caps(caps(DebugVisibility::InspectRedacted));
+        assert_eq!(vm.debug_visibility(), DebugVisibility::InspectRedacted);
+    }
+
+    /// The grants are for a debugger: a program that declares and calls one
+    /// is refused, and without the grant the name doesn't exist at all.
+    #[test]
+    fn program_code_cannot_call_a_debug_grant() {
+        let src = "CAP_CALL \"debug.step\" 0\nHALT";
+        let program = assemble(src, Some(&[DEBUG_STEP]), Some("t")).unwrap();
+
+        let mut granted = PortableVm::new(program.clone());
+        granted.set_host_caps(caps(DebugVisibility::Full));
+        let err = granted.run().unwrap_err().to_string();
+        assert!(err.contains("authorizes a debugger"), "{err}");
+
+        let ungranted = PortableVm::new(program).run();
+        assert!(ungranted.is_err(), "debug.step ran without any grant");
     }
 }

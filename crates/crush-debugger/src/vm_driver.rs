@@ -147,6 +147,22 @@ pub trait VmDriver {
     fn local(&self, _depth: usize, _slot: u16) -> Option<crush_vm::vm::Value> {
         None
     }
+
+    /// What a debug client may do, from the VM's `debug.*` grants. The
+    /// default grants nothing: a driver must opt in.
+    fn debug_visibility(&self) -> crush_vm::DebugVisibility {
+        crush_vm::DebugVisibility::None
+    }
+
+    /// Every frame, innermost first, rendered by `redactor`.
+    fn frames(&self, _redactor: &crush_vm::Redactor) -> Vec<crush_vm::FrameSnapshot> {
+        Vec::new()
+    }
+
+    /// Program output printed since the last call.
+    fn take_output(&mut self) -> String {
+        String::new()
+    }
 }
 
 impl<'a> PortableVmDriver<'a> {
@@ -369,6 +385,21 @@ impl<'a> VmDriver for PortableVmDriver<'a> {
 
     fn local(&self, depth: usize, slot: u16) -> Option<crush_vm::vm::Value> {
         self.vm.local(depth, slot).cloned()
+    }
+
+    fn debug_visibility(&self) -> crush_vm::DebugVisibility {
+        self.vm.debug_visibility()
+    }
+
+    fn frames(&self, redactor: &crush_vm::Redactor) -> Vec<crush_vm::FrameSnapshot> {
+        (1..=self.vm.call_depth())
+            .rev()
+            .filter_map(|d| self.vm.frame_snapshot(d, redactor))
+            .collect()
+    }
+
+    fn take_output(&mut self) -> String {
+        self.vm.take_output()
     }
 }
 

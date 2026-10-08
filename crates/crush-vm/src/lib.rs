@@ -31,8 +31,10 @@ pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
-pub use debug::{DebugStop, StepMode, WatchId, WatchScope};
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
+pub use debug::{
+    DebugStop, DebugVisibility, FrameSnapshot, Redactor, StepMode, ValueView, WatchId, WatchScope,
+};
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use io_read::InputSource;
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};

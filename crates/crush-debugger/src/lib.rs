@@ -14,6 +14,15 @@
 //! - NDJSON diagnostics: [`OwnedDiagRecord`] / [`parse_record`] /
 //!   [`consume_stream`], re-exported from `crush_diagnostics::wire_consumer`.
 //!
+//! - [`events`]: [`DebugEvent`]s for embedding hosts, through a
+//!   [`DebugEventSink`] (a channel sender, or [`CollectingSink`]).
+//!
+//! Debugging is grant-gated (CRUSH-160): the session reads its
+//! `DebugVisibility` from the VM's `debug.*` host-capability grants once,
+//! at construction. Without `debug.step` every command that controls the
+//! program is refused; values are hidden unless `debug.inspect.redacted`
+//! (type + keyed hash) or `debug.inspect` (in full) is granted too.
+//!
 //! Stepping and watchpoints are bytecode-level (CRUSH-159): `step` runs one
 //! instruction, `next` runs a call to completion, `finish` runs until the
 //! current function returns, all by call depth; `watch <slot>` stops after
@@ -22,11 +31,13 @@
 //! assembler produces one, for breakpoints in `.crush` assembly).
 
 pub mod breakpoint;
+pub mod events;
 pub mod repl;
 pub mod session;
 pub mod vm_driver;
 
 pub use breakpoint::{BreakpointId, BreakpointSet, Location};
+pub use events::{CollectingSink, DebugEvent, DebugEventSink, StopReason};
 pub use repl::{Command, ParseCommandError, parse_breakpoint_arg, parse_command};
 pub use session::DebugSession;
 pub use vm_driver::{PortableVmDriver, StepOutcome, VmDriver, VmError, VmRunResult, VmState};

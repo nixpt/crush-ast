@@ -40,6 +40,12 @@ struct RunArgs {
 
     /// Grant a capability (repeatable). Pass once per capability
     /// the target program declares, e.g. `--cap io.print`.
+    ///
+    /// `debug.*` names grant the debugger itself, not the program:
+    /// `debug.step` to break/step/continue/watch, plus
+    /// `debug.inspect.redacted` (values as type + hash) or `debug.inspect`
+    /// (values in full) to `print` and see values in stops. Without
+    /// `debug.step` the REPL refuses every command that runs the program.
     #[arg(long = "cap", value_name = "NAME")]
     capabilities: Vec<String>,
 
@@ -74,6 +80,34 @@ struct RunArgs {
     strict: bool,
 }
 
+/// The debugger grants named by `--cap debug.*` flags.
+fn debug_visibility(names: &[&str]) -> anyhow::Result<crush_vm::DebugVisibility> {
+    use crush_vm::DebugVisibility as V;
+    use crush_vm::debug::{DEBUG_INSPECT, DEBUG_INSPECT_REDACTED, DEBUG_STEP};
+    for &name in names {
+        if ![DEBUG_STEP, DEBUG_INSPECT_REDACTED, DEBUG_INSPECT].contains(&name) {
+            anyhow::bail!(
+                "unknown debugger grant `{name}` (expected {DEBUG_STEP}, \
+                 {DEBUG_INSPECT_REDACTED} or {DEBUG_INSPECT})"
+            );
+        }
+    }
+    let has = |n| names.contains(&n);
+    if !has(DEBUG_STEP) {
+        if !names.is_empty() {
+            anyhow::bail!("`{}` needs `--cap {DEBUG_STEP}` too", names[0]);
+        }
+        return Ok(V::None);
+    }
+    Ok(if has(DEBUG_INSPECT) {
+        V::Full
+    } else if has(DEBUG_INSPECT_REDACTED) {
+        V::InspectRedacted
+    } else {
+        V::ControlOnly
+    })
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Cmd::Version) {
@@ -85,13 +119,21 @@ fn main() -> anyhow::Result<()> {
             let _ = args.strict;
             let source = std::fs::read_to_string(&args.target)
                 .map_err(|e| anyhow::anyhow!("cannot read {}: {}", args.target, e))?;
-            let caps: Vec<&str> = args.capabilities.iter().map(|s| s.as_str()).collect();
+            let (debug_caps, caps): (Vec<&str>, Vec<&str>) = args
+                .capabilities
+                .iter()
+                .map(|s| s.as_str())
+                .partition(|c| c.starts_with("debug."));
+            let visibility = debug_visibility(&debug_caps)?;
             let permissions: Option<&[&str]> =
                 if caps.is_empty() { None } else { Some(&caps) };
             let mut program = crush_vm::assemble(&source, permissions, Some(&args.target))
                 .map_err(|e| anyhow::anyhow!("assemble failed: {}", e))?;
             let source_map = std::mem::take(&mut program.source_map);
             let mut vm = crush_vm::PortableVm::new(program);
+            let mut grants = crush_vm::HostCaps::new();
+            grants.grant_debug(visibility);
+            vm.set_host_caps(grants);
             {
                 let mut quotas = crush_vm::Quotas::default();
                 let mut set = false;

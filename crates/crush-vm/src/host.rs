@@ -96,6 +96,17 @@ impl HostCaps {
         self
     }
 
+    /// Grant a debug client `level` (CRUSH-160): registers the
+    /// presence-only `debug.*` gates that make it up (see
+    /// [`DebugVisibility::grants`](crate::debug::DebugVisibility::grants)).
+    /// Program code can't use them: calling one is an error.
+    pub fn grant_debug(&mut self, level: crate::debug::DebugVisibility) -> &mut Self {
+        for &name in level.grants() {
+            self.register(Box::new(DebugGate { name }));
+        }
+        self
+    }
+
     pub fn register(&mut self, handler: Box<dyn HostCap>) -> &mut Self {
         let name = handler.spec().name.clone();
         self.handlers.insert(name, handler);
@@ -132,6 +143,28 @@ impl std::fmt::Debug for HostCaps {
 /// pushes it, so a capsule's declared polyglot grant becomes a live gate with no crush-vm change.
 pub fn polyglot_gate(lang: &str) -> Box<dyn HostCap> {
     Box::new(PolyglotGate { lang: lang.to_string() })
+}
+
+/// Presence-only `debug.*` grant. A debugger checks for its registration;
+/// a program that declares and calls it gets an error, not a no-op.
+struct DebugGate {
+    name: &'static str,
+}
+
+impl HostCap for DebugGate {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: self.name.to_string(),
+            argc: None,
+            returns: false,
+        }
+    }
+    fn call(&self, _args: Vec<crate::vm::Value>) -> Result<Option<crate::vm::Value>, String> {
+        Err(format!(
+            "{} authorizes a debugger; program code can't call it",
+            self.name
+        ))
+    }
 }
 
 /// Presence-only capability gate for `@<lang>` polyglot blocks. exec_lang checks

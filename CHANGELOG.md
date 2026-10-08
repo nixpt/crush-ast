@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Debugger: grants, redaction and events (CRUSH-160).** Debugging is now a
+  granted capability: `debug.step` (control), `debug.inspect.redacted` (values
+  as type + per-session hash) and `debug.inspect` (values in full), via
+  `HostCaps::grant_debug` or `crush-debugger run --cap debug.*`. **Without a
+  debug grant the debugger REPL refuses to run the program** — pass
+  `--cap debug.step --cap debug.inspect` for the old behaviour. New
+  `DebugEvent`/`DebugEventSink` (a channel sender works) for embedding hosts;
+  `PortableVm::frame_snapshot` returns redacted frames. The REPL now shows the
+  program's own output.
 - **Debugger: step over/out and watchpoints (CRUSH-159).** `PortableVm` gains
   `request_step(StepMode::{Into, Over, Out})` (by call depth),
   `add_watchpoint(slot, WatchScope::{Frame(depth), Top})`, `call_depth()`,

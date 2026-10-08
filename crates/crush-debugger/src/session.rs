@@ -8,7 +8,9 @@
 use std::marker::PhantomData;
 
 use super::breakpoint::{BreakpointId, BreakpointSet};
-use super::vm_driver::VmDriver;
+use super::events::{DebugEvent, DebugEventSink, StopReason};
+use super::repl::Command;
+use super::vm_driver::{VmDriver, VmRunResult};
 
 /// Returns the quota value `N` if `e` is any of the four quota
 /// exhaustion variants, or `None` otherwise.
@@ -55,6 +57,10 @@ pub struct DebugSession<'a, D: VmDriver> {
     /// Assembler sourcemap: `(source_line, bytecode_offset)` for
     /// resolving `file:line` breakpoints to VM addresses.
     source_map: Vec<(usize, usize)>,
+    /// Renders values at the grant-derived visibility (fixed at `new`).
+    redactor: crush_vm::Redactor,
+    /// Where events go, if a host attached a sink.
+    sink: Option<Box<dyn DebugEventSink>>,
     /// Tie the session's lifetime to the VM's; without it the `'a`
     /// would be unused and Rust would reject the struct.
     _vm_ref: PhantomData<&'a ()>,
@@ -64,12 +70,34 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
     /// Construct a session around an already-attached VM driver.
     /// `source_map` is the assembler line→offset mapping; pass
     /// `Vec::new()` for programs without debug info.
+    ///
+    /// What the session may do is read once, here, from the driver's
+    /// `debug.*` grants (`VmDriver::debug_visibility`).
     pub fn new(driver: D, source_map: Vec<(usize, usize)>) -> Self {
+        let redactor = crush_vm::Redactor::new(driver.debug_visibility());
         Self {
             driver,
             breakpoints: BreakpointSet::new(),
             source_map,
+            redactor,
+            sink: None,
             _vm_ref: PhantomData,
+        }
+    }
+
+    /// The visibility this session's grants allow.
+    pub fn visibility(&self) -> crush_vm::DebugVisibility {
+        self.redactor.visibility()
+    }
+
+    /// Send this session's events to `sink` (replacing any previous one).
+    pub fn set_event_sink(&mut self, sink: impl DebugEventSink + 'static) {
+        self.sink = Some(Box::new(sink));
+    }
+
+    fn emit(&mut self, event: DebugEvent) {
+        if let Some(sink) = self.sink.as_mut() {
+            sink.emit(event);
         }
     }
 
@@ -169,30 +197,77 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
     /// `"quota exceeded (N)"` message, matching the `continue` path's
     /// `VmRunResult::QuotaExceeded` format.
     ///
-    /// `pub(crate)` so the test module can exercise it directly without
-    /// mocking stdin.
-    pub(crate) fn handle_command(
-        &mut self,
-        cmd: super::repl::Command,
-    ) -> anyhow::Result<Option<String>> {
+    /// Public so an embedding host can drive the session without the
+    /// stdin REPL (pair it with `set_event_sink`).
+    ///
+    /// Grant-gated: a command its grants don't allow is refused with a
+    /// message naming the missing grant (and a `Refused` event); nothing
+    /// reaches the VM. Program output printed by the command comes first in
+    /// the message.
+    pub fn handle_command(&mut self, cmd: Command) -> anyhow::Result<Option<String>> {
+        if let Some((operation, needs)) = self.missing_grant(&cmd) {
+            self.emit(DebugEvent::Refused { operation, needs });
+            return Ok(Some(format!(
+                "refused: `{operation}` needs the `{needs}` grant \
+                 (crush-debugger run --cap {needs})"
+            )));
+        }
+        let message = self.run_command(cmd)?;
+        Ok(message)
+    }
+
+    /// The grant `cmd` lacks, as `(command, grant)`, or `None` if allowed.
+    fn missing_grant(&self, cmd: &Command) -> Option<(&'static str, &'static str)> {
+        let operation = match cmd {
+            Command::Break { .. } => "break",
+            Command::Delete { .. } => "delete",
+            Command::Step => "step",
+            Command::Next => "next",
+            Command::Finish => "finish",
+            Command::Continue => "continue",
+            Command::Watch { .. } => "watch",
+            Command::Unwatch { .. } => "unwatch",
+            Command::Print { .. } => {
+                return (!self.visibility().can_inspect())
+                    .then_some(("print", crush_vm::debug::DEBUG_INSPECT_REDACTED));
+            }
+            Command::List | Command::Status | Command::Help | Command::Quit => return None,
+        };
+        (!self.visibility().can_control()).then_some((operation, crush_vm::debug::DEBUG_STEP))
+    }
+
+    fn run_command(&mut self, cmd: Command) -> anyhow::Result<Option<String>> {
         match cmd {
             super::repl::Command::Help => Ok(Some(HELP_BANNER.to_string())),
-            super::repl::Command::Step => match self.driver.step() {
-                Ok(outcome) => Ok(Some(format!(
-                    "step {}: yielded={}",
-                    outcome.instruction_count, outcome.yielded
-                ))),
-                Err(super::vm_driver::VmError::Inner(ref e)) if quota_n(e).is_some() => {
-                    Ok(Some(quota_message(e)))
+            super::repl::Command::Step => {
+                let stepped = self.driver.step();
+                let output = self.drain_output();
+                match stepped {
+                    Ok(outcome) => {
+                        let reason = if outcome.yielded {
+                            StopReason::Paused
+                        } else {
+                            StopReason::Step
+                        };
+                        self.emit_stop(reason);
+                        Ok(Some(format!(
+                            "{output}step {}: yielded={}",
+                            outcome.instruction_count, outcome.yielded
+                        )))
+                    }
+                    Err(super::vm_driver::VmError::Inner(ref e)) if quota_n(e).is_some() => {
+                        self.emit(DebugEvent::QuotaExceeded(quota_n(e).unwrap_or(0)));
+                        Ok(Some(format!("{output}{}", quota_message(e))))
+                    }
+                    Err(e) => {
+                        self.emit(DebugEvent::Error(e.to_string()));
+                        Err(anyhow::anyhow!("{}", e))
+                    }
                 }
-                Err(e) => Err(anyhow::anyhow!("{}", e)),
-            },
+            }
             super::repl::Command::Continue => {
-                let result = self
-                    .driver
-                    .run_until_breakpoint_or_done()
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                Ok(Some(result.to_string()))
+                let result = self.driver.run_until_breakpoint_or_done();
+                self.report(result)
             }
             super::repl::Command::List => {
                 if self.breakpoints.is_empty() {
@@ -269,7 +344,7 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                 };
                 let depth = self.driver.call_depth();
                 Ok(Some(match self.driver.local(depth, slot) {
-                    Some(v) => format!("slot {slot} = {}", super::vm_driver::show_value(&v)),
+                    Some(v) => format!("slot {slot} = {}", self.redactor.view(&v)),
                     None => format!("slot {slot} is unset in frame {depth}"),
                 }))
             }
@@ -299,11 +374,88 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
 impl<'a, D: VmDriver> DebugSession<'a, D> {
     /// `next` / `finish`: run the step and report where it stopped.
     fn run_step(&mut self, mode: crush_vm::StepMode) -> anyhow::Result<Option<String>> {
-        let result = self
-            .driver
-            .step_mode(mode)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        Ok(Some(result.to_string()))
+        let result = self.driver.step_mode(mode);
+        self.report(result)
+    }
+
+    /// Program output since the last command: emitted as an event and
+    /// returned for the REPL message.
+    fn drain_output(&mut self) -> String {
+        let output = self.driver.take_output();
+        if !output.is_empty() {
+            self.emit(DebugEvent::Output(output.clone()));
+        }
+        output
+    }
+
+    fn emit_stop(&mut self, reason: StopReason) {
+        if self.sink.is_some() {
+            let frames = self.driver.frames(&self.redactor);
+            self.emit(DebugEvent::Stopped { reason, frames });
+        }
+    }
+
+    /// Turn a run's result into events and a message. Values pass through
+    /// the redactor; nothing raw leaves the session.
+    fn report(
+        &mut self,
+        result: Result<VmRunResult, super::vm_driver::VmError>,
+    ) -> anyhow::Result<Option<String>> {
+        let output = self.drain_output();
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => {
+                self.emit(DebugEvent::Error(e.to_string()));
+                return Err(anyhow::anyhow!("{}", e));
+            }
+        };
+        let message = match result {
+            VmRunResult::Done => {
+                self.emit(DebugEvent::Finished);
+                "done".to_string()
+            }
+            VmRunResult::QuotaExceeded(n) => {
+                self.emit(DebugEvent::QuotaExceeded(n));
+                format!("quota exceeded ({n})")
+            }
+            VmRunResult::HitBreakpoint(id) => {
+                self.emit_stop(StopReason::Breakpoint(id));
+                format!("hit breakpoint #{}", id.0)
+            }
+            VmRunResult::Paused => {
+                self.emit_stop(StopReason::Paused);
+                "paused".to_string()
+            }
+            VmRunResult::Stepped { ip, depth } => {
+                self.emit_stop(StopReason::Step);
+                format!("stopped at ip {ip} (depth {depth})")
+            }
+            VmRunResult::Watchpoint {
+                id,
+                slot,
+                depth,
+                old,
+                new,
+            } => {
+                let old = old.as_ref().map(|v| self.redactor.view(v));
+                let new = self.redactor.view(&new);
+                let text = format!(
+                    "watchpoint #{}: slot {slot} (depth {depth}) {} -> {new}",
+                    id.0,
+                    old.as_ref()
+                        .map_or_else(|| "(unset)".to_string(), ToString::to_string),
+                );
+                self.emit_stop(StopReason::Watchpoint {
+                    id,
+                    slot,
+                    depth,
+                    old,
+                    new,
+                });
+                text
+            }
+        };
+        Ok(Some(format!("{output}{message}")))
     }
 }
 
@@ -311,6 +463,7 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
 struct MockVmDriver {
     breakpoints: Option<BreakpointSet>,
     step_count: u64,
+    visibility: crush_vm::DebugVisibility,
 }
 
 #[cfg(test)]
@@ -338,6 +491,9 @@ impl VmDriver for MockVmDriver {
             paused_at: None,
         }
     }
+    fn debug_visibility(&self) -> crush_vm::DebugVisibility {
+        self.visibility
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +507,7 @@ mod tests {
             MockVmDriver {
                 breakpoints: None,
                 step_count: 0,
+                visibility: crush_vm::DebugVisibility::Full,
             },
             Vec::new(),
         )
@@ -364,6 +521,7 @@ mod tests {
             MockVmDriver {
                 breakpoints: None,
                 step_count: 0,
+                visibility: crush_vm::DebugVisibility::Full,
             },
             vec![(2, 0), (3, 3), (4, 7)],
         )
@@ -537,6 +695,108 @@ mod tests {
     fn handle_command_quit_panics() {
         let mut s = session();
         let _ = s.handle_command(Command::Quit);
+    }
+
+    // ── CRUSH-160: grant gating ────────────────────────────────────
+
+    fn session_at(level: crush_vm::DebugVisibility) -> DebugSession<'static, MockVmDriver> {
+        DebugSession::<'static, _>::new(
+            MockVmDriver {
+                breakpoints: None,
+                step_count: 0,
+                visibility: level,
+            },
+            Vec::new(),
+        )
+    }
+
+    fn control_commands() -> Vec<Command> {
+        vec![
+            Command::Break {
+                file: PathBuf::from("a.crush"),
+                line: 1,
+            },
+            Command::Delete { id: 0 },
+            Command::Step,
+            Command::Next,
+            Command::Finish,
+            Command::Continue,
+            Command::Watch {
+                slot: 0,
+                scope: None,
+            },
+            Command::Unwatch { id: 0 },
+        ]
+    }
+
+    /// No `debug.step`: every control command is refused before it reaches
+    /// the VM, with a `Refused` event naming the grant.
+    #[test]
+    fn without_debug_step_every_control_command_is_refused() {
+        let mut s = session_at(crush_vm::DebugVisibility::None);
+        let sink = crate::events::CollectingSink::new();
+        s.set_event_sink(sink.clone());
+        for cmd in control_commands() {
+            let out = s.handle_command(cmd.clone()).unwrap().unwrap();
+            assert!(
+                out.starts_with("refused:") && out.contains("`debug.step`"),
+                "{cmd:?}: {out}"
+            );
+        }
+        assert_eq!(s.driver.step_count, 0, "a refused command reached the VM");
+        assert_eq!(s.breakpoint_count(), 0);
+        let refused = sink
+            .events()
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    DebugEvent::Refused {
+                        needs: "debug.step",
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(refused, control_commands().len());
+        // Read-only commands still answer.
+        assert!(s.handle_command(Command::Help).unwrap().is_some());
+        assert_eq!(
+            s.handle_command(Command::List).unwrap().unwrap(),
+            "no breakpoints"
+        );
+    }
+
+    #[test]
+    fn control_only_steps_but_refuses_print() {
+        let mut s = session_at(crush_vm::DebugVisibility::ControlOnly);
+        assert_eq!(
+            s.handle_command(Command::Step).unwrap().unwrap(),
+            "step 1: yielded=false"
+        );
+        let out = s
+            .handle_command(Command::Print { name: "0".into() })
+            .unwrap()
+            .unwrap();
+        assert!(
+            out.contains("refused") && out.contains("debug.inspect.redacted"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn inspect_levels_allow_print() {
+        for level in [
+            crush_vm::DebugVisibility::InspectRedacted,
+            crush_vm::DebugVisibility::Full,
+        ] {
+            let mut s = session_at(level);
+            let out = s
+                .handle_command(Command::Print { name: "0".into() })
+                .unwrap()
+                .unwrap();
+            assert!(!out.contains("refused"), "{level:?}: {out}");
+        }
     }
 
     // ── sourcemap resolution tests ─────────────────────────────────

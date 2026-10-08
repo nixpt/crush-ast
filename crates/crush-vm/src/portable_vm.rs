@@ -375,6 +375,50 @@ impl PortableVm {
         self.watches.iter().map(|w| (w.id, w.slot, w.scope))
     }
 
+    /// What a debug client of this VM may do, from the `debug.*` grants in
+    /// its host capabilities (`None` without any; see
+    /// `HostCaps::grant_debug`).
+    pub fn debug_visibility(&self) -> crate::debug::DebugVisibility {
+        crate::debug::DebugVisibility::granted(self.host_caps.as_ref())
+    }
+
+    /// The frame at call `depth` (1 = entry), with its locals rendered by
+    /// `redactor`: the snapshot never holds a raw value, so it carries no
+    /// more than the redactor's visibility allows.
+    pub fn frame_snapshot(
+        &self,
+        depth: usize,
+        redactor: &crate::debug::Redactor,
+    ) -> Option<crate::debug::FrameSnapshot> {
+        let frame = self.call_stack.get(depth.checked_sub(1)?)?;
+        // Below the top, a frame is parked at its callee's return address.
+        let ip = match self.call_stack.get(depth) {
+            Some(callee) => callee.return_ip?,
+            None => self.ip,
+        };
+        let mut slots: Vec<u16> = frame.memory.keys().copied().collect();
+        slots.sort_unstable();
+        Some(crate::debug::FrameSnapshot {
+            depth,
+            function: self.function_at(ip).map(str::to_string),
+            ip,
+            locals: slots
+                .into_iter()
+                .map(|slot| (slot, redactor.view(&frame.memory[&slot])))
+                .collect(),
+        })
+    }
+
+    /// The function whose code contains `ip`: the one with the highest
+    /// entry at or below it (functions are laid out one after another).
+    pub fn function_at(&self, ip: usize) -> Option<&str> {
+        self.func_entry
+            .iter()
+            .filter(|&(_, &entry)| entry <= ip)
+            .max_by_key(|&(_, &entry)| entry)
+            .map(|(name, _)| name.as_str())
+    }
+
     /// Why the most recent `VmYield::DebugBreak` happened. Cleared when
     /// the next instruction executes.
     pub fn last_stop(&self) -> Option<&crate::debug::DebugStop> {
