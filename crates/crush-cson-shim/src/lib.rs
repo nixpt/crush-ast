@@ -7,6 +7,6 @@
 //! `crush-caison`; this crate gets no further releases.
 //!
 //! The VM capability is now `caison.parse`; `cson.parse` is a deprecated
-//! alias removed in 0.4.
+//! alias removed in 0.5.
 
 pub use crush_caison::*;

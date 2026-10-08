@@ -44,11 +44,34 @@ if [ -z "$LAST_TAG" ]; then
   exit 0
 fi
 
-SUBJECTS="$(git log --pretty=format:'%s%n%b' "${LAST_TAG}..HEAD" 2>/dev/null || true)"
+# Conventional-commits is precise about WHERE each marker lives:
+#   feat: / fix: / type!:   are SUBJECT-line prefixes
+#   BREAKING CHANGE:        is a FOOTER (body) trailer
+# Scanning the whole body for subject prefixes misfires on prose — a commit
+# message that merely DISCUSSES "feat:" or "fix:" would match.
+SUBJECT_LINES="$(git log --pretty=format:'%s' "${LAST_TAG}..HEAD" 2>/dev/null || true)"
+BODY_LINES="$(git log --pretty=format:'%b' "${LAST_TAG}..HEAD" 2>/dev/null || true)"
+
+is_breaking() {
+  printf '%s' "$SUBJECT_LINES" | grep -qE '^[a-z]+(\([^)]*\))?!:' && return 0
+  printf '%s' "$BODY_LINES"    | grep -qE '^BREAKING[[:space:]]CHANGE:' && return 0
+  return 1
+}
+has_feat() { printf '%s' "$SUBJECT_LINES" | grep -qE '^feat(\([^)]*\))?!?:'; }
+has_fix()  { printf '%s' "$SUBJECT_LINES" | grep -qE '^fix(\([^)]*\))?!?:'; }
+
+# Release-worthiness gate: only feat/fix/breaking mint a version. docs, chore,
+# test, ci, refactor, style, perf, build are a no-op. Set BUMPVER_RELEASE_ALL=1
+# for the old tag-on-every-push behaviour.
+if [ "${BUMPVER_RELEASE_ALL:-0}" != "1" ] && ! is_breaking && ! has_feat && ! has_fix; then
+  log "no feat:/fix:/breaking commits since ${LAST_TAG} — nothing to release"
+  exit 0
+fi
+
 bump="patch"
-if printf '%s' "$SUBJECTS" | grep -qiE '(^|[[:space:]])BREAKING[[:space:]]CHANGE|^[a-z]+(\([^)]*\))?!:'; then
+if is_breaking; then
   bump="major"
-elif printf '%s' "$SUBJECTS" | grep -qiE '^feat(\([^)]*\))?:'; then
+elif has_feat; then
   bump="minor"
 fi
 
@@ -58,13 +81,41 @@ fi
 # coincidentally shares the version — path deps also carry no `source =` line.
 workspace_member_names() {
   awk '/^\[package\]/{f=1;next}/^\[/{f=0}f&&/^name[[:space:]]*=/{v=$0;sub(/^[^=]*=[[:space:]]*"?/,"",v);sub(/".*/,"",v);gsub(/[[:space:]]/,"",v);print v;exit}' Cargo.toml
-  awk '/^\[workspace\]/{f=1;next}/^\[/{f=0}f&&/^members[[:space:]]*=/{line=$0;sub(/^[^=]*=[[:space:]]*/,"",line);gsub(/[][",]/," ",line);print line}' Cargo.toml \
-    | tr ' ' '\n' \
-    | while IFS= read -r d; do
-        [ -n "$d" ] || continue
-        [ "$d" = "." ] && continue
-        [ -f "$d/Cargo.toml" ] || continue
-        awk '/^\[package\]/{f=1;next}/^\[/{f=0}f&&/^name[[:space:]]*=/{v=$0;sub(/^[^=]*=[[:space:]]*"?/,"",v);sub(/".*/,"",v);gsub(/[[:space:]]/,"",v);print v;exit}' "$d/Cargo.toml"
+  # members may span several lines and use globs ("crates/*"): collect every
+  # quoted entry between `members = [` and the closing `]`, then expand globs.
+  awk '/^\[workspace\]/{f=1;next}/^\[/{f=0;m=0}f&&/^[[:space:]]*members[[:space:]]*=/{m=1}m{line=$0;sub(/#.*/,"",line);while(match(line,/"[^"]*"/)){print substr(line,RSTART+1,RLENGTH-2);line=substr(line,RSTART+RLENGTH)}if($0~/\]/)m=0}' Cargo.toml \
+    | while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        for d in $pat; do
+          [ "$d" = "." ] && continue
+          [ -f "$d/Cargo.toml" ] || continue
+          awk '/^\[package\]/{f=1;next}/^\[/{f=0}f&&/^name[[:space:]]*=/{v=$0;sub(/^[^=]*=[[:space:]]*"?/,"",v);sub(/".*/,"",v);gsub(/[[:space:]]/,"",v);print v;exit}' "$d/Cargo.toml"
+        done
+      done
+}
+
+# Point every in-workspace path dependency's version requirement at the new
+# version. A member pinned as `foo = { path = "...", version = "0.3.8" }`
+# means ^0.3.8, which a minor or major bump (0.4.0) no longer satisfies: the
+# workspace stops resolving (crush-ast: 51 such pins, s474). Covers the root
+# [workspace.dependencies] and every member manifest; inline tables only.
+rewrite_internal_reqs() {
+  local nextver="$1" members f
+  members="$(workspace_member_names)"
+  [ -n "$members" ] || return 0
+  find . -name Cargo.toml -not -path '*/target/*' -not -path './.git/*' -not -path './.jagent/*' -not -path '*/node_modules/*' \
+    | while IFS= read -r f; do
+        awk -v nextver="$nextver" -v members="$members" '
+          BEGIN { n=split(members, m, "\n"); for (i=1;i<=n;i++) if (m[i]!="") want[m[i]]=1 }
+          {
+            line=$0
+            if (line ~ /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*\{/ && line ~ /path[[:space:]]*=/ && line ~ /version[[:space:]]*=[[:space:]]*"[^"]*"/) {
+              name=line; sub(/^[[:space:]]*/,"",name); sub(/[[:space:]]*=.*/,"",name)
+              if (name in want) sub(/version[[:space:]]*=[[:space:]]*"[^"]*"/, "version = \"" nextver "\"", line)
+            }
+            print line
+          }' "$f" > "$f.tmp"
+        if [ -s "$f.tmp" ]; then mv "$f.tmp" "$f"; else rm -f "$f.tmp"; log "rewrite_internal_reqs: empty output for $f, left unchanged"; fi
       done
 }
 
@@ -129,6 +180,7 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 write_version "$NEXT"
+rewrite_internal_reqs "$NEXT"
 
 if [ -f Cargo.toml ] && command -v cargo >/dev/null 2>&1; then
   log "refreshing Cargo.lock (cargo update --workspace)…"
@@ -193,7 +245,12 @@ if [ -f CHANGELOG.md ]; then
       END { if (!done) printf "%s", entry }
     ' CHANGELOG.md > CHANGELOG.md.tmp
   fi
-  [ -s CHANGELOG.md.tmp ] && mv CHANGELOG.md.tmp CHANGELOG.md || rm -f CHANGELOG.md.tmp
+  # if/else (not "A and-then B or-else C"): a failed mv must not fall through and delete the new entry (SQ-201)
+  if [ -s CHANGELOG.md.tmp ]; then
+    mv CHANGELOG.md.tmp CHANGELOG.md
+  else
+    rm -f CHANGELOG.md.tmp
+  fi
   rm -f "$ENTRY_FILE"
   log "appended mechanical CHANGELOG.md entry for v${NEXT}"
 fi
@@ -217,12 +274,32 @@ git config user.email "$GIT_EMAIL"
 for f in Cargo.toml Cargo.lock VERSION CHANGELOG.md; do
   [ -f "$f" ] && ! git check-ignore -q "$f" && git add "$f"
 done
+# member manifests whose internal version requirements rewrite_internal_reqs
+# moved (one add per path, same reason as above)
+# (list first: piping git diff into git add races both for .git/index.lock)
+_bumped_manifests="$(git diff --name-only -- '*Cargo.toml')"
+for f in $_bumped_manifests; do git add "$f"; done
 git commit -m "chore(release): v${NEXT} [skip ci]" >/dev/null
 git tag "v${NEXT}"
 log "tagged v${NEXT}"
 
 if git remote get-url origin >/dev/null 2>&1; then
-  git push origin "HEAD:${MAIN_BRANCH}" "v${NEXT}"
+  # Push the bump commit ALONE, then the tag only after the commit is on the
+  # branch. A single push with both refspecs evaluates each ref independently:
+  # when branch protection refuses HEAD:${MAIN_BRANCH} (e.g. a pull_request
+  # ruleset with no bypass actor for the release token), the tag half still
+  # lands — stranding a vX.Y.Z tag that is not an ancestor of the branch while
+  # the branch's version file still reads the OLD version (zorro#128: v0.31.1
+  # orphaned by fleet-default-main-protection). A refused release must leave
+  # NO tag on origin.
+  if ! git push origin "HEAD:${MAIN_BRANCH}"; then
+    log "ERROR: bump-commit push to ${MAIN_BRANCH} was refused — NOT pushing tag v${NEXT}."
+    log "branch protection likely blocks direct pushes here; the release automation needs a"
+    log "bypass actor or a PR-based release flow (see nixpt/zorro#128 for the worked options)."
+    log "the bump commit + tag exist locally only; drop the tag with: git tag -d v${NEXT}"
+    exit 1
+  fi
+  git push origin "v${NEXT}"
   log "pushed ${MAIN_BRANCH} + v${NEXT} to origin"
   # A pushed tag is not a GitHub Release — the Releases page / `gh release
   # list` only shows actual Release objects. Pre-1.0, stay tag-only on
@@ -234,9 +311,11 @@ if git remote get-url origin >/dev/null 2>&1; then
   # succeeded and is the source of truth either way.
   if [ "$MA" -ge 1 ] 2>/dev/null; then
     if command -v gh >/dev/null 2>&1; then
-      gh release create "v${NEXT}" --title "v${NEXT}" --generate-notes --target "${MAIN_BRANCH}" \
-        && log "created GitHub Release v${NEXT}" \
-        || log "gh release create failed (non-fatal) — tag+push already succeeded"
+      if gh release create "v${NEXT}" --title "v${NEXT}" --generate-notes --target "${MAIN_BRANCH}"; then
+        log "created GitHub Release v${NEXT}"
+      else
+        log "gh release create failed (non-fatal) — tag+push already succeeded"
+      fi
     else
       log "gh CLI not available — tag pushed, no GitHub Release object created"
     fi

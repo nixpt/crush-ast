@@ -14,9 +14,10 @@ Trusted Publishing can only be configured for a crate that exists, so a new
 crate's first release is a manual `cargo publish -p <crate>` (then add
 Trusted Publishing for it on crates.io).
 
-The plan stops before publishing anything if a crate in the set depends on a
-workspace crate that is not on crates.io at the version this tree needs; it
-names the crates that need that manual first publish.
+A crate that needs a never-published workspace crate (directly or through
+another waiting crate) waits; everything else is published. The run then
+names the crates that need a manual first publish; publish those by hand and
+run again to finish.
 
 Order: normal and build dependencies between workspace crates, dependencies
 first. Dev-dependencies are ignored: crates.io accepts path-only dev-deps,
@@ -110,39 +111,50 @@ def main():
     in_set = {n for n, versions in on_registry.items() if versions is not None}
     not_published = sorted(set(packages) - in_set)
 
-    todo, done, blocked = [], [], []
+    # A crate waits if it needs a never-published workspace crate, directly
+    # or through another waiting crate. Everything else is published now; a
+    # re-run after the manual first publishes picks up the rest.
+    todo, done, waiting = [], [], {}
     for name in (n for n in topo_order(in_set, deps) if n in in_set):
         version = packages[name]["version"]
         if version in on_registry[name]:
             done.append(f"{name} {version}")
             continue
-        missing = [
-            d for d in deps[name]
-            if d not in in_set and packages[d]["version"] not in (on_registry[d] or ())
-        ]
-        if missing:
-            blocked.append((name, missing))
-        todo.append((name, version))
+        needs = sorted(
+            {
+                d for d in deps[name]
+                if d not in in_set and packages[d]["version"] not in (on_registry[d] or ())
+            }
+            | {m for d in deps[name] if d in waiting for m in waiting[d]}
+        )
+        if needs:
+            waiting[name] = needs
+        else:
+            todo.append((name, version))
 
     print(f"already on crates.io ({len(done)}): {', '.join(done) or '-'}")
     print(f"never published, left out ({len(not_published)}): {', '.join(not_published) or '-'}")
-    print(f"to publish, in order ({len(todo)}):")
+    print(f"to publish now, in order ({len(todo)}):")
     for name, version in todo:
         print(f"  {name} {version}")
 
-    if blocked:
-        print("\nBLOCKED: these depend on workspace crates that are not on crates.io yet:")
-        for name, missing in blocked:
-            print(f"  {name} needs {', '.join(missing)}")
-        firsts = sorted({m for _, missing in blocked for m in missing})
-        print("Publish each of these once by hand, then add Trusted Publishing for it on crates.io:")
+    def report_waiting():
+        if not waiting:
+            return
+        firsts = sorted({m for needs in waiting.values() for m in needs})
+        print(f"\nWAITING ({len(waiting)}): these need a crate that has never been published:")
+        for name, needs in waiting.items():
+            print(f"  {name} needs {', '.join(needs)}")
+        print("After this run, publish these once by hand (dependencies first), add Trusted Publishing")
+        print("for each on crates.io, then run this again to publish the rest:")
         for m in topo_order(firsts, deps):
             if m in firsts:
                 print(f"  cargo publish -p {m}")
-        sys.exit(1)
+        print(f"::warning::{len(waiting)} crate(s) wait on a first publish of {', '.join(firsts)}")
 
     if not todo:
-        print("\nnothing to publish")
+        print("\nnothing to publish now")
+        report_waiting()
         return
 
     # Package and verify the whole set before uploading anything, so a crate
@@ -159,6 +171,7 @@ def main():
 
     if not publish:
         print("\nverified; plan only (pass --publish to publish)")
+        report_waiting()
         return
 
     # Already verified above; --no-verify skips building each crate twice.
@@ -167,6 +180,7 @@ def main():
         subprocess.run(["cargo", "publish", "-p", name, "--locked", "--no-verify"], check=True)
         print("::endgroup::", flush=True)
     print(f"\npublished {len(todo)} crate(s)")
+    report_waiting()
 
 
 if __name__ == "__main__":

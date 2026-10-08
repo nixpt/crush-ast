@@ -1,5 +1,5 @@
 //! CRUSH-149: `caison.parse` is the capability; `cson.parse` is a deprecated
-//! alias with the same handler (removed in 0.4).
+//! alias with the same handler (removed in 0.5).
 
 use crush_lang_sdk::HostCapsBuilder;
 use crush_vm::vm::Value;
