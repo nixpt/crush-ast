@@ -69,6 +69,16 @@ pub(crate) fn canonical_lang(lang: &str) -> Option<&'static str> {
     }
 }
 
+/// The `polyglot.<lang>` grant an `@lang` block needs: the canonical name
+/// for a known tag, the raw tag otherwise. Both VM backends gate on it, and
+/// [`crate::capabilities_used`] reports it.
+pub(crate) fn polyglot_gate_name(lang: &str) -> String {
+    match canonical_lang(lang) {
+        Some(c) => format!("polyglot.{c}"),
+        None => format!("polyglot.{lang}"),
+    }
+}
+
 /// The @lang → (binary, exec-flag) allowlist. SHARED with portable_vm so the two backends can
 /// never drift on which languages run or how (found drifting by crush-diff: portable used the raw
 /// tag `javascript` with `-c`, scheduler mapped it to `node -e`). Public so host tooling
@@ -1091,9 +1101,7 @@ fn execute_one(
             // capability-based language that MUST be granted, exactly like fs.read or net.get.
             // The grant is `polyglot.<lang>` in the host-caps registry (crush-run: --polyglot;
             // exo-light: derived from the CapabilitySet). No grant → refuse, loudly.
-            let gate = canonical_lang(lang)
-                .map(|c| format!("polyglot.{c}"))
-                .unwrap_or_else(|| format!("polyglot.{lang}"));
+            let gate = polyglot_gate_name(lang);
             if host_caps.map(|h| h.get(&gate).is_none()).unwrap_or(true) {
                 return Err(VmError::UnknownCap(format!(
                     "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"

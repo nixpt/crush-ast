@@ -181,7 +181,8 @@ enum Commands {
         #[command(flatten)]
         grants: GrantArgs,
     },
-    /// Type-check without emitting bytecode
+    /// Compile the package like `build` (without writing target/) and check
+    /// the capabilities it uses against capsule.toml's [capabilities]
     Check,
     /// Pack source into a .crush-pack archive
     Pack {
@@ -300,6 +301,11 @@ pub const CODE_SITE: &str = "E-SITE";
 /// previously), so adding the const here slots the new code into
 /// the byte-exact surface without patching `crush_diagnostics`.
 pub const CODE_LINT: &str = "E-LINT";
+/// `crush-pkg check` capability findings (CRUSH-170): a capability the
+/// program uses but `capsule.toml` doesn't declare (`error`), a declared one
+/// it never uses (`warning`), or one a `web` capsule can't get in the
+/// browser (`warning`).
+pub const CODE_CAPS: &str = "E-CAPS";
 
 /// Tagged-error wrapper that lets `dispatch` route failures to
 /// the right per-domain wire code. Each variant carries the full
@@ -555,7 +561,7 @@ fn dispatch(
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
         Commands::Run { args, grants } => handle_run(args, &grants, strict_mode)
             .map_err(|e| CommandFailure::Run(format!("{e:#}"))),
-        Commands::Check => handle_check()
+        Commands::Check => handle_check(json_mode, strict_mode)
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
         Commands::Pack { output } => handle_pack(output)
             .map_err(|e| CommandFailure::Manifest(format!("{e:#}"))),
@@ -673,7 +679,8 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
     Ok(())
 }
 
-fn handle_check() -> anyhow::Result<()> {
+fn handle_check(json_mode: bool, strict_mode: bool) -> anyhow::Result<()> {
+    let manifest_path = find_manifest()?;
     let (manifest, root) = load_manifest()?;
     crush_pkg::flow::require_crush_buildable(&manifest, &root, "check")?;
     println!(
@@ -681,8 +688,62 @@ fn handle_check() -> anyhow::Result<()> {
         manifest.capsule.name, manifest.capsule.version
     );
     let builder = PackageBuilder::new(manifest, root);
-    builder.check()?;
+    let report = builder.check()?;
+    let manifest_text = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+    let errors = emit_cap_findings(
+        &mut std::io::stdout(),
+        &report,
+        &manifest_text,
+        json_mode,
+        strict_mode,
+    )?;
+    if errors > 0 {
+        anyhow::bail!(
+            "{errors} capability error(s): the program uses capabilities capsule.toml doesn't declare"
+        );
+    }
+    if !json_mode {
+        let used: Vec<&str> = report.used.iter().map(String::as_str).collect();
+        println!("check passed; capabilities used: {}", used.join(", "));
+    }
     Ok(())
+}
+
+/// Print `crush-pkg check`'s capability findings: one `E-CAPS` NDJSON record
+/// each in json/strict mode, else one `level: capsule.toml:LINE: message
+/// (hint)` line. Levels go through [`strict_downgrade`] like every other
+/// record. Returns how many are errors.
+fn emit_cap_findings(
+    out: &mut impl Write,
+    report: &crush_pkg::capcheck::CheckReport,
+    manifest_text: &str,
+    json_mode: bool,
+    strict_mode: bool,
+) -> std::io::Result<usize> {
+    let mut errors = 0;
+    for f in &report.findings {
+        let level = strict_downgrade(f.level.as_str(), strict_mode);
+        if level == "error" {
+            errors += 1;
+        }
+        let line = crush_pkg::capcheck::line_of(manifest_text, &f.capability);
+        if json_mode {
+            emit_diag(
+                out,
+                CODE_CAPS,
+                f.level.as_str(),
+                &f.message,
+                Some("capsule.toml"),
+                line,
+                Some(&f.hint),
+                strict_mode,
+            )?;
+        } else {
+            let at = line.map(|l| format!(":{l}")).unwrap_or_default();
+            writeln!(out, "{level}: capsule.toml{at}: {} ({})", f.message, f.hint)?;
+        }
+    }
+    Ok(errors)
 }
 
 /// Which stage of the no-subcommand flow failed, so the failure keeps the

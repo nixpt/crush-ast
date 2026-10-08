@@ -144,3 +144,19 @@ fn squad_bridge_peek_cannot_read_outside_fs_root() {
         assert!(!all.contains("[capsule]"), "capsule.toml leaked:\n{all}");
     }
 }
+
+#[test]
+fn squad_bridge_peek_declares_exactly_the_capabilities_it_uses() {
+    let (_tmp, dir) = bridge_peek();
+    let out = crush_pkg(&dir, &["check", "--message-format=json"], &[]);
+    let all = text(&out);
+    assert!(out.status.success(), "check failed:\n{all}");
+    assert!(!all.contains("E-CAPS"), "capability findings:\n{all}");
+
+    let human = crush_pkg(&dir, &["check"], &[]);
+    assert!(
+        text(&human).contains("capabilities used: env.get, fs.cat, io.print,"),
+        "{}",
+        text(&human)
+    );
+}
