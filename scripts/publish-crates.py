@@ -59,14 +59,16 @@ def crates_io_versions(name):
 
 
 def workspace():
-    meta = json.loads(
-        subprocess.run(
-            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
+    result = subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        # show cargo's own reason (e.g. a missing path dependency)
+        sys.stderr.write(result.stderr)
+        sys.exit(f"cargo metadata failed (exit {result.returncode}); see cargo's error above")
+    meta = json.loads(result.stdout)
     members = set(meta["workspace_members"])
     packages = {
         p["name"]: p

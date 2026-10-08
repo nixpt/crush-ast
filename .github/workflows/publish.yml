@@ -52,7 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
-    env:
       # the tag to publish: the dispatch input, else the pushed tag
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
