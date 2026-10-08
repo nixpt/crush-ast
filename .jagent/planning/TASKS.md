@@ -213,6 +213,9 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 - [x] **CRUSH-146** (XS, P1): JIT `arr_set` didn't push the array back — `a[i] = v` corrupted the JIT stack (found during CRUSH-135). [ticket](tickets/CRUSH-146-jit-arr-set-stack-contract.md)
 - [x] **CRUSH-147** (S): salvage + triage of the dirty shared checkout — salvage `salvage/panini/CRUSH-147-20261005-0848`@`c302e83`; the 196 dirty files are a `cargo fmt --all` run (0 unique work; CRUSH-73/19/11 work is not in it). [ticket](tickets/CRUSH-147-shared-checkout-salvage.md)
 - [ ] **CRUSH-148** (S): no fmt gate in CI — 202/319 `.rs` files on `main` aren't rustfmt-clean; pin one rustfmt (CI says 1.85, `rust-toolchain.toml` says stable), one mechanical `cargo fmt --all` commit + `.git-blame-ignore-revs`, then a `cargo fmt --all --check` job. Also: `cargo fmt` fails inside `.jagent/worktrees/*` (sibling `buckets` link lands inside the workspace). [ticket](tickets/CRUSH-148-fmt-ci-gate.md)
+- [ ] **CRUSH-149** (S): rename `crush-cson` → `crush-caison` (capability `caison.parse`, `cson.parse` deprecated alias until 0.4), retire the old crate name via `crates/crush-cson-shim`. Mechanical only. [ticket](tickets/CRUSH-149-crush-caison-rename.md)
+- [ ] **CRUSH-150** (S): delete crush-frontend's hand-written CAISON parser (`parser/cson.rs`) in favour of `caison`'s reference parser; run caison's `conformance/` vectors in CI. Follow-up to CRUSH-149.
+- [ ] **CRUSH-151** (M, needs captain): CAISON → Crush value mapping — `node_to_value` drops confidence/annotations and renders `@synthesize` as a placeholder string. Proposal: `{value, confidence, meta}` map only when present; `@synthesize` as a distinct value the host can fill. Follow-up to CRUSH-149.
 
 ## Filed 2026-10-07 — CRUSH-150 migration inventory (derby phase 2)
 

@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use regex::Regex;
 use anyhow::{Result, anyhow};
 use crush_cast::{Program, Statement, Expression, Function, CastType};
-use crush_cson::CaisonValue;
-use crush_cson::parser::CaisonParser;
+use crush_caison::CaisonValue;
+use crush_caison::parser::CaisonParser;
 use crush_walker_core::{Frontend, FeatureReport};
 
 /// Rule matching structure mapping a regex to a CAST node type.

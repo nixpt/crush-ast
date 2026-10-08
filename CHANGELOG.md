@@ -14,6 +14,18 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush-cson` renamed to `crush-caison`; VM capability `caison.parse` (CRUSH-149).**
+  CAISON was renamed from CSON on 2026-09-27 ("CSON" already means
+  CoffeeScript Object Notation); the crate and capability now match.
+  `crates/crush-cson` → `crates/crush-caison` (package `crush-caison`,
+  `CsonParseCap` → `CaisonParseCap`); `crush_cast::cson` → `crush_cast::caison`.
+  Migration: depend on `crush-caison`; call `caison.parse` from Crush.
+  `crush_cast::cson` (a `#[deprecated]` module) and the `cson.parse`
+  capability (same handler) keep working until 0.4. The `crush-cson` crate
+  name is retired: `crates/crush-cson-shim` publishes a final `crush-cson`
+  that only re-exports `crush-caison`. Mechanical rename — no change to the
+  value mapping or parser.
+
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

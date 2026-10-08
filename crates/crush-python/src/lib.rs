@@ -39,7 +39,7 @@ fn run_casm(json: &str) -> PyResult<String> {
 /// Parse a CSON string.
 #[pyfunction]
 fn parse_cson(cson_str: &str) -> PyResult<String> {
-    let mut parser = crush_cson::parser::CaisonParser::new(cson_str);
+    let mut parser = crush_caison::parser::CaisonParser::new(cson_str);
     let doc = parser.parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 

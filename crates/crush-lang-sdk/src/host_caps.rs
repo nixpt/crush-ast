@@ -180,7 +180,9 @@ impl HostCapsBuilder {
 
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
-        caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
+        caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::new()));
+        // Deprecated pre-rename name; removed in 0.4 (CRUSH-149).
+        caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::deprecated_alias()));
         caps.grant_polyglot(&self.polyglot);
         if self.fs {
             let root = self.fs_root.unwrap_or_else(|| ".".to_string());
