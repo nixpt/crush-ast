@@ -146,3 +146,28 @@ fn trailing_args_are_rejected_after_a_subcommand_other_than_run() {
     let out = crush_pkg(&app, &["build", "stray"]);
     assert!(!out.status.success());
 }
+
+#[test]
+fn show_prints_catalogue_fields_and_rejects_unknown_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app_with_dep(tmp.path());
+    let manifest = app.join("capsule.toml");
+    let base = std::fs::read_to_string(&manifest).unwrap();
+    let with = base.replace(
+        "language = \"crush\"\n",
+        "language = \"crush\"\ncategory = \"dev-tool\"\nplatforms = [\"linux\", \"web\"]\n",
+    );
+    std::fs::write(&manifest, &with).unwrap();
+    let out = crush_pkg(&app, &["show"]);
+    let all = text(&out);
+    assert!(out.status.success(), "{all}");
+    assert!(all.contains("category = \"dev-tool\""), "{all}");
+    assert!(all.contains("platforms = ["), "{all}");
+
+    std::fs::write(&manifest, with.replace("dev-tool", "toolz")).unwrap();
+    let out = crush_pkg(&app, &["show"]);
+    let all = text(&out);
+    assert!(!out.status.success());
+    assert!(all.contains("crush-pkg[E-MANIFEST]"), "{all}");
+    assert!(all.contains("unknown [capsule] category \"toolz\""), "{all}");
+}

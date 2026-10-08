@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Manifest `category` and `platforms` (CRUSH-171).** `[capsule]` takes an
+  optional `category` (`cli`, `library`, `app`, `service`, `game`,
+  `dev-tool`, `language`, `example`) and `platforms` (any of `linux`,
+  `macos`, `windows`, `web`). Unknown values, duplicate platforms, and `web` on
+  a non-Crush capsule are load errors that name the accepted values.
+  `crush-pkg show` prints both. Manifests without them load as before. The
+  schema is documented in `crates/crush-pkg/MANIFEST.md`.
+
 - **`crush-pkg` with no subcommand builds and runs (CRUSH-167, squeeze folded
   in).** A bare `crush-pkg` builds the package (entry + path deps), writes
   `target/<name>.cvm` + `.casm.json`, then runs the program it just built;

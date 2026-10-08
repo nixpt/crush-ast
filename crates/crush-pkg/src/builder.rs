@@ -559,6 +559,8 @@ mod tests {
                 entry: entry.to_string(),
                 language: "crush".to_string(),
                 runtime_version: None,
+                category: None,
+                platforms: Vec::new(),
                 description: None,
                 author: None,
                 network_access: None,
