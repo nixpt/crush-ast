@@ -30,6 +30,17 @@ add its entry after yours.
   grant; `crush-run caps --json` prints it and now includes the
   `polyglot.*` gates). `PackageBuilder::check` returns a `CheckReport`.
 
+- **`crush-pkg` grants: `--fs`, `--fs-root`, `--env`, `--time` (CRUSH-172).**
+  `crush-pkg run` and bare `crush-pkg` took no grants, so a capsule that
+  read a file could not run at all. They now take the same grant flags as
+  `crush run`, and register the pure standard library the way `crush run`
+  does. New example capsule `examples/crush/capsules/squad-bridge-peek`
+  (the first pure-Crush capsule: prints the last entries of a log via
+  `fs.cat`, file from `$BRIDGE_PEEK_FILE`, read inside the `--fs` sandbox).
+  CI's `Test (sdk)` job now also runs `crush-pkg`'s tests, which no job ran
+  before. Library: `runners::get_runner_with` / `get_runner_for_payload_with`
+  take the `CrushRunner` to use.
+
 - **`crush-cson` renamed to `crush-caison`; VM capability `caison.parse` (CRUSH-149).**
   CAISON was renamed from CSON on 2026-09-27 ("CSON" already means
   CoffeeScript Object Notation); the crate and capability now match.

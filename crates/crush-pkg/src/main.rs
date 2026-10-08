@@ -57,7 +57,7 @@ use std::collections::HashSet;
 
 use crush_pkg::manifest::Manifest;
 use crush_pkg::packer::{pack, unpack};
-use crush_pkg::runners::{ExecutionResult, get_runner_for_payload};
+use crush_pkg::runners::{ExecutionResult, get_runner_for_payload_with};
 use crush_pkg::signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
@@ -114,6 +114,51 @@ struct Cli {
     /// `crush-installer`.
     #[arg(long, global = true, value_name = "FORMAT")]
     message_format: Option<MessageFormat>,
+    /// Capability grants for the no-subcommand build-then-run flow
+    #[command(flatten)]
+    grants: GrantArgs,
+}
+
+/// Host capabilities a Crush program may use when `crush-pkg` runs it.
+/// Same flags and meaning as `crush run` / `crush-run`: nothing with
+/// authority is ambient, so a capsule that reads files needs `--fs`, and
+/// only sees what is under `--fs-root`. The pure standard library is
+/// always on (CRUSH-113, decision C-1). Script and native capsules run as
+/// separate processes and ignore these.
+#[derive(clap::Args, Debug, Clone, Default)]
+struct GrantArgs {
+    /// Grant the filesystem capabilities (fs.read/cat/ls/..., text.*),
+    /// confined to --fs-root.
+    #[arg(long)]
+    fs: bool,
+    /// Directory the --fs grant is confined to (relative to the current
+    /// directory).
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    fs_root: PathBuf,
+    /// Grant environment-variable access (env.get, env.all, env.home_dir).
+    #[arg(long)]
+    env: bool,
+    /// Grant the clock (time.now*, time.elapsed, time.sleep, async.sleep).
+    #[arg(long)]
+    time: bool,
+}
+
+impl GrantArgs {
+    fn host_caps(&self) -> crush_vm::HostCaps {
+        crush_lang_sdk::HostCapsBuilder::new()
+            .fs(self.fs)
+            .fs_root(self.fs_root.to_string_lossy())
+            .env(self.env)
+            .time(self.time)
+            .stdlib(true)
+            .build()
+    }
+
+    fn runner(&self) -> crush_pkg::runners::CrushRunner {
+        crush_pkg::runners::CrushRunner {
+            host_caps: Some(self.host_caps()),
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -133,6 +178,8 @@ enum Commands {
         /// Arguments passed to the program's main function
         #[arg(last = true)]
         args: Vec<String>,
+        #[command(flatten)]
+        grants: GrantArgs,
     },
     /// Compile the package like `build` (without writing target/) and check
     /// the capabilities it uses against capsule.toml's [capabilities]
@@ -504,7 +551,7 @@ fn dispatch(
     strict_mode: bool,
 ) -> Result<(), CommandFailure> {
     let Some(command) = cli.command else {
-        return handle_default(cli.args, strict_mode)
+        return handle_default(cli.args, &cli.grants, strict_mode)
             .map_err(|e| e.into_failure());
     };
     match command {
@@ -512,7 +559,7 @@ fn dispatch(
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
         Commands::Build => handle_build()
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
-        Commands::Run { args } => handle_run(args, strict_mode)
+        Commands::Run { args, grants } => handle_run(args, &grants, strict_mode)
             .map_err(|e| CommandFailure::Run(format!("{e:#}"))),
         Commands::Check => handle_check(json_mode, strict_mode)
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
@@ -579,7 +626,7 @@ fn handle_build() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_run(args: Vec<String>, strict_mode: bool) -> anyhow::Result<()> {
+fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
     let payload = root.join(&manifest.capsule.entry);
     if !payload.exists() {
@@ -613,7 +660,7 @@ fn handle_run(args: Vec<String>, strict_mode: bool) -> anyhow::Result<()> {
         );
     }
 
-    let runner = get_runner_for_payload(&payload, &manifest);
+    let runner = get_runner_for_payload_with(&payload, &manifest, grants.runner());
     println!(
         "running {} v{} ({})",
         manifest.capsule.name, manifest.capsule.version, manifest.capsule.language
@@ -722,12 +769,16 @@ impl DefaultFailure {
 /// produced (entry + path deps), not a fresh compile of the entry file.
 /// Script/Native capsules have nothing to build, so they go straight to
 /// the same runner dispatch `crush-pkg run` uses, args included.
-fn handle_default(args: Vec<String>, strict_mode: bool) -> Result<(), DefaultFailure> {
+fn handle_default(
+    args: Vec<String>,
+    grants: &GrantArgs,
+    strict_mode: bool,
+) -> Result<(), DefaultFailure> {
     let (manifest, root) = load_manifest().map_err(DefaultFailure::Manifest)?;
     if let crush_pkg::flow::Buildability::NotCrush(_) =
         crush_pkg::flow::buildability(&manifest, &root)
     {
-        return handle_run(args, strict_mode).map_err(DefaultFailure::Run);
+        return handle_run(args, grants, strict_mode).map_err(DefaultFailure::Run);
     }
 
     let name = manifest.capsule.name.clone();
@@ -746,7 +797,8 @@ fn handle_default(args: Vec<String>, strict_mode: bool) -> Result<(), DefaultFai
     // CrushRunner has no argv channel for Crush programs (same as
     // `crush-pkg run -- ARGS` on a Crush capsule), so `args` stop here.
     let _ = args;
-    crush_pkg::runners::CrushRunner::default()
+    grants
+        .runner()
         .run_program(&output.program)
         .map_err(DefaultFailure::Run)?;
     Ok(())
@@ -1452,8 +1504,20 @@ mod tests {
         assert_eq!(with_args.message_format, Some(MessageFormat::Json));
 
         let run = Cli::try_parse_from(["crush-pkg", "run", "--", "x"]).expect("run -- x");
-        assert!(matches!(run.command, Some(Commands::Run { ref args }) if args == &["x".to_string()]));
+        assert!(matches!(run.command, Some(Commands::Run { ref args, .. }) if args == &["x".to_string()]));
         assert!(run.args.is_empty(), "run's args belong to the subcommand");
+
+        // Grants parse on `run` and on the bare flow (CRUSH-172).
+        let run = Cli::try_parse_from(["crush-pkg", "run", "--fs", "--fs-root", "data", "--env"])
+            .expect("run with grants");
+        let Some(Commands::Run { grants, .. }) = run.command else {
+            panic!("expected run")
+        };
+        assert!(grants.fs && grants.env && !grants.time);
+        assert_eq!(grants.fs_root, PathBuf::from("data"));
+        let bare = Cli::try_parse_from(["crush-pkg", "--fs", "--time"]).expect("bare with grants");
+        assert!(bare.command.is_none() && bare.grants.fs && bare.grants.time);
+        assert_eq!(bare.grants.fs_root, PathBuf::from("."));
     }
 
     /// K. `handle_lint_with` under JSON+non-strict: emits the
@@ -1867,7 +1931,7 @@ entry = "main.unknown"
         let old_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(dir.path()).unwrap();
 
-        let result_strict = handle_run(vec![], /* strict_mode */ true);
+        let result_strict = handle_run(vec![], &GrantArgs::default(), /* strict_mode */ true);
         
         std::env::set_current_dir(old_cwd).unwrap();
 

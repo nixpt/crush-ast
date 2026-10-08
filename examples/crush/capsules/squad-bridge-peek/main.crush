@@ -1,0 +1,40 @@
+# squad-bridge-peek — print the last few entries of a squad bridge log.
+#
+# Needs two grants: --fs (it reads the log with fs.cat, and only sees files
+# under --fs-root) and --env (the file is $BRIDGE_PEEK_FILE, or "bridge.md"
+# in the sandbox root when that is unset). No path is built in.
+#
+#   crush-pkg run --fs --fs-root fixtures --env
+#   BRIDGE_PEEK_FILE=bridge.md crush-pkg --fs --fs-root fixtures --env
+
+fn peek_count() -> int {
+    return 5
+}
+
+fn main() {
+    let path = "bridge.md"
+    let from_env = env.get("BRIDGE_PEEK_FILE")
+    if from_env != null {
+        path = from_env
+    }
+
+    let lines = str.split(fs.cat(path), "\n")
+    let entries = []
+    for line in lines {
+        if str.len(line) > 0 {
+            entries.push(line)
+        }
+    }
+
+    let n = len(entries)
+    let start = n - peek_count()
+    if start < 0 {
+        start = 0
+    }
+    io.print("=== squad-bridge-peek: " + path + " (last " + (n - start) + " of " + n + ") ===")
+    let i = start
+    while i < n {
+        io.print(entries[i])
+        i = i + 1
+    }
+}
