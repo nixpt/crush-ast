@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 use std::io::Write;
 
@@ -750,6 +750,7 @@ fn handle_lint(json_mode: bool, strict_mode: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::ValueEnum;
 
     // ----------------------------------------------------------------
     // Per-binary code value lockdown.
