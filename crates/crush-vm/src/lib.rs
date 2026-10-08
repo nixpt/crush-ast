@@ -35,6 +35,12 @@ pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use io_read::InputSource;
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
 pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
+pub use scheduler::resolve_lang_binary;
+
+/// Whether this build runs `@lang[deps]` blocks in a buckets-provisioned bwrap
+/// sandbox (cargo feature `sandboxed-polyglot`). Lets host tooling report it.
+pub const SANDBOXED_POLYGLOT: bool = cfg!(feature = "sandboxed-polyglot");
+
 #[cfg(feature = "native-plugins")]
 pub use vm::{run_fastvm, run_fastvm_with_caps, run_casm_json, CrushResultExt};
 

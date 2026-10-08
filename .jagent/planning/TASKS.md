@@ -242,7 +242,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **CRUSH-172** (XS (~15 turns), lane E3): Example capsule: `squad-bridge-peek` (first pure-Crush capsule). *Skipped in relay — waits on CRUSH-151 (#98).* [ticket](tickets/CRUSH-172-example-squad-bridge-peek.md)
 - [x] **CRUSH-173** (S (~40 turns), lane E4, panini-e — PR pending): Design notes recovered from the ancestors. [ticket](tickets/CRUSH-173-design-notes-from-ancestors.md)
 - [x] ~~**CRUSH-174** (S (~20 turns), lane E6): Browser playground on `crush-web` — check, then port only if missing.~~ **Superseded** by crushlang.org/playground + CRUSH-118 (#93; CRUSH-169). [ticket](tickets/CRUSH-174-browser-playground-check.md)
-- [ ] **CRUSH-175** (S (~25 turns), lane E5): `crush doctor` — polyglot runtime health check. [ticket](tickets/CRUSH-175-crush-doctor.md)
+- [x] **CRUSH-175** (S (~25 turns), lane E5, panini-e — PR pending): `crush doctor` — polyglot runtime health check. [ticket](tickets/CRUSH-175-crush-doctor.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 

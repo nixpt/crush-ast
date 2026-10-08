@@ -34,6 +34,8 @@ pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod doctor;
 // Compares against crush-vm's FastVM backend — native-plugins only.
 #[cfg(feature = "native-plugins")]
 pub mod differential;
