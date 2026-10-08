@@ -219,7 +219,7 @@ All reproduced on `main` `a8247af` (polyglot #70/#72/#73 confirmed by reading). 
 Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/planning/MIGRATION-INVENTORY.md) §5; 🔒 = captain decision first (§5.1 C-1…C-8). Lane A starts with existing **CRUSH-113** (decision C-1: stdlib default-on). Supersession proposal for CRUSH-56/57/88–97/108 is CRUSH-169.
 
 - [x] **CRUSH-151** (M (~60 turns), lane A2; **done 2026-10-07, nimbus** — 10 coreutils + VM-local `fs.cd` (C-5), shared `FsSandbox`): fs coreutils host capabilities (`fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find`). [ticket](tickets/CRUSH-151-fs-coreutils-host-caps.md)
-- [ ] **CRUSH-152** (XS (~15 turns), lane A3): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
+- [x] **CRUSH-152** (XS (~15 turns), lane A3; **done 2026-10-07, nimbus** — `AsyncSleepCap` over the shared `sleep_ms`): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
 - [ ] **CRUSH-153** (S (~30 turns), lane A4): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
 - [ ] **CRUSH-154** (S (~40 turns), lane A5 🔒): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
 - [ ] **CRUSH-155** (S (~20 turns), lane A6): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)

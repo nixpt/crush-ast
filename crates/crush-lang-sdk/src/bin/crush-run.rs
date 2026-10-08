@@ -68,7 +68,7 @@ struct RunArgs {
     #[arg(long)]
     env: bool,
 
-    /// Enable time host capabilities (time.now, time.now_ms, time.now_iso, time.elapsed, time.sleep).
+    /// Enable time host capabilities (time.now, time.now_ms, time.now_iso, time.elapsed, time.sleep, async.sleep).
     #[arg(long)]
     time: bool,
 
@@ -235,6 +235,7 @@ fn list_caps() {
     println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
     println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
+    println!("  async.sleep MS         same as time.sleep (blocking; does not yield)");
     println!("Message-bus capabilities (enable with --bus):");
     println!("  message_bus.publish TOPIC PAYLOAD");
     println!("  message_bus.subscribe TOPIC");

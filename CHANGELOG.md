@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`async.sleep` (CRUSH-152).** Registered with `--time` next to `time.sleep`
+  and backed by the same function, so `await async.sleep(ms)` (the exosphere
+  / nanovm spelling) works and honours the wall-clock quota (`CapTimeout`). It
+  blocks like `time.sleep`; it does not yield to the scheduler. The
+  conformance runner learned `// caps: time`; `examples/crush/async_test.crush`
+  now passes.
 - **fs coreutils + a VM-local working directory (CRUSH-151).** Under `--fs`,
   `crush-lang-sdk` now also registers `fs.ls`, `fs.cat`, `fs.pwd`, `fs.cd`,
   `fs.mkdir`, `fs.rm`, `fs.cp`, `fs.mv`, `fs.touch` and `fs.find`. `fs.cd`

@@ -83,7 +83,8 @@ impl HostCapsBuilder {
         self
     }
 
-    /// Enable time capabilities (`time.now`).
+    /// Enable time capabilities (`time.now`, `time.now_ms`, `time.now_iso`,
+    /// `time.elapsed`, `time.sleep`, and its alias `async.sleep`).
     pub fn time(mut self, enable: bool) -> Self {
         self.time = enable;
         self
@@ -204,6 +205,7 @@ impl HostCapsBuilder {
             caps.register(Box::new(TimeNowIsoCap));
             caps.register(Box::new(TimeElapsedCap));
             caps.register(Box::new(TimeSleepCap));
+            caps.register(Box::new(AsyncSleepCap));
         }
         if self.bus {
             crate::bus::register(&mut caps);
@@ -655,48 +657,74 @@ time_cap!(TimeElapsedCap, "time.elapsed", 1, |args: &[Value]| {
 /// `async.sleep` were this same synchronous sleep under two names). A sleep
 /// longer than the VM's wall-time quota stops at the quota and reports
 /// `CapTimeout` rather than hanging the program.
+/// `time.sleep(ms)` — block for `ms` milliseconds (`--time`).
 pub struct TimeSleepCap;
 
-impl TimeSleepCap {
-    fn millis(args: &[Value]) -> Result<u64, String> {
-        match args.first() {
-            Some(Value::Int(ms)) if *ms >= 0 => Ok(*ms as u64),
-            other => Err(format!(
-                "time.sleep: expected non-negative int milliseconds, got {}",
+/// `async.sleep(ms)` — the exosphere / nanovm name for the same blocking
+/// sleep (`--time`, CRUSH-152). It does not yield to the scheduler; both
+/// names run [`sleep_ms`].
+pub struct AsyncSleepCap;
+
+/// The one sleep implementation behind `time.sleep` and `async.sleep`: block
+/// for the requested milliseconds, or — when the VM's wall-clock deadline is
+/// shorter — sleep until the deadline and report a timeout.
+fn sleep_ms(
+    cap: &str,
+    args: &[Value],
+    deadline_ms: Option<u64>,
+) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+    let ms = match args.first() {
+        Some(Value::Int(ms)) if *ms >= 0 => *ms as u64,
+        other => {
+            return Err(format!(
+                "{cap}: expected non-negative int milliseconds, got {}",
                 other.map_or("nothing".to_string(), |v| v.to_string())
-            )),
+            )
+            .into());
         }
+    };
+    if let Some(deadline) = deadline_ms
+        && ms > deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(deadline));
+        return Err(crush_vm::host::HostCapError::Timeout);
     }
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+    Ok(Some(Value::Null))
 }
 
-impl HostCap for TimeSleepCap {
-    fn spec(&self) -> HostCapSpec {
-        HostCapSpec {
-            name: "time.sleep".to_string(),
-            argc: Some(1),
-            returns: true,
-        }
-    }
+macro_rules! sleep_cap {
+    ($ty:ident, $name:expr) => {
+        impl HostCap for $ty {
+            fn spec(&self) -> HostCapSpec {
+                HostCapSpec {
+                    name: $name.to_string(),
+                    argc: Some(1),
+                    returns: true,
+                }
+            }
 
-    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        std::thread::sleep(std::time::Duration::from_millis(Self::millis(&args)?));
-        Ok(Some(Value::Null))
-    }
+            fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+                // No deadline, so the only error is a bad argument.
+                sleep_ms($name, &args, None).map_err(|e| match e {
+                    crush_vm::host::HostCapError::Message(m) => m,
+                    crush_vm::host::HostCapError::Timeout => format!("{}: timed out", $name),
+                })
+            }
 
-    fn call_with_deadline(
-        &self,
-        args: Vec<Value>,
-        deadline_ms: u64,
-    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
-        let ms = Self::millis(&args)?;
-        if ms > deadline_ms {
-            std::thread::sleep(std::time::Duration::from_millis(deadline_ms));
-            return Err(crush_vm::host::HostCapError::Timeout);
+            fn call_with_deadline(
+                &self,
+                args: Vec<Value>,
+                deadline_ms: u64,
+            ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+                sleep_ms($name, &args, Some(deadline_ms))
+            }
         }
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-        Ok(Some(Value::Null))
-    }
+    };
 }
+
+sleep_cap!(TimeSleepCap, "time.sleep");
+sleep_cap!(AsyncSleepCap, "async.sleep");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Process helpers
@@ -873,6 +901,59 @@ mod tests {
             Err(HostCapError::Timeout)
         ));
         assert!(cap.call(vec![Value::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn async_sleep_is_time_sleep_under_another_name() {
+        use crush_vm::host::HostCapError;
+        let cap = AsyncSleepCap;
+        assert_eq!(cap.spec().name, "async.sleep");
+        assert_eq!(cap.spec().argc, TimeSleepCap.spec().argc);
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(1)], 1_000),
+            Ok(Some(Value::Null))
+        ));
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(60_000)], 5),
+            Err(HostCapError::Timeout)
+        ));
+        let err = cap.call(vec![Value::Int(-1)]).unwrap_err();
+        assert!(err.starts_with("async.sleep:"), "{err}");
+    }
+
+    #[test]
+    fn sleep_caps_need_the_time_grant() {
+        let caps = HostCapsBuilder::new().stdlib(true).fs(true).build();
+        assert!(caps.get("time.sleep").is_none());
+        assert!(caps.get("async.sleep").is_none());
+        let caps = HostCapsBuilder::new().time(true).build();
+        assert!(caps.get("async.sleep").is_some());
+    }
+
+    // CRUSH-152: `await async.sleep(..)` from source, past the VM's
+    // wall-clock limit, is a named CapTimeout — and returns at the limit,
+    // not after the requested sleep.
+    #[test]
+    fn async_sleep_past_the_wall_clock_limit_is_a_cap_timeout() {
+        let prog =
+            crate::compile::compile_crush_source("await async.sleep(60000)\n").expect("compile");
+        let caps = HostCapsBuilder::new().time(true).build();
+        let quotas = crush_vm::Quotas {
+            max_wall_time_ms: 100,
+            ..Default::default()
+        };
+        let start = std::time::Instant::now();
+        let err = crush_vm::run_with_caps(&prog, &quotas, Some(&caps)).unwrap_err();
+        assert!(
+            matches!(err, crush_vm::VmError::CapTimeout { .. }),
+            "{err:?}"
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+
+        let ok = crate::compile::compile_crush_source("await async.sleep(1)\nio.print(\"woke\")\n")
+            .expect("compile");
+        let result = crush_vm::run_with_caps(&ok, &quotas, Some(&caps)).unwrap();
+        assert_eq!(result.output, "woke\n");
     }
 
     #[test]
