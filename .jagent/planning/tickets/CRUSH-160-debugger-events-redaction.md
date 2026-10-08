@@ -89,3 +89,4 @@ Stacked on CRUSH-159 (crush-ast#103) → CRUSH-176 (#101).
 - `cargo test -p crush-vm -p crush-debugger -p crush-lang-sdk`: 583 passed, 0 failed.
   `cargo check -p crush-vm --no-default-features --target wasm32-unknown-unknown`: clean.
 - Live run of the binary at all four levels (transcript excerpt in the README).
+- Commit: `cb02e51`; PR crush-ast#105 (stacked on #103 → #101).
