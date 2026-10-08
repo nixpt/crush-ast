@@ -755,3 +755,9 @@ The ticket asks for registry access by construction. HostCaps held Box<dyn HostC
 Reason:
 Exosphere's delegation read agent status from files in a fixed directory and dispatched through fleet tooling. The reusable part is selection + format validation, so the backend is reduced to status(agent) and dispatch(agent, task) and everything else is pure, testable code in crush-lang-sdk. Supplying a backend to HostCapsBuilder does not register anything without ai_native(true), keeping capabilities opt-in. Rejected: falling back to the first agent when none is available (dispatches to a busy agent behind the caller's back); silently treating unsupported strategies/formats as first_available/skip (hides mistakes).
 
+
+## 2026-10-08T12:20:06-05:00 — CRUSH-170: capability inference reads CVM1 bytecode (crush_vm::capabilities_used), not CAST
+
+Reason:
+Ticket said 'a pass over CAST collecting CapabilityCalls + builtins that lower to CAP_CALL'. At CAST level that needs a copy of the frontend/casm_to_vm lowering table to know which builtins become caps, and a copy of the polyglot/AI gate naming. Bytecode is after every lowering, CAP_CALL names are const-pool constants (no dynamic cap names), and the VM's own operand_kind/canonical_lang/ai_native_kind_for_opcode give the exact gate names the VM checks at run time. Reachability from the entry (CALL edges + functions named by PUSH_STR, since SPAWN pops its target) keeps a path dep's uncalled functions out. Ambient/granted classification reuses crush-run caps --json's table, moved to crush_lang_sdk::effects::catalog(). Rejected: CAST walk (duplicates lowering), CASM walk (still needs AI op->kind map, misses casm_to_vm's call->CAP_CALL rule unless copied), whole-program without reachability (spurious errors from deps).
+
