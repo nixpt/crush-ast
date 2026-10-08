@@ -3,10 +3,12 @@ name: publish
 # Publish the workspace's crates to crates.io from a release tag.
 #
 # How to release: run `release` (bumps the version and pushes tag vX.Y.Z),
-# then run this workflow with "Use workflow from" set to that tag. A tag
-# pushed by release.yml doesn't start this workflow by itself: GitHub doesn't
-# trigger workflows from events made with a workflow's own token. A tag you
-# push by hand does.
+# then run this workflow from main with the `tag` input set to vX.Y.Z. It
+# checks out and publishes exactly that tag; the workflow file itself comes
+# from main, so fixes to this file apply to tags cut before them. A tag
+# pushed by release.yml doesn't start this workflow by itself (GitHub doesn't
+# trigger workflows from a workflow token's events); a tag you push by hand
+# does, and then publishes that tag.
 #
 # What gets published: every publishable workspace crate that is already on
 # crates.io, dependencies first, skipping versions already there (so a re-run
@@ -28,6 +30,10 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z)"
+        type: string
+        required: false
       verify_auth:
         description: "Only prove the crates.io Trusted Publishing exchange works (no publish)"
         type: boolean
@@ -46,24 +52,39 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
+    env:
+      # the tag to publish: the dispatch input, else the pushed tag
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: refuse to publish from a branch
+      - name: refuse anything but a release tag
         if: inputs.verify_auth != true
         run: |
-          case "$GITHUB_REF" in
-            refs/tags/v*) ;;
+          case "$RELEASE_TAG" in
+            v[0-9]*) ;;
             *)
-              echo "::error::publish runs from a release tag (vX.Y.Z), not $GITHUB_REF — pick the tag under 'Use workflow from'"
+              echo "::error::publish needs a release tag (vX.Y.Z); got '$RELEASE_TAG' — set the 'tag' input"
               exit 1 ;;
           esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.verify_auth == true && github.ref || format('refs/tags/{0}', env.RELEASE_TAG) }}
+
+      # crush-vm and crush-pkg have path dependencies on a sibling buckets
+      # checkout (published as crush-buckets); without it cargo can't load
+      # the workspace. Same layout as ci.yml. The published crates depend on
+      # crush-buckets from crates.io, not on this checkout.
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
 
       - name: tag must match the workspace version
         if: inputs.verify_auth != true
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${RELEASE_TAG#v}"
           if [ "$tag" != "$ver" ]; then
             echo "::error::tag v$tag does not match the workspace version $ver"
             exit 1
