@@ -93,11 +93,21 @@ impl Report {
         // bwrap is what the sandboxed build actually spawns; the `buckets` CLI
         // is the user-facing tool for priming its cache. Neither is needed by
         // a build without `sandboxed-polyglot`.
-        tools.push(check("sandbox", "bwrap", features.sandboxed_polyglot, path_var));
+        tools.push(check(
+            "sandbox",
+            "bwrap",
+            features.sandboxed_polyglot,
+            path_var,
+        ));
         tools.push(check("sandbox", "buckets", false, path_var));
 
         let ok = tools.iter().all(|t| t.found() || !t.required);
-        Report { version: env!("CARGO_PKG_VERSION").to_string(), features, tools, ok }
+        Report {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            features,
+            tools,
+            ok,
+        }
     }
 
     pub fn to_json(&self) -> String {
@@ -118,7 +128,10 @@ impl Report {
                 (None, _) if t.required => "not found on PATH".to_string(),
                 (None, _) => "not found on PATH (optional)".to_string(),
             };
-            out.push_str(&format!("  {mark}  {:<10} {:<8} {detail}\n", t.role, t.binary));
+            out.push_str(&format!(
+                "  {mark}  {:<10} {:<8} {detail}\n",
+                t.role, t.binary
+            ));
         }
         let f = &self.features;
         out.push_str(&format!(
@@ -137,7 +150,13 @@ impl Report {
 fn check(role: &str, binary: &str, required: bool, path_var: Option<&OsStr>) -> ToolCheck {
     let path = path_var.and_then(|p| find_on_path(binary, p));
     let version = path.as_deref().and_then(probe_version);
-    ToolCheck { role: role.to_string(), binary: binary.to_string(), path, version, required }
+    ToolCheck {
+        role: role.to_string(),
+        binary: binary.to_string(),
+        path,
+        version,
+        required,
+    }
 }
 
 /// First executable file named `binary` in a `PATH`-style list.
@@ -151,7 +170,9 @@ pub fn find_on_path(binary: &str, path_var: &OsStr) -> Option<PathBuf> {
 #[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    path.metadata().map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    path.metadata()
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 #[cfg(not(unix))]
@@ -189,11 +210,18 @@ fn probe_version(path: &Path) -> Option<String> {
     let Ok((out, err)) = rx.recv_timeout(VERSION_TIMEOUT) else {
         let _ = child.kill();
         let _ = child.wait();
-        eprintln!("crush doctor: '{}' --version (pid {pid}) timed out", path.display());
+        eprintln!(
+            "crush doctor: '{}' --version (pid {pid}) timed out",
+            path.display()
+        );
         return None;
     };
     let _ = child.wait();
-    out.lines().chain(err.lines()).map(str::trim).find(|l| !l.is_empty()).map(str::to_string)
+    out.lines()
+        .chain(err.lines())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(all(test, unix))]
@@ -214,14 +242,24 @@ mod tests {
         fake_tool(dir.path(), "python3", "echo 'Python 3.99.1'");
         let path = dir.path().as_os_str();
         assert!(find_on_path("node", path).is_none());
-        assert_eq!(find_on_path("python3", path), Some(dir.path().join("python3")));
+        assert_eq!(
+            find_on_path("python3", path),
+            Some(dir.path().join("python3"))
+        );
     }
 
     #[test]
     fn version_falls_back_to_stderr() {
         let dir = tempfile::tempdir().unwrap();
-        fake_tool(dir.path(), "bash", "echo >&2; echo 'GNU bash, version 9.9' >&2");
-        assert_eq!(probe_version(&dir.path().join("bash")).as_deref(), Some("GNU bash, version 9.9"));
+        fake_tool(
+            dir.path(),
+            "bash",
+            "echo >&2; echo 'GNU bash, version 9.9' >&2",
+        );
+        assert_eq!(
+            probe_version(&dir.path().join("bash")).as_deref(),
+            Some("GNU bash, version 9.9")
+        );
     }
 
     #[test]
@@ -240,12 +278,21 @@ mod tests {
     #[test]
     fn optional_sandbox_tools_do_not_fail_the_report() {
         let dir = tempfile::tempdir().unwrap();
-        for (name, v) in [("python3", "Python 3.99.1"), ("node", "v99.0.0"), ("bash", "GNU bash, version 9.9")] {
+        for (name, v) in [
+            ("python3", "Python 3.99.1"),
+            ("node", "v99.0.0"),
+            ("bash", "GNU bash, version 9.9"),
+        ] {
             fake_tool(dir.path(), name, &format!("echo '{v}'"));
         }
         let report = Report::collect(Some(dir.path().as_os_str()));
         // bwrap is required only in a sandboxed-polyglot build.
         assert_eq!(report.ok, !crush_vm::SANDBOXED_POLYGLOT);
-        assert!(report.tools.iter().any(|t| t.binary == "buckets" && !t.found() && !t.required));
+        assert!(
+            report
+                .tools
+                .iter()
+                .any(|t| t.binary == "buckets" && !t.found() && !t.required)
+        );
     }
 }

@@ -102,9 +102,15 @@ fn doctor(args: impl Iterator<Item = String>) -> ExitCode {
             "-h" | "--help" => {
                 println!("crush doctor [--json]");
                 println!();
-                println!("Report whether python3, node and bash (what `crush run --polyglot` spawns)");
-                println!("and the sandbox tools bwrap/buckets are on PATH, with their versions, plus");
-                println!("this build's polyglot features. Exits 1 if a required runtime is missing.");
+                println!(
+                    "Report whether python3, node and bash (what `crush run --polyglot` spawns)"
+                );
+                println!(
+                    "and the sandbox tools bwrap/buckets are on PATH, with their versions, plus"
+                );
+                println!(
+                    "this build's polyglot features. Exits 1 if a required runtime is missing."
+                );
                 return ExitCode::SUCCESS;
             }
             other => {
@@ -119,5 +125,9 @@ fn doctor(args: impl Iterator<Item = String>) -> ExitCode {
     } else {
         print!("{}", report.to_text());
     }
-    if report.ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    if report.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }

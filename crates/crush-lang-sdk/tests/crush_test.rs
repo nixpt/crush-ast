@@ -102,12 +102,21 @@ fn crush_doctor_reports_runtimes_found_on_path() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let report: serde_json::Value = serde_json::from_str(&stdout).expect(&stdout);
     let tool = |bin: &str| {
-        report["tools"].as_array().unwrap().iter().find(|t| t["binary"] == bin).unwrap().clone()
+        report["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["binary"] == bin)
+            .unwrap()
+            .clone()
     };
     assert_eq!(tool("python3")["version"], "Python 3.99.1");
     assert_eq!(tool("node")["version"], "v99.0.0");
     assert_eq!(tool("bash")["version"], "GNU bash, version 9.9.9");
-    assert_eq!(tool("node")["path"], dir.path().join("node").to_str().unwrap());
+    assert_eq!(
+        tool("node")["path"],
+        dir.path().join("node").to_str().unwrap()
+    );
     assert!(tool("buckets")["path"].is_null());
     assert_eq!(tool("buckets")["required"], false);
     // This test build has no sandboxed-polyglot, so bwrap is optional and the report passes.
@@ -126,7 +135,10 @@ fn crush_doctor_fails_when_a_polyglot_runtime_is_missing() {
     let output = crush_doctor_with_path(dir.path(), &[]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(1), "{stdout}");
-    assert!(stdout.contains("MISSING") && stdout.contains("node"), "{stdout}");
+    assert!(
+        stdout.contains("MISSING") && stdout.contains("node"),
+        "{stdout}"
+    );
     assert!(stdout.contains("Python 3.99.1"), "{stdout}");
 }
 
