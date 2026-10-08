@@ -226,6 +226,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
 - [ ] **CRUSH-157** (M (~60 turns), lane B2): `ai_native.toolchain` strategy engine. [ticket](tickets/CRUSH-157-ai-toolchain-engine.md)
 - [ ] **CRUSH-158** (S (~30 turns), lane B3): `QueryProvider` / `DelegationBackend` traits + delegation selection. [ticket](tickets/CRUSH-158-ai-provider-traits.md)
+- [x] **CRUSH-176** (S, lane C0): PortableVm skipped a jump landing on its own instruction (#94) — a recursive tail call's `RET` returning to the caller's `RET`, `loop: JMP loop`; awesome-crush games now match the scheduler. [ticket](tickets/CRUSH-176-portable-vm-self-landing-jump.md)
 - [ ] **CRUSH-159** (M (~70 turns), lane C1): Debugger: step over/out and watchpoints over `PortableVm`. [ticket](tickets/CRUSH-159-debugger-step-watch.md)
 - [ ] **CRUSH-160** (M (~50 turns), lane C2): Debugger: event sink, redacted value views, cap-gated debug scopes. [ticket](tickets/CRUSH-160-debugger-events-redaction.md)
 - [ ] **CRUSH-161** (S (~20 turns), lane D1): Make `crush-pkg` publishable (unblocks squeeze). [ticket](tickets/CRUSH-161-crush-pkg-publishable.md)

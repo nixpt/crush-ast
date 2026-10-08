@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Fix: `PortableVm` diverged from the scheduler on recursive programs
+  (CRUSH-176, #94).** A jump that lands on the instruction it came from — a
+  recursive call in tail position returning to the caller's own `RET`, or
+  `loop: JMP loop` — was treated as "no jump" and fell through. awesome-crush's
+  tictactoe, lights_out, blackjack and multi-round blackjack_interactive now
+  run the same on `PortableVm` (crush-web `Session`/`execute_with`, the
+  debugger, exo-light) as on `crush_vm::run`.
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

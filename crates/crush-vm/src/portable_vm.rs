@@ -112,6 +112,8 @@ pub struct PortableVm {
     ip: usize,
     /// Total instruction steps executed.
     steps: usize,
+    /// Set by `jump_to` when the current instruction chose the next IP.
+    jumped: bool,
     /// Whether the VM has halted.
     halted: bool,
     /// Whether privileged capabilities are allowed.
@@ -181,6 +183,7 @@ impl PortableVm {
             input: crate::io_read::InputSource::Stdin,
             ip: start_ip,
             steps: 0,
+            jumped: false,
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
@@ -346,13 +349,14 @@ impl PortableVm {
             }));
         }
 
-        // Save IP before execution to detect control flow changes
-        let ip_before = self.ip;
+        // Control-flow ops (CALL, RET, JMP/JZ/JNZ taken, THROW, AWAIT) set
+        // the next IP through `jump_to`, which raises `jumped`. Comparing
+        // `self.ip` before and after is not enough: a jump can land on the
+        // instruction it came from — a `RET` back to the caller's own `RET`
+        // (a recursive call in tail position, #94) or `loop: JMP loop`.
+        self.jumped = false;
         self.execute_instruction(opcode, next_ip)?;
-
-        // Only advance IP if execute_instruction didn't change it
-        // (CALL, RET, JMP, JZ, JNZ set self.ip themselves)
-        if self.ip == ip_before {
+        if !self.jumped {
             self.ip = next_ip;
         }
         self.steps += 1;
@@ -371,6 +375,12 @@ impl PortableVm {
                 return Ok(self.take_result());
             }
         }
+    }
+
+    /// Make `ip` the next instruction instead of the one after the current.
+    fn jump_to(&mut self, ip: usize) {
+        self.ip = ip;
+        self.jumped = true;
     }
 
     /// Execute a single instruction at the current IP.
@@ -733,7 +743,7 @@ impl PortableVm {
                     _ => unreachable!(),
                 };
                 if take {
-                    self.ip = target;
+                    self.jump_to(target);
                 }
             }
             PRINT => {
@@ -790,7 +800,7 @@ impl PortableVm {
                 // Arguments stay on the stack (main VM convention).
                 // Callee accesses them via stack operations or LOAD/STORE slots.
                 self.call_stack.push(Frame::new(Some(next_ip)));
-                self.ip = func_entry;
+                self.jump_to(func_entry);
             }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -803,7 +813,7 @@ impl PortableVm {
                         self.halted = true;
                     }
                     Some(ret_ip) => {
-                        self.ip = ret_ip;
+                        self.jump_to(ret_ip);
                     }
                 }
             }
@@ -1021,7 +1031,7 @@ impl PortableVm {
                     // Unwind to the frame and stack height that entered the try.
                     self.call_stack.truncate(handler.call_depth);
                     self.stack.truncate(handler.stack_len);
-                    self.ip = handler.handler_ip;
+                    self.jump_to(handler.handler_ip);
                     self.push(err_val);
                     return Ok(());
                 }
@@ -1261,7 +1271,7 @@ impl PortableVm {
                             self.stack.extend(args);
                             self.call_stack
                                 .push(Frame::new(Some(next_ip)));
-                            self.ip = entry;
+                            self.jump_to(entry);
                             return Ok(());
                         }
                     }
@@ -2291,5 +2301,49 @@ HALT"#;
         let mut vm = PortableVm::new(program);
         vm.set_input(crate::io_read::InputSource::interactive());
         assert!(matches!(vm.step(), Err(VmError::CapNotDeclared(cap)) if cap == "io.read"));
+    }
+
+    // #94: a jump that lands on the instruction it came from used to look
+    // like "no jump" and fall through to the next instruction.
+    #[test]
+    fn test_portable_recursive_tail_call_returns_through_same_ret() {
+        // The inner `f` returns to `done`, the very `RET` it is executing.
+        let source = r#"
+            .func main
+            PUSH 1
+            CALL f
+            PUSH 7
+            CAP_CALL "io.print" 1
+            HALT
+            .func f
+            JZ done
+            PUSH 0
+            CALL f
+            done:
+            RET
+        "#;
+        let program = assemble(source, Some(&["io.print"]), Some("test")).unwrap();
+        let expected = crate::vm::run(&program, &Quotas::default()).unwrap();
+        let result = PortableVm::new(program).run().unwrap();
+        assert_eq!(result.output, "7\n");
+        assert_eq!(
+            (result.output, result.stack, result.steps),
+            (expected.output, expected.stack, expected.steps)
+        );
+    }
+
+    #[test]
+    fn test_portable_self_jump_loops_until_step_quota() {
+        let program = assemble("loop:\nJMP loop\nPUSH 1\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        vm.set_quotas(Quotas {
+            max_steps: 10,
+            ..Default::default()
+        });
+        assert!(
+            matches!(vm.run(), Err(VmError::StepQuota(_))),
+            "fell through the self-jump"
+        );
+        assert_eq!(vm.current_ip(), 0);
     }
 }
