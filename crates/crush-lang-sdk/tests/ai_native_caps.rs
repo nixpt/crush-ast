@@ -41,6 +41,11 @@ fn every_cap_call_returns_a_map_with_kind_and_ok() {
     let mut caps = HostCaps::new();
     ai_native::register(&mut caps);
     for kind in ai_native::KINDS {
+        // CRUSH-157: `toolchain` is the real engine, not an echo stub — it
+        // has its own tests (`ai_native/toolchain.rs`, `tests/ai_toolchain.rs`).
+        if *kind == "toolchain" {
+            continue;
+        }
         let name = format!("ai_native.{kind}");
         let handler = caps.get(&name).expect("registered above");
         let out = handler

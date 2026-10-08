@@ -22,6 +22,8 @@
 //! AND the gate names (ai_native.<kind>) are stable; the implementation
 //! under those gates is what later milestones will swap.
 
+pub mod toolchain;
+
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::cell::RefCell;
@@ -33,6 +35,11 @@ use std::rc::Rc;
 /// Idempotent in practice: `HostCaps::register` re-keys by name, so a
 /// second call replaces any prior handler for the same gate. Used by
 /// the `HostCapsBuilder::ai_native(bool)` toggle and by tests.
+///
+/// CRUSH-157: `ai_native.toolchain` is the real engine
+/// ([`toolchain::ToolchainCap`]); its steps dispatch through a snapshot of
+/// `caps` as it stands at this call, so register `ai_native` **after** every
+/// capability a tool chain may use. The other nine stay echo stubs.
 pub fn register(caps: &mut HostCaps) {
     caps.register(Box::new(AiNativeQueryCap));
     caps.register(Box::new(AiNativeSynthesizeCap));
@@ -44,6 +51,8 @@ pub fn register(caps: &mut HostCaps) {
     caps.register(Box::new(AiNativeGoalDeclarationCap));
     caps.register(Box::new(AiNativeProgressUpdateCap));
     caps.register(Box::new(AiNativeKnowledgeSharingCap));
+    let tools = std::sync::Arc::new(caps.clone());
+    caps.register(Box::new(toolchain::ToolchainCap::new(tools)));
 }
 
 /// All 10 kind strings in registration order. Reused by tests + the

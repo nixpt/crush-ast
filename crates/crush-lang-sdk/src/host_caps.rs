@@ -170,9 +170,11 @@ impl HostCapsBuilder {
     /// `ai_native.toolchain`, `ai_native.goal_declaration`,
     /// `ai_native.progress_update`, `ai_native.knowledge_sharing`) are
     /// registered as deterministic stubs returning
-    /// `Value::Map({ok: true, kind: "<name>", echo: <args>})`. Real AI
-    /// backends will replace these stubs in later milestones, but the
-    /// surface shape and gate names are stable.
+    /// `Value::Map({ok: true, kind: "<name>", echo: <args>})`, except
+    /// `ai_native.toolchain`, which is the real strategy engine (CRUSH-157):
+    /// it runs each step through the capabilities this builder granted, and
+    /// nothing else. Real AI backends will replace the stubs in later
+    /// milestones, but the surface shape and gate names are stable.
     pub fn ai_native(mut self, enable: bool) -> Self {
         self.ai_native = enable;
         self

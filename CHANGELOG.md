@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`ai_native.toolchain` runs tool chains (CRUSH-157).** With `ai_native`
+  granted, the toolchain cap is now a strategy engine (sequential, parallel,
+  conditional, retry × fail-fast, continue-on-error, retry, fallback) that
+  returns `{results, aborted, abort_reason}`. Every step is dispatched
+  through the program's own `HostCaps`: a tool (or its
+  `required_capability`) that wasn't granted fails its step and never runs.
+  Tool arguments come from `parameters.args` (positional) or the parameters
+  map; `"$name"` refers to an earlier step's `result_binding`. `HostCaps` is
+  now `Clone` (clones share handlers) and `Value::is_truthy` is public.
+
 - **`ai_native.*` caps receive their compiled arguments (CRUSH-156).** Each
   AI opcode now calls its cap with `[payload, operands…]`: the compiled
   payload as a map, then the values the frontend pushed for that kind

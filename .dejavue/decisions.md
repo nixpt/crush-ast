@@ -679,3 +679,9 @@ Browsers have no stdin, so io.read returned EOF on every read and blackjack_inte
 Reason:
 AI opcodes carry a compiled JSON payload (string operand) and some kinds also consume values the frontend pushes (context_aware, semantic_match, synthesize with a variable count). CVM1 AI opcodes have one Str operand, so the count goes in the payload (stack_args, stripped before the call) rather than a new operand encoding. One shared module crush_vm::ai_args is called by scheduler, PortableVm and fastvm::resolve_host_request so engines can't diverge. Rejected: a per-kind static arity table in the VM (synthesize is variable); passing only the payload (drops the operands, which then leaked on the stack); erroring when ungranted (changes pre-CRUSH-32 null behaviour).
 
+
+## 2026-10-07T21:51:13-05:00 — CRUSH-157: ai_native.toolchain dispatches through a HostCaps snapshot; HostCaps handlers became Arc so the registry is Clone
+
+Reason:
+The ticket asks for registry access by construction. HostCaps held Box<dyn HostCap> and could not be shared, and the VM consumes it. Making handlers Arc<dyn HostCap> (register/get signatures unchanged) makes a clone a cheap snapshot of the grant set sharing the same cap instances, so a tool step sees the same RNG/bus/db state as direct CAP_CALLs. ai_native::register snapshots at call time and the builder registers ai_native last. Rejected: building the registry twice from a cloned builder (duplicates stateful caps — two RNG streams, two db connections); a forwarding wrapper per cap (loses any future defaulted HostCap methods such as effects()); giving the VM's AI dispatch special registry access (bypasses the HostCap interface). Values cross into tools as JSON so parallel steps can run on threads (Value is not Send) and every strategy gives identical results.
+
