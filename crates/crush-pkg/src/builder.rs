@@ -193,11 +193,6 @@ pub fn lint_capsule_toml_with_entry(
             Some(kv) => kv,
             None => continue,
         };
-        // Compare the section prefix only — `[env.production]` and
-        // `[capsule.entry]` both match rules keyed on `"env"` /
-        // `"capsule"` respectively.
-        let section_prefix = section_root.split('.').next().unwrap_or(&section_root);
-
         // Single dispatch loop — every rule family lives in one match arm.
         for rule in DEAD_CODE_RULES {
             // Exact section-name match (deliberately NOT prefix
@@ -564,6 +559,8 @@ mod tests {
                 entry: entry.to_string(),
                 language: "crush".to_string(),
                 runtime_version: None,
+                category: None,
+                platforms: Vec::new(),
                 description: None,
                 author: None,
                 network_access: None,

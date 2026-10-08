@@ -95,6 +95,32 @@ add its entry after yours.
   tictactoe, lights_out, blackjack and multi-round blackjack_interactive now
   run the same on `PortableVm` (crush-web `Session`/`execute_with`, the
   debugger, exo-light) as on `crush_vm::run`.
+- **Manifest `category` and `platforms` (CRUSH-171).** `[capsule]` takes an
+  optional `category` (`cli`, `library`, `app`, `service`, `game`,
+  `dev-tool`, `language`, `example`) and `platforms` (any of `linux`,
+  `macos`, `windows`, `web`). Unknown values, duplicate platforms, and `web` on
+  a non-Crush capsule are load errors that name the accepted values.
+  `crush-pkg show` prints both. Manifests without them load as before. The
+  schema is documented in `crates/crush-pkg/MANIFEST.md`.
+
+- **`crush-pkg` with no subcommand builds and runs (CRUSH-167, squeeze folded
+  in).** A bare `crush-pkg` builds the package (entry + path deps), writes
+  `target/<name>.cvm` + `.casm.json`, then runs the program it just built;
+  `crush-pkg -- ARGS` passes ARGS through (Script/Native capsules receive
+  them; Crush programs have no argv channel yet). Script and native capsules
+  skip the build and go straight to the runner. `crush-pkg build`/`check` now
+  refuse Script/Native capsules with a clear message (`E-BUILDER`) instead of
+  feeding Python or JavaScript to the Crush compiler. Replaces the separate
+  `squeeze` tool. New library surface: `crush_pkg::flow` and
+  `CrushRunner::run_program`.
+
+- **crush-pkg is publishable (CRUSH-161).** `cargo publish --dry-run -p
+  crush-pkg` now verifies against crates.io as it is (every dependency,
+  including `crush-buckets` 0.1.0, is live). The script runner's buckets
+  sandbox profile no longer names fields that only exist in the unpublished
+  buckets checkout. The publish itself is the maintainers' step; see the
+  publish lane in `.jagent/planning/tickets/CRUSH-104-publish-lane.md`.
+
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

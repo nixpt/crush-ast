@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 use std::io::Write;
 
@@ -91,9 +91,18 @@ fn load_manifest() -> anyhow::Result<(Manifest, PathBuf)> {
 #[derive(Parser)]
 #[command(name = "crush-pkg")]
 #[command(about = "Crush Package Manager — build, run, and manage Crush programs")]
+#[command(
+    long_about = "Crush Package Manager — build, run, and manage Crush programs.\n\n\
+                  With no subcommand, `crush-pkg` builds (writing target/) and \
+                  runs the current package in one go; `crush-pkg -- ARGS` passes ARGS \
+                  to the program. Script and native capsules skip check/build and just run."
+)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+    /// Arguments passed to the program (no-subcommand build-then-run only)
+    #[arg(last = true)]
+    args: Vec<String>,
     /// Output format for terminal messages. `text` default;
     /// `json` for editor/CI consumers; `strict` for NDJSON + CI
     /// gate that downgrades `level: "note"` builder warnings to
@@ -351,7 +360,7 @@ fn main() {
     // subcommand itself (the lint subcommand already emits via
     // dispatch → `handle_lint`; re-running post-dispatch here
     // would duplicate per-finding records on stdout).
-    let is_lint_subcommand = matches!(cli.command, Commands::Lint { .. });
+    let is_lint_subcommand = matches!(cli.command, Some(Commands::Lint { .. }));
     if let Err(failure) = dispatch(cli, json_mode, strict_mode) {
         let (code, msg) = failure.code_and_message();
         if json_mode {
@@ -488,7 +497,11 @@ fn dispatch(
     json_mode: bool,
     strict_mode: bool,
 ) -> Result<(), CommandFailure> {
-    match cli.command {
+    let Some(command) = cli.command else {
+        return handle_default(cli.args, strict_mode)
+            .map_err(|e| e.into_failure());
+    };
+    match command {
         Commands::New { name, dir } => handle_new(name, dir)
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
         Commands::Build => handle_build()
@@ -544,6 +557,7 @@ fn handle_new(name: String, dir: Option<PathBuf>) -> anyhow::Result<()> {
 
 fn handle_build() -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
+    crush_pkg::flow::require_crush_buildable(&manifest, &root, "build")?;
     println!(
         "building {} v{}",
         manifest.capsule.name, manifest.capsule.version
@@ -614,12 +628,66 @@ fn handle_run(args: Vec<String>, strict_mode: bool) -> anyhow::Result<()> {
 
 fn handle_check() -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
+    crush_pkg::flow::require_crush_buildable(&manifest, &root, "check")?;
     println!(
         "checking {} v{}",
         manifest.capsule.name, manifest.capsule.version
     );
     let builder = PackageBuilder::new(manifest, root);
     builder.check()?;
+    Ok(())
+}
+
+/// Which stage of the no-subcommand flow failed, so the failure keeps the
+/// wire code the equivalent subcommand would have used.
+enum DefaultFailure {
+    Manifest(anyhow::Error),
+    Builder(anyhow::Error),
+    Run(anyhow::Error),
+}
+
+impl DefaultFailure {
+    fn into_failure(self) -> CommandFailure {
+        match self {
+            DefaultFailure::Manifest(e) => CommandFailure::Manifest(format!("{e:#}")),
+            DefaultFailure::Builder(e) => CommandFailure::Builder(format!("{e:#}")),
+            DefaultFailure::Run(e) => CommandFailure::Run(format!("{e:#}")),
+        }
+    }
+}
+
+/// Bare `crush-pkg`: build → write `target/` → run, for
+/// Crush-source capsules. The run step executes the program `build`
+/// produced (entry + path deps), not a fresh compile of the entry file.
+/// Script/Native capsules have nothing to build, so they go straight to
+/// the same runner dispatch `crush-pkg run` uses, args included.
+fn handle_default(args: Vec<String>, strict_mode: bool) -> Result<(), DefaultFailure> {
+    let (manifest, root) = load_manifest().map_err(DefaultFailure::Manifest)?;
+    if let crush_pkg::flow::Buildability::NotCrush(_) =
+        crush_pkg::flow::buildability(&manifest, &root)
+    {
+        return handle_run(args, strict_mode).map_err(DefaultFailure::Run);
+    }
+
+    let name = manifest.capsule.name.clone();
+    let version = manifest.capsule.version.clone();
+    let builder = PackageBuilder::new(manifest, root);
+    // No separate `check` pass: `build` compiles the whole package (entry +
+    // path deps), which is the stronger check. `PackageBuilder::check`
+    // compiles each file alone and so rejects an entry that calls a
+    // dependency's functions.
+    println!("building {name} v{version}");
+    let output = builder.build().map_err(DefaultFailure::Builder)?;
+    builder
+        .write_output(&output)
+        .map_err(DefaultFailure::Builder)?;
+    println!("running {name} v{version}");
+    // CrushRunner has no argv channel for Crush programs (same as
+    // `crush-pkg run -- ARGS` on a Crush capsule), so `args` stop here.
+    let _ = args;
+    crush_pkg::runners::CrushRunner::default()
+        .run_program(&output.program)
+        .map_err(DefaultFailure::Run)?;
     Ok(())
 }
 
@@ -750,6 +818,7 @@ fn handle_lint(json_mode: bool, strict_mode: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::ValueEnum;
 
     // ----------------------------------------------------------------
     // Per-binary code value lockdown.
@@ -1279,7 +1348,7 @@ mod tests {
         // variant is `Lint {}`. Confirms `Lint` is selected and
         // the enum stays field-less.
         match &cli.command {
-            Commands::Lint {} => { /* correct variant */ }
+            Some(Commands::Lint {}) => { /* correct variant */ }
             other => panic!(
                 "expected `Commands::Lint {{}}`, got a different variant: {:?}",
                 other
@@ -1301,8 +1370,29 @@ mod tests {
             "--message-format=strict",
         ])
         .expect("--message-format after subcommand must parse");
-        assert!(matches!(pre.command, Commands::Lint { .. }));
-        assert!(matches!(post.command, Commands::Lint { .. }));
+        assert!(matches!(pre.command, Some(Commands::Lint { .. })));
+        assert!(matches!(post.command, Some(Commands::Lint { .. })));
+    }
+
+    /// CRUSH-167: no subcommand parses (bare build-then-run), takes
+    /// trailing `-- ARGS`, and keeps `--message-format` working on both
+    /// sides of a subcommand.
+    #[test]
+    fn cli_bare_invocation_parses_with_trailing_args() {
+        use clap::Parser;
+        let bare = Cli::try_parse_from(["crush-pkg"]).expect("bare must parse");
+        assert!(bare.command.is_none());
+        assert!(bare.args.is_empty());
+
+        let with_args = Cli::try_parse_from(["crush-pkg", "--message-format=json", "--", "a", "-b"])
+            .expect("bare with -- args must parse");
+        assert!(with_args.command.is_none());
+        assert_eq!(with_args.args, vec!["a".to_string(), "-b".to_string()]);
+        assert_eq!(with_args.message_format, Some(MessageFormat::Json));
+
+        let run = Cli::try_parse_from(["crush-pkg", "run", "--", "x"]).expect("run -- x");
+        assert!(matches!(run.command, Some(Commands::Run { ref args }) if args == &["x".to_string()]));
+        assert!(run.args.is_empty(), "run's args belong to the subcommand");
     }
 
     /// K. `handle_lint_with` under JSON+non-strict: emits the

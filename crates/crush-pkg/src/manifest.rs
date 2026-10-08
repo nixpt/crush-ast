@@ -59,6 +59,14 @@ pub struct CapsuleSection {
     /// this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
+    /// Catalogue category, one of [`CATEGORIES`] (CRUSH-171). Optional;
+    /// unset means uncategorised. Checked by [`Manifest::validate`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Platforms the capsule claims to run on, each one of [`PLATFORMS`]
+    /// (CRUSH-171). Empty means "no claim", not "nowhere".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<String>,
     // Policy / daemon fields
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_access: Option<String>,
@@ -307,6 +315,35 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
 /// now fails loudly at parse time instead of silently routing to a stub-bail
 /// at run time. See `.jagent/planning/tickets/CRUSHRUNNERS-1.md` Gap 1 for the thread history
 /// and re-introduction path.
+/// Known `[capsule] category` values and what each one is for (CRUSH-171).
+pub const CATEGORIES: &[(&str, &str)] = &[
+    ("cli", "command-line tool"),
+    ("library", "reusable package, mainly consumed as a dependency"),
+    ("app", "end-user application (TUI, GUI or web UI)"),
+    ("service", "long-running or background capsule"),
+    ("game", "game"),
+    ("dev-tool", "tool for writing, building or debugging code"),
+    ("language", "language support: a walker, front end or plugin"),
+    ("example", "demo, tutorial or teaching material"),
+];
+
+/// Known `[capsule] platforms` values (CRUSH-171). `web` is the browser
+/// (crush-web's wasm VM), which only runs Crush programs.
+pub const PLATFORMS: &[&str] = &["linux", "macos", "windows", "web"];
+
+/// Category names from the older crush-capsules sketch, mapped onto
+/// [`CATEGORIES`] so manifests written against it keep loading.
+fn migrate_category(category: &str) -> &str {
+    match category {
+        "core-utility" | "system-utility" => "cli",
+        "development-tool" => "dev-tool",
+        "user-app" => "app",
+        "system-service" => "service",
+        "language-walker" => "language",
+        other => other,
+    }
+}
+
 pub fn validate_language(language: &str) -> anyhow::Result<()> {
     if language == "container" {
         anyhow::bail!(
@@ -448,6 +485,10 @@ impl Manifest {
         // via `language_to_capsule_type` above (no silent fallback here either).
         validate_language(&manifest.capsule.language)?;
 
+        if let Some(category) = manifest.capsule.category.as_mut() {
+            *category = migrate_category(category).to_string();
+        }
+
         manifest.validate()?;
         Ok(manifest)
     }
@@ -458,6 +499,46 @@ impl Manifest {
         }
         if self.capsule.entry.is_empty() {
             anyhow::bail!("capsule entry cannot be empty");
+        }
+        self.validate_catalogue()
+    }
+
+    /// `[capsule] category` / `platforms` (CRUSH-171): known values only,
+    /// no duplicate platforms, and `web` only for Crush capsules.
+    fn validate_catalogue(&self) -> anyhow::Result<()> {
+        if let Some(category) = &self.capsule.category
+            && !CATEGORIES.iter().any(|(name, _)| name == category)
+        {
+            let known: Vec<&str> = CATEGORIES.iter().map(|(name, _)| *name).collect();
+            anyhow::bail!(
+                "unknown [capsule] category \"{category}\"; expected one of: {}",
+                known.join(", ")
+            );
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for platform in &self.capsule.platforms {
+            if !PLATFORMS.contains(&platform.as_str()) {
+                anyhow::bail!(
+                    "unknown [capsule] platform \"{platform}\"; expected any of: {}",
+                    PLATFORMS.join(", ")
+                );
+            }
+            if seen.contains(&platform.as_str()) {
+                anyhow::bail!("[capsule] platforms lists \"{platform}\" more than once");
+            }
+            seen.push(platform);
+        }
+        if seen.contains(&"web") {
+            let lang = self.capsule.language.as_str();
+            if matches!(
+                language_to_capsule_type(lang),
+                CapsuleType::Native | CapsuleType::Script(_)
+            ) {
+                anyhow::bail!(
+                    "[capsule] platforms includes \"web\", but the browser only runs Crush \
+                     programs and this capsule's language is \"{lang}\""
+                );
+            }
         }
         Ok(())
     }
@@ -498,6 +579,8 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
             entry: "src/main.crush".to_string(),
             language: "crush".to_string(),
             runtime_version: None,
+            category: None,
+            platforms: Vec::new(),
             network_access: None,
             seccomp_profile: None,
             rootless: None,
@@ -604,6 +687,8 @@ network = true
                 entry: "main.crush".into(),
                 language: "crush".into(),
                 runtime_version: None,
+                category: None,
+                platforms: Vec::new(),
                 description: None,
                 author: None,
                 network_access: None,
@@ -767,5 +852,94 @@ language = "rust-script"
             language_to_capsule_type(&m.capsule.language),
             CapsuleType::Auto
         );
+    }
+
+    // ─── CRUSH-171: category / platforms ──────────────────────────────
+
+    fn parse(capsule_extra: &str) -> anyhow::Result<Manifest> {
+        let content = format!(
+            "[capsule]\nname = \"x\"\nentry = \"main.crush\"\nlanguage = \"crush\"\n{capsule_extra}"
+        );
+        Manifest::from_str(&content, Path::new("capsule.toml"))
+    }
+
+    #[test]
+    fn catalogue_fields_are_optional() {
+        let m = parse("").unwrap();
+        assert_eq!(m.capsule.category, None);
+        assert!(m.capsule.platforms.is_empty());
+        let toml = m.to_toml_string().unwrap();
+        assert!(!toml.contains("category") && !toml.contains("platforms"), "{toml}");
+    }
+
+    #[test]
+    fn catalogue_fields_parse_and_round_trip() {
+        let m = parse("category = \"game\"\nplatforms = [\"linux\", \"web\"]\n").unwrap();
+        assert_eq!(m.capsule.category.as_deref(), Some("game"));
+        assert_eq!(m.capsule.platforms, vec!["linux", "web"]);
+        let toml = m.to_toml_string().unwrap();
+        assert!(toml.contains("category = \"game\""), "{toml}");
+        let back = Manifest::from_str(&toml, Path::new("capsule.toml")).unwrap();
+        assert_eq!(back.capsule.category.as_deref(), Some("game"));
+        assert_eq!(back.capsule.platforms, vec!["linux", "web"]);
+    }
+
+    #[test]
+    fn every_known_category_and_platform_is_accepted() {
+        for (name, _) in CATEGORIES {
+            parse(&format!("category = \"{name}\"\n")).unwrap();
+        }
+        let all = PLATFORMS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+        parse(&format!("platforms = [{all}]\n")).unwrap();
+    }
+
+    #[test]
+    fn unknown_category_is_a_clear_error() {
+        let err = parse("category = \"utility\"\n").unwrap_err().to_string();
+        assert!(err.contains("unknown [capsule] category \"utility\""), "{err}");
+        assert!(err.contains("cli, library, app"), "{err}");
+    }
+
+    #[test]
+    fn unknown_or_duplicate_platform_is_a_clear_error() {
+        let err = parse("platforms = [\"linux\", \"beos\"]\n").unwrap_err().to_string();
+        assert!(err.contains("unknown [capsule] platform \"beos\""), "{err}");
+        assert!(err.contains("linux, macos, windows, web"), "{err}");
+        let err = parse("platforms = [\"linux\", \"linux\"]\n").unwrap_err().to_string();
+        assert!(err.contains("\"linux\" more than once"), "{err}");
+    }
+
+    #[test]
+    fn web_platform_is_crush_only() {
+        let content = "[capsule]\nname = \"x\"\nentry = \"main.py\"\nlanguage = \"python\"\nplatforms = [\"web\"]\n";
+        let err = Manifest::from_str(content, Path::new("capsule.toml")).unwrap_err().to_string();
+        assert!(err.contains("browser only runs Crush"), "{err}");
+        assert!(err.contains("\"python\""), "{err}");
+        // A Python capsule may still claim the desktop platforms.
+        let ok = content.replace("[\"web\"]", "[\"linux\", \"macos\"]");
+        Manifest::from_str(&ok, Path::new("capsule.toml")).unwrap();
+    }
+
+    #[test]
+    fn legacy_sketch_categories_migrate() {
+        for (old, new) in [
+            ("core-utility", "cli"),
+            ("system-utility", "cli"),
+            ("development-tool", "dev-tool"),
+            ("user-app", "app"),
+            ("system-service", "service"),
+            ("language-walker", "language"),
+        ] {
+            let m = parse(&format!("category = \"{old}\"\n")).unwrap();
+            assert_eq!(m.capsule.category.as_deref(), Some(new), "{old}");
+        }
+    }
+
+    #[test]
+    fn top_level_platform_table_from_the_sketch_is_ignored() {
+        // The crush-capsules sketch used a top-level `[platform]` table; it
+        // doesn't collide with `[capsule] platforms` and still loads.
+        let m = parse("\n[platform]\nprimary = [\"desktop\"]\n").unwrap();
+        assert!(m.capsule.platforms.is_empty());
     }
 }
