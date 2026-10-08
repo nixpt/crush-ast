@@ -36,3 +36,9 @@ crush-capsules' `squad-bridge-peek` is the only pure-Crush capsule outside crush
 ## Source (reference only — re-implement, don't copy)
 
 - `nixpt/crush-capsules` `squad-bridge-peek/`
+
+## Note (2026-10-07, panini-e, lane E3) — skipped, not started
+
+Needs `fs.cat` from **CRUSH-151**, which is in review (crush-ast#98) but not merged on `main`, so this
+ticket was skipped in the phase-2 relay per the dispatch rule. Pick it up once #98 lands; nothing was
+built for it yet.
