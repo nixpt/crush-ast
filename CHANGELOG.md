@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **crush-pkg is publishable (CRUSH-161).** `cargo publish --dry-run -p
+  crush-pkg` now verifies against crates.io as it is (every dependency,
+  including `crush-buckets` 0.1.0, is live). The script runner's buckets
+  sandbox profile no longer names fields that only exist in the unpublished
+  buckets checkout. The publish itself is the maintainers' step; see the
+  publish lane in `.jagent/planning/tickets/CRUSH-104-publish-lane.md`.
+
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

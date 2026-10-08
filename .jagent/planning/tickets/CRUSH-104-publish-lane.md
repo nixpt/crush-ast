@@ -182,7 +182,8 @@ cd /path/to/clean/crush-ast
 # 1. Re-check on the tag (packages + verifies all 13 against each other)
 cargo package -p crush-errors -p casm -p crush-diagnostics -p crush-ffi \
   -p crush-vm -p crush-cson -p crush-cast -p crush-index -p crush-frontend \
-  -p crush-walker-core -p crush-lang-js -p crush-lang-python -p crush-lang-sdk
+  -p crush-walker-core -p crush-lang-js -p crush-lang-python -p crush-lang-sdk \
+  -p crush-pkg
 
 # 2. Publish, in this order (cargo publish waits for each to appear in the index)
 cargo publish -p crush-errors
@@ -198,6 +199,7 @@ cargo publish -p crush-walker-core
 cargo publish -p crush-lang-js        # new crate name
 cargo publish -p crush-lang-python    # new crate name
 cargo publish -p crush-lang-sdk
+cargo publish -p crush-pkg           # new crate name (CRUSH-161)
 ```
 
 Alternative: re-enable `crates-publish-sync.timer`, but its unit currently
@@ -205,6 +207,31 @@ points `--repo` at the shared checkout `/workspace/projects/crush-ast`, so it
 publishes whatever that tree has checked out. Repoint it at a clean
 origin/main tree first. The timer also walks the *whole* workspace in topo
 order, so the SDK lands only after any earlier unpublished crates.
+
+## Addendum: `crush-pkg` joins the lane (CRUSH-161, 2026-10-07)
+
+`crush-pkg` was never in the 13-crate set above; it is the package manager,
+not part of the SDK's closure, and squeeze (and anything else that wants
+`crush-pkg` from crates.io) was blocked on it. It now sits last in the order,
+after `crush-lang-sdk`:
+
+- Normal deps: `crush-vm`, `crush-cast`, `casm`, `crush-frontend`,
+  `crush-lang-sdk`, `crush-diagnostics` (all live at 0.3.9) and
+  `crush-buckets` 0.1.0 (live, required, not optional).
+- `cargo publish --dry-run -p crush-pkg` against the real crates.io index,
+  no `[patch.crates-io]`: **exit 0** (`Packaged 26 files, 355.3KiB`,
+  `Verifying crush-pkg v0.3.9 … Finished`, `aborting upload due to dry run`).
+  Before the fix it failed with `E0560: struct SandboxProfile has no field
+  named extra_rw_binds` / `net_ns`: the buckets checkout added those fields
+  without a version bump, so crates.io `crush-buckets` 0.1.0 lacks them.
+  `runners.rs` now fills them with `..Default::default()`, which is what
+  `crush-vm/src/bucket_exec.rs` already did.
+- Because its deps are already live at 0.3.9, `crush-pkg` can be published on
+  its own today, independently of the 13 above. If the 13 are republished
+  first, publish `crush-pkg` after them from the same tag.
+- `crates-publish-sync` walks the whole workspace in topo order, so it picks
+  `crush-pkg` up without a config change (subject to the shared-checkout
+  caveat above).
 
 ## Yank commands (captain, after the publish above)
 

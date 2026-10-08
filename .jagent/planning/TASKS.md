@@ -228,7 +228,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **CRUSH-158** (S (~30 turns), lane B3): `QueryProvider` / `DelegationBackend` traits + delegation selection. [ticket](tickets/CRUSH-158-ai-provider-traits.md)
 - [ ] **CRUSH-159** (M (~70 turns), lane C1): Debugger: step over/out and watchpoints over `PortableVm`. [ticket](tickets/CRUSH-159-debugger-step-watch.md)
 - [ ] **CRUSH-160** (M (~50 turns), lane C2): Debugger: event sink, redacted value views, cap-gated debug scopes. [ticket](tickets/CRUSH-160-debugger-events-redaction.md)
-- [ ] **CRUSH-161** (S (~20 turns), lane D1): Make `crush-pkg` publishable (unblocks squeeze). [ticket](tickets/CRUSH-161-crush-pkg-publishable.md)
+- [x] **CRUSH-161** (S (~20 turns), lane D1): Make `crush-pkg` publishable (unblocks squeeze). Dry-run green `19368b4` (panini-d); publish pending (foreman). [ticket](tickets/CRUSH-161-crush-pkg-publishable.md)
 - [ ] **CRUSH-162** (M (~50 turns), lane F 🔒): In-process Lua `EXEC_LANG` (decision-gated). [ticket](tickets/CRUSH-162-in-process-lua-exec-lang.md)
 - [ ] **CRUSH-163** (M (~70 turns), lane F 🔒): FastVM yield-servicing host loop (decision-gated, lane-guarded). [ticket](tickets/CRUSH-163-fastvm-host-loop.md)
 - [ ] **CRUSH-164** (XS (~15 turns), lane F): Wildcard + expiry in `Quotas::allowed_caps` (optional). [ticket](tickets/CRUSH-164-allowed-caps-wildcards.md)
@@ -340,3 +340,4 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **issue** — exosphere capsule-ui crates/platform/sdk/capsule-ui/src/crush/crush-markup.tsx:175 passes raw html prop to dangerouslySetInnerHTML with no sanitizer despite header claiming 'safely' — XSS risk; exosphere-owned (found by CRUSH-150 scout)  _(nimbus-scout, 2026-10-07)_
 - [ ] **issue** — EXO-194 hazard 1 has happened: exosphere Cargo.lock holds both in-tree casm 0.1.0 and crates.io casm 0.3.0 (via exo-light -> crush-vm 0.3.6), plus two crush-errors; exo-light also lags crush-ast 0.3.9 (found by CRUSH-150)  _(nimbus-scout, 2026-10-07)_
 - [ ] **gap** — crush-debugger README.md:11,43 and lib.rs:27 still describe todo!() hook points that no longer exist (session.rs:346 replaced them) — stale docs  _(nimbus-scout, 2026-10-07)_
+- [ ] **issue** — crush-buckets public API drifted without a version bump: the buckets checkout's SandboxProfile has extra_rw_binds + net_ns, crates.io crush-buckets 0.1.0 does not, both say 0.1.0. Any crush-ast crate that names those fields builds against the path dep and fails publish verification against crates.io (hit on crush-pkg, CRUSH-161). buckets should publish 0.2.0; crush-ast should use ..Default::default() for SandboxProfile until then.  _(panini-d, 2026-10-07)_
