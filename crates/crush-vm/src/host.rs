@@ -70,6 +70,19 @@ pub trait HostCap: Send + Sync {
         let _ = deadline_ms;
         self.call(args).map_err(HostCapError::Message)
     }
+
+    /// What the capability touches outside the VM, as `"<resource>/<action>"`
+    /// labels (`"fs/read"`, `"env/read"`, `"time/sleep"`, `"net/http"`, …),
+    /// so tooling — capability inference, audit, grant review — can ask
+    /// without running it (CRUSH-155).
+    ///
+    /// `Some(&[])` declares a pure capability; the default `None` means the
+    /// capability has not declared its effects, which a cautious caller should
+    /// treat as "could touch anything". Purely informational: the VM never
+    /// consults it to allow or refuse a call.
+    fn effects(&self) -> Option<&'static [&'static str]> {
+        None
+    }
 }
 
 /// Registry of host-provided capabilities.
@@ -116,6 +129,12 @@ impl HostCaps {
     pub fn spec(&self, name: &str) -> Option<HostCapSpec> {
         self.handlers.get(name).map(|h| h.spec())
     }
+
+    /// Take every registered handler out of the registry, e.g. to wrap or
+    /// re-register them into another one.
+    pub fn into_handlers(self) -> impl Iterator<Item = Box<dyn HostCap>> {
+        self.handlers.into_values()
+    }
 }
 
 impl std::fmt::Debug for HostCaps {
@@ -147,5 +166,8 @@ impl HostCap for PolyglotGate {
     }
     fn call(&self, _args: Vec<crate::vm::Value>) -> Result<Option<crate::vm::Value>, String> {
         Ok(None)
+    }
+    fn effects(&self) -> Option<&'static [&'static str]> {
+        Some(&["process/spawn"])
     }
 }

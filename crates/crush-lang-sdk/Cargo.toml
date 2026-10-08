@@ -31,10 +31,14 @@ name = "crush"
 path = "src/bin/crush.rs"
 
 [features]
-default = ["native-plugins", "polyglot-python", "polyglot-javascript"]
+default = ["native-plugins", "polyglot-python", "polyglot-javascript", "stdlib"]
 net = ["dep:ureq"]
 db = ["dep:rusqlite"]
 graphics = []
+# Pure-computation stdcaps (str/math/conv/collections/json/path/regex/...).
+# On by default (CRUSH-113, decision C-1): they confer no authority, so the
+# binaries register them without a flag. Embedded/wasm builds can opt out with
+# `default-features = false`; `--stdlib` then fails loudly instead of no-oping.
 stdlib = ["dep:regex"]
 repl-helper = ["dep:rustyline"]
 # crush-diff's differential module compares against crush-vm's FastVM

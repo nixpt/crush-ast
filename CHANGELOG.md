@@ -26,6 +26,52 @@ add its entry after yours.
   that only re-exports `crush-caison`. Mechanical rename — no change to the
   value mapping or parser.
 
+- **Capability effects (CRUSH-155).** `crush_vm::HostCap` gains a defaulted
+  `effects() -> Option<&'static [&'static str]>` (`None` = undeclared,
+  `Some(&[])` = pure; labels like `"fs/read"`, `"env/read"`, `"time/sleep"`,
+  `"net/http"`, `"process/spawn"`) — existing implementations compile
+  unchanged. Every capability `HostCapsBuilder` registers now declares its
+  effects (the stdlib as pure), polyglot gates declare `process/spawn`, and
+  `crush-run caps --json` lists name, argc, returns, effects and the granting
+  flag for every capability. Informational only: grants still decide access.
+  New `HostCaps::into_handlers()`.
+- **`env.all` / `env.home_dir` and more HTTP verbs (CRUSH-153).** With
+  `--env`: `env.all()` (map of the variables the grant exposes — the host
+  environment plus injected values) and `env.home_dir()` (`HOME` /
+  `USERPROFILE`, or null). With the `net` feature + `--net`: `net.http_put`,
+  `net.http_delete`, and `net.http_request(method, url, body, headers)`, which
+  returns `{status, body}` instead of failing on a non-2xx status. All five
+  `net.*` verbs now share one request path and honour the VM's wall-clock
+  quota (`CapTimeout`) — previously `net.http_get`/`http_post` could block
+  past it. exosphere's `http.*` names are not aliased (one name per
+  capability).
+- **`async.sleep` (CRUSH-152).** Registered with `--time` next to `time.sleep`
+  and backed by the same function, so `await async.sleep(ms)` (the exosphere
+  / nanovm spelling) works and honours the wall-clock quota (`CapTimeout`). It
+  blocks like `time.sleep`; it does not yield to the scheduler. The
+  conformance runner learned `// caps: time`; `examples/crush/async_test.crush`
+  now passes.
+- **fs coreutils + a VM-local working directory (CRUSH-151).** Under `--fs`,
+  `crush-lang-sdk` now also registers `fs.ls`, `fs.cat`, `fs.pwd`, `fs.cd`,
+  `fs.mkdir`, `fs.rm`, `fs.cp`, `fs.mv`, `fs.touch` and `fs.find`. `fs.cd`
+  moves a working directory that belongs to the capability registry (one per
+  VM) and that every `fs.*` and `text.*` file cap resolves against; it never
+  leaves `--fs-root` and never `chdir`s the process. `fs.pwd` answers relative
+  to the root (`.` at the root). Directories need an explicit flag to be
+  removed or copied recursively; `fs.rm`/`fs.mv` act on a symlink itself, and
+  a recursive `fs.cp` refuses symlinks. `fs.list` now returns sorted names, and
+  fs errors show sandbox-relative paths instead of host paths. PortableVm's
+  privileged tier now covers `fs.mkdir/rm/cp/mv/touch` as well as `fs.write`.
+- **Standard library on by default (CRUSH-113).** The `stdlib` cargo feature
+  of `crush-lang-sdk` is now in `default`, and `crush-run` / `crush-repl`
+  register the pure stdcaps (`str.*`, `math.*`, `conv.*`, `collections.*`,
+  `json.*`, `path.*`, `regex.*`, …) without a flag — they do no I/O and grant
+  no authority. `--stdlib` still parses; `--no-stdlib` turns them off. In a
+  build without the feature (`default-features = false`), `--stdlib` is now a
+  hard error instead of a warning, and `ReplConfig { stdlib: true, .. }` is
+  refused instead of silently ignored. `HostCapsBuilder` itself is unchanged:
+  embedders still opt in with `.stdlib(true)`. I/O families (`text.head`,
+  `time.now`, `fs.*`, …) stay behind their grants.
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

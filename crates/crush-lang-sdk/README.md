@@ -43,6 +43,13 @@ language 'X'"`.
 - `crush-compile` — compile source to CASM.
 - `crush-repl` — interactive read-eval-print loop.
 
+`crush-run` and `crush-repl` register the standard library (`str.*`,
+`math.*`, `conv.*`, `collections.*`, `json.*`, `path.*`, `regex.*`, …) by
+default; pass `--no-stdlib` to leave it out. It comes from the `stdlib` cargo
+feature, which is on by default — with `default-features = false` the stdlib
+is absent and `--stdlib` is an error. Capabilities with real authority
+(`--fs`, `--env`, `--time`, `--net`, …) are always opt-in.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0 at your option.

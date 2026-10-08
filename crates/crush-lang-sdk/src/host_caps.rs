@@ -49,7 +49,6 @@ impl HostCapsBuilder {
         Self::default()
     }
 
-    /// Enable filesystem capabilities (`fs.read`, `fs.write`, `fs.exists`, `fs.list`).
     /// Grant polyglot execution for the given languages (canonical: "python", "javascript",
     /// "bash"). Each becomes a `polyglot.<lang>` gate in the registry. Without this, @lang blocks
     /// refuse to spawn — polyglot is NOT ambient.
@@ -58,6 +57,9 @@ impl HostCapsBuilder {
         self
     }
 
+    /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.exists`,
+    /// `fs.list`, the coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`,
+    /// and the `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
     pub fn fs(mut self, enable: bool) -> Self {
         self.fs = enable;
         self
@@ -69,7 +71,9 @@ impl HostCapsBuilder {
         self
     }
 
-    /// Enable environment variable access (`env.get`).
+    /// Enable environment variable access (`env.get`, `env.all`, `env.home_dir`).
+    /// The grant exposes the host process environment, with any
+    /// [`with_env_var`](Self::with_env_var) values layered on top.
     pub fn env(mut self, enable: bool) -> Self {
         self.env = enable;
         self
@@ -81,7 +85,8 @@ impl HostCapsBuilder {
         self
     }
 
-    /// Enable time capabilities (`time.now`).
+    /// Enable time capabilities (`time.now`, `time.now_ms`, `time.now_iso`,
+    /// `time.elapsed`, `time.sleep`, and its alias `async.sleep`).
     pub fn time(mut self, enable: bool) -> Self {
         self.time = enable;
         self
@@ -185,14 +190,23 @@ impl HostCapsBuilder {
         caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::deprecated_alias()));
         caps.grant_polyglot(&self.polyglot);
         if self.fs {
-            let root = self.fs_root.unwrap_or_else(|| ".".to_string());
-            caps.register(Box::new(FsReadCap::new(&root)));
-            caps.register(Box::new(FsWriteCap::new(&root)));
-            caps.register(Box::new(FsExistsCap::new(&root)));
-            caps.register(Box::new(FsListCap::new(&root)));
-            crate::text_tools::register(&mut caps, &root);
+            // One sandbox, so `fs.cd` moves the working directory every
+            // file cap in this registry resolves against.
+            let fs = FsSandbox::new(self.fs_root.as_deref().unwrap_or("."));
+            caps.register(Box::new(FsReadCap { fs: fs.clone() }));
+            caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
+            caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
+            caps.register(Box::new(FsListCap { fs: fs.clone() }));
+            crate::fs_tools::register(&mut caps, &fs);
+            crate::text_tools::register(&mut caps, &fs);
         }
         if self.env {
+            caps.register(Box::new(EnvAllCap {
+                overrides: self.env_vars.clone(),
+            }));
+            caps.register(Box::new(EnvHomeDirCap {
+                overrides: self.env_vars.clone(),
+            }));
             caps.register(Box::new(EnvGetCap::new(self.env_vars)));
         }
         if self.time {
@@ -201,6 +215,7 @@ impl HostCapsBuilder {
             caps.register(Box::new(TimeNowIsoCap));
             caps.register(Box::new(TimeElapsedCap));
             caps.register(Box::new(TimeSleepCap));
+            caps.register(Box::new(AsyncSleepCap));
         }
         if self.bus {
             crate::bus::register(&mut caps);
@@ -232,12 +247,15 @@ impl HostCapsBuilder {
                 eprintln!("crush-lang-sdk: failed to register db capabilities: {e}");
             }
         }
+        // The stdlib is pure: declared with no effects as a family.
         #[cfg(feature = "stdlib")]
         if self.stdlib {
+            let mut stdlib = HostCaps::new();
             crate::stdlib::register_with_rng(
-                &mut caps,
+                &mut stdlib,
                 Arc::new(Mutex::new(crate::stdlib::RngState::new(0))),
             );
+            crate::effects::register_all(&mut caps, stdlib, &[]);
         }
         if let Some(idx) = self.codebase_index {
             crate::codebase::register(&mut caps, idx);
@@ -245,7 +263,7 @@ impl HostCapsBuilder {
         if self.ai_native {
             crate::ai_native::register(&mut caps);
         }
-        caps
+        crate::effects::declare(caps)
     }
 }
 
@@ -253,8 +271,16 @@ impl HostCapsBuilder {
 // Filesystem helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBuf, String> {
-    use std::path::{Component, Path, PathBuf};
+/// Resolve `path` against `cwd` (relative to `root`) and confine it to
+/// `root`. With `follow` false the last component is not resolved through a
+/// symlink, so `fs.rm`/`fs.mv` act on a link rather than on what it names.
+fn resolve_in(
+    root: &str,
+    cwd: &std::path::Path,
+    path: &Value,
+    follow: bool,
+) -> Result<std::path::PathBuf, String> {
+    use std::path::{Component, Path};
 
     let s = crate::caps::value_as_text(path);
     let p = Path::new(&s);
@@ -269,7 +295,7 @@ pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBu
     // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
     // compares components, so `<root>/../x` used to pass the check below and
     // let `fs.write("../x", ..)` write outside the sandbox.
-    let mut relative = PathBuf::new();
+    let mut relative = cwd.to_path_buf();
     for component in p.components() {
         match component {
             Component::CurDir => {}
@@ -282,15 +308,34 @@ pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBu
             Component::RootDir | Component::Prefix(_) => return Err(escapes()),
         }
     }
-    let joined = root_canonical.join(&relative);
 
-    // Then resolve symlinks through the deepest ancestor that exists, so a
-    // symlink inside the root cannot point a new file outside it either.
+    // Not following the last component: confine its parent, keep the name.
+    if !follow && let Some(name) = relative.file_name().map(|n| n.to_os_string()) {
+        let parent = relative.parent().unwrap_or(Path::new("")).to_path_buf();
+        let dir = confine(&root_canonical, &parent).ok_or_else(escapes)?;
+        return Ok(dir.join(name));
+    }
+    confine(&root_canonical, &relative).ok_or_else(escapes)
+}
+
+/// Join `relative` onto the canonical root, resolving symlinks through the
+/// deepest ancestor that exists, so a symlink inside the root cannot point a
+/// new file outside it either. `None` if the result leaves the root.
+fn confine(
+    root_canonical: &std::path::Path,
+    relative: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let joined = root_canonical.join(relative);
     let mut existing = joined.as_path();
     let mut rest = Vec::new();
     let resolved = loop {
         if let Ok(canonical) = existing.canonicalize() {
-            break rest.iter().rev().fold(canonical, |acc: PathBuf, part| acc.join(part));
+            break rest
+                .iter()
+                .rev()
+                .fold(canonical, |acc: PathBuf, part| acc.join(part));
         }
         match (existing.parent(), existing.file_name()) {
             (Some(parent), Some(name)) => {
@@ -300,20 +345,110 @@ pub(crate) fn resolve_path(root: &str, path: &Value) -> Result<std::path::PathBu
             _ => break joined.clone(),
         }
     };
-    if !resolved.starts_with(&root_canonical) {
-        return Err(escapes());
+    resolved.starts_with(root_canonical).then_some(resolved)
+}
+
+/// The `--fs` sandbox one registry's file caps share: the root, plus the
+/// working directory `fs.cd` moves (CRUSH-151, decision C-5). The working
+/// directory is per-registry — local to the VM the registry serves — always
+/// inside the root, and never the host process's cwd.
+#[derive(Clone)]
+pub(crate) struct FsSandbox {
+    root: String,
+    /// Relative to the canonical root; empty = the root itself.
+    cwd: Arc<std::sync::Mutex<std::path::PathBuf>>,
+}
+
+impl FsSandbox {
+    pub(crate) fn new(root: &str) -> Self {
+        Self {
+            root: root.to_string(),
+            cwd: Arc::default(),
+        }
     }
-    Ok(resolved)
+
+    fn cwd(&self) -> std::path::PathBuf {
+        self.cwd.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn root_canonical(&self) -> std::path::PathBuf {
+        let root = std::path::Path::new(&self.root);
+        root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+    }
+
+    /// Resolve a program path against the working directory, inside the root.
+    pub(crate) fn resolve(&self, path: &Value) -> Result<std::path::PathBuf, String> {
+        resolve_in(&self.root, &self.cwd(), path, true)
+    }
+
+    /// Like [`resolve`](Self::resolve), but a symlink in the last component
+    /// is the target itself rather than what it points to.
+    pub(crate) fn resolve_nofollow(&self, path: &Value) -> Result<std::path::PathBuf, String> {
+        resolve_in(&self.root, &self.cwd(), path, false)
+    }
+
+    /// `fs.cd`: move the working directory to an existing directory.
+    pub(crate) fn cd(&self, path: &Value) -> Result<(), String> {
+        let target = self.resolve(path)?;
+        if !target.is_dir() {
+            return Err(format!("fs.cd {}: not a directory", self.display(&target)));
+        }
+        let relative = target
+            .strip_prefix(self.root_canonical())
+            .map_err(|_| format!("fs.cd {}: outside the sandbox", self.display(&target)))?
+            .to_path_buf();
+        *self.cwd.lock().unwrap_or_else(|e| e.into_inner()) = relative;
+        Ok(())
+    }
+
+    /// `fs.pwd`: the working directory relative to the root, `.` at the root.
+    pub(crate) fn pwd(&self) -> String {
+        let cwd = self.cwd();
+        if cwd.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            cwd.to_string_lossy().into_owned()
+        }
+    }
+
+    /// A resolved path as the program sees it (relative to the root), so
+    /// error messages never print the host's absolute path.
+    pub(crate) fn display(&self, path: &std::path::Path) -> String {
+        match path.strip_prefix(self.root_canonical()) {
+            Ok(p) if p.as_os_str().is_empty() => ".".to_string(),
+            Ok(p) => p.to_string_lossy().into_owned(),
+            Err(_) => path.to_string_lossy().into_owned(),
+        }
+    }
+
+    /// Refuse to remove or move the root, the working directory, or any
+    /// directory containing it — the sandbox would lose its footing.
+    pub(crate) fn refuse_working_dir(
+        &self,
+        cap: &str,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let cwd = self.root_canonical().join(self.cwd());
+        if cwd.starts_with(path) {
+            return Err(format!(
+                "{cap} {}: refusing to remove or move the sandbox root or the working directory",
+                self.display(path)
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct FsReadCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsReadCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -328,21 +463,23 @@ impl HostCap for FsReadCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
+        let path = self.fs.resolve(&args[0])?;
         let data = std::fs::read_to_string(&path)
-            .map_err(|e| format!("fs.read {}: {e}", path.display()))?;
+            .map_err(|e| format!("fs.read {}: {e}", self.fs.display(&path)))?;
         Ok(Some(Value::Str(data)))
     }
 }
 
 pub struct FsWriteCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsWriteCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -357,21 +494,24 @@ impl HostCap for FsWriteCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
+        let path = self.fs.resolve(&args[0])?;
         let data = crate::caps::value_as_text(&args[1]);
-        std::fs::write(&path, data).map_err(|e| format!("fs.write {}: {e}", path.display()))?;
+        std::fs::write(&path, data)
+            .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
 }
 
 pub struct FsExistsCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsExistsCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -386,19 +526,21 @@ impl HostCap for FsExistsCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
+        let path = self.fs.resolve(&args[0])?;
         Ok(Some(Value::Int(if path.exists() { 1 } else { 0 })))
     }
 }
 
 pub struct FsListCap {
-    root: String,
+    fs: FsSandbox,
 }
 
 impl FsListCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
     pub fn new(root: &str) -> Self {
         Self {
-            root: root.to_string(),
+            fs: FsSandbox::new(root),
         }
     }
 }
@@ -413,13 +555,8 @@ impl HostCap for FsListCap {
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let path = resolve_path(&self.root, &args[0])?;
-        let entries: Vec<Value> = std::fs::read_dir(&path)
-            .map_err(|e| format!("fs.list {}: {e}", path.display()))?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_name().into_string().ok().map(Value::Str))
-            .collect();
-        Ok(Some(Value::new_array(entries)))
+        let path = self.fs.resolve(&args[0])?;
+        crate::fs_tools::list_dir("fs.list", &path, &self.fs).map(Some)
     }
 }
 
@@ -455,6 +592,59 @@ impl HostCap for EnvGetCap {
             Ok(v) => Ok(Some(Value::Str(v))),
             Err(_) => Ok(Some(Value::Null)),
         }
+    }
+}
+
+/// `env.all()` — every variable the `--env` grant exposes, as a map: the
+/// host environment with the builder's injected values on top (CRUSH-153).
+/// Variables whose name or value is not valid Unicode are skipped.
+pub struct EnvAllCap {
+    overrides: HashMap<String, String>,
+}
+
+impl HostCap for EnvAllCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "env.all".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let mut all: HashMap<String, Value> = std::env::vars_os()
+            .filter_map(|(k, v)| Some((k.into_string().ok()?, Value::Str(v.into_string().ok()?))))
+            .collect();
+        for (k, v) in &self.overrides {
+            all.insert(k.clone(), Value::Str(v.clone()));
+        }
+        Ok(Some(Value::new_map(all)))
+    }
+}
+
+/// `env.home_dir()` — the user's home directory (`HOME`, or `USERPROFILE` on
+/// Windows) as the `--env` grant sees it, or null when unset.
+pub struct EnvHomeDirCap {
+    overrides: HashMap<String, String>,
+}
+
+impl HostCap for EnvHomeDirCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "env.home_dir".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let home = self
+            .overrides
+            .get(key)
+            .cloned()
+            .or_else(|| std::env::var(key).ok());
+        Ok(Some(home.map_or(Value::Null, Value::Str)))
     }
 }
 
@@ -533,48 +723,74 @@ time_cap!(TimeElapsedCap, "time.elapsed", 1, |args: &[Value]| {
 /// `async.sleep` were this same synchronous sleep under two names). A sleep
 /// longer than the VM's wall-time quota stops at the quota and reports
 /// `CapTimeout` rather than hanging the program.
+/// `time.sleep(ms)` — block for `ms` milliseconds (`--time`).
 pub struct TimeSleepCap;
 
-impl TimeSleepCap {
-    fn millis(args: &[Value]) -> Result<u64, String> {
-        match args.first() {
-            Some(Value::Int(ms)) if *ms >= 0 => Ok(*ms as u64),
-            other => Err(format!(
-                "time.sleep: expected non-negative int milliseconds, got {}",
+/// `async.sleep(ms)` — the exosphere / nanovm name for the same blocking
+/// sleep (`--time`, CRUSH-152). It does not yield to the scheduler; both
+/// names run [`sleep_ms`].
+pub struct AsyncSleepCap;
+
+/// The one sleep implementation behind `time.sleep` and `async.sleep`: block
+/// for the requested milliseconds, or — when the VM's wall-clock deadline is
+/// shorter — sleep until the deadline and report a timeout.
+fn sleep_ms(
+    cap: &str,
+    args: &[Value],
+    deadline_ms: Option<u64>,
+) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+    let ms = match args.first() {
+        Some(Value::Int(ms)) if *ms >= 0 => *ms as u64,
+        other => {
+            return Err(format!(
+                "{cap}: expected non-negative int milliseconds, got {}",
                 other.map_or("nothing".to_string(), |v| v.to_string())
-            )),
+            )
+            .into());
         }
+    };
+    if let Some(deadline) = deadline_ms
+        && ms > deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(deadline));
+        return Err(crush_vm::host::HostCapError::Timeout);
     }
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+    Ok(Some(Value::Null))
 }
 
-impl HostCap for TimeSleepCap {
-    fn spec(&self) -> HostCapSpec {
-        HostCapSpec {
-            name: "time.sleep".to_string(),
-            argc: Some(1),
-            returns: true,
-        }
-    }
+macro_rules! sleep_cap {
+    ($ty:ident, $name:expr) => {
+        impl HostCap for $ty {
+            fn spec(&self) -> HostCapSpec {
+                HostCapSpec {
+                    name: $name.to_string(),
+                    argc: Some(1),
+                    returns: true,
+                }
+            }
 
-    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        std::thread::sleep(std::time::Duration::from_millis(Self::millis(&args)?));
-        Ok(Some(Value::Null))
-    }
+            fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+                // No deadline, so the only error is a bad argument.
+                sleep_ms($name, &args, None).map_err(|e| match e {
+                    crush_vm::host::HostCapError::Message(m) => m,
+                    crush_vm::host::HostCapError::Timeout => format!("{}: timed out", $name),
+                })
+            }
 
-    fn call_with_deadline(
-        &self,
-        args: Vec<Value>,
-        deadline_ms: u64,
-    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
-        let ms = Self::millis(&args)?;
-        if ms > deadline_ms {
-            std::thread::sleep(std::time::Duration::from_millis(deadline_ms));
-            return Err(crush_vm::host::HostCapError::Timeout);
+            fn call_with_deadline(
+                &self,
+                args: Vec<Value>,
+                deadline_ms: u64,
+            ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+                sleep_ms($name, &args, Some(deadline_ms))
+            }
         }
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-        Ok(Some(Value::Null))
-    }
+    };
 }
+
+sleep_cap!(TimeSleepCap, "time.sleep");
+sleep_cap!(AsyncSleepCap, "async.sleep");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Process helpers
@@ -751,6 +967,101 @@ mod tests {
             Err(HostCapError::Timeout)
         ));
         assert!(cap.call(vec![Value::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn env_all_and_home_dir_follow_the_env_grant() {
+        let caps = HostCapsBuilder::new()
+            .env(true)
+            .with_env_var("CRUSH_153_INJECTED", "yes")
+            .with_env_var("HOME", "/sandbox/home")
+            .build();
+        let Some(Value::Map(all)) = caps.get("env.all").unwrap().call(vec![]).unwrap() else {
+            panic!("env.all must return a map");
+        };
+        let all = all.borrow();
+        assert_eq!(all["CRUSH_153_INJECTED"], Value::Str("yes".into()));
+        assert_eq!(all["HOME"], Value::Str("/sandbox/home".into()));
+        if let Ok(path) = std::env::var("PATH") {
+            assert_eq!(all["PATH"], Value::Str(path));
+        }
+        assert_eq!(
+            caps.get("env.home_dir").unwrap().call(vec![]).unwrap(),
+            Some(Value::Str("/sandbox/home".into()))
+        );
+
+        let ungranted = HostCapsBuilder::new().stdlib(true).time(true).build();
+        for cap in ["env.get", "env.all", "env.home_dir"] {
+            assert!(ungranted.get(cap).is_none(), "{cap} without --env");
+        }
+    }
+
+    // Source → VM for one env cap.
+    #[test]
+    fn env_home_dir_through_the_source_pipeline() {
+        let prog = crate::compile::compile_crush_source("io.print(env.home_dir())\n").unwrap();
+        let caps = HostCapsBuilder::new()
+            .env(true)
+            .with_env_var("HOME", "/sandbox/home")
+            .build();
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&caps)).unwrap();
+        assert_eq!(result.output, "/sandbox/home\n");
+        let refused = crush_vm::run_with_caps(&prog, &quotas, None).unwrap_err();
+        assert!(refused.to_string().contains("env.home_dir"), "{refused}");
+    }
+
+    #[test]
+    fn async_sleep_is_time_sleep_under_another_name() {
+        use crush_vm::host::HostCapError;
+        let cap = AsyncSleepCap;
+        assert_eq!(cap.spec().name, "async.sleep");
+        assert_eq!(cap.spec().argc, TimeSleepCap.spec().argc);
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(1)], 1_000),
+            Ok(Some(Value::Null))
+        ));
+        assert!(matches!(
+            cap.call_with_deadline(vec![Value::Int(60_000)], 5),
+            Err(HostCapError::Timeout)
+        ));
+        let err = cap.call(vec![Value::Int(-1)]).unwrap_err();
+        assert!(err.starts_with("async.sleep:"), "{err}");
+    }
+
+    #[test]
+    fn sleep_caps_need_the_time_grant() {
+        let caps = HostCapsBuilder::new().stdlib(true).fs(true).build();
+        assert!(caps.get("time.sleep").is_none());
+        assert!(caps.get("async.sleep").is_none());
+        let caps = HostCapsBuilder::new().time(true).build();
+        assert!(caps.get("async.sleep").is_some());
+    }
+
+    // CRUSH-152: `await async.sleep(..)` from source, past the VM's
+    // wall-clock limit, is a named CapTimeout — and returns at the limit,
+    // not after the requested sleep.
+    #[test]
+    fn async_sleep_past_the_wall_clock_limit_is_a_cap_timeout() {
+        let prog =
+            crate::compile::compile_crush_source("await async.sleep(60000)\n").expect("compile");
+        let caps = HostCapsBuilder::new().time(true).build();
+        let quotas = crush_vm::Quotas {
+            max_wall_time_ms: 100,
+            ..Default::default()
+        };
+        let start = std::time::Instant::now();
+        let err = crush_vm::run_with_caps(&prog, &quotas, Some(&caps)).unwrap_err();
+        assert!(
+            matches!(err, crush_vm::VmError::CapTimeout { .. }),
+            "{err:?}"
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+
+        let ok = crate::compile::compile_crush_source("await async.sleep(1)\nio.print(\"woke\")\n")
+            .expect("compile");
+        let result = crush_vm::run_with_caps(&ok, &quotas, Some(&caps)).unwrap();
+        assert_eq!(result.output, "woke\n");
     }
 
     #[test]

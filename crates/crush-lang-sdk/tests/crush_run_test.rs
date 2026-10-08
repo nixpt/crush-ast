@@ -270,3 +270,136 @@ fn crush_run_reads_piped_stdin_through_source_pipeline() {
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "piped input\n");
 }
+
+// CRUSH-113: the stdlib is on by default — a conv.* call needs no flag —
+// and `--no-stdlib` takes it away again.
+#[test]
+fn crush_run_registers_stdlib_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("conv.crush");
+    std::fs::write(&src, "fn main() { io.print(conv.to_str(42)); return 0; }\n").unwrap();
+
+    let output = run_crush_run(&["run", src.to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert_eq!(stdout.trim(), "42");
+
+    // The old flag still parses and changes nothing.
+    let output = run_crush_run(&["run", "--stdlib", src.to_str().unwrap()]);
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+
+    let output = run_crush_run(&["run", "--no-stdlib", src.to_str().unwrap()]);
+    assert!(
+        !output.status.success(),
+        "--no-stdlib must withhold conv.to_str"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("conv.to_str"), "stderr: {stderr}");
+}
+
+#[test]
+fn crush_run_caps_lists_stdlib_as_default() {
+    let output = run_crush_run(&["caps"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("on by default; --no-stdlib to disable"),
+        "{stdout}"
+    );
+}
+
+// CRUSH-151: the fs coreutils run end to end under `--fs`, `fs.cd` stays
+// inside `--fs-root`, and without the grant they do not exist.
+#[test]
+fn crush_run_fs_coreutils_stay_in_the_sandbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let write = |name: &str, body: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        path.to_str().unwrap().to_string()
+    };
+    let ok = write(
+        "ok.crush",
+        r#"fs.mkdir("a/b", true)
+fs.cd("a")
+fs.touch("b/x.txt")
+io.print(fs.pwd())
+io.print(fs.find(".", "*.txt"))
+fs.cd("..")
+io.print(fs.pwd())
+"#,
+    );
+    // crush-run drops stdout when the program fails, so the escape attempt
+    // is its own program.
+    let escape = write("escape.crush", "fs.cd(\"a\")\nfs.cd(\"../..\")\n");
+    let fs_args = |src: &str| {
+        let args = ["run", "--fs", "--fs-root", root.to_str().unwrap(), src];
+        run_crush_run(&args)
+    };
+
+    let output = fs_args(&ok);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.starts_with("a\n[b/x.txt]\n.\n"), "stdout: {stdout}");
+    assert!(root.join("a/b/x.txt").exists());
+
+    let output = fs_args(&escape);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "cd above the root must fail");
+    assert!(stderr.contains("escapes sandbox"), "stderr: {stderr}");
+
+    let output = run_crush_run(&["run", &ok]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("unknown capability: fs.mkdir"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn crush_run_caps_lists_fs_coreutils() {
+    let stdout = String::from_utf8_lossy(&run_crush_run(&["caps"]).stdout).into_owned();
+    for cap in [
+        "fs.ls", "fs.cat", "fs.pwd", "fs.cd", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch",
+        "fs.find",
+    ] {
+        assert!(
+            stdout.contains(&format!("  {cap} ")),
+            "{cap} missing from caps:\n{stdout}"
+        );
+    }
+}
+
+// CRUSH-155: `caps --json` lists every capability with its effects and grant.
+#[test]
+fn crush_run_caps_json_lists_effects_and_grants() {
+    let output = run_crush_run(&["caps", "--json"]);
+    assert!(output.status.success());
+    let list: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let find = |name: &str| {
+        list.iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} missing"))
+            .clone()
+    };
+    assert_eq!(find("fs.rm")["effects"], serde_json::json!(["fs/write"]));
+    assert_eq!(find("fs.rm")["grant"], "--fs");
+    assert_eq!(find("conv.to_str")["effects"], serde_json::json!([]));
+    assert_eq!(find("io.print")["grant"], "portable");
+    assert_eq!(find("time.sleep")["argc"], 1);
+    assert!(
+        list.iter().all(|c| c["effects"].is_array()),
+        "every capability declares its effects"
+    );
+}

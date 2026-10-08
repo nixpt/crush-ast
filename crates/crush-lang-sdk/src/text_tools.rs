@@ -5,24 +5,23 @@
 //! nanovm put these in its stdlib with ambient access to any path; here they
 //! read files, so they follow the `fs.*` rules instead: registered only when
 //! the host grants filesystem access (`HostCapsBuilder::fs` / `--fs`), and
-//! every path is resolved inside the sandbox root (`--fs-root`) by the same
-//! `resolve_path` the `fs.*` caps use. `text.grep` needs the `regex`
+//! every path is resolved inside the sandbox root (`--fs-root`), against the
+//! `fs.cd` working directory, by the same [`FsSandbox`] the `fs.*` caps use. `text.grep` needs the `regex`
 //! dependency and so also needs the `stdlib` feature.
 
-use crate::host_caps::resolve_path;
+use crate::host_caps::FsSandbox;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::collections::HashMap;
 use std::path::Path;
 
-pub(crate) fn register(caps: &mut HostCaps, root: &str) {
-    let root = root.to_string();
-    caps.register(Box::new(TextHeadCap { root: root.clone() }));
-    caps.register(Box::new(TextTailCap { root: root.clone() }));
-    caps.register(Box::new(TextWcCap { root: root.clone() }));
-    caps.register(Box::new(TextCutCap { root: root.clone() }));
+pub(crate) fn register(caps: &mut HostCaps, fs: &FsSandbox) {
+    caps.register(Box::new(TextHeadCap { fs: fs.clone() }));
+    caps.register(Box::new(TextTailCap { fs: fs.clone() }));
+    caps.register(Box::new(TextWcCap { fs: fs.clone() }));
+    caps.register(Box::new(TextCutCap { fs: fs.clone() }));
     #[cfg(feature = "stdlib")]
-    caps.register(Box::new(TextGrepCap { root }));
+    caps.register(Box::new(TextGrepCap { fs: fs.clone() }));
 }
 
 fn read(cap: &str, path: &Path) -> Result<String, String> {
@@ -43,7 +42,7 @@ fn str_array<'a>(items: impl Iterator<Item = &'a str>) -> Value {
 macro_rules! fs_text_cap {
     ($name:ident, $full:expr, $argc:expr, $body:expr) => {
         pub struct $name {
-            root: String,
+            fs: FsSandbox,
         }
         impl HostCap for $name {
             fn spec(&self) -> HostCapSpec {
@@ -55,7 +54,7 @@ macro_rules! fs_text_cap {
             }
             fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
                 #[allow(clippy::redundant_closure_call)]
-                ($body)(self.root.as_str(), &args)
+                ($body)(&self.fs, &args)
             }
         }
     };
@@ -66,8 +65,8 @@ fs_text_cap!(
     TextHeadCap,
     "text.head",
     Some(2),
-    |root: &str, args: &[Value]| {
-        let path = resolve_path(root, &args[0])?;
+    |fs: &FsSandbox, args: &[Value]| {
+        let path = fs.resolve(&args[0])?;
         let n = count_arg("text.head", &args[1])?;
         let content = read("text.head", &path)?;
         Ok(Some(str_array(content.lines().take(n))))
@@ -79,8 +78,8 @@ fs_text_cap!(
     TextTailCap,
     "text.tail",
     Some(2),
-    |root: &str, args: &[Value]| {
-        let path = resolve_path(root, &args[0])?;
+    |fs: &FsSandbox, args: &[Value]| {
+        let path = fs.resolve(&args[0])?;
         let n = count_arg("text.tail", &args[1])?;
         let content = read("text.tail", &path)?;
         let lines: Vec<&str> = content.lines().collect();
@@ -95,8 +94,8 @@ fs_text_cap!(
     TextWcCap,
     "text.wc",
     Some(1),
-    |root: &str, args: &[Value]| {
-        let path = resolve_path(root, &args[0])?;
+    |fs: &FsSandbox, args: &[Value]| {
+        let path = fs.resolve(&args[0])?;
         let content = read("text.wc", &path)?;
         let mut m = HashMap::new();
         m.insert(
@@ -121,8 +120,8 @@ fs_text_cap!(
     TextCutCap,
     "text.cut",
     Some(3),
-    |root: &str, args: &[Value]| {
-        let path = resolve_path(root, &args[0])?;
+    |fs: &FsSandbox, args: &[Value]| {
+        let path = fs.resolve(&args[0])?;
         let delim = args[1].to_string();
         let col = count_arg("text.cut", &args[2])?;
         if col == 0 || delim.is_empty() {
@@ -134,18 +133,6 @@ fs_text_cap!(
         }))))
     }
 );
-
-/// Path shown to the program: relative to the sandbox root, never the host's
-/// absolute path.
-#[cfg(feature = "stdlib")]
-fn display_path(root: &str, path: &Path) -> String {
-    let root = Path::new(root);
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    path.strip_prefix(&root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned()
-}
 
 /// Every regular file under `dir`, depth-first in name order, not following
 /// symlinks (nanovm's `WalkDir::follow_links(false)`).
@@ -173,7 +160,7 @@ fs_text_cap!(
     TextGrepCap,
     "text.grep",
     None,
-    |root: &str, args: &[Value]| {
+    |fs: &FsSandbox, args: &[Value]| {
         if !(2..=4).contains(&args.len()) {
             return Err(format!(
                 "text.grep: expected 2 to 4 arguments (pattern, path, recursive, ignore_case), got {}",
@@ -187,7 +174,7 @@ fs_text_cap!(
             .case_insensitive(ignore_case)
             .build()
             .map_err(|e| format!("text.grep: invalid pattern: {e}"))?;
-        let path = resolve_path(root, &args[1])?;
+        let path = fs.resolve(&args[1])?;
 
         let files = if path.is_file() {
             vec![path]
@@ -209,7 +196,7 @@ fs_text_cap!(
                 Err(e) if single => return Err(format!("text.grep {}: {e}", file.display())),
                 Err(_) => continue,
             };
-            let shown = display_path(root, &file);
+            let shown = fs.display(&file);
             for (i, line) in content.lines().enumerate() {
                 if re.is_match(line) {
                     let mut m = HashMap::new();
@@ -243,7 +230,7 @@ mod tests {
         args: Vec<Value>,
     ) -> Result<Option<Value>, String> {
         let mut caps = HostCaps::new();
-        register(&mut caps, dir.path().to_str().unwrap());
+        register(&mut caps, &FsSandbox::new(dir.path().to_str().unwrap()));
         caps.get(name).expect(name).call(args)
     }
 

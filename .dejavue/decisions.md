@@ -673,3 +673,33 @@ crates.io's 0.3.0 releases predate APIs their dependents use (crush-lang-js fail
 Reason:
 Browsers have no stdin, so io.read returned EOF on every read and blackjack_interactive left the table. crush_vm::InputSource (io_read.rs, the shared io.read module) = Stdin (default, native unchanged) | Supplied(text) | Interactive{pending, closed}; every variant reads through read_io_line_from so terminator/EOF semantics are one implementation. In Interactive mode PortableVm::step() checks before executing a CAP_CALL whose const is io.read (and only if it is declared + allowed): no pending line -> return VmYield::HostCall{capability:'io.read'} with IP/stack/steps untouched; provide_input then the next step executes the read normally. No mid-instruction state, nothing re-executed, output kept (take_output drains a cursor, VmResult.output still full). Rejected: (a) yield from inside dispatch_cap after popping args — would need to stash a half-executed instruction and push the result on resume; (b) a new opcode or Program/bytecode change — affects every client; (c) breakpoints at every io.read CAP_CALL (exo-light's trick) — host would have to scan bytecode and still feed the value. Scope kept to PortableVm (crush-web's stepped runner); scheduler.rs still reads process stdin — gap filed.
 
+
+## 2026-10-07T20:06:36-05:00 — CRUSH-113: stdlib default-on in the binaries, not in HostCapsBuilder
+
+Reason:
+Decision C-1 (captain s474). The stdcaps are pure (no I/O, no authority), so crush-run/crush-repl/the conformance runner register them without a flag and --no-stdlib opts out; the cargo feature joins default so the shipped toolchain has conv/collections/regex/json. HostCapsBuilder's default stays off: flipping it would silently grow every embedder's registry (exo-light, crush-notebook, crush-web), which the ticket did not sanction. Without the feature, --stdlib and ReplConfig{stdlib:true} are hard errors instead of the old warning + 'unknown capability'.
+
+
+## 2026-10-07T20:15:27-05:00 — CRUSH-151: fs.cd is registry-local state in a shared FsSandbox; fs.pwd is root-relative
+
+Reason:
+Decision C-5 (captain s474): VM-local cwd inside --fs-root, never chdir. Implemented as host_caps::FsSandbox {root, Arc<Mutex<cwd>>} built once per HostCapsBuilder::build and cloned into every file cap (fs.*, text.*), so the cwd is per registry = per VM, and two VMs never share one. Paths are cwd-joined lexically and then confined exactly as before. fs.pwd answers root-relative ('.' at the root) rather than a host path (no leak) or a '/'-anchored chroot path (would need absolute paths to mean root-relative everywhere, changing fs.read's 'absolute paths are not allowed' contract). rm/mv resolve the last component without following symlinks; mutating fs caps join fs.write in crush-vm's PRIVILEGED_PREFIXES.
+
+
+## 2026-10-07T20:27:12-05:00 — CRUSH-153: one deadline-aware request() behind every net.* verb; http_request returns {status, body}; no http.* aliases
+
+Reason:
+The ticket asked for http_put/delete/request with 'the same timeout/deadline behaviour as http_get', but http_get had none (no call_with_deadline override), so a slow server could hold the VM past max_wall_time_ms. All five verbs now share net::request(), which sets the ureq agent timeout from the CAP_CALL deadline and maps I/O timeouts to HostCapError::Timeout. http_request is the general verb, so it reports the status (map {status, body}) instead of failing on 4xx/5xx; the fixed verbs keep their body-or-error contract. exosphere's http.* spellings are not aliased: one name per capability. env.all exposes exactly what --env already exposed to env.get (the host env + injected overrides).
+
+
+## 2026-10-07T20:34:09-05:00 — CRUSH-154: storage.* declined — db.* covers persistence
+
+Reason:
+Decision C-6 (captain s474). exosphere's handle-based storage.open/read/write/size/close would add a new kind of per-VM state (handle scoping, cleanup on drop, use-after-close) across all five backends for a family with no Crush consumer; db.query/db.execute (--db PATH) and fs.* (--fs) already cover persistence. Mapping in docs/design/storage-caps-declined.md; reopen only for a consumer db/fs can't serve, behind its own --store grant.
+
+
+## 2026-10-07T20:41:09-05:00 — CRUSH-155: capability effects are a defaulted HostCap::effects() method plus one SDK table, not a HostCapSpec field
+
+Reason:
+HostCapSpec is built by struct literal in every HostCap impl across the workspace and in clients (exo-light, crush-notebook, crush-web); adding a field breaks them all, contradicting the ticket's 'existing impls don't change'. A default trait method returning Option<&'static [&'static str]> is additive: None = undeclared (treat as could-touch-anything), Some(&[]) = pure. Rather than override it in ~130 SDK types, HostCapsBuilder::build wraps handlers with labels from effects::effects_of (stdlib registered as a pure family) behind a delegating wrapper; a test with every grant on fails if any builder cap is undeclared. Informational only — grants still decide access.
+

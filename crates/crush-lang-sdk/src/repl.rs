@@ -14,6 +14,9 @@ use crate::theme::JsonDiagnostic;
 
 pub struct ReplConfig {
     pub quotas: Quotas,
+    /// Register the standard library capabilities. Defaults to on when the
+    /// `stdlib` feature is compiled in; [`run`] refuses `true` in a build
+    /// without it rather than silently ignoring it.
     pub stdlib: bool,
     /// Diagnostic output mode for per-line errors inside the REPL loop.
     /// `Text` (default) prints themed output to stderr via `theme::render_*`.
@@ -33,7 +36,8 @@ impl Default for ReplConfig {
                 max_call_depth: 64,
                 ..Default::default()
             },
-            stdlib: false,
+            // On whenever the build has it (CRUSH-113).
+            stdlib: cfg!(feature = "stdlib"),
             message_format: MessageFormat::Text,
         }
     }
@@ -305,7 +309,9 @@ fn handle_meta_command(input: &str, state: &mut ReplState) -> Result<bool, MetaC
         ".caps" => {
             println!("Built-in: io.print, str.concat, str.len");
             #[cfg(feature = "stdlib")]
-            println!("Stdlib: str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*");
+            println!(
+                "Stdlib (on unless --no-stdlib): str.*, math.*, conv.*, collections.*, json.*, path.*, regex.*"
+            );
             return Ok(false);
         }
         ".clear" => {
@@ -375,8 +381,24 @@ pub struct ReplEvalResult {
     pub defined: Vec<String>,
 }
 
+/// Refuse `stdlib: true` in a build that cannot honour it (CRUSH-113): the
+/// REPL used to ignore it, and every stdlib call then failed as an unknown
+/// capability.
+fn check_stdlib_available(config: &ReplConfig) -> anyhow::Result<()> {
+    if config.stdlib && !cfg!(feature = "stdlib") {
+        anyhow::bail!(
+            "the REPL was asked for the standard library, but this build lacks the 'stdlib' feature"
+        );
+    }
+    Ok(())
+}
+
 pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig) -> ReplEvalResult {
     let mut eval_result = ReplEvalResult { output: None, error: None, defined: vec![] };
+    if let Err(e) = check_stdlib_available(config) {
+        eval_result.error = Some(e.to_string());
+        return eval_result;
+    }
 
     let snippet = match parse_repl_source(source) {
         Ok(s) => s,
@@ -539,6 +561,7 @@ fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> a
 }
 
 pub fn run(config: ReplConfig) -> anyhow::Result<()> {
+    check_stdlib_available(&config)?;
     crate::theme::init_styling();
     let stdin = io::stdin();
     let mut input = stdin.lock();

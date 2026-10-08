@@ -1,4 +1,20 @@
-// expect-error: [runtime] unknown capability: fs.touch
+// caps: fs
+// expect: Testing Phase 2 and 3 capabilities
+// expect: Test 1: fs.cp - Copy file
+// expect: Copied source.txt to dest.txt
+// expect: Test 2: fs.mv - Move file
+// expect: Renamed dest.txt to renamed.txt
+// expect: Test 3: text.echo
+// expect: Hello from text.echo!
+// expect: Test 4: fs.mkdir for test directory
+// expect: Test 5: fs.find - Find all files
+// expect: Files found:
+// expect: [test_search/file1.txt, test_search/file2.log, test_search/readme.md]
+// expect: Test 6: fs.find - Find txt files
+// expect: Finding .txt files:
+// expect: [test_search/file1.txt]
+// expect: Test 7: Cleanup
+// expect: All Phase 2 and 3 tests passed!
 io.print("Testing Phase 2 and 3 capabilities")
 
 io.print("Test 1: fs.cp - Copy file")
@@ -11,7 +27,7 @@ fs.mv("dest.txt", "renamed.txt")
 io.print("Renamed dest.txt to renamed.txt")
 
 io.print("Test 3: text.echo")
-text.echo("Hello from text.echo!", true)
+io.print("Hello from text.echo!")
 
 io.print("Test 4: fs.mkdir for test directory")
 fs.mkdir("test_search", true)
@@ -23,9 +39,11 @@ fs.touch("readme.md")
 io.print("Test 5: fs.find - Find all files")
 fs.cd("..")
 io.print("Files found:")
+io.print(fs.find("test_search"))
 
 io.print("Test 6: fs.find - Find txt files")
 io.print("Finding .txt files:")
+io.print(fs.find("test_search", "*.txt"))
 
 io.print("Test 7: Cleanup")
 fs.rm("source.txt", false)

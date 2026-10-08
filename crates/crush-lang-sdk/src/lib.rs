@@ -28,6 +28,7 @@ pub mod ai_native;
 pub mod builder;
 pub mod concurrency_native;
 pub mod dom_native;
+pub mod effects;
 pub mod bus;
 pub mod caps;
 pub mod cli;
@@ -43,6 +44,7 @@ pub mod db;
 mod util;
 #[cfg(feature = "graphics")]
 pub mod graphics;
+mod fs_tools;
 pub mod host_caps;
 #[cfg(feature = "net")]
 pub mod net;
