@@ -1,0 +1,107 @@
+name: publish
+
+# Publish the workspace's crates to crates.io from a release tag.
+#
+# How to release: run `release` (bumps the version and pushes tag vX.Y.Z),
+# then run this workflow with "Use workflow from" set to that tag. A tag
+# pushed by release.yml doesn't start this workflow by itself: GitHub doesn't
+# trigger workflows from events made with a workflow's own token. A tag you
+# push by hand does.
+#
+# What gets published: every publishable workspace crate that is already on
+# crates.io, dependencies first, skipping versions already there (so a re-run
+# is safe). scripts/publish-crates.py prints the plan and verifies the whole
+# set with `cargo package` before uploading anything. A crate that has never
+# been published is left out: its first release is a manual
+# `cargo publish -p <crate>`, after which you add Trusted Publishing for it.
+# The run stops before uploading if a crate in the set needs one of those.
+#
+# Auth, in order:
+#   1. crates.io Trusted Publishing (OIDC, no stored secret). Configure it once
+#      per crate on crates.io: crate settings → Trusted Publishing → GitHub,
+#      repository nixpt/crush-ast, workflow publish.yml.
+#   2. Fallback: a CARGO_REGISTRY_TOKEN repository secret (a scoped token,
+#      publish-update only, for this repo's crates).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      verify_auth:
+        description: "Only prove the crates.io Trusted Publishing exchange works (no publish)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # trusted publishing needs the OIDC token
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: refuse to publish from a branch
+        if: inputs.verify_auth != true
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *)
+              echo "::error::publish runs from a release tag (vX.Y.Z), not $GITHUB_REF — pick the tag under 'Use workflow from'"
+              exit 1 ;;
+          esac
+
+      - name: tag must match the workspace version
+        if: inputs.verify_auth != true
+        run: |
+          ver="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::tag v$tag does not match the workspace version $ver"
+            exit 1
+          fi
+          echo "publishing crush-ast $ver"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Before fetching the token: Trusted Publishing tokens expire after 30
+      # minutes, and verifying the whole set builds every crate.
+      - name: plan and verify (no upload)
+        if: inputs.verify_auth != true
+        run: python3 scripts/publish-crates.py
+
+      - name: crates.io trusted publishing token
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+        continue-on-error: true # falls back to the CARGO_REGISTRY_TOKEN secret below
+
+      - name: report trusted publishing status (verify_auth)
+        if: inputs.verify_auth == true
+        env:
+          TP_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          if [ -n "$TP_TOKEN" ]; then
+            echo "trusted publishing OK: crates.io issued a short-lived token to this workflow"
+          else
+            echo "::error::trusted publishing FAILED: crates.io did not issue a token — check each crate's Trusted Publishing config (repo nixpt/crush-ast, workflow publish.yml)"
+            exit 1
+          fi
+
+      - name: publish
+        if: inputs.verify_auth != true
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error::no crates.io credential: configure Trusted Publishing for publish.yml or add a CARGO_REGISTRY_TOKEN secret"
+            exit 1
+          fi
+          python3 scripts/publish-crates.py --publish --verified
