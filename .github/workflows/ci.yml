@@ -105,6 +105,11 @@ jobs:
   # SDK shipped without that gate; nothing ran these tests in CI, so a
   # regression would have shipped the same way. Default features on purpose:
   # that is the feature set `cargo add crush-lang-sdk` gets.
+  #
+  # crush-pkg rides along (CRUSH-172): it sits on top of the SDK, so the extra
+  # cost is its own crate, and until now no job ran its tests at all (`Test
+  # (workspace)` is `--no-run`). Its suite drives the real `crush-pkg` binary
+  # over the example capsules in `examples/crush/capsules/`.
   test-sdk:
     name: Test (sdk)
     runs-on: ubuntu-latest
@@ -121,7 +126,7 @@ jobs:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo test -p crush-lang-sdk --lib --tests 2>&1
+          cargo test -p crush-lang-sdk -p crush-pkg --lib --tests 2>&1
 
   # ── Whole-workspace test build (blocking) ─────────────────────────────────
   # The job that did not exist, and whose absence let a fixed bug come back.

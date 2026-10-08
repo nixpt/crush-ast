@@ -229,6 +229,7 @@ fn diag_record_accepts_all_per_binary_wire_codes() {
         "E-NEW",         // crush-pkg new
         "E-MANIFEST",    // crush-pkg pack/unpack/show
         "E-BUILDER",     // crush-pkg build/check
+        "E-CAPS",        // crush-pkg check capability findings
         "E-RUN",         // crush-pkg run
         "E-SIGN",        // crush-pkg sign/verify/keygen
         "E-SITE",        // crush-pkg site/site-extract

@@ -14,6 +14,22 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush-pkg check` checks capabilities (CRUSH-170).** `check` now
+  compiles the package the way `build` does (entry plus path deps), so an
+  entry that calls a dependency's functions no longer fails it, and then
+  compares the capabilities the program uses with `capsule.toml`'s
+  `[capabilities]`: used but undeclared is an error, a `required` entry
+  nothing uses is a warning, and so is a capability a `platforms = ["web"]`
+  capsule can't get in the browser. Findings are `E-CAPS` records under
+  `--message-format=json`. Ambient capabilities (VM built-ins, the pure
+  stdlib) needn't be declared; families (`"fs"`) and scoped entries
+  (`"fs.read:/x"`) count. Details and blind spots: `crates/crush-pkg/MANIFEST.md`.
+  New APIs: `crush_vm::capabilities_used(&Program)` (every capability name a
+  compiled program can request, from the code reachable from its entry), and
+  `crush_lang_sdk::effects::catalog()` (every capability with its effects and
+  grant; `crush-run caps --json` prints it and now includes the
+  `polyglot.*` gates). `PackageBuilder::check` returns a `CheckReport`.
+
 - **`crush-cson` renamed to `crush-caison`; VM capability `caison.parse` (CRUSH-149).**
   CAISON was renamed from CSON on 2026-09-27 ("CSON" already means
   CoffeeScript Object Notation); the crate and capability now match.

@@ -360,26 +360,18 @@ impl PackageBuilder {
         &self.root_dir
     }
 
-    pub fn check(&self) -> anyhow::Result<()> {
-        let sources = self.collect_all_sources()?;
-        for (path, _) in &sources {
-            let source = std::fs::read_to_string(path)?;
-            let program = crush_lang_sdk::compile::compile_crush_to_casm(&source)?;
-            if program.functions.is_empty() {
-                anyhow::bail!("{}: no functions defined", path.display());
-            }
-            println!("  checked {}", path.display());
-        }
-        let deps = self.resolve_deps()?;
-        for dep in &deps {
-            let program = crush_lang_sdk::compile::compile_crush_to_casm(&dep.source)?;
-            if program.functions.is_empty() {
-                anyhow::bail!("{}: no functions defined", dep.source_file.display());
-            }
-            println!("  checked dep {}", dep.source_file.display());
-        }
-        println!("check passed: {} source(s)", sources.len() + deps.len());
-        Ok(())
+    /// Compile the package exactly as [`build`](Self::build) does (entry +
+    /// path deps, as one program, so an entry that calls a dependency's
+    /// functions checks clean) without writing `target/`, then compare the
+    /// capabilities the program uses with `[capabilities]`
+    /// ([`crate::capcheck`]). Compile errors are `Err`; capability findings
+    /// are in the report, for the caller to print.
+    pub fn check(&self) -> anyhow::Result<crate::capcheck::CheckReport> {
+        let output = self.build()?;
+        let used = crush_vm::capabilities_used(&output.program)
+            .map_err(|e| anyhow::anyhow!("capability inference: {e}"))?;
+        let findings = crate::capcheck::diff(&used, &self.manifest);
+        Ok(crate::capcheck::CheckReport { used, findings })
     }
 
     pub fn build(&self) -> anyhow::Result<BuildOutput> {

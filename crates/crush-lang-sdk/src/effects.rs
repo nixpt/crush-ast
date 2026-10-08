@@ -69,6 +69,103 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
     Some(effects)
 }
 
+/// One capability this build can register: its spec, effects, and the
+/// grant that unlocks it. See [`catalog`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapInfo {
+    pub name: String,
+    pub argc: Option<usize>,
+    pub returns: bool,
+    pub effects: Vec<&'static str>,
+    /// `"portable"` (VM built-in), `"always"` (registered by every
+    /// [`HostCapsBuilder`](crate::HostCapsBuilder)), the stdlib, or the
+    /// `crush run` flag that grants it (`"--fs"`, `"--polyglot"`, …).
+    pub grant: &'static str,
+}
+
+/// The `grant` of the pure standard library in [`catalog`].
+pub const STDLIB_GRANT: &str = "stdlib (default; --no-stdlib)";
+
+impl CapInfo {
+    /// Available without any grant: a VM built-in, always registered, or the
+    /// pure stdlib. Everything else needs a grant from whoever runs the
+    /// program.
+    pub fn is_ambient(&self) -> bool {
+        matches!(self.grant, "portable" | "always" | STDLIB_GRANT)
+    }
+}
+
+/// Every capability this build can register, sorted by name, with its
+/// effects and the grant that unlocks it. A name appears once, under the
+/// first grant that registers it (built-ins, then always, then stdlib, then
+/// the flags). `crush-run caps --json` prints this; `crush-pkg check` uses it
+/// to tell ambient capabilities from granted ones.
+pub fn catalog() -> Vec<CapInfo> {
+    use crate::HostCapsBuilder;
+    let new = HostCapsBuilder::new;
+    #[allow(unused_mut)]
+    let mut grants: Vec<(&'static str, HostCapsBuilder)> = vec![("always", new())];
+    #[cfg(feature = "stdlib")]
+    grants.push((STDLIB_GRANT, new().stdlib(true)));
+    grants.extend([
+        ("--fs", new().fs(true)),
+        ("--env", new().env(true)),
+        ("--time", new().time(true)),
+        ("--bus", new().bus(true)),
+        ("--task", new().task(true)),
+        ("--akg", new().akg(true)),
+        ("--process", new().process(true)),
+        ("--crypto", new().crypto(true)),
+        ("--polyglot", new().polyglot(&["python", "javascript", "bash"])),
+    ]);
+    #[cfg(feature = "graphics")]
+    grants.push(("--graphics", new().graphics(true)));
+    #[cfg(feature = "net")]
+    grants.push(("--net", new().net(true)));
+    #[cfg(feature = "db")]
+    grants.push(("--db PATH", new().db(":memory:")));
+
+    let mut out = std::collections::BTreeMap::new();
+    for spec in crush_vm::capabilities().values() {
+        let effects: &[&str] = match spec.name {
+            "io.print" => &["stdout/write"],
+            "io.read" => &["stdin/read"],
+            _ => &[],
+        };
+        out.insert(
+            spec.name.to_string(),
+            CapInfo {
+                name: spec.name.to_string(),
+                argc: spec.argc,
+                returns: spec.returns,
+                effects: effects.to_vec(),
+                grant: "portable",
+            },
+        );
+    }
+    for (grant, builder) in grants {
+        let caps = builder.build();
+        for name in caps.names() {
+            if out.contains_key(name) {
+                continue;
+            }
+            let cap = caps.get(name).expect("listed name");
+            let spec = cap.spec();
+            out.insert(
+                name.to_string(),
+                CapInfo {
+                    name: spec.name.clone(),
+                    argc: spec.argc,
+                    returns: spec.returns,
+                    effects: cap.effects().unwrap_or_default().to_vec(),
+                    grant,
+                },
+            );
+        }
+    }
+    out.into_values().collect()
+}
+
 /// A handler plus its declared effects; everything else is delegated.
 struct Declared {
     inner: Arc<dyn HostCap>,
@@ -200,6 +297,26 @@ mod tests {
         }
         #[cfg(feature = "net")]
         assert_eq!(effects("net.http_request"), ["net/http"]);
+    }
+
+    #[test]
+    fn catalog_names_each_capability_once_with_its_grant() {
+        let catalog = super::catalog();
+        let get = |n: &str| catalog.iter().find(|c| c.name == n).unwrap_or_else(|| panic!("{n}"));
+        assert!(get("io.print").is_ambient());
+        assert!(get("push").is_ambient());
+        assert!(get("caison.parse").is_ambient());
+        assert_eq!(get("fs.cat").grant, "--fs");
+        assert!(!get("fs.cat").is_ambient());
+        assert_eq!(get("env.get").effects, ["env/read"]);
+        assert_eq!(get("polyglot.python").grant, "--polyglot");
+        #[cfg(feature = "stdlib")]
+        assert!(get("conv.to_str").is_ambient());
+        let names: Vec<_> = catalog.iter().map(|c| c.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(names, sorted, "sorted, no duplicates");
     }
 
     #[test]

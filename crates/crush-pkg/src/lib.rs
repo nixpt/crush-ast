@@ -74,6 +74,7 @@ pub use runners::{CapsuleRunner, CrushRunner, ExecutionResult};
 // terse.
 
 pub mod builder;
+pub mod capcheck; // `crush-pkg check`: used vs declared capabilities (CRUSH-170).
 pub mod ecap; // Underpins [`site`] for static-site capsules.
 pub mod flow; // Build-then-run composition + the Crush-buildable guard.
 pub mod manifest;
