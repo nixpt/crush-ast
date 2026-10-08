@@ -14,6 +14,77 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-08
+
+- Merge pull request #121 from nixpt/agent/foreman/release-0.4-prep
+- docs: cson.parse alias stays until 0.5
+- ci(publish): publish everything not waiting on a first publish; report the rest
+- ci(release): reinstall bump-version with internal-pin rewrite (squadron#122)
+- Merge pull request #120 from nixpt/agent/foreman/publish-workflow
+- ci: publish.yml — publish the workspace to crates.io from a release tag (Trusted Publishing)
+- Merge pull request #119 from nixpt/agent/foreman/doctor-etxtbsy
+- Merge pull request #118 from nixpt/agent/panini/CRUSH-170
+- fix(crush-doctor): retry --version launch while the tool is "text file busy"
+- Merge pull request #117 from nixpt/agent/panini/CRUSH-172
+- Merge remote-tracking branch 'origin/main' into kai/118-update
+- dejavue: record CRUSH-170 decision (inference over CVM1 bytecode)
+- planning: capture flaky doctor version_falls_back_to_stderr (ETXTBSY) found on CRUSH-170 CI
+- feat(crush-pkg): capability inference in `crush-pkg check` (CRUSH-170)
+- feat(crush-pkg): squad-bridge-peek example capsule + run grants (CRUSH-172)
+- Merge pull request #116 from nixpt/kai/merge-wave-s474
+- Merge wave: declare caison.parse's effects
+- Merge wave: make lane A's effects wrapper work with lane B's shared registry
+- TASKS: dedupe the phase-2 board after the merge wave; renumber CRUSH-149 follow-ups
+- Merge remote-tracking branch 'origin/agent/nimbus-b/CRUSH-158' into kai/merge-wave
+- Merge remote-tracking branch 'origin/agent/panini-e/CRUSH-175' into kai/merge-wave
+- Merge remote-tracking branch 'origin/agent/panini-d/CRUSH-171' into kai/merge-wave
+- Merge remote-tracking branch 'origin/agent/nimbus-c/CRUSH-160' into kai/merge-wave
+- Merge remote-tracking branch 'origin/agent/nimbus-a/CRUSH-155' into kai/merge-wave
+- Merge remote-tracking branch 'origin/agent/panini/CRUSH-149' into kai/merge-wave
+- planning: capture missing Crush AI-expression syntax (found CRUSH-158)
+- feat(ai_native): QueryProvider / DelegationBackend + delegation selection (CRUSH-158)
+- feat(ai_native): toolchain strategy engine, each step grant-gated (CRUSH-157)
+- feat(ai_native): caps receive compiled payload + stack operands (CRUSH-156)
+- style: rustfmt crush doctor (CRUSH-175)
+- feat(crush): crush doctor — polyglot runtime health check (CRUSH-175)
+- docs(planning): CRUSH-170 deferred until lane A's caps merge
+- docs(planning): CRUSH-171 evidence + decision
+- feat(crush-pkg): CRUSH-171 manifest category + platforms metadata
+- docs(design): import system, compile pipeline, walker authoring, SBL notes (CRUSH-173)
+- docs(planning): CRUSH-167 evidence + decision
+- feat(crush-pkg): CRUSH-167 bare crush-pkg builds then runs; build/check refuse non-Crush
+- docs(planning): CRUSH-161 evidence, crush-pkg in the publish lane
+- fix(crush-pkg): CRUSH-161 build against crates.io crush-buckets 0.1.0
+- docs(planning): close archive-zip stdlib restore tickets; record C-2/C-3 decisions (CRUSH-169)
+- docs: fix stale exosphere/ecasm references in crush-ast docs (CRUSH-168)
+- docs(planning): CRUSH-160 evidence — commit + PR
+- feat(debugger): grant-gated debugging, redacted value views, event sink (CRUSH-160)
+- feat(vm,sdk): CRUSH-155 — capability effects metadata + crush-run caps --json
+- docs(planning): CRUSH-159 evidence — commit + PR
+- feat(debugger): step over/out and watchpoints on PortableVm (CRUSH-159)
+- docs: CRUSH-154 — decline storage.* (C-6); db.* covers persistence
+- docs(planning): CRUSH-176 evidence — commit + PR
+- fix(crush-vm): PortableVm skipped a jump landing on its own instruction (CRUSH-176, #94)
+- feat(sdk): CRUSH-153 — env.all/env.home_dir, net.http_put/delete/request, deadline-aware HTTP
+- feat(sdk): CRUSH-152 — async.sleep under --time, sharing time.sleep's implementation
+- feat(sdk): CRUSH-151 — fs coreutils and a VM-local fs.cd inside the --fs sandbox
+- feat(sdk): CRUSH-113 — stdlib on by default; --stdlib without the feature is an error
+- feat: rename crush-cson to crush-caison, add caison.parse capability (CRUSH-149)
+- Merge pull request #95 from nixpt/agent/nimbus/CRUSH-150
+- tickets: point CRUSH-55/113/122 at the CRUSH-150 migration inventory
+- tickets: file CRUSH-151..175 phase-2 migration tickets + TASKS rows
+- docs(planning): CRUSH-150 §5 phase-2 order + decisions, §6 dead weight
+- docs(planning): CRUSH-150 §2 stdlib/stdcap/corecap
+- docs(planning): CRUSH-150 §1 module map
+- docs(planning): CRUSH-150 §4 squeeze
+- docs(planning): CRUSH-150 §3 runtimes + captured findings
+- docs(planning): CRUSH-150 migration inventory skeleton + prior-art re-check
+- Merge pull request #93 from nixpt/agent/nimbus/CRUSH-118
+- feat(crush-web): interactive io.read — Session + execute_with stdin (CRUSH-118)
+- feat(crush-vm): host-chosen io.read input source on PortableVm (CRUSH-118)
+
+
+
 - **`crush-pkg check` checks capabilities (CRUSH-170).** `check` now
   compiles the package the way `build` does (entry plus path deps), so an
   entry that calls a dependency's functions no longer fails it, and then

@@ -45,7 +45,7 @@ crate-type = ["cdylib"]
 # Plain-lib dependency: crush-vm is `crate-type = ["lib"]` and must stay so.
 # `no-default-features` mirrors what crush-vm/pyproject.toml used to pass —
 # the wheel never wanted ort/libloading/crush-ffi.
-crush-vm = { path = "../crush-vm", version = "0.3.8", default-features = false }
+crush-vm = { path = "../crush-vm", version = "0.4.0", default-features = false }
 pyo3 = { version = "0.23" }
 
 [features]

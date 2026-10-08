@@ -10,7 +10,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-crush-diagnostics = { path = "../crush-diagnostics", version = "0.3.8" }
+crush-diagnostics = { path = "../crush-diagnostics", version = "0.4.0" }
 # CRUSH-26: explicit `features = ["download-binaries"]` so ort-sys
 # fetches a prebuilt ONNX Runtime at build time on any clean runner
 # (CI's ubuntu-latest has no system onnxruntime). The "Same version

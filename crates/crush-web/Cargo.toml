@@ -26,11 +26,11 @@ crate-type = ["cdylib", "rlib"]
 # compile_crush_source() here does parse + polyglot-marshaling-prep + CASM
 # lowering + casm-to-VM-program assembly in one call — the same pipeline
 # crush-run/crushc use natively, not a separate reimplementation.
-crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.3.8", default-features = false }
+crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.4.0", default-features = false }
 # Core interpreter only — native-only backends (ONNX optimizer, dynamic
 # plugin loading, subprocess capabilities) can't cross the wasm32 boundary;
 # see crush-vm/Cargo.toml's `native-plugins` feature.
-crush-vm = { path = "../crush-vm", version = "0.3.8", default-features = false }
+crush-vm = { path = "../crush-vm", version = "0.4.0", default-features = false }
 
 wasm-bindgen = "0.2"
 serde = { version = "1.0", features = ["derive"] }
