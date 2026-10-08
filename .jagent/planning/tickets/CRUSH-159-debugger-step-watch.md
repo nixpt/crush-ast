@@ -78,3 +78,4 @@ source map (the M3 item already listed under Non-goals).
 - `cargo check -p crush-vm --no-default-features --target wasm32-unknown-unknown`: clean.
 - Live run of `crush-debugger run tests/fixtures/calls.crush` — transcript in the README.
 - Found on the way (captured in TASKS): the debugger never shows the program's own output.
+- Commit: `c2f470f`; PR crush-ast#103 (stacked on #101).
