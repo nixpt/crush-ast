@@ -120,6 +120,14 @@ add its entry after yours.
   sandbox profile no longer names fields that only exist in the unpublished
   buckets checkout. The publish itself is the maintainers' step; see the
   publish lane in `.jagent/planning/tickets/CRUSH-104-publish-lane.md`.
+- **`crush doctor` (CRUSH-175).** Reports whether the interpreters polyglot
+  blocks spawn (`python3`, `node`, `bash` — taken from `EXEC_LANG`'s own
+  allowlist) and the sandbox tools (`bwrap`, `buckets`) are on `PATH`, with
+  their versions, plus this build's polyglot features. `--json` for tooling;
+  exits 1 when a runtime that `crush run --polyglot` grants is missing (`bwrap`
+  counts only in a `sandboxed-polyglot` build). Read-only: it runs `--version`
+  and nothing else. New in `crush-vm`: `resolve_lang_binary` is public and
+  `SANDBOXED_POLYGLOT` reports that feature.
 
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string

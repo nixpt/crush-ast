@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-162 |
 | **Priority** | P4 |
-| **Status** | Backlog |
+| **Status** | Declined (2026-10-07) — captain decision C-2 |
 | **Phase** | M7 |
 | **Assignee** | unassigned |
 | **Dependencies** | decision C-2 |
@@ -40,3 +40,10 @@ crush-ast has no Lua. nanovm ran Lua in-process (mlua, restricted stdlib `STRING
 ## Source (reference only — re-implement, don't copy)
 
 - exo `crates/core/vm/nanovm/src/polyglot/builtin_executors.rs`
+
+## Resolution — Declined (2026-10-07, captain decision C-2, recorded by CRUSH-169)
+
+Captain s474 (recorded on crush-ast#95): **no in-process Lua.** Do not reintroduce `mlua` or any
+Lua runtime unless someone explicitly asks for it. Polyglot execution stays on the `EXEC_LANG`
+subprocess path (+ buckets sandboxing). If a consumer ever asks, reopen this ticket — its success
+criteria above are still the right bar (restricted stdlib, `polyglot.lua` gate, refusal test).

@@ -728,4 +728,14 @@ Captain C-4 = fold. Bare crush-pkg was a clap error, so making the subcommand op
 
 Reason:
 Re-implemented from the crush-capsules sketch's idea, not its scheme: the sketch's 6 categories were exosphere-desktop shaped (system-service, core-utility…) and its platform model was web_compatible/desktop_only booleans + a [platform] table. crush-pkg capsules are Crush/Script/Native file manifests, so: category ∈ {cli, library, app, service, game, dev-tool, language, example} and platforms ⊆ {linux, macos, windows, web} where web = crush-web's wasm VM. Both live under [capsule] as String/Vec<String> (not enums) so serde never rejects before validate() can name the known values. Unknown values hard-error (ticket asks for validation); old sketch names auto-migrate like the manifest's other legacy keys; empty platforms = no claim. Only real cross-field rule: web requires a Crush capsule (the browser can't run python/node/native). platforms is NOT checked against used capabilities — that is CRUSH-170 territory.
+## 2026-10-07T20:59:25-05:00 — CRUSH-169: close the exosphere-1.0.zip stdlib restore (CRUSH-56/57/88-97/108) as superseded
+
+Reason:
+The zip's stdlib is the same crate as exosphere's live tree (archived-stdlib an older snapshot); CRUSH-122 already restored the clean families from the live tree with tests; the 46 'mock-tainted' caps map exactly onto families MIGRATION-INVENTORY 2.2 classifies dead/out (polyglot bridge, ai/agent/learn mocks, dom, task, data.*). Genuine remainder = CRUSH-151..155. Same PR records captain s474 decisions: CRUSH-162 declined (C-2, no Lua unless someone asks), CRUSH-163 deferred to CRUSH-77 (C-3), CRUSH-174 superseded by crushlang.org/playground + CRUSH-118; CRUSH-154 declined (C-6) is recorded by lane A (#102). Ticket files kept for history, not deleted.
+
+
+## 2026-10-07T21:11:37-05:00 — CRUSH-175: crush doctor reads EXEC_LANG's allowlist; required = what --polyglot grants
+
+Reason:
+doctor must check exactly the binaries EXEC_LANG will spawn, so crush-vm's resolve_lang_binary went pub (was pub(crate)) instead of a second hard-coded table in crush-lang-sdk; a public SANDBOXED_POLYGLOT const reports the crush-vm feature, which crush-lang-sdk cannot see via cfg. Exit 1 iff python3/node/bash (the set crush run --polyglot grants) is missing; bwrap counts only in a sandboxed-polyglot build (it is what bucket_exec spawns); the buckets CLI is informational (the VM uses the buckets library). Implemented in the crush umbrella itself, since there is no sibling tool to dispatch to.
 

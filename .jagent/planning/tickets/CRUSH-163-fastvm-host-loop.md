@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-163 |
 | **Priority** | P4 |
-| **Status** | Backlog |
+| **Status** | Deferred (2026-10-07) — captain decision C-3, decide with CRUSH-77 |
 | **Phase** | M2 |
 | **Assignee** | unassigned |
 | **Dependencies** | decision C-3 |
@@ -18,7 +18,7 @@
 
 ## Success criteria
 
-- [ ] decision C-3 recorded
+- [x] decision C-3 recorded (deferred — see Resolution)
 - [ ] if go: a host loop servicing every yield kind through `HostCaps`, parity with CVM1 under the differential harness (CRUSH-77)
 - [ ] nanovm AI spellings accepted as lowerer aliases
 - [ ] watchdog/restart either serviced with tests or rejected at lowering with a clear error
@@ -39,3 +39,9 @@
 ## Source (reference only — re-implement, don't copy)
 
 - exo `crates/core/vm/nanovm/src/vm/mod.rs:932-1080`; nanovm `tests/supervision_tests.rs` (ancestor)
+
+## Resolution — Deferred (2026-10-07, captain decision C-3, recorded by CRUSH-169)
+
+Captain s474 (recorded on crush-ast#95): **deferred to CRUSH-77** (the four-engine differential).
+CVM1 is the production engine; whether FastVM is a sanctioned engine that needs a host loop gets
+decided there. Do not start this ticket before CRUSH-77 settles FastVM's status.

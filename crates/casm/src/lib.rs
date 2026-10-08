@@ -768,6 +768,5 @@ mod tests {
     }
 
     // VER-02 CASM version-gate tests live in `tests/ver02_version_gate.rs`
-    // (an integration test) so they compile against the public API and dodge
-    // the pre-existing uncompilable `ecasm.rs` inline tests (see EXO-151).
+    // (an integration test) so they exercise only the public API.
 }

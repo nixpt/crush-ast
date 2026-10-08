@@ -1,6 +1,8 @@
 # crush-cast — Status & Design Notes
 
-Last reviewed: 2026-05-28
+Last reviewed: 2026-10-07 (CRUSH-168). Sections below that describe the
+pre-extraction exosphere tree were rewritten for crush-ast; history of where
+things came from is in `docs/planning/MIGRATION-INVENTORY.md`.
 
 ---
 
@@ -8,18 +10,12 @@ Last reviewed: 2026-05-28
 
 | | |
 |---|---|
-| Version | `1.0.0` |
-| Published to crates.io | **No** |
-| Blocker | `crush-errors = { path = "../base/errors" }` — path dep prevents `cargo publish` |
-| Unblock sequence | Publish `crush-errors` → publish `crush-cast` → freeze schema |
+| Version | workspace version (`version.workspace = true`, see root `Cargo.toml`) |
+| Published to crates.io | **Yes** — `crush-cast` (with `crush-errors`) |
+| Wire format version | `CAST_VERSION` in `src/pack.rs` (separate from the crate version) |
 
-Until published, all consumers must use a workspace path dep. The "CAST as
-open contract" value prop (external tools generating CAST JSON) is not
-deliverable until the crate is on crates.io with a stable version.
-
-Note: crush-lang (`v0.1.0`) is also unpublished and has additional path deps
-(`casm`, `nanovm`). crush-cast's publication path does not require crush-lang
-to publish first.
+External tools can depend on `crush-cast` from crates.io; inside this
+workspace it is a `workspace = true` dependency like every other internal crate.
 
 ---
 
@@ -36,8 +32,9 @@ CAST without touching Rust. Two codegen binaries ship with the crate:
 - `export-ts` — TypeScript bindings via `ts-rs` (`--features ts-export`)
 - `export-py` — Python dataclasses
 
-`crush-lang`'s `ast.rs` is `pub use crush_cast::*` — the compiler imports the
-schema wholesale rather than defining its own AST.
+`crush-frontend` uses `crush_cast` types directly (`parse_source` returns a
+`crush_cast::Program`, `compile_cast` takes one) — the compiler has no AST of
+its own.
 
 ---
 
@@ -55,14 +52,16 @@ foreign source with variable injection metadata. Walker crates execute it in a
 sandbox at runtime. No cross-VM interop complexity.
 
 **Security flows through the IR.**  
-`Capability` import nodes declare required permissions. crush-lang's `Compiler`
-collects all permissions into a `Manifest` in the CASM output. The runtime
+`Capability` import nodes declare required permissions. `crush-frontend`'s
+compiler collects them into the `Manifest` of the CASM output. The runtime
 checks the manifest before granting access. The chain is:
 `source → compile-time collection → runtime enforcement`.
 
 **JSON round-trip is the contract.**  
-A Python or TypeScript tool can generate CAST JSON and pass it to
-`crush-lang --from-cast` for compilation. This is the intended integration
+A Python or TypeScript tool can generate CAST JSON; a Rust host deserializes
+it into `crush_cast::Program` and compiles it with
+`crush_frontend::compile_cast`. (There is no CLI flag that reads CAST JSON
+today — `crushc --emit ast` only dumps it.) This is the intended integration
 path for external code generators and AI-assisted code synthesis.
 
 ---
@@ -88,48 +87,37 @@ For the CASM bytecode output schema (the compiled form), see `SCHEMA.md`.
 
 - No execution logic — pure data + serde
 - No CASM bytecode — lives in the `casm` crate
-- No runtime — nanovm is separate
-- No stdlib — the Crush stdlib lives at `crates/core/base/stdlib/` (live
-  workspace member; see "stdlib status" below)
+- No runtime — `crush-vm` (CVM1 scheduler, PortableVm, FastVM) is separate
+- No stdlib — see below
 
 ---
 
-## stdlib status (correction, 2026-05-28 foreman)
+## Where the stdlib lives
 
-**The Crush stdlib is alive and well**, not archived. The earlier note in
-this file ("stdlib is archived, nanovm API mismatch") was incorrect.
+The Crush standard library is part of `crush-lang-sdk`, not this crate:
 
-- **Live stdlib:** `crates/core/base/stdlib/` (workspace member; 27+ modules
-  including `str`, `collections`, `math`, `regex`, `path`, `fs`, `http`,
-  `env`, `dom`, `polyglot_bridge`, `ai_capabilities`, `async_cap`, `time_cap`).
-- **Live bundling layer:** `crates/capabilities/corecaps/` — exposes
-  `register_corecaps()` to install every namespace into a `nanovm::Registry`
-  in one call.
-- **Capability categorization:** every namespace is classified as either
-  `stdcap` (pure utilities: str/collections/math/json/conv/path/regex/bytes/
-  buffer/binary/result/data) or `corecap` (system access: env/time/http/fs/
-  text/storage/task/gfx/ai/agent/learn/async/polyglot/python/js/dom).
-- **Archived stdlib:** `archive/archived-stdlib/` — historical, retained
-  for reference. The live stdlib superseded it. `corecaps/src/lib.rs`
-  notes: "Follows the namespace layout from
-  `archive/archived-stdlib/src/create_std_registry.rs`".
+- **stdcaps** (pure: `str`, `collections`, `math`, `conv`, `json`, `path`,
+  `regex`, `bytes`/`buffer`/`binary`, `result`, `text.sort/uniq`,
+  `time.format/parse`, `env.os/arch`) — `crates/crush-lang-sdk/src/stdlib.rs`
+  and `crates/crush-lang-sdk/src/stdlib/`, registered by
+  `HostCapsBuilder::stdlib(true)` (cargo feature `stdlib`).
+- **`system.*`** (the System Bytecode Layer, written in Crush) —
+  `crates/crush-lang-sdk/sbl/sbl_core.crush`, run by `src/sbl.rs`.
+- **corecaps** (I/O behind a named grant: `fs.*`, `time.now/sleep`, `env.get`,
+  `net.*`, `text.head/tail/...`) — `crates/crush-lang-sdk/src/host_caps.rs`,
+  `src/text_tools.rs`, `src/net.rs`.
 
-What Crush programs import today: the live `stdlib` namespaces via
-`corecaps::register_corecaps()` (the canonical install path) or via direct
-namespace import.
+The stdcap/corecap split, and what was (and was not) carried over from the
+exosphere stdlib this one replaced, is in
+[`docs/planning/MIGRATION-INVENTORY.md`](../../docs/planning/MIGRATION-INVENTORY.md) §2.
 
 ---
 
-## Open questions (as of 2026-05-28)
+## Open questions
 
-- ✅ **`SecureEnv` decryption at runtime — RESOLVED s221 2026-05-28: Option B
-  (pre-loaded keyring) ratified by captain.** Capsule receives decrypted env at
-  spawn via `secure_env::SecureEnvBuilder` + `load_keys_to_env(&keys)`; capability
-  gate on `secrets.read` is the consent layer. Pattern already in production for
-  AI agent capsules at `crates/ai/core/agent-core/src/factory.rs:88-112`; EXO-143
-  generalizes it to all CAST `SecureEnv` imports. The `SecureEnv { keys, alias,
-  db_path }` variant matches Option B as-is — no schema change required.
-  Implementation is a separate follow-up ticket. See `TASKS.md` EXO-143 +
-  `.dejavue/decisions.md`.
-- `meta` field key naming: is there a standardized scheme for source
-  location, type hints, etc.? (Tracked as EXO-144.)
+- `SecureEnv` runtime decryption was settled in exosphere (pre-loaded keyring,
+  gated on a `secrets.read` grant); nothing in crush-ast implements it yet. The
+  `SecureEnv { keys, alias, db_path }` variant needs no schema change for that
+  design.
+- `meta` field key naming: there is no standardized scheme for source
+  location, type hints, etc. yet.
