@@ -180,16 +180,34 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
+/// Start `<path> --version`, retrying briefly while the file is "text file
+/// busy" (ETXTBSY): exec fails that way while any process still has the file
+/// open for writing — a tool mid-upgrade, or, in tests, a just-written script
+/// whose write descriptor a concurrently forked child inherited until its exec.
+fn spawn_version(path: &Path) -> Option<std::process::Child> {
+    let mut attempts = 0;
+    loop {
+        match Command::new(path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => return Some(child),
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 => {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// Run `<path> --version` and keep the first non-empty line of stdout (or
 /// stderr — some tools print it there). Killed after [`VERSION_TIMEOUT`].
 fn probe_version(path: &Path) -> Option<String> {
-    let mut child = Command::new(path)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+    let mut child = spawn_version(path)?;
     let pid = child.id();
     let stdout = child.stdout.take()?;
     let stderr = child.stderr.take()?;
