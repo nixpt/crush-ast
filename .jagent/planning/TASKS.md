@@ -223,7 +223,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **CRUSH-153** (S (~30 turns), lane A4): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
 - [ ] **CRUSH-154** (S (~40 turns), lane A5 🔒): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
 - [ ] **CRUSH-155** (S (~20 turns), lane A6): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)
-- [ ] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
+- [x] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
 - [ ] **CRUSH-157** (M (~60 turns), lane B2): `ai_native.toolchain` strategy engine. [ticket](tickets/CRUSH-157-ai-toolchain-engine.md)
 - [ ] **CRUSH-158** (S (~30 turns), lane B3): `QueryProvider` / `DelegationBackend` traits + delegation selection. [ticket](tickets/CRUSH-158-ai-provider-traits.md)
 - [ ] **CRUSH-159** (M (~70 turns), lane C1): Debugger: step over/out and watchpoints over `PortableVm`. [ticket](tickets/CRUSH-159-debugger-step-watch.md)
@@ -340,3 +340,6 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **issue** — exosphere capsule-ui crates/platform/sdk/capsule-ui/src/crush/crush-markup.tsx:175 passes raw html prop to dangerouslySetInnerHTML with no sanitizer despite header claiming 'safely' — XSS risk; exosphere-owned (found by CRUSH-150 scout)  _(nimbus-scout, 2026-10-07)_
 - [ ] **issue** — EXO-194 hazard 1 has happened: exosphere Cargo.lock holds both in-tree casm 0.1.0 and crates.io casm 0.3.0 (via exo-light -> crush-vm 0.3.6), plus two crush-errors; exo-light also lags crush-ast 0.3.9 (found by CRUSH-150)  _(nimbus-scout, 2026-10-07)_
 - [ ] **gap** — crush-debugger README.md:11,43 and lib.rs:27 still describe todo!() hook points that no longer exist (session.rs:346 replaced them) — stale docs  _(nimbus-scout, 2026-10-07)_
+- [ ] **issue** — FastVM lowering (fastvm/instructions.rs) and AOT codegen (crush-aot codegen.rs/codegen_c.rs) match ai_toolchain/ai_goal_declaration/ai_knowledge_sharing but crush-frontend emits ai_tool_chain/ai_goal_decl/ai_knowledge_share, so those three AI ops never lower on FastVM/AOT (found CRUSH-156)  _(nimbus-b, 2026-10-07)_
+- [ ] **gap** — FastVM AI ops (execution.rs) and AOT make_ai_stub don't pop the stack operands the frontend pushes for context_aware/semantic_match/synthesize, and AOT pushes a value for statement-form AI ops (goal/progress/knowledge) — stack imbalance vs CVM1 after CRUSH-156; FastVM can't service stack-operand kinds in resolve_host_request  _(nimbus-b, 2026-10-07)_
+- [ ] **gap** — ai_semantic_switch / ai_capability_discovery / ai_adaptation_request still lower to NOP in crush-lang-sdk compile.rs; semantic_switch's compiled target is left on the stack and its case table is never consulted (found CRUSH-156)  _(nimbus-b, 2026-10-07)_

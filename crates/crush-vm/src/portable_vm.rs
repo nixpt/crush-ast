@@ -1192,19 +1192,33 @@ impl PortableVm {
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
             | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
-                // CRUSH-32: gate the AI opcodes through `self.host_caps.get("ai_native.<kind>")`
-                // (mirrors scheduler.rs — see that file for the rationale).
+                // CRUSH-32/156: gate the AI opcodes through `self.host_caps.get("ai_native.<kind>")`
+                // with payload + stack operands (mirrors scheduler.rs; contract in `crate::ai_args`).
                 let kind = crate::bytecode::ai_native_kind_for_opcode(opcode)
                     .expect("AI opcode byte in combined match arm must map to a known kind");
-                let gate = format!("ai_native.{kind}");
-                let value = match self.host_caps.as_ref().and_then(|h| h.get(&gate)) {
-                    Some(handler) => handler
-                        .call(vec![])
-                        .ok()
-                        .flatten()
-                        .unwrap_or(Value::Null),
-                    None => Value::Null,
-                };
+                let idx = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                let raw = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?;
+                let payload = crate::ai_args::parse_payload(raw)?;
+                let n = crate::ai_args::stack_argc(&payload);
+                if self.stack.len() < n {
+                    return Err(VmError::StackUnderflow);
+                }
+                let operands = self.stack.split_off(self.stack.len() - n);
+                let value = crate::ai_args::dispatch(
+                    kind,
+                    &payload,
+                    operands,
+                    self.host_caps.as_ref(),
+                    self.quotas.max_wall_time_ms,
+                )?;
                 self.push(value);
             }
             // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.

@@ -84,23 +84,25 @@ fn stub_map(kind: &str, args: &[Value]) -> Value {
     Value::Map(Rc::new(RefCell::new(obj)))
 }
 
-/// Single-cap declaration. `argc: Some(0)` (each AI cap takes no stack
-/// args today; the JSON payload is carried inline at bytecode parse time,
-/// not via VM stack — real backends can override this later by registering
-/// a different impl under the same gate); `returns: true` (always pushes
-/// the stub Map onto the VM stack).
+/// Single-cap declaration. CRUSH-156: a cap receives `[payload, operands…]`
+/// (`crush_vm::ai_args`) — the compiled payload Map, then the values the
+/// frontend pushed for that kind — so `argc` is `1` for payload-only kinds,
+/// `2` for `context_aware` (wrapped expression) and `semantic_match`
+/// (target), and variadic (`None`) for `synthesize` (context refs +
+/// examples). `returns: true` (always pushes the stub Map onto the VM
+/// stack). Real backends replace these by registering under the same gate.
 ///
 /// `HostCap::spec` returns OWNED `HostCapSpec` (per the actual trait
 /// signature in `crush-vm/src/host.rs`), so no static caching / `Box::leak`
 /// dance needed — each call produces a fresh owned value.
 macro_rules! ai_native_cap {
-    ($name:ident, $kind:literal) => {
+    ($name:ident, $kind:literal, $argc:expr) => {
         pub struct $name;
         impl HostCap for $name {
             fn spec(&self) -> HostCapSpec {
                 HostCapSpec {
                     name: format!("ai_native.{}", $kind),
-                    argc: Some(0),
+                    argc: $argc,
                     returns: true,
                 }
             }
@@ -114,16 +116,16 @@ macro_rules! ai_native_cap {
     };
 }
 
-ai_native_cap!(AiNativeQueryCap, "query");
-ai_native_cap!(AiNativeSynthesizeCap, "synthesize");
-ai_native_cap!(AiNativeAgentDelegationCap, "agent_delegation");
-ai_native_cap!(AiNativeSemanticMatchCap, "semantic_match");
-ai_native_cap!(AiNativeLearningLoopCap, "learning_loop");
-ai_native_cap!(AiNativeContextAwareCap, "context_aware");
-ai_native_cap!(AiNativeToolchainCap, "toolchain");
-ai_native_cap!(AiNativeGoalDeclarationCap, "goal_declaration");
-ai_native_cap!(AiNativeProgressUpdateCap, "progress_update");
-ai_native_cap!(AiNativeKnowledgeSharingCap, "knowledge_sharing");
+ai_native_cap!(AiNativeQueryCap, "query", Some(1));
+ai_native_cap!(AiNativeSynthesizeCap, "synthesize", None);
+ai_native_cap!(AiNativeAgentDelegationCap, "agent_delegation", Some(1));
+ai_native_cap!(AiNativeSemanticMatchCap, "semantic_match", Some(2));
+ai_native_cap!(AiNativeLearningLoopCap, "learning_loop", Some(1));
+ai_native_cap!(AiNativeContextAwareCap, "context_aware", Some(2));
+ai_native_cap!(AiNativeToolchainCap, "toolchain", Some(1));
+ai_native_cap!(AiNativeGoalDeclarationCap, "goal_declaration", Some(1));
+ai_native_cap!(AiNativeProgressUpdateCap, "progress_update", Some(1));
+ai_native_cap!(AiNativeKnowledgeSharingCap, "knowledge_sharing", Some(1));
 
 #[cfg(test)]
 mod tests {
@@ -252,10 +254,13 @@ mod tests {
     }
 
     #[test]
-    fn spec_includes_argc_zero_and_returns_true() {
+    fn spec_declares_real_argc_and_returns_true() {
         let spec = AiNativeQueryCap.spec();
-        assert_eq!(spec.argc, Some(0));
+        assert_eq!(spec.argc, Some(1));
         assert!(spec.returns);
         assert_eq!(spec.name, "ai_native.query");
+        assert_eq!(AiNativeContextAwareCap.spec().argc, Some(2));
+        assert_eq!(AiNativeSemanticMatchCap.spec().argc, Some(2));
+        assert_eq!(AiNativeSynthesizeCap.spec().argc, None);
     }
 }

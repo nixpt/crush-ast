@@ -14,6 +14,18 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`ai_native.*` caps receive their compiled arguments (CRUSH-156).** Each
+  AI opcode now calls its cap with `[payload, operands…]`: the compiled
+  payload as a map, then the values the frontend pushed for that kind
+  (`context_aware`'s expression, `semantic_match`'s target, `synthesize`'s
+  context refs and examples). Specs declare real arities (1, 2, or variadic
+  for `synthesize`). Crush programs compiled to CVM1 now execute the ten AI
+  ops (they were lowered to `NOP`); statement forms pop their result.
+  Ungranted ops still yield `null`, operands consumed. FastVM's
+  `resolve_host_request` passes the payload through the same contract
+  (`crush_vm::ai_args`) and returns map results as JSON text. Tool lists
+  carry `required_capability`, and the `fallback` policy carries its tools.
+
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the

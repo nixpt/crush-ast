@@ -499,11 +499,50 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 // Stubs for unimplemented opcodes — prevent bailing
                 "new_struct" => "NEW_OBJ".to_string(),
                 "dom_mutate" | "dom_event_listener" | "dom_query" => "NOP".to_string(),
-                "ai_goal_decl" | "ai_progress_update" | "ai_knowledge_share" => "NOP".to_string(),
+                // CRUSH-156: the ten `ai_native.*` kinds lower to their AI
+                // opcode with the compiled payload as the string operand
+                // (`crush_vm::ai_args` is the contract). Statement forms
+                // push the cap's result like the expression forms, so a POP
+                // follows to keep the stack balanced.
+                "ai_query"
+                | "ai_tool_chain"
+                | "ai_toolchain"
+                | "ai_agent_delegation"
+                | "ai_learning_loop"
+                | "ai_context_aware"
+                | "ai_synthesize"
+                | "ai_semantic_match"
+                | "ai_goal_decl"
+                | "ai_goal_declaration"
+                | "ai_progress_update"
+                | "ai_knowledge_share"
+                | "ai_knowledge_sharing" => {
+                    let (opcode, statement) = match instr.op.as_str() {
+                        "ai_query" => ("AI_QUERY", false),
+                        "ai_tool_chain" | "ai_toolchain" => ("AI_TOOLCHAIN", false),
+                        "ai_agent_delegation" => ("AI_AGENT_DELEGATION", false),
+                        "ai_learning_loop" => ("AI_LEARNING_LOOP", false),
+                        "ai_context_aware" => ("AI_CONTEXT_AWARE", false),
+                        "ai_synthesize" => ("AI_SYNTHESIZE", false),
+                        "ai_semantic_match" => ("AI_SEMANTIC_MATCH", false),
+                        "ai_goal_decl" | "ai_goal_declaration" => ("AI_GOAL_DECLARATION", true),
+                        "ai_progress_update" => ("AI_PROGRESS_UPDATE", true),
+                        _ => ("AI_KNOWLEDGE_SHARING", true),
+                    };
+                    let payload = serde_json::to_string(&instr.args).map_err(|e| {
+                        anyhow::anyhow!(
+                            "{}: failed to serialize args at {fname}:{i}: {e}",
+                            instr.op
+                        )
+                    })?;
+                    if statement {
+                        format!("{opcode} {payload:?}\n    POP")
+                    } else {
+                        format!("{opcode} {payload:?}")
+                    }
+                }
                 "ai_capability_discovery" | "ai_adaptation_request" => "NOP".to_string(),
-                "ai_query" | "ai_tool_chain" | "ai_agent_delegation" => "NOP".to_string(),
-                "ai_learning_loop" | "ai_context_aware" => "NOP".to_string(),
-                "ai_synthesize" | "ai_semantic_match" | "ai_semantic_switch" => "NOP".to_string(),
+                "ai_semantic_switch" => "NOP".to_string(),
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));
