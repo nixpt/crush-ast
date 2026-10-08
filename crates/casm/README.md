@@ -19,7 +19,7 @@ Source Code (Crush/Python/JS/etc.)
        ↓
    CASM (Bytecode)  ← This crate
        ↓
-   NanoVM
+   crush-vm (CVM1 / PortableVm / FastVM), crush-jit, crush-aot
 ```
 
 ## Instruction Set

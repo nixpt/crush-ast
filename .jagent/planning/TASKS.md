@@ -235,7 +235,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [ ] **CRUSH-165** (S (~30 turns), lane F): CVM1 execution transcript (hash-chained), feature-gated (optional). [ticket](tickets/CRUSH-165-cvm1-execution-transcript.md)
 - [ ] **CRUSH-166** (S (~15 turns), lane F): Design note: guest→host capability callbacks during `EXEC_LANG`. [ticket](tickets/CRUSH-166-exec-lang-callback-design.md)
 - [ ] **CRUSH-167** (S (~40 turns), lane D2 🔒): Fold squeeze's build-then-run flow into crush-pkg (decision-gated). [ticket](tickets/CRUSH-167-fold-squeeze-into-crush-pkg.md)
-- [ ] **CRUSH-168** (XS (~15 turns), lane E1): Fix stale in-code docs pointing at exosphere/ecasm. [ticket](tickets/CRUSH-168-stale-cross-repo-docs.md)
+- [x] **CRUSH-168** (XS (~15 turns), lane E1, panini-e — PR pending): Fix stale in-code docs pointing at exosphere/ecasm. [ticket](tickets/CRUSH-168-stale-cross-repo-docs.md)
 - [ ] **CRUSH-169** (XS (~10 turns), lane E2): Close the archive-zip stdlib restoration tickets as superseded. [ticket](tickets/CRUSH-169-close-superseded-stdlib-restore.md)
 - [ ] **CRUSH-170** (M (~60 turns), lane D3): Capability inference: diff used vs declared caps (`crush-pkg check`). [ticket](tickets/CRUSH-170-capability-inference-check.md)
 - [ ] **CRUSH-171** (S (~25 turns), lane D4): Package manifest category / platform metadata. [ticket](tickets/CRUSH-171-manifest-category-metadata.md)

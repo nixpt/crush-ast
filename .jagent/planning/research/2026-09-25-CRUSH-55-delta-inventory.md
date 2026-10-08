@@ -1,5 +1,11 @@
 # CRUSH-55 — exosphere ↔ crush-ast delta inventory
 
+> **Superseded as the working map (2026-10-07):** the verdicts below were re-checked and extended to
+> the ancestor repos, crush-capsules, the stdlib/stdcap/corecap split and squeeze in
+> [`docs/planning/MIGRATION-INVENTORY.md`](../../../docs/planning/MIGRATION-INVENTORY.md) (CRUSH-150),
+> which also carries the phase-2 ticket order. exosphere's own `docs/crush/EXO-205-*.md` divergence
+> inventory is superseded by this one and stays in exosphere as history.
+
 **Date:** 2026-09-25 · **Trees:** `exo:` = nixpt/exosphere @ `8d52996`; `ast:` = crush-ast @ `868be4f`
 (`claude/stdlib-nanovm-crush-ast-port-477gv7`, i.e. main `11396b2` + CRUSH-122) · **Method:** read-only
 diffs, symbol-set comparisons and consumer greps across both trees; nothing built or run unless a
