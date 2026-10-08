@@ -212,7 +212,7 @@ impl HostCapsBuilder {
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
         caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::new()));
-        // Deprecated pre-rename name; removed in 0.4 (CRUSH-149).
+        // Deprecated pre-rename name; removed in 0.5 (CRUSH-149).
         caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::deprecated_alias()));
         caps.grant_polyglot(&self.polyglot);
         if self.fs {

@@ -48,7 +48,7 @@ add its entry after yours.
   `CsonParseCap` → `CaisonParseCap`); `crush_cast::cson` → `crush_cast::caison`.
   Migration: depend on `crush-caison`; call `caison.parse` from Crush.
   `crush_cast::cson` (a `#[deprecated]` module) and the `cson.parse`
-  capability (same handler) keep working until 0.4. The `crush-cson` crate
+  capability (same handler) keep working until 0.5. The `crush-cson` crate
   name is retired: `crates/crush-cson-shim` publishes a final `crush-cson`
   that only re-exports `crush-caison`. Mechanical rename — no change to the
   value mapping or parser.

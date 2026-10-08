@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 pub mod ai;
 pub mod caison;
-/// Deprecated alias for [`caison`] (renamed from CSON; removed in 0.4).
+/// Deprecated alias for [`caison`] (renamed from CSON; removed in 0.5).
 #[deprecated(note = "renamed to crush_cast::caison")]
 pub mod cson {
     pub use super::caison::*;

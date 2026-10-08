@@ -7,7 +7,7 @@
 //! full so downstream code that used to reach them through `crush_caison::*`
 //! keeps compiling. `crush-caison` itself now carries only the Crush-specific
 //! VM host capability ([`vm_cap::CaisonParseCap`], registered as `caison.parse`;
-//! `cson.parse` stays as a deprecated alias until 0.4, CRUSH-149).
+//! `cson.parse` stays as a deprecated alias until 0.5, CRUSH-149).
 //!
 //! `caison` diverged from this crate's original fork (spec fixes, printer
 //! rewrite, metadata-order changes) — consult `caison`'s own docs, not this

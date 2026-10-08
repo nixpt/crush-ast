@@ -8,7 +8,7 @@ use caison::{CaisonNode, CaisonValue};
 /// Capability name for CAISON parsing.
 pub const CAP_NAME: &str = "caison.parse";
 /// Deprecated pre-rename capability name (CSON → CAISON); same handler.
-/// Removed in 0.4.
+/// Removed in 0.5.
 pub const DEPRECATED_CAP_NAME: &str = "cson.parse";
 
 /// Exposes the `caison.parse` capability to Crush VM.
