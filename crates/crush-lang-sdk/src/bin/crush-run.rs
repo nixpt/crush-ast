@@ -39,7 +39,12 @@ enum Commands {
     Run(RunArgs),
 
     /// List built-in portable capabilities.
-    Caps,
+    Caps {
+        /// Print every capability as JSON (name, argc, returns, effects, and
+        /// the grant that unlocks it) instead of the human-readable list.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -143,7 +148,8 @@ fn main() {
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
     match cli.command {
-        Commands::Caps => list_caps(),
+        Commands::Caps { json: false } => list_caps(),
+        Commands::Caps { json: true } => list_caps_json(),
         Commands::Run(args) => {
             if let Err(e) = run_file(&args) {
                 match args.message_format {
@@ -198,6 +204,70 @@ impl std::error::Error for CompileFailed {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.0.source()
     }
+}
+
+/// `crush-run caps --json`: every capability this build can register, with
+/// its effects (CRUSH-155) and the flag that grants it.
+fn list_caps_json() {
+    use crush_lang_sdk::HostCapsBuilder;
+    let new = HostCapsBuilder::new;
+    #[allow(unused_mut)]
+    let mut grants: Vec<(&str, HostCapsBuilder)> = vec![
+        ("always", new()),
+        ("stdlib (default; --no-stdlib)", new().stdlib(true)),
+        ("--fs", new().fs(true)),
+        ("--env", new().env(true)),
+        ("--time", new().time(true)),
+        ("--bus", new().bus(true)),
+        ("--task", new().task(true)),
+        ("--akg", new().akg(true)),
+        ("--process", new().process(true)),
+        ("--crypto", new().crypto(true)),
+    ];
+    #[cfg(feature = "graphics")]
+    grants.push(("--graphics", new().graphics(true)));
+    #[cfg(feature = "net")]
+    grants.push(("--net", new().net(true)));
+    #[cfg(feature = "db")]
+    grants.push(("--db PATH", new().db(":memory:")));
+
+    let mut out = std::collections::BTreeMap::new();
+    for spec in crush_vm::capabilities().values() {
+        let effects: &[&str] = match spec.name {
+            "io.print" => &["stdout/write"],
+            "io.read" => &["stdin/read"],
+            _ => &[],
+        };
+        out.insert(
+            spec.name.to_string(),
+            serde_json::json!({
+                "name": spec.name, "argc": spec.argc, "returns": spec.returns,
+                "effects": effects, "grant": "portable",
+            }),
+        );
+    }
+    for (grant, builder) in grants {
+        let caps = builder.build();
+        for name in caps.names() {
+            if out.contains_key(name) {
+                continue;
+            }
+            let cap = caps.get(name).expect("listed name");
+            let spec = cap.spec();
+            out.insert(
+                name.to_string(),
+                serde_json::json!({
+                    "name": spec.name, "argc": spec.argc, "returns": spec.returns,
+                    "effects": cap.effects(), "grant": grant,
+                }),
+            );
+        }
+    }
+    let list: Vec<_> = out.into_values().collect();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&list).expect("serializable")
+    );
 }
 
 fn list_caps() {

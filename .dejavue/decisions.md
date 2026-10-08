@@ -697,3 +697,9 @@ The ticket asked for http_put/delete/request with 'the same timeout/deadline beh
 Reason:
 Decision C-6 (captain s474). exosphere's handle-based storage.open/read/write/size/close would add a new kind of per-VM state (handle scoping, cleanup on drop, use-after-close) across all five backends for a family with no Crush consumer; db.query/db.execute (--db PATH) and fs.* (--fs) already cover persistence. Mapping in docs/design/storage-caps-declined.md; reopen only for a consumer db/fs can't serve, behind its own --store grant.
 
+
+## 2026-10-07T20:41:09-05:00 — CRUSH-155: capability effects are a defaulted HostCap::effects() method plus one SDK table, not a HostCapSpec field
+
+Reason:
+HostCapSpec is built by struct literal in every HostCap impl across the workspace and in clients (exo-light, crush-notebook, crush-web); adding a field breaks them all, contradicting the ticket's 'existing impls don't change'. A default trait method returning Option<&'static [&'static str]> is additive: None = undeclared (treat as could-touch-anything), Some(&[]) = pure. Rather than override it in ~130 SDK types, HostCapsBuilder::build wraps handlers with labels from effects::effects_of (stdlib registered as a pure family) behind a delegating wrapper; a test with every grant on fails if any builder cap is undeclared. Informational only — grants still decide access.
+

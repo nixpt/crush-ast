@@ -380,3 +380,26 @@ fn crush_run_caps_lists_fs_coreutils() {
         );
     }
 }
+
+// CRUSH-155: `caps --json` lists every capability with its effects and grant.
+#[test]
+fn crush_run_caps_json_lists_effects_and_grants() {
+    let output = run_crush_run(&["caps", "--json"]);
+    assert!(output.status.success());
+    let list: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let find = |name: &str| {
+        list.iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} missing"))
+            .clone()
+    };
+    assert_eq!(find("fs.rm")["effects"], serde_json::json!(["fs/write"]));
+    assert_eq!(find("fs.rm")["grant"], "--fs");
+    assert_eq!(find("conv.to_str")["effects"], serde_json::json!([]));
+    assert_eq!(find("io.print")["grant"], "portable");
+    assert_eq!(find("time.sleep")["argc"], 1);
+    assert!(
+        list.iter().all(|c| c["effects"].is_array()),
+        "every capability declares its effects"
+    );
+}

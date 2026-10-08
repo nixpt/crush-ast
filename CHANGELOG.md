@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Capability effects (CRUSH-155).** `crush_vm::HostCap` gains a defaulted
+  `effects() -> Option<&'static [&'static str]>` (`None` = undeclared,
+  `Some(&[])` = pure; labels like `"fs/read"`, `"env/read"`, `"time/sleep"`,
+  `"net/http"`, `"process/spawn"`) — existing implementations compile
+  unchanged. Every capability `HostCapsBuilder` registers now declares its
+  effects (the stdlib as pure), polyglot gates declare `process/spawn`, and
+  `crush-run caps --json` lists name, argc, returns, effects and the granting
+  flag for every capability. Informational only: grants still decide access.
+  New `HostCaps::into_handlers()`.
 - **`env.all` / `env.home_dir` and more HTTP verbs (CRUSH-153).** With
   `--env`: `env.all()` (map of the variables the grant exposes — the host
   environment plus injected values) and `env.home_dir()` (`HOME` /

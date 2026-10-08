@@ -222,7 +222,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [x] **CRUSH-152** (XS (~15 turns), lane A3; **done 2026-10-07, nimbus** — `AsyncSleepCap` over the shared `sleep_ms`): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
 - [x] **CRUSH-153** (S (~30 turns), lane A4; **done 2026-10-07, nimbus** — `env.all/home_dir`, `net.http_put/delete/request`, one deadline-aware request path): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
 - [x] **CRUSH-154** (S (~40 turns), lane A5 🔒; **closed 2026-10-07, nimbus — declined per C-6**, `db.*` covers persistence: [docs/design/storage-caps-declined.md](../../docs/design/storage-caps-declined.md)): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
-- [ ] **CRUSH-155** (S (~20 turns), lane A6): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)
+- [x] **CRUSH-155** (S (~20 turns), lane A6; **done 2026-10-07, nimbus** — defaulted `HostCap::effects()` (not a struct field), builder-wide effects table, `crush-run caps --json`): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)
 - [ ] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
 - [ ] **CRUSH-157** (M (~60 turns), lane B2): `ai_native.toolchain` strategy engine. [ticket](tickets/CRUSH-157-ai-toolchain-engine.md)
 - [ ] **CRUSH-158** (S (~30 turns), lane B3): `QueryProvider` / `DelegationBackend` traits + delegation selection. [ticket](tickets/CRUSH-158-ai-provider-traits.md)

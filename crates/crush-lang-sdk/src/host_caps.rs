@@ -245,12 +245,15 @@ impl HostCapsBuilder {
                 eprintln!("crush-lang-sdk: failed to register db capabilities: {e}");
             }
         }
+        // The stdlib is pure: declared with no effects as a family.
         #[cfg(feature = "stdlib")]
         if self.stdlib {
+            let mut stdlib = HostCaps::new();
             crate::stdlib::register_with_rng(
-                &mut caps,
+                &mut stdlib,
                 Arc::new(Mutex::new(crate::stdlib::RngState::new(0))),
             );
+            crate::effects::register_all(&mut caps, stdlib, &[]);
         }
         if let Some(idx) = self.codebase_index {
             crate::codebase::register(&mut caps, idx);
@@ -258,7 +261,7 @@ impl HostCapsBuilder {
         if self.ai_native {
             crate::ai_native::register(&mut caps);
         }
-        caps
+        crate::effects::declare(caps)
     }
 }
 
