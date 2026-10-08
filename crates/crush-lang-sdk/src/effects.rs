@@ -13,6 +13,8 @@
 //!
 //! [`HostCapsBuilder`]: crate::HostCapsBuilder
 
+use std::sync::Arc;
+
 use crush_vm::host::HostCapError;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
@@ -68,7 +70,7 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
 
 /// A handler plus its declared effects; everything else is delegated.
 struct Declared {
-    inner: Box<dyn HostCap>,
+    inner: Arc<dyn HostCap>,
     effects: &'static [&'static str],
 }
 
@@ -98,7 +100,7 @@ impl HostCap for Declared {
 /// one that has not declared its own.
 pub(crate) fn register_all(into: &mut HostCaps, from: HostCaps, effects: &'static [&'static str]) {
     for handler in from.into_handlers() {
-        into.register(with_effects(handler, Some(effects)));
+        into.register_shared(with_effects(handler, Some(effects)));
     }
 }
 
@@ -108,17 +110,17 @@ pub(crate) fn declare(caps: HostCaps) -> HostCaps {
     let mut out = HostCaps::new();
     for handler in caps.into_handlers() {
         let effects = effects_of(&handler.spec().name);
-        out.register(with_effects(handler, effects));
+        out.register_shared(with_effects(handler, effects));
     }
     out
 }
 
 fn with_effects(
-    handler: Box<dyn HostCap>,
+    handler: Arc<dyn HostCap>,
     effects: Option<&'static [&'static str]>,
-) -> Box<dyn HostCap> {
+) -> Arc<dyn HostCap> {
     match (handler.effects(), effects) {
-        (None, Some(effects)) => Box::new(Declared {
+        (None, Some(effects)) => Arc::new(Declared {
             inner: handler,
             effects,
         }),

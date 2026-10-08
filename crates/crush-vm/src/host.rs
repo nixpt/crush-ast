@@ -131,6 +131,14 @@ impl HostCaps {
         self
     }
 
+    /// Register a handler that is already shared, e.g. one taken out of
+    /// another registry with [`HostCaps::into_handlers`].
+    pub fn register_shared(&mut self, handler: Arc<dyn HostCap>) -> &mut Self {
+        let name = handler.spec().name.clone();
+        self.handlers.insert(name, handler);
+        self
+    }
+
     /// Look up a handler by capability name.
     pub fn get(&self, name: &str) -> Option<&dyn HostCap> {
         self.handlers.get(name).map(|b| b.as_ref())
@@ -148,7 +156,7 @@ impl HostCaps {
 
     /// Take every registered handler out of the registry, e.g. to wrap or
     /// re-register them into another one.
-    pub fn into_handlers(self) -> impl Iterator<Item = Box<dyn HostCap>> {
+    pub fn into_handlers(self) -> impl Iterator<Item = Arc<dyn HostCap>> {
         self.handlers.into_values()
     }
 }
