@@ -1,13 +1,13 @@
-//! Crush VM host capability for CAISON — the `cson.parse` capability.
+//! Crush VM host capability for CAISON — the `caison.parse` capability
+//! (and its deprecated `cson.parse` alias).
 //!
 //! The CAISON format's canonical types, parser, and printer (formerly
 //! "CSON") have moved to the standalone [`caison`] crate
 //! (<https://github.com/nixpt/caison>), which this crate re-exports in
-//! full so downstream code that used to reach them through `crush_cson::*`
-//! keeps compiling. `crush-cson` itself now carries only the Crush-specific
-//! VM host capability ([`vm_cap::CsonParseCap`], registered as `cson.parse`
-//! — the capability name is intentionally NOT renamed here; that is a
-//! separate Crush-language-API decision, tracked outside CRUSH-CAISON-1).
+//! full so downstream code that used to reach them through `crush_caison::*`
+//! keeps compiling. `crush-caison` itself now carries only the Crush-specific
+//! VM host capability ([`vm_cap::CaisonParseCap`], registered as `caison.parse`;
+//! `cson.parse` stays as a deprecated alias until 0.4, CRUSH-149).
 //!
 //! `caison` diverged from this crate's original fork (spec fixes, printer
 //! rewrite, metadata-order changes) — consult `caison`'s own docs, not this

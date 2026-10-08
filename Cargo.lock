@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "casm"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "bitflags 2.13.0",
  "byteorder",
@@ -912,7 +912,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crush-aot"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "crush-aotc"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
@@ -981,11 +981,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-caison"
+version = "0.3.9"
+dependencies = [
+ "caison",
+ "crush-vm",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crush-cast"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "cbor4ii",
- "crush-cson",
+ "crush-caison",
  "crush-errors",
  "indexmap",
  "serde",
@@ -997,17 +1007,14 @@ dependencies = [
 
 [[package]]
 name = "crush-cson"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
- "caison",
- "crush-vm",
- "serde",
- "serde_json",
+ "crush-caison",
 ]
 
 [[package]]
 name = "crush-debugger"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1020,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "crush-diagnostics"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -1028,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "crush-errors"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "regex",
  "serde",
@@ -1038,11 +1045,11 @@ dependencies = [
 
 [[package]]
 name = "crush-ffi"
-version = "0.3.8"
+version = "0.3.9"
 
 [[package]]
 name = "crush-frontend"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
@@ -1059,19 +1066,19 @@ dependencies = [
 
 [[package]]
 name = "crush-index"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
+ "crush-caison",
  "crush-cast",
- "crush-cson",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "crush-installer"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1084,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "crush-jit"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1099,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-bash"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "brush-parser",
@@ -1114,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-c"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
@@ -1133,11 +1140,11 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-custom"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
+ "crush-caison",
  "crush-cast",
- "crush-cson",
  "crush-walker-core",
  "regex",
  "serde",
@@ -1146,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-dart"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1163,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-go"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1180,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-java"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1196,7 +1203,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-js"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "boa_ast",
@@ -1218,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-nepali"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "crush-cast",
@@ -1230,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-python"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "crush-cast",
@@ -1246,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-rust"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "crush-cast",
@@ -1261,15 +1268,15 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-sdk"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64",
  "casm",
  "chrono",
  "clap",
+ "crush-caison",
  "crush-cast",
- "crush-cson",
  "crush-errors",
  "crush-frontend",
  "crush-index",
@@ -1292,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-wasm"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1309,7 +1316,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-zig"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1326,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lang-zsh"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "crush-cast",
@@ -1341,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "crush-lint"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "crush-diagnostics",
  "ort",
@@ -1352,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "crush-macros"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "casm",
  "crush-frontend",
@@ -1365,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "crush-net"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "crush-lang-sdk",
  "rcgen",
@@ -1378,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "crush-pkg"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1408,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "crush-plugin-example"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "crush-ffi",
 ]
@@ -1425,11 +1432,11 @@ dependencies = [
 
 [[package]]
 name = "crush-python"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "casm",
+ "crush-caison",
  "crush-cast",
- "crush-cson",
  "crush-vm",
  "pyo3",
  "serde_json",
@@ -1437,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "crush-tui"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -1450,7 +1457,7 @@ dependencies = [
 
 [[package]]
 name = "crush-vm"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "casm",
@@ -1470,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "crush-vm-capi"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "casm",
  "crush-vm",
@@ -1479,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "crush-walker"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1490,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "crush-walker-core"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "crush-cast",
@@ -4441,7 +4448,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-crush"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "cc",
  "tree-sitter",

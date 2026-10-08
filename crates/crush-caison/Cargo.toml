@@ -1,5 +1,5 @@
 [package]
-name = "crush-cson"
+name = "crush-caison"
 description = "Crush VM host capability for CAISON (formerly CSON) parsing — the format types/parser/printer now live in the standalone `caison` crate; this crate keeps only the `cson.parse` capability and re-exports caison."
 readme = "../../README.md"
 version.workspace = true

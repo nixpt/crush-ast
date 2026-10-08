@@ -39,7 +39,8 @@ The repos are **peer projects** — no path dependencies run in either direction
 crates/
 ├── crush-errors/         # Unified error types (leaf crate)
 ├── crush-cast/           # CAST — Crush Abstract Syntax Tree IR
-├── crush-cson/           # CSON config/serialization format on top of CAST
+├── crush-caison/         # CAISON (formerly CSON) format + `caison.parse` VM capability
+├── crush-cson-shim/      # retired `crush-cson` name: re-exports crush-caison
 ├── casm/                 # CASM — Crush Assembly bytecode format
 ├── tree-sitter-crush/    # Tree-sitter grammar for the Crush language
 ├── crush-diagnostics/    # Shared diagnostics/wire-format types

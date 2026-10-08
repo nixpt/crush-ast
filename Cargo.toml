@@ -34,7 +34,7 @@ members = [
     "crates/crush-macros",
     "crates/crush-aot",
     "xtask"
-    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-cson", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
+    , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-caison", "crates/crush-cson-shim", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
 
 # crush-web is deliberately NOT a member: many members depend on crush-vm
 # with default features (native-plugins on), and Cargo unifies features for
@@ -65,7 +65,7 @@ rust-version  = "1.95.0"
 [workspace.dependencies]
 crush-errors      = { path = "crates/crush-errors",      version = "0.3.8" }
 crush-cast        = { path = "crates/crush-cast",        version = "0.3.8" }
-crush-cson        = { path = "crates/crush-cson",        version = "0.3.8" }
+crush-caison      = { path = "crates/crush-caison",      version = "0.3.8" }
 # CAISON (formerly CSON) canonical types/parser/printer — standalone crate,
 # https://github.com/nixpt/caison. NOT YET on crates.io as of CRUSH-CAISON-1;
 # this dep will not resolve until caison 0.1.0 publishes.
