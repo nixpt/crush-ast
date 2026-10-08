@@ -60,4 +60,4 @@ change.
 - `cargo test -p crush-vm -p crush-lang-sdk`: all green.
 - `crush-diff examples/crush/*.crush`: 43 files, 33 agree, 0 diverged,
   10 don't compile (pre-existing).
-- Commit: see PR.
+- Commit: `d917985`; PR crush-ast#101.
