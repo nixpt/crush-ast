@@ -20,6 +20,7 @@ pub mod assembler;
 pub mod bytecode;
 pub mod arithmetic;
 pub mod caps;
+pub mod debug;
 pub mod host;
 pub mod io_print;
 pub mod io_read;
@@ -30,6 +31,7 @@ pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
+pub use debug::{DebugStop, StepMode, WatchId, WatchScope};
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use io_read::InputSource;

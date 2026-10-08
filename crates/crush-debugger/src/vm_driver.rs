@@ -3,7 +3,8 @@
 //! The `VmDriver` trait lets `session.rs` drive ANY single-steppable VM
 //! (today: `PortableVmDriver` wrapping `crush-vm::PortableVm`) without
 //! depending on the concrete VM type. Trait surface is minimal — only
-//! what a REPL needs.
+//! what a REPL needs. Methods added after the first release (step modes,
+//! watchpoints, locals) have defaults, so existing drivers keep compiling.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -32,6 +33,29 @@ pub enum VmRunResult {
     HitBreakpoint(crate::breakpoint::BreakpointId),
     QuotaExceeded(usize),
     Paused,
+    /// A `next`/`finish`/`step_mode` request finished; the VM is paused
+    /// before the instruction at `ip`, `depth` frames deep.
+    Stepped {
+        ip: usize,
+        depth: usize,
+    },
+    /// The last instruction changed a watched slot (it has already run).
+    Watchpoint {
+        id: crush_vm::WatchId,
+        slot: u16,
+        depth: usize,
+        old: Option<crush_vm::vm::Value>,
+        new: crush_vm::vm::Value,
+    },
+}
+
+/// Text for a value in debugger output: strings quoted, everything else as
+/// the VM prints it.
+pub fn show_value(v: &crush_vm::vm::Value) -> String {
+    match v {
+        crush_vm::vm::Value::Str(s) => format!("{s:?}"),
+        other => crush_vm::value_to_text(other),
+    }
 }
 
 impl fmt::Display for VmRunResult {
@@ -41,6 +65,21 @@ impl fmt::Display for VmRunResult {
             Self::HitBreakpoint(id) => write!(f, "hit breakpoint #{}", id.0),
             Self::QuotaExceeded(n) => write!(f, "quota exceeded ({n})"),
             Self::Paused => f.write_str("paused"),
+            Self::Stepped { ip, depth } => write!(f, "stopped at ip {ip} (depth {depth})"),
+            Self::Watchpoint {
+                id,
+                slot,
+                depth,
+                old,
+                new,
+            } => write!(
+                f,
+                "watchpoint #{}: slot {slot} (depth {depth}) {} -> {}",
+                id.0,
+                old.as_ref()
+                    .map_or_else(|| "(unset)".to_string(), show_value),
+                show_value(new)
+            ),
         }
     }
 }
@@ -75,6 +114,39 @@ pub trait VmDriver {
     fn set_breakpoints(&mut self, bps: &BreakpointSet);
 
     fn state(&self) -> VmState;
+
+    /// Run a step of the given kind (into/over/out by call depth) and
+    /// report where it stopped. A breakpoint or watchpoint on the way ends
+    /// it early. Drivers without step support return `DriverInvariant`.
+    fn step_mode(&mut self, _mode: crush_vm::StepMode) -> Result<VmRunResult, VmError> {
+        Err(VmError::DriverInvariant(
+            "this driver does not support step over/out",
+        ))
+    }
+
+    /// Watch local `slot` in `scope`; `None` if the driver can't watch.
+    fn add_watchpoint(
+        &mut self,
+        _slot: u16,
+        _scope: crush_vm::WatchScope,
+    ) -> Option<crush_vm::WatchId> {
+        None
+    }
+
+    /// Remove a watchpoint. Returns whether it existed.
+    fn remove_watchpoint(&mut self, _id: crush_vm::WatchId) -> bool {
+        false
+    }
+
+    /// Current call depth (1 = entry frame; 0 if unknown).
+    fn call_depth(&self) -> usize {
+        0
+    }
+
+    /// Local `slot` of the frame at `depth`, if assigned.
+    fn local(&self, _depth: usize, _slot: u16) -> Option<crush_vm::vm::Value> {
+        None
+    }
 }
 
 impl<'a> PortableVmDriver<'a> {
@@ -138,7 +210,11 @@ impl<'a> VmDriver for PortableVmDriver<'a> {
         // counter advanced but the instruction didn't execute —
         // track it here so `run_until_breakpoint_or_done` can
         // report the correct breakpoint ID.
-        if yielded.is_some() {
+        let breakpoint_stop = matches!(
+            self.vm.last_stop(),
+            Some(crush_vm::DebugStop::Breakpoint { .. })
+        );
+        if yielded.is_some() && breakpoint_stop {
             let ip = self.vm.current_ip();
             self.breakpoint_hit.entry(ip).and_modify(|c| *c += 1).or_insert(1);
             // Capture the paused-at location so `state()` reports
@@ -174,6 +250,30 @@ impl<'a> VmDriver for PortableVmDriver<'a> {
                 Err(e) => return Err(e),
             };
             if outcome.yielded {
+                match self.vm.last_stop() {
+                    Some(crush_vm::DebugStop::Step { ip, .. }) => {
+                        return Ok(VmRunResult::Stepped {
+                            ip: *ip,
+                            depth: self.vm.call_depth(),
+                        });
+                    }
+                    Some(crush_vm::DebugStop::Watch {
+                        id,
+                        slot,
+                        depth,
+                        old,
+                        new,
+                    }) => {
+                        return Ok(VmRunResult::Watchpoint {
+                            id: *id,
+                            slot: *slot,
+                            depth: *depth,
+                            old: old.clone(),
+                            new: new.clone(),
+                        });
+                    }
+                    _ => {}
+                }
                 let ip = self.vm.current_ip();
                 // The per-IP counter was already incremented by
                 // `step()` when the VM yielded DebugBreak. Guard
@@ -241,6 +341,34 @@ impl<'a> VmDriver for PortableVmDriver<'a> {
             instruction_count: self.instruction_count,
             paused_at: self.paused_bp.clone(),
         }
+    }
+
+    fn step_mode(&mut self, mode: crush_vm::StepMode) -> Result<VmRunResult, VmError> {
+        self.vm.request_step(mode);
+        let result = self.run_until_breakpoint_or_done();
+        // A quota or error ended the run: don't leave the request armed.
+        self.vm.cancel_step();
+        result
+    }
+
+    fn add_watchpoint(
+        &mut self,
+        slot: u16,
+        scope: crush_vm::WatchScope,
+    ) -> Option<crush_vm::WatchId> {
+        Some(self.vm.add_watchpoint(slot, scope))
+    }
+
+    fn remove_watchpoint(&mut self, id: crush_vm::WatchId) -> bool {
+        self.vm.remove_watchpoint(id)
+    }
+
+    fn call_depth(&self) -> usize {
+        self.vm.call_depth()
+    }
+
+    fn local(&self, depth: usize, slot: u16) -> Option<crush_vm::vm::Value> {
+        self.vm.local(depth, slot).cloned()
     }
 }
 

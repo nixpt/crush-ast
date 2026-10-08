@@ -679,3 +679,75 @@ fn max_call_depth_flag_hits_call_depth_quota_on_step() {
     );
     assert!(success);
 }
+
+// ── CRUSH-159: next / finish / watch / print over a real call ─────────
+//
+// calls.crush: main stores 5 in slot 0, calls inc(1) (= 11) and stores
+// the result in slot 1. Offsets: PUSH 0, STORE 9, PUSH 12, CALL 21,
+// STORE 24.
+
+#[test]
+fn repl_watch_reports_the_change_and_print_reads_the_slot() {
+    let (stdout, stderr, success) = spawn_debugger(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        b"watch 0\ncontinue\nprint 0\nprint 1\nunwatch 0\ncontinue\nquit\n",
+    );
+    for want in [
+        "watchpoint #0 set on slot 0 in frame 1",
+        "watchpoint #0: slot 0 (depth 1) (unset) -> 5",
+        "slot 0 = 5",
+        "slot 1 is unset in frame 1",
+        "watchpoint #0 removed",
+        "done",
+    ] {
+        assert!(
+            stdout.contains(want),
+            "missing `{want}`\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+    assert!(success);
+}
+
+#[test]
+fn repl_next_steps_over_the_call() {
+    let (stdout, stderr, success) = spawn_debugger(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        b"next\nnext\nnext\nnext\nprint 1\nnext\nprint 1\nquit\n",
+    );
+    // Three single instructions, then the CALL runs inc to completion.
+    let stops: Vec<&str> = stdout
+        .split("cru-s-debugger> ")
+        .filter_map(|chunk| chunk.lines().next())
+        .filter(|l| l.starts_with("stopped at"))
+        .collect();
+    assert_eq!(
+        stops,
+        [
+            "stopped at ip 9 (depth 1)",
+            "stopped at ip 12 (depth 1)",
+            "stopped at ip 21 (depth 1)",
+            "stopped at ip 24 (depth 1)",
+            "stopped at ip 27 (depth 1)",
+        ],
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("slot 1 is unset in frame 1"), "{stdout}");
+    assert!(stdout.contains("slot 1 = 11"), "{stdout}");
+    assert!(success);
+}
+
+#[test]
+fn repl_finish_returns_to_the_caller() {
+    let (stdout, stderr, success) = spawn_debugger(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        // Four raw steps: PUSH, STORE, PUSH, CALL -> now inside inc.
+        b"step\nstep\nstep\nstep\nfinish\nprint 0\nquit\n",
+    );
+    assert!(
+        stdout.contains("stopped at ip 24 (depth 1)"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // Back in main's frame: its slot 0, not inc's.
+    assert!(stdout.contains("slot 0 = 5"), "{stdout}");
+    assert!(success);
+}

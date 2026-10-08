@@ -34,11 +34,16 @@ const HELP_BANNER: &str = "\
 Commands:
   break <file>:<line>  — set a breakpoint
   delete <id>          — remove a breakpoint
-  step | s             — single-step the VM
-  continue | c         — run until breakpoint or done
+  step | s             — execute one instruction (enters calls)
+  next | n             — step over: run a call to completion
+  finish | fin         — step out: run until this function returns
+  continue | c         — run until breakpoint, watchpoint or done
+  watch <slot> [top | frame <depth>]
+                       — stop when a local slot changes (default: this frame)
+  unwatch <id>         — remove a watchpoint
   list | l             — list all breakpoints
   status | info | i    — show VM state
-  print <var> | p      — print variable value (NYI)
+  print <slot> | p     — print a local slot of the current frame
   quit | q             — exit
   help | h | ?         — show this help";
 
@@ -118,9 +123,8 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
     /// `repl::parse_command`, dispatches to `handle_command`, and
     /// prints results. Exits on EOF or `quit`.
     ///
-    /// The heuristic step-loop in `vm_driver.rs` polyfills the missing
-    /// upstream BP pause hook — breakpoints are registered but cannot
-    /// be checked mid-step until the sourcemap lands.
+    /// Breakpoints, steps and watchpoints pause through `PortableVm`'s
+    /// own hooks (`VmYield::DebugBreak` + `last_stop`).
     pub fn run_repl(&mut self) -> anyhow::Result<()> {
         use std::io::{self, BufRead, Write};
         let stdin = io::stdin();
@@ -227,8 +231,47 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                     Ok(Some(format!("no breakpoint #{}", id)))
                 }
             }
+            super::repl::Command::Next => self.run_step(crush_vm::StepMode::Over),
+            super::repl::Command::Finish => self.run_step(crush_vm::StepMode::Out),
+            super::repl::Command::Watch { slot, scope } => {
+                let depth = self.driver.call_depth();
+                let scope = scope.unwrap_or(if depth == 0 {
+                    crush_vm::WatchScope::Top
+                } else {
+                    crush_vm::WatchScope::Frame(depth)
+                });
+                match self.driver.add_watchpoint(slot, scope) {
+                    Some(id) => {
+                        let where_ = match scope {
+                            crush_vm::WatchScope::Top => "the running frame".to_string(),
+                            crush_vm::WatchScope::Frame(d) => format!("frame {d}"),
+                        };
+                        Ok(Some(format!(
+                            "watchpoint #{} set on slot {slot} in {where_}",
+                            id.0
+                        )))
+                    }
+                    None => Ok(Some("this VM driver does not support watchpoints".into())),
+                }
+            }
+            super::repl::Command::Unwatch { id } => {
+                if self.driver.remove_watchpoint(crush_vm::WatchId(id)) {
+                    Ok(Some(format!("watchpoint #{id} removed")))
+                } else {
+                    Ok(Some(format!("no watchpoint #{id}")))
+                }
+            }
             super::repl::Command::Print { name } => {
-                Ok(Some(format!("<print {}: not yet implemented>", name)))
+                let Ok(slot) = name.trim_start_matches('$').parse::<u16>() else {
+                    return Ok(Some(format!(
+                        "`{name}`: compiled bytecode has no local names yet; use `print <slot>`"
+                    )));
+                };
+                let depth = self.driver.call_depth();
+                Ok(Some(match self.driver.local(depth, slot) {
+                    Some(v) => format!("slot {slot} = {}", super::vm_driver::show_value(&v)),
+                    None => format!("slot {slot} is unset in frame {depth}"),
+                }))
             }
             super::repl::Command::Status => {
                 let state = self.driver.state();
@@ -250,6 +293,17 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                 unreachable!("Quit handled in run_repl before handle_command")
             }
         }
+    }
+}
+
+impl<'a, D: VmDriver> DebugSession<'a, D> {
+    /// `next` / `finish`: run the step and report where it stopped.
+    fn run_step(&mut self, mode: crush_vm::StepMode) -> anyhow::Result<Option<String>> {
+        let result = self
+            .driver
+            .step_mode(mode)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        Ok(Some(result.to_string()))
     }
 }
 
@@ -426,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_command_print_not_yet_implemented() {
+    fn handle_command_print_by_name_explains_slots() {
         let mut s = session();
         let out = s
             .handle_command(Command::Print {
@@ -434,7 +488,24 @@ mod tests {
             })
             .unwrap()
             .unwrap();
-        assert_eq!(out, "<print x: not yet implemented>");
+        assert!(out.contains("use `print <slot>`"), "{out}");
+    }
+
+    /// A driver without step/watch support says so instead of failing
+    /// silently (the mock keeps the trait's defaults).
+    #[test]
+    fn handle_command_next_and_watch_on_a_driver_without_support() {
+        let mut s = session();
+        let err = s.handle_command(Command::Next).unwrap_err();
+        assert!(err.to_string().contains("does not support step"), "{err}");
+        let out = s
+            .handle_command(Command::Watch {
+                slot: 0,
+                scope: None,
+            })
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("does not support watchpoints"), "{out}");
     }
 
     /// `status` should report instruction count and no pause point.

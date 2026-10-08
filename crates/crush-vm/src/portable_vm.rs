@@ -136,6 +136,13 @@ pub struct PortableVm {
     /// hot path in `step()` is an O(1) lookup instead of O(n)
     /// `.filter().count()`.
     breakpoint_count: std::collections::HashMap<usize, usize>,
+    /// Pending `request_step`, cleared when it completes or another stop wins.
+    step_request: Option<crate::debug::StepRequest>,
+    /// Watched local slots (`add_watchpoint`).
+    watches: Vec<crate::debug::Watch>,
+    next_watch_id: u32,
+    /// Why the last `DebugBreak` happened.
+    last_stop: Option<crate::debug::DebugStop>,
 }
 
 impl PortableVm {
@@ -192,6 +199,10 @@ impl PortableVm {
             breakpoints: Vec::new(),
             breakpoint_hit: std::collections::HashMap::new(),
             breakpoint_count: std::collections::HashMap::new(),
+            step_request: None,
+            watches: Vec::new(),
+            next_watch_id: 0,
+            last_stop: None,
         }
     }
 
@@ -288,6 +299,132 @@ impl PortableVm {
         self.ip
     }
 
+    /// Number of frames on the call stack (1 = running the entry function).
+    pub fn call_depth(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    /// The value in local `slot` of the frame at call depth `depth`
+    /// (1 = entry frame), if that frame exists and the slot is assigned.
+    pub fn local(&self, depth: usize, slot: u16) -> Option<&Value> {
+        self.call_stack
+            .get(depth.checked_sub(1)?)
+            .and_then(|f| f.memory.get(&slot))
+    }
+
+    /// Pause again after a step of the given kind (see [`StepMode`]).
+    /// `step()` then returns `DebugBreak` *before* the instruction where
+    /// the step ends, with [`DebugStop::Step`] in [`last_stop`]. A
+    /// breakpoint or watchpoint hit on the way ends the step early.
+    /// Replaces any pending request.
+    ///
+    /// [`StepMode`]: crate::debug::StepMode
+    /// [`DebugStop::Step`]: crate::debug::DebugStop::Step
+    /// [`last_stop`]: Self::last_stop
+    pub fn request_step(&mut self, mode: crate::debug::StepMode) {
+        self.step_request = Some(crate::debug::StepRequest {
+            mode,
+            depth: self.call_stack.len(),
+            executed: false,
+        });
+    }
+
+    /// Drop a pending `request_step`.
+    pub fn cancel_step(&mut self) {
+        self.step_request = None;
+    }
+
+    /// Watch local `slot` in `scope`. After an instruction changes the
+    /// slot's value (assignment, or an in-place edit of an array/map it
+    /// holds), `step()` returns `DebugBreak` with [`DebugStop::Watch`] in
+    /// [`last_stop`]; unlike a breakpoint, the changing instruction has
+    /// already run. The first assignment of an unset slot counts as a
+    /// change.
+    ///
+    /// [`DebugStop::Watch`]: crate::debug::DebugStop::Watch
+    /// [`last_stop`]: Self::last_stop
+    pub fn add_watchpoint(
+        &mut self,
+        slot: u16,
+        scope: crate::debug::WatchScope,
+    ) -> crate::debug::WatchId {
+        let id = crate::debug::WatchId(self.next_watch_id);
+        self.next_watch_id += 1;
+        let mut watch = crate::debug::Watch {
+            id,
+            slot,
+            scope,
+            seen: None,
+        };
+        watch.seen = self.observe(&watch);
+        self.watches.push(watch);
+        id
+    }
+
+    /// Remove a watchpoint. Returns whether it existed.
+    pub fn remove_watchpoint(&mut self, id: crate::debug::WatchId) -> bool {
+        let before = self.watches.len();
+        self.watches.retain(|w| w.id != id);
+        self.watches.len() != before
+    }
+
+    /// Registered watchpoints as `(id, slot, scope)`, in creation order.
+    pub fn watchpoints(
+        &self,
+    ) -> impl Iterator<Item = (crate::debug::WatchId, u16, crate::debug::WatchScope)> + '_ {
+        self.watches.iter().map(|w| (w.id, w.slot, w.scope))
+    }
+
+    /// Why the most recent `VmYield::DebugBreak` happened. Cleared when
+    /// the next instruction executes.
+    pub fn last_stop(&self) -> Option<&crate::debug::DebugStop> {
+        self.last_stop.as_ref()
+    }
+
+    /// `(depth, snapshot)` of a watch's slot right now, `None` when the
+    /// watched frame doesn't exist.
+    fn observe(
+        &self,
+        watch: &crate::debug::Watch,
+    ) -> Option<(usize, Option<crate::debug::Snapshot>)> {
+        let depth = match watch.scope {
+            crate::debug::WatchScope::Frame(d) => d,
+            crate::debug::WatchScope::Top => self.call_stack.len(),
+        };
+        let frame = self.call_stack.get(depth.checked_sub(1)?)?;
+        Some((
+            depth,
+            frame
+                .memory
+                .get(&watch.slot)
+                .map(crate::debug::Snapshot::of),
+        ))
+    }
+
+    /// Re-read every watch after an instruction; report the first change.
+    fn check_watches(&mut self) -> Option<crate::debug::DebugStop> {
+        let mut hit = None;
+        for i in 0..self.watches.len() {
+            let now = self.observe(&self.watches[i]);
+            let watch = &mut self.watches[i];
+            if hit.is_none()
+                && let (Some((d0, old)), Some((d1, Some(new)))) = (&watch.seen, &now)
+                && d0 == d1
+                && old.as_ref() != Some(new)
+            {
+                hit = Some(crate::debug::DebugStop::Watch {
+                    id: watch.id,
+                    slot: watch.slot,
+                    depth: *d1,
+                    old: old.as_ref().map(|s| s.value.clone()),
+                    new: new.value.clone(),
+                });
+            }
+            watch.seen = now;
+        }
+        hit
+    }
+
     /// Execute a single instruction.
     ///
     /// If a breakpoint is set at the current IP, returns
@@ -320,10 +457,25 @@ impl PortableVm {
                 self.breakpoint_hit.remove(&self.ip);
             } else {
                 *hit += 1;
+                self.step_request = None;
+                self.last_stop = Some(crate::debug::DebugStop::Breakpoint { ip: self.ip });
                 return Ok(Some(VmYield::DebugBreak {
                     reason: format!("breakpoint at ip {}", self.ip),
                 }));
             }
+        }
+
+        if let Some(req) = self.step_request
+            && req.done_at(self.call_stack.len())
+        {
+            self.step_request = None;
+            self.last_stop = Some(crate::debug::DebugStop::Step {
+                mode: req.mode,
+                ip: self.ip,
+            });
+            return Ok(Some(VmYield::DebugBreak {
+                reason: format!("step at ip {}", self.ip),
+            }));
         }
 
         self.check_step_quota()?;
@@ -360,6 +512,24 @@ impl PortableVm {
             self.ip = next_ip;
         }
         self.steps += 1;
+        self.last_stop = None;
+        if let Some(req) = self.step_request.as_mut() {
+            req.executed = true;
+        }
+
+        if !self.watches.is_empty()
+            && let Some(stop) = self.check_watches()
+        {
+            let reason = match &stop {
+                crate::debug::DebugStop::Watch { id, slot, .. } => {
+                    format!("watchpoint {} on slot {slot}", id.0)
+                }
+                _ => unreachable!("check_watches only reports watch stops"),
+            };
+            self.step_request = None;
+            self.last_stop = Some(stop);
+            return Ok(Some(VmYield::DebugBreak { reason }));
+        }
 
         Ok(None)
     }

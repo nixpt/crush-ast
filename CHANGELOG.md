@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Debugger: step over/out and watchpoints (CRUSH-159).** `PortableVm` gains
+  `request_step(StepMode::{Into, Over, Out})` (by call depth),
+  `add_watchpoint(slot, WatchScope::{Frame(depth), Top})`, `call_depth()`,
+  `local(depth, slot)` and `last_stop()`; stops still surface as
+  `VmYield::DebugBreak`. `crush-debugger` adds `next`, `finish`, `watch`,
+  `unwatch` and a working `print <slot>`. Bytecode-level: locals are slots
+  until the frontend emits a source map.
 - **Fix: `PortableVm` diverged from the scheduler on recursive programs
   (CRUSH-176, #94).** A jump that lands on the instruction it came from — a
   recursive call in tail position returning to the caller's own `RET`, or
