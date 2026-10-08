@@ -1,0 +1,11 @@
+[capsule]
+name = "squad-bridge-peek"
+version = "0.1.0"
+description = "Print the last few entries of a squad bridge log"
+entry = "main.crush"
+language = "crush"
+category = "example"
+platforms = ["linux", "macos", "windows"]
+
+[capabilities]
+required = ["env.get", "fs.cat", "io.print"]

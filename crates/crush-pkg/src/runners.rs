@@ -219,8 +219,14 @@ impl CapsuleRunner for ScriptRunner {
 
 /// Get runner from manifest capsule type
 pub fn get_runner(capsule_type: &CapsuleType) -> Box<dyn CapsuleRunner> {
+    get_runner_with(capsule_type, CrushRunner::default())
+}
+
+/// [`get_runner`], but Crush capsules run on `crush` — e.g. a
+/// [`CrushRunner`] carrying the host capabilities the caller granted.
+pub fn get_runner_with(capsule_type: &CapsuleType, crush: CrushRunner) -> Box<dyn CapsuleRunner> {
     match capsule_type {
-        CapsuleType::Auto | CapsuleType::Crush => Box::new(CrushRunner::default()),
+        CapsuleType::Auto | CapsuleType::Crush => Box::new(crush),
         CapsuleType::Native => Box::new(NativeRunner),
         // Container variant deleted (CRUSHCN-1) — see .jagent/planning/tickets/CRUSHRUNNERS-1.md Gap 1.
         CapsuleType::Script(runtime) => Box::new(ScriptRunner::new(runtime.clone())),
@@ -229,9 +235,18 @@ pub fn get_runner(capsule_type: &CapsuleType) -> Box<dyn CapsuleRunner> {
 
 /// Auto-detect runner from payload path + manifest
 pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<dyn CapsuleRunner> {
+    get_runner_for_payload_with(payload_path, manifest, CrushRunner::default())
+}
+
+/// [`get_runner_for_payload`], but Crush payloads run on `crush`.
+pub fn get_runner_for_payload_with(
+    payload_path: &Path,
+    manifest: &Manifest,
+    crush: CrushRunner,
+) -> Box<dyn CapsuleRunner> {
     let capsule_type = crate::manifest::language_to_capsule_type(&manifest.capsule.language);
     if capsule_type != CapsuleType::Auto {
-        return get_runner(&capsule_type);
+        return get_runner_with(&capsule_type, crush);
     }
 
     let format = PayloadFormat::from_path(payload_path);
@@ -252,7 +267,7 @@ pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<d
     };
 
     match format {
-        PayloadFormat::Casm => Box::new(CrushRunner::default()),
+        PayloadFormat::Casm => Box::new(crush),
         PayloadFormat::JavaScript | PayloadFormat::TypeScript => {
             Box::new(ScriptRunner::new(ScriptRuntime::Bun))
         }
@@ -261,7 +276,7 @@ pub fn get_runner_for_payload(payload_path: &Path, manifest: &Manifest) -> Box<d
         PayloadFormat::NativeElf | PayloadFormat::NativeMachO | PayloadFormat::NativePe => {
             Box::new(NativeRunner)
         }
-        PayloadFormat::Unknown => Box::new(CrushRunner::default()),
+        PayloadFormat::Unknown => Box::new(crush),
     }
 }
 

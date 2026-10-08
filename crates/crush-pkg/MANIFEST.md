@@ -114,3 +114,27 @@ Rules, checked when the manifest loads:
 the VM with no host capabilities, so only the VM built-ins (`io.print`,
 `str.*`, `conv.chr/ord`, the array built-ins) are there. A `web` capsule
 that calls `fs.read` is refused at run time in the browser.
+
+## `[capabilities]` and running a capsule
+
+`required` lists the capabilities the program calls (`io.print`, `fs.cat`,
+`env.get`, …). Declaring a capability does not grant it. Whoever runs the
+capsule grants authority on the command line, with the same flags as
+`crush run`:
+
+| Flag | Grants |
+|---|---|
+| `--fs` | `fs.*` and the `text.*` file tools, confined to `--fs-root` |
+| `--fs-root DIR` | the directory `--fs` is confined to (default `.`) |
+| `--env` | `env.get`, `env.all`, `env.home_dir` |
+| `--time` | `time.*`, `async.sleep` |
+
+The VM built-ins (`io.print`, `str.*`, `conv.chr/ord`, …) and the pure
+standard library are always available. Grants work on `crush-pkg run` and
+on bare `crush-pkg` (build, then run). A call to a capability that wasn't
+granted stops the program with `unknown capability: <name>`.
+
+```sh
+cd examples/crush/capsules/squad-bridge-peek
+crush-pkg run --fs --fs-root fixtures --env
+```
