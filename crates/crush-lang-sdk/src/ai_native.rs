@@ -22,6 +22,7 @@
 //! AND the gate names (ai_native.<kind>) are stable; the implementation
 //! under those gates is what later milestones will swap.
 
+pub mod providers;
 pub mod toolchain;
 
 use crush_vm::vm::Value;
@@ -41,6 +42,17 @@ use std::rc::Rc;
 /// `caps` as it stands at this call, so register `ai_native` **after** every
 /// capability a tool chain may use. The other nine stay echo stubs.
 pub fn register(caps: &mut HostCaps) {
+    register_with(caps, None, None);
+}
+
+/// [`register`], with host backends for `ai_native.query` and
+/// `ai_native.agent_delegation` (CRUSH-158) in place of their echo stubs.
+/// The toolchain's snapshot is taken last, so tool steps see the backends.
+pub fn register_with(
+    caps: &mut HostCaps,
+    query: Option<std::sync::Arc<dyn providers::QueryProvider>>,
+    delegation: Option<std::sync::Arc<dyn providers::DelegationBackend>>,
+) {
     caps.register(Box::new(AiNativeQueryCap));
     caps.register(Box::new(AiNativeSynthesizeCap));
     caps.register(Box::new(AiNativeAgentDelegationCap));
@@ -51,6 +63,12 @@ pub fn register(caps: &mut HostCaps) {
     caps.register(Box::new(AiNativeGoalDeclarationCap));
     caps.register(Box::new(AiNativeProgressUpdateCap));
     caps.register(Box::new(AiNativeKnowledgeSharingCap));
+    if let Some(q) = query {
+        caps.register(Box::new(providers::QueryCap::new(q)));
+    }
+    if let Some(d) = delegation {
+        caps.register(Box::new(providers::DelegationCap::new(d)));
+    }
     let tools = std::sync::Arc::new(caps.clone());
     caps.register(Box::new(toolchain::ToolchainCap::new(tools)));
 }

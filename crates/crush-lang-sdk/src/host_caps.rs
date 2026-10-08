@@ -41,6 +41,9 @@ pub struct HostCapsBuilder {
     codebase_index: Option<Arc<CrushIndex>>,
     /// CRUSH-32: register the `ai_native.*` capability surface (default off).
     ai_native: bool,
+    /// CRUSH-158: host backends behind `ai_native.query` / `.agent_delegation`.
+    query_provider: Option<Arc<dyn crate::ai_native::providers::QueryProvider>>,
+    delegation_backend: Option<Arc<dyn crate::ai_native::providers::DelegationBackend>>,
 }
 
 impl HostCapsBuilder {
@@ -180,6 +183,27 @@ impl HostCapsBuilder {
         self
     }
 
+    /// **CRUSH-158**: answer `ai_native.query` with `provider` instead of the
+    /// echo stub. Takes effect only together with [`Self::ai_native`]`(true)`
+    /// — supplying a backend is not a grant.
+    pub fn query_provider(
+        mut self,
+        provider: Arc<dyn crate::ai_native::providers::QueryProvider>,
+    ) -> Self {
+        self.query_provider = Some(provider);
+        self
+    }
+
+    /// **CRUSH-158**: run `ai_native.agent_delegation` on `backend` instead
+    /// of the echo stub. Like [`Self::query_provider`], needs `ai_native(true)`.
+    pub fn delegation_backend(
+        mut self,
+        backend: Arc<dyn crate::ai_native::providers::DelegationBackend>,
+    ) -> Self {
+        self.delegation_backend = Some(backend);
+        self
+    }
+
     pub fn build(self) -> HostCaps {
         let mut caps = HostCaps::new();
         caps.register(Box::new(crush_cson::vm_cap::CsonParseCap));
@@ -243,7 +267,11 @@ impl HostCapsBuilder {
             crate::codebase::register(&mut caps, idx);
         }
         if self.ai_native {
-            crate::ai_native::register(&mut caps);
+            crate::ai_native::register_with(
+                &mut caps,
+                self.query_provider,
+                self.delegation_backend,
+            );
         }
         caps
     }

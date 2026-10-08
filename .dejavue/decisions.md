@@ -685,3 +685,9 @@ AI opcodes carry a compiled JSON payload (string operand) and some kinds also co
 Reason:
 The ticket asks for registry access by construction. HostCaps held Box<dyn HostCap> and could not be shared, and the VM consumes it. Making handlers Arc<dyn HostCap> (register/get signatures unchanged) makes a clone a cheap snapshot of the grant set sharing the same cap instances, so a tool step sees the same RNG/bus/db state as direct CAP_CALLs. ai_native::register snapshots at call time and the builder registers ai_native last. Rejected: building the registry twice from a cloned builder (duplicates stateful caps — two RNG streams, two db connections); a forwarding wrapper per cap (loses any future defaulted HostCap methods such as effects()); giving the VM's AI dispatch special registry access (bypasses the HostCap interface). Values cross into tools as JSON so parallel steps can run on threads (Value is not Send) and every strategy gives identical results.
 
+
+## 2026-10-07T21:55:43-05:00 — CRUSH-158: delegation selection is pure over a two-method DelegationBackend (status, dispatch); a backend is not a grant
+
+Reason:
+Exosphere's delegation read agent status from files in a fixed directory and dispatched through fleet tooling. The reusable part is selection + format validation, so the backend is reduced to status(agent) and dispatch(agent, task) and everything else is pure, testable code in crush-lang-sdk. Supplying a backend to HostCapsBuilder does not register anything without ai_native(true), keeping capabilities opt-in. Rejected: falling back to the first agent when none is available (dispatches to a busy agent behind the caller's back); silently treating unsupported strategies/formats as first_available/skip (hides mistakes).
+

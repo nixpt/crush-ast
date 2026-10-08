@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Host backends for `ai_native.query` and `ai_native.agent_delegation`
+  (CRUSH-158).** New `ai_native::providers::{QueryProvider,
+  DelegationBackend}` traits; `HostCapsBuilder::query_provider(..)` /
+  `.delegation_backend(..)` put them behind the gates in place of the echo
+  stubs (they take effect only with `ai_native(true)` — a backend is not a
+  grant). Delegation picks agents (`first_available`, `broadcast`, `best`,
+  `round_robin`; others are an error) from the backend's reported status and
+  validates each result against `expected_format` (`json`, `structured`,
+  `text`). No real backend ships; `ai_native::register_with` is the
+  non-builder entry point.
+
 - **`ai_native.toolchain` runs tool chains (CRUSH-157).** With `ai_native`
   granted, the toolchain cap is now a strategy engine (sequential, parallel,
   conditional, retry × fail-fast, continue-on-error, retry, fallback) that
