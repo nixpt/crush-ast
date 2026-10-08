@@ -1,12 +1,22 @@
 //! Integration test for the `crush-debugger run` REPL loop.
 //!
 //! Starts the debugger binary with a minimal `.crush` fixture, pipes
-//! REPL commands via stdin, and asserts expected output.
+//! REPL commands via stdin, and asserts expected output. `spawn_debugger`
+//! passes the full debugger grants (CRUSH-160); the grant tests at the end
+//! use `spawn_debugger_ungranted` and pick their own.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+/// Run the debugger with full debugger grants (CRUSH-160) added.
 fn spawn_debugger(args: &[&str], stdin_bytes: &[u8]) -> (String, String, bool) {
+    let mut granted = args.to_vec();
+    granted.extend(["--cap", "debug.step", "--cap", "debug.inspect"]);
+    spawn_debugger_ungranted(&granted, stdin_bytes)
+}
+
+/// Run the debugger with exactly `args`: no debugger grants unless given.
+fn spawn_debugger_ungranted(args: &[&str], stdin_bytes: &[u8]) -> (String, String, bool) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_crush-debugger"))
         .args(args)
         .stdin(Stdio::piped())
@@ -678,4 +688,179 @@ fn max_call_depth_flag_hits_call_depth_quota_on_step() {
         stderr
     );
     assert!(success);
+}
+
+// ── CRUSH-159: next / finish / watch / print over a real call ─────────
+//
+// calls.crush: main stores 5 in slot 0, calls inc(1) (= 11) and stores
+// the result in slot 1. Offsets: PUSH 0, STORE 9, PUSH 12, CALL 21,
+// STORE 24.
+
+#[test]
+fn repl_watch_reports_the_change_and_print_reads_the_slot() {
+    let (stdout, stderr, success) = spawn_debugger(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        b"watch 0\ncontinue\nprint 0\nprint 1\nunwatch 0\ncontinue\nquit\n",
+    );
+    for want in [
+        "watchpoint #0 set on slot 0 in frame 1",
+        "watchpoint #0: slot 0 (depth 1) (unset) -> 5",
+        "slot 0 = 5",
+        "slot 1 is unset in frame 1",
+        "watchpoint #0 removed",
+        "done",
+    ] {
+        assert!(
+            stdout.contains(want),
+            "missing `{want}`\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+    assert!(success);
+}
+
+#[test]
+fn repl_next_steps_over_the_call() {
+    let (stdout, stderr, success) = spawn_debugger(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        b"next\nnext\nnext\nnext\nprint 1\nnext\nprint 1\nquit\n",
+    );
+    // Three single instructions, then the CALL runs inc to completion.
+    let stops: Vec<&str> = stdout
+        .split("cru-s-debugger> ")
+        .filter_map(|chunk| chunk.lines().next())
+        .filter(|l| l.starts_with("stopped at"))
+        .collect();
+    assert_eq!(
+        stops,
+        [
+            "stopped at ip 9 (depth 1)",
+            "stopped at ip 12 (depth 1)",
+            "stopped at ip 21 (depth 1)",
+            "stopped at ip 24 (depth 1)",
+            "stopped at ip 27 (depth 1)",
+        ],
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("slot 1 is unset in frame 1"), "{stdout}");
+    assert!(stdout.contains("slot 1 = 11"), "{stdout}");
+    assert!(success);
+}
+
+#[test]
+fn repl_finish_returns_to_the_caller() {
+    let (stdout, stderr, success) = spawn_debugger(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        // Four raw steps: PUSH, STORE, PUSH, CALL -> now inside inc.
+        b"step\nstep\nstep\nstep\nfinish\nprint 0\nquit\n",
+    );
+    assert!(
+        stdout.contains("stopped at ip 24 (depth 1)"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // Back in main's frame: its slot 0, not inc's.
+    assert!(stdout.contains("slot 0 = 5"), "{stdout}");
+    assert!(success);
+}
+
+// ── CRUSH-160: debugger grants ────────────────────────────────────────
+
+#[test]
+fn without_debug_grants_the_repl_refuses_to_run_the_program() {
+    let (stdout, stderr, success) = spawn_debugger_ungranted(
+        &["run", "tests/fixtures/calls.crush", "--cap", "io.print"],
+        b"continue\nnext\nwatch 0\nprint 0\nhelp\nquit\n",
+    );
+    assert_eq!(
+        stdout.matches("refused:").count(),
+        4,
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("`continue` needs the `debug.step` grant"),
+        "{stdout}"
+    );
+    // Nothing ran: the program's output never appeared.
+    assert!(!stdout.contains("11"), "{stdout}");
+    assert!(stdout.contains("Commands:"), "help still answers\n{stdout}");
+    assert!(success);
+}
+
+#[test]
+fn control_grant_runs_but_hides_values() {
+    let (stdout, stderr, success) = spawn_debugger_ungranted(
+        &[
+            "run",
+            "tests/fixtures/calls.crush",
+            "--cap",
+            "io.print",
+            "--cap",
+            "debug.step",
+        ],
+        b"watch 0\ncontinue\nprint 0\ncontinue\nquit\n",
+    );
+    assert!(
+        stdout.contains("watchpoint #0: slot 0 (depth 1) (unset) -> <hidden>"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("`print` needs the `debug.inspect.redacted` grant"),
+        "{stdout}"
+    );
+    // Program output isn't inspection: it still shows.
+    assert!(stdout.contains("11\ndone"), "{stdout}");
+    assert!(success);
+}
+
+#[test]
+fn redacted_grant_shows_type_and_hash_never_content() {
+    let (stdout, stderr, success) = spawn_debugger_ungranted(
+        &[
+            "run",
+            "tests/fixtures/calls.crush",
+            "--cap",
+            "io.print",
+            "--cap",
+            "debug.step",
+            "--cap",
+            "debug.inspect.redacted",
+        ],
+        b"next\nnext\nprint 0\nquit\n",
+    );
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("slot 0 = "))
+        .unwrap_or_else(|| panic!("no print output\nstdout:\n{stdout}\nstderr:\n{stderr}"));
+    assert!(line.contains("slot 0 = <int #"), "{line}");
+    assert!(!line.ends_with("= 5"), "{line}");
+    assert!(success);
+}
+
+#[test]
+fn unknown_or_incomplete_debug_grants_are_rejected() {
+    let (_, stderr, success) = spawn_debugger_ungranted(
+        &[
+            "run",
+            "tests/fixtures/calls.crush",
+            "--cap",
+            "debug.everything",
+        ],
+        b"quit\n",
+    );
+    assert!(!success);
+    assert!(
+        stderr.contains("unknown debugger grant `debug.everything`"),
+        "{stderr}"
+    );
+
+    let (_, stderr, success) = spawn_debugger_ungranted(
+        &[
+            "run",
+            "tests/fixtures/calls.crush",
+            "--cap",
+            "debug.inspect",
+        ],
+        b"quit\n",
+    );
+    assert!(!success);
+    assert!(stderr.contains("needs `--cap debug.step`"), "{stderr}");
 }

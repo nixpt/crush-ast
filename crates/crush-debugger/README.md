@@ -1,84 +1,116 @@
 # crush-debugger
 
-Interactive runtime debugger for Crush packages.
+Interactive runtime debugger for Crush programs. It drives
+`crush_vm::PortableVm` and pauses on the VM's own hooks: breakpoints,
+steps and watchpoints all surface as `VmYield::DebugBreak`, and
+`PortableVm::last_stop()` says which one fired.
 
-## Status: SCAFFOLD (initial commit)
+## Grants
 
-This crate ships a coherent surface (modules, public API, parsers,
-breakpoint registry, VM driver trait, in-process session) but
-**does not yet pause on a real breakpoint**. Every component that
-needs the upstream `crush_vm::PortableVm` BP-pause hook (latent at
-`portable_vm.rs:1037`) is wired behind `todo!()` macros so the
-integration seam is *loud* during code review, not silent.
+Debugging a program is a capability like any other: nothing is ambient.
+The session reads its level once, from `debug.*` grants in the VM's
+`HostCaps` (`HostCaps::grant_debug(level)`; the CLI takes them as `--cap`):
 
-## What's real (and unit-tested)
+| Grants | Level | Allows |
+|--------|-------|--------|
+| none | `None` | `help`, `list`, `status`, `quit` only; everything else is refused, naming the missing grant |
+| `debug.step` | `ControlOnly` | breakpoints, steps, `continue`, watchpoints; every value shows as `<hidden>` |
+| `+ debug.inspect.redacted` | `InspectRedacted` | `print`, values as `<type #hash>`: equal values hash equal within one session, the key changes per session |
+| `+ debug.inspect` | `Full` | values in full |
 
-| Module | Surface | Tests |
-|--------|---------|-------|
-| `wire_consumer` | `parse_record`, `consume_stream`, `OwnedDiagRecord`, `ParseRecordError` | 5 |
-| `breakpoint`    | `BreakpointSet`, `Breakpoint`, `BreakpointId`, `Location` | 4 |
-| `repl`          | `parse_command`, `Command`, `ParseCommandError`             | 10 |
-| `vm_driver`     | `VmDriver`, `PortableVmDriver`, `StepOutcome`, `VmState`, `VmRunResult`, `VmError` | 4 |
-| `session`       | `DebugSession`, `MockVmDriver` (test)                        | 4 |
+`debug.inspect*` without `debug.step` grants nothing. The `debug.*` gates
+are for the debugger: a program that declares and calls one gets an error.
+The program's own output is not inspection and always shows.
 
-`wire_consumer::parse_record` round-trips a hand-authored
-`DiagRecord` against `crush_diagnostics::diag_line` so the parser
-matches the canonical emitter byte-for-byte (mirrors the lockdown
-test in `crush_pkg::main::handle_lint_with_byte_exact_three_rule_fedpath`).
+## Commands
 
-`breakpoint::BreakpointSet` is keyed on `<file>:<line>` with
-monotonic IDs and a `BTreeMap` for stable insertion-order iteration.
+| Command | What it does |
+|---------|--------------|
+| `break <file>:<line>` / `b` | breakpoint, resolved to a bytecode offset through the assembler source map |
+| `delete <id>` / `d` | remove a breakpoint |
+| `step` / `s` | execute one instruction (enters calls) |
+| `next` / `n` | step over: one instruction, running any call it makes to completion |
+| `finish` / `fin` | step out: run until the current function returns (from the entry function: to the end) |
+| `continue` / `c` | run until a breakpoint, a watchpoint, a quota, or the end |
+| `watch <slot> [top \| frame <depth>]` / `w` | stop after an instruction changes a local slot; default scope is the current frame |
+| `unwatch <id>` | remove a watchpoint |
+| `print <slot>` / `p` | value of a local slot in the current frame |
+| `list` / `l`, `status` / `i`, `help` / `h`, `quit` / `q` | |
 
-`repl::parse_command` accepts long verbs (`break`, `step`, `continue`,
-`list`, `print`, `delete`, `quit`, `help`) plus single-letter aliases
-(`b`, `s`, `c`, `l`, `p`, `d`, `q`, `h`, `?`).
+Stepping and watching work at bytecode level, by call depth:
 
-## What's NOT real (next-iteration blockers)
+- a step never stops where it started; `next` stops at the next
+  instruction no deeper than where it began, `finish` at the next one
+  shallower. A breakpoint or watchpoint hit on the way ends the step.
+- a breakpoint and a finished step pause *before* their instruction; a
+  watchpoint pauses *after* the instruction that changed the slot. A
+  change includes the slot's first assignment and in-place edits of an
+  array or map it holds.
+- `frame <depth>` watches one activation (1 = entry frame); `top` watches
+  whichever function is running and re-reads the slot silently on calls
+  and returns.
 
-1. **Real BP pause.** `PortableVmDriver::run_until_breakpoint_or_done`
-   uses a heuristic step-loop with a hard cap until the upstream hook
-   at `crush_vm::portable_vm.rs:1037` lands.
-2. **`file:line` -> bytecode coord.** `Breakpoint.bytecode_address`
-   stays `None` until `crush_frontend` ships a sourcemap.
-3. **REPL eval.** `DebugSession::run_repl` is `todo!()` because binding
-   `Command -> VmDriver` actions needs (1).
-4. **APIs (TUI / DAP / VS Code extension).** Only the `clap` CLI shell
-   exists today. The REPL stdin loop and any DAP/LSP adapter are
-   placeholders wired at the trait seam.
+Locals are numbered slots: compiled bytecode keeps no variable names, and
+only the assembler emits a line map. Watching by name and line-level
+stepping need a source map from `crush-frontend`.
+
+The same hooks are public on `PortableVm` (`request_step`, `cancel_step`,
+`add_watchpoint`, `remove_watchpoint`, `call_depth`, `local`,
+`last_stop`, and `frame_snapshot` / `debug_visibility` for redacted views),
+so any host that steps the VM, such as crush-web's `Session`, can use
+them without this crate. Those are host APIs; the grant check sits in
+`DebugSession`, the boundary a debug client talks to.
+
+## Events
+
+A host that embeds the debugger instead of using the REPL drives
+`DebugSession::handle_command` and attaches a sink:
+
+```rust
+let (tx, rx) = std::sync::mpsc::channel();
+session.set_event_sink(tx);            // or a CollectingSink
+session.handle_command(parse_command("continue")?)?;
+for event in rx.try_iter() { /* DebugEvent */ }
+```
+
+Events: `Stopped { reason, frames }` (reason: breakpoint, step, watchpoint
+with old/new, paused; frames innermost first, each with function name, IP
+and locals), `Output`, `Finished`, `QuotaExceeded`, `Error`, `Refused`.
+Every value in an event is a `ValueView` rendered at the session's level,
+never a raw VM value, and events are `Send`.
 
 ## CLI
 
 ```text
+$ crush-debugger run <FILE> [--cap NAME]... [--break FILE:LINE]...
+                 [--max-steps N] [--max-stack N] [--max-output N] [--max-call-depth N]
 $ crush-debugger version
-$ crush-debugger run <TARGET> [--strict]
-$ crush-debugger repl
 ```
 
-`version` confirms the scaffold is loaded; `run` and `repl` print
-the upstream blocker they are gated on (no business logic yet).
+`run` loads a CASM text file (`crush_vm::assemble`), not Crush source.
 
-## Workspace layout
-
-```toml
-# Cargo.toml (path deps):
-crush-vm          = { workspace = true }
-crush-diagnostics = { workspace = true }
+```text
+$ crush-debugger run tests/fixtures/calls.crush --cap io.print \
+    --cap debug.step --cap debug.inspect
+cru-s-debugger> watch 0
+watchpoint #0 set on slot 0 in frame 1
+cru-s-debugger> continue
+watchpoint #0: slot 0 (depth 1) (unset) -> 5
+cru-s-debugger> print 0
+slot 0 = 5
+cru-s-debugger> next
+stopped at ip 21 (depth 1)
+cru-s-debugger> next
+stopped at ip 24 (depth 1)
 ```
 
-External deps are all `workspace = true` (clap, anyhow, serde,
-serde_json). No new external crates added by this scaffold.
+(The second `next` ran the whole `CALL inc`.) With `--cap
+debug.inspect.redacted` instead of `debug.inspect`, the same session shows
+`(unset) -> <int #f1f2057bd1863c82>` and `slot 0 = <int #f1f2057bd1863c82>`.
 
-## Bumping to a real debugger
+## Library
 
-When the upstream `crush_vm::PortableVm` BP-pause hook lands:
-
-1. Replace `PortableVmDriver::run_until_breakpoint_or_done` body with
-   a `step()` loop that inspects the new `VmYield::BreakpointHit`
-   variant and returns `VmRunResult::HitBreakpoint`.
-2. Populate `Breakpoint.bytecode_address` from a `crush_frontend`
-   sourcemap (or instruct the driver to look it up at BP-time).
-3. Implement `DebugSession::run_repl` as a `parse_command -> match
-   on Command -> drive the VmDriver` loop.
-4. Flip the `run_repl_panics_with_todo_macro_until_upstream_hook_lands`
-   test to a positive test that exercises a full break/step/continue
-   cycle.
+`DebugSession` owns a `VmDriver` (today `PortableVmDriver`), the
+breakpoint registry and the source map. `VmDriver`'s step/watch/locals
+methods have defaults, so drivers written before them still compile; they
+report "not supported".

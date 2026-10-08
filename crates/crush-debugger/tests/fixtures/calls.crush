@@ -1,0 +1,15 @@
+.func main
+    PUSH 5
+    STORE 0
+    PUSH 1
+    CALL inc
+    STORE 1
+    LOAD 1
+    CAP_CALL "io.print" 1
+    HALT
+.func inc
+    STORE 0
+    LOAD 0
+    PUSH 10
+    ADD
+    RET

@@ -1,0 +1,198 @@
+# Blackjack table -- deterministic self-playing card game.
+#
+# From awesome-crush (github.com/nixpt/awesome-crush, games/blackjack.crush).
+# Regression corpus for #94 (CRUSH-176).
+#
+# This is deliberately not another board simulation. The deck is an affine
+# permutation of 52 cards, so every card in a round is unique without arrays,
+# mutable collections, or a random-number capability. Hand state is carried
+# as scalar totals and ace counts through recursive hit/stand decisions.
+#
+# The player uses a simple deterministic policy: hit below 17, otherwise
+# stand. The dealer follows the same policy. Six rounds are played with a
+# fixed wager and a visible bankroll, making the whole run reproducible.
+
+fn card_at(seed, index) {
+    # 17 is coprime with 52, so this visits every card exactly once.
+    return (seed + 17 * index) % 52;
+}
+
+fn card_rank(card) {
+    return card % 13;
+}
+
+fn card_value(card) {
+    let rank = card_rank(card);
+    if rank == 0 {
+        return 1;
+    }
+    if rank >= 10 {
+        return 10;
+    }
+    return rank + 1;
+}
+
+fn is_ace(card) {
+    if card_rank(card) == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn card_text(card) {
+    let rank = card_rank(card);
+    let face = "";
+    if rank == 0 {
+        face = "A";
+    } else if rank == 1 {
+        face = "2";
+    } else if rank == 2 {
+        face = "3";
+    } else if rank == 3 {
+        face = "4";
+    } else if rank == 4 {
+        face = "5";
+    } else if rank == 5 {
+        face = "6";
+    } else if rank == 6 {
+        face = "7";
+    } else if rank == 7 {
+        face = "8";
+    } else if rank == 8 {
+        face = "9";
+    } else if rank == 9 {
+        face = "10";
+    } else if rank == 10 {
+        face = "J";
+    } else if rank == 11 {
+        face = "Q";
+    } else {
+        face = "K";
+    }
+
+    let suit = card / 13;
+    let suit_text = "C";
+    if suit == 1 {
+        suit_text = "D";
+    } else if suit == 2 {
+        suit_text = "H";
+    } else if suit == 3 {
+        suit_text = "S";
+    }
+    return face + suit_text;
+}
+
+fn blackjack_total(hard, aces) {
+    let total = hard;
+    # Count one ace as 11 only when it keeps the hand at or below 21.
+    if aces > 0 {
+        if hard + 10 <= 21 {
+            total = hard + 10;
+        }
+    }
+    return total;
+}
+
+fn pack_turn(total, next_index) {
+    return total * 100 + next_index;
+}
+
+# Return final player total and the next unused deck index packed together.
+fn player_turn(seed, next_index, hard, aces, cards) {
+    let total = blackjack_total(hard, aces);
+    if total > 21 {
+        io.print("player busts at " + total);
+        return pack_turn(total, next_index);
+    }
+    if total >= 17 {
+        io.print("player stands at " + total + " (" + cards + " cards)");
+        return pack_turn(total, next_index);
+    }
+
+    let card = card_at(seed, next_index);
+    io.print("player hits " + card_text(card));
+    return player_turn(seed, next_index + 1, hard + card_value(card), aces + is_ace(card), cards + 1);
+}
+
+fn dealer_turn(seed, next_index, up_card, hole_card, hard, aces, cards) {
+    let total = blackjack_total(hard, aces);
+    if cards == 2 {
+        io.print("dealer reveals " + card_text(up_card) + " " + card_text(hole_card));
+    }
+    if total > 21 {
+        io.print("dealer busts at " + total);
+        return total;
+    }
+    if total >= 17 {
+        io.print("dealer stands at " + total + " (" + cards + " cards)");
+        return total;
+    }
+
+    let card = card_at(seed, next_index);
+    io.print("dealer hits " + card_text(card));
+    return dealer_turn(seed, next_index + 1, up_card, hole_card, hard + card_value(card), aces + is_ace(card), cards + 1);
+}
+
+fn play_round(round, seed, bankroll) {
+    let wager = 10;
+    io.print("");
+    io.print("round " + round + " | bankroll " + bankroll + " | wager " + wager);
+
+    let player_one = card_at(seed, 0);
+    let player_two = card_at(seed, 1);
+    let dealer_up = card_at(seed, 2);
+    let dealer_hole = card_at(seed, 3);
+
+    let player_hard = card_value(player_one) + card_value(player_two);
+    let player_aces = is_ace(player_one) + is_ace(player_two);
+    let player_start = blackjack_total(player_hard, player_aces);
+    io.print("player is dealt " + card_text(player_one) + " " + card_text(player_two) + " -> " + player_start);
+    io.print("dealer shows " + card_text(dealer_up) + " [hidden]");
+
+    let player_packed = player_turn(seed, 4, player_hard, player_aces, 2);
+    let player_total = player_packed / 100;
+    let dealer_index = player_packed % 100;
+
+    if player_total > 21 {
+        io.print("result: dealer wins");
+        return bankroll - wager;
+    }
+
+    let dealer_hard = card_value(dealer_up) + card_value(dealer_hole);
+    let dealer_aces = is_ace(dealer_up) + is_ace(dealer_hole);
+    let dealer_total = dealer_turn(seed, dealer_index, dealer_up, dealer_hole, dealer_hard, dealer_aces, 2);
+
+    if dealer_total > 21 {
+        io.print("result: player wins");
+        return bankroll + wager;
+    }
+    if player_total > dealer_total {
+        io.print("result: player wins " + player_total + " to " + dealer_total);
+        return bankroll + wager;
+    }
+    if player_total < dealer_total {
+        io.print("result: dealer wins " + dealer_total + " to " + player_total);
+        return bankroll - wager;
+    }
+    io.print("result: push at " + player_total);
+    return bankroll;
+}
+
+fn play_table(round, max_rounds, bankroll) {
+    if round > max_rounds {
+        io.print("");
+        io.print("table closed with bankroll " + bankroll);
+        return bankroll;
+    }
+    let seed = 11 + round * 19;
+    let next_bankroll = play_round(round, seed, bankroll);
+    return play_table(round + 1, max_rounds, next_bankroll);
+}
+
+fn main() {
+    io.print("Blackjack table -- six deterministic rounds");
+    io.print("deck: affine permutation, policy: hit below 17");
+    let final_bankroll = play_table(1, 6, 100);
+    io.print("final bankroll: " + final_bankroll);
+    return;
+}

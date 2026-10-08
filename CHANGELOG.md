@@ -72,6 +72,29 @@ add its entry after yours.
   refused instead of silently ignored. `HostCapsBuilder` itself is unchanged:
   embedders still opt in with `.stdlib(true)`. I/O families (`text.head`,
   `time.now`, `fs.*`, …) stay behind their grants.
+- **Debugger: grants, redaction and events (CRUSH-160).** Debugging is now a
+  granted capability: `debug.step` (control), `debug.inspect.redacted` (values
+  as type + per-session hash) and `debug.inspect` (values in full), via
+  `HostCaps::grant_debug` or `crush-debugger run --cap debug.*`. **Without a
+  debug grant the debugger REPL refuses to run the program** — pass
+  `--cap debug.step --cap debug.inspect` for the old behaviour. New
+  `DebugEvent`/`DebugEventSink` (a channel sender works) for embedding hosts;
+  `PortableVm::frame_snapshot` returns redacted frames. The REPL now shows the
+  program's own output.
+- **Debugger: step over/out and watchpoints (CRUSH-159).** `PortableVm` gains
+  `request_step(StepMode::{Into, Over, Out})` (by call depth),
+  `add_watchpoint(slot, WatchScope::{Frame(depth), Top})`, `call_depth()`,
+  `local(depth, slot)` and `last_stop()`; stops still surface as
+  `VmYield::DebugBreak`. `crush-debugger` adds `next`, `finish`, `watch`,
+  `unwatch` and a working `print <slot>`. Bytecode-level: locals are slots
+  until the frontend emits a source map.
+- **Fix: `PortableVm` diverged from the scheduler on recursive programs
+  (CRUSH-176, #94).** A jump that lands on the instruction it came from — a
+  recursive call in tail position returning to the caller's own `RET`, or
+  `loop: JMP loop` — was treated as "no jump" and fell through. awesome-crush's
+  tictactoe, lights_out, blackjack and multi-round blackjack_interactive now
+  run the same on `PortableVm` (crush-web `Session`/`execute_with`, the
+  debugger, exo-light) as on `crush_vm::run`.
 - **crush-web: interactive `io.read` in the browser (CRUSH-118, #91).** New
   `execute_with(source, { stdin, max_steps })` feeds `io.read` from a string
   and keeps output printed before an error; new `Session` pauses when the
