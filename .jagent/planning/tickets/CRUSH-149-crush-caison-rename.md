@@ -19,4 +19,4 @@ re-exporting `caison` plus the `cson.parse` VM capability. Mechanical rename:
 
 ## Not here
 
-CRUSH-150 (delete frontend's duplicate parser), CRUSH-151 (value mapping).
+CRUSH-177 (delete frontend's duplicate parser), CRUSH-178 (value mapping).
