@@ -691,3 +691,9 @@ Decision C-5 (captain s474): VM-local cwd inside --fs-root, never chdir. Impleme
 Reason:
 The ticket asked for http_put/delete/request with 'the same timeout/deadline behaviour as http_get', but http_get had none (no call_with_deadline override), so a slow server could hold the VM past max_wall_time_ms. All five verbs now share net::request(), which sets the ureq agent timeout from the CAP_CALL deadline and maps I/O timeouts to HostCapError::Timeout. http_request is the general verb, so it reports the status (map {status, body}) instead of failing on 4xx/5xx; the fixed verbs keep their body-or-error contract. exosphere's http.* spellings are not aliased: one name per capability. env.all exposes exactly what --env already exposed to env.get (the host env + injected overrides).
 
+
+## 2026-10-07T20:34:09-05:00 — CRUSH-154: storage.* declined — db.* covers persistence
+
+Reason:
+Decision C-6 (captain s474). exosphere's handle-based storage.open/read/write/size/close would add a new kind of per-VM state (handle scoping, cleanup on drop, use-after-close) across all five backends for a family with no Crush consumer; db.query/db.execute (--db PATH) and fs.* (--fs) already cover persistence. Mapping in docs/design/storage-caps-declined.md; reopen only for a consumer db/fs can't serve, behind its own --store grant.
+

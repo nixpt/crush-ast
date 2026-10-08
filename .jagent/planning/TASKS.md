@@ -221,7 +221,7 @@ Ordered by relay lane in [`docs/planning/MIGRATION-INVENTORY.md`](../../docs/pla
 - [x] **CRUSH-151** (M (~60 turns), lane A2; **done 2026-10-07, nimbus** — 10 coreutils + VM-local `fs.cd` (C-5), shared `FsSandbox`): fs coreutils host capabilities (`fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find`). [ticket](tickets/CRUSH-151-fs-coreutils-host-caps.md)
 - [x] **CRUSH-152** (XS (~15 turns), lane A3; **done 2026-10-07, nimbus** — `AsyncSleepCap` over the shared `sleep_ms`): `async.sleep` as an alias of `time.sleep`. [ticket](tickets/CRUSH-152-async-sleep-alias.md)
 - [x] **CRUSH-153** (S (~30 turns), lane A4; **done 2026-10-07, nimbus** — `env.all/home_dir`, `net.http_put/delete/request`, one deadline-aware request path): `env.all`/`env.home_dir` and `http.put/delete/request`. [ticket](tickets/CRUSH-153-env-http-cap-gaps.md)
-- [ ] **CRUSH-154** (S (~40 turns), lane A5 🔒): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
+- [x] **CRUSH-154** (S (~40 turns), lane A5 🔒; **closed 2026-10-07, nimbus — declined per C-6**, `db.*` covers persistence: [docs/design/storage-caps-declined.md](../../docs/design/storage-caps-declined.md)): `storage.*` handle-based store capabilities — port or decline. [ticket](tickets/CRUSH-154-storage-caps-decision.md)
 - [ ] **CRUSH-155** (S (~20 turns), lane A6): Effect metadata on `HostCapSpec` (optional). [ticket](tickets/CRUSH-155-hostcapspec-effects.md)
 - [ ] **CRUSH-156** (M (~40 turns), lane B1): `ai_native.*` caps take real arguments. [ticket](tickets/CRUSH-156-ai-native-arg-plumbing.md)
 - [ ] **CRUSH-157** (M (~60 turns), lane B2): `ai_native.toolchain` strategy engine. [ticket](tickets/CRUSH-157-ai-toolchain-engine.md)
