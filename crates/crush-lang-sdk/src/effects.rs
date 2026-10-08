@@ -25,8 +25,9 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
     const FS_READ: &[&str] = &["fs/read"];
     const FS_WRITE: &[&str] = &["fs/write"];
     let effects: &'static [&'static str] = match name {
-        // Always registered: parses its argument, nothing else.
-        "cson.parse" => &[],
+        // Always registered: parses its argument, nothing else. `cson.parse`
+        // is the deprecated alias (CRUSH-149).
+        "caison.parse" | "cson.parse" => &[],
         // --fs
         "fs.read" | "fs.cat" | "fs.exists" | "fs.list" | "fs.ls" | "fs.find" | "fs.pwd"
         | "fs.cd" => FS_READ,
@@ -190,6 +191,7 @@ mod tests {
         assert_eq!(effects("async.sleep"), ["time/sleep"]);
         assert_eq!(effects("process.exec"), ["process/spawn"]);
         assert_eq!(effects("polyglot.python"), ["process/spawn"]);
+        assert!(effects("caison.parse").is_empty());
         assert!(effects("cson.parse").is_empty());
         #[cfg(feature = "stdlib")]
         {
