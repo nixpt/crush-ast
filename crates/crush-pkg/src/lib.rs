@@ -75,6 +75,7 @@ pub use runners::{CapsuleRunner, CrushRunner, ExecutionResult};
 
 pub mod builder;
 pub mod ecap; // Underpins [`site`] for static-site capsules.
+pub mod flow; // Build-then-run composition + the Crush-buildable guard.
 pub mod manifest;
 pub mod packer;
 pub mod runners; // [`CapsuleRunner`] triumvirate lives here.

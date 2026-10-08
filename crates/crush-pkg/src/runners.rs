@@ -49,9 +49,18 @@ impl CapsuleRunner for CrushRunner {
             let source = std::fs::read_to_string(payload_path)?;
             crush_lang_sdk::compile::compile_crush_source(&source)?
         };
+        self.run_program(&program)
+    }
+}
 
+impl CrushRunner {
+    /// Run an already-compiled program under this runner's capability
+    /// registry and print its output. `crush-pkg`'s build-then-run flow
+    /// uses this to run the program `PackageBuilder::build` produced
+    /// (entry + path deps) instead of recompiling the entry file alone.
+    pub fn run_program(&self, program: &crush_vm::Program) -> anyhow::Result<ExecutionResult> {
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(&program, &quotas, self.host_caps.as_ref())?;
+        let result = crush_vm::run_with_caps(program, &quotas, self.host_caps.as_ref())?;
 
         if !result.output.is_empty() {
             println!("{}", result.output);

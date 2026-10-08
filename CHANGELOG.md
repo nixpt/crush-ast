@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush-pkg` with no subcommand builds and runs (CRUSH-167, squeeze folded
+  in).** A bare `crush-pkg` builds the package (entry + path deps), writes
+  `target/<name>.cvm` + `.casm.json`, then runs the program it just built;
+  `crush-pkg -- ARGS` passes ARGS through (Script/Native capsules receive
+  them; Crush programs have no argv channel yet). Script and native capsules
+  skip the build and go straight to the runner. `crush-pkg build`/`check` now
+  refuse Script/Native capsules with a clear message (`E-BUILDER`) instead of
+  feeding Python or JavaScript to the Crush compiler. Replaces the separate
+  `squeeze` tool. New library surface: `crush_pkg::flow` and
+  `CrushRunner::run_program`.
+
 - **crush-pkg is publishable (CRUSH-161).** `cargo publish --dry-run -p
   crush-pkg` now verifies against crates.io as it is (every dependency,
   including `crush-buckets` 0.1.0, is live). The script runner's buckets
