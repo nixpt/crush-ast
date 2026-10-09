@@ -444,7 +444,13 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         }
         "casm" => {
             let source = std::fs::read_to_string(&args.path)?;
-            let permissions: Vec<&str> = args.caps.iter().map(|s| s.as_str()).collect();
+            let mut permissions: Vec<&str> = args.caps.iter().map(|s| s.as_str()).collect();
+            // Hand-written assembly has no compiler to declare its polyglot grants, and
+            // EXEC_LANG checks the manifest (CRUSH-226) — `--polyglot` declares them too,
+            // so it keeps meaning what it meant before.
+            if args.polyglot {
+                permissions.extend(["polyglot.python", "polyglot.javascript", "polyglot.bash"]);
+            }
             let program = crush_lang_sdk::assemble(&source, Some(&permissions), None)?;
             runtime.run(&program)?
         }

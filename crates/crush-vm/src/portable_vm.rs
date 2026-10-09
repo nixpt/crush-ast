@@ -1378,6 +1378,7 @@ impl PortableVm {
                 // CAPABILITY GATE — must match scheduler.rs exactly (crush-diff would catch drift).
                 // A @lang block spawns an interpreter with full host authority; require polyglot.<lang>.
                 let gate = crate::scheduler::polyglot_gate_name(lang);
+                crate::scheduler::check_cap_permitted(&gate, self.declared_caps.contains(&gate), &self.quotas)?;
                 if self.host_caps.as_ref().map(|h| h.get(&gate).is_none()).unwrap_or(true) {
                     return Err(VmError::UnknownCap(format!(
                         "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
@@ -1534,14 +1535,7 @@ impl PortableVm {
 
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
         // Check permission
-        if !self.declared_caps.contains(cap) {
-            return Err(VmError::CapNotDeclared(cap.to_string()));
-        }
-        if let Some(allowed) = &self.quotas.allowed_caps
-            && !allowed.iter().any(|a| a == cap)
-        {
-            return Err(VmError::CapDenied(cap.to_string()));
-        }
+        crate::scheduler::check_cap_permitted(cap, self.declared_caps.contains(cap), &self.quotas)?;
 
         // Built-in portable capabilities
         if let Some(spec) = crate::caps::capabilities().get(cap) {
@@ -2339,6 +2333,39 @@ HALT"#;
             other => panic!("expected Array([1]), got {other:?}"),
         }
     }
+    /// CRUSH-226: `EXEC_LANG` passes the declared-caps and `allowed_caps`
+    /// checks like every `CAP_CALL` (mirrors scheduler.rs's
+    /// `exec_lang_permission_tests`). Denied before any spawn.
+    fn portable_python_block(declared: &[&str], quotas: Quotas) -> PortableVm {
+        let spec = serde_json::json!({"lang": "python", "code": "print(1)", "var_count": 0});
+        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        let mut vm = PortableVm::new(assemble(&src, Some(declared), Some("test")).unwrap());
+        let mut caps = crate::HostCaps::new();
+        caps.grant_polyglot(&["python"]);
+        vm.set_host_caps(caps);
+        vm.set_quotas(quotas);
+        vm
+    }
+
+    #[test]
+    fn test_portable_exec_lang_respects_allowed_caps() {
+        let quotas = Quotas { allowed_caps: Some(vec!["io.print".into()]), ..Quotas::default() };
+        let mut vm = portable_python_block(&["polyglot.python"], quotas);
+        match vm.run() {
+            Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
+            other => panic!("expected CapDenied(polyglot.python), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_portable_exec_lang_requires_declared_gate() {
+        let mut vm = portable_python_block(&[], Quotas::default());
+        match vm.run() {
+            Err(VmError::CapNotDeclared(cap)) => assert_eq!(cap, "polyglot.python"),
+            other => panic!("expected CapNotDeclared(polyglot.python), got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_portable_exec_lang_partial_binding() {
         // EXEC_LANG with var_count=3 but only var_0 is named.
@@ -2354,7 +2381,7 @@ HALT"#;
             "PUSH_STR \"hello\"\nEXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('"', "\\\"")
         );
-        let program = assemble(&src, None, Some("test")).unwrap();
+        let program = assemble(&src, Some(&["polyglot.bash"]), Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
         let mut caps = crate::HostCaps::new();
         caps.grant_polyglot(&["bash"]);
@@ -2378,7 +2405,7 @@ HALT"#;
             "PUSH_STR \"ab\"\nPUSH_STR \"AB\"\nEXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('"', "\\\"")
         );
-        let program = assemble(&src, None, Some("test")).unwrap();
+        let program = assemble(&src, Some(&["polyglot.bash"]), Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
         let mut caps = crate::HostCaps::new();
         caps.grant_polyglot(&["bash"]);
@@ -2445,7 +2472,7 @@ HALT"#;
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('"', "\\\"")
         );
-        let program = assemble(&src, None, Some("test")).unwrap();
+        let program = assemble(&src, Some(&["polyglot.bash"]), Some("test")).unwrap();
         let mut vm = PortableVm::new(program);
         let mut caps = crate::HostCaps::new();
         caps.grant_polyglot(&["bash"]);

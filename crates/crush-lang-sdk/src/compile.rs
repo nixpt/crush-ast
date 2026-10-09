@@ -450,6 +450,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "arr_set" => "ARR_SET".to_string(),
                 "export_var" => "NOP".to_string(),
                 "exec_lang" => {
+                    // Declare the block's polyglot grant: the VM checks EXEC_LANG against
+                    // the manifest like any other capability (CRUSH-226).
+                    if let Some(lang) = instr.args.get("lang").and_then(|v| v.as_str()) {
+                        perms.insert(crush_vm::polyglot_gate_name(lang));
+                    }
                     let args_json = serde_json::to_string(&instr.args).map_err(|e| {
                         anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}")
                     })?;
