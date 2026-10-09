@@ -782,3 +782,15 @@ Rejected alternatives:
 - **Keep 2*e -> e+e only when e is a variable or literal**: still no speedup on the VM (extra load) and keeps a rule that has to be reasoned about
 - **Wrapping arithmetic in folding**: silently changes program results; the VM errors on overflow, so the folded and unfolded programs would disagree
 
+
+## 2026-10-09T07:30:00+00:00 — CRUSH-227: the AOT C runtime reclaims memory with a mark-and-sweep collector run only at instruction boundaries; locals live on a collector-visible heap stack
+
+Reason:
+Since CRUSH-216/223 C-backend strings/arrays/maps were freed only between runs, so accumulation cost O(n^2) memory (5,000 appends: 214 MB) and 2^20 temporaries exhausted the array pool. A collection runs only at a safepoint (top of each function's dispatch loop, between instructions); there every live value is on the value stack or in a locals frame, because a `call` leaves its arguments on the stack and no instruction holds a value in a C variable across a call into Crush code. So the root set is exactly _stack[0.._sp] + _locals[0.._lsp]. Locals moved from C variables to _locals (one frame per call, restored at both return sites). Heap strings are recognised by binary search in the block registry (sorted at collection), so no string-producing code changed; string literals are not in the registry and are never freed. Arrays/objects get mark bits and free lists. Allocation only counts bytes; threshold max(1 MB, 2 x live). CRUSH_GC_STRESS=1 collects at every safepoint and runs in CI. Result: every measured case 11-15 MB peak RSS; 5,000 appends 1.26 s -> 0.02 s.
+
+Rejected alternatives:
+- **Reference counting (like the Rust backend's Rc)**: every push/pop/store/copy of a Value in the generated C would need inc/dec; many hand-written emitters (vec_add, mat_mul, make_range, caps) would each need it right, and cycles through arrays/maps leak
+- **Conservative scan of the C stack**: non-portable, needs the C stack bounds, and Value locals were plain C variables the compiler can keep in registers
+- **Collect inside the allocator**: an allocation happens mid-instruction while operands sit in C variables (e.g. `_add` holds la/ra while allocating), which would be missed roots
+- **Per-run arena only (status quo)**: O(n^2) memory for accumulation; the review on PR #126 showed realistic programs dying
+

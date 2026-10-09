@@ -299,7 +299,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-221** (P2, XS): Float literals with exponents (`1.5e10`, `1e-7`) don't parse. [ticket](tickets/CRUSH-221-float-exponent-literals.md)
 - [ ] **CRUSH-222** (P1, S): The `crush-aotc` crate (second C backend) has no caller and is wrong on 33/52 programs (try/catch skipped, `len`, indexing). [ticket](tickets/CRUSH-222-crush-aotc-crate-unreachable-and-wrong.md)
 - [x] **CRUSH-223** (P1, S): AOT C: 512-slot value stack silently drops values; array pool exhausted after ~2000 arrays. [ticket](tickets/CRUSH-223-aot-c-fixed-capacity-silent-failures.md)
-- [ ] **CRUSH-227** (P1, M): AOT C never frees strings/arrays/maps during a run: O(n²) memory for accumulation, pool exhaustion after 2^20 arrays (collector prototyped). [ticket](tickets/CRUSH-227-aot-c-memory-never-reclaimed.md)
+- [x] **CRUSH-227** (P1, M): AOT C never frees strings/arrays/maps during a run: O(n²) memory for accumulation, pool exhaustion after 2^20 arrays (collector prototyped). [ticket](tickets/CRUSH-227-aot-c-memory-never-reclaimed.md)
 - [ ] **CRUSH-228** (P3, XS): AOT C: dead `mk_null()` fallbacks after allocation; one OOM helper; error helper naming. [ticket](tickets/CRUSH-228-aot-c-dead-null-fallbacks-and-error-helpers.md)
 - [ ] **CRUSH-229** (P2, S): Float-to-text exists three times (VM, Rust AOT, C AOT); pin them together. [ticket](tickets/CRUSH-229-float-text-three-copies.md)
 - [ ] **CRUSH-230** (P3, XS): VM `MAT_MUL` panics on ragged/mismatched matrices; no Crush syntax emits it. [ticket](tickets/CRUSH-230-vm-mat-mul-panics-on-ragged-input.md)

@@ -9,3 +9,8 @@ A crate that is a normal Rust library dependency inside this workspace MUST stay
 ## 2026-10-09T03:42:00+00:00
 
 The crush-frontend optimizer must not change what a program observably does: it may not change how many times a subexpression is evaluated, drop a call or other side effect, or change a value's type. Rewrites that need type or purity information are not allowed until the optimizer has that information. Check: every compilable examples/crush/*.crush prints the same output with and without crushc -O (CRUSH-189; a CI test for this is not yet in place).
+
+
+## 2026-10-09T07:30:00+00:00
+
+The AOT C runtime's collector (CRUSH-227) finds roots only on the value stack and in _locals frames. No generated instruction may hold a Value in a C variable across a call back into Crush code (a future map(arr, fn)-style op must keep its values on the stack), no instruction may run a collection mid-way, and no string operation may return a pointer into the middle of another string block. Check: the Test (aot) CI job reruns the C-runtime tests with CRUSH_GC_STRESS=1, which collects before every instruction.
