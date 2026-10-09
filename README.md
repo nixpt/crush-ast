@@ -90,7 +90,13 @@ crates/
 
 ### Building from Source
 
-Ensure you have Rust 1.85+ installed.
+Ensure you have Rust 1.85+ installed. `crush-pkg` and `crush-vm` path-depend on
+[`nixpt/buckets`](https://github.com/nixpt/buckets), so clone it next to this
+repo first (CI does the same):
+
+```bash
+git clone https://github.com/nixpt/buckets ../buckets
+```
 
 ```bash
 # Build the core SDK and package manager
@@ -107,7 +113,7 @@ cargo run --bin crush-installer -- install --bin-dir target/debug
 cargo run --bin crushc -- --help
 
 # Run a Crush script directly
-cargo run --bin crush-run -- my-program.crush
+cargo run --bin crush-run -- run my-program.crush
 ```
 
 ## ⚙️ Compilation Pipeline
