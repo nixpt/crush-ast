@@ -124,3 +124,50 @@ sibling `buckets` repository. Porting the brainfuck ASCII lookup table to use
 | Design | `docs/design/lang-deps-pypi-npm.md` |
 | Sandbox wiring | `crates/crush-vm/src/bucket_exec.rs` |
 | crush-pkg runners | `crates/crush-pkg/src/runners.rs` |
+
+## CRUSH-187 / CRUSH-189 handoff (2026-10-09)
+
+PR #125, branch `ccr-12236bee-uj4oar`: open, CI green, waiting on review/merge.
+Closes GitHub #37 and #92.
+
+### What changed
+
+- `crates/crush-frontend/src/compiler.rs` (`ensure_return`): appends
+  `push_null; ret` unless the last instruction is `ret`/`throw`/`jmp`/`halt`
+  AND no jump targets the end of the body. Previously a function with any
+  `ret` got none, so an early return from a branch let execution fall into the
+  next function.
+- `crates/crush-frontend/src/optimizer.rs`:
+  - Removed the identity and strength-reduction rewrites (`x*0`, `x*1`, `x+0`,
+    `2*x`→`x+x` and the mirrored forms).
+  - Int folding is checked: on overflow the expression is left unfolded so the
+    runtime reports it.
+  - Variables assigned in a `try` body are dropped from the `catch` handler's
+    constants.
+- Decisions and rejected alternatives are in `decisions.md`. The new rule is in
+  `invariants.md`.
+
+### Verification
+
+- `crates/crush-lang-sdk/tests/implicit_return_and_optimizer_test.rs`: 10
+  end-to-end tests. All fail without the fix and pass with it.
+- `cargo test --workspace`: 1732 passed. `cargo clippy --workspace` (the CI form)
+  is clean.
+- Live runs:
+  - #37's repro prints 0..5.
+  - awesome-crush `game_of_life` finishes in 286,738 steps (it previously went
+    past 50M).
+  - `pong` reaches `draw 0-0` in 2,303,450 steps.
+- All 34 compilable `examples/crush/*.crush` print identical output with and
+  without `crushc -O`. This was run by hand.
+
+### Next steps
+
+1. Review and merge PR #125.
+2. Turn the with/without `-O` comparison into a CI test. No ticket yet.
+3. Fix the `approx_constant` failures under `cargo clippy --all-targets`, or drop
+   `--all-targets` from CLAUDE.md's build commands.
+4. Decide on pong's step count: document `--max-steps` as breakout does, or
+   revisit the 1M default.
+5. Continue with CRUSH-179..221 from the 2026-10-09 sweep (engine divergence in
+   CRUSH-213..221).
