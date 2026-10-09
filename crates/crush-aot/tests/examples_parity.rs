@@ -13,11 +13,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crush_aot::AotCompiler;
 use crush_lang_sdk::{Quotas, Runtime};
 
-/// Examples whose AOT output is known to differ, and why. Keep this exact: the test
-/// also fails when one of these starts matching, so the list can't go stale.
-const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
-    ("arrays_and_loops", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
+/// `(example, backend)` pairs whose AOT output is known to differ, and why. Keyed by
+/// backend so a known divergence on one can't hide a regression on the other. Keep it
+/// exact: the test also fails when a pair starts matching, so the list can't go stale.
+const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
+    ("arrays_and_loops", "rust", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
+    ("arrays_and_loops", "c", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
 ];
+
+/// Parallel builds. Each is a rustc or gcc process of its own, next to the other test
+/// binaries `cargo test` runs, so stay well under the core count by default.
+fn worker_count() -> usize {
+    std::env::var("CRUSH_AOT_PARITY_JOBS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()).min(4))
+}
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/crush")
@@ -70,10 +82,9 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
     let diverged = Mutex::new(BTreeSet::new());
     let failures = Mutex::new(Vec::new());
 
-    // Each rustc build takes seconds; spread the examples over the available cores.
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // Each rustc build takes seconds, so build several examples at once.
     std::thread::scope(|scope| {
-        for _ in 0..threads {
+        for _ in 0..worker_count() {
             scope.spawn(|| {
                 while let Some(path) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let name = path.file_stem().unwrap().to_string_lossy().into_owned();
@@ -109,7 +120,7 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
                         match aot_stdout(&so) {
                             Ok(got) if got == expected => {}
                             Ok(_) => {
-                                diverged.lock().unwrap().insert(name.clone());
+                                diverged.lock().unwrap().insert((name.clone(), backend.to_string()));
                             }
                             Err(e) => failures.lock().unwrap().push(format!("{name} [{backend}]: run failed: {e}")),
                         }
@@ -123,12 +134,16 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
     let mut failures = failures.into_inner().unwrap();
     failures.sort();
 
-    let known: BTreeSet<String> = KNOWN_DIVERGENCES.iter().map(|(n, _)| n.to_string()).collect();
-    for name in diverged.difference(&known) {
-        failures.push(format!("{name}: AOT output differs from the VM's"));
+    let known: BTreeSet<(String, String)> = KNOWN_DIVERGENCES
+        .iter()
+        .filter(|(_, backend, _)| use_c || *backend != "c")
+        .map(|(name, backend, _)| (name.to_string(), backend.to_string()))
+        .collect();
+    for (name, backend) in diverged.difference(&known) {
+        failures.push(format!("{name} [{backend}]: AOT output differs from the VM's"));
     }
-    for name in known.difference(&diverged) {
-        failures.push(format!("{name}: now matches the VM; remove it from KNOWN_DIVERGENCES"));
+    for (name, backend) in known.difference(&diverged) {
+        failures.push(format!("{name} [{backend}]: now matches the VM; remove it from KNOWN_DIVERGENCES"));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     // Guard against the loop silently skipping everything (e.g. examples moved).

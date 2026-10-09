@@ -29,6 +29,7 @@ pub mod codegen;
 pub mod codegen_c;
 pub mod compiler;
 pub mod loader;
+pub mod names;
 
 pub use compiler::AotCompiler;
 
