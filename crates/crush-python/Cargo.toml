@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 crush-cast.workspace = true
 crush-vm.workspace = true
 casm.workspace = true
-crush-caison = { path = "../crush-caison", version = "0.4.0" }
+crush-caison = { path = "../crush-caison", version = "0.4.1" }
 serde_json.workspace = true
 pyo3 = { version = "0.23", features = ["abi3", "abi3-py311"] }
 

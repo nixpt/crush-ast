@@ -14,6 +14,25 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-09
+
+- Merge pull request #125 from nixpt/ccr-12236bee-uj4oar
+- docs(dejavue): sync skill copies with dejavue 2.2.0; fix the not-on-PATH line
+- docs(dejavue): append 2026-10-09 state and CRUSH-187/189 handoff
+- docs(dejavue): record CRUSH-187/189 decisions and optimizer invariant
+- fix(frontend): implicit return after early return; sound optimizer (CRUSH-187, CRUSH-189)
+- Merge pull request #124 from nixpt/ccr-12236bee-uj4oar
+- chore(planning): file CRUSH-213..221 (engine divergence); index CRUSH-179..221 in TASKS and BACKLOG-INDEX
+- docs: crush-run needs the run subcommand; document the ../buckets sibling clone; file CRUSH-211..212
+- chore(planning): file CRUSH-179..210 from the 2026-10-09 test-drive sweep; fix clippy deny + stale example
+- test(crush-lang-sdk): check PATH instead of USER in dashboard test
+- Merge pull request #123 from nixpt/agent/foreman/publish-env-dup
+- ci(publish): fix duplicate job env key; show cargo's error on metadata failure
+- Merge pull request #122 from nixpt/agent/foreman/publish-tag-input
+- ci(publish): check out the buckets sibling; publish a tag given as input
+
+
+
 ## [0.4.0] - 2026-10-08
 
 - Merge pull request #121 from nixpt/agent/foreman/release-0.4-prep

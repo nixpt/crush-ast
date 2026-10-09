@@ -19,7 +19,7 @@ default = ["native-plugins"]
 native-plugins = ["crush-vm/native-plugins"]
 
 [dependencies]
-crush-vm = { path = "../crush-vm", version = "0.4.0", default-features = false }
+crush-vm = { path = "../crush-vm", version = "0.4.1", default-features = false }
 casm.workspace = true
 serde_json.workspace = true
 
