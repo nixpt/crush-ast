@@ -803,10 +803,18 @@ impl Compiler {
                 lang,
                 code,
                 variables,
-                imports: _, // Ignore for now
+                imports,
                 deps,
                 meta,
             } => {
+                // CRUSH-224: each block runs in a fresh interpreter, so the `use @lang`
+                // imports that reach it are written into its own source.
+                let code = match crate::lang_imports::import_header(lang, imports)
+                    .map_err(|e| anyhow::anyhow!(e))?
+                {
+                    Some(header) => crate::lang_imports::splice_header(lang, code, &header),
+                    None => code.clone(),
+                };
                 // Push variables onto stack for injection into the sandbox
                 for var_name in variables {
                     instrs.push(self.create_instr(
@@ -944,29 +952,13 @@ impl Compiler {
                         // Track permission in manifest
                         self.all_permissions.insert(capability_path.clone());
                     }
-                    ImportStatement::PolyglotModule {
-                        language,
-                        module_path,
-                        alias,
-                        selective: _,
-                    } => {
-                        // Load a polyglot module into the exec_lang session state
-                        let load_code = format!("import {}", module_path);
-                        instrs.push(self.create_instr(
-                            "exec_lang",
-                            serde_json::json!({
-                                "lang": language,
-                                "code": load_code,
-                                "var_count": 0
-                            }),
-                            meta,
-                        ));
-                        let store_name = alias.as_deref().unwrap_or(module_path.as_str());
-                        instrs.push(self.create_instr(
-                            "store",
-                            serde_json::json!({"name": store_name}),
-                            meta,
-                        ));
+                    ImportStatement::PolyglotModule { language, .. } => {
+                        // Emits nothing here: there is no interpreter session to load into.
+                        // The import is written into each later `@lang` block instead
+                        // (`LangBlock.imports`, filled by crush-lang-sdk's polyglot pass,
+                        // see `lang_imports`). CRUSH-224.
+                        crate::lang_imports::check_polyglot_use(language)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     }
                     ImportStatement::SecureEnv {
                         keys,

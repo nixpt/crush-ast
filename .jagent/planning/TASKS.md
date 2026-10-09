@@ -299,9 +299,9 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-221** (P2, XS): Float literals with exponents (`1.5e10`, `1e-7`) don't parse. [ticket](tickets/CRUSH-221-float-exponent-literals.md)
 - [ ] **CRUSH-222** (P1, S): The `crush-aotc` crate (second C backend) has no caller and is wrong on 33/52 programs (try/catch skipped, `len`, indexing). [ticket](tickets/CRUSH-222-crush-aotc-crate-unreachable-and-wrong.md)
 - [x] **CRUSH-223** (P1, S): AOT C: 512-slot value stack silently drops values; array pool exhausted after ~2000 arrays. [ticket](tickets/CRUSH-223-aot-c-fixed-capacity-silent-failures.md)
-- [ ] **CRUSH-224** (P1, S): `use @lang` imports never reach later blocks; `LangBlock.imports` dropped; `polyglot_imports.rs` has no callers. [ticket](tickets/CRUSH-224-polyglot-imports-dropped.md)
+- [x] **CRUSH-224** (P1, S): `use @lang` imports never reach later blocks; `LangBlock.imports` dropped; `polyglot_imports.rs` has no callers. [ticket](tickets/CRUSH-224-polyglot-imports-dropped.md)
 - [ ] **CRUSH-225** (P2, M): Design: polyglot session state across blocks (one subprocess worker per language per run). [ticket](tickets/CRUSH-225-persistent-polyglot-session.md)
-- [ ] **CRUSH-226** (P1, XS): `EXEC_LANG` skips the declared-caps and `Quotas::allowed_caps` checks. [ticket](tickets/CRUSH-226-exec-lang-ignores-allowed-caps.md)
+- [x] **CRUSH-226** (P1, XS): `EXEC_LANG` skips the declared-caps and `Quotas::allowed_caps` checks. [ticket](tickets/CRUSH-226-exec-lang-ignores-allowed-caps.md)
 - [x] **CRUSH-227** (P1, M): AOT C never frees strings/arrays/maps during a run: O(n²) memory for accumulation, pool exhaustion after 2^20 arrays (collector prototyped). [ticket](tickets/CRUSH-227-aot-c-memory-never-reclaimed.md)
 - [ ] **CRUSH-228** (P3, XS): AOT C: dead `mk_null()` fallbacks after allocation; one OOM helper; error helper naming. [ticket](tickets/CRUSH-228-aot-c-dead-null-fallbacks-and-error-helpers.md)
 - [ ] **CRUSH-229** (P2, S): Float-to-text exists three times (VM, Rust AOT, C AOT); pin them together. [ticket](tickets/CRUSH-229-float-text-three-copies.md)
@@ -314,6 +314,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-236** (P1, S): Polyglot blocks run unsandboxed by default; pinned deps then silently ignored; sandbox untested in CI. [ticket](tickets/CRUSH-236-polyglot-sandbox-default.md)
 - [ ] **CRUSH-237** (P2, S): Polyglot marshaling misses comprehension inputs; analyzer failure is silent. [ticket](tickets/CRUSH-237-polyglot-marshaling-gaps.md)
 - [ ] **CRUSH-238** (P2, M): Walkers stub unsupported constructs as Null; walker/differential docs overclaim. [ticket](tickets/CRUSH-238-walkers-stub-unsupported-constructs.md)
+- [x] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
@@ -430,3 +431,4 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **opportunity** — Crush text syntax has no AI expressions: crush-frontend's parser only produces AIStatement::SemanticSwitch (and CSON @synthesize → Synthesize); query/toolchain/delegation exist only via CAST producers, so .crush programs can't use the ai_native engine from CRUSH-156..158  _(nimbus-b, 2026-10-07)_
 - [ ] **issue** — crush-lang-sdk doctor::tests::version_falls_back_to_stderr is flaky in CI (failed once on PR #118 Test (sdk), run 37813777655: probe_version returned None). Likely ETXTBSY: fake_tool writes a #!/bin/sh script then execs it while other test threads fork and briefly inherit the write fd. Fix: retry spawn on ETXTBSY in the test helper (or probe_version), or serialize the fake-tool tests.  _(panini-cap, 2026-10-08)_
 - [ ] **issue** — crush-vm prefixes every HostCap error with 'unknown capability: <name>:' even when the cap IS registered and refused for a real reason (e.g. 'unknown capability: fs.cat: path escapes sandbox root: ../x'). Misleading: reads as a missing grant. Found running squad-bridge-peek (CRUSH-172) under crush-run --fs.  _(panini-cap, 2026-10-08)_
+- [ ] **gap** — tree-sitter-crush has 0 Rust tests; its grammar corpus (crates/tree-sitter-crush/test/corpus) only runs under the tree-sitter CLI ('tree-sitter test'), which no CI job invokes. The grammar is never checked against its corpus in CI. Found during CRUSH-231.  _(naka, 2026-10-09)_

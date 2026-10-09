@@ -215,7 +215,7 @@ impl std::error::Error for NotGranted {}
 
 /// Compile `path` to bytecode, plus the `@capabilities` it declares
 /// (`.crush` only).
-fn load_program(path: &std::path::Path, casm_caps: &[String]) -> anyhow::Result<(crush_vm::Program, Option<Vec<String>>)> {
+fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) -> anyhow::Result<(crush_vm::Program, Option<Vec<String>>)> {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     match ext {
         "crush" => {
@@ -230,7 +230,13 @@ fn load_program(path: &std::path::Path, casm_caps: &[String]) -> anyhow::Result<
         }
         "casm" => {
             let source = std::fs::read_to_string(path)?;
-            let permissions: Vec<&str> = casm_caps.iter().map(|s| s.as_str()).collect();
+            let mut permissions: Vec<&str> = casm_caps.iter().map(|s| s.as_str()).collect();
+            // Hand-written assembly has no compiler to declare its polyglot grants, and
+            // EXEC_LANG checks the manifest (CRUSH-226) — `--polyglot` declares them too,
+            // so it keeps meaning what it meant before.
+            if polyglot {
+                permissions.extend(["polyglot.python", "polyglot.javascript", "polyglot.bash"]);
+            }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
         "cvm1" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
@@ -241,7 +247,7 @@ fn load_program(path: &std::path::Path, casm_caps: &[String]) -> anyhow::Result<
 /// `crush-run caps FILE`: what the program can use, grouped by what grants
 /// it, without running it.
 fn show_program_caps(path: &std::path::Path, json: bool) -> anyhow::Result<()> {
-    let (program, declared) = load_program(path, &[])?;
+    let (program, declared) = load_program(path, &[], false)?;
     let used = crush_lang_sdk::effects::used_by(&program)?;
     let catalog = crush_lang_sdk::effects::catalog();
     let grant_of = |cap: &str| -> &'static str {
@@ -547,7 +553,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         "cvm1" => std::fs::read(&args.path)
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
-        _ => Some(load_program(&args.path, &args.caps)?.0),
+        _ => Some(load_program(&args.path, &args.caps, args.polyglot)?.0),
     };
     if let Some(program) = &preflight {
         let missing = runtime.missing_grants(program)?;

@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-231 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M2 |
-| **Assignee** | unassigned |
+| **Assignee** | naka |
 | **Dependencies** | none |
 | **Estimated effort** | S |
 | **Filed by** | kai (foreman) — s476, 2026-10-09, on `db3e8e1`; toolchain finding from the cloud agent on PR #126 |
@@ -66,14 +66,31 @@ All 13 showed CI green while never executing. They passed when run by hand on
 
 ## Success criteria
 
-- [ ] No `toolchain: "1.85"` left in `.github/workflows/`. MSRV is either checked by
+- [x] No `toolchain: "1.85"` left in `.github/workflows/`. MSRV is either checked by
       a job or `rust-version` is removed.
-- [ ] Every workspace member's tests run in some CI job, or the member is listed as
+- [x] Every workspace member's tests run in some CI job, or the member is listed as
       excluded with a reason.
-- [ ] The CI log of the fixing PR shows `backend_agreement` and `examples_parity`
+- [x] The CI log of the fixing PR shows `backend_agreement` and `examples_parity`
       running (`test result: ok. … passed`), not just `Executable`.
-- [ ] Lint the workflow with `actionlint`.
+- [x] Lint the workflow with `actionlint`.
 
 ## Related
 
 - PR #126 (AOT fixes whose tests CI never ran), CRUSH-214/216/223.
+
+## Resolution (naka, 2026-10-09)
+
+- All nine `toolchain: "1.85"` lines are removed. A new `MSRV (1.95.0)` job runs
+  `cargo check --workspace` with `RUSTUP_TOOLCHAIN=1.95.0`, which overrides
+  `rust-toolchain.toml`. Run locally on 1.95.0 with the same excludes: green.
+- A new `Test (rest)` job runs `cargo test --tests` on the 23 members that
+  no job tested. With crush-aot in `Test (aot)`, all 42 members now run their
+  tests in a `test-*` job. Each crate passed locally, run alone and in the
+  combined invocation. None was red, so no follow-up tickets.
+- No tests exist in crush-cson, crush-ffi, crush-plugin-example, crush-tui,
+  or tree-sitter-crush. They stay in the list so new tests run. The
+  tree-sitter grammar corpus is a separate gap, logged in TASKS.md.
+- crush-lang-custom builds and passes. The "pre-existing issues" exclude
+  from 2026-07 on Check/Clippy/Feature gates looks stale. Those excludes are
+  left alone here.
+- actionlint v1.7.12, with shellcheck 0.11.0 active: 0 errors.

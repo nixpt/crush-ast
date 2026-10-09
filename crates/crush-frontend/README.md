@@ -21,8 +21,9 @@ Crush source → crush-frontend (parse → analyze → optimize → compile) →
 - **Semantics & optimizer** — `semantics` analysis and an `optimizer` pass over
   the CAST.
 - **Compiler** — lowers CAST to CASM bytecode.
-- **Polyglot** — `language_walkers` / `polyglot_imports` drive the subprocess
-  walker seam (other-language source → CAST), and `import_system` resolves imports.
+- **Polyglot** — `language_walkers` drives the subprocess walker seam
+  (other-language source → CAST); `lang_imports` writes `use @lang` imports
+  into each `@lang` block; `import_system` resolves imports.
 - **AI runtime** — `ai_runtime` support for CAST `ai_meta`.
 
 ## Example

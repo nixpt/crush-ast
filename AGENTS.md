@@ -33,6 +33,13 @@ managed block below this content without clobbering it; see CONTRIBUTING.md.
 - Never edit the shared checkout directly — use a worktree
   (`kitchen enter <NAME>` / `kitchen ship --pr` / `kitchen clean`, or a plain
   `git worktree add` if squadron isn't on PATH).
+- Never run an example with stdin left open. `examples/crush/blackjack_interactive.crush`
+  calls `io.read()`, which blocks forever on an inherited pipe nobody writes to, and that
+  hangs the whole agent session. Run examples (singly or in a loop over
+  `examples/crush/*.crush`) as `timeout 60 crush-run run … < /dev/null`: at EOF `io.read()`
+  returns `""` and the game exits. To play it, pipe the moves in (`printf '10\ns\nq\n' | …`).
+  The same goes for any program using `io.read`. Tests must set `Stdio::null()` or piped stdin
+  (as `examples_parity.rs` does).
 - Live-verify before calling something done: compile it, run it against real
   input, check the actual output. Tests passing and CI green are both
   necessary, neither is sufficient — this repo's own history (a trailing-
