@@ -92,21 +92,46 @@ static inline Value mk_array(int idx)   { return (Value){TAG_ARRAY, .array_idx=i
 static inline Value mk_object(int idx)  { return (Value){TAG_OBJECT, .obj_idx=idx}; }
 
 // ── Array pool ───────────────────────────────────────────────────────
-#define ARRAY_POOL_MAX 64
-#define ARRAY_DATA_CAP 65536
+// Headers live in a static pool (only the slots a run touches cost memory);
+// each array's elements are a heap block that grows on demand and is reused by
+// the next run. Arrays aren't reclaimed during a run. (CRUSH-223: the pool used
+// to be 64 arrays of a fixed 65,536 slots, and running out pushed null or
+// dropped elements without an error.)
+#define ARRAY_POOL_MAX (1 << 20)
 
 typedef struct {
-    Value data[ARRAY_DATA_CAP];
-    int   len;
+    Value* data;
+    int    len;
+    int    cap;
 } CrushArray;
 
 static CrushArray _arrays[ARRAY_POOL_MAX];
 static int        _array_count = 0;
 
+static inline void _crush_arith_error(const char *msg);
+
+// Never fails: exhausting the pool is a runtime error, not a null array.
 static inline int _alloc_array(void) {
-    if (_array_count >= ARRAY_POOL_MAX) return -1;
+    if (_array_count >= ARRAY_POOL_MAX) _crush_arith_error("array pool exhausted");
     _arrays[_array_count].len = 0;
     return _array_count++;
+}
+
+// Make room for `n` elements.
+static void _array_reserve(CrushArray* a, int64_t n) {
+    if (n <= a->cap) return;
+    if (n > INT32_MAX / 2) _crush_arith_error("array too large");
+    int cap = a->cap ? a->cap : 8;
+    while (cap < n) cap *= 2;
+    Value* data = (Value*)realloc(a->data, (size_t)cap * sizeof(Value));
+    if (!data) _crush_arith_error("out of memory");
+    a->data = data;
+    a->cap = cap;
+}
+
+static inline void _array_push(CrushArray* a, Value v) {
+    _array_reserve(a, (int64_t)a->len + 1);
+    a->data[a->len++] = v;
 }
 
 static inline int _wrap_index(int idx, int len) {
@@ -115,7 +140,8 @@ static inline int _wrap_index(int idx, int len) {
 }
 
 // ── Object pool ─────────────────────���────────────────────────────────
-#define OBJ_POOL_MAX 32
+// Running out of objects or fields is a runtime error (CRUSH-223), not a null.
+#define OBJ_POOL_MAX (1 << 16)
 #define OBJ_FIELD_CAP 16
 
 typedef struct {
@@ -132,7 +158,7 @@ static CrushObject _objects[OBJ_POOL_MAX];
 static int         _object_count = 0;
 
 static inline int _alloc_object(void) {
-    if (_object_count >= OBJ_POOL_MAX) return -1;
+    if (_object_count >= OBJ_POOL_MAX) _crush_arith_error("object pool exhausted");
     _objects[_object_count].field_count = 0;
     return _object_count++;
 }
@@ -152,11 +178,10 @@ static void _obj_set(CrushObject* obj, const char* key, Value val) {
             return;
         }
     }
-    if (obj->field_count < OBJ_FIELD_CAP) {
-        obj->fields[obj->field_count].key = key;
-        obj->fields[obj->field_count].val = val;
-        obj->field_count++;
-    }
+    if (obj->field_count >= OBJ_FIELD_CAP) _crush_arith_error("object has too many fields (max 16)");
+    obj->fields[obj->field_count].key = key;
+    obj->fields[obj->field_count].val = val;
+    obj->field_count++;
 }
 
 // ── AI stub helper (CRUSH-32 follow-up) ─────────────────────────────
@@ -285,16 +310,26 @@ static inline const char* io_read_line(void) {
 
 fn emit_c_helpers(out: &mut String) {
     out.push_str(r#"// ── Stack ──────────────────────────────────────────────────────────
-#define STACK_MAX 512
-static Value   _stack[STACK_MAX];
+// Grows on demand. (CRUSH-223: a fixed 512 slots silently dropped pushes past
+// the end, so deep recursion read null and failed with a bogus type error.)
+static Value*  _stack = NULL;
+static int     _stack_cap = 0;
 static int     _sp = 0;
+
+static void _stack_grow(void) {
+    int cap = _stack_cap ? _stack_cap * 2 : 1024;
+    Value* stack = (Value*)realloc(_stack, (size_t)cap * sizeof(Value));
+    if (!stack) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+    _stack = stack;
+    _stack_cap = cap;
+}
 
 static void _reset_arrays(void) { _array_count = 0; _object_count = 0; }
 
-static inline void  _push(Value v) { if (_sp < STACK_MAX) _stack[_sp++] = v; }
+static inline void  _push(Value v) { if (_sp == _stack_cap) _stack_grow(); _stack[_sp++] = v; }
 static inline Value _pop(void)     { return _sp > 0 ? _stack[--_sp] : mk_null(); }
 static inline Value _peek(void)    { return _sp > 0 ? _stack[_sp-1] : mk_null(); }
-static inline void  _dup(void)     { if (_sp > 0 && _sp < STACK_MAX) _stack[_sp] = _stack[_sp-1], _sp++; }
+static inline void  _dup(void)     { if (_sp > 0) _push(_stack[_sp-1]); }
 static inline void  _swap(void)    { if (_sp >= 2) { Value t=_stack[_sp-1]; _stack[_sp-1]=_stack[_sp-2]; _stack[_sp-2]=t; } }
 
 static inline double _to_float(Value v) { return (v.tag == TAG_FLOAT) ? v.f : ((v.tag == TAG_INT) ? (double)v.i : 0.0); }
@@ -431,12 +466,10 @@ static Value _add(Value a, Value b) {
     }
     if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
         // Array concatenation: a new array, neither operand changes (#75, CRUSH-135).
+        int id = _alloc_array();
         CrushArray* la = &_arrays[a.array_idx];
         CrushArray* ra = &_arrays[b.array_idx];
-        if (la->len + ra->len > ARRAY_DATA_CAP) _crush_arith_error("array concatenation exceeds capacity");
-        int id = _alloc_array();
-        if (id < 0) _crush_arith_error("array pool exhausted");
-        la = &_arrays[a.array_idx]; ra = &_arrays[b.array_idx];
+        _array_reserve(&_arrays[id], (int64_t)la->len + ra->len);
         memcpy(_arrays[id].data, la->data, sizeof(Value) * (size_t)la->len);
         memcpy(_arrays[id].data + la->len, ra->data, sizeof(Value) * (size_t)ra->len);
         _arrays[id].len = la->len + ra->len;
@@ -838,6 +871,7 @@ fn emit_c_instr(
                             CrushArray* la = &_arrays[l.array_idx];
                             CrushArray* ra = &_arrays[r.array_idx];
                             int len = la->len < ra->len ? la->len : ra->len;
+                            _array_reserve(&_arrays[arr_id], len);
                             _arrays[arr_id].len = len;
                             _Pragma("GCC ivdep")
                             for (int i=0; i<len; i++) {{
@@ -898,10 +932,12 @@ fn emit_c_instr(
                             
                             int out_id = _alloc_array();
                             if (out_id >= 0) {{
+                                _array_reserve(&_arrays[out_id], rows_a);
                                 _arrays[out_id].len = rows_a;
                                 for (int i=0; i<rows_a; i++) {{
                                     int row_id = _alloc_array();
                                     if (row_id >= 0) {{
+                                        _array_reserve(&_arrays[row_id], cols_b);
                                         _arrays[row_id].len = cols_b;
                                         for (int j=0; j<cols_b; j++) {{
                                             double sum = 0.0;
@@ -1124,13 +1160,13 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_push" | "array_push" => {{
-            out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len < ARRAY_DATA_CAP) {{ __a->data[__a->len++] = __val; }} }} }} _push(__arr); }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break;\n"));
         }}
         "arr_pop" | "array_pop" => {{
             out.push_str(&format!("                {{ Value __arr = _pop(); Value __popped = mk_null(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len > 0) {{ __popped = __a->data[--__a->len]; }} }} }} _push(__arr); _push(__popped); }} _pc={next_pc}; break;\n"));
         }}
         "make_range" => {{
-            out.push_str(&format!("                {{ Value __end_v = _pop(); Value __start_v = _pop(); int64_t __start = (__start_v.tag == TAG_INT) ? __start_v.i : 0; int64_t __end = (__end_v.tag == TAG_INT) ? __end_v.i : 0; int __ai = _alloc_array(); if (__ai >= 0) {{ CrushArray* __a = &_arrays[__ai]; int64_t __i = __start; int __n = 0; while (__i < __end && __n < ARRAY_DATA_CAP) {{ __a->data[__n++] = mk_int(__i); __i++; }} __a->len = __n; _push(mk_array(__ai)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __end_v = _pop(); Value __start_v = _pop(); int64_t __start = (__start_v.tag == TAG_INT) ? __start_v.i : 0; int64_t __end = (__end_v.tag == TAG_INT) ? __end_v.i : 0; int __ai = _alloc_array(); if (__ai >= 0) {{ CrushArray* __a = &_arrays[__ai]; if (__end > __start) _array_reserve(__a, __end - __start); int __n = 0; for (int64_t __i = __start; __i < __end; __i++) __a->data[__n++] = mk_int(__i); __a->len = __n; _push(mk_array(__ai)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }}
 
         // ── Objects ──
@@ -1154,7 +1190,7 @@ fn emit_c_instr(
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
                 "append" | "push" | "arr.push" | "array.push" => {
-                    out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len < ARRAY_DATA_CAP) {{ __a->data[__a->len++] = __val; }} }} }} }} _pc={next_pc}; break; // cap_call append/push\n"));
+                    out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} }} _pc={next_pc}; break; // cap_call append/push\n"));
                 }
                 "arr_get" => {
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));
@@ -1164,7 +1200,7 @@ fn emit_c_instr(
                 }
                 "make_range" => {
                     // Variadic: 0, 1, or 2 args �� args pushed left-to-right, top of stack = last arg
-                    out.push_str(&format!("                {{ int64_t __start = 0, __end = 100; if ({argc} >= 2) {{ Value __ev = _pop(); __end = (__ev.tag == TAG_INT) ? __ev.i : 100; Value __sv = _pop(); __start = (__sv.tag == TAG_INT) ? __sv.i : 0; }} else if ({argc} >= 1) {{ Value __ev = _pop(); __end = (__ev.tag == TAG_INT) ? __ev.i : 100; }} int __ai = _alloc_array(); if (__ai >= 0) {{ CrushArray* __a = &_arrays[__ai]; int64_t __i = __start; int __n = 0; while (__i < __end && __n < ARRAY_DATA_CAP) {{ __a->data[__n++] = mk_int(__i); __i++; }} __a->len = __n; _push(mk_array(__ai)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call make_range\n"));
+                    out.push_str(&format!("                {{ int64_t __start = 0, __end = 100; if ({argc} >= 2) {{ Value __ev = _pop(); __end = (__ev.tag == TAG_INT) ? __ev.i : 100; Value __sv = _pop(); __start = (__sv.tag == TAG_INT) ? __sv.i : 0; }} else if ({argc} >= 1) {{ Value __ev = _pop(); __end = (__ev.tag == TAG_INT) ? __ev.i : 100; }} int __ai = _alloc_array(); if (__ai >= 0) {{ CrushArray* __a = &_arrays[__ai]; if (__end > __start) _array_reserve(__a, __end - __start); int __n = 0; for (int64_t __i = __start; __i < __end; __i++) __a->data[__n++] = mk_int(__i); __a->len = __n; _push(mk_array(__ai)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call make_range\n"));
                 }
                 "io.read" => {
                     out.push_str(&format!("                {{ _push(mk_string(io_read_line())); }} _pc={next_pc}; break; // cap_call io.read\n"));

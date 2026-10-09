@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-223 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-09, PR #126) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | claude |
 | **Dependencies** | none (related: CRUSH-216, CRUSH-219) |
 | **Estimated effort** | S |
 | **Filed by** | claude — 2026-10-09 AOT test drive, reproduced on `main` `5755262` (debug build) |
@@ -29,6 +29,22 @@
 
 ## Success criteria
 
-- [ ] Stack overflow is a clear runtime error (or the stack grows); never silently drops a value.
-- [ ] Arrays are reclaimed or growable; the `a = a + [i]` loop runs to 10,000.
-- [ ] Both cases covered by a test that compares with interp.
+- [x] Stack overflow is a clear runtime error (or the stack grows); never silently drops a value.
+- [x] Arrays are growable; the pool holds 1M arrays and running out is an error. (The
+      10,000-iteration `a = a + [i]` loop works but copies ~800 MB, since nothing is
+      reclaimed during a run; reclamation needs refcounting, not in scope.)
+- [x] Both cases covered by a test that compares with interp.
+
+## Resolution
+
+- Correction to the problem statement: the pool was **64 arrays** of a fixed 65,536
+  slots each (64 MB static), and **32 objects**. `new_array`/`new_object` pushed `null`
+  when the pool ran out; `push` and `make_range` stopped adding at the cap with no error.
+- **Value stack:** heap, doubling on demand (`_stack_grow`); `_dup` goes through `_push`.
+- **Arrays:** a 1M-entry header pool (untouched slots cost nothing); each array's data is
+  a growable heap block (`_array_reserve`, `_array_push`) used by concatenation, `push`,
+  `make_range`, `vec_add` and `matmul`. `_alloc_array` never returns -1: exhaustion is
+  `array pool exhausted`.
+- **Objects:** pool raised to 65,536; exhaustion and a 17th field are runtime errors.
+- Tests: `crates/crush-aot/tests/stdout_parity.rs` `deep_recursion_keeps_every_stack_value`,
+  `many_and_large_arrays`, `many_maps` (Rust and C backends; all three fail before).

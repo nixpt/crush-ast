@@ -298,7 +298,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-220** (P1, S): `crush-diff` misses almost every cross-engine bug: FastVM abstains, JIT/AOT not included. [ticket](tickets/CRUSH-220-crush-diff-coverage-gaps.md)
 - [ ] **CRUSH-221** (P2, XS): Float literals with exponents (`1.5e10`, `1e-7`) don't parse. [ticket](tickets/CRUSH-221-float-exponent-literals.md)
 - [ ] **CRUSH-222** (P1, S): The `crush-aotc` crate (second C backend) has no caller and is wrong on 33/52 programs (try/catch skipped, `len`, indexing). [ticket](tickets/CRUSH-222-crush-aotc-crate-unreachable-and-wrong.md)
-- [ ] **CRUSH-223** (P1, S): AOT C: 512-slot value stack silently drops values; array pool exhausted after ~2000 arrays. [ticket](tickets/CRUSH-223-aot-c-fixed-capacity-silent-failures.md)
+- [x] **CRUSH-223** (P1, S): AOT C: 512-slot value stack silently drops values; array pool exhausted after ~2000 arrays. [ticket](tickets/CRUSH-223-aot-c-fixed-capacity-silent-failures.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 

@@ -164,3 +164,58 @@ fn stored_conv_chr_result_survives() {
         "AU\n",
     );
 }
+
+// CRUSH-223: the C value stack was 512 slots and dropped pushes past the end, so
+// `sum(600)` failed with `+ on non-numeric operands`. (crush-run stops at its 256-deep
+// call quota instead; AOT has no call-depth limit yet, CRUSH-219.)
+#[test]
+fn deep_recursion_keeps_every_stack_value() {
+    assert_prints(
+        "deep_recursion",
+        r#"fn sum(n) { if n == 0 { return 0; } return n + sum(n - 1); }
+           fn main() { io.print(sum(600)); return 0; }"#,
+        "180300\n",
+    );
+}
+
+// CRUSH-223: the C array pool held 64 arrays of 65,536 fixed slots; running out pushed
+// null or dropped elements without an error.
+#[test]
+fn many_and_large_arrays() {
+    assert_prints(
+        "arrays",
+        r#"fn mk(i) { return [i, i]; }
+           fn main() {
+               let t = 0;
+               let i = 0;
+               while i < 100 { let a = mk(i); t = t + a[1]; i = i + 1; }
+               io.print(t);
+               let b = [];
+               i = 0;
+               while i < 2000 { b = b + [i]; i = i + 1; }
+               io.print(b[1999]);
+               let c = [];
+               i = 0;
+               while i < 100000 { c.push(i); i = i + 1; }
+               io.print(len(c));
+               return 0;
+           }"#,
+        "4950\n1999\n100000\n",
+    );
+}
+
+// CRUSH-223: the C object pool held 32 maps.
+#[test]
+fn many_maps() {
+    assert_prints(
+        "maps",
+        r#"fn main() {
+               let t = 0;
+               let i = 0;
+               while i < 100 { let o = {"a": i}; t = t + o.a; i = i + 1; }
+               io.print(t);
+               return 0;
+           }"#,
+        "4950\n",
+    );
+}
