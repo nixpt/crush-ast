@@ -95,7 +95,11 @@ fn crush_scripts_do_what_the_bash_scripts_do() {
     let mut report = Vec::new();
     for case in &cases {
         let mut bash = Command::new("bash");
-        bash.arg(dir().join("cases").join(format!("{case}.sh"))).args(ARGS);
+        // `sort` and `find` order by the caller's locale; crush orders by byte. Pin the
+        // bash side to the C locale so the comparison doesn't depend on the host's LANG.
+        bash.env("LC_ALL", "C")
+            .arg(dir().join("cases").join(format!("{case}.sh")))
+            .args(ARGS);
         let mut crush = Command::new(env!("CARGO_BIN_EXE_crush-run"));
         crush
             .args(["run", "--fs", "--fs-root", ".", "--process", "--env", "--time"])
