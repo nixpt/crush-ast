@@ -47,7 +47,7 @@ consults a resolver:
 |---|---|---|
 | `CrushModule` | `push_str path; cap_call module.load 1; store alias` (`selective` dropped) | — |
 | `Capability` | `push_str; cap_call cap.acquire; store` (`permissions` dropped) | `capability_path` |
-| `PolyglotModule` | `exec_lang` running `import <path>` with no variables; `store` | — |
+| `PolyglotModule` | nothing: the import is written into each later `@lang` block of that language (`LangBlock.imports`, `crush_frontend::lang_imports`, CRUSH-224); bash is a compile error | — |
 | `SecureEnv` | `secrets.read` per key, or `secrets.load_all` | `secrets.read` |
 | `MCPImport` | `mcp.connect`, then `mcp.get_tool` per tool | `mcp.client` |
 | `External` | `push_str uri; cap_call external.load; store` (`resource_type` dropped) | `external.load` |
@@ -81,7 +81,7 @@ when called:
 - `SecurityPolicy.max_import_depth` and the `allow_*` flags are never checked;
   `ImportError::ImportCycle` is declared and never produced.
 
-`crates/crush-frontend/src/polyglot_imports.rs` builds on its types and is likewise unused.
+(`polyglot_imports.rs`, which built on its types and was likewise unused, was deleted in CRUSH-224.)
 
 ## Specified vs implemented
 
