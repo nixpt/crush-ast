@@ -60,6 +60,7 @@
 | 146 | JIT `arr_set` stack contract: `a[i] = v` corrupted the JIT stack (found during CRUSH-135) |
 | 179–221 | 2026-10-09 test-drive sweep (claude): security/caps (179–186), frontend + optimizer (187–195; 187 = #37 + #92 pong, 189 = #92 game_of_life), walkers (196–204), bindings/grammar/lint/build (205–210), tooling + conformance (211–212), engine divergence (213–221) |
 | 222–223 | 2026-10-09 AOT test drive (claude): unused `crush-aotc` crate (222), AOT C fixed capacities (223); new evidence appended to 214, 216, 217, 220 |
+| 224–226 | s476 polyglot test (kai): `use @lang` imports dropped (224), cross-block session design (225), EXEC_LANG skips allowed_caps (226). |
 | 227–230 | PR #126 review follow-ups (claude): AOT C memory reclamation (227), dead fallbacks/error helpers (228), three float-to-text copies (229), VM `MAT_MUL` panic (230). 224–226 are #127's. |
 | 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
 
