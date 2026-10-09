@@ -35,3 +35,16 @@ as "agrees" by `crush-diff`, except the random map-order case:
   never stdout, so every print-path bug in CRUSH-216/217 passes it.
 - `jit-runner` exits `host request (unserviced)` on the first `FastYield::Request`, so
   no program that calls `io.print` can run under the JIT from any CLI.
+
+## Progress 2026-10-09 (PR #126)
+
+AOT stdout is now covered outside `crush-diff`:
+
+- `crates/crush-aot/tests/examples_parity.rs`: every `examples/crush` program the VM
+  runs and an AOT backend accepts must print the same on the Rust and C (gcc)
+  backends; known exceptions are listed with a reason, and the list fails when it
+  goes stale. Against the pre-fix code generators it reports all of CRUSH-214/216.
+- `crates/crush-aot/tests/stdout_parity.rs`: targeted print-path cases.
+
+Still open here: FastVM and JIT in `crush-diff` (and `jit-runner` servicing
+`io.print`), and AOT inside `crush-diff` itself.
