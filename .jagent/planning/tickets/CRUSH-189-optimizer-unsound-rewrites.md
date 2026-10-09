@@ -57,7 +57,7 @@ The optimizer runs on `crushc -O` and **always** on `crush-run x.crush` / `crush
 - [x] Folding uses `checked_*` and leaves the expression unfolded on overflow.
 - [x] Variables assigned anywhere in a `try` body are invalidated for the handler.
 - [x] Differential check: every `examples/crush/*.crush` gives identical output with and without `-O`
-      (34/34 compilable examples, run by hand — not yet a CI test; see CRUSH-220).
+      (34/34 compilable examples, run by hand — not yet a CI test).
 - [x] Close #92's game_of_life half.
 
 ## Resolution
