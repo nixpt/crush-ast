@@ -67,6 +67,40 @@ jobs:
             -p crush-jit \
             2>&1
 
+  # ── AOT backends (Rust + C) ───────────────────────────────────────────────
+  # crush-aot's tests build real .so files with rustc and gcc and compare what the
+  # programs print with the VM. Test (workspace) only compiles them (`--no-run`),
+  # so before this job none of them ran in CI. The second step reruns the C-runtime
+  # tests with CRUSH_GC_STRESS=1 (a collection before every instruction), which
+  # turns any value the collector fails to find into wrong output or a crash
+  # (CRUSH-227). memory_bounds is left out of it: millions of iterations.
+  test-aot:
+    name: Test (aot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p crush-aot --lib --tests 2>&1
+      - name: C runtime under GC stress
+        env:
+          CRUSH_GC_STRESS: "1"
+        run: |
+          cargo test -p crush-aot \
+            --test stdout_parity \
+            --test backend_agreement \
+            --test examples_parity \
+            --test integration_c \
+            2>&1
+
   # ── All language SDK tests ────────────────────────────────────────────────
   test-languages:
     name: Test (walkers)

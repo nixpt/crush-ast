@@ -302,7 +302,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-224** (P1, S): `use @lang` imports never reach later blocks; `LangBlock.imports` dropped; `polyglot_imports.rs` has no callers. [ticket](tickets/CRUSH-224-polyglot-imports-dropped.md)
 - [ ] **CRUSH-225** (P2, M): Design: polyglot session state across blocks (one subprocess worker per language per run). [ticket](tickets/CRUSH-225-persistent-polyglot-session.md)
 - [ ] **CRUSH-226** (P1, XS): `EXEC_LANG` skips the declared-caps and `Quotas::allowed_caps` checks. [ticket](tickets/CRUSH-226-exec-lang-ignores-allowed-caps.md)
-- [ ] **CRUSH-227** (P1, M): AOT C never frees strings/arrays/maps during a run: O(n²) memory for accumulation, pool exhaustion after 2^20 arrays (collector prototyped). [ticket](tickets/CRUSH-227-aot-c-memory-never-reclaimed.md)
+- [x] **CRUSH-227** (P1, M): AOT C never frees strings/arrays/maps during a run: O(n²) memory for accumulation, pool exhaustion after 2^20 arrays (collector prototyped). [ticket](tickets/CRUSH-227-aot-c-memory-never-reclaimed.md)
 - [ ] **CRUSH-228** (P3, XS): AOT C: dead `mk_null()` fallbacks after allocation; one OOM helper; error helper naming. [ticket](tickets/CRUSH-228-aot-c-dead-null-fallbacks-and-error-helpers.md)
 - [ ] **CRUSH-229** (P2, S): Float-to-text exists three times (VM, Rust AOT, C AOT); pin them together. [ticket](tickets/CRUSH-229-float-text-three-copies.md)
 - [ ] **CRUSH-230** (P3, XS): VM `MAT_MUL` panics on ragged/mismatched matrices; no Crush syntax emits it. [ticket](tickets/CRUSH-230-vm-mat-mul-panics-on-ragged-input.md)

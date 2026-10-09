@@ -103,18 +103,31 @@ typedef struct {
     Value* data;
     int    len;
     int    cap;
+    bool   alive;   // allocated and not yet collected
+    bool   mark;    // reached during the current collection
 } CrushArray;
 
 static CrushArray _arrays[ARRAY_POOL_MAX];
-static int        _array_count = 0;
+static int        _array_count = 0;      // high-water mark of slots ever used
+static int*       _array_free = NULL;    // slots the collector freed, reused first
+static int        _array_free_count = 0;
 
 static inline void _crush_arith_error(const char *msg);
+static size_t _gc_allocated = 0;         // bytes allocated since the last collection
 
 // Never fails: exhausting the pool is a runtime error, not a null array.
 static inline int _alloc_array(void) {
-    if (_array_count >= ARRAY_POOL_MAX) _crush_arith_error("array pool exhausted");
-    _arrays[_array_count].len = 0;
-    return _array_count++;
+    int idx;
+    if (_array_free_count > 0) {
+        idx = _array_free[--_array_free_count];
+    } else {
+        if (_array_count >= ARRAY_POOL_MAX) _crush_arith_error("array pool exhausted");
+        idx = _array_count++;
+    }
+    _arrays[idx].len = 0;
+    _arrays[idx].alive = true;
+    _gc_allocated += sizeof(CrushArray);
+    return idx;
 }
 
 // Make room for `n` elements.
@@ -125,6 +138,7 @@ static void _array_reserve(CrushArray* a, int64_t n) {
     while (cap < n) cap *= 2;
     Value* data = (Value*)realloc(a->data, (size_t)cap * sizeof(Value));
     if (!data) _crush_arith_error("out of memory");
+    _gc_allocated += (size_t)(cap - a->cap) * sizeof(Value);
     a->data = data;
     a->cap = cap;
 }
@@ -152,15 +166,29 @@ typedef struct {
 typedef struct {
     CrushField fields[OBJ_FIELD_CAP];
     int   field_count;
+    bool  alive;
+    bool  mark;
 } CrushObject;
 
 static CrushObject _objects[OBJ_POOL_MAX];
-static int         _object_count = 0;
+static int         _object_count = 0;    // high-water mark
+static int*        _object_free = NULL;
+static int         _object_free_count = 0;
 
+// Field keys are always string literals from the instruction stream, so the
+// collector only has to follow field values.
 static inline int _alloc_object(void) {
-    if (_object_count >= OBJ_POOL_MAX) _crush_arith_error("object pool exhausted");
-    _objects[_object_count].field_count = 0;
-    return _object_count++;
+    int idx;
+    if (_object_free_count > 0) {
+        idx = _object_free[--_object_free_count];
+    } else {
+        if (_object_count >= OBJ_POOL_MAX) _crush_arith_error("object pool exhausted");
+        idx = _object_count++;
+    }
+    _objects[idx].field_count = 0;
+    _objects[idx].alive = true;
+    _gc_allocated += sizeof(CrushObject);
+    return idx;
 }
 
 static Value _obj_get(CrushObject* obj, const char* key) {
@@ -235,6 +263,7 @@ static Value mk_dom_stub(const char* kind) {
 static char** _str_blocks = NULL;
 static size_t _str_block_count = 0;
 static size_t _str_block_cap = 0;
+static bool*  _str_marks = NULL;      // parallel to _str_blocks during a collection
 
 static char* _str_new(size_t len) {
     if (_str_block_count == _str_block_cap) {
@@ -248,6 +277,7 @@ static char* _str_new(size_t len) {
     if (!p) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
     p[len] = '\0';
     _str_blocks[_str_block_count++] = p;
+    _gc_allocated += len + 1;
     return p;
 }
 
@@ -324,7 +354,137 @@ static void _stack_grow(void) {
     _stack_cap = cap;
 }
 
-static void _reset_arrays(void) { _array_count = 0; _object_count = 0; }
+static void _reset_arrays(void) {
+    _array_count = 0; _array_free_count = 0;
+    _object_count = 0; _object_free_count = 0;
+}
+
+// ── Locals ──────────────────────────────────────────────────────────
+// Every function's locals live in one heap stack (not C locals) so the
+// collector can see them. A function takes a frame on entry and releases it
+// on return; index through `_locals` each time, since it can move.
+static Value* _locals = NULL;
+static int    _locals_cap = 0;
+static int    _lsp = 0;
+
+static int _frame_enter(int n) {
+    int base = _lsp;
+    if (base + n > _locals_cap) {
+        int cap = _locals_cap ? _locals_cap : 1024;
+        while (cap < base + n) cap *= 2;
+        Value* locals = (Value*)realloc(_locals, (size_t)cap * sizeof(Value));
+        if (!locals) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+        _locals = locals;
+        _locals_cap = cap;
+    }
+    for (int i = 0; i < n; i++) _locals[base + i] = mk_null();
+    _lsp = base + n;
+    return base;
+}
+
+// ── Garbage collection ──────────────────────────────────────────────
+// Mark-and-sweep, run only at a safepoint: the top of a function's dispatch
+// loop, between instructions. There every live value is on the value stack or
+// in a locals frame (a call keeps its arguments on the stack and holds nothing
+// in C variables), so those two are the whole root set. Allocation only counts
+// bytes. CRUSH_GC_STRESS=1 collects at every safepoint, for tests.
+static size_t _gc_threshold = 1 << 20;
+static bool   _gc_stress = false;
+static Value* _gc_work = NULL;
+static int    _gc_work_len = 0, _gc_work_cap = 0;
+
+static void _gc_push(Value v) {
+    if (v.tag != TAG_STRING && v.tag != TAG_ARRAY && v.tag != TAG_OBJECT) return;
+    if (_gc_work_len == _gc_work_cap) {
+        int cap = _gc_work_cap ? _gc_work_cap * 2 : 1024;
+        Value* work = (Value*)realloc(_gc_work, (size_t)cap * sizeof(Value));
+        if (!work) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+        _gc_work = work;
+        _gc_work_cap = cap;
+    }
+    _gc_work[_gc_work_len++] = v;
+}
+
+static int _gc_ptr_cmp(const void* a, const void* b) {
+    uintptr_t x = (uintptr_t)*(char* const*)a, y = (uintptr_t)*(char* const*)b;
+    return x < y ? -1 : x > y;
+}
+
+// A string is a heap block when its pointer is in the (sorted) registry;
+// anything else is a literal from the instruction stream.
+static void _gc_mark_string(const char* s) {
+    size_t lo = 0, hi = _str_block_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if ((uintptr_t)_str_blocks[mid] < (uintptr_t)s) lo = mid + 1; else hi = mid;
+    }
+    if (lo < _str_block_count && _str_blocks[lo] == s) _str_marks[lo] = true;
+}
+
+static void _gc_collect(void) {
+    qsort(_str_blocks, _str_block_count, sizeof(char*), _gc_ptr_cmp);
+    _str_marks = (bool*)realloc(_str_marks, (_str_block_count ? _str_block_count : 1) * sizeof(bool));
+    if (!_str_marks) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+    memset(_str_marks, 0, _str_block_count * sizeof(bool));
+    for (int i = 0; i < _array_count; i++) _arrays[i].mark = false;
+    for (int i = 0; i < _object_count; i++) _objects[i].mark = false;
+
+    _gc_work_len = 0;
+    for (int i = 0; i < _sp; i++) _gc_push(_stack[i]);
+    for (int i = 0; i < _lsp; i++) _gc_push(_locals[i]);
+    while (_gc_work_len > 0) {
+        Value v = _gc_work[--_gc_work_len];
+        if (v.tag == TAG_STRING) {
+            _gc_mark_string(v.s);
+        } else if (v.tag == TAG_ARRAY && v.array_idx >= 0 && v.array_idx < _array_count) {
+            CrushArray* a = &_arrays[v.array_idx];
+            if (a->mark) continue;
+            a->mark = true;
+            for (int i = 0; i < a->len; i++) _gc_push(a->data[i]);
+        } else if (v.tag == TAG_OBJECT && v.obj_idx >= 0 && v.obj_idx < _object_count) {
+            CrushObject* o = &_objects[v.obj_idx];
+            if (o->mark) continue;
+            o->mark = true;
+            for (int i = 0; i < o->field_count; i++) _gc_push(o->fields[i].val);
+        }
+    }
+
+    size_t live = 0, kept = 0;
+    for (size_t i = 0; i < _str_block_count; i++) {
+        if (_str_marks[i]) { live += strlen(_str_blocks[i]) + 1; _str_blocks[kept++] = _str_blocks[i]; }
+        else free(_str_blocks[i]);
+    }
+    _str_block_count = kept;
+
+    _array_free = (int*)realloc(_array_free, (_array_count ? _array_count : 1) * sizeof(int));
+    _array_free_count = 0;
+    for (int i = 0; i < _array_count; i++) {
+        CrushArray* a = &_arrays[i];
+        if (a->alive && !a->mark) {
+            a->alive = false;
+            a->len = 0;
+            // Keep small buffers for reuse; give big ones back.
+            if (a->cap > 64) { free(a->data); a->data = NULL; a->cap = 0; }
+        }
+        if (a->alive) live += sizeof(CrushArray) + (size_t)a->cap * sizeof(Value);
+        else _array_free[_array_free_count++] = i;
+    }
+    _object_free = (int*)realloc(_object_free, (_object_count ? _object_count : 1) * sizeof(int));
+    _object_free_count = 0;
+    for (int i = 0; i < _object_count; i++) {
+        CrushObject* o = &_objects[i];
+        if (o->alive && !o->mark) o->alive = false;
+        if (o->alive) live += sizeof(CrushObject);
+        else _object_free[_object_free_count++] = i;
+    }
+
+    _gc_allocated = 0;
+    _gc_threshold = live * 2 > ((size_t)1 << 20) ? live * 2 : ((size_t)1 << 20);
+}
+
+static inline void _gc_safepoint(void) {
+    if (_gc_stress || _gc_allocated >= _gc_threshold) _gc_collect();
+}
 
 static inline void  _push(Value v) { if (_sp == _stack_cap) _stack_grow(); _stack[_sp++] = v; }
 static inline Value _pop(void)     { return _sp > 0 ? _stack[--_sp] : mk_null(); }
@@ -608,17 +768,20 @@ fn emit_c_function(
 
     out.push_str(&format!("static Value fn_{fn_name}(void) {{\n"));
 
-    // Locals
+    // Locals: `Value` locals are a frame on the collector-visible `_locals`
+    // stack (see `discover_locals`); typed ones would stay C variables.
+    out.push_str(&format!("    int __lb = _frame_enter({});\n", local_index.len()));
     for meta in local_index.values() {
         match meta.ty {
             LocalType::F64 => out.push_str(&format!("    double {} = 0.0;\n", meta.c_name)),
             LocalType::I64 => out.push_str(&format!("    int64_t {} = 0;\n", meta.c_name)),
-            LocalType::Value => out.push_str(&format!("    Value {} = mk_null();\n", meta.c_name)),
+            LocalType::Value => {}
         }
     }
 
     out.push_str("    int _pc = 0;\n");
     out.push_str("    while (1) {\n");
+    out.push_str("        _gc_safepoint();\n");
     out.push_str("        switch (_pc) {\n");
 
     for (i, instr) in func.body.iter().enumerate() {
@@ -629,7 +792,7 @@ fn emit_c_function(
         out.push_str("            }\n");
     }
 
-    out.push_str("            default: return mk_null();\n");
+    out.push_str("            default: _lsp = __lb; return mk_null();\n");
     out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
@@ -766,8 +929,12 @@ fn discover_locals(body: &[casm::Instruction], params: &[String], type_hints: Op
                 LocalType::I64 => "_li",
                 LocalType::Value => "_lv",
             };
+            let c_name = match ty {
+                LocalType::Value => format!("_locals[__lb + {next}]"),
+                _ => format!("{}_{}", prefix, next),
+            };
             map.insert(name.to_string(), LocalMeta {
-                c_name: format!("{}_{}", prefix, next),
+                c_name,
                 ty,
             });
             *next += 1;
@@ -1145,7 +1312,7 @@ fn emit_c_instr(
         }
 
         "ret" | "halt" => {
-            out.push_str("                return _pop();\n");
+            out.push_str("                { Value __ret = _pop(); _lsp = __lb; return __ret; }\n");
         }
 
         // ── Calls ──
@@ -1286,8 +1453,13 @@ fn emit_c_entry_point(out: &mut String) {
 __attribute__((visibility("default")))
 const char* crush_run(void) {
     _sp = 0;  // reset stack
+    _lsp = 0;
     _reset_arrays();
     _reset_strings();
+    _gc_allocated = 0;
+    _gc_threshold = 1 << 20;
+    const char* __stress = getenv("CRUSH_GC_STRESS");
+    _gc_stress = __stress != NULL && __stress[0] != '\0' && __stress[0] != '0';
     Value result = fn_main();
     // The host prints the result through its own stdout; flush ours first so
     // the program's output comes before it (CRUSH-216).
