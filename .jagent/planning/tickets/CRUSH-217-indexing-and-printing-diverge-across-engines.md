@@ -37,3 +37,10 @@ which makes `crush-diff` report random divergences.
 - [ ] Shared value formatter for printing (arrays/maps/structs) across engines; map
       iteration order deterministic (insertion order).
 - [ ] Differential test per row.
+
+## Update 2026-10-09 (AOT test drive, `main` `5755262`)
+
+- AOT Rust: `"a=" + [1, 2]` prints `a=Array(RefCell { value: [Int(1), Int(2)] })` (Rust
+  `Debug`); `print([1,2,3])` is correct there.
+- AOT C: `print({"a": 1})` prints `[array#0]` (maps take the array arm); `"a=" + [1,2]`
+  prints `a=[opaque]`.

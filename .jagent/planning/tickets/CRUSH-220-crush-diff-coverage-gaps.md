@@ -28,3 +28,10 @@ as "agrees" by `crush-diff`, except the random map-order case:
 - [ ] AOT (gcc at least) included where the program is AOT-supported.
 - [ ] Composite values compared via a canonical formatter (CRUSH-217) so map order doesn't create noise.
 - [ ] The sweep's repro programs added to the corpus as regression cases.
+
+## Update 2026-10-09 (AOT test drive, `main` `5755262`)
+
+- `crates/crush-aot/tests/differential_aot.rs` compares only `main`'s return value,
+  never stdout, so every print-path bug in CRUSH-216/217 passes it.
+- `jit-runner` exits `host request (unserviced)` on the first `FastYield::Request`, so
+  no program that calls `io.print` can run under the JIT from any CLI.

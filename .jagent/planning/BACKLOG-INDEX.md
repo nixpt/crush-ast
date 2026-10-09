@@ -59,6 +59,7 @@
 | 145 | SET_FIELD contract diverged: map literals broken off CVM1 (found during CRUSH-134) |
 | 146 | JIT `arr_set` stack contract: `a[i] = v` corrupted the JIT stack (found during CRUSH-135) |
 | 179–221 | 2026-10-09 test-drive sweep (claude): security/caps (179–186), frontend + optimizer (187–195; 187 = #37 + #92 pong, 189 = #92 game_of_life), walkers (196–204), bindings/grammar/lint/build (205–210), tooling + conformance (211–212), engine divergence (213–221) |
+| 222–223 | 2026-10-09 AOT test drive (claude): unused `crush-aotc` crate (222), AOT C fixed capacities (223); new evidence appended to 214, 216, 217, 220 |
 | 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
 
 ## How to dispatch from this index

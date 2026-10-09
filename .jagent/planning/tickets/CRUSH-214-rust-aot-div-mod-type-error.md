@@ -25,3 +25,10 @@ A Crush function named `loop` (any Rust keyword) emits `fn loop(...)` — names 
 - [ ] `/` and `%` compile and match interp output (incl. the CRUSH-213 edge cases).
 - [ ] Function/variable names are mangled or raw-escaped; test with `loop`, `type`, `match`.
 - [ ] A CI smoke test compiles every `examples/crush` program the backend claims to support.
+
+## Update 2026-10-09 (AOT test drive, `main` `5755262`)
+
+- Not only games: `let z = 0; io.print(5 / z)` fails to compile too. Any `/` or `%` whose
+  operands aren't both literals goes through this closure.
+- Across `examples/crush`, all 104 rustc errors (69 `%`, 35 `/`) come from these two
+  lines; `--backend rustc` matches interp on 10 of 27 runnable examples, gcc on 14.

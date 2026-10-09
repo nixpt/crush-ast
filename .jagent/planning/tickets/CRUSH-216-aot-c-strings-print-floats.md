@@ -34,3 +34,23 @@
 - [ ] `io.print` follows the same stack contract as the VM (pushes Null).
 - [ ] Float literals emitted with C syntax (`%.17g` + ensure `.0`/exponent); printing matches interp's shortest-roundtrip format.
 - [ ] stdout flushed before the runner prints the result.
+
+## Update 2026-10-09 (AOT test drive, `main` `5755262`)
+
+More repros for item 1 (gcc and clang; rustc correct):
+
+- A value held in a variable is overwritten by later string work. Storing calls
+  `_str_dup`, which copies into the same ring buffer, so it gives no protection:
+  ```crush
+  fn tag(n) { return "keep" + n; }
+  fn main() { let keep = tag(7); let s = ""; let i = 0;
+    while i < 40 { s = "abcdefgh" + i; i = i + 1; } io.print(keep); return 0; }
+  ```
+  interp `keep7`, gcc `gh36`.
+- Building a 300-character string gives a 32-character one with no error
+  (`len` prints `32`). `_add` returns `null` for results >= 256 bytes and `_str_alloc`
+  truncates at the buffer end instead of failing.
+- Arrays concatenated into a string render as `[opaque]` (`_to_text_buf` default arm);
+  see CRUSH-217.
+- Example impact: breakout, fifteen_puzzle, game_of_life, lights_out, pong and snake all
+  print garbled boards under gcc/clang.
