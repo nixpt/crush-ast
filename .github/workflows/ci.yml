@@ -24,9 +24,37 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo check --workspace \
+            --exclude crush-python \
+            --exclude crush-lang-custom \
+            2>&1
+
+  # ── MSRV: the workspace builds on the declared rust-version ───────────────
+  # Every other job runs whatever stable rust-toolchain.toml resolves to.
+  # rust-toolchain.toml takes precedence over the toolchain a setup action
+  # installs as default, so this job sets RUSTUP_TOOLCHAIN, which beats the
+  # file, for every step including rust-cache's rustc probe. Keep the
+  # version in step with `rust-version` in Cargo.toml (CRUSH-231).
+  msrv:
+    name: MSRV (1.95.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: "1.95.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+      - uses: Swatinem/rust-cache@v2
+      - run: rustc --version
       - run: |
           cargo check --workspace \
             --exclude crush-python \
@@ -54,8 +82,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo test --lib --tests \
@@ -86,8 +112,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p crush-aot --lib --tests 2>&1
       - name: C runtime under GC stress
@@ -99,6 +123,66 @@ jobs:
             --test backend_agreement \
             --test examples_parity \
             --test integration_c \
+            2>&1
+
+  # ── Every other member's tests (CRUSH-231) ────────────────────────────────
+  # Before this job, these crates were compiled by Test (workspace)
+  # (`--no-run`) but no job ran their tests. With this job and the targeted
+  # jobs, every workspace member's tests run somewhere. A new member must be
+  # added to one of the `-p` lists, or excluded here with a reason.
+  #
+  # `--tests` (not bare `cargo test`) for the same doctest reason as Test
+  # (core). It also takes in bin-only crates (crush-walker, crush-installer,
+  # crush-tui), where `--lib` would match nothing.
+  #
+  # crush-lang-custom is still left out of Check/Clippy/Feature gates, but it
+  # builds and its tests pass, so it runs here. crush-python links libpython
+  # (pyo3, abi3-py311): setup-python provides a shared libpython.
+  #
+  # No tests yet, but kept in the list so new ones run without a CI change:
+  # crush-cson, crush-ffi, crush-plugin-example, crush-tui, tree-sitter-crush
+  # (its grammar corpus needs the tree-sitter CLI, which this job doesn't run).
+  test-rest:
+    name: Test (rest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo test --tests \
+            -p crush-errors \
+            -p crush-caison \
+            -p crush-cson \
+            -p crush-diagnostics \
+            -p crush-macros \
+            -p tree-sitter-crush \
+            -p crush-walker \
+            -p xtask \
+            -p crush-lang-custom \
+            -p crush-lang-java \
+            -p crush-lang-wasm \
+            -p crush-index \
+            -p crush-net \
+            -p crush-ptx \
+            -p crush-lint \
+            -p crush-ffi \
+            -p crush-plugin-example \
+            -p crush-installer \
+            -p crush-debugger \
+            -p crush-tui \
+            -p crush-vm-capi \
+            -p crush-aotc \
+            -p crush-python \
             2>&1
 
   # ── All language SDK tests ────────────────────────────────────────────────
@@ -114,8 +198,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo test \
@@ -156,8 +238,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo test -p crush-lang-sdk -p crush-pkg --lib --tests 2>&1
@@ -200,8 +280,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo test --workspace --no-run \
@@ -226,7 +304,6 @@ jobs:
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: |
@@ -273,8 +350,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -311,8 +386,6 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo check --workspace \

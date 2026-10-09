@@ -306,7 +306,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-228** (P3, XS): AOT C: dead `mk_null()` fallbacks after allocation; one OOM helper; error helper naming. [ticket](tickets/CRUSH-228-aot-c-dead-null-fallbacks-and-error-helpers.md)
 - [ ] **CRUSH-229** (P2, S): Float-to-text exists three times (VM, Rust AOT, C AOT); pin them together. [ticket](tickets/CRUSH-229-float-text-three-copies.md)
 - [ ] **CRUSH-230** (P3, XS): VM `MAT_MUL` panics on ragged/mismatched matrices; no Crush syntax emits it. [ticket](tickets/CRUSH-230-vm-mat-mul-panics-on-ragged-input.md)
-- [ ] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
+- [x] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
@@ -423,3 +423,4 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **opportunity** — Crush text syntax has no AI expressions: crush-frontend's parser only produces AIStatement::SemanticSwitch (and CSON @synthesize → Synthesize); query/toolchain/delegation exist only via CAST producers, so .crush programs can't use the ai_native engine from CRUSH-156..158  _(nimbus-b, 2026-10-07)_
 - [ ] **issue** — crush-lang-sdk doctor::tests::version_falls_back_to_stderr is flaky in CI (failed once on PR #118 Test (sdk), run 37813777655: probe_version returned None). Likely ETXTBSY: fake_tool writes a #!/bin/sh script then execs it while other test threads fork and briefly inherit the write fd. Fix: retry spawn on ETXTBSY in the test helper (or probe_version), or serialize the fake-tool tests.  _(panini-cap, 2026-10-08)_
 - [ ] **issue** — crush-vm prefixes every HostCap error with 'unknown capability: <name>:' even when the cap IS registered and refused for a real reason (e.g. 'unknown capability: fs.cat: path escapes sandbox root: ../x'). Misleading: reads as a missing grant. Found running squad-bridge-peek (CRUSH-172) under crush-run --fs.  _(panini-cap, 2026-10-08)_
+- [ ] **gap** — tree-sitter-crush has 0 Rust tests; its grammar corpus (crates/tree-sitter-crush/test/corpus) only runs under the tree-sitter CLI ('tree-sitter test'), which no CI job invokes. The grammar is never checked against its corpus in CI. Found during CRUSH-231.  _(naka, 2026-10-09)_
