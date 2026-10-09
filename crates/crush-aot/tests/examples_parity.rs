@@ -40,9 +40,15 @@ fn cc_available(cc: &str) -> bool {
 }
 
 /// What `crush-run` prints, or `None` when the VM can't run the program (it needs a
-/// capability grant, fails at run time, or isn't valid Crush).
+/// capability grant, fails at run time, or isn't valid Crush), or reads input.
 fn vm_stdout(source: &str) -> Option<String> {
     let program = crush_lang_sdk::compile::compile_crush_source(source).ok()?;
+    // An interactive program (`io.read`) can't be compared without input, and the
+    // in-process VM would read this test's own stdin: under a shell whose stdin never
+    // closes, the test then hangs forever (it did, twice).
+    if crush_lang_sdk::effects::used_by(&program).ok()?.contains("io.read") {
+        return None;
+    }
     let quotas = Quotas { max_steps: 20_000_000, ..Quotas::default() };
     let result = Runtime::with_quotas(quotas).run(&program).ok()?;
     result.halted.then_some(result.output)
