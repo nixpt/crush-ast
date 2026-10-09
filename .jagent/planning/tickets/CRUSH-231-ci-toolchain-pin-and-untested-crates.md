@@ -57,7 +57,7 @@ All 13 showed CI green while never executing. They passed when run by hand on
    - add a `Test (rest)` job with explicit `-p` lists; or
    - make `Test (workspace)` a real run with `--exclude` for the crates that
      genuinely can't run on the runner, each exclude with a comment.
-3. crush-aot needs `gcc` on the runner. `ubuntu-latest` already has it. Its tests
+3. **crush-aot is covered by PR #128** (CRUSH-227), which adds a `Test (aot)` job that runs its suite and reruns the C tests under `CRUSH_GC_STRESS=1`. Once #128 merges, 23 crates remain uncovered. #128's job copies the dead `toolchain: "1.85"` line too, so step 1 covers it as well. For reference, crush-aot needs `gcc` on the runner. `ubuntu-latest` already has it. Its tests
    skip the C backend when `gcc` is missing (`cc_available`). Keep
    `CRUSH_AOT_PARITY_JOBS=2` on CI, since `examples_parity` builds in parallel and
    takes about 55 s locally with 2 jobs.
