@@ -21,37 +21,75 @@
 //! - [`Session`]: runs until the program needs a line, pauses, and resumes
 //!   when the page calls `provide(line)` — an interactive terminal.
 //!
+//! Every entry point registers the same capabilities `crush-run` gives a
+//! program with no grant flags (see [`browser_caps`]): the pure standard
+//! library (`math.*`, `str.*`, `system.*`, …), `sys.args`/`sys.exit` and
+//! `caison.parse`. Nothing that reaches outside the VM (`fs`, `time`, `env`,
+//! `process`, `net`) is registered.
+//!
 //! `@lang{}` polyglot blocks are unsupported either way: `EXEC_LANG` needs to
 //! spawn a subprocess, which doesn't exist in a browser sandbox. The VM
 //! returns a capability-gated `VmError` for those, same as running with no
 //! `--polyglot` grant natively — not a silent no-op.
 
-use crush_vm::{InputSource, PortableVm, VmYield};
+use crush_vm::{HostCaps, InputSource, PortableVm, VmError, VmYield};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+
+/// The capabilities every browser run gets: what `crush-run` registers when
+/// given no grant flags. That is the pure standard library (`math.*`,
+/// `str.*`, `system.*`, …; the `stdlib` feature, on by default), `sys.args`
+/// (answering `args`), `sys.exit` and `caison.parse`. None of them reaches
+/// outside the VM, so a page needs no grant to offer them; `fs`, `time`,
+/// `env`, `process` and `net` stay absent.
+pub fn browser_caps(args: Vec<String>) -> HostCaps {
+    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args);
+    #[cfg(feature = "stdlib")]
+    let builder = builder.stdlib(true);
+    builder.build()
+}
 
 #[derive(Serialize)]
 struct ExecutionResult {
     output: String,
     steps: usize,
     halted: bool,
+    /// The status passed to `sys.exit`, when the program called it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
 }
 
 fn run_program(program: &crush_vm::Program) -> Result<JsValue, JsValue> {
     let quotas = crush_vm::Quotas::default();
-    let result = crush_vm::run(program, &quotas)
-        .map_err(|e| JsValue::from_str(&format!("runtime error: {e}")))?;
-
-    let out = ExecutionResult {
-        output: result.output,
-        steps: result.steps,
-        halted: result.halted,
-    };
+    let caps = browser_caps(Vec::new());
+    // Collected through the streaming sink so that output printed before a
+    // `sys.exit` survives it (the exit arrives as an `Err`).
+    let mut output = String::new();
+    let out =
+        match crush_vm::vm::run_with_caps_streaming(program, &quotas, Some(&caps), &mut |part| {
+            output.push_str(part)
+        }) {
+            Ok(result) => ExecutionResult {
+                output: result.output,
+                steps: result.steps,
+                halted: result.halted,
+                exit_code: None,
+            },
+            Err(VmError::Exit(code)) => ExecutionResult {
+                output,
+                steps: 0,
+                halted: true,
+                exit_code: Some(code),
+            },
+            Err(e) => return Err(JsValue::from_str(&format!("runtime error: {e}"))),
+        };
     serde_wasm_bindgen::to_value(&out).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// Compile and run Crush source, returning `{ output, steps, halted }` as a
-/// plain JS object, or throwing a string error (compile failure or VmError).
+/// Compile and run Crush source, returning `{ output, steps, halted,
+/// exit_code? }` as a plain JS object, or throwing a string error (compile
+/// failure or VmError). `exit_code` is set when the program called
+/// `sys.exit`; `steps` is then 0 (not reported on that path).
 #[wasm_bindgen]
 pub fn execute(source: &str) -> Result<JsValue, JsValue> {
     let program = crush_lang_sdk::compile::compile_crush_source(source)
@@ -93,6 +131,8 @@ pub struct RunOptions {
     /// each call. Defaults to `crush_vm::Quotas::default().max_steps`.
     #[serde(alias = "maxSteps")]
     pub max_steps: Option<usize>,
+    /// What `sys.args()` returns. Absent means none.
+    pub args: Option<Vec<String>>,
 }
 
 fn parse_options(options: JsValue) -> Result<RunOptions, JsValue> {
@@ -116,7 +156,7 @@ pub enum Status {
 }
 
 /// One stepped-run report, serialized to JS as
-/// `{ status, output, error?, steps }`.
+/// `{ status, output, error?, exit_code?, steps }`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub status: Status,
@@ -124,6 +164,9 @@ pub struct Report {
     pub output: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The status passed to `sys.exit` (the run is then `done`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     pub steps: usize,
 }
 
@@ -135,39 +178,52 @@ fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) 
     let mut vm = PortableVm::new(program);
     vm.set_quotas(quotas);
     vm.set_input(input);
+    vm.set_host_caps(browser_caps(options.args.clone().unwrap_or_default()));
     vm
 }
 
-/// Step `vm` until it finishes, errors, or pauses for input.
-fn drive(vm: &mut PortableVm) -> (Status, Option<String>) {
+/// Where [`drive`] stopped: the status, the error for `Status::Error`, and
+/// the `sys.exit` status if the program called it.
+type Stop = (Status, Option<String>, Option<i32>);
+
+/// Step `vm` until it finishes, errors, exits, or pauses for input.
+fn drive(vm: &mut PortableVm) -> Stop {
     loop {
         if vm.is_halted() {
-            return (Status::Done, None);
+            return (Status::Done, None, None);
         }
         match vm.step() {
             Ok(None) => {}
             Ok(Some(VmYield::HostCall { capability, .. })) if capability == "io.read" => {
-                return (Status::NeedInput, None);
+                return (Status::NeedInput, None, None);
             }
             Ok(Some(other)) => {
                 return (
                     Status::Error,
                     Some(format!("unexpected VM pause: {other:?}")),
+                    None,
                 );
             }
-            Err(e) => return (Status::Error, Some(format!("runtime error: {e}"))),
+            Err(VmError::Exit(code)) => return (Status::Done, None, Some(code)),
+            Err(e) => return (Status::Error, Some(format!("runtime error: {e}")), None),
         }
     }
 }
 
-/// Result of [`execute_with`], serialized as `{ ok, output, error?, steps }`.
+/// Result of [`execute_with`], serialized as
+/// `{ ok, output, error?, exit_code?, steps }`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecuteWithResult {
+    /// The program finished without an error and, if it called `sys.exit`,
+    /// with status 0.
     pub ok: bool,
     /// Everything printed, including output before an error.
     pub output: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The status passed to `sys.exit`, when the program called it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     pub steps: usize,
 }
 
@@ -180,23 +236,25 @@ pub fn execute_with_options(source: &str, options: &RunOptions) -> ExecuteWithRe
                 ok: false,
                 output: String::new(),
                 error: Some(format!("compile error: {e}")),
+                exit_code: None,
                 steps: 0,
             };
         }
     };
     let stdin = options.stdin.clone().unwrap_or_default();
     let mut vm = new_vm(program, options, InputSource::supplied(stdin));
-    let (status, error) = drive(&mut vm);
+    let (status, error, exit_code) = drive(&mut vm);
     ExecuteWithResult {
-        ok: status == Status::Done,
+        ok: status == Status::Done && exit_code.unwrap_or(0) == 0,
         output: vm.take_output(),
         error,
+        exit_code,
         steps: vm.steps(),
     }
 }
 
-/// Compile and run Crush source with options `{ stdin?, max_steps? }`,
-/// returning `{ ok, output, error?, steps }`. `io.read` takes lines from
+/// Compile and run Crush source with options `{ stdin?, max_steps?, args? }`,
+/// returning `{ ok, output, error?, exit_code?, steps }`. `io.read` takes lines from
 /// `stdin` and returns `""` once it runs out. Compile and runtime errors come
 /// back as `ok: false` with output printed before the error kept; only
 /// malformed options throw.
@@ -233,12 +291,13 @@ pub struct Session {
     vm: Option<PortableVm>,
     status: Option<Status>,
     error: Option<String>,
+    exit_code: Option<i32>,
     transcript: String,
 }
 
 #[wasm_bindgen]
 impl Session {
-    /// Compile `source` with options `{ max_steps? }` (`stdin` is ignored —
+    /// Compile `source` with options `{ max_steps?, args? }` (`stdin` is ignored —
     /// use `provide`). Nothing runs until [`Session::run`].
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str, options: JsValue) -> Result<Session, JsValue> {
@@ -279,12 +338,14 @@ impl Session {
                 vm: Some(new_vm(program, options, InputSource::interactive())),
                 status: None,
                 error: None,
+                exit_code: None,
                 transcript: String::new(),
             },
             Err(e) => Session {
                 vm: None,
                 status: Some(Status::Error),
                 error: Some(format!("compile error: {e}")),
+                exit_code: None,
                 transcript: String::new(),
             },
         }
@@ -297,15 +358,17 @@ impl Session {
         if matches!(self.status, Some(Status::Done | Status::Error)) {
             return self.terminal_report();
         }
-        let (status, error) = drive(vm);
+        let (status, error, exit_code) = drive(vm);
         let output = vm.take_output();
         self.transcript.push_str(&output);
         self.status = Some(status);
         self.error = error.clone();
+        self.exit_code = exit_code;
         Report {
             status,
             output,
             error,
+            exit_code,
             steps: vm.steps(),
         }
     }
@@ -334,6 +397,7 @@ impl Session {
             status: self.status.unwrap_or(Status::Error),
             output: String::new(),
             error: self.error.clone(),
+            exit_code: self.exit_code,
             steps: self.vm.as_ref().map_or(0, PortableVm::steps),
         }
     }

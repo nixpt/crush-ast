@@ -12,18 +12,44 @@ by `crush-run`/`crush-diff`, not a separate reimplementation.
 import init, { execute, execute_with, Session, run_blob, check } from "./pkg/crush_web.js";
 await init();
 
-execute(source);            // { output, steps, halted } or throws; io.read sees EOF
-execute_with(source, { stdin: "10\nh\ns\n0\n", max_steps: 1_000_000 });
-                            // { ok, output, error?, steps } — never throws for
+execute(source);            // { output, steps, halted, exit_code? } or throws; io.read sees EOF
+execute_with(source, { stdin: "10\nh\ns\n0\n", max_steps: 1_000_000, args: ["a"] });
+                            // { ok, output, error?, exit_code?, steps } — never throws for
                             // compile/runtime errors; output before an error is kept
 
 const s = new Session(source, { max_steps: 1_000_000 });
-let r = s.run();            // { status, output, error?, steps }
+let r = s.run();            // { status, output, error?, exit_code?, steps }
 while (r.status === "need_input") {
   term.write(r.output);
   r = s.provide(await nextLine());   // or s.close() to send EOF
 }
 term.write(r.output);       // status is "done" or "error"
+```
+
+### Capabilities
+
+Every entry point registers what `crush-run` gives a program with no grant
+flags, all of it pure computation that never leaves the VM:
+
+- the standard library (`math.*`, `str.*`, `system.*`, …), behind the
+  default-on `stdlib` cargo feature;
+- `sys.args()`, which returns the `args` option (`[]` when absent, and for
+  `execute`/`run_blob`);
+- `sys.exit(code)`: the run stops and reports `exit_code`. Output printed
+  before it is kept. A `Session` ends with `status: "done"`; `execute_with`
+  sets `ok: false` unless the code is 0; `execute` returns normally
+  (`steps` is then 0);
+- `caison.parse`.
+
+Nothing that reaches outside the VM (`fs`, `time`, `env`, `process`, `net`)
+is registered; calling one is a runtime error.
+
+The standard library roughly doubles the module (about 0.5 MB to 0.95 MB
+gzipped after `wasm-bindgen`, mostly `regex`). A page that doesn't need it can
+build without it:
+
+```bash
+wasm-pack build --target web -- --no-default-features --features panic-hook
 ```
 
 ### `io.read` in the browser

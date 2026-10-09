@@ -38,8 +38,13 @@ serde-wasm-bindgen = "0.6"
 console_error_panic_hook = { version = "0.1", optional = true }
 
 [features]
-default = ["panic-hook"]
+default = ["panic-hook", "stdlib"]
 panic-hook = ["dep:console_error_panic_hook"]
+# The pure standard-library capabilities (math.*, str.*, system.*, …) that
+# every run registers (see `browser_caps`). Roughly doubles the .wasm
+# (~0.5 MB → ~0.95 MB gzipped, mostly `regex`); build with
+# `--no-default-features --features panic-hook` for a page that doesn't need it.
+stdlib = ["crush-lang-sdk/stdlib"]
 
 [package.metadata.wasm-pack.profile.release]
 opt-level = "z"

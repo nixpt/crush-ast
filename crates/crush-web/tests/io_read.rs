@@ -12,6 +12,7 @@ fn execute_with_stdin_plays_a_round() {
     let options = RunOptions {
         stdin: Some("10\nh\ns\n0\n".into()),
         max_steps: None,
+        ..Default::default()
     };
     let result = execute_with_options(BLACKJACK, &options);
     assert!(result.ok, "{:?}", result.error);
@@ -60,6 +61,7 @@ fn execute_with_step_budget_and_compile_error() {
     let options = RunOptions {
         stdin: None,
         max_steps: Some(50),
+        ..Default::default()
     };
     let result = execute_with_options(BLACKJACK, &options);
     assert!(!result.ok);
@@ -116,6 +118,7 @@ fn session_plays_a_round_interactively() {
     let options = RunOptions {
         stdin: Some("10\ns\n0\n".into()),
         max_steps: None,
+        ..Default::default()
     };
     assert_eq!(
         session.transcript(),
@@ -145,6 +148,7 @@ fn session_close_is_eof_and_budget_spans_the_session() {
         &RunOptions {
             stdin: None,
             max_steps: Some(second_read - 1),
+            ..Default::default()
         },
     );
     assert_eq!(session.run_report().status, Status::NeedInput);
