@@ -41,7 +41,7 @@ fn main() {
 
     hash("crush-dashboard")
 
-    check_env("USER")
+    check_env("PATH")
     check_env("SHELL")
 }
 "#;
@@ -61,5 +61,5 @@ fn main() {
     assert!(result.output.contains("hello world"));
     assert!(result.output.contains("11"));
     assert!(result.output.contains("sha256:"));
-    assert!(result.output.contains("USER="));
+    assert!(result.output.contains("PATH="));
 }
