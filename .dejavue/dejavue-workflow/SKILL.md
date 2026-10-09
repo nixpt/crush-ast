@@ -1,5 +1,6 @@
 ---
 name: dejavue-workflow
+license: MIT (Copyright (c) 2026 nixpt and Dejavue Contributors; https://github.com/nixpt/dejavue)
 description: |
   How to use dejavue (repo-local agent memory) as a working agent.
   Boot packet on arrival, capture architectural decisions during work,
@@ -289,10 +290,27 @@ Canonical `.gitignore` entries:
 .dejavue/.locks/
 ```
 
-The post-commit hook (installed by `dejavue init`) auto-records every
-commit's file changes as `file_changed` events. The hook is one line
-calling `dejavue changed --auto`; no manual `changed` calls needed for
-committed work.
+File changes are git's record, not dejavue's: `since`, `explain` and
+`changelog` read them from git. The post-commit hook older versions
+installed is retired. The command it runs (`dejavue changed --auto`) is
+now a no-op that writes and amends nothing, and `init` no longer
+installs it. `dejavue hook posttooluse` is likewise a no-op; drop it
+from runner configs when convenient.
+
+### External index freshness in the boot packet
+
+Structural index tools can append `symbol_index` / `symbol_index_incremental`
+events to the timeline (same JSONL schema, same append contract). When they
+exist, `dejavue context` shows an `index freshness` section — last full
+index, age, incremental count — and warns past 30 days. An arriving agent
+reads this before deciding whether to trust or rebuild a structural index.
+
+### Old hooks no longer dirty the tree
+
+Older hooks appended a `file_changed` line after every commit and amended
+it in, which left a dangling timeline diff and stopped `git rebase`. Those
+hooks are now no-ops. A dirty `.dejavue/timeline.jsonl` is real uncommitted
+memory again, so commit it like any other change.
 
 ## `merge=union` for parallel branches
 
@@ -387,7 +405,7 @@ Takes ~30 seconds. Pays off compounding over future sessions.
 dejavue state --summary "<current-state>" --agent <you>
 dejavue handoff --summary "<what's-done>" --next "<next-steps>" --agent <you>
 git add .dejavue/
-git commit -m "<your message — post-commit hook also records the diff>"
+git commit -m "<your message>"
 ```
 
 ### DCP multi-target export
@@ -439,14 +457,13 @@ For context: `dejavue init` does more than create `.dejavue/`. It also:
    if the marker (`<!-- dejavue:discovery -->`) or any `dejavue context`
    reference already exists, the stub is skipped.
 
-2. **Copies skills to `.dejavue/`** — copies `dejavue/` and
-   `dejavue-workflow/` from the adjacent `skills/` directory into the
-   repo's `.dejavue/` as an in-repo fallback. Agents without the skills
-   in their global `~/.claude/skills/` can still load them from
-   `python3 .dejavue/dejavue install-skill`.
+2. **Vendors only on request** — `init --vendor` copies `dejavue.py`,
+   `dejavue/` and `dejavue-workflow/` into the repo's `.dejavue/` as an
+   offline fallback. Without it nothing is copied, and the boot stub
+   points at `dejavue` on PATH or a resolver. Don't vendor by default:
+   a committed copy drifts from the installed tool.
 
-3. **Installs git hooks** — post-commit (auto `file_changed` recording),
-   pre-push (staleness check), post-checkout (prints `dejavue status` on
+3. **Installs git hooks** — pre-push (staleness check), post-checkout (prints `dejavue status` on
    branch switch — guards on `$3==1`, never fires on file checkout);
    `.gitattributes` `merge=union` entries for timeline/decisions/invariants.
 

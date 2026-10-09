@@ -83,6 +83,7 @@ This repo uses [dejavue](https://github.com/nixpt/dejavue) for persistent
 architectural context — decisions, invariants, constraints not derivable
 from the code alone. Run `dejavue context` before non-trivial changes,
 `dejavue recall <query>` to search, `dejavue decision "<title>" --reason
-"..."` to record a real one as you make it. Fallback if not on PATH:
-`python3 .dejavue/dejavue context`. `.jagent/planning/` holds the *what/when*
+"..."` to record a real one as you make it. Not on PATH? Use a resolver
+such as `jagent-dejavue context`, or install it:
+`pipx install git+https://github.com/nixpt/dejavue`. `.jagent/planning/` holds the *what/when*
 (ROADMAP, TASKS, `CRUSH-N` tickets) as a separate concern from dejavue's *why*.
