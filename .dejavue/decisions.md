@@ -761,3 +761,24 @@ Exosphere's delegation read agent status from files in a fixed directory and dis
 Reason:
 Ticket said 'a pass over CAST collecting CapabilityCalls + builtins that lower to CAP_CALL'. At CAST level that needs a copy of the frontend/casm_to_vm lowering table to know which builtins become caps, and a copy of the polyglot/AI gate naming. Bytecode is after every lowering, CAP_CALL names are const-pool constants (no dynamic cap names), and the VM's own operand_kind/canonical_lang/ai_native_kind_for_opcode give the exact gate names the VM checks at run time. Reachability from the entry (CALL edges + functions named by PUSH_STR, since SPAWN pops its target) keeps a path dep's uncalled functions out. Ambient/granted classification reuses crush-run caps --json's table, moved to crush_lang_sdk::effects::catalog(). Rejected: CAST walk (duplicates lowering), CASM walk (still needs AI op->kind map, misses casm_to_vm's call->CAP_CALL rule unless copied), whole-program without reachability (spurious errors from deps).
 
+
+## 2026-10-09T03:40:00+00:00 — CRUSH-187 (#37, #92 pong): ensure_return appends push_null/ret whenever the end of the body is reachable, not only when the body has no ret
+
+Reason:
+The old rule ('no RET anywhere -> append one') missed functions that return early from a branch and can also reach the end: they fell off into the next function's code, giving truncated instruction / call depth quota / stack underflow depending on layout. The end is unreachable only if the last instruction is a terminator (ret/throw/jmp/halt) AND no instruction's target points at or past the end of the body; otherwise the implicit return is added. The extra push_null/ret in the conservative case is dead code, which is harmless. Pinned by crush-lang-sdk tests/implicit_return_and_optimizer_test.rs (#37 repro, pong_tick shape).
+
+Rejected alternatives:
+- **Append push_null/ret to every function unconditionally**: simplest, but bloats every body that already ends in ret; the reachability check is a few lines
+- **Full CFG reachability analysis**: more precise but nothing else needs a CFG yet; the terminator + jump-target check is exact for the shapes codegen emits
+
+
+## 2026-10-09T03:41:00+00:00 — CRUSH-189 (#92 game_of_life): the optimizer's algebraic-identity and strength-reduction rewrites are removed, not made type-aware
+
+Reason:
+2*e -> e+e evaluated e twice (game_of_life's 2 * pow2(n - 1) went exponential); x+0 -> x turned "a" + 0 into "a"; 0*f() -> 0 dropped the call; 0*2.5 gave int 0. Making them sound needs type and purity information the optimizer does not have, and the cases they help with literal operands are already covered by constant folding. e+e was never cheaper than 2*e on this VM (an extra load). Constant folding of int arithmetic now uses checked_add/sub/mul/div/rem and checked_neg and leaves the expression unfolded on overflow, so the runtime reports arithmetic overflow instead of crushc panicking. try/catch: variables assigned anywhere in the try body are dropped from the handler's constant map. Verified: all 34 compilable examples/crush programs print identical output with and without -O.
+
+Rejected alternatives:
+- **Type-aware identity rewrites**: needs a type/purity pass the optimizer doesn't have; the win is negligible once literals are folded
+- **Keep 2*e -> e+e only when e is a variable or literal**: still no speedup on the VM (extra load) and keeps a rule that has to be reasoned about
+- **Wrapping arithmetic in folding**: silently changes program results; the VM errors on overflow, so the folded and unfolded programs would disagree
+
