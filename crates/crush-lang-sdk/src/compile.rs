@@ -502,13 +502,56 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     })?;
                     format!("JNZ {label}")
                 }
-                "new_array" => {
-                    let size = instr.args.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    "NEW_ARRAY 0".to_string()
+                // `size` on the `new_*` collection ops is the frontend's capacity
+                // hint, not a count of operands on the stack (CVM1's NEW_* pops
+                // that many), so every collection starts empty and the literal's
+                // elements arrive through the matching `*_push`.
+                "new_array" => "NEW_ARRAY 0".to_string(),
+                "new_tuple" => "NEW_TUPLE 0".to_string(),
+                "new_list" => "NEW_LIST 0".to_string(),
+                "new_vector" => "NEW_VECTOR 0".to_string(),
+                "new_set" => "NEW_SET 0".to_string(),
+                "array_push" | "arr_push" => "ARR_PUSH".to_string(),
+                "array_pop" | "arr_pop" => "ARR_POP".to_string(),
+                "tuple_push" => "TUPLE_PUSH".to_string(),
+                "list_push" => "LIST_PUSH".to_string(),
+                "vector_push" => "VECTOR_PUSH".to_string(),
+                "set_push" => "SET_PUSH".to_string(),
+                "len" | "arr_len" => "ARR_LEN".to_string(),
+                "bit_and" => "BITAND".to_string(),
+                "bit_or" => "BITOR".to_string(),
+                "bit_xor" => "BITXOR".to_string(),
+                "bit_not" => "BITNOT".to_string(),
+                "shl" => "SHL".to_string(),
+                "shr" => "SHR".to_string(),
+                // CVM1's ROT is [x, y, z] -> [y, x, z]; CASM's `rot` (and the
+                // FastVM/JIT `Rot`) is [x, y, z] -> [y, z, x]. ROLL 2 is exactly
+                // the latter, so don't lower to the divergent opcode.
+                "rot" => "ROLL 2".to_string(),
+                "pick" | "roll" => {
+                    let n = instr.args.get("n").and_then(|v| v.as_u64()).ok_or_else(|| {
+                        anyhow::anyhow!("{} missing n at {fname}:{i}", instr.op)
+                    })?;
+                    format!("{} {n}", instr.op.to_uppercase())
                 }
-                "array_push" => "ARR_PUSH".to_string(),
-                "array_pop" => "ARR_POP".to_string(),
-                "len" => "ARR_LEN".to_string(),
+                "type_of" => "TYPEOF".to_string(),
+                "cast" => {
+                    let ty = instr.args.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("cast missing type at {fname}:{i}")
+                    })?;
+                    format!("CAST {ty:?}")
+                }
+                "math_pow" => "MATH_POW".to_string(),
+                "math_sqrt" => "MATH_SQRT".to_string(),
+                "math_abs" => "MATH_ABS".to_string(),
+                "math_round" => "MATH_ROUND".to_string(),
+                "math_floor" => "MATH_FLOOR".to_string(),
+                "math_ceil" => "MATH_CEIL".to_string(),
+                "str_starts_with" => "STR_STARTS_WITH".to_string(),
+                "str_ends_with" => "STR_ENDS_WITH".to_string(),
+                "str_to_upper" => "STR_TO_UPPER".to_string(),
+                "str_to_lower" => "STR_TO_LOWER".to_string(),
+                "str_trim" => "STR_TRIM".to_string(),
                 "index" | "arr_get" => "ARR_GET".to_string(),
                 "make_range" => "MAKE_RANGE".to_string(),
                 "str_contains" => "STR_CONTAINS".to_string(),
@@ -530,7 +573,10 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let esc = args_json.replace('\\', "\\\\").replace('"', "\\\"");
                     format!("EXEC_LANG \"{esc}\"")
                 }
-                "spawn" => "SPAWN".to_string(),
+                "spawn" => {
+                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+                    format!("SPAWN {argc}")
+                }
                 "yield" => "YIELD".to_string(),
                 "await" => "AWAIT".to_string(),
                 "throw" => "THROW".to_string(),
