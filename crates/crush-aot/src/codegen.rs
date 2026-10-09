@@ -230,12 +230,12 @@ fn as_text(v: &RuntimeValue) -> String {
     }
 }
 
-fn div_zero() -> i64 {
+fn div_zero() -> ! {
     eprintln!("crush(aot): division by zero");
     std::process::exit(1);
 }
 
-fn div_zero_f() -> f64 {
+fn div_zero_f() -> ! {
     eprintln!("crush(aot): division by zero");
     std::process::exit(1);
 }
@@ -409,10 +409,14 @@ fn emit_function(
     out.push_str("}\n\n");
 }
 
+/// Rust identifier for a Crush function. The prefix keeps Crush names from being Rust
+/// keywords (`loop`, `type`, `match`) or colliding with the runtime helpers emitted
+/// above (`bin_add`, `negate`, ...), either of which broke the build (CRUSH-214).
 fn sanitize_fn_name(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
-        .collect()
+    let body: String = name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    format!("crush_fn_{body}")
 }
 
 // ── Instruction body emission ───────────────────────────────────────────────
@@ -499,8 +503,11 @@ fn emit_body(
         // Division by zero was SILENTLY yielding 0 here while the interpreter raised
         // VmError::DivisionByZero on the same source. `1 / 0` printed "0" from an AOT binary
         // and errored under crush-run. Same program, different answers, no error. Now both die.
-        "div"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ RuntimeValue::Int(a/b) }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a/b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
-        "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b!=0 {{ RuntimeValue::Int(a%b) }} else {{ div_zero() }}, |a,b| if b!=0.0 {{ a%b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
+        // `div_zero` diverges (`-> !`): it used to return `i64`, which made every int `/` and
+        // `%` closure ill-typed, so no program dividing by a variable compiled (CRUSH-214).
+        // `checked_*` turns `i64::MIN / -1` into the overflow error instead of a panic.
+        "div"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b==0 {{ div_zero() }} else {{ a.checked_div(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()) }}, |a,b| if b!=0.0 {{ a/b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
+        "mod"  => { out.push_str(&format!("{ind}bin_arith(&mut stack, |a,b| if b==0 {{ div_zero() }} else {{ a.checked_rem(b).map(RuntimeValue::Int).unwrap_or_else(|| arith_overflow()) }}, |a,b| if b!=0.0 {{ a%b }} else {{ div_zero_f() }});\n")); out.push_str(&next_pc_str); }
         "neg"  => { out.push_str(&format!("{ind}negate(&mut stack);\n")); out.push_str(&next_pc_str); }
 
         // ── Math ops ──
@@ -868,7 +875,7 @@ fn emit_entry_point(out: &mut String) {
     out.push_str(r#"
 #[unsafe(no_mangle)]
 pub extern "C" fn crush_run() -> *mut std::ffi::c_char {
-    let result = main();
+    let result = crush_fn_main();
     let json = format!("{}", result);
     let c_str = std::ffi::CString::new(json).unwrap_or_default();
     c_str.into_raw()

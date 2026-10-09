@@ -122,6 +122,30 @@ fn test_aot_arithmetic_div() {
     assert_eq!(result, RuntimeValue::Int(25));
 }
 
+fn run_main(source: &str, name: &str) -> RuntimeValue {
+    let so_path = AotCompiler::new().compile_source(source, name).expect("compile_source failed");
+    Module::load(&so_path).expect("Module::load failed").call_main().expect("call_main failed")
+}
+
+// CRUSH-214: `100 / 4` above is folded by the optimizer, so it never reached the `div`
+// codegen. With operands from a call, every int `/` and `%` emitted ill-typed Rust (E0308).
+#[test]
+fn test_aot_div_and_mod_of_runtime_values_compile() {
+    let src = "fn n(x) { return x; } fn main() { let a = n(17); let b = n(5); return a / b * 100 + a % b; }";
+    assert_eq!(run_main(src, "test_div_mod_runtime"), RuntimeValue::Int(302));
+    let src = "fn n(x) { return x; } fn main() { return n(-7) / n(2) * 10 + n(-7) % n(3); }";
+    assert_eq!(run_main(src, "test_div_mod_negative"), RuntimeValue::Int(-31));
+}
+
+// CRUSH-214: Crush function names that are Rust keywords or runtime helper names.
+#[test]
+fn test_aot_function_names_that_are_rust_keywords_or_helpers() {
+    let src = "fn loop(x) { return x + 1; } fn type(x) { return x * 2; } fn impl(x) { return x - 3; } fn ref(x) { return x; } \
+               fn bin_add(x) { return x; } fn negate(x) { return x; } \
+               fn main() { return impl(ref(type(loop(bin_add(negate(4)))))); }";
+    assert_eq!(run_main(src, "test_keyword_fn_names"), RuntimeValue::Int(7));
+}
+
 #[test]
 fn test_aot_comparison_eq() {
     let compiler = AotCompiler::new();

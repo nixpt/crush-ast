@@ -289,7 +289,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-211** (P1, S): Conformance corpus fails 19/37 annotated files; not in CI. [ticket](tickets/CRUSH-211-conformance-corpus-rot-and-ci-gate.md)
 - [ ] **CRUSH-212** (P2, S): Tooling papercuts: crush-diff exits 0 on bad paths; crush-tui/xtask ignore `--help`; installer & versions; doc drift. [ticket](tickets/CRUSH-212-tooling-cli-papercuts.md)
 - [ ] **CRUSH-213** (P0, S): `i64::MIN / -1` panics or SIGFPEs on every engine; JIT dies with a signal on `/ 0` and `% 0`. [ticket](tickets/CRUSH-213-int-min-div-and-jit-div-zero-signals.md)
-- [ ] **CRUSH-214** (P0, XS): Rust AOT backend can't compile any program using `/` or `%` (E0308); keyword-named functions emit invalid Rust. [ticket](tickets/CRUSH-214-rust-aot-div-mod-type-error.md)
+- [x] **CRUSH-214** (P0, XS): Rust AOT backend can't compile any program using `/` or `%` (E0308); keyword-named functions emit invalid Rust. [ticket](tickets/CRUSH-214-rust-aot-div-mod-type-error.md)
 - [ ] **CRUSH-215** (P0, S): FastVM/JIT `==`/`!=` wrong for strings, bools and null (JIT tictactoe ends immediately). [ticket](tickets/CRUSH-215-fastvm-jit-equality-non-numeric.md)
 - [ ] **CRUSH-216** (P0, M): AOT C: 256-byte string ring buffer truncates strings; `io.print` stack contract; float literals and formatting. [ticket](tickets/CRUSH-216-aot-c-strings-print-floats.md)
 - [ ] **CRUSH-217** (P1, M): Indexing, map access, `len(map)` and value printing differ on every engine. [ticket](tickets/CRUSH-217-indexing-and-printing-diverge-across-engines.md)
