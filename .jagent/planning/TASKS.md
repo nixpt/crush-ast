@@ -307,7 +307,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-229** (P2, S): Float-to-text exists three times (VM, Rust AOT, C AOT); pin them together. [ticket](tickets/CRUSH-229-float-text-three-copies.md)
 - [ ] **CRUSH-230** (P3, XS): VM `MAT_MUL` panics on ragged/mismatched matrices; no Crush syntax emits it. [ticket](tickets/CRUSH-230-vm-mat-mul-panics-on-ragged-input.md)
 - [ ] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
-- [x] **CRUSH-232** (P1, M): Agent-written programs declare their capabilities; `crush-run` shows and checks them before running. [ticket](tickets/CRUSH-232-agent-programs-declare-capabilities-preflight.md)
+- [x] **CRUSH-243** (P1, M): Agent-written programs declare their capabilities; `crush-run` shows and checks them before running. [ticket](tickets/CRUSH-243-agent-programs-declare-capabilities-preflight.md)
 - [ ] **CRUSH-233** (P1, M): Pause to approve: hosts intercept each capability call (approve / deny / policy file). [ticket](tickets/CRUSH-233-pause-to-approve-capability-calls.md)
 - [ ] **CRUSH-234** (P1, M): AI-native calls fail closed; `semantic_switch` is a NOP; no real provider; flagship example crashes. [ticket](tickets/CRUSH-234-ai-native-fail-closed-and-reachable.md)
 - [ ] **CRUSH-235** (P2, M): No memory budget in `Quotas`. [ticket](tickets/CRUSH-235-memory-quota.md)

@@ -61,7 +61,7 @@ impl CheckReport {
 }
 
 /// Does `entry` (a `[capabilities]` string) cover capability `cap`? The
-/// same rule as `@capabilities` in source (CRUSH-232).
+/// same rule as `@capabilities` in source (CRUSH-243).
 pub use crush_lang_sdk::effects::covers;
 
 /// Compare `used` with `manifest`'s `[capabilities]`, and with its

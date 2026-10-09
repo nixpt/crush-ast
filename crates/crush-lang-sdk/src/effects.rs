@@ -171,7 +171,7 @@ pub fn catalog() -> Vec<CapInfo> {
 /// Does `entry` (a declared capability) cover capability `cap`? An entry is
 /// the same name (`fs.cat`), the same name with a scope (`fs.read:/var/log`;
 /// the scope isn't checked), or a family (`fs` or `fs.*` covers every
-/// `fs.<x>`). Shared by `@capabilities` (CRUSH-232) and `crush-pkg check`'s
+/// `fs.<x>`). Shared by `@capabilities` (CRUSH-243) and `crush-pkg check`'s
 /// `capsule.toml` (CRUSH-170).
 pub fn covers(entry: &str, cap: &str) -> bool {
     let base = entry.split(':').next().unwrap_or(entry).trim();
@@ -210,7 +210,7 @@ pub struct MissingGrant {
 }
 
 /// Every capability `program` can request that is neither a VM built-in nor
-/// registered in `host_caps` (CRUSH-232). A host calls this before running
+/// registered in `host_caps` (CRUSH-243). A host calls this before running
 /// agent-written code so a missing grant is refused up front, with the whole
 /// list, instead of failing mid-run after earlier effects happened.
 ///

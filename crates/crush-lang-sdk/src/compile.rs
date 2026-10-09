@@ -46,7 +46,7 @@ pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
     Ok(casm)
 }
 
-/// CRUSH-232: a program that declares `@capabilities` may only use the
+/// CRUSH-243: a program that declares `@capabilities` may only use the
 /// ambient capabilities and the ones its entries cover. Checked on the
 /// bytecode, so the names are exactly the ones the VM will gate on
 /// (builtins lowered to capability calls, `polyglot.<lang>`, AI gates).

@@ -207,7 +207,7 @@ fn main() {
 }
 
 /// The program can request capabilities this run doesn't grant, found before
-/// it ran (CRUSH-232), so `main` labels it `[capabilities]`.
+/// it ran (CRUSH-243), so `main` labels it `[capabilities]`.
 #[derive(Debug)]
 struct NotGranted(String);
 
@@ -552,7 +552,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     let runtime =
         Runtime::with_quotas(quotas).with_host_caps(builder.args(args.script_args.clone()).build());
 
-    // CRUSH-232: refuse before anything runs when the program can request a
+    // CRUSH-243: refuse before anything runs when the program can request a
     // capability this run doesn't grant, listing all of them at once. A
     // `.cvm1` blob that doesn't decode is left to `run_blob` below, which
     // reports it as a typed load error.

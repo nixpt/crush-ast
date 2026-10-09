@@ -418,7 +418,7 @@ fn escalate_issue(details) {
     assert!(has_switch, "expected semantic_switch in process_user_intent body");
 }
 
-// ─── CRUSH-232: declared capabilities ──────────────────────────────────
+// ─── CRUSH-243: declared capabilities ──────────────────────────────────
 
 #[test]
 fn parse_capabilities_annotation_into_the_manifest() {

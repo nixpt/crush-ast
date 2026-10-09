@@ -324,7 +324,7 @@ impl Parser {
                             continue;
                         }
                         "capabilities" => {
-                            // CRUSH-232: `@capabilities [fs.cat, time.now]`.
+                            // CRUSH-243: `@capabilities [fs.cat, time.now]`.
                             // `@capabilities []` declares a program that uses
                             // nothing beyond the ambient capabilities.
                             self.advance();

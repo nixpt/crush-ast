@@ -44,7 +44,7 @@ add its entry after yours.
 - `fs.write`, `akg.write`, `message_bus.publish`/`subscribe` and `task.stop` no longer
   end every program with `stack underflow`; they return null (CRUSH-183).
 
-### Added — declared capabilities (CRUSH-232)
+### Added — declared capabilities (CRUSH-243)
 - `@capabilities [fs.cat, time.now]` (or `capabilities: [...]` inside `@module`)
   declares what a program may use beyond the ambient built-ins. Compiling rejects
   a program that uses a capability its declaration doesn't cover. Entries are names

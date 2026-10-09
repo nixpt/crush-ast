@@ -358,7 +358,7 @@ io.print(fs.pwd())
     assert!(!output.status.success(), "cd above the root must fail");
     assert!(stderr.contains("escapes sandbox"), "stderr: {stderr}");
 
-    // Without --fs the run is refused before anything executes (CRUSH-232).
+    // Without --fs the run is refused before anything executes (CRUSH-243).
     let output = run_crush_run(&["run", &ok]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
@@ -403,7 +403,7 @@ fn crush_run_caps_json_lists_effects_and_grants() {
     );
 }
 
-// ── CRUSH-232: declared capabilities, checked before running ───────────────
+// ── CRUSH-243: declared capabilities, checked before running ───────────────
 
 fn temp_program(body: &str) -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().unwrap();

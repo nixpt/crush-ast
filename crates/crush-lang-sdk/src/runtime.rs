@@ -314,7 +314,7 @@ impl Runtime {
     /// Capabilities `program` can request that this runtime won't grant: not
     /// a VM built-in and not registered, or excluded by
     /// [`Quotas::allowed_caps`]. Call it before [`run`](Self::run) to refuse
-    /// agent-written code up front instead of mid-run (CRUSH-232).
+    /// agent-written code up front instead of mid-run (CRUSH-243).
     pub fn missing_grants(&self, program: &Program) -> anyhow::Result<Vec<crate::effects::MissingGrant>> {
         let mut missing = crate::effects::missing_grants(program, self.host_caps.as_ref())?;
         if let Some(allowed) = &self.quotas.allowed_caps {

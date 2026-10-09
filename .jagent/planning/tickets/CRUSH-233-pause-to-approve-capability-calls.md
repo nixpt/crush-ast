@@ -7,7 +7,7 @@
 | **Status** | Backlog |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
-| **Dependencies** | CRUSH-232 |
+| **Dependencies** | CRUSH-243 |
 | **Estimated effort** | M |
 | **Filed by** | claude — 2026-10-09 use-case review (agents + polyglot), on `main` `2d71b96` |
 

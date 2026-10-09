@@ -1,8 +1,8 @@
-# CRUSH-232 — Agent-written programs declare their capabilities; the host checks them before running
+# CRUSH-243 — Agent-written programs declare their capabilities; the host checks them before running
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-232 |
+| **ID** | CRUSH-243 |
 | **Priority** | P1 |
 | **Status** | Done (2026-10-09) |
 | **Phase** | M5 |
