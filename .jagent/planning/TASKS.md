@@ -291,7 +291,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-213** (P0, S): `i64::MIN / -1` panics or SIGFPEs on every engine; JIT dies with a signal on `/ 0` and `% 0`. [ticket](tickets/CRUSH-213-int-min-div-and-jit-div-zero-signals.md)
 - [x] **CRUSH-214** (P0, XS): Rust AOT backend can't compile any program using `/` or `%` (E0308); keyword-named functions emit invalid Rust. [ticket](tickets/CRUSH-214-rust-aot-div-mod-type-error.md)
 - [ ] **CRUSH-215** (P0, S): FastVM/JIT `==`/`!=` wrong for strings, bools and null (JIT tictactoe ends immediately). [ticket](tickets/CRUSH-215-fastvm-jit-equality-non-numeric.md)
-- [ ] **CRUSH-216** (P0, M): AOT C: 256-byte string ring buffer truncates strings; `io.print` stack contract; float literals and formatting. [ticket](tickets/CRUSH-216-aot-c-strings-print-floats.md)
+- [x] **CRUSH-216** (P0, M): AOT C: 256-byte string ring buffer truncates strings; `io.print` stack contract; float literals and formatting. [ticket](tickets/CRUSH-216-aot-c-strings-print-floats.md)
 - [ ] **CRUSH-217** (P1, M): Indexing, map access, `len(map)` and value printing differ on every engine. [ticket](tickets/CRUSH-217-indexing-and-printing-diverge-across-engines.md)
 - [ ] **CRUSH-218** (P1, S): JIT allows only 8 call frames; JIT float `%` int fails; FastVM turns failed caps into strings. [ticket](tickets/CRUSH-218-jit-frame-limit-and-fastvm-cap-errors.md)
 - [ ] **CRUSH-219** (P1, M): VM runtime errors can't be caught by `try`; AOT rejects `try`/`throw`/structs and has no call-depth limit. [ticket](tickets/CRUSH-219-runtime-errors-uncatchable-aot-no-try.md)

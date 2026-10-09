@@ -807,11 +807,11 @@ fn emit_body(
                     out.push_str(&next_pc_str);
                 }
                 "conv.chr" => {
-                    out.push_str(&format!("{ind}stack.push(conv_chr_value(stack.pop().unwrap_or(RuntimeValue::Null)));\n"));
+                    out.push_str(&format!("{ind}{{ let v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_chr_value(v)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "conv.ord" => {
-                    out.push_str(&format!("{ind}stack.push(conv_ord_value(stack.pop().unwrap_or(RuntimeValue::Null)));\n"));
+                    out.push_str(&format!("{ind}{{ let v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_ord_value(v)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "io.print" | "print" => {

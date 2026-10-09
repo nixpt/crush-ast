@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-216 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-09, PR #126) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | claude |
 | **Dependencies** | CRUSH-11 |
 | **Estimated effort** | M |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build) |
@@ -30,10 +30,10 @@
 
 ## Success criteria
 
-- [ ] Heap-allocated (refcounted or arena-per-run) strings; the board repro and the three games match interp.
-- [ ] `io.print` follows the same stack contract as the VM (pushes Null).
-- [ ] Float literals emitted with C syntax (`%.17g` + ensure `.0`/exponent); printing matches interp's shortest-roundtrip format.
-- [ ] stdout flushed before the runner prints the result.
+- [x] Heap-allocated (refcounted or arena-per-run) strings; the board repro and the three games match interp.
+- [x] `io.print` follows the same stack contract as the VM (pushes Null).
+- [x] Float literals emitted with C syntax (`%.17g` + ensure `.0`/exponent); printing matches interp's shortest-roundtrip format.
+- [x] stdout flushed before the runner prints the result.
 
 ## Update 2026-10-09 (AOT test drive, `main` `5755262`)
 
@@ -54,3 +54,26 @@ More repros for item 1 (gcc and clang; rustc correct):
   see CRUSH-217.
 - Example impact: breakout, fifteen_puzzle, game_of_life, lights_out, pong and snake all
   print garbled boards under gcc/clang.
+
+## Resolution
+
+- **Strings:** every runtime string is its own `malloc` block, tracked and freed at the
+  start of the next `crush_run()` (arena per run). Stores no longer copy. `_add`,
+  `str_to_upper`/`lower`/`trim` and `conv.chr` (16 rotating static buffers) allocate
+  there. No size limit; memory is reclaimed per run, not during it.
+- **`io.print`** renders through the same `_to_text_buf` as concatenation and pushes
+  `null`.
+- **Floats:** one C formatter, `_float_text`, matching the VM's Rust `Display`
+  (shortest round-trip digits, no exponent, `.0` on whole numbers, `NaN`/`inf`), used by
+  `io.print`, concatenation and `crush_run`'s result. Literals are emitted with `{v:?}`
+  (`1e20`), `NAN`/`INFINITY`.
+- **Ordering:** `crush_run` flushes stdout before returning.
+- Also fixed (Rust backend): `conv.chr`/`conv.ord` emitted `stack.push(f(stack.pop()))`,
+  a double mutable borrow (E0499); the existing test only grepped the generated source.
+- Tests: `crates/crush-aot/tests/stdout_parity.rs` — 6 cases, each checked on the Rust and
+  C backends against `crush-run`'s output; all 6 fail before the fix.
+- Live: gcc and clang now match `crush-run` on 18 of 27 runnable examples (was 14),
+  including breakout, fifteen_puzzle, game_of_life, lights_out, pong and snake.
+- Not done here: `str.to_upper`/`to_lower`/`trim` reach the C backend as `cap_call` and
+  stay unsupported (the VM's versions are Unicode-aware; ASCII C versions would diverge).
+  Array/map printing is CRUSH-217.

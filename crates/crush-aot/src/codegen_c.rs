@@ -201,26 +201,66 @@ static Value mk_dom_stub(const char* kind) {
 }
 
 
-// ── String buffer (for to_upper / to_lower / trim) ────────────────────
-#define STRBUF_SIZE 256
-static char _strbuf[STRBUF_SIZE];
-static int  _strbuf_idx = 0;
+// ── Strings ─────────────────────────────────────────────────────────
+// Every string built at run time is its own heap block, kept until the next
+// crush_run() frees them all. Strings are immutable, so values can share a
+// block. (CRUSH-216: this used to be one 256-byte ring buffer, so a string held
+// in a variable was overwritten by later string work and long strings were
+// silently truncated.)
+static char** _str_blocks = NULL;
+static size_t _str_block_count = 0;
+static size_t _str_block_cap = 0;
+
+static char* _str_new(size_t len) {
+    if (_str_block_count == _str_block_cap) {
+        size_t cap = _str_block_cap ? _str_block_cap * 2 : 256;
+        char** blocks = (char**)realloc(_str_blocks, cap * sizeof(char*));
+        if (!blocks) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+        _str_blocks = blocks;
+        _str_block_cap = cap;
+    }
+    char* p = (char*)malloc(len + 1);
+    if (!p) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+    p[len] = '\0';
+    _str_blocks[_str_block_count++] = p;
+    return p;
+}
+
+static void _reset_strings(void) {
+    for (size_t i = 0; i < _str_block_count; i++) free(_str_blocks[i]);
+    _str_block_count = 0;
+}
 
 static inline const char* _str_alloc(const char* src) {
-    int start = _strbuf_idx;
-    int i = 0;
-    while (src[i] && start + i < STRBUF_SIZE - 1) {
-        _strbuf[start + i] = src[i];
-        i++;
-    }
-    _strbuf[start + i] = '\0';
-    _strbuf_idx = start + i + 1;
-    if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
-    return &_strbuf[start];
+    size_t len = strlen(src);
+    char* p = _str_new(len);
+    memcpy(p, src, len);
+    return p;
 }
 
 static inline const char* _str_dup(const char* src) {
     return _str_alloc(src);
+}
+
+static const char* _str_map_case(const char* src, int upper) {
+    size_t len = strlen(src);
+    char* p = _str_new(len);
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)src[i];
+        p[i] = (char)(upper ? toupper(c) : tolower(c));
+    }
+    return p;
+}
+
+static const char* _str_trim(const char* src) {
+    const char* start = src;
+    while (*start && isspace((unsigned char)*start)) start++;
+    const char* end = src + strlen(src);
+    while (end > start && isspace((unsigned char)*(end - 1))) end--;
+    size_t len = (size_t)(end - start);
+    char* p = _str_new(len);
+    memcpy(p, start, len);
+    return p;
 }
 
 // Read one line from stdin. EOF and read errors both produce an empty string;
@@ -277,39 +317,60 @@ static inline bool _truthy(Value v) {
 
 static inline bool _is_num(Value v) { return v.tag == TAG_INT || v.tag == TAG_FLOAT; }
 
-// ── String rendering (for string concatenation) ─────────────────────────
-// Render a Value to its text form. When the result is a numeric value that
-// must be formatted into a buffer, writes to `buf` (which must be at least
-// STRBUF_SIZE bytes long). Returns a pointer to either a string constant,
-// `v.s`, or `buf`.
-static inline const char* _to_text_buf(Value v, char* buf, size_t bufsz) {
+// ── Value text (print, string concatenation, crush_run's result) ─────────
+// Large enough for any double written without an exponent (~330 chars).
+#define TEXTBUF_SIZE 512
+
+// A float the way the VM prints it (Rust `f64` Display, crush-vm io_print.rs):
+// the shortest digits that read back as the same double, never an exponent,
+// and `.0` on finite whole numbers. `NaN`, `inf`, `-inf` as Rust spells them.
+static const char* _float_text(double f, char* buf) {
+    if (isnan(f)) return "NaN";
+    if (isinf(f)) return f > 0 ? "inf" : "-inf";
+    if (f == trunc(f)) { snprintf(buf, TEXTBUF_SIZE, "%.1f", f); return buf; }
+    char sci[40];
+    for (int prec = 0; prec < 17; prec++) {
+        snprintf(sci, sizeof(sci), "%.*e", prec, f);
+        if (strtod(sci, NULL) == f) break;
+    }
+    // sci is "[-]d[.ddd]e[+-]xx": split into digits and a decimal exponent.
+    const char* p = sci;
+    char* out = buf;
+    if (*p == '-') { *out++ = '-'; p++; }
+    char digits[24]; int nd = 0;
+    while (*p && *p != 'e') { if (*p != '.') digits[nd++] = *p; p++; }
+    int exp10 = atoi(p + 1);   // value = d.ddd × 10^exp10
+    while (nd > 1 && digits[nd - 1] == '0') nd--;
+    if (exp10 < 0) {
+        *out++ = '0'; *out++ = '.';
+        for (int i = -1; i > exp10; i--) *out++ = '0';
+        for (int i = 0; i < nd; i++) *out++ = digits[i];
+    } else {
+        // Not a whole number, so the digits run past the decimal point.
+        for (int i = 0; i <= exp10; i++) *out++ = i < nd ? digits[i] : '0';
+        *out++ = '.';
+        for (int i = exp10 + 1; i < nd; i++) *out++ = digits[i];
+    }
+    *out = '\0';
+    return buf;
+}
+
+// Render a Value to text. Numbers are written into `buf` (TEXTBUF_SIZE bytes);
+// the result is `buf`, a string constant, or `v.s`.
+static inline const char* _to_text_buf(Value v, char* buf) {
     switch (v.tag) {
-        case TAG_INT:   snprintf(buf, bufsz, "%ld", (long)v.i); return buf;
-        case TAG_FLOAT:
-            if (isfinite(v.f) && v.f == (double)(int64_t)v.f) {
-                snprintf(buf, bufsz, "%.1f", v.f);
-            } else {
-                snprintf(buf, bufsz, "%.15g", v.f);
-            }
-            return buf;
+        case TAG_INT:   snprintf(buf, TEXTBUF_SIZE, "%ld", (long)v.i); return buf;
+        case TAG_FLOAT: return _float_text(v.f, buf);
         case TAG_BOOL:  return v.b ? "true" : "false";
         case TAG_NULL:  return "null";
         case TAG_STRING: return v.s;
         default:        return "[opaque]";
     }
 }
-// Convenience wrapper using the global _strbuf (safe only when result is used immediately).
-static inline const char* _to_text(Value v) {
-    return _to_text_buf(v, _strbuf, STRBUF_SIZE);
-}
 
 static inline void _crush_arith_error(const char *msg) {
     fprintf(stderr, "crush(aotc): %s\n", msg);
     exit(1);
-}
-
-static inline int _str_contains_ptr(const char* p) {
-    return p >= _strbuf && p < _strbuf + STRBUF_SIZE;
 }
 
 static const char* _conv_chr(int64_t codepoint) {
@@ -332,7 +393,7 @@ static const char* _conv_chr(int64_t codepoint) {
         out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
         out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); out[4] = '\0';
     }
-    return out;
+    return _str_alloc(out);   // the 16 rotating slots aren't durable once stored
 }
 
 static int64_t _conv_ord(const char* s) {
@@ -359,38 +420,14 @@ static int64_t _conv_ord(const char* s) {
 static Value _add(Value a, Value b) {
     // String concatenation when either operand is a string
     if (a.tag == TAG_STRING || b.tag == TAG_STRING) {
-        char _ta[STRBUF_SIZE], _tb[STRBUF_SIZE];
-        const char* sa = _to_text_buf(a, _ta, STRBUF_SIZE);
-        const char* sb = _to_text_buf(b, _tb, STRBUF_SIZE);
-        int slen = (int)(strlen(sa) + strlen(sb));
-        if (slen >= STRBUF_SIZE) return mk_null();            // Allocate at the current ring-buffer position so multiple string
-            // results can coexist at different positions in _strbuf.
-            int start = _strbuf_idx;
-            // CRITICAL: sa or sb may point into _strbuf at positions BEFORE `start`.
-            // Writing the concatenated result at `start` would overwrite the trailing
-            // portion of the source data before it's been read (if slen > start - src_pos).
-            // Save _strbuf to a local buffer when either source is in _strbuf.
-            char _strbuf_save[STRBUF_SIZE];
-            int need_save = _str_contains_ptr(sa) || _str_contains_ptr(sb);
-            if (need_save) {
-                memcpy(_strbuf_save, _strbuf, STRBUF_SIZE);
-                if (_str_contains_ptr(sa)) sa = _strbuf_save + (sa - _strbuf);
-                if (_str_contains_ptr(sb)) sb = _strbuf_save + (sb - _strbuf);
-            }
-            if (start + slen >= STRBUF_SIZE) {
-                // The result doesn't fit at the current position; wrap to 0.
-                // This may overwrite older data but is the ring-buffer contract.
-                // Sources are already in _strbuf_save so there's no overlap.
-                start = 0;
-            }
-            char* buf = &_strbuf[start];
-            int pos = 0;
-            while (*sa && start + pos < STRBUF_SIZE - 1) { buf[pos++] = *sa++; }
-            while (*sb && start + pos < STRBUF_SIZE - 1) { buf[pos++] = *sb++; }
-            buf[pos] = '\0';
-            _strbuf_idx = start + pos + 1;
-            if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0;
-            return mk_string(buf);
+        char _ta[TEXTBUF_SIZE], _tb[TEXTBUF_SIZE];
+        const char* sa = _to_text_buf(a, _ta);
+        const char* sb = _to_text_buf(b, _tb);
+        size_t la = strlen(sa), lb = strlen(sb);
+        char* buf = _str_new(la + lb);
+        memcpy(buf, sa, la);
+        memcpy(buf + la, sb, lb);
+        return mk_string(buf);
     }
     if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
         // Array concatenation: a new array, neither operand changes (#75, CRUSH-135).
@@ -735,7 +772,7 @@ fn emit_c_instr(
         }
         "push_float" => {
             let v = args["value"].as_f64().unwrap_or(0.0);
-            out.push_str(&format!("                _push(mk_float({v})); _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                _push(mk_float({})); _pc={next_pc}; break;\n", c_double_literal(v)));
         }
         "push_bool" => {
             let v = args["value"].as_bool().unwrap_or(false);
@@ -775,12 +812,7 @@ fn emit_c_instr(
                     LocalType::F64 => out.push_str(&format!("                {} = _to_float(_pop()); _pc={next_pc}; break;\n", meta.c_name)),
                     LocalType::I64 => out.push_str(&format!("                {} = _to_int(_pop()); _pc={next_pc}; break;\n", meta.c_name)),
                     LocalType::Value => {
-                        // Pin strings that live in _strbuf so they survive subsequent
-                        // function calls that reuse the ring buffer.
-                        out.push_str(&format!(
-                            "                {{ Value __sv = _pop(); if (__sv.tag == TAG_STRING && _str_contains_ptr(__sv.s)) {{ __sv.s = _str_dup(__sv.s); }} {} = __sv; }} _pc={next_pc}; break;\n",
-                            meta.c_name
-                        ));
+                        out.push_str(&format!("                {} = _pop(); _pc={next_pc}; break;\n", meta.c_name));
                     }
                 }
             } else {
@@ -1144,7 +1176,10 @@ fn emit_c_instr(
                     out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_STRING) _crush_arith_error(\"conv.ord: expected string\"); _push(mk_int(_conv_ord(__v.s))); }} _pc={next_pc}; break; // cap_call conv.ord\n"));
                 }
                 "io.print" | "print" => {
-                    out.push_str(&format!("                {{ Value __pv = _pop(); switch (__pv.tag) {{ case TAG_INT: printf(\"%ld\\n\", (long)__pv.i); break; case TAG_FLOAT: printf(\"%g\\n\", __pv.f); break; case TAG_BOOL: printf(\"%s\\n\", __pv.b ? \"true\" : \"false\"); break; case TAG_NULL: printf(\"null\\n\"); break; case TAG_STRING: printf(\"%s\\n\", __pv.s); break; default: printf(\"[array#%d]\\n\", __pv.array_idx); break; }} }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    // Same text as string concatenation (`_to_text_buf`), and pushes null like
+                    // the VM: the CASM pops print's result, so pushing nothing popped the
+                    // caller's pending operand instead (CRUSH-216).
+                    out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; if (__pv.tag == TAG_ARRAY) printf(\"[array#%d]\\n\", __pv.array_idx); else printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
                 }
                 _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
@@ -1161,15 +1196,13 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ Value __sfx = _pop(); Value __s = _pop(); bool __r = false; if (__s.tag == TAG_STRING && __sfx.tag == TAG_STRING) {{ size_t __sl = strlen(__s.s); size_t __xl = strlen(__sfx.s); __r = (__sl >= __xl && strcmp(__s.s + __sl - __xl, __sfx.s) == 0); }} _push(mk_bool(__r)); }} _pc={next_pc}; break;\n"));
         }}
         "str_to_upper" => {{
-            // Use ring-buffer append to avoid overwriting other strings in _strbuf.
-            // Source may also be in _strbuf — save/restore to local buffer first.
-            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; int __start = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__src)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __src = _sv + (__src - _strbuf); }} int __i = 0; while (__src[__i] && __start + __i < STRBUF_SIZE-1) {{ _strbuf[__start + __i] = (char)toupper((unsigned char)__src[__i]); __i++; }} _strbuf[__start + __i] = '\\0'; _strbuf_idx = __start + __i + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__start])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __s = _pop(); _push(__s.tag == TAG_STRING ? mk_string(_str_map_case(__s.s, 1)) : __s); }} _pc={next_pc}; break;\n"));
         }}
         "str_to_lower" => {{
-            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; int __start = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__src)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __src = _sv + (__src - _strbuf); }} int __i = 0; while (__src[__i] && __start + __i < STRBUF_SIZE-1) {{ _strbuf[__start + __i] = (char)tolower((unsigned char)__src[__i]); __i++; }} _strbuf[__start + __i] = '\\0'; _strbuf_idx = __start + __i + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__start])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __s = _pop(); _push(__s.tag == TAG_STRING ? mk_string(_str_map_case(__s.s, 0)) : __s); }} _pc={next_pc}; break;\n"));
         }}
         "str_trim" => {{
-            out.push_str(&format!("                {{ Value __s = _pop(); if (__s.tag == TAG_STRING) {{ const char* __src = __s.s; const char* __start = __src; while (*__start && isspace((unsigned char)*__start)) __start++; const char* __end = __src + strlen(__src); while (__end > __start && isspace((unsigned char)*(__end-1))) __end--; size_t __len = (size_t)(__end - __start); int __pos = _strbuf_idx; char _sv[STRBUF_SIZE]; if (_str_contains_ptr(__start)) {{ memcpy(_sv, _strbuf, STRBUF_SIZE); __start = _sv + (__start - _strbuf); }} if (__len >= (size_t)(STRBUF_SIZE - __pos)) {{ __pos = 0; }} memcpy(&_strbuf[__pos], __start, __len); _strbuf[__pos + __len] = '\\0'; _strbuf_idx = __pos + (int)__len + 1; if (_strbuf_idx >= STRBUF_SIZE) _strbuf_idx = 0; _push(mk_string(&_strbuf[__pos])); }} else {{ _push(__s); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __s = _pop(); _push(__s.tag == TAG_STRING ? mk_string(_str_trim(__s.s)) : __s); }} _pc={next_pc}; break;\n"));
         }}
         // `str_split` / `str_replace` / `str_join` need dynamic strings this
         // backend doesn't have; they used to compile to a null stub.
@@ -1177,6 +1210,19 @@ fn emit_c_instr(
         _ => unsupported = Some(format!("`{}`", instr.op)),
     }
     unsupported
+}
+
+/// A C `double` literal that reads back as exactly `v`. Rust's `{v}` Display writes
+/// `1e20` as `100000000000000000000`, an integer literal too large for C (CRUSH-216);
+/// `{v:?}` is the shortest round-trip form and uses an exponent when that's shorter.
+fn c_double_literal(v: f64) -> String {
+    if v.is_nan() {
+        "NAN".to_string()
+    } else if v.is_infinite() {
+        if v > 0.0 { "INFINITY".to_string() } else { "(-INFINITY)".to_string() }
+    } else {
+        format!("{v:?}")
+    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -1191,19 +1237,16 @@ __attribute__((visibility("default")))
 const char* crush_run(void) {
     _sp = 0;  // reset stack
     _reset_arrays();
+    _reset_strings();
     Value result = fn_main();
+    // The host prints the result through its own stdout; flush ours first so
+    // the program's output comes before it (CRUSH-216).
+    fflush(stdout);
     static char _buf[512];
+    char __tb[TEXTBUF_SIZE];
     switch (result.tag) {
         case TAG_INT:   snprintf(_buf, sizeof(_buf), "%ld", (long)result.i); break;
-        case TAG_FLOAT: {
-            double __f = result.f;
-            if (isfinite(__f) && __f == (double)(int64_t)__f) {
-                snprintf(_buf, sizeof(_buf), "%.1f", __f);
-            } else {
-                snprintf(_buf, sizeof(_buf), "%.15g", __f);
-            }
-            break;
-        }
+        case TAG_FLOAT: snprintf(_buf, sizeof(_buf), "%s", _float_text(result.f, __tb)); break;
         case TAG_BOOL:  snprintf(_buf, sizeof(_buf), "%s", result.b ? "true" : "false"); break;
         case TAG_NULL:  snprintf(_buf, sizeof(_buf), "null"); break;
         case TAG_STRING: snprintf(_buf, sizeof(_buf), "\"%s\"", result.s); break;
