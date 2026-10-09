@@ -84,6 +84,9 @@ impl HostCap for NetHttpCap {
         request(self.verb, &args, self.max_response_bytes, None).map_err(|e| match e {
             HostCapError::Message(m) => m,
             HostCapError::Timeout => format!("{}: timed out", self.verb.name()),
+            // `sys.exit` is the only source of `Exit`, and an HTTP request never raises it;
+            // the string-returning `call()` has no way to carry a status, so report it.
+            HostCapError::Exit(code) => format!("{}: unexpected exit({code})", self.verb.name()),
         })
     }
 
