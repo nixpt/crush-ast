@@ -306,6 +306,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-228** (P3, XS): AOT C: dead `mk_null()` fallbacks after allocation; one OOM helper; error helper naming. [ticket](tickets/CRUSH-228-aot-c-dead-null-fallbacks-and-error-helpers.md)
 - [ ] **CRUSH-229** (P2, S): Float-to-text exists three times (VM, Rust AOT, C AOT); pin them together. [ticket](tickets/CRUSH-229-float-text-three-copies.md)
 - [ ] **CRUSH-230** (P3, XS): VM `MAT_MUL` panics on ragged/mismatched matrices; no Crush syntax emits it. [ticket](tickets/CRUSH-230-vm-mat-mul-panics-on-ragged-input.md)
+- [ ] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
