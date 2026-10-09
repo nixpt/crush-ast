@@ -250,8 +250,11 @@ fn test_dead_code_elimination_constant_if_branch() {
     }
 }
 
+/// CRUSH-189 / GH #92: `n * 2` used to become `n + n`, which evaluates the
+/// operand twice (and turned `2 * pow2(n - 1)` exponential). It must stay a
+/// multiplication.
 #[test]
-fn test_strength_reduction_mul_by_two() {
+fn mul_by_two_is_not_rewritten() {
     let mut functions = HashMap::new();
     functions.insert(
         "main".to_string(),
@@ -298,11 +301,11 @@ fn test_strength_reduction_mul_by_two() {
                 }),
             ..
         } => {
-            assert_eq!(operator, "+");
+            assert_eq!(operator, "*");
             assert!(matches!(**left, Expression::Var { .. }));
-            assert!(matches!(**right, Expression::Var { .. }));
+            assert!(matches!(**right, Expression::IntLiteral { value: 2, .. }));
         }
-        other => panic!("expected reduced n*2 to n+n, got: {:?}", other),
+        other => panic!("expected n*2 to be left alone, got: {:?}", other),
     }
 }
 

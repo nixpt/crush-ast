@@ -224,7 +224,14 @@ impl Optimizer {
             } => {
                 let mut body_consts = consts.clone();
                 Self::optimize_block_with_consts(&mut body, &mut body_consts);
+                // The handler can run after any prefix of the body, so a
+                // variable assigned anywhere in the body is unknown there.
                 let mut handler_consts = consts.clone();
+                let mut mutated = HashSet::new();
+                Self::collect_mutated_vars(&body, &mut mutated);
+                for var in mutated {
+                    handler_consts.remove(&var);
+                }
                 handler_consts.remove(&error_var);
                 Self::optimize_block_with_consts(&mut handler, &mut handler_consts);
                 consts.clear();
@@ -312,61 +319,11 @@ impl Optimizer {
                 Self::optimize_expr(left);
                 Self::optimize_expr(right);
 
-                // Strength reduction and identities for integer literals.
-                if operator == "*" {
-                    if let Expression::IntLiteral { value: 0, .. } = &**left {
-                        *expr = Expression::IntLiteral {
-                            value: 0,
-                            meta: meta.clone(),
-                        };
-                        return;
-                    }
-                    if let Expression::IntLiteral { value: 0, .. } = &**right {
-                        *expr = Expression::IntLiteral {
-                            value: 0,
-                            meta: meta.clone(),
-                        };
-                        return;
-                    }
-                    if let Expression::IntLiteral { value: 1, .. } = &**left {
-                        *expr = (**right).clone();
-                        return;
-                    }
-                    if let Expression::IntLiteral { value: 1, .. } = &**right {
-                        *expr = (**left).clone();
-                        return;
-                    }
-                    if let Expression::IntLiteral { value: 2, .. } = &**left {
-                        let rhs = (**right).clone();
-                        *expr = Expression::BinaryOp {
-                            operator: "+".to_string(),
-                            left: Box::new(rhs.clone()),
-                            right: Box::new(rhs),
-                            meta: meta.clone(),
-                        };
-                        return;
-                    }
-                    if let Expression::IntLiteral { value: 2, .. } = &**right {
-                        let lhs = (**left).clone();
-                        *expr = Expression::BinaryOp {
-                            operator: "+".to_string(),
-                            left: Box::new(lhs.clone()),
-                            right: Box::new(lhs),
-                            meta: meta.clone(),
-                        };
-                        return;
-                    }
-                }
-                if operator == "+" {
-                    if let Expression::IntLiteral { value: 0, .. } = &**left {
-                        *expr = (**right).clone();
-                        return;
-                    }
-                    if let Expression::IntLiteral { value: 0, .. } = &**right {
-                        *expr = (**left).clone();
-                        return;
-                    }
-                }
+                // No algebraic identities (`x*0`, `x*1`, `x+0`, `2*x` -> `x+x`):
+                // without type or purity information they changed results —
+                // `"a" + 0`, `0 * f()` dropping the call, `2 * f()` running `f`
+                // twice (CRUSH-189, GitHub #92). Literal operands are covered by
+                // the folding below.
 
                 // Constant folding for Ints.
                 if let (
@@ -374,12 +331,15 @@ impl Optimizer {
                     Expression::IntLiteral { value: r_val, .. },
                 ) = (&**left, &**right)
                 {
+                    // Checked: on overflow (or `i64::MIN / -1`) leave the
+                    // expression for the runtime to report, instead of
+                    // panicking the compiler (CRUSH-189).
                     let folded = match operator.as_str() {
-                        "+" => Some(l_val + r_val),
-                        "-" => Some(l_val - r_val),
-                        "*" => Some(l_val * r_val),
-                        "/" if *r_val != 0 => Some(l_val / r_val),
-                        "%" if *r_val != 0 => Some(l_val % r_val),
+                        "+" => l_val.checked_add(*r_val),
+                        "-" => l_val.checked_sub(*r_val),
+                        "*" => l_val.checked_mul(*r_val),
+                        "/" => l_val.checked_div(*r_val),
+                        "%" => l_val.checked_rem(*r_val),
                         _ => None,
                     };
 
@@ -456,9 +416,10 @@ impl Optimizer {
                 Self::optimize_expr(operand);
                 if let Expression::IntLiteral { value, .. } = &**operand
                     && operator == "-"
+                    && let Some(negated) = value.checked_neg()
                 {
                     *expr = Expression::IntLiteral {
-                        value: -value,
+                        value: negated,
                         meta: meta.clone(),
                     };
                     return;

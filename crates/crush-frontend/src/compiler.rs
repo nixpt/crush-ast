@@ -349,7 +349,18 @@ impl Compiler {
         instrs: &mut Vec<Instruction>,
         meta: Option<&HashMap<String, serde_json::Value>>,
     ) {
-        if !instrs.iter().any(|i| i.op == "ret") {
+        // The end of the body is reachable unless the last instruction never
+        // falls through and nothing jumps past it. Checking for "any `ret`"
+        // missed `fn f(c) { if c { return } ... }`, which then ran off the end
+        // of the function (CRUSH-187, GitHub #37 / #92).
+        let len = instrs.len() as u64;
+        let ends_in_terminator = instrs
+            .last()
+            .is_some_and(|i| matches!(i.op.as_str(), "ret" | "throw" | "jmp" | "halt"));
+        let jumps_past_end = instrs
+            .iter()
+            .any(|i| i.args.get("target").and_then(|t| t.as_u64()).is_some_and(|t| t >= len));
+        if !ends_in_terminator || jumps_past_end {
             let meta_json = meta
                 .map(|m| serde_json::to_value(m).unwrap())
                 .unwrap_or(serde_json::json!({}));

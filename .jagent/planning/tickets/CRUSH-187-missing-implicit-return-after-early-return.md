@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-187 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-09, branch `ccr-12236bee-uj4oar`) |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | claude |
 | **Dependencies** | none |
 | **Estimated effort** | XS |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build); GitHub #37, #92 (pong) |
@@ -53,7 +53,17 @@ variant and finishes with a larger `--max-steps`.
 
 ## Success criteria
 
-- [ ] Append the implicit return whenever the last instruction is not an
+- [x] Append the implicit return whenever the last instruction is not an
       unconditional `ret`/`halt`/`jmp` (or always append; dead code is harmless).
-- [ ] Regression tests: the repro above, #37's repro, and pong's `pong_tick` shape.
-- [ ] Close GitHub #37; #92's pong half.
+- [x] Regression tests: the repro above, #37's repro, and pong's `pong_tick` shape.
+- [x] Close GitHub #37; #92's pong half.
+
+## Resolution
+
+`ensure_return` now appends `push_null; ret` unless the last instruction is a
+terminator (`ret`/`throw`/`jmp`/`halt`) **and** no instruction's `target` points at or
+past the end of the body. Regressions in
+`crates/crush-lang-sdk/tests/implicit_return_and_optimizer_test.rs` (#37's repro
+verbatim, the pong `pong_tick` shape, early return with and without a value). Live:
+#37's repro prints `0..5`; awesome-crush `games/pong.crush` reaches `draw 0-0`
+(2,303,450 steps — needs `--max-steps` above the 1M default, like breakout).
