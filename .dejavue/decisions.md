@@ -794,3 +794,15 @@ Rejected alternatives:
 - **Collect inside the allocator**: an allocation happens mid-instruction while operands sit in C variables (e.g. `_add` holds la/ra while allocating), which would be missed roots
 - **Per-run arena only (status quo)**: O(n^2) memory for accumulation; the review on PR #126 showed realistic programs dying
 
+
+## 2026-10-09T02:04:00-05:00 — CRUSH-226: EXEC_LANG enforces declared caps (no polyglot exemption); compiler declares polyglot.<lang>
+
+Reason:
+One helper (scheduler::check_cap_permitted) for dispatch_cap and EXEC_LANG on both engines. Exempting polyglot from the manifest would make the manifest under-report the most powerful authority a program can use. casm_to_vm declares polyglot.<lang> per exec_lang (as it declares every CAP_CALL); crush-run --polyglot declares the three gates for hand-written .casm. Cost accepted: pre-change .cvm1 blobs with @lang blocks must be recompiled (CapNotDeclared).
+
+
+## 2026-10-09T02:04:00-05:00 — CRUSH-224: use @lang is compile-time text splicing onto guest line 1; binds module name + alias + selected names
+
+Reason:
+Each @lang block is a fresh interpreter, so imports are written into every later block of the canonical language (LangBlock.imports filled by crush-lang-sdk prepare_polyglot_blocks; text built by crush_frontend::lang_imports in the compiler). Header shares guest line 1 (replaces a blank line or is prefixed with ';') so guest line K = .crush block_line+K-1; only a Python first line that opens a block gets its own line. The module's own name stays bound even with 'as' because the ticket's repro (use ... as m; math.sqrt) must work and Python rebinding is harmless; JS binds alias + derivable name via const. Rejected: runtime import session (no persistent interpreter, CRUSH-225), alias-only binding (breaks the repro), wiring polyglot_imports.rs (simulated sandbox model, no real semantics) - deleted.
+

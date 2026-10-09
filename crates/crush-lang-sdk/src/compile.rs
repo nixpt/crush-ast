@@ -58,17 +58,60 @@ pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
 /// Python block is left unmarshaled too rather than failing Crush
 /// compilation outright; the actual `python3` subprocess will raise its
 /// own loud syntax error at run time, which is still honest, just later.
+///
+/// It also fills `LangBlock.imports` with the `use @lang` imports that reach
+/// each block (CRUSH-224); the compiler writes them into the block's source.
+/// A `use @lang` reaches every later block of its language in the same body
+/// and the bodies nested in it. One at the top level of `main` — where a
+/// script's top-level statements land — also reaches every other function.
 pub fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
-    for func in program.functions.values_mut() {
+    let file_level: Vec<crush_cast::ImportStatement> = program
+        .functions
+        .get("main")
+        .map(|main| main.body.iter().filter_map(polyglot_use).cloned().collect())
+        .unwrap_or_default();
+    for (name, func) in program.functions.iter_mut() {
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
-        prepare_stmts(&mut func.body, &mut known_locals);
+        let mut uses = if name == "main" { Vec::new() } else { file_level.clone() };
+        prepare_stmts(&mut func.body, &mut known_locals, &mut uses);
     }
 }
 
-fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet<String>) {
+/// The import of a `use @lang …` statement.
+fn polyglot_use(stmt: &crush_cast::Statement) -> Option<&crush_cast::ImportStatement> {
+    match stmt {
+        crush_cast::Statement::Import {
+            import: import @ crush_cast::ImportStatement::PolyglotModule { .. },
+            ..
+        } => Some(import),
+        _ => None,
+    }
+}
+
+fn prepare_stmts(
+    stmts: &mut [crush_cast::Statement],
+    known_locals: &mut HashSet<String>,
+    uses: &mut Vec<crush_cast::ImportStatement>,
+) {
     use crush_cast::Statement;
     for stmt in stmts.iter_mut() {
+        if let Some(import) = polyglot_use(stmt) {
+            uses.push(import.clone());
+            continue;
+        }
+        if let Statement::LangBlock { lang, imports, .. } = stmt {
+            let canonical = crush_frontend::lang_imports::canonical_lang(lang);
+            *imports = uses
+                .iter()
+                .filter(|u| {
+                    matches!(u, crush_cast::ImportStatement::PolyglotModule { language, .. }
+                        if crush_frontend::lang_imports::canonical_lang(language) == canonical
+                            && canonical.is_some())
+                })
+                .cloned()
+                .collect();
+        }
         match stmt {
             Statement::VarDecl { name, .. }
             | Statement::Assign { target: name, .. }
@@ -157,17 +200,17 @@ fn prepare_stmts(stmts: &mut [crush_cast::Statement], known_locals: &mut HashSet
                 else_body,
                 ..
             } => {
-                prepare_stmts(then_body, known_locals);
+                prepare_stmts(then_body, known_locals, &mut uses.clone());
                 if let Some(else_body) = else_body {
-                    prepare_stmts(else_body, known_locals);
+                    prepare_stmts(else_body, known_locals, &mut uses.clone());
                 }
             }
-            Statement::While { body, .. } => prepare_stmts(body, known_locals),
+            Statement::While { body, .. } => prepare_stmts(body, known_locals, &mut uses.clone()),
             Statement::For {
                 variable, body, ..
             } => {
                 known_locals.insert(variable.clone());
-                prepare_stmts(body, known_locals);
+                prepare_stmts(body, known_locals, &mut uses.clone());
             }
             _ => {}
         }
@@ -450,6 +493,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "arr_set" => "ARR_SET".to_string(),
                 "export_var" => "NOP".to_string(),
                 "exec_lang" => {
+                    // Declare the block's polyglot grant: the VM checks EXEC_LANG against
+                    // the manifest like any other capability (CRUSH-226).
+                    if let Some(lang) = instr.args.get("lang").and_then(|v| v.as_str()) {
+                        perms.insert(crush_vm::polyglot_gate_name(lang));
+                    }
                     let args_json = serde_json::to_string(&instr.args).map_err(|e| {
                         anyhow::anyhow!("exec_lang: failed to serialize args at {fname}:{i}: {e}")
                     })?;
@@ -919,5 +967,103 @@ mod tests {
         assert_eq!(dedent("    a\n    b\n"), "a\nb");
         assert_eq!(dedent("  a\n    b\n"), "a\n  b");
         assert_eq!(dedent("a"), "a");
+    }
+
+    /// CRUSH-226: a compiled `@lang` block declares its gate, so the VM's
+    /// declared-caps check passes for anything this compiler produced.
+    #[test]
+    fn test_compiled_lang_block_declares_its_polyglot_gate() {
+        let prog = compile_crush_source("@py {\nx = 1\n}\n@javascript {\nlet y = 2\n}\n").expect("compile");
+        let perms = &prog.manifest.permissions;
+        assert!(perms.iter().any(|p| p == "polyglot.python"), "{perms:?}");
+        assert!(perms.iter().any(|p| p == "polyglot.javascript"), "{perms:?}");
+    }
+
+    /// Run on the scheduler (`run_with_caps`) AND on `PortableVm`; both must
+    /// print the same thing.
+    fn run_both_engines(source: &str) -> String {
+        let prog = compile_crush_source(source).expect("compile");
+        let sched = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+            .expect("scheduler run")
+            .output;
+        let mut vm = crush_vm::PortableVm::new(prog);
+        vm.set_host_caps(_poly_caps());
+        let portable = vm.run().expect("PortableVm run").output;
+        assert_eq!(sched, portable, "engines disagree");
+        sched
+    }
+
+    // CRUSH-224: `use @lang` reaches later blocks. The ticket's repro: the
+    // module is bound under its own name, the alias in addition.
+    #[test]
+    fn test_use_lang_python_module_and_alias_reach_block() {
+        let out = run_both_engines(
+            "use @lang python \"math\" as m\n@python {\nprint(\"sqrt16 =\", math.sqrt(16), m.floor(2.5))\n}\n",
+        );
+        assert_eq!(out, "sqrt16 = 4.0 2");
+    }
+
+    #[test]
+    fn test_use_lang_python_selective_import() {
+        let out = run_both_engines(
+            "use @lang python \"os.path\" { \"join\" }\nfn main() {\n    let a = \"x\";\n    @python {\n        r = join(a, \"y\")\n    }\n    print(r);\n}\n",
+        );
+        assert_eq!(out, "x/y\n");
+    }
+
+    #[test]
+    fn test_use_lang_javascript_require() {
+        let out = run_both_engines(
+            "use @lang javascript \"path\" as p\n@javascript {\nconsole.log(p.basename(\"/a/b.txt\"), path.sep)\n}\n",
+        );
+        assert_eq!(out, "b.txt /");
+    }
+
+    // A file-level `use` reaches blocks in other functions; a `use` only
+    // reaches blocks of its own language.
+    #[test]
+    fn test_use_lang_reaches_other_functions_and_only_its_language() {
+        let src = "use @lang python \"json\"\nfn helper() {\n    @python {\n        print(json.dumps([1]))\n    }\n}\nfn main() {\n    helper();\n}\n";
+        assert_eq!(run_both_engines(src), "[1]");
+        let mut program = crush_frontend::parse_source(
+            "use @lang python \"json\"\n@javascript {\nlet z = 1\n}\n",
+        )
+        .expect("parse");
+        prepare_polyglot_blocks(&mut program);
+        let has_imports = program.functions["main"].body.iter().any(|s| {
+            matches!(s, crush_cast::Statement::LangBlock { imports, .. } if !imports.is_empty())
+        });
+        assert!(!has_imports, "a python import must not reach a javascript block");
+    }
+
+    // The import goes on guest line 1, so guest line K is still .crush line
+    // block_line + K - 1 — with and without marshaling.
+    #[test]
+    fn test_use_lang_keeps_guest_line_numbers() {
+        for src in [
+            "use @lang python \"math\"\n@python {\nx = math.pi\nboom()\n}\n",
+            "use @lang python \"math\"\nlet v = 1\n@python {\nx = math.pi + v\nboom()\n}\n",
+        ] {
+            let prog = compile_crush_source(src).expect("compile");
+            let err = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+                .expect_err("boom() is undefined");
+            let msg = err.to_string();
+            // block on .crush line 2 or 3; `boom()` is guest line 3.
+            assert!(msg.contains("line 3, in <module>"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn test_use_lang_bash_is_a_compile_error() {
+        let err = compile_crush_source("use @lang bash \"lib.sh\"\n@bash {\necho hi\n}\n")
+            .expect_err("bash imports are rejected");
+        assert!(format!("{err:#}").contains("bash"), "{err:#}");
+    }
+
+    // The `use` itself no longer lowers to a throwaway exec_lang.
+    #[test]
+    fn test_use_lang_emits_no_exec_lang_of_its_own() {
+        let prog = compile_crush_source("use @lang python \"math\"\nlet x = 1\n").expect("compile");
+        assert!(!prog.manifest.permissions.iter().any(|p| p.starts_with("polyglot.")));
     }
 }

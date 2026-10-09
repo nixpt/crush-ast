@@ -71,12 +71,31 @@ pub(crate) fn canonical_lang(lang: &str) -> Option<&'static str> {
 
 /// The `polyglot.<lang>` grant an `@lang` block needs: the canonical name
 /// for a known tag, the raw tag otherwise. Both VM backends gate on it, and
-/// [`crate::capabilities_used`] reports it.
-pub(crate) fn polyglot_gate_name(lang: &str) -> String {
+/// [`crate::capabilities_used`] reports it, and the compiler declares it in
+/// the manifest of any program containing that block.
+pub fn polyglot_gate_name(lang: &str) -> String {
     match canonical_lang(lang) {
         Some(c) => format!("polyglot.{c}"),
         None => format!("polyglot.{lang}"),
     }
+}
+
+/// The two permission checks every capability use passes before it reaches
+/// the host-caps registry: the program declared `cap` in its manifest
+/// (`CapNotDeclared` otherwise), and the embedder's `Quotas::allowed_caps`
+/// allowlist, when set, names it (`CapDenied` otherwise). SHARED by
+/// `dispatch_cap` and the `EXEC_LANG` arm of both engines (CRUSH-226: the
+/// polyglot gate used to skip both checks).
+pub(crate) fn check_cap_permitted(cap: &str, declared: bool, quotas: &Quotas) -> Result<(), VmError> {
+    if !declared {
+        return Err(VmError::CapNotDeclared(cap.to_string()));
+    }
+    if let Some(allowed) = &quotas.allowed_caps
+        && !allowed.iter().any(|a| a == cap)
+    {
+        return Err(VmError::CapDenied(cap.to_string()));
+    }
+    Ok(())
 }
 
 /// The @lang → (binary, exec-flag) allowlist. SHARED with portable_vm so the two backends can
@@ -1101,7 +1120,10 @@ fn execute_one(
             // capability-based language that MUST be granted, exactly like fs.read or net.get.
             // The grant is `polyglot.<lang>` in the host-caps registry (crush-run: --polyglot;
             // exo-light: derived from the CapabilitySet). No grant → refuse, loudly.
+            // The gate is a capability like any other: declared in the manifest (the compiler
+            // declares it for every block) and inside the embedder's `allowed_caps` (CRUSH-226).
             let gate = polyglot_gate_name(lang);
+            check_cap_permitted(&gate, declared.contains(gate.as_str()), quotas)?;
             if host_caps.map(|h| h.get(&gate).is_none()).unwrap_or(true) {
                 return Err(VmError::UnknownCap(format!(
                     "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
@@ -1429,14 +1451,7 @@ fn dispatch_cap(
     out_len: &mut usize,
     host_caps: Option<&HostCaps>,
 ) -> Result<Option<Value>, VmError> {
-    if !declared.contains(cap) {
-        return Err(VmError::CapNotDeclared(cap.to_string()));
-    }
-    if let Some(allowed) = &quotas.allowed_caps
-        && !allowed.iter().any(|a| a == cap)
-    {
-        return Err(VmError::CapDenied(cap.to_string()));
-    }
+    check_cap_permitted(cap, declared.contains(cap), quotas)?;
 
     if let Some(spec) = capabilities().get(cap) {
         if let Some(expected) = spec.argc
@@ -1847,7 +1862,7 @@ mod wall_clock_limit_tests {
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
-        let prog = assemble(&src, None, None).unwrap();
+        let prog = assemble(&src, Some(&["polyglot.bash"]), None).unwrap();
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["bash"]);
@@ -1917,7 +1932,7 @@ mod wall_clock_limit_tests {
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
-        let prog = assemble(&src, None, None).unwrap();
+        let prog = assemble(&src, Some(&["polyglot.bash"]), None).unwrap();
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["bash"]);
@@ -2005,7 +2020,7 @@ mod wall_clock_limit_tests {
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
-        let prog = assemble(&src, None, None).unwrap();
+        let prog = assemble(&src, Some(&["polyglot.python"]), None).unwrap();
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["python"]);
@@ -2082,7 +2097,7 @@ mod wall_clock_limit_tests {
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
-        let prog = assemble(&src, None, None).unwrap();
+        let prog = assemble(&src, Some(&["polyglot.javascript"]), None).unwrap();
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["javascript"]);
@@ -2135,7 +2150,7 @@ mod wall_clock_limit_tests {
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
-        let prog = assemble(&src, None, None).unwrap();
+        let prog = assemble(&src, Some(&["polyglot.javascript"]), None).unwrap();
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["javascript"]);
@@ -2172,7 +2187,7 @@ mod wall_clock_limit_tests {
             "EXEC_LANG \"{}\"\nHALT",
             spec.to_string().replace('\\', "\\\\").replace('"', "\\\"")
         );
-        let prog = assemble(&src, None, None).unwrap();
+        let prog = assemble(&src, Some(&["polyglot.python"]), None).unwrap();
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["python"]);
@@ -2186,6 +2201,62 @@ mod wall_clock_limit_tests {
                 );
             }
             other => panic!("expected a SandboxSetup LangRuntimeError, got {other:?}"),
+        }
+    }
+}
+
+/// CRUSH-226: `EXEC_LANG` passes the same declared-caps and `allowed_caps`
+/// checks as every `CAP_CALL`, before the polyglot gate is even consulted.
+#[cfg(test)]
+mod exec_lang_permission_tests {
+    use super::*;
+    use crate::assembler::assemble;
+    use crate::host::HostCaps;
+    use crate::vm::run_with_caps;
+
+    /// A `@python` block as the compiler emits it. The denial happens before
+    /// any spawn, so no interpreter is needed on the test host.
+    fn python_block(declared: &[&str]) -> Program {
+        let spec = serde_json::json!({"lang": "python", "code": "print(1)", "var_count": 0});
+        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        assemble(&src, Some(declared), None).unwrap()
+    }
+
+    fn granted() -> HostCaps {
+        let mut caps = HostCaps::new();
+        caps.grant_polyglot(&["python"]);
+        caps
+    }
+
+    #[test]
+    fn allowed_caps_without_the_gate_denies_the_block() {
+        let quotas = Quotas { allowed_caps: Some(vec!["io.print".into()]), ..Quotas::default() };
+        let prog = python_block(&["polyglot.python"]);
+        match run_with_caps(&prog, &quotas, Some(&granted())) {
+            Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
+            other => panic!("expected CapDenied(polyglot.python), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn undeclared_gate_is_refused_even_when_granted() {
+        let prog = python_block(&[]);
+        match run_with_caps(&prog, &Quotas::default(), Some(&granted())) {
+            Err(VmError::CapNotDeclared(cap)) => assert_eq!(cap, "polyglot.python"),
+            other => panic!("expected CapNotDeclared(polyglot.python), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alias_tags_check_the_canonical_gate() {
+        // `@py` needs `polyglot.python`, the name the compiler declares.
+        let spec = serde_json::json!({"lang": "py", "code": "print(1)", "var_count": 0});
+        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        let prog = assemble(&src, Some(&["polyglot.python"]), None).unwrap();
+        let quotas = Quotas { allowed_caps: Some(vec![]), ..Quotas::default() };
+        match run_with_caps(&prog, &quotas, Some(&granted())) {
+            Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
+            other => panic!("expected CapDenied(polyglot.python), got {other:?}"),
         }
     }
 }

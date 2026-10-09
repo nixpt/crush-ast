@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-224 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | panini |
 | **Dependencies** | none (touches the same `prepare_stmts` pass as CRUSH-193) |
 | **Estimated effort** | S |
 | **Filed by** | kai (foreman) — s476, 2026-10-09; reproduced on a 2026-10-07 debug build, code path unchanged at `5755262` |
@@ -61,12 +61,34 @@ Do it at compile time, with no state carried between processes:
 
 ## Success criteria
 
-- [ ] The repro prints `sqrt16 = 4.0`.
-- [ ] Selective form `use @lang python "os.path" { "join" }` makes `join` usable.
-- [ ] JS works the same way (`use @lang javascript "fs" as fs`).
-- [ ] Guest error line numbers still point at the right `.crush` line.
-- [ ] `LangBlock.imports` is populated in `--emit ast` output.
-- [ ] Both VMs (interp scheduler + PortableVm) covered by a test.
+- [x] The repro prints `sqrt16 = 4.0`.
+- [x] Selective form `use @lang python "os.path" { "join" }` makes `join` usable.
+- [x] JS works the same way (`use @lang javascript "fs" as fs`).
+- [x] Guest error line numbers still point at the right `.crush` line.
+- [x] `LangBlock.imports` is populated in `--emit ast` output.
+- [x] Both VMs (interp scheduler + PortableVm) covered by a test.
+
+## Resolution (panini, 2026-10-09)
+
+- `prepare_polyglot_blocks` (crush-lang-sdk) fills `LangBlock.imports`: a
+  `use @lang` reaches later blocks of its (canonical) language in the same
+  body and nested bodies; one at the top level of `main` (where a script's
+  top-level statements land) also reaches every other function.
+- The compiler turns `imports` into source (`crush_frontend::lang_imports`)
+  and splices it onto guest line 1: a blank first line is replaced, otherwise
+  the header is prefixed (`import m; <line 1>`). Guest line K stays `.crush`
+  line `block_line + K - 1`. The only shift: a Python block whose first line
+  opens a block (`for …:`) gets the header on its own line.
+- What a `use` binds: the module under its own name (unless selective-only),
+  the alias in addition, the selected names. So the repro's `math.sqrt` works
+  with `as m`, and so does `m.sqrt`. Python paths and all names are validated
+  as identifiers before they are spliced into source.
+- `PolyglotModule` lowers to nothing (bash and unknown languages are compile
+  errors).
+- `polyglot_imports.rs` **deleted**: it modelled a simulated sandbox
+  (sandbox ids, memory/CPU limits nothing enforced, a hard-coded module
+  allowlist) that has nothing to do with the subprocess + capability-gate
+  model, and nothing in the workspace or its dependents called it.
 
 ## Related
 
