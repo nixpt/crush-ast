@@ -1,5 +1,8 @@
 //! Integration tests for crush! and crush_file! macros.
 
+// 3.14 is the fixture value under test, not an approximation of PI.
+#![allow(clippy::approx_constant)]
+
 use crush_macros::{crush, crush_file};
 use crush_vm::CrushResultExt;
 

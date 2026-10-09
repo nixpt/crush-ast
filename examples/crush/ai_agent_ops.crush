@@ -63,5 +63,5 @@ fn process_user_intent(intent_text) {
 }
 fn escalate_issue(details) {
     // Example of relying on a manifest invariant conceptually
-    print("Escalating to human agents: ", details)
+    print("Escalating to human agents: " + details)
 }
