@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-232 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-09) |
 | **Phase** | M5 |
-| **Assignee** | unassigned |
+| **Assignee** | claude |
 | **Dependencies** | CRUSH-170 (capabilities_used) |
 | **Estimated effort** | M |
 | **Filed by** | claude — 2026-10-09 use-case review (agents + polyglot), on `main` `2d71b96` |
@@ -28,11 +28,30 @@ and against what it is willing to grant, and refuses **before** anything runs.
 
 ## Success criteria
 
-- [ ] A program can declare the capabilities it needs in source; the compiler rejects a
+- [x] A program can declare the capabilities it needs in source; the compiler rejects a
       program that uses a capability it did not declare (and, with no declaration, keeps
       today's behaviour so existing programs still compile).
-- [ ] `crush-run` prints what a program needs (declared vs. inferred by
+- [x] `crush-run` prints what a program needs (declared vs. inferred by
       `capabilities_used`) without running it.
-- [ ] Before executing, `crush-run` refuses with one error listing every needed
+- [x] Before executing, `crush-run` refuses with one error listing every needed
       capability the host has not granted — no partial run.
-- [ ] An example agent-written program with a declaration, run with and without grants.
+- [x] An example agent-written program with a declaration, run with and without grants.
+
+## Resolution
+
+- Syntax: `@capabilities [..]` (top level) or `capabilities: [..]` in `@module`; stored as
+  `crush_cast::manifest::ModuleManifest::capabilities: Option<Vec<String>>` (`None` = no
+  declaration, `Some([])` = ambient only). Entry rule = `crush-pkg check`'s `covers()`, now
+  shared from `crush_lang_sdk::effects`.
+- Compile check in `crush_lang_sdk::compile::compile_crush_to_casm` (every Crush compile path,
+  `crushc` included), on the bytecode via `capabilities_used`, so names are the gate names
+  (`polyglot.python`, lowered builtins). Ambient = `CapInfo::is_ambient`.
+- Pre-run check: `Runtime::missing_grants` (built-ins, registered host caps,
+  `Quotas::allowed_caps`); `crush-run run` refuses with `[capabilities] … nothing was run` and
+  the grants grouped by flag; `crush-run caps FILE [--json]` shows the plan.
+- Live: every example that ran before runs the same; the six that failed on a missing grant
+  now list all missing grants up front (fs_test, phase2_3_test, repl_test, text_tools_test,
+  lang_test, polyglot_braces).
+- Example: awesome-crush `agents/log-triage/` (tool + two tampered variants + walkthrough).
+- Tests: `crush_run_test.rs` (4 new), `annotation_parse_tests.rs` (3), `effects.rs` (2).
+- Not done here: approving individual calls (CRUSH-233); `--cap` for `.crush` remains unused.

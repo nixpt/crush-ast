@@ -38,12 +38,16 @@ enum Commands {
     /// Run a CASM text file or CVM1 binary.
     Run(RunArgs),
 
-    /// List built-in portable capabilities.
+    /// List built-in portable capabilities, or, given a program, the
+    /// capabilities it can use and what grants each (without running it).
     Caps {
-        /// Print every capability as JSON (name, argc, returns, effects, and
-        /// the grant that unlocks it) instead of the human-readable list.
+        /// Print as JSON instead of the human-readable list.
         #[arg(long)]
         json: bool,
+
+        /// A program (.crush, .casm or .cvm1) to inspect instead of listing
+        /// every capability.
+        path: Option<PathBuf>,
     },
 }
 
@@ -148,8 +152,14 @@ fn main() {
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
     match cli.command {
-        Commands::Caps { json: false } => list_caps(),
-        Commands::Caps { json: true } => list_caps_json(),
+        Commands::Caps { json, path: Some(path) } => {
+            if let Err(e) = show_program_caps(&path, json) {
+                eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, "compile"));
+                std::process::exit(1);
+            }
+        }
+        Commands::Caps { json: false, path: None } => list_caps(),
+        Commands::Caps { json: true, path: None } => list_caps_json(),
         Commands::Run(args) => {
             if let Err(e) = run_file(&args) {
                 match args.message_format {
@@ -158,6 +168,8 @@ fn main() {
                         // error type produced by `run_file`.
                         let label = if e.is::<CompileFailed>() {
                             "compile"
+                        } else if e.is::<NotGranted>() {
+                            "capabilities"
                         } else {
                             "runtime"
                         };
@@ -186,6 +198,106 @@ fn main() {
             }
         }
     }
+}
+
+/// The program can request capabilities this run doesn't grant, found before
+/// it ran (CRUSH-232), so `main` labels it `[capabilities]`.
+#[derive(Debug)]
+struct NotGranted(String);
+
+impl std::fmt::Display for NotGranted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotGranted {}
+
+/// Compile `path` to bytecode, plus the `@capabilities` it declares
+/// (`.crush` only).
+fn load_program(path: &std::path::Path, casm_caps: &[String]) -> anyhow::Result<(crush_vm::Program, Option<Vec<String>>)> {
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    match ext {
+        "crush" => {
+            let source = std::fs::read_to_string(path)?;
+            let declared = crush_frontend::parse_source(&source)
+                .ok()
+                .and_then(|p| p.manifest)
+                .and_then(|m| m.capabilities);
+            let program =
+                crush_lang_sdk::compile::compile_crush_source(&source).map_err(CompileFailed)?;
+            Ok((program, declared))
+        }
+        "casm" => {
+            let source = std::fs::read_to_string(path)?;
+            let permissions: Vec<&str> = casm_caps.iter().map(|s| s.as_str()).collect();
+            Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
+        }
+        "cvm1" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
+        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"),
+    }
+}
+
+/// `crush-run caps FILE`: what the program can use, grouped by what grants
+/// it, without running it.
+fn show_program_caps(path: &std::path::Path, json: bool) -> anyhow::Result<()> {
+    let (program, declared) = load_program(path, &[])?;
+    let used = crush_lang_sdk::effects::used_by(&program)?;
+    let catalog = crush_lang_sdk::effects::catalog();
+    let grant_of = |cap: &str| -> &'static str {
+        if crush_vm::capabilities().contains_key(cap) {
+            return "portable";
+        }
+        catalog.iter().find(|c| c.name == cap).map_or("not available in this host", |c| c.grant)
+    };
+    let ambient = |grant: &str| matches!(grant, "portable" | "always" | crush_lang_sdk::effects::STDLIB_GRANT);
+    if json {
+        let caps: Vec<_> = used
+            .iter()
+            .map(|c| {
+                let grant = grant_of(c);
+                serde_json::json!({"name": c, "grant": grant, "ambient": ambient(grant)})
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "program": path.display().to_string(),
+                "declared": declared,
+                "uses": caps,
+            }))
+            .expect("serializable")
+        );
+        return Ok(());
+    }
+    println!("{}", path.display());
+    match &declared {
+        Some(d) if d.is_empty() => println!("  declares: nothing beyond the ambient capabilities"),
+        Some(d) => println!("  declares: {}", d.join(", ")),
+        None => println!("  declares: (no @capabilities declaration)"),
+    }
+    let mut needs: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    let mut free = Vec::new();
+    for cap in &used {
+        let grant = grant_of(cap);
+        if ambient(grant) {
+            free.push(cap.as_str());
+        } else {
+            needs.entry(grant).or_default().push(cap);
+        }
+    }
+    if needs.is_empty() {
+        println!("  needs no grants");
+    } else {
+        println!("  needs these grants to run:");
+        for (grant, caps) in &needs {
+            println!("    {grant}: {}", caps.join(", "));
+        }
+    }
+    if !free.is_empty() {
+        println!("  also uses (ambient): {}", free.join(", "));
+    }
+    Ok(())
 }
 
 /// A `.crush` source that failed to parse, type-check or compile, so `main`
@@ -427,6 +539,28 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
 
     let runtime = Runtime::with_quotas(quotas).with_host_caps(builder.build());
 
+    // CRUSH-232: refuse before anything runs when the program can request a
+    // capability this run doesn't grant, listing all of them at once. A
+    // `.cvm1` blob that doesn't decode is left to `run_blob` below, which
+    // reports it as a typed load error.
+    let preflight = match ext {
+        "cvm1" => std::fs::read(&args.path)
+            .ok()
+            .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
+        _ => Some(load_program(&args.path, &args.caps)?.0),
+    };
+    if let Some(program) = &preflight {
+        let missing = runtime.missing_grants(program)?;
+        if !missing.is_empty() {
+            return Err(NotGranted(format!(
+                "{} needs capabilities this run does not grant; nothing was run:\n{}",
+                args.path.display(),
+                crush_lang_sdk::effects::describe_missing(&missing)
+            ))
+            .into());
+        }
+    }
+
     let result = match ext {
         "cvm1" => {
             // Route through `Runtime::run_blob` so any blob-decode error
@@ -436,18 +570,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
             let blob = std::fs::read(&args.path)?;
             runtime.run_blob(&blob)?
         }
-        "crush" => {
-            let source = std::fs::read_to_string(&args.path)?;
-            let program =
-                crush_lang_sdk::compile::compile_crush_source(&source).map_err(CompileFailed)?;
-            runtime.run(&program)?
-        }
-        "casm" => {
-            let source = std::fs::read_to_string(&args.path)?;
-            let permissions: Vec<&str> = args.caps.iter().map(|s| s.as_str()).collect();
-            let program = crush_lang_sdk::assemble(&source, Some(&permissions), None)?;
-            runtime.run(&program)?
-        }
+        "crush" | "casm" => runtime.run(preflight.as_ref().expect("compiled above"))?,
         // Defensive: the pre-check above already bails on unsupported
         // extensions, so this arm is unreachable in normal flow. Use
         // `bail!` rather than `unreachable!` so a contributor who adds

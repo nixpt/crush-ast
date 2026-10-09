@@ -166,6 +166,92 @@ pub fn catalog() -> Vec<CapInfo> {
     out.into_values().collect()
 }
 
+/// Does `entry` (a declared capability) cover capability `cap`? An entry is
+/// the same name (`fs.cat`), the same name with a scope (`fs.read:/var/log`;
+/// the scope isn't checked), or a family (`fs` or `fs.*` covers every
+/// `fs.<x>`). Shared by `@capabilities` (CRUSH-232) and `crush-pkg check`'s
+/// `capsule.toml` (CRUSH-170).
+pub fn covers(entry: &str, cap: &str) -> bool {
+    let base = entry.split(':').next().unwrap_or(entry).trim();
+    let family = base.strip_suffix(".*").unwrap_or(base);
+    base == cap
+        || (!family.is_empty()
+            && cap.len() > family.len()
+            && cap.starts_with(family)
+            && cap.as_bytes()[family.len()] == b'.')
+}
+
+/// The capabilities `program` can request: every `CAP_CALL` and gated opcode
+/// reachable from its entry ([`crush_vm::capabilities_used`]), sorted.
+pub fn used_by(program: &crush_vm::Program) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    crush_vm::capabilities_used(program).map_err(|e| anyhow::anyhow!("capability inference: {e}"))
+}
+
+/// The capabilities in `used` that need a grant (not ambient, see
+/// [`CapInfo::is_ambient`]) and that no entry of `declared` covers.
+pub fn undeclared(used: &std::collections::BTreeSet<String>, declared: &[String]) -> Vec<String> {
+    let catalog = catalog();
+    used.iter()
+        .filter(|cap| !catalog.iter().any(|c| &c.name == *cap && c.is_ambient()))
+        .filter(|cap| !declared.iter().any(|entry| covers(entry, cap)))
+        .cloned()
+        .collect()
+}
+
+/// A capability a program can request that the host running it doesn't grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingGrant {
+    pub capability: String,
+    /// What grants it in `crush run` terms (`"--fs"`, `"--time"`, …), or
+    /// `None` when no grant in this build provides it.
+    pub grant: Option<&'static str>,
+}
+
+/// Every capability `program` can request that is neither a VM built-in nor
+/// registered in `host_caps` (CRUSH-232). A host calls this before running
+/// agent-written code so a missing grant is refused up front, with the whole
+/// list, instead of failing mid-run after earlier effects happened.
+///
+/// Inference is static: a capability only reachable through a function name
+/// computed at run time (`spawn`) isn't seen, and the VM's own check still
+/// applies when the program runs.
+pub fn missing_grants(program: &crush_vm::Program, host_caps: Option<&HostCaps>) -> anyhow::Result<Vec<MissingGrant>> {
+    let builtins = crush_vm::capabilities();
+    let missing: Vec<String> = used_by(program)?
+        .into_iter()
+        .filter(|cap| !builtins.contains_key(cap.as_str()))
+        .filter(|cap| host_caps.is_none_or(|h| h.get(cap).is_none()))
+        .collect();
+    if missing.is_empty() {
+        return Ok(Vec::new());
+    }
+    let catalog = catalog();
+    Ok(missing
+        .into_iter()
+        .map(|capability| {
+            let grant = catalog.iter().find(|c| c.name == capability).map(|c| c.grant);
+            MissingGrant { capability, grant }
+        })
+        .collect())
+}
+
+/// One line per missing grant, grouped by what grants it:
+/// `--fs: fs.cat, fs.list`.
+pub fn describe_missing(missing: &[MissingGrant]) -> String {
+    let mut groups: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for m in missing {
+        groups
+            .entry(m.grant.unwrap_or("not available in this host"))
+            .or_default()
+            .push(&m.capability);
+    }
+    groups
+        .iter()
+        .map(|(grant, caps)| format!("  {grant}: {}", caps.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A handler plus its declared effects; everything else is delegated.
 struct Declared {
     inner: Arc<dyn HostCap>,
@@ -229,6 +315,33 @@ fn with_effects(
 #[cfg(test)]
 mod tests {
     use crate::HostCapsBuilder;
+
+    #[test]
+    fn undeclared_ignores_ambient_and_honours_families() {
+        use std::collections::BTreeSet;
+        let used: BTreeSet<String> =
+            ["io.print", "str.len", "fs.cat", "fs.list", "time.now", "env.get"].map(String::from).into();
+        let declared = vec!["fs".to_string(), "time.now:anything".to_string()];
+        assert_eq!(super::undeclared(&used, &declared), ["env.get"]);
+        assert_eq!(super::undeclared(&used, &[]), ["env.get", "fs.cat", "fs.list", "time.now"]);
+    }
+
+    #[test]
+    fn missing_grants_names_what_grants_each() {
+        let program = crate::compile::compile_crush_source(
+            "fn main() { let t = time.now(); io.print(fs.cat(\"x\")); return 0 }",
+        )
+        .unwrap();
+        let none = super::missing_grants(&program, None).unwrap();
+        let names: Vec<_> = none.iter().map(|m| (m.capability.as_str(), m.grant)).collect();
+        assert_eq!(names, [("fs.cat", Some("--fs")), ("time.now", Some("--time"))]);
+        let granted = HostCapsBuilder::new().fs(true).time(true).build();
+        assert!(super::missing_grants(&program, Some(&granted)).unwrap().is_empty());
+        assert_eq!(
+            super::describe_missing(&none),
+            "  --fs: fs.cat\n  --time: time.now"
+        );
+    }
 
     /// Every grant at once — the most a builder can register.
     fn everything() -> crush_vm::HostCaps {

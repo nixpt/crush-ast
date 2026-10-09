@@ -40,8 +40,11 @@ fn bash_block_refused_without_grant() {
     let (out, err, ok) = run(&src, &[]);
     assert!(!ok, "program should FAIL without --polyglot");
     let combined = format!("{out}{err}");
+    // crush-run refuses before running (CRUSH-232); the VM's own EXEC_LANG gate is
+    // pinned by the embedded-runtime tests below, which have no pre-run check.
     assert!(
-        combined.contains("polyglot.bash") && combined.contains("requires"),
+        combined.contains("polyglot.bash")
+            && (combined.contains("requires") || combined.contains("nothing was run")),
         "expected a loud polyglot-capability refusal, got: {combined}"
     );
     assert!(!probe.exists(), "SECURITY: @bash escaped the capability gate and wrote a file");
@@ -82,11 +85,14 @@ fn escape_probe(tag: &str) -> std::path::PathBuf {
 
 fn assert_refused_without_spawn(probe: &std::path::Path, ok: bool, combined: &str) {
     assert!(!ok, "program should be refused, got success: {combined}");
-    // Refused by the VM's EXEC_LANG gate, not by something unrelated (a parse error would also
-    // fail the program and leave no probe, proving nothing about the gate).
+    // Refused by a capability gate, not by something unrelated (a parse error would also
+    // fail the program and leave no probe, proving nothing about the gate): the VM's
+    // EXEC_LANG gate, or crush-run's pre-run check naming the `polyglot.<lang>` grant
+    // (CRUSH-232).
     assert!(
         combined.contains("requires the 'polyglot.")
-            || combined.contains("no executor registered for language"),
+            || combined.contains("no executor registered for language")
+            || (combined.contains("nothing was run") && combined.contains("polyglot.")),
         "expected an EXEC_LANG gate/allowlist refusal, got: {combined}"
     );
     assert!(

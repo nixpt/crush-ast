@@ -51,6 +51,15 @@ pub struct ModuleManifest {
     #[serde(default)]
     pub exhaustive_types: Vec<String>,
 
+    /// The capabilities this program may use, declared by its author
+    /// (`@capabilities [fs.cat, time.now]`, or `capabilities: [...]` inside
+    /// `@module`). `None` means no declaration. When present, compiling
+    /// rejects a program that uses a non-ambient capability no entry covers
+    /// (CRUSH-232). An entry is a name (`fs.cat`), a family (`fs`, `fs.*`),
+    /// or a name with a scope (`fs.read:/var/log`; the scope isn't checked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
+
     /// Chronological change log (newest last). Lightweight dejavue integration —
     /// the compiler writes here from commit metadata when `--embed-changelog` is set.
     #[serde(default)]

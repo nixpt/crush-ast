@@ -700,6 +700,7 @@ mod tests {
                 }],
                 related: vec!["other".to_string()],
                 exhaustive_types: vec!["MyEnum".to_string()],
+                capabilities: None,
                 changelog: vec![],
             }),
             exhaustive_sites: vec![ExhaustiveMatchSite {

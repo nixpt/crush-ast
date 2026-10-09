@@ -1,4 +1,4 @@
-// expect-error: [runtime] unknown capability: @python requires the 'polyglot.python' capability (run with --polyg...
+// expect-error: [capabilities] examples/crush/polyglot_braces.crush needs capabilities this run does not grant; nothing was run:
 // Test: Polyglot block brace handling (EXO-47)
 // Description: Verifies the parser treats @<lang> { ... } bodies as opaque
 // raw text bounded by a matching '}' at the outer nesting level, with

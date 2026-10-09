@@ -794,3 +794,15 @@ Rejected alternatives:
 - **Collect inside the allocator**: an allocation happens mid-instruction while operands sit in C variables (e.g. `_add` holds la/ra while allocating), which would be missed roots
 - **Per-run arena only (status quo)**: O(n^2) memory for accumulation; the review on PR #126 showed realistic programs dying
 
+
+## 2026-10-09T08:00:00+00:00 — CRUSH-232: programs declare capabilities with @capabilities; the compiler holds code to the declaration and crush-run refuses missing grants before running
+
+Reason:
+For agent-written code the contract has to be checkable before anything runs. The compiler used to auto-declare every capability a program called, so the manifest carried no information. Now @capabilities [..] (or capabilities: in @module) is optional; when present, compile_crush_to_casm rejects any non-ambient capability no entry covers, checked on the bytecode with capabilities_used so names are the exact VM gate names. Separately, crush-run computes Runtime::missing_grants (not a VM built-in, not registered, or excluded by allowed_caps) and refuses with the full list before running, so a run never half-happens. Entry matching reuses crush-pkg check's covers() (moved to crush_lang_sdk::effects) so capsule.toml and source declarations mean the same thing. Undeclared programs keep compiling unchanged.
+
+Rejected alternatives:
+- **Make the declaration mandatory**: breaks every existing program and walker output; optional declaration plus the pre-run check gives the safety where it is wanted
+- **Reuse the old `capability fs readonly` syntax**: its families/modes (system, network connect) don't map to real capability names, and existing examples use it as decoration; a new annotation avoids silently changing their meaning
+- **Check the declaration against the compiler's own permission set**: that set holds method names (push) and misses builtins lowered later; the bytecode is after every lowering (CRUSH-170 decision)
+- **Pre-run check only when a declaration exists**: the missing-grant problem (failing mid-run after earlier effects) applies to every program; the check is cheap and only changes programs that would have failed anyway
+

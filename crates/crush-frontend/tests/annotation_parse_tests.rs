@@ -417,3 +417,30 @@ fn escalate_issue(details) {
     });
     assert!(has_switch, "expected semantic_switch in process_user_intent body");
 }
+
+// ─── CRUSH-232: declared capabilities ──────────────────────────────────
+
+#[test]
+fn parse_capabilities_annotation_into_the_manifest() {
+    let p = parse("@capabilities [fs.cat, \"fs.read:/var/log\", time]\nfn main() {}\n").expect("parse");
+    let caps = p.manifest.expect("manifest").capabilities.expect("declared");
+    assert_eq!(caps, ["fs.cat", "fs.read:/var/log", "time"]);
+}
+
+#[test]
+fn parse_empty_capabilities_is_a_declaration_of_nothing() {
+    let p = parse("@capabilities []\nfn main() {}\n").expect("parse");
+    assert_eq!(p.manifest.expect("manifest").capabilities, Some(vec![]));
+    // No annotation at all is not a declaration.
+    let p = parse("fn main() {}\n").expect("parse");
+    assert!(p.manifest.and_then(|m| m.capabilities).is_none());
+}
+
+#[test]
+fn parse_capabilities_inside_module_block_on_one_line() {
+    let p = parse("@module { purpose: \"tool\", capabilities: [fs.cat, env.get] }\nfn main() {}\n")
+        .expect("parse");
+    let m = p.manifest.expect("manifest");
+    assert_eq!(m.purpose, "tool");
+    assert_eq!(m.capabilities, Some(vec!["fs.cat".to_string(), "env.get".to_string()]));
+}

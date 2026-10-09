@@ -14,6 +14,24 @@ add its entry after yours.
 
 ## [Unreleased]
 
+### Added — declared capabilities (CRUSH-232)
+- `@capabilities [fs.cat, time.now]` (or `capabilities: [...]` inside `@module`)
+  declares what a program may use beyond the ambient built-ins. Compiling rejects
+  a program that uses a capability its declaration doesn't cover. Entries are names
+  (`fs.cat`), families (`fs`, `fs.*`) or scoped names (`fs.read:/var/log`). A program
+  without a declaration compiles as before.
+- `crush-run caps FILE [--json]` lists the capabilities a program can use and the
+  grant each needs, without running it.
+- `Runtime::missing_grants` and `crush_lang_sdk::effects::{covers, undeclared,
+  missing_grants}` for hosts that want the same check.
+
+### Changed
+- `crush-run run` checks grants **before** running: a program that can reach a
+  capability the run doesn't grant is refused with every missing grant listed
+  (`[capabilities] … nothing was run`), instead of failing at the first one
+  mid-run with `unknown capability`. Programs that ran before run the same.
+- `@module { purpose: "x", exports: [a] }` accepts commas between keys on one line.
+
 ## [0.4.1] - 2026-10-09
 
 - Merge pull request #125 from nixpt/ccr-12236bee-uj4oar

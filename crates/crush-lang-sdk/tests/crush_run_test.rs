@@ -358,13 +358,12 @@ io.print(fs.pwd())
     assert!(!output.status.success(), "cd above the root must fail");
     assert!(stderr.contains("escapes sandbox"), "stderr: {stderr}");
 
+    // Without --fs the run is refused before anything executes (CRUSH-232).
     let output = run_crush_run(&["run", &ok]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
-    assert!(
-        stderr.contains("unknown capability: fs.mkdir"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("nothing was run"), "stderr: {stderr}");
+    assert!(stderr.contains("--fs: ") && stderr.contains("fs.mkdir"), "stderr: {stderr}");
 }
 
 #[test]
@@ -402,4 +401,92 @@ fn crush_run_caps_json_lists_effects_and_grants() {
         list.iter().all(|c| c["effects"].is_array()),
         "every capability declares its effects"
     );
+}
+
+// ── CRUSH-232: declared capabilities, checked before running ───────────────
+
+fn temp_program(body: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool.crush");
+    std::fs::write(&path, body).unwrap();
+    let path = path.to_str().unwrap().to_string();
+    (dir, path)
+}
+
+const TOOL: &str = r#"@capabilities [fs.cat, time.now]
+fn main() {
+  io.print("starting")
+  let t = time.now()
+  io.print(str.len(fs.cat("tool.crush")))
+  return 0
+}
+"#;
+
+#[test]
+fn crush_run_caps_file_shows_what_a_program_needs_without_running_it() {
+    let (_dir, path) = temp_program(TOOL);
+    let output = run_crush_run(&["caps", &path]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.contains("declares: fs.cat, time.now"), "{stdout}");
+    assert!(stdout.contains("--fs: fs.cat"), "{stdout}");
+    assert!(stdout.contains("--time: time.now"), "{stdout}");
+    assert!(stdout.contains("also uses (ambient): io.print"), "{stdout}");
+    assert!(!stdout.contains("starting"), "caps must not run the program: {stdout}");
+
+    let json = run_crush_run(&["caps", "--json", &path]);
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
+    assert_eq!(v["declared"], serde_json::json!(["fs.cat", "time.now"]));
+    let fs_cat = v["uses"].as_array().unwrap().iter().find(|c| c["name"] == "fs.cat").unwrap();
+    assert_eq!(fs_cat["grant"], "--fs");
+    assert_eq!(fs_cat["ambient"], false);
+}
+
+#[test]
+fn crush_run_refuses_ungranted_capabilities_before_running_anything() {
+    let (dir, path) = temp_program(TOOL);
+    let output = run_crush_run(&["run", &path]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(!stdout.contains("starting"), "nothing may run: {stdout}");
+    assert!(stderr.contains("[capabilities]"), "{stderr}");
+    assert!(stderr.contains("--fs: fs.cat") && stderr.contains("--time: time.now"), "{stderr}");
+
+    // One grant short: still refused, naming only the missing one.
+    let output = run_crush_run(&["run", "--fs", &path]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("--time: time.now") && !stderr.contains("fs.cat"), "{stderr}");
+
+    let root = dir.path().to_str().unwrap();
+    let output = run_crush_run(&["run", "--fs", "--fs-root", root, "--time", &path]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.starts_with("starting\n"), "{stdout}");
+}
+
+#[test]
+fn crush_run_rejects_a_capability_the_program_did_not_declare() {
+    let (_dir, path) = temp_program(
+        "@capabilities [fs.cat]\nfn main() { io.print(env.get(\"HOME\")); return 0 }\n",
+    );
+    let output = run_crush_run(&["run", "--fs", "--env", &path]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("[compile]"), "{stderr}");
+    assert!(stderr.contains("not declared in @capabilities: env.get"), "{stderr}");
+}
+
+#[test]
+fn crush_run_empty_declaration_allows_only_ambient_capabilities() {
+    let (_dir, pure) = temp_program("@capabilities []\nfn main() { io.print(str.len(\"abc\")); return 0 }\n");
+    let output = run_crush_run(&["run", &pure]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("3\n"));
+
+    let (_dir, poly) = temp_program("@capabilities []\nfn main() { @python { x = 1 } return 0 }\n");
+    let output = run_crush_run(&["run", "--polyglot", &poly]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not declared in @capabilities: polyglot.python"), "{stderr}");
 }

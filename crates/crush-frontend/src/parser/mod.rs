@@ -273,6 +273,7 @@ impl Parser {
         let mut pending_wip: Option<WipNode> = None;
         let mut pending_temporaries: Vec<TemporaryNode> = Vec::new();
         let mut pending_decisions: Vec<DecisionNode> = Vec::new();
+        let mut pending_capabilities: Option<Vec<String>> = None;
 
         self.skip_newlines();
 
@@ -320,6 +321,15 @@ impl Parser {
                             self.advance();
                             let items = self.parse_at_items();
                             pending_exhaustive_types.extend(items);
+                            continue;
+                        }
+                        "capabilities" => {
+                            // CRUSH-232: `@capabilities [fs.cat, time.now]`.
+                            // `@capabilities []` declares a program that uses
+                            // nothing beyond the ambient capabilities.
+                            self.advance();
+                            let items = self.parse_at_items();
+                            pending_capabilities.get_or_insert_with(Vec::new).extend(items);
                             continue;
                         }
                         "errors" | "reads" | "writes" | "does-not-write" | "covers"
@@ -553,10 +563,14 @@ impl Parser {
         let manifest = if pending_manifest.is_some()
             || !pending_invariants.is_empty()
             || !pending_exhaustive_types.is_empty()
+            || pending_capabilities.is_some()
         {
             let mut m = pending_manifest.unwrap_or_default();
             m.invariants.extend(pending_invariants);
             m.exhaustive_types.extend(pending_exhaustive_types);
+            if let Some(caps) = pending_capabilities {
+                m.capabilities.get_or_insert_with(Vec::new).extend(caps);
+            }
             Some(m)
         } else {
             None
@@ -2429,9 +2443,13 @@ impl Parser {
                 "purpose" => {
                     manifest.purpose = self.parse_at_string_value();
                 }
-                "exports" | "related" | "invariants" | "exhaustive_types" | "changelog" => {
+                "exports" | "related" | "invariants" | "exhaustive_types" | "changelog"
+                | "capabilities" => {
                     let items = self.parse_at_list();
                     match key.as_str() {
+                        "capabilities" => {
+                            manifest.capabilities.get_or_insert_with(Vec::new).extend(items)
+                        }
                         "exports" => manifest.exports = items,
                         "related" => manifest.related = items,
                         "invariants" => manifest.invariants.extend(items.into_iter().map(|n| {
@@ -2453,6 +2471,12 @@ impl Parser {
                 }
             }
             self.skip_newlines();
+            // Keys may also be comma-separated on one line:
+            // `@module { purpose: "x", capabilities: [fs.cat] }`.
+            if matches!(self.peek(), Token::Comma(_)) {
+                self.advance();
+                self.skip_newlines();
+            }
         }
 
         if matches!(self.peek(), Token::RBrace(_)) {
