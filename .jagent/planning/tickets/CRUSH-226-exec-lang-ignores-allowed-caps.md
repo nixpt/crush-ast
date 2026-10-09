@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-226 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M7 |
-| **Assignee** | unassigned |
+| **Assignee** | panini |
 | **Dependencies** | none |
 | **Estimated effort** | XS |
 | **Filed by** | kai (foreman) — s476, 2026-10-09; read on `5755262` |
@@ -45,10 +45,29 @@ Preferably factor them into one helper that both `dispatch_cap` and `EXEC_LANG` 
 
 ## Success criteria
 
-- [ ] `allowed_caps = Some(vec!["io.print"])` + polyglot gate registered → `@python`
+- [x] `allowed_caps = Some(vec!["io.print"])` + polyglot gate registered → `@python`
       fails with `CapDenied("polyglot.python")` on both engines.
-- [ ] Declared-caps behaviour decided and tested (enforced, or exemption documented).
-- [ ] Existing `--polyglot` paths in `crush-run` unchanged.
+- [x] Declared-caps behaviour decided and tested (enforced, or exemption documented).
+- [x] Existing `--polyglot` paths in `crush-run` unchanged.
+
+## Resolution (panini, 2026-10-09)
+
+`scheduler::check_cap_permitted` holds both checks; `dispatch_cap` and the
+`EXEC_LANG` arm of both engines call it, before the host-caps registry gate.
+
+Declared caps are **enforced**, not exempted. `casm_to_vm` declares
+`polyglot.<lang>` (canonical name, via the now-public
+`crush_vm::polyglot_gate_name`) for each `exec_lang`, as it already declares
+every `CAP_CALL`. `crush-run --polyglot` adds the three gates to the declared
+permissions of hand-written `.casm`, so both `--polyglot` paths behave as
+before. Cost: a `.cvm1` compiled before this change fails with
+`CapNotDeclared("polyglot.<lang>")` until recompiled.
+
+Tests: `scheduler::exec_lang_permission_tests` (3) and
+`portable_vm::tests::test_portable_exec_lang_{respects_allowed_caps,requires_declared_gate}`;
+`compile::tests::test_compiled_lang_block_declares_its_polyglot_gate`.
+`crush-run` has no flag for `allowed_caps`, so the denial is not reachable
+from the CLI.
 
 ## Related
 

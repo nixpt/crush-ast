@@ -41,7 +41,7 @@ pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use io_read::InputSource;
 pub use portable_vm::{Frame, PortableVm, VmYield, value_to_text};
 pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
-pub use scheduler::resolve_lang_binary;
+pub use scheduler::{polyglot_gate_name, resolve_lang_binary};
 pub use cap_inference::capabilities_used;
 
 /// Whether this build runs `@lang[deps]` blocks in a buckets-provisioned bwrap

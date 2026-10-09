@@ -14,6 +14,22 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`EXEC_LANG` checks declared caps and `allowed_caps` (CRUSH-226).** A
+  `@lang` block's `polyglot.<lang>` gate now passes the same two checks as
+  every `CAP_CALL`: an embedder's `Quotas::allowed_caps` that leaves it out
+  denies the block (`CapDenied`), and the program must declare it
+  (`CapNotDeclared`). The compiler declares it for every block, and
+  `crush-run --polyglot` declares it for hand-written `.casm`. A `.cvm1`
+  compiled before this change has no polyglot declaration: recompile it.
+- **`use @lang` imports reach later blocks (CRUSH-224).** `use @lang python
+  "math" as m` is written into every later `@python` block as
+  `import math; import math as m` (selective form: `from m import a, b`;
+  JavaScript: `const x = require("m")`). It no longer lowers to a throwaway
+  `exec_lang`. `LangBlock.imports` is filled. The import shares the block's
+  first line, so guest line numbers still map to `.crush` lines. `use @lang
+  bash` is a compile error. The unused `crush_frontend::polyglot_imports`
+  module is removed.
+
 ## [0.4.1] - 2026-10-09
 
 - Merge pull request #125 from nixpt/ccr-12236bee-uj4oar
