@@ -28,6 +28,8 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         // Always registered: parses its argument, nothing else. `cson.parse`
         // is the deprecated alias (CRUSH-149).
         "caison.parse" | "cson.parse" => &[],
+        // Always registered: the program's own arguments, and ending the program.
+        "sys.args" | "sys.exit" => &[],
         // --fs
         "fs.read" | "fs.cat" | "fs.exists" | "fs.list" | "fs.ls" | "fs.find" | "fs.pwd"
         | "fs.cd" => FS_READ,

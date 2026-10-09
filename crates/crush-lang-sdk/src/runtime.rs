@@ -338,6 +338,18 @@ impl Runtime {
         )?)
     }
 
+    /// [`run`](Self::run), handing each piece of output to `sink` as soon as the
+    /// program prints it. A CLI writes it straight to stdout, so long-running
+    /// scripts show progress and nothing printed before an error is lost.
+    pub fn run_streaming(&self, program: &Program, sink: &mut dyn FnMut(&str)) -> Result<VmResult, RuntimeError> {
+        Ok(crush_vm::vm::run_with_caps_streaming(
+            program,
+            &self.quotas,
+            self.host_caps.as_ref(),
+            sink,
+        )?)
+    }
+
     /// Load a CVM1 binary blob and run it.
     pub fn run_blob(&self, blob: &[u8]) -> Result<VmResult, RuntimeError> {
         let program =

@@ -30,6 +30,20 @@ add its entry after yours.
   bash` is a compile error. The unused `crush_frontend::polyglot_imports`
   module is removed.
 
+### Added — scripting basics
+- `sys.args()` returns the program's arguments: `crush run script.crush a "b c"`
+  (flags may follow; `--` passes an argument starting with `-`). Always registered.
+- `sys.exit(code)` ends the program with exit status 0–255; output printed before it
+  is kept.
+- `crush-run` writes output as the program prints it instead of all at the end, and
+  output printed before a runtime error is no longer lost (`Runtime::run_streaming`,
+  `crush_vm::vm::run_with_caps_streaming`).
+- `tests/scripting_parity.rs`: 13 everyday shell jobs in bash and Crush, compared.
+
+### Fixed
+- `fs.write`, `akg.write`, `message_bus.publish`/`subscribe` and `task.stop` no longer
+  end every program with `stack underflow`; they return null (CRUSH-183).
+
 ### Added — declared capabilities (CRUSH-232)
 - `@capabilities [fs.cat, time.now]` (or `capabilities: [...]` inside `@module`)
   declares what a program may use beyond the ambient built-ins. Compiling rejects

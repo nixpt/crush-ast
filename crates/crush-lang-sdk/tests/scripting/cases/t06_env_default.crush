@@ -1,0 +1,9 @@
+// Greeting from $GREETING, default "hello".
+fn main() {
+  let g = env.get("GREETING")
+  if g == null {
+    g = "hello"
+  }
+  io.print(g + ", world")
+  return 0
+}

@@ -1,0 +1,14 @@
+// Count TODO lines per .rs file under src/, sorted by path, then the total.
+fn main() {
+  let files = fs.find("src", "*.rs")
+  let total = 0
+  let i = 0
+  while i < len(files) {
+    let n = len(text.grep("TODO", files[i]))
+    io.print(files[i] + ": " + n)
+    total = total + n
+    i = i + 1
+  }
+  io.print("total: " + total)
+  return 0
+}

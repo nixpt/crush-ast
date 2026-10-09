@@ -1,0 +1,10 @@
+// Run commands, report each exit status.
+fn main() {
+  let a = json.parse(process.exec("sh", ["-c", "exit 0"]))
+  io.print("true-ish: " + a.exit_code)
+  let b = json.parse(process.exec("sh", ["-c", "exit 3"]))
+  io.print("fails: " + b.exit_code)
+  let c = json.parse(process.exec("echo", ["hello"]))
+  io.print("captured: " + str.trim(c.stdout))
+  return 0
+}

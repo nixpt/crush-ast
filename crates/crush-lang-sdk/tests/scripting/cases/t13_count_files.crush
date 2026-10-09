@@ -1,0 +1,6 @@
+// Count regular files (not directories) under the current directory.
+// fs.find returns directories too, and nothing tells them apart (no fs.is_dir / fs.stat).
+fn main() {
+  io.print("files: " + len(fs.find(".", "*")))
+  return 0
+}

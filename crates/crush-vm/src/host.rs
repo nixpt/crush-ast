@@ -28,6 +28,10 @@ pub enum HostCapError {
     /// The capability self-enforced `deadline_ms` from
     /// [`HostCap::call_with_deadline`] and gave up before completing.
     Timeout,
+    /// The program asked to stop with this exit status (`sys.exit`). Not a
+    /// failure: the VM ends the run with [`VmError::Exit`](crate::VmError::Exit)
+    /// and the host decides what the status means (a CLI exits with it).
+    Exit(i32),
 }
 
 impl From<String> for HostCapError {

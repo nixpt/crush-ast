@@ -490,3 +490,80 @@ fn crush_run_empty_declaration_allows_only_ambient_capabilities() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("not declared in @capabilities: polyglot.python"), "{stderr}");
 }
+
+// ── Scripting basics: arguments, exit status, output that survives errors ───
+
+#[test]
+fn crush_run_passes_script_arguments_to_sys_args() {
+    let (_dir, path) = temp_program(
+        "fn main() {\n  let a = sys.args()\n  io.print(len(a))\n  io.print(a[1])\n  io.print(a[2])\n  return 0\n}\n",
+    );
+    // Flags may follow the arguments; `--` passes one that starts with `-`.
+    let output = run_crush_run(&["run", &path, "one", "two words", "--max-steps", "1000", "--", "--three"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "3\ntwo words\n--three\n");
+}
+
+#[test]
+fn crush_run_exits_with_the_status_given_to_sys_exit() {
+    let (_dir, path) = temp_program(
+        "fn main() {\n  io.print(\"before\")\n  sys.exit(3)\n  io.print(\"after\")\n  return 0\n}\n",
+    );
+    let output = run_crush_run(&["run", &path]);
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "before\n");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("[runtime]"));
+
+    let (_dir, bad) = temp_program("fn main() { sys.exit(300) }\n");
+    let output = run_crush_run(&["run", &bad]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("from 0 to 255"));
+}
+
+#[test]
+fn crush_run_keeps_output_printed_before_a_runtime_error() {
+    let (dir, path) = temp_program(
+        "fn main() {\n  io.print(\"step 1\")\n  io.print(\"step 2\")\n  let x = fs.cat(\"missing.txt\")\n  return 0\n}\n",
+    );
+    let root = dir.path().to_str().unwrap();
+    let output = run_crush_run(&["run", "--fs", "--fs-root", root, &path]);
+    assert!(!output.status.success());
+    // It used to print nothing: output was only written once the program ended.
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "step 1\nstep 2\n");
+}
+
+#[test]
+fn crush_run_streams_output_while_the_program_runs() {
+    use std::io::{BufRead, BufReader};
+    let (_dir, path) = temp_program(
+        "fn main() {\n  io.print(\"first\")\n  time.sleep(1500)\n  io.print(\"second\")\n  return 0\n}\n",
+    );
+    let mut child = Command::new(crush_run_bin())
+        .args(["run", "--time", &path])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn crush-run");
+    let start = std::time::Instant::now();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    assert_eq!(lines.next().unwrap().unwrap(), "first");
+    let first_at = start.elapsed();
+    assert_eq!(lines.next().unwrap().unwrap(), "second");
+    child.wait().unwrap();
+    assert!(
+        first_at < std::time::Duration::from_millis(1200),
+        "the first line arrived after {first_at:?}, i.e. only when the program ended"
+    );
+}
+
+#[test]
+fn crush_run_fs_write_as_a_statement_and_as_a_value() {
+    let (dir, path) = temp_program(
+        "fn main() {\n  fs.write(\"a.txt\", \"one\")\n  let r = fs.write(\"b.txt\", \"two\")\n  io.print(r)\n  io.print(fs.cat(\"a.txt\") + fs.cat(\"b.txt\"))\n  return 0\n}\n",
+    );
+    let root = dir.path().to_str().unwrap();
+    let output = run_crush_run(&["run", "--fs", "--fs-root", root, &path]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "null\nonetwo\n");
+}

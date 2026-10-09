@@ -75,6 +75,10 @@ pub enum VmError {
     /// cap so a hang is diagnosable, not a silent freeze.
     #[error("'{cap}' exceeded its {limit_ms}ms wall-clock quota and was killed")]
     CapTimeout { cap: String, limit_ms: u64 },
+    /// The program called `sys.exit(code)`. Ends the run on purpose; a CLI
+    /// exits with `code`, everything printed before it already went out.
+    #[error("program exited with status {0}")]
+    Exit(i32),
     /// A `@python`/`@javascript`/`@bash` polyglot block's **guest program**
     /// raised its own runtime exception (non-zero exit, e.g. a Python
     /// `ZeroDivisionError` or a Node `TypeError`) — or, distinctly (CRUSH-20),
@@ -759,6 +763,17 @@ pub fn run_with_caps(
     host_caps: Option<&HostCaps>,
 ) -> Result<VmResult, VmError> {
     crate::scheduler::run_scheduled(program, quotas, host_caps)
+}
+
+/// [`run_with_caps`], handing each piece of output to `sink` as soon as it is
+/// printed (see [`crate::scheduler::run_scheduled_streaming`]).
+pub fn run_with_caps_streaming(
+    program: &Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
+    sink: &mut dyn FnMut(&str),
+) -> Result<VmResult, VmError> {
+    crate::scheduler::run_scheduled_streaming(program, quotas, host_caps, Some(sink))
 }
 
 /// Run a program using the optimized FastVM architecture with empty capabilities.

@@ -1,0 +1,18 @@
+// Rename photos/*.jpeg to *.jpg, then list photos/.
+fn main() {
+  let files = fs.list("photos")
+  let i = 0
+  while i < len(files) {
+    if path.extension(files[i]) == "jpeg" {
+      fs.mv("photos/" + files[i], "photos/" + path.stem(files[i]) + ".jpg")
+    }
+    i = i + 1
+  }
+  let now = fs.list("photos")
+  i = 0
+  while i < len(now) {
+    io.print(now[i])
+    i = i + 1
+  }
+  return 0
+}

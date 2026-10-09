@@ -53,8 +53,14 @@ enum Commands {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Path to the program file (.casm or .cvm1).
+    /// Path to the program file (.crush, .casm or .cvm1).
     path: PathBuf,
+
+    /// Arguments for the program, returned by `sys.args()`. Flags for
+    /// crush-run may come before or after them; put `--` before an argument
+    /// that starts with `-`.
+    #[arg(value_name = "ARGS")]
+    script_args: Vec<String>,
 
     /// Grant a capability permission (repeatable).
     #[arg(long = "cap", value_name = "CAP")]
@@ -543,7 +549,8 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         );
     }
 
-    let runtime = Runtime::with_quotas(quotas).with_host_caps(builder.build());
+    let runtime =
+        Runtime::with_quotas(quotas).with_host_caps(builder.args(args.script_args.clone()).build());
 
     // CRUSH-232: refuse before anything runs when the program can request a
     // capability this run doesn't grant, listing all of them at once. A
@@ -567,25 +574,26 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         }
     }
 
-    let result = match ext {
-        "cvm1" => {
-            // Route through `Runtime::run_blob` so any blob-decode error
-            // (bad magic, unsupported version, truncated, bad manifest)
-            // becomes a typed `RuntimeError::LoadBlob` rather than a bare
-            // `CrushError` that falls past the JSON downcast.
-            let blob = std::fs::read(&args.path)?;
-            runtime.run_blob(&blob)?
+    // Output goes to stdout as the program prints it, so a long-running script
+    // shows progress and nothing printed before an error is lost.
+    let mut write_out = |part: &str| {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(part.as_bytes());
+        let _ = out.flush();
+    };
+    let result = match &preflight {
+        Some(program) => runtime.run_streaming(program, &mut write_out),
+        // A `.cvm1` that doesn't decode: `run_blob` reports it as a typed
+        // `RuntimeError::LoadBlob` (E-RT01 in JSON mode).
+        None => runtime.run_blob(&std::fs::read(&args.path)?),
+    };
+    let result = match result {
+        // `sys.exit(code)`: a requested stop, not an error.
+        Err(crush_lang_sdk::RuntimeError::Vm(crush_vm::VmError::Exit(code))) => {
+            std::process::exit(code)
         }
-        "crush" | "casm" => runtime.run(preflight.as_ref().expect("compiled above"))?,
-        // Defensive: the pre-check above already bails on unsupported
-        // extensions, so this arm is unreachable in normal flow. Use
-        // `bail!` rather than `unreachable!` so a contributor who adds
-        // a new extension to the pre-check but forgets to wire the
-        // dispatch sees a clean error message + an actionable TODO
-        // marker, instead of a release-build panic.
-        _ => anyhow::bail!(
-            "unsupported extension {ext} reached dispatch after pre-check (this is a bug)"
-        ),
+        other => other?,
     };
 
     print_result(&result);
@@ -596,6 +604,6 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
 }
 
 fn print_result(result: &VmResult) {
-    print!("{}", result.output);
+    // The output itself was streamed while the program ran.
     eprintln!("[steps={}, stack={}]", result.steps, result.stack.len());
 }

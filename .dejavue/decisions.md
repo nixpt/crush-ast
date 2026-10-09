@@ -816,3 +816,15 @@ One helper (scheduler::check_cap_permitted) for dispatch_cap and EXEC_LANG on bo
 Reason:
 Each @lang block is a fresh interpreter, so imports are written into every later block of the canonical language (LangBlock.imports filled by crush-lang-sdk prepare_polyglot_blocks; text built by crush_frontend::lang_imports in the compiler). Header shares guest line 1 (replaces a blank line or is prefixed with ';') so guest line K = .crush block_line+K-1; only a Python first line that opens a block gets its own line. The module's own name stays bound even with 'as' because the ticket's repro (use ... as m; math.sqrt) must work and Python rebinding is harmless; JS binds alias + derivable name via const. Rejected: runtime import session (no persistent interpreter, CRUSH-225), alias-only binding (breaks the repro), wiring polyglot_imports.rs (simulated sandbox model, no real semantics) - deleted.
 
+
+## 2026-10-09T10:00:00+00:00 — Scripting: sys.args/sys.exit are always-registered host caps; exit is a VmError, not main's return value; output streams through a per-step sink
+
+Reason:
+Shell use needed arguments, an exit status and live output. sys.args and sys.exit are registered by every HostCapsBuilder (no grant): arguments are input from the invoker like stdin, and ending the program reaches nothing outside the VM. sys.exit raises HostCapError::Exit -> VmError::Exit(code); crush-run exits with it silently. main's return value is NOT the exit status: examples return values (fibonacci returns 55) and the conformance corpus pins expect-exit: 0 for them. Streaming: run_scheduled_streaming hands the main thread's new output parts to a sink after every step, before acting on the step's error, so nothing printed before a failure is lost; only the scheduler loop changed (no sink threaded through execute_one/dispatch_cap). VmResult::output still holds everything. Void host caps (CRUSH-183) now push Null in the VM rather than teaching the compiler each host cap's arity.
+
+Rejected alternatives:
+- **main's return value as the exit status**: changes the exit status of existing programs that return values (fibonacci: 55) and contradicts the corpus's expect-exit: 0
+- **Pass argv as main's parameter**: needs a calling-convention change in every engine; a capability is one implementation every host can provide
+- **Thread a sink through execute_one/dispatch_cap**: three push sites and several signatures for the same effect as flushing after each step
+- **Compiler learns host-cap arity from effects::catalog()**: catalog depends on build features and hosts register their own caps; `let x = fs.write()` would still underflow
+

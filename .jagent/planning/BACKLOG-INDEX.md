@@ -63,6 +63,7 @@
 | 224–226 | s476 polyglot test (kai): `use @lang` imports dropped (224), cross-block session design (225), EXEC_LANG skips allowed_caps (226). |
 | 227–230 | PR #126 review follow-ups (claude): AOT C memory reclamation (227), dead fallbacks/error helpers (228), three float-to-text copies (229), VM `MAT_MUL` panic (230). 224–226 are #127's. |
 | 232–238 | 2026-10-09 use-case review (claude): agent capabilities — declare + preflight (232), pause-to-approve (233), AI-native fail closed (234), memory quota (235); polyglot — sandbox default (236), marshaling gaps (237), walker stubs + doc overclaims (238) |
+| 239–242 | 2026-10-09 scripting test drive (claude): stdin EOF vs blank line (239), fs.stat/append (240), stderr + run-summary noise (241), process.exec result type (242) |
 | 231 | s476 (kai): CI toolchain pin dead + 24 crates never run tests in CI |
 | 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
 

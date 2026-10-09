@@ -1,0 +1,9 @@
+// Write a two-line report to out/report.txt, then print it.
+fn main() {
+  fs.mkdir("out", true)
+  let files = len(fs.find("src", "*.rs"))
+  let logs = len(fs.list("logs"))
+  fs.write("out/report.txt", "rust files: " + files + "\nlogs: " + logs + "\n")
+  io.print(str.trim_end(fs.cat("out/report.txt")))
+  return 0
+}

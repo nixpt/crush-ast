@@ -258,7 +258,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-180** (P0, S): fs sandbox escape: writes follow a dangling symlink out of `--fs-root`. [ticket](tickets/CRUSH-180-fs-sandbox-dangling-symlink-escape.md)
 - [ ] **CRUSH-181** (P0, S): Default-on stdlib: unbounded allocations abort the host; negative/invalid args panic. [ticket](tickets/CRUSH-181-stdlib-unbounded-alloc-and-panics.md)
 - [ ] **CRUSH-182** (P1, XS): `--task` spawns arbitrary processes without `--process`; children outlive the VM. [ticket](tickets/CRUSH-182-task-start-spawns-without-process.md)
-- [ ] **CRUSH-183** (P1, S): Host caps that return nothing (`fs.write`, `akg.write`, `message_bus.*`, `task.stop`) fail with stack underflow. [ticket](tickets/CRUSH-183-unit-host-caps-stack-underflow.md)
+- [x] **CRUSH-183** (P1, S): Host caps that return nothing (`fs.write`, `akg.write`, `message_bus.*`, `task.stop`) fail with stack underflow. [ticket](tickets/CRUSH-183-unit-host-caps-stack-underflow.md)
 - [ ] **CRUSH-184** (P1, S): `crush-run`/`crush-walk-run` discard all prior output on a runtime error; walk-run exits 0. [ticket](tickets/CRUSH-184-cli-drops-output-on-runtime-error.md)
 - [ ] **CRUSH-185** (P2, M): Stdlib correctness sweep: `path.normalize`, `conv.to_bool`, `time.parse`, negative indices, arity, caps listing. [ticket](tickets/CRUSH-185-stdlib-correctness-sweep.md)
 - [ ] **CRUSH-186** (P2, XS): String `+` is limited by the *output* quota; wall-clock limit doesn't bound `process.exec`/loops. [ticket](tickets/CRUSH-186-plus-operator-uses-output-quota.md)
@@ -314,6 +314,10 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-236** (P1, S): Polyglot blocks run unsandboxed by default; pinned deps then silently ignored; sandbox untested in CI. [ticket](tickets/CRUSH-236-polyglot-sandbox-default.md)
 - [ ] **CRUSH-237** (P2, S): Polyglot marshaling misses comprehension inputs; analyzer failure is silent. [ticket](tickets/CRUSH-237-polyglot-marshaling-gaps.md)
 - [ ] **CRUSH-238** (P2, M): Walkers stub unsupported constructs as Null; walker/differential docs overclaim. [ticket](tickets/CRUSH-238-walkers-stub-unsupported-constructs.md)
+- [ ] **CRUSH-239** (P1, S): `io.read()` returns "" for a blank line and for EOF; scripts reading stdin stop early. [ticket](tickets/CRUSH-239-io-read-eof-vs-blank-line.md)
+- [ ] **CRUSH-240** (P2, S): No fs.stat / is_dir / append for scripts. [ticket](tickets/CRUSH-240-fs-file-type-size-append.md)
+- [ ] **CRUSH-241** (P2, XS): No stderr output; `[steps=…]` on every run; failing caps labelled `unknown capability`. [ticket](tickets/CRUSH-241-stderr-and-run-summary-noise.md)
+- [ ] **CRUSH-242** (P2, XS): `process.exec` returns a JSON string, not a value. [ticket](tickets/CRUSH-242-process-exec-returns-json-string.md)
 - [x] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
 
 ## M9 — Cross-project convergence & STDLIB restoration

@@ -385,6 +385,19 @@ pub fn run_scheduled(
     quotas: &Quotas,
     host_caps: Option<&HostCaps>,
 ) -> Result<VmResult, VmError> {
+    run_scheduled_streaming(program, quotas, host_caps, None)
+}
+
+/// [`run_scheduled`], also handing each piece of the main thread's output to
+/// `sink` as soon as the instruction that printed it has run, so a host can
+/// show it live, and output printed before an error isn't lost with it.
+/// `VmResult::output` still holds all of it.
+pub fn run_scheduled_streaming(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
+    mut sink: Option<&mut dyn FnMut(&str)>,
+) -> Result<VmResult, VmError> {
     let code = &program.code;
     let n = code.len();
     if n == 0 {
@@ -423,6 +436,8 @@ pub fn run_scheduled(
 
     let mut threads: Vec<GreenThread> = vec![GreenThread::new(start_ip)];
     let mut current: usize = 0;
+    // How many of the main thread's output parts `sink` has seen.
+    let mut streamed: usize = 0;
     let mut slice_remaining = SLICE_SIZE;
 
     loop {
@@ -480,7 +495,17 @@ pub fn run_scheduled(
         let action = execute_one(
             &mut threads[current], code, ip, next_ip, n, program, quotas,
             &declared, host_caps, &func_entry,
-        )?;
+        );
+        // Before acting on an error: what the program printed so far still goes out.
+        if current == 0
+            && let Some(sink) = sink.as_deref_mut()
+        {
+            for part in &threads[0].out_parts[streamed..] {
+                sink(part);
+            }
+            streamed = threads[0].out_parts.len();
+        }
+        let action = action?;
 
         match action {
             StepAction::Continue => {
@@ -1629,7 +1654,11 @@ fn dispatch_cap(
             return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
         }
         return match handler.call_with_deadline(args, quotas.max_wall_time_ms) {
-            Ok(v) => Ok(v),
+            // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
+            // leaves Null: the compiler only knows the built-ins' arity, so it pops
+            // the result of every host call, and `let x = fs.write(..)` stores one
+            // (CRUSH-183: these used to end every program with `stack underflow`).
+            Ok(v) => Ok(Some(v.unwrap_or(Value::Null))),
             Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
                 cap: cap.to_string(),
                 limit_ms: quotas.max_wall_time_ms,
@@ -1637,6 +1666,7 @@ fn dispatch_cap(
             Err(crate::host::HostCapError::Message(msg)) => {
                 Err(VmError::UnknownCap(format!("{cap}: {msg}")))
             }
+            Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
         };
     }
 

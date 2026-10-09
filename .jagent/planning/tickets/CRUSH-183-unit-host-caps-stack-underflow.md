@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-183 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-09) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -28,6 +28,15 @@ that was never pushed.
 
 ## Success criteria
 
-- [ ] Every host cap either always pushes a value (Null) or is known to the compiler
+- [x] Every host cap either always pushes a value (Null) or is known to the compiler
       as void, from one source of truth (e.g. `effects::catalog()`).
-- [ ] Test: each listed cap used as a statement runs to completion.
+- [x] Test: each listed cap used as a statement runs to completion.
+
+## Resolution
+
+Both VMs now push Null when a host capability returns nothing (`portable_vm.rs` and
+`scheduler.rs`, the host-cap arm of `dispatch_cap`), so the compiler's POP after every
+host call is always right and `let r = fs.write(..)` stores null. Built-ins (`io.print`)
+keep their known-void handling. `tests/void_host_caps_test.rs` covers fs.write (statement
+and value), akg.write, message_bus.publish/subscribe; `crush_run_test.rs` covers the CLI.
+task.stop is fixed by the same change but not tested (task.start fails separately).
