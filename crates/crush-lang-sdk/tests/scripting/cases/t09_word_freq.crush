@@ -1,0 +1,55 @@
+// stdin: text. Top 3 words by count (ties by word), "count word".
+fn main() {
+  let words = []
+  let counts = []
+  let line = io.read()
+  while line != "" {
+    let parts = str.split(line, " ")
+    let p = 0
+    while p < len(parts) {
+      let w = parts[p]
+      if w != "" {
+        let k = 0
+        let found = -1
+        while k < len(words) {
+          if words[k] == w { found = k }
+          k = k + 1
+        }
+        if found < 0 {
+          words.push(w)
+          counts.push(1)
+        } else {
+          counts[found] = counts[found] + 1
+        }
+      }
+      p = p + 1
+    }
+    line = io.read()
+  }
+  let printed = 0
+  while printed < 3 {
+    let best = -1
+    let k = 0
+    while k < len(words) {
+      if counts[k] > 0 {
+        if best < 0 {
+          best = k
+        } else {
+          if counts[k] > counts[best] {
+            best = k
+          } else {
+            if counts[k] == counts[best] {
+              if words[k] < words[best] { best = k }
+            }
+          }
+        }
+      }
+      k = k + 1
+    }
+    if best < 0 { return 0 }
+    io.print(counts[best] + " " + words[best])
+    counts[best] = 0
+    printed = printed + 1
+  }
+  return 0
+}

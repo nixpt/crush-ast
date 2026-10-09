@@ -435,6 +435,10 @@ impl Engine<'_> {
                 self.deadline_ms
             ))),
             Err(HostCapError::Message(m)) => Err(Failure::Error(m)),
+            // A tool step can't end the whole program.
+            Err(HostCapError::Exit(code)) => {
+                Err(Failure::Error(format!("tried to exit with status {code}")))
+            }
         }
     }
 }

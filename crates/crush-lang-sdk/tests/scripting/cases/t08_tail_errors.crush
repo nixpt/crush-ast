@@ -1,0 +1,18 @@
+// Last 2 lines of logs/app.log, then the number of ERROR lines across logs/*.log.
+fn main() {
+  let last = text.tail("logs/app.log", 2)
+  let i = 0
+  while i < len(last) {
+    io.print(last[i])
+    i = i + 1
+  }
+  let logs = fs.find("logs", "*.log")
+  let errors = 0
+  i = 0
+  while i < len(logs) {
+    errors = errors + len(text.grep("ERROR", logs[i]))
+    i = i + 1
+  }
+  io.print("errors: " + errors)
+  return 0
+}

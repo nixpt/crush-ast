@@ -41,6 +41,8 @@ pub struct HostCapsBuilder {
     codebase_index: Option<Arc<CrushIndex>>,
     /// CRUSH-32: register the `ai_native.*` capability surface (default off).
     ai_native: bool,
+    /// What `sys.args()` returns: the arguments the program was started with.
+    script_args: Vec<String>,
     /// CRUSH-158: host backends behind `ai_native.query` / `.agent_delegation`.
     query_provider: Option<Arc<dyn crate::ai_native::providers::QueryProvider>>,
     delegation_backend: Option<Arc<dyn crate::ai_native::providers::DelegationBackend>>,
@@ -50,6 +52,14 @@ impl HostCapsBuilder {
     /// Create a new builder with all capabilities disabled.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The arguments `sys.args()` returns (default: none). Like stdin, they
+    /// are input from whoever started the program, so `sys.args` is always
+    /// registered and needs no grant.
+    pub fn args(mut self, args: Vec<String>) -> Self {
+        self.script_args = args;
+        self
     }
 
     /// Grant polyglot execution for the given languages (canonical: "python", "javascript",
@@ -214,6 +224,9 @@ impl HostCapsBuilder {
         caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::new()));
         // Deprecated pre-rename name; removed in 0.5 (CRUSH-149).
         caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::deprecated_alias()));
+        // Scripting basics, always registered: neither reaches outside the VM.
+        caps.register(Box::new(SysArgsCap { args: self.script_args.clone() }));
+        caps.register(Box::new(SysExitCap));
         caps.grant_polyglot(&self.polyglot);
         if self.fs {
             // One sandbox, so `fs.cd` moves the working directory every
@@ -594,6 +607,54 @@ impl HostCap for FsListCap {
 // Environment helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// `sys.args()`: the program's arguments, as an array of strings.
+pub struct SysArgsCap {
+    args: Vec<String>,
+}
+
+impl HostCap for SysArgsCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec { name: "sys.args".to_string(), argc: Some(0), returns: true }
+    }
+
+    fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+        Ok(Some(Value::new_array(self.args.iter().cloned().map(Value::Str).collect())))
+    }
+}
+
+/// `sys.exit(code)`: stop the program with an exit status (0–255). Ends the
+/// run with `VmError::Exit`; output printed before it is kept.
+pub struct SysExitCap;
+
+impl HostCap for SysExitCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec { name: "sys.exit".to_string(), argc: Some(1), returns: false }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        match self.call_with_deadline(args, 0) {
+            Err(crush_vm::host::HostCapError::Message(m)) => Err(m),
+            _ => Err("sys.exit ends the program".to_string()),
+        }
+    }
+
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        _deadline_ms: u64,
+    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+        match &args[0] {
+            Value::Int(code) if (0..=255).contains(code) => {
+                Err(crush_vm::host::HostCapError::Exit(*code as i32))
+            }
+            other => Err(crush_vm::host::HostCapError::Message(format!(
+                "sys.exit expects an int from 0 to 255, got {}",
+                crate::caps::value_as_text(other)
+            ))),
+        }
+    }
+}
+
 pub struct EnvGetCap {
     overrides: HashMap<String, String>,
 }
@@ -805,6 +866,7 @@ macro_rules! sleep_cap {
                 sleep_ms($name, &args, None).map_err(|e| match e {
                     crush_vm::host::HostCapError::Message(m) => m,
                     crush_vm::host::HostCapError::Timeout => format!("{}: timed out", $name),
+                    crush_vm::host::HostCapError::Exit(code) => format!("{}: exit {code}", $name),
                 })
             }
 

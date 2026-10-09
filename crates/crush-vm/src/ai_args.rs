@@ -89,6 +89,7 @@ pub fn dispatch(
             limit_ms: deadline_ms,
         }),
         Err(HostCapError::Message(msg)) => Err(VmError::UnknownCap(format!("{gate}: {msg}"))),
+        Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }
 

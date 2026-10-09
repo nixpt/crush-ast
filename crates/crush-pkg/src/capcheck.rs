@@ -60,16 +60,9 @@ impl CheckReport {
     }
 }
 
-/// Does `entry` (a `[capabilities]` string) cover capability `cap`?
-pub fn covers(entry: &str, cap: &str) -> bool {
-    let base = entry.split(':').next().unwrap_or(entry).trim();
-    let family = base.strip_suffix(".*").unwrap_or(base);
-    base == cap
-        || (!family.is_empty()
-            && cap.len() > family.len()
-            && cap.starts_with(family)
-            && cap.as_bytes()[family.len()] == b'.')
-}
+/// Does `entry` (a `[capabilities]` string) cover capability `cap`? The
+/// same rule as `@capabilities` in source (CRUSH-243).
+pub use crush_lang_sdk::effects::covers;
 
 /// Compare `used` with `manifest`'s `[capabilities]`, and with its
 /// `platforms` (a `web` capsule gets a warning for every capability the

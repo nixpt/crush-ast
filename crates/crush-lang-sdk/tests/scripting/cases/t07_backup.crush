@@ -1,0 +1,9 @@
+// Copy docs/notes.md into backup/notes.md.bak (creating backup/), report.
+fn main() {
+  fs.mkdir("backup", true)
+  fs.cp("docs/notes.md", "backup/notes.md.bak")
+  if fs.exists("backup/notes.md.bak") {
+    io.print("backed up: " + text.wc("backup/notes.md.bak").lines + " lines")
+  }
+  return 0
+}

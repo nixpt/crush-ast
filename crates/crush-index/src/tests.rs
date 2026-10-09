@@ -14,6 +14,7 @@ fn program_with_manifest(purpose: &str, exports: &[&str]) -> Program {
             invariants: Vec::new(),
             related: Vec::new(),
             exhaustive_types: Vec::new(),
+            capabilities: None,
             changelog: Vec::new(),
         }),
         functions: HashMap::new(),

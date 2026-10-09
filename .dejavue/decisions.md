@@ -795,6 +795,16 @@ Rejected alternatives:
 - **Per-run arena only (status quo)**: O(n^2) memory for accumulation; the review on PR #126 showed realistic programs dying
 
 
+## 2026-10-09T08:00:00+00:00 — CRUSH-243: programs declare capabilities with @capabilities; the compiler holds code to the declaration and crush-run refuses missing grants before running
+
+Reason:
+For agent-written code the contract has to be checkable before anything runs. The compiler used to auto-declare every capability a program called, so the manifest carried no information. Now @capabilities [..] (or capabilities: in @module) is optional; when present, compile_crush_to_casm rejects any non-ambient capability no entry covers, checked on the bytecode with capabilities_used so names are the exact VM gate names. Separately, crush-run computes Runtime::missing_grants (not a VM built-in, not registered, or excluded by allowed_caps) and refuses with the full list before running, so a run never half-happens. Entry matching reuses crush-pkg check's covers() (moved to crush_lang_sdk::effects) so capsule.toml and source declarations mean the same thing. Undeclared programs keep compiling unchanged.
+
+Rejected alternatives:
+- **Make the declaration mandatory**: breaks every existing program and walker output; optional declaration plus the pre-run check gives the safety where it is wanted
+- **Reuse the old `capability fs readonly` syntax**: its families/modes (system, network connect) don't map to real capability names, and existing examples use it as decoration; a new annotation avoids silently changing their meaning
+- **Check the declaration against the compiler's own permission set**: that set holds method names (push) and misses builtins lowered later; the bytecode is after every lowering (CRUSH-170 decision)
+- **Pre-run check only when a declaration exists**: the missing-grant problem (failing mid-run after earlier effects) applies to every program; the check is cheap and only changes programs that would have failed anyway
 ## 2026-10-09T02:04:00-05:00 — CRUSH-226: EXEC_LANG enforces declared caps (no polyglot exemption); compiler declares polyglot.<lang>
 
 Reason:
@@ -805,4 +815,16 @@ One helper (scheduler::check_cap_permitted) for dispatch_cap and EXEC_LANG on bo
 
 Reason:
 Each @lang block is a fresh interpreter, so imports are written into every later block of the canonical language (LangBlock.imports filled by crush-lang-sdk prepare_polyglot_blocks; text built by crush_frontend::lang_imports in the compiler). Header shares guest line 1 (replaces a blank line or is prefixed with ';') so guest line K = .crush block_line+K-1; only a Python first line that opens a block gets its own line. The module's own name stays bound even with 'as' because the ticket's repro (use ... as m; math.sqrt) must work and Python rebinding is harmless; JS binds alias + derivable name via const. Rejected: runtime import session (no persistent interpreter, CRUSH-225), alias-only binding (breaks the repro), wiring polyglot_imports.rs (simulated sandbox model, no real semantics) - deleted.
+
+
+## 2026-10-09T10:00:00+00:00 — Scripting: sys.args/sys.exit are always-registered host caps; exit is a VmError, not main's return value; output streams through a per-step sink
+
+Reason:
+Shell use needed arguments, an exit status and live output. sys.args and sys.exit are registered by every HostCapsBuilder (no grant): arguments are input from the invoker like stdin, and ending the program reaches nothing outside the VM. sys.exit raises HostCapError::Exit -> VmError::Exit(code); crush-run exits with it silently. main's return value is NOT the exit status: examples return values (fibonacci returns 55) and the conformance corpus pins expect-exit: 0 for them. Streaming: run_scheduled_streaming hands the main thread's new output parts to a sink after every step, before acting on the step's error, so nothing printed before a failure is lost; only the scheduler loop changed (no sink threaded through execute_one/dispatch_cap). VmResult::output still holds everything. Void host caps (CRUSH-183) now push Null in the VM rather than teaching the compiler each host cap's arity.
+
+Rejected alternatives:
+- **main's return value as the exit status**: changes the exit status of existing programs that return values (fibonacci: 55) and contradicts the corpus's expect-exit: 0
+- **Pass argv as main's parameter**: needs a calling-convention change in every engine; a capability is one implementation every host can provide
+- **Thread a sink through execute_one/dispatch_cap**: three push sites and several signatures for the same effect as flushing after each step
+- **Compiler learns host-cap arity from effects::catalog()**: catalog depends on build features and hosts register their own caps; `let x = fs.write()` would still underflow
 

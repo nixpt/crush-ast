@@ -1,0 +1,10 @@
+// Every .md and .rs file, sorted.
+fn main() {
+  let all = text.sort(fs.find(".", "*.md") + fs.find(".", "*.rs"))
+  let i = 0
+  while i < len(all) {
+    io.print(all[i])
+    i = i + 1
+  }
+  return 0
+}

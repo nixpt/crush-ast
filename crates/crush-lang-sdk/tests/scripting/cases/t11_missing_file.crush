@@ -1,0 +1,10 @@
+// Read a missing file; on failure print a message and continue.
+fn main() {
+  try {
+    let c = fs.cat("nope.txt")
+  } catch e {
+    io.print("nope.txt missing, using default")
+  }
+  io.print("continued")
+  return 0
+}

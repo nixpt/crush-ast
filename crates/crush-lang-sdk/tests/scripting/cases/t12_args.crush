@@ -1,0 +1,10 @@
+// Print the script arguments, one per line, numbered.
+fn main() {
+  let args = sys.args()
+  let i = 0
+  while i < len(args) {
+    io.print(str.concat(i + 1) + ": " + args[i])
+    i = i + 1
+  }
+  return 0
+}

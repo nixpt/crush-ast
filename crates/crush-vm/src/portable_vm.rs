@@ -1736,7 +1736,11 @@ impl PortableVm {
                 });
             }
             return match handler.call_with_deadline(args, self.quotas.max_wall_time_ms) {
-                Ok(v) => Ok(v),
+                // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
+                // leaves Null: the compiler only knows the built-ins' arity, so it pops
+                // the result of every host call, and `let x = fs.write(..)` stores one
+                // (CRUSH-183: these used to end every program with `stack underflow`).
+                Ok(v) => Ok(Some(v.unwrap_or(Value::Null))),
                 Err(crate::host::HostCapError::Timeout) => Err(VmError::CapTimeout {
                     cap: cap.to_string(),
                     limit_ms: self.quotas.max_wall_time_ms,
@@ -1744,6 +1748,7 @@ impl PortableVm {
                 Err(crate::host::HostCapError::Message(msg)) => {
                     Err(VmError::UnknownCap(format!("{cap}: {msg}")))
                 }
+                Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
             };
         }
 

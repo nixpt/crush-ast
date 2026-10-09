@@ -38,7 +38,32 @@ pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
 pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
     let mut program = crush_frontend::parse_source(source)?;
     prepare_polyglot_blocks(&mut program);
-    crush_frontend::compile_cast_owned(program)
+    let declared = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
+    let casm = crush_frontend::compile_cast_owned(program)?;
+    if let Some(declared) = declared {
+        check_declared_capabilities(&casm, &declared)?;
+    }
+    Ok(casm)
+}
+
+/// CRUSH-243: a program that declares `@capabilities` may only use the
+/// ambient capabilities and the ones its entries cover. Checked on the
+/// bytecode, so the names are exactly the ones the VM will gate on
+/// (builtins lowered to capability calls, `polyglot.<lang>`, AI gates).
+fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) -> anyhow::Result<()> {
+    let used = crate::effects::used_by(&casm_to_vm(casm)?)?;
+    let undeclared = crate::effects::undeclared(&used, declared);
+    if undeclared.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "the program uses {} not declared in @capabilities: {}\n  \
+         add {} to @capabilities, or stop using {}",
+        if undeclared.len() == 1 { "a capability" } else { "capabilities" },
+        undeclared.join(", "),
+        if undeclared.len() == 1 { "it" } else { "them" },
+        if undeclared.len() == 1 { "it" } else { "them" },
+    )
 }
 
 /// Every path from Crush source to bytecode must run this — `crushc` used to

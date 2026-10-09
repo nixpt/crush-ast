@@ -358,13 +358,12 @@ io.print(fs.pwd())
     assert!(!output.status.success(), "cd above the root must fail");
     assert!(stderr.contains("escapes sandbox"), "stderr: {stderr}");
 
+    // Without --fs the run is refused before anything executes (CRUSH-243).
     let output = run_crush_run(&["run", &ok]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
-    assert!(
-        stderr.contains("unknown capability: fs.mkdir"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("nothing was run"), "stderr: {stderr}");
+    assert!(stderr.contains("--fs: ") && stderr.contains("fs.mkdir"), "stderr: {stderr}");
 }
 
 #[test]
@@ -402,4 +401,169 @@ fn crush_run_caps_json_lists_effects_and_grants() {
         list.iter().all(|c| c["effects"].is_array()),
         "every capability declares its effects"
     );
+}
+
+// ── CRUSH-243: declared capabilities, checked before running ───────────────
+
+fn temp_program(body: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool.crush");
+    std::fs::write(&path, body).unwrap();
+    let path = path.to_str().unwrap().to_string();
+    (dir, path)
+}
+
+const TOOL: &str = r#"@capabilities [fs.cat, time.now]
+fn main() {
+  io.print("starting")
+  let t = time.now()
+  io.print(str.len(fs.cat("tool.crush")))
+  return 0
+}
+"#;
+
+#[test]
+fn crush_run_caps_file_shows_what_a_program_needs_without_running_it() {
+    let (_dir, path) = temp_program(TOOL);
+    let output = run_crush_run(&["caps", &path]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.contains("declares: fs.cat, time.now"), "{stdout}");
+    assert!(stdout.contains("--fs: fs.cat"), "{stdout}");
+    assert!(stdout.contains("--time: time.now"), "{stdout}");
+    assert!(stdout.contains("also uses (ambient): io.print"), "{stdout}");
+    assert!(!stdout.contains("starting"), "caps must not run the program: {stdout}");
+
+    let json = run_crush_run(&["caps", "--json", &path]);
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
+    assert_eq!(v["declared"], serde_json::json!(["fs.cat", "time.now"]));
+    let fs_cat = v["uses"].as_array().unwrap().iter().find(|c| c["name"] == "fs.cat").unwrap();
+    assert_eq!(fs_cat["grant"], "--fs");
+    assert_eq!(fs_cat["ambient"], false);
+}
+
+#[test]
+fn crush_run_refuses_ungranted_capabilities_before_running_anything() {
+    let (dir, path) = temp_program(TOOL);
+    let output = run_crush_run(&["run", &path]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(!stdout.contains("starting"), "nothing may run: {stdout}");
+    assert!(stderr.contains("[capabilities]"), "{stderr}");
+    assert!(stderr.contains("--fs: fs.cat") && stderr.contains("--time: time.now"), "{stderr}");
+
+    // One grant short: still refused, naming only the missing one.
+    let output = run_crush_run(&["run", "--fs", &path]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("--time: time.now") && !stderr.contains("fs.cat"), "{stderr}");
+
+    let root = dir.path().to_str().unwrap();
+    let output = run_crush_run(&["run", "--fs", "--fs-root", root, "--time", &path]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.starts_with("starting\n"), "{stdout}");
+}
+
+#[test]
+fn crush_run_rejects_a_capability_the_program_did_not_declare() {
+    let (_dir, path) = temp_program(
+        "@capabilities [fs.cat]\nfn main() { io.print(env.get(\"HOME\")); return 0 }\n",
+    );
+    let output = run_crush_run(&["run", "--fs", "--env", &path]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("[compile]"), "{stderr}");
+    assert!(stderr.contains("not declared in @capabilities: env.get"), "{stderr}");
+}
+
+#[test]
+fn crush_run_empty_declaration_allows_only_ambient_capabilities() {
+    let (_dir, pure) = temp_program("@capabilities []\nfn main() { io.print(str.len(\"abc\")); return 0 }\n");
+    let output = run_crush_run(&["run", &pure]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("3\n"));
+
+    let (_dir, poly) = temp_program("@capabilities []\nfn main() { @python { x = 1 } return 0 }\n");
+    let output = run_crush_run(&["run", "--polyglot", &poly]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not declared in @capabilities: polyglot.python"), "{stderr}");
+}
+
+// ── Scripting basics: arguments, exit status, output that survives errors ───
+
+#[test]
+fn crush_run_passes_script_arguments_to_sys_args() {
+    let (_dir, path) = temp_program(
+        "fn main() {\n  let a = sys.args()\n  io.print(len(a))\n  io.print(a[1])\n  io.print(a[2])\n  return 0\n}\n",
+    );
+    // Flags may follow the arguments; `--` passes one that starts with `-`.
+    let output = run_crush_run(&["run", &path, "one", "two words", "--max-steps", "1000", "--", "--three"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "3\ntwo words\n--three\n");
+}
+
+#[test]
+fn crush_run_exits_with_the_status_given_to_sys_exit() {
+    let (_dir, path) = temp_program(
+        "fn main() {\n  io.print(\"before\")\n  sys.exit(3)\n  io.print(\"after\")\n  return 0\n}\n",
+    );
+    let output = run_crush_run(&["run", &path]);
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "before\n");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("[runtime]"));
+
+    let (_dir, bad) = temp_program("fn main() { sys.exit(300) }\n");
+    let output = run_crush_run(&["run", &bad]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("from 0 to 255"));
+}
+
+#[test]
+fn crush_run_keeps_output_printed_before_a_runtime_error() {
+    let (dir, path) = temp_program(
+        "fn main() {\n  io.print(\"step 1\")\n  io.print(\"step 2\")\n  let x = fs.cat(\"missing.txt\")\n  return 0\n}\n",
+    );
+    let root = dir.path().to_str().unwrap();
+    let output = run_crush_run(&["run", "--fs", "--fs-root", root, &path]);
+    assert!(!output.status.success());
+    // It used to print nothing: output was only written once the program ended.
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "step 1\nstep 2\n");
+}
+
+#[test]
+fn crush_run_streams_output_while_the_program_runs() {
+    use std::io::{BufRead, BufReader};
+    let (_dir, path) = temp_program(
+        "fn main() {\n  io.print(\"first\")\n  time.sleep(1500)\n  io.print(\"second\")\n  return 0\n}\n",
+    );
+    let mut child = Command::new(crush_run_bin())
+        .args(["run", "--time", &path])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn crush-run");
+    let start = std::time::Instant::now();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    assert_eq!(lines.next().unwrap().unwrap(), "first");
+    let first_at = start.elapsed();
+    assert_eq!(lines.next().unwrap().unwrap(), "second");
+    child.wait().unwrap();
+    assert!(
+        first_at < std::time::Duration::from_millis(1200),
+        "the first line arrived after {first_at:?}, i.e. only when the program ended"
+    );
+}
+
+#[test]
+fn crush_run_fs_write_as_a_statement_and_as_a_value() {
+    let (dir, path) = temp_program(
+        "fn main() {\n  fs.write(\"a.txt\", \"one\")\n  let r = fs.write(\"b.txt\", \"two\")\n  io.print(r)\n  io.print(fs.cat(\"a.txt\") + fs.cat(\"b.txt\"))\n  return 0\n}\n",
+    );
+    let root = dir.path().to_str().unwrap();
+    let output = run_crush_run(&["run", "--fs", "--fs-root", root, &path]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "null\nonetwo\n");
 }

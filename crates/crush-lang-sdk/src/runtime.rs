@@ -311,11 +311,42 @@ impl Runtime {
     }
 
     /// Run a pre-loaded [`Program`].
+    /// Capabilities `program` can request that this runtime won't grant: not
+    /// a VM built-in and not registered, or excluded by
+    /// [`Quotas::allowed_caps`]. Call it before [`run`](Self::run) to refuse
+    /// agent-written code up front instead of mid-run (CRUSH-243).
+    pub fn missing_grants(&self, program: &Program) -> anyhow::Result<Vec<crate::effects::MissingGrant>> {
+        let mut missing = crate::effects::missing_grants(program, self.host_caps.as_ref())?;
+        if let Some(allowed) = &self.quotas.allowed_caps {
+            for capability in crate::effects::used_by(program)? {
+                let known = missing.iter().any(|m| m.capability == capability);
+                if !known && !crush_vm::capabilities().contains_key(capability.as_str())
+                    && !allowed.iter().any(|a| a == &capability)
+                {
+                    missing.push(crate::effects::MissingGrant { capability, grant: None });
+                }
+            }
+        }
+        Ok(missing)
+    }
+
     pub fn run(&self, program: &Program) -> Result<VmResult, RuntimeError> {
         Ok(run_with_caps(
             program,
             &self.quotas,
             self.host_caps.as_ref(),
+        )?)
+    }
+
+    /// [`run`](Self::run), handing each piece of output to `sink` as soon as the
+    /// program prints it. A CLI writes it straight to stdout, so long-running
+    /// scripts show progress and nothing printed before an error is lost.
+    pub fn run_streaming(&self, program: &Program, sink: &mut dyn FnMut(&str)) -> Result<VmResult, RuntimeError> {
+        Ok(crush_vm::vm::run_with_caps_streaming(
+            program,
+            &self.quotas,
+            self.host_caps.as_ref(),
+            sink,
         )?)
     }
 
