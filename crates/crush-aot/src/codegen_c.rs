@@ -470,8 +470,9 @@ static Value _add(Value a, Value b) {
         CrushArray* la = &_arrays[a.array_idx];
         CrushArray* ra = &_arrays[b.array_idx];
         _array_reserve(&_arrays[id], (int64_t)la->len + ra->len);
-        memcpy(_arrays[id].data, la->data, sizeof(Value) * (size_t)la->len);
-        memcpy(_arrays[id].data + la->len, ra->data, sizeof(Value) * (size_t)ra->len);
+        // An empty array may have no data block; memcpy with NULL is undefined even for 0 bytes.
+        if (la->len > 0) memcpy(_arrays[id].data, la->data, sizeof(Value) * (size_t)la->len);
+        if (ra->len > 0) memcpy(_arrays[id].data + la->len, ra->data, sizeof(Value) * (size_t)ra->len);
         _arrays[id].len = la->len + ra->len;
         return mk_array(id);
     }
@@ -508,6 +509,8 @@ static Value _mul(Value a, Value b) {
 static Value _div(Value a, Value b) {
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         if (b.i == 0) _crush_arith_error("division by zero");
+        // INT64_MIN / -1 overflows (SIGFPE on x86); report it like the Rust backend.
+        if (a.i == INT64_MIN && b.i == -1) _crush_arith_error("arithmetic overflow");
         return mk_int(a.i / b.i);
     }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
@@ -518,6 +521,7 @@ static Value _div(Value a, Value b) {
 static Value _mod(Value a, Value b) {
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         if (b.i == 0) _crush_arith_error("division by zero");
+        if (a.i == INT64_MIN && b.i == -1) _crush_arith_error("arithmetic overflow");
         return mk_int(a.i % b.i);
     }
     double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
@@ -631,10 +635,10 @@ fn emit_c_function(
     out.push_str("}\n\n");
 }
 
+/// C identifier body for a Crush function (emitted as `fn_<this>`); same scheme as
+/// the Rust backend.
 fn sanitize_fn_name(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
-        .collect()
+    crate::names::mangle(name)
 }
 
 fn infer_types(body: &[casm::Instruction], explicit_hints: Option<&HashMap<String, String>>) -> HashMap<String, String> {
@@ -926,10 +930,20 @@ fn emit_c_instr(
                             int arr_id = _alloc_array();
                             _push(arr_id >= 0 ? mk_array(arr_id) : mk_null());
                         }} else {{
+                            // Every row of l must be an array of cols_a values, r must have
+                            // cols_a rows of cols_b values. Array data is sized to its length,
+                            // so a ragged or mismatched input would read past the block.
                             int rows_a = la->len;
-                            int cols_a = la->data[0].tag == TAG_ARRAY ? _arrays[la->data[0].array_idx].len : 0;
-                            int cols_b = ra->data[0].tag == TAG_ARRAY ? _arrays[ra->data[0].array_idx].len : 0;
-                            
+                            int cols_a = la->data[0].tag == TAG_ARRAY ? _arrays[la->data[0].array_idx].len : -1;
+                            int cols_b = ra->data[0].tag == TAG_ARRAY ? _arrays[ra->data[0].array_idx].len : -1;
+                            if (cols_a < 0 || cols_b < 0 || ra->len != cols_a) _crush_arith_error("mat_mul: shape mismatch");
+                            for (int i=0; i<rows_a; i++) {{
+                                if (la->data[i].tag != TAG_ARRAY || _arrays[la->data[i].array_idx].len != cols_a) _crush_arith_error("mat_mul: shape mismatch");
+                            }}
+                            for (int k=0; k<cols_a; k++) {{
+                                if (ra->data[k].tag != TAG_ARRAY || _arrays[ra->data[k].array_idx].len != cols_b) _crush_arith_error("mat_mul: shape mismatch");
+                            }}
+
                             int out_id = _alloc_array();
                             if (out_id >= 0) {{
                                 _array_reserve(&_arrays[out_id], rows_a);
@@ -1285,7 +1299,17 @@ const char* crush_run(void) {
         case TAG_FLOAT: snprintf(_buf, sizeof(_buf), "%s", _float_text(result.f, __tb)); break;
         case TAG_BOOL:  snprintf(_buf, sizeof(_buf), "%s", result.b ? "true" : "false"); break;
         case TAG_NULL:  snprintf(_buf, sizeof(_buf), "null"); break;
-        case TAG_STRING: snprintf(_buf, sizeof(_buf), "\"%s\"", result.s); break;
+        case TAG_STRING: {
+            // A string can be any length, so it gets its own buffer, valid until
+            // the next crush_run() (a fixed 512 bytes truncated longer results).
+            static char* _str_result = NULL;
+            size_t __n = strlen(result.s) + 3;
+            char* __r = (char*)realloc(_str_result, __n);
+            if (!__r) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+            _str_result = __r;
+            snprintf(_str_result, __n, "\"%s\"", result.s);
+            return _str_result;
+        }
         case TAG_ARRAY:  snprintf(_buf, sizeof(_buf), "[array#%d len=%d]", result.array_idx, result.array_idx >= 0 && result.array_idx < _array_count ? _arrays[result.array_idx].len : 0); break;
         case TAG_OBJECT: snprintf(_buf, sizeof(_buf), "[object#%d fields=%d]", result.obj_idx, result.obj_idx >= 0 && result.obj_idx < _object_count ? _objects[result.obj_idx].field_count : 0); break;
         default:         snprintf(_buf, sizeof(_buf), "null"); break;

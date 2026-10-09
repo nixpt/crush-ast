@@ -413,10 +413,7 @@ fn emit_function(
 /// keywords (`loop`, `type`, `match`) or colliding with the runtime helpers emitted
 /// above (`bin_add`, `negate`, ...), either of which broke the build (CRUSH-214).
 fn sanitize_fn_name(name: &str) -> String {
-    let body: String = name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
-        .collect();
-    format!("crush_fn_{body}")
+    format!("crush_fn_{}", crate::names::mangle(name))
 }
 
 // ── Instruction body emission ───────────────────────────────────────────────
