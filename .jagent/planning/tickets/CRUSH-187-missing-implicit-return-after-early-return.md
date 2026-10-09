@@ -39,6 +39,13 @@ print("ok")
 `call depth quota exceeded (256)` — layout varies, see CRUSH-188). Expected
 `after`, `ok`. Even `fn f(c){ if c { return } }` fails.
 
+Per engine (`fn early(x) { if x { return 1 } }  print(early(false))`): interp
+`call depth quota exceeded (256)`; FastVM hangs; JIT `flag=1` or a `JIT stack overflow`
+panic; AOT prints `null` (correct). awesome-crush `games/pong.crush`'s `pong_tick` CASM
+ends `CALL pong_tick; POP` with no `RET` (with `--max-call-depth 100000` you get #92's
+original `stack underflow`). The in-repo `examples/crush/pong.crush` is a different
+variant and finishes with a larger `--max-steps`.
+
 ## Where
 
 `crates/crush-frontend/src/compiler.rs:~347-352` (`ensure_return`:
