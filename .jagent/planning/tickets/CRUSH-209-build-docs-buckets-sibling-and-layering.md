@@ -31,7 +31,7 @@
 
 ## Success criteria
 
-- [ ] README "Build" section documents the sibling clone (or depend on the published
-      `crush-buckets` crate by version).
+- [x] README "Building from Source" documents the sibling clone (done in the filing PR); longer term,
+      depend on the published `crush-buckets` crate by version.
 - [ ] `crush-bucketspike` removed or excluded.
 - [ ] `cargo tree -p crush-cast` doesn't contain `crush-vm`.

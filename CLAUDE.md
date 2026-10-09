@@ -47,7 +47,7 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo run --bin crushc -- --help
-cargo run --bin crush-run -- my-program.crush
+cargo run --bin crush-run -- run my-program.crush
 ```
 
 Version is automatic (`bump-version` — every push to `main` bumps + tags from

@@ -72,7 +72,7 @@ called out.
 cargo build --workspace
 cargo test --workspace                    # verified 2026-08-21: no exclusions needed
 cargo clippy --workspace --all-targets
-cargo run --bin crushc -- --help          # or: cargo run --bin crush-run -- my-program.crush
+cargo run --bin crushc -- --help          # or: cargo run --bin crush-run -- run my-program.crush
 ```
 
 A feature isn't done when `cargo test` passes — it's done when it also
