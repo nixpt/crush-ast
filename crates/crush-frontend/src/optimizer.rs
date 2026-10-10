@@ -41,6 +41,13 @@ impl Optimizer {
         stmt: Statement,
         consts: &mut HashMap<String, Expression>,
     ) -> Vec<Statement> {
+        // A match arm or lambda body inside this statement's expressions may
+        // assign a variable; nothing known about it survives the statement.
+        let mut expr_mutated = HashSet::new();
+        Self::collect_mutated_in_stmt_exprs(&stmt, &mut expr_mutated);
+        for var in expr_mutated {
+            consts.remove(&var);
+        }
         match stmt {
             Statement::VarDecl {
                 name,
@@ -464,8 +471,83 @@ impl Optimizer {
         }
     }
 
+    /// Variables a statement's *expressions* may assign: a `match` arm body
+    /// or a lambda body is a statement list nested inside an expression, so
+    /// an assignment there changes what a name holds after the enclosing
+    /// statement. Without this, `let r = "a"; match x { 2 => { r = "b" } };
+    /// print(r)` folded to `print("a")` (GitHub issue #147).
+    fn collect_mutated_in_stmt_exprs(stmt: &Statement, out: &mut HashSet<String>) {
+        match stmt {
+            Statement::VarDecl { value: v, .. }
+            | Statement::Assign { value: v, .. }
+            | Statement::Export { value: v, .. }
+            | Statement::ExprStmt { expr: v, .. }
+            | Statement::Return { value: Some(v), .. }
+            | Statement::Throw { value: v, .. } => Self::collect_mutated_in_expr(v, out),
+            Statement::If { condition, .. } => Self::collect_mutated_in_expr(condition, out),
+            Statement::While { condition, .. } => Self::collect_mutated_in_expr(condition, out),
+            Statement::For { iterable, .. } => Self::collect_mutated_in_expr(iterable, out),
+            Statement::SetField { target, value, .. } => {
+                Self::collect_mutated_in_expr(target, out);
+                Self::collect_mutated_in_expr(value, out);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_mutated_in_expr(expr: &Expression, out: &mut HashSet<String>) {
+        match expr {
+            Expression::Match {
+                expression, arms, ..
+            } => {
+                Self::collect_mutated_in_expr(expression, out);
+                for arm in arms {
+                    Self::collect_mutated_vars(&arm.body, out);
+                }
+            }
+            Expression::Lambda { body, .. } => Self::collect_mutated_vars(body, out),
+            Expression::BinaryOp { left, right, .. } => {
+                Self::collect_mutated_in_expr(left, out);
+                Self::collect_mutated_in_expr(right, out);
+            }
+            Expression::Range { start, end, .. } => {
+                Self::collect_mutated_in_expr(start, out);
+                Self::collect_mutated_in_expr(end, out);
+            }
+            Expression::UnaryOp { operand: e, .. }
+            | Expression::GetField { target: e, .. }
+            | Expression::Await { expression: e, .. }
+            | Expression::DomQuery { selector: e, .. } => Self::collect_mutated_in_expr(e, out),
+            Expression::Index { target, index, .. } => {
+                Self::collect_mutated_in_expr(target, out);
+                Self::collect_mutated_in_expr(index, out);
+            }
+            Expression::Call { args: es, .. }
+            | Expression::CapabilityCall { args: es, .. }
+            | Expression::VectorMath { args: es, .. }
+            | Expression::Spawn { args: es, .. }
+            | Expression::Pipeline { segments: es, .. }
+            | Expression::ArrayLiteral { elements: es, .. }
+            | Expression::TupleLiteral { elements: es, .. }
+            | Expression::ListLiteral { elements: es, .. }
+            | Expression::VectorLiteral { elements: es, .. }
+            | Expression::SetLiteral { elements: es, .. } => {
+                for e in es {
+                    Self::collect_mutated_in_expr(e, out);
+                }
+            }
+            Expression::ObjectLiteral { properties, .. } => {
+                for (_, v) in properties {
+                    Self::collect_mutated_in_expr(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn collect_mutated_vars(stmts: &[Statement], out: &mut HashSet<String>) {
         for stmt in stmts {
+            Self::collect_mutated_in_stmt_exprs(stmt, out);
             match stmt {
                 Statement::Assign { target, .. } => {
                     out.insert(target.clone());

@@ -675,27 +675,30 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         }
     }
 
-    // Post-process: suppress POP after non-returning CAP_CALL
+    // Post-process: restore the frontend's stack discipline around a
+    // non-returning CAP_CALL. The frontend compiles every expression as
+    // leaving exactly one value, but a void capability (`io.print`, ...)
+    // pushes nothing. When the very next line is the statement's POP, drop
+    // it; otherwise the value is consumed somewhere else (a match arm's
+    // `JMP` to a shared POP, a STORE, a RET), so push the null the
+    // expression stands for. Only dropping an adjacent POP underflowed the
+    // stack when a void call ended a match arm (GitHub issue #143).
     let mut cleaned: Vec<String> = Vec::new();
-    let mut suppress_next_pop: Option<bool> = None;
-    for line in &lines {
-        let trimmed = line.trim();
-        if let Some(cap_name) = trimmed.strip_prefix("CAP_CALL ") {
+    let mut i = 0;
+    while i < lines.len() {
+        let line = &lines[i];
+        cleaned.push(line.clone());
+        if let Some(cap_name) = line.trim().strip_prefix("CAP_CALL ") {
             let name = cap_name.split('"').nth(1).unwrap_or("");
-            suppress_next_pop = Some(!cap_returns_value(name));
-            cleaned.push(line.clone());
-        } else if trimmed == "POP" {
-            if let Some(suppress) = suppress_next_pop.take()
-                && suppress
-            {
-                continue;
+            if !cap_returns_value(name) {
+                if lines.get(i + 1).map(|l| l.trim()) == Some("POP") {
+                    i += 1;
+                } else {
+                    cleaned.push("    PUSH_NULL".to_string());
+                }
             }
-            suppress_next_pop = None;
-            cleaned.push(line.clone());
-        } else {
-            suppress_next_pop = None;
-            cleaned.push(line.clone());
         }
+        i += 1;
     }
 
     let assembly = cleaned.join("\n");
