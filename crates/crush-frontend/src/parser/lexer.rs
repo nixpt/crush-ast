@@ -128,6 +128,7 @@ pub enum Token {
     Semicolon(SourceLocation), // ;
     Dot(SourceLocation),       // .
     DotDot(SourceLocation),    // ..
+    DotDotEq(SourceLocation),  // ..=
     Question(SourceLocation),  // ?
 
     // Special
@@ -218,6 +219,7 @@ impl Token {
             Token::Semicolon(_) => "`;`".to_string(),
             Token::Dot(_) => "`.`".to_string(),
             Token::DotDot(_) => "`..`".to_string(),
+            Token::DotDotEq(_) => "`..=`".to_string(),
             Token::Question(_) => "`?`".to_string(),
 
             Token::Newline(_) => "newline".to_string(),
@@ -873,7 +875,12 @@ impl Lexer {
                 self.advance();
                 if self.peek() == Some('.') {
                     self.advance();
-                    Ok(Token::DotDot(location))
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        Ok(Token::DotDotEq(location))
+                    } else {
+                        Ok(Token::DotDot(location))
+                    }
                 } else {
                     Ok(Token::Dot(location))
                 }
