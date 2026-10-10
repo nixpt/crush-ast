@@ -828,3 +828,12 @@ Rejected alternatives:
 - **Thread a sink through execute_one/dispatch_cap**: three push sites and several signatures for the same effect as flushing after each step
 - **Compiler learns host-cap arity from effects::catalog()**: catalog depends on build features and hosts register their own caps; `let x = fs.write()` would still underflow
 
+## 2026-10-09T22:50:00+00:00 — crush-web registers crush-run's no-grant capability set (stdlib, sys.*, caison.parse); stdlib is a default-on feature; sys.exit is a finished run with exit_code
+
+Reason:
+The browser runtime ran programs with no host capabilities, so pure stdlib calls (math.sqrt, system.path_normalize) that need no grant natively failed in the browser. browser_caps() builds the same HostCapsBuilder crush-run uses with no grant flags (stdlib(true).args(..)): one implementation, every backend calls into it. Nothing outside the VM is added: fs/time/env/process/net have no browser source and stay unregistered (their up-front refusal is CRUSH-245). The stdlib doubles the gzipped module (~0.5 -> ~0.95 MB, mostly regex), so crush-web has a default-on `stdlib` feature that pages can drop. sys.exit arrives as VmError::Exit; the browser reports it as exit_code on a finished run (Session status done, execute_with ok only for 0), keeping earlier output; execute() collects output through run_with_caps_streaming's sink for that reason.
+
+Rejected alternatives:
+- **Register only math.\***: picks a subset by hand; the browser would drift from crush-run again as the stdlib grows
+- **Stdlib always compiled in**: a page that only needs the core language pays ~450 KB gzipped for regex it never uses
+- **Report sys.exit as an error/throw**: an exit status is the program's chosen result, not a failure; throwing from execute() would also discard the output printed before it

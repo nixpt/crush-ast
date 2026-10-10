@@ -1,4 +1,6 @@
 /target/
+# crush-web is its own workspace (excluded from the root one), so it has its own target dir.
+/crates/crush-web/target/
 __pycache__/
 
 # dejavue: local-only artifacts

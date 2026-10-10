@@ -318,6 +318,12 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-240** (P2, S): No fs.stat / is_dir / append for scripts. [ticket](tickets/CRUSH-240-fs-file-type-size-append.md)
 - [ ] **CRUSH-241** (P2, XS): No stderr output; `[steps=…]` on every run; failing caps labelled `unknown capability`. [ticket](tickets/CRUSH-241-stderr-and-run-summary-noise.md)
 - [ ] **CRUSH-242** (P2, XS): `process.exec` returns a JSON string, not a value. [ticket](tickets/CRUSH-242-process-exec-returns-json-string.md)
+- [x] **CRUSH-244** (P2, S): `crush-web` registered no capabilities: `math.*`/`str.*`/`system.*`/`sys.*` missing in the browser. [ticket](tickets/CRUSH-244-crush-web-no-stdlib.md)
+- [ ] **CRUSH-245** (P2, S): `crush-web` has no grant preflight; programs fail partway with "unknown capability". [ticket](tickets/CRUSH-245-crush-web-no-grant-preflight.md)
+- [ ] **CRUSH-246** (P1, L): WASM walker keeps only `call` instructions; all computation dropped. [ticket](tickets/CRUSH-246-wasm-walker-keeps-only-calls.md)
+- [ ] **CRUSH-247** (P2, S): `.wasm` input read as UTF-8 by `crush-walk-run`/`crush-aotc`; `LanguageAdapter::walk` takes `&str`. [ticket](tickets/CRUSH-247-wasm-binary-read-as-utf8.md)
+- [ ] **CRUSH-248** (P2, XS): WASM walker: exported functions renamed but called as `func_N`. [ticket](tickets/CRUSH-248-wasm-walker-export-name-mismatch.md)
+- [ ] **CRUSH-249** (P3, XS): `crush-walk-run` exits 0 when the program fails. [ticket](tickets/CRUSH-249-crush-walk-run-exits-zero-on-error.md)
 - [x] **CRUSH-231** (P1, S): CI: the `toolchain: "1.85"` pin is dead (overridden by `rust-toolchain.toml` stable; `rust-version` is 1.95), and 24 of 42 crates — incl. crush-aot's new parity tests — are compile-only (`--no-run`). [ticket](tickets/CRUSH-231-ci-toolchain-pin-and-untested-crates.md)
 - [x] **CRUSH-232** (P2, S): `casm_to_vm` total over the CASM `OpCode` set: 38 unsupported → 5 (allowlisted with reasons), `spawn` lowering fixed, 7 NOP stubs now pinned. [ticket](tickets/CRUSH-232-casm-cvm1-lowering-completeness.md)
 

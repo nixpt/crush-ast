@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush-web`: the browser gets the standard library, `sys.args` and
+  `sys.exit` (CRUSH-244).** Every entry point now registers what `crush-run`
+  gives a program with no grant flags: `math.*`, `str.*`, `system.*` and the
+  rest of the stdlib, `sys.args` (answering a new `args` option), `sys.exit`
+  and `caison.parse`. Before, the browser had no capabilities at all, so
+  `examples/crush/math_test.crush` and `test_sbl.crush` failed there while
+  passing natively. `sys.exit(n)` is reported as `exit_code` with earlier
+  output kept (a `Session` ends `done`; `execute_with` sets `ok: false` for a
+  non-zero code). Nothing outside the VM (`fs`, `time`, `env`, `process`,
+  `net`) is registered. The stdlib roughly doubles the module (~0.5 → ~0.95 MB
+  gzipped); the new default-on `stdlib` feature leaves it out.
 - **`EXEC_LANG` checks declared caps and `allowed_caps` (CRUSH-226).** A
   `@lang` block's `polyglot.<lang>` gate now passes the same two checks as
   every `CAP_CALL`: an embedder's `Quotas::allowed_caps` that leaves it out
