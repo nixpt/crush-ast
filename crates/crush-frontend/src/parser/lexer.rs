@@ -337,6 +337,18 @@ impl Lexer {
     fn read_number(&mut self) -> Result<Token, ParseError> {
         let start_line = self.line;
         let start_col = self.col;
+
+        // Check for hex (0x) or binary (0b) prefix
+        if self.peek() == Some('0') {
+            if let Some(next) = self.peek_ahead(1) {
+                if next == 'x' || next == 'X' {
+                    return self.read_radix_number(16, start_line, start_col);
+                } else if next == 'b' || next == 'B' {
+                    return self.read_radix_number(2, start_line, start_col);
+                }
+            }
+        }
+
         let mut value = String::new();
         let mut is_float = false;
 
@@ -391,6 +403,57 @@ impl Lexer {
                     value,
                 }),
             }
+        }
+    }
+
+    /// Read a hex (0x) or binary (0b) integer literal. The `0x`/`0b` prefix
+    /// has not been consumed yet when this is called.
+    fn read_radix_number(
+        &mut self,
+        radix: u32,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token, ParseError> {
+        // Consume the '0' and the 'x'/'b' prefix
+        self.advance();
+        self.advance();
+
+        let mut value = String::new();
+        while let Some(ch) = self.peek() {
+            let valid = match radix {
+                16 => ch.is_ascii_hexdigit(),
+                2 => ch == '0' || ch == '1',
+                _ => false,
+            };
+            if valid {
+                value.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if value.is_empty() {
+            return Err(ParseError::InvalidNumber {
+                line: start_line,
+                col: start_col,
+                value: format!("0{}", if radix == 16 { "x" } else { "b" }),
+            });
+        }
+
+        match i64::from_str_radix(&value, radix) {
+            Ok(i) => Ok(Token::Int(
+                i,
+                SourceLocation {
+                    line: start_line,
+                    col: start_col,
+                },
+            )),
+            Err(_) => Err(ParseError::InvalidNumber {
+                line: start_line,
+                col: start_col,
+                value,
+            }),
         }
     }
 
