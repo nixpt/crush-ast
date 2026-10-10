@@ -164,6 +164,7 @@ impl Parser {
             Token::Semicolon(loc) => (loc.line, loc.col),
             Token::Dot(loc) => (loc.line, loc.col),
             Token::DotDot(loc) => (loc.line, loc.col),
+            Token::DotDotEq(loc) => (loc.line, loc.col),
             Token::Question(loc) => (loc.line, loc.col),
             Token::Newline(loc) => (loc.line, loc.col),
             Token::EOF(loc) => (loc.line, loc.col),
@@ -1254,6 +1255,7 @@ impl Parser {
                 // Range binds looser than every arithmetic/comparison op, so `0..n+1`
                 // is `0..(n+1)` — the same choice Rust makes.
                 Token::DotDot(_) => ("..", 15, false),
+                Token::DotDotEq(_) => ("..=", 15, false),
                 Token::Or(_) => ("||", 20, false),
                 Token::And(_) => ("&&", 30, false),
                 Token::Eq(_) => ("==", 40, false),
@@ -1286,6 +1288,24 @@ impl Parser {
                 Expression::Range {
                     start: Box::new(left),
                     end: Box::new(end),
+                    meta: self.make_meta(),
+                }
+            } else if op == "..=" {
+                // Inclusive range: desugar `a..=b` to `a..(b+1)`
+                let end = self.parse_expression_with_precedence(next_min_prec)?;
+                let one = Expression::IntLiteral {
+                    value: 1,
+                    meta: self.make_meta(),
+                };
+                let end_plus_one = Expression::BinaryOp {
+                    operator: "+".to_string(),
+                    left: Box::new(end),
+                    right: Box::new(one),
+                    meta: self.make_meta(),
+                };
+                Expression::Range {
+                    start: Box::new(left),
+                    end: Box::new(end_plus_one),
                     meta: self.make_meta(),
                 }
             } else if op == "|>" {
