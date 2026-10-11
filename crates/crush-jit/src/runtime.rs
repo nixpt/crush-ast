@@ -1242,6 +1242,43 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         }
 
         // ════════════════════════════════════════════════════════════════════
+        // OP_MAP_KEYS (41): map -> sorted key array, others pass through
+        // ════════════════════════════════════════════════════════════════════
+        OP_MAP_KEYS => {
+            let val = ctx.pop().unwrap_or(JitValue::null());
+            if let Some(ref_idx) = val.to_ref() {
+                let is_map = matches!(
+                    arena_ref(ctx.arena).and_then(|a| a.get(ref_idx)),
+                    Some(Object::Map(_))
+                );
+                if is_map {
+                    if let Some(arena) = arena_mut(ctx.arena) {
+                        if let Some(Object::Map(map)) = arena.get(ref_idx) {
+                            let mut keys: Vec<String> = map.keys().cloned().collect();
+                            keys.sort();
+                            let mut key_vals = Vec::with_capacity(keys.len());
+                            for k in keys {
+                                // Allocate string in arena
+                                let s_ptr = arena.alloc(Object::Str(k));
+                                key_vals.push(jit_to_rtv(JitValue::from_ref(s_ptr)));
+                            }
+                            let arr_ptr = arena.alloc(Object::Array(key_vals));
+                            ctx.push(JitValue::from_ref(arr_ptr));
+                        } else {
+                            ctx.push(val);
+                        }
+                    } else {
+                        ctx.push(val);
+                    }
+                } else {
+                    ctx.push(val);
+                }
+            } else {
+                ctx.push(val);
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
         // Unknown opcode
         // ════════════════════════════════════════════════════════════════════
         _ => {

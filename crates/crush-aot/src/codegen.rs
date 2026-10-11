@@ -749,6 +749,10 @@ fn emit_body(
             out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __l = match &__v {{ RuntimeValue::Array(a) => a.borrow().len() as i64, RuntimeValue::String(s) => s.len() as i64, _ => 0 }}; stack.push(RuntimeValue::Int(__l)); }}\n"));
             out.push_str(&next_pc_str);
         }}
+        "map_keys" => {{
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Map(m) => {{ let mut __k: Vec<String> = m.borrow().keys().cloned().collect(); __k.sort(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
+            out.push_str(&next_pc_str);
+        }}
         "arr_push" | "array_push" => {{
             out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); let mut __ok = false; if let Some(RuntimeValue::Array(ref a)) = __arr {{ a.borrow_mut().push(__val); __ok = true; }} if __ok {{ stack.push(__arr.unwrap()); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
             out.push_str(&next_pc_str);

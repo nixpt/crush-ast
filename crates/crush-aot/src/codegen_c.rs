@@ -1340,6 +1340,11 @@ fn emit_c_instr(
         "arr_len" | "len" => {{
             out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
         }}
+        "map_keys" => {{
+            // C backend has no map support; pass through unchanged.
+            // Maps were already unsupported here before this op existed.
+            out.push_str(&format!("                {{ Value __v = _pop(); _push(__v); }} _pc={next_pc}; break;\n"));
+        }}
         "arr_push" | "array_push" => {{
             out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break;\n"));
         }}
