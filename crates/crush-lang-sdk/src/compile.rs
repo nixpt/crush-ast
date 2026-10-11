@@ -517,6 +517,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 "list_push" => "LIST_PUSH".to_string(),
                 "vector_push" => "VECTOR_PUSH".to_string(),
                 "set_push" => "SET_PUSH".to_string(),
+                "map_keys" => "MAP_KEYS".to_string(),
                 "len" | "arr_len" => "ARR_LEN".to_string(),
                 "bit_and" => "BITAND".to_string(),
                 "bit_or" => "BITOR".to_string(),

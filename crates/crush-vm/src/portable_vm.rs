@@ -1169,6 +1169,18 @@ impl PortableVm {
                 s_rc.borrow_mut().push(val); // In actual Set might check uniqueness, using Vec for now
                 self.push(Value::Set(s_rc));
             }
+            MAP_KEYS => {
+                let val = self.pop()?;
+                match val {
+                    Value::Map(m) => {
+                        let mut keys: Vec<String> = m.borrow().keys().cloned().collect();
+                        keys.sort();
+                        let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
+                        self.push(Value::new_array(key_vals));
+                    }
+                    other => self.push(other),
+                }
+            }
             NEW_OBJ => {
                 self.push(Value::new_map(std::collections::HashMap::new()));
             }

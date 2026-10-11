@@ -102,6 +102,7 @@ pub(crate) const OP_ADD_STR: i64 = 38;
 pub(crate) const OP_CMP_ORDERED: i64 = 39;
 /// Pop a value, push its canonical truthiness as a bool (CRUSH-134).
 pub(crate) const OP_TRUTHY: i64 = 40;
+pub(crate) const OP_MAP_KEYS: i64 = 41;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}

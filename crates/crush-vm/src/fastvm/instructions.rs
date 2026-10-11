@@ -114,6 +114,7 @@ pub enum FastOp {
     VectorPush,
     NewSet,
     SetPush,
+    MapKeys,
     Len,
     MakeRange,
 
@@ -688,6 +689,7 @@ pub fn lower_bytecode_program(
             VECTOR_PUSH => FastInstr::simple(FastOp::VectorPush),
             NEW_SET => FastInstr::simple(FastOp::NewSet),
             SET_PUSH => FastInstr::simple(FastOp::SetPush),
+            MAP_KEYS => FastInstr::simple(FastOp::MapKeys),
             
             NEW_OBJ => FastInstr::simple(FastOp::NewObj),
             SET_FIELD => {
@@ -1234,6 +1236,7 @@ fn lower_instruction(
         "list_push" => Ok(FastInstr::simple(FastOp::ListPush)),
         "vector_push" => Ok(FastInstr::simple(FastOp::VectorPush)),
         "set_push" => Ok(FastInstr::simple(FastOp::SetPush)),
+        "map_keys" => Ok(FastInstr::simple(FastOp::MapKeys)),
 
         "new_obj" => Ok(FastInstr::simple(FastOp::NewObj)),
         "new_struct" => {
