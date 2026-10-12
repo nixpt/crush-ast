@@ -317,7 +317,7 @@ its behavior, not just a smoke test.
 
 - [CRUSH-54] Surfer migration wave 1: in-tree runtime → `crush-ast`
   (re-export, drop-in, no behavior change); wave 2: replace in-tree forks
-- [CRUSH-55] Exosphere divergence reconcile (cross-tree)
+- ~~[CRUSH-55] Exosphere divergence reconcile (cross-tree)~~ — closed 2026-10-12: ast ⊇ exo (D-1); exo runtimes retired (D-2)
 - ~~[CRUSH-56] STDLIB clean-restore tracker~~ / ~~[CRUSH-57] STDLIB
   mock-rewrite tracker~~ — superseded by CRUSH-122 + CRUSH-151..155 (CRUSH-169)
 - [CRUSH-58] Nakshatra artifact canonicalization (companion to CRUSH-23)

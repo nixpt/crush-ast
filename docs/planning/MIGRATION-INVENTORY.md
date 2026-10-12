@@ -29,13 +29,11 @@ CRUSH-55 claims re-checked against today's `ast:`:
   (`ast:crates/crush-frontend/src/language_walkers.rs:179`, test `:522`).
 - Orphaned `ast:crates/crush-vm/src/polyglot/` (2.2k uncompiled lines) — **deleted** (no longer in
   `ast:crates/crush-vm/src/`).
-- AI tool-chain engine + arg plumbing (CRUSH-55 PORT #1) — **still open**: `ai_native.*` caps still
-  declare `argc: Some(0)` (`ast:crates/crush-lang-sdk/src/ai_native.rs:87-103`).
-- Debugger semantics (CRUSH-55 PORT #2) — **still open**: the `todo!()` panics are gone
-  (`ast:crates/crush-debugger/src/session.rs:346` replaced them), but there is no step-over/out or
-  watchpoint anywhere in `crush-debugger/src` — only bytecode breakpoints (`portable_vm.rs:121-279`).
-  Its `README.md:11,43` and `lib.rs:27` still describe the old `todo!()` hook points (stale).
-- CRUSH-113 — **still open**: `stdlib` is not in `crush-lang-sdk`'s `default` features
+- AI tool-chain engine + arg plumbing (CRUSH-55 PORT #1) — **done** (2026-10-07): CRUSH-156 (args),
+  CRUSH-157 (toolchain engine), CRUSH-158 (provider traits).
+- Debugger semantics (CRUSH-55 PORT #2) — **done** (2026-10-07): step over/out + watchpoints
+  (CRUSH-159), events + redacted value views (CRUSH-160).
+- CRUSH-113 — **done**: `stdlib` is in `crush-lang-sdk`'s `default` features (C-1). Was: `stdlib` not in `default`
   (`ast:crates/crush-lang-sdk/Cargo.toml` `[features]`), and `crush-run --stdlib` without it only
   warns (`ast:crates/crush-lang-sdk/src/bin/crush-run.rs:368-370`).
 
