@@ -1010,6 +1010,20 @@ fn execute_one(
             s_rc.borrow_mut().push(val);
             push!(Value::Set(s_rc));
         }
+        MAP_KEYS => {
+            let val = pop!();
+            match val {
+                Value::Map(m) => {
+                    let mut keys: Vec<String> = m.borrow().keys().cloned().collect();
+                    // Sort keys for deterministic iteration order
+                    keys.sort();
+                    let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
+                    push!(Value::new_array(key_vals));
+                }
+                // Arrays and strings pass through unchanged
+                other => push!(other),
+            }
+        }
         LOAD => {
             let slot = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap());
             let v = call_stack

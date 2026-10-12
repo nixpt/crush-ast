@@ -654,6 +654,8 @@ impl Compiler {
 
                 // Compile iterable and store in temp var
                 self.compile_expr(iterable, instrs)?;
+                // Convert maps to key arrays (arrays/strings pass through unchanged)
+                instrs.push(self.create_instr("map_keys", serde_json::json!({}), meta));
                 instrs.push(self.create_instr("store", serde_json::json!({"name": arr_var}), meta));
 
                 // Initialize index to 0
