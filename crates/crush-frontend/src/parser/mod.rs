@@ -151,6 +151,7 @@ impl Parser {
             Token::Not(loc) => (loc.line, loc.col),
             Token::Assign(loc) => (loc.line, loc.col),
             Token::Pipe(loc) => (loc.line, loc.col),
+            Token::Bar(loc) => (loc.line, loc.col),
             Token::Arrow(loc) | Token::FatArrow(loc) => (loc.line, loc.col),
             Token::DoubleColon(loc) => (loc.line, loc.col),
             Token::LParen(loc) => (loc.line, loc.col),
@@ -1544,7 +1545,11 @@ impl Parser {
                     meta: self.make_meta(),
                 })
             }
+            Token::Bar(_) => self.parse_lambda(),
+            // Legacy spelling `|>x|> -> expr` (the only one that parsed before #78).
             Token::Pipe(_) => self.parse_lambda(),
+            // `|| expr` — a lambda with no parameters (`||` lexes as Or).
+            Token::Or(_) => self.parse_lambda(),
             Token::Bool(b, _) => {
                 let value = *b;
                 self.advance();
@@ -1718,57 +1723,71 @@ impl Parser {
     }
 
     /// Parse lambda expression: |args| { body } or |args| => expr
+    /// `|a, b| { body }`, `|a| => expr`, `|a| -> expr`, `|a| expr`, and `|| ...`
+    /// with no parameters (#78).
     fn parse_lambda(&mut self) -> Result<Expression, ()> {
-        self.expect(Token::Pipe(SourceLocation { line: 0, col: 0 }))?;
-
         let mut params = Vec::new();
-        while !matches!(self.peek(), Token::Pipe(_)) && !matches!(self.peek(), Token::EOF(_)) {
-            match self.peek() {
-                Token::Ident(n, _) => {
-                    let name = n.clone();
-                    self.advance();
-
-                    let type_hint = if matches!(self.peek(), Token::Colon(_)) {
+        if matches!(self.peek(), Token::Or(_)) {
+            self.advance(); // `||`: no parameters
+        } else {
+            // `|` opens the parameter list; `|>` is the legacy spelling.
+            if !matches!(self.peek(), Token::Bar(_) | Token::Pipe(_)) {
+                self.expect(Token::Bar(SourceLocation { line: 0, col: 0 }))?;
+            }
+            self.advance();
+            while !matches!(self.peek(), Token::Bar(_) | Token::Pipe(_) | Token::EOF(_)) {
+                match self.peek() {
+                    Token::Ident(n, _) => {
+                        let name = n.clone();
                         self.advance();
-                        self.parse_cast_type()?
-                    } else {
-                        CastType::Any
-                    };
-                    params.push((name, type_hint));
+
+                        let type_hint = if matches!(self.peek(), Token::Colon(_)) {
+                            self.advance();
+                            self.parse_cast_type()?
+                        } else {
+                            CastType::Any
+                        };
+                        params.push((name, type_hint));
+                    }
+                    _ => {
+                        let (line, col) = self.get_location(self.peek());
+                        self.errors.push(ParseError::Expected {
+                            line,
+                            col,
+                            expected: "parameter name".to_string(),
+                            found: self.peek().describe(),
+                        });
+                        return Err(());
+                    }
                 }
-                _ => {
-                    let (line, col) = self.get_location(self.peek());
-                    self.errors.push(ParseError::Expected {
-                        line,
-                        col,
-                        expected: "parameter name".to_string(),
-                        found: self.peek().describe(),
-                    });
-                    return Err(());
+
+                if matches!(self.peek(), Token::Comma(_)) {
+                    self.advance();
                 }
             }
-
-            if matches!(self.peek(), Token::Comma(_)) {
+            if matches!(self.peek(), Token::Pipe(_)) {
                 self.advance();
+            } else {
+                self.expect(Token::Bar(SourceLocation { line: 0, col: 0 }))?;
             }
         }
-
-        self.expect(Token::Pipe(SourceLocation { line: 0, col: 0 }))?;
 
         let body = if matches!(self.peek(), Token::LBrace(_)) {
             self.expect(Token::LBrace(SourceLocation { line: 0, col: 0 }))?;
             let b = self.parse_block()?;
             self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
             b
-        } else if matches!(self.peek(), Token::Arrow(_)) {
-            self.advance();
+        } else {
+            // `=>` (the documented form) or `->` before an expression body; a bare
+            // expression is accepted too. (This used to fall through to an empty body.)
+            if matches!(self.peek(), Token::FatArrow(_) | Token::Arrow(_)) {
+                self.advance();
+            }
             let expr = self.parse_expression()?;
             vec![Statement::Return {
                 value: Some(expr),
                 meta: self.make_meta(),
             }]
-        } else {
-            Vec::new()
         };
 
         Ok(Expression::Lambda {

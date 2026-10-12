@@ -112,6 +112,7 @@ pub enum Token {
     Not(SourceLocation),         // !
     Assign(SourceLocation),      // =
     Pipe(SourceLocation),        // |>
+    Bar(SourceLocation),       // |   (lambda parameters)
     Arrow(SourceLocation),       // ->
     FatArrow(SourceLocation),    // =>  (match arm separator)
     DoubleColon(SourceLocation), // ::
@@ -203,6 +204,7 @@ impl Token {
             Token::Not(_) => "`!`".to_string(),
             Token::Assign(_) => "`=`".to_string(),
             Token::Pipe(_) => "`|>`".to_string(),
+            Token::Bar(_) => "`|`".to_string(),
             Token::Arrow(_) => "`->`".to_string(),
             Token::FatArrow(_) => "`=>`".to_string(),
             Token::DoubleColon(_) => "`::`".to_string(),
@@ -935,7 +937,7 @@ impl Lexer {
                     self.advance();
                     Ok(Token::Or(location))
                 } else {
-                    Ok(Token::Ident("|".to_string(), location)) // Single | as ident for now
+                    Ok(Token::Bar(location)) // `|`: lambda parameter delimiters (#78)
                 }
             }
             '#' => {
