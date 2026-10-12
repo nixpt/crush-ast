@@ -836,14 +836,15 @@ fn emit_c_function(
     out: &mut String,
     name: &str,
     func: &casm::Function,
-    _program: &casm::Program,
+    program: &casm::Program,
     unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
     let n = func.body.len();
 
     // Discover locals by scanning store/load instructions (func.locals may be empty)
-    let local_index = discover_locals(&func.body, &func.params, func.type_hints.as_ref());
+    let arity: HashMap<String, usize> = program.functions.iter().map(|(k, f)| (k.clone(), f.params.len())).collect();
+    let local_index = discover_locals(func, &arity);
 
     out.push_str(&format!("static Value fn_{fn_name}(void) {{\n"));
 
@@ -883,124 +884,170 @@ fn sanitize_fn_name(name: &str) -> String {
     crate::names::mangle(name)
 }
 
-fn infer_types(body: &[casm::Instruction], explicit_hints: Option<&HashMap<String, String>>) -> HashMap<String, String> {
-    let mut inferred: HashMap<String, String> = HashMap::new();
-    let mut stack: Vec<String> = Vec::new();
+/// Abstract value type for local-type inference (CRUSH-257).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ty { Int, Float, Bool, Str, Null, Array, Object, Any }
 
-    for instr in body {
+fn join_ty(a: Ty, b: Ty) -> Ty { if a == b { a } else { Ty::Any } }
+
+fn arith_ty(l: Ty, r: Ty) -> Ty {
+    match (l, r) {
+        (Ty::Int, Ty::Int) => Ty::Int,
+        (Ty::Int | Ty::Float, Ty::Int | Ty::Float) => Ty::Float,
+        _ => Ty::Any,
+    }
+}
+
+/// Abstract state at one instruction: operand-stack types and per-local types.
+#[derive(Clone, PartialEq)]
+struct AbsState { stack: Vec<Ty>, locals: HashMap<String, Ty> }
+
+impl AbsState {
+    /// Join `other` into `self`; `None` if stack depths disagree (unanalysable).
+    fn join(&mut self, other: &AbsState) -> Option<bool> {
+        if self.stack.len() != other.stack.len() { return None; }
+        let mut changed = false;
+        for (x, y) in self.stack.iter_mut().zip(&other.stack) {
+            let j = join_ty(*x, *y);
+            if j != *x { *x = j; changed = true; }
+        }
+        for (k, v) in &other.locals {
+            match self.locals.get(k).copied() {
+                Some(cur) => { let j = join_ty(cur, *v); if j != cur { self.locals.insert(k.clone(), j); changed = true; } }
+                None => { self.locals.insert(k.clone(), *v); changed = true; }
+            }
+        }
+        // A local absent on one side is still uninitialised (Null) there.
+        let missing: Vec<String> = self.locals.keys().filter(|k| !other.locals.contains_key(*k)).cloned().collect();
+        for k in missing {
+            let cur = self.locals[&k];
+            let j = join_ty(cur, Ty::Null);
+            if j != cur { self.locals.insert(k, j); changed = true; }
+        }
+        Some(changed)
+    }
+}
+
+/// Sound per-local types for one function (CRUSH-257): forward abstract
+/// interpretation over the CFG with exact stack effects for every opcode the
+/// C backend emits, joining at merge points until a fixpoint. A local's type
+/// is the join of every value stored to it and every value a load can see
+/// (uninitialised = Null), so it is `Int`/`Float` only when that is true on
+/// every path. Returns `None` — no typed locals for this function — on any
+/// opcode, callee or stack shape the analysis does not model.
+fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> Option<HashMap<String, Ty>> {
+    let body = &func.body;
+    let n = body.len();
+    let mut states: Vec<Option<AbsState>> = vec![None; n + 1];
+    // Parameters arrive on the stack; the body's leading `store`s pop them.
+    states[0] = Some(AbsState { stack: vec![Ty::Any; func.params.len()], locals: HashMap::new() });
+    let mut observed: HashMap<String, Ty> = HashMap::new();
+    let mut work: Vec<usize> = vec![0];
+    let mut steps = 0usize;
+    while let Some(pc) = work.pop() {
+        steps += 1;
+        if steps > 200_000 { return None; }
+        if pc >= n { continue; }
+        let mut st = states[pc].clone()?;
+        let instr = &body[pc];
+        let pop = |st: &mut AbsState| -> Option<Ty> { st.stack.pop() };
+        let mut succ: Vec<usize> = vec![pc + 1];
+        let target = || instr.args.get("target").and_then(|v| v.as_u64()).map(|t| t as usize);
         match instr.op.as_str() {
-            "push_int" => stack.push("Int".to_string()),
-            "push_float" => stack.push("Float".to_string()),
-            "push_bool" => stack.push("Bool".to_string()),
-            "push_str" => stack.push("Str".to_string()),
-            "push_null" => stack.push("Null".to_string()),
+            "push_int" => st.stack.push(Ty::Int),
+            "push_float" => st.stack.push(Ty::Float),
+            "push_bool" => st.stack.push(Ty::Bool),
+            "push_str" => st.stack.push(Ty::Str),
+            "push_null" => st.stack.push(Ty::Null),
+            "pop" => { pop(&mut st)?; }
+            "dup" => { let t = *st.stack.last()?; st.stack.push(t); }
+            "swap" => { let a = pop(&mut st)?; let b = pop(&mut st)?; st.stack.push(a); st.stack.push(b); }
+            "nop" | "yield" => {}
             "load" => {
-                if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
-                    if let Some(explicit) = explicit_hints.and_then(|h| h.get(name)) {
-                        stack.push(explicit.clone());
-                    } else if let Some(inf) = inferred.get(name) {
-                        stack.push(inf.clone());
-                    } else {
-                        stack.push("Any".to_string());
-                    }
-                } else {
-                    stack.push("Any".to_string());
-                }
+                let name = instr.args.get("name")?.as_str()?;
+                let t = st.locals.get(name).copied().unwrap_or(Ty::Null);
+                observed.entry(name.to_string()).and_modify(|o| *o = join_ty(*o, t)).or_insert(t);
+                st.stack.push(t);
             }
             "store" => {
-                let ty = stack.pop().unwrap_or_else(|| "Any".to_string());
-                if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
-                    if let Some(existing) = inferred.get(name) {
-                        if existing != &ty && existing != "Any" {
-                            // Type conflict, widen to Any (Value)
-                            inferred.insert(name.to_string(), "Any".to_string());
-                        }
-                    } else {
-                        inferred.insert(name.to_string(), ty);
-                    }
-                }
+                let name = instr.args.get("name")?.as_str()?.to_string();
+                let t = pop(&mut st)?;
+                observed.entry(name.clone()).and_modify(|o| *o = join_ty(*o, t)).or_insert(t);
+                st.locals.insert(name, t);
             }
-            "add" | "sub" | "mul" | "div" | "mod" => {
-                let right = stack.pop().unwrap_or_else(|| "Any".to_string());
-                let left = stack.pop().unwrap_or_else(|| "Any".to_string());
-                if left == "Float" || right == "Float" {
-                    stack.push("Float".to_string());
-                } else if left == "Int" && right == "Int" {
-                    stack.push("Int".to_string());
-                } else {
-                    stack.push("Any".to_string());
-                }
+            "add" => {
+                let r = pop(&mut st)?; let l = pop(&mut st)?;
+                st.stack.push(if l == Ty::Str || r == Ty::Str { Ty::Str } else { arith_ty(l, r) });
             }
-            "neg" => {
-                let v = stack.pop().unwrap_or_else(|| "Any".to_string());
-                stack.push(v);
+            "sub" | "mul" | "div" | "mod" => { let r = pop(&mut st)?; let l = pop(&mut st)?; st.stack.push(arith_ty(l, r)); }
+            "neg" => { let v = pop(&mut st)?; st.stack.push(if matches!(v, Ty::Int | Ty::Float) { v } else { Ty::Any }); }
+            "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "and" | "or" | "str_contains" | "str_starts_with" | "str_ends_with" => {
+                pop(&mut st)?; pop(&mut st)?; st.stack.push(Ty::Bool);
             }
-            "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "and" | "or" => {
-                stack.pop(); stack.pop();
-                stack.push("Bool".to_string());
+            "not" => { pop(&mut st)?; st.stack.push(Ty::Bool); }
+            "bit_and" | "bit_or" | "bit_xor" | "shl" | "shr" => {
+                let r = pop(&mut st)?; let l = pop(&mut st)?;
+                st.stack.push(if l == Ty::Int && r == Ty::Int { Ty::Int } else { Ty::Any });
             }
-            "not" => {
-                stack.pop();
-                stack.push("Bool".to_string());
+            "bit_not" => { let v = pop(&mut st)?; st.stack.push(if v == Ty::Int { Ty::Int } else { Ty::Any }); }
+            "vec_add" | "mat_mul" | "vec_dot" | "arr_get" | "index" | "map_keys" => {
+                if !matches!(instr.op.as_str(), "map_keys") { pop(&mut st)?; }
+                pop(&mut st)?; st.stack.push(Ty::Any);
             }
-            "vec_add" | "mat_mul" => {
-                stack.pop(); stack.pop();
-                stack.push("Array".to_string());
+            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" | "await" => { pop(&mut st)?; st.stack.push(Ty::Any); }
+            "arr_len" | "len" => { pop(&mut st)?; st.stack.push(Ty::Int); }
+            "new_array" => st.stack.push(Ty::Array),
+            "new_obj" => st.stack.push(Ty::Object),
+            "make_range" => { pop(&mut st)?; pop(&mut st)?; st.stack.push(Ty::Array); }
+            "arr_set" => { pop(&mut st)?; pop(&mut st)?; pop(&mut st)?; }
+            "arr_push" | "array_push" | "set_field" => { pop(&mut st)?; let a = pop(&mut st)?; st.stack.push(a); }
+            "arr_pop" | "array_pop" => { let a = pop(&mut st)?; st.stack.push(a); st.stack.push(Ty::Any); }
+            op if op.starts_with("ai_") || op.starts_with("dom_") => st.stack.push(Ty::Any),
+            "cap_call" => {
+                let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                for _ in 0..argc { pop(&mut st)?; }
+                st.stack.push(Ty::Any);
             }
-            "vec_dot" => {
-                stack.pop(); stack.pop();
-                stack.push("Float".to_string());
+            "spawn" => {
+                let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                for _ in 0..=argc { pop(&mut st)?; }
+                st.stack.push(Ty::Null);
             }
-            "len" => {
-                stack.pop();
-                stack.push("Int".to_string());
+            "call" => {
+                let callee = instr.args.get("function")?.as_str()?;
+                for _ in 0..*arity.get(callee)? { pop(&mut st)?; }
+                st.stack.push(Ty::Any);
             }
-            "math_pow" | "math_sqrt" | "math_abs" | "math_round" | "math_floor" | "math_ceil" => {
-                if instr.op.as_str() == "math_pow" { stack.pop(); stack.pop(); } else { stack.pop(); }
-                stack.push("Float".to_string());
-            }
-            "pop" => { stack.pop(); }
-            "dup" => {
-                if let Some(t) = stack.last().cloned() {
-                    stack.push(t);
-                }
-            }
-            "swap" => {
-                let a = stack.pop().unwrap_or_else(|| "Any".to_string());
-                let b = stack.pop().unwrap_or_else(|| "Any".to_string());
-                stack.push(a);
-                stack.push(b);
-            }
-            "jmp" | "jmp_if" | "jmp_if_not" => { stack.clear(); }
-            _ => {
-                // Unknown ops could modify stack unpredictably, but casm is usually strict.
-                // We could clear the stack or push 'Any'.
-                // Safe approach: we don't know the exact stack depth effect without a full table.
-                // Since this is just local inference, we'll keep it simple.
-                // In a real pass, we'd need to simulate all opcodes' stack effects.
+            "jmp" => { succ = vec![target()?]; }
+            "jmp_if" | "jmp_if_not" => { pop(&mut st)?; succ.push(target()?); }
+            "ret" | "halt" => { pop(&mut st)?; succ.clear(); }
+            _ => return None,
+        }
+        for s in succ {
+            if s > n { return None; }
+            match &mut states[s] {
+                Some(existing) => { if existing.join(&st)? && s < n { work.push(s); } }
+                slot @ None => { *slot = Some(st.clone()); if s < n { work.push(s); } }
             }
         }
     }
-    inferred
+    Some(observed)
 }
 
 /// Pre-scan instructions to discover local variable names from store/load ops.
-fn discover_locals(body: &[casm::Instruction], params: &[String], type_hints: Option<&HashMap<String, String>>) -> HashMap<String, LocalMeta> {
+fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>) -> HashMap<String, LocalMeta> {
+    let (body, params) = (&func.body, &func.params);
     let mut map = HashMap::new();
     let mut next = 0usize;
-    let inferred = infer_types(body, type_hints);
+    let inferred = infer_local_types(func, arity).unwrap_or_default();
 
-    let mut add_local = |name: &str, map: &mut HashMap<String, LocalMeta>, next: &mut usize| {
+    let add_local = |name: &str, map: &mut HashMap<String, LocalMeta>, next: &mut usize| {
         if !map.contains_key(name) {
-            let explicit = type_hints.and_then(|h| h.get(name)).map(|s| s.as_str());
-            let inf = inferred.get(name).map(|s| s.as_str());
-            let ty_str = explicit.unwrap_or_else(|| inf.unwrap_or(""));
-            
-            let ty = match ty_str {
-                // TODO: type inference currently produces wrong results for array/varargs ops.
-                // Force Value type until inference handles all opcodes correctly.
-                // "Float" | "F64" | "F32" => LocalType::F64,
-                // "Int" => LocalType::I64,
+            // CRUSH-257: a native C local only when inference proved the type on
+            // every path (source type hints are not trusted for storage).
+            let ty = match inferred.get(name) {
+                Some(Ty::Int) => LocalType::I64,
+                Some(Ty::Float) => LocalType::F64,
                 _ => LocalType::Value,
             };
             let prefix = match ty {
@@ -1599,3 +1646,79 @@ fn emit_c_ai_stub(_out: &mut String) {}
 // (an earlier fetch had these helpers inside the prelude raw-string and
 // caused a structural parse error).
 fn emit_c_dom_stub(_out: &mut String) {}
+
+#[cfg(test)]
+mod typed_locals_tests {
+    //! CRUSH-257: local-type inference must be sound — a local is a native C
+    //! `int64_t` / `double` only if every path agrees.
+    use super::*;
+
+    fn types_of(src: &str, func: &str) -> Option<HashMap<String, Ty>> {
+        let program = crush_frontend::compile_crush_source(src).expect("compiles");
+        let arity = program.functions.iter().map(|(k, f)| (k.clone(), f.params.len())).collect();
+        infer_local_types(&program.functions[func], &arity)
+    }
+
+    fn func(body: serde_json::Value) -> casm::Function {
+        serde_json::from_value(serde_json::json!({ "params": [], "body": body })).unwrap()
+    }
+
+    #[test]
+    fn int_counter_and_accumulator_are_int() {
+        let t = types_of("fn main() {\n let i = 0\n let s = 0\n while i < 10 {\n s = (s + i * i) % 7\n i = i + 1\n }\n print(s)\n}\n", "main").unwrap();
+        assert_eq!(t["i"], Ty::Int);
+        assert_eq!(t["s"], Ty::Int);
+    }
+
+    #[test]
+    fn float_local_is_float() {
+        let t = types_of("fn main() {\n let f = 0.5\n f = f * 2.0\n print(f)\n}\n", "main").unwrap();
+        assert_eq!(t["f"], Ty::Float);
+    }
+
+    #[test]
+    fn a_local_that_ever_holds_an_array_is_not_int() {
+        let t = types_of("fn main() {\n let x = 0\n if x == 0 {\n x = [1, 2]\n }\n print(x)\n}\n", "main").unwrap();
+        assert_eq!(t["x"], Ty::Any);
+    }
+
+    #[test]
+    fn call_results_are_not_assumed_int() {
+        let t = types_of("fn helper(a) {\n return a + 1\n}\nfn main() {\n let r = helper(1)\n r = r + 1\n print(r)\n}\n", "main").unwrap();
+        assert_eq!(t["r"], Ty::Any);
+        // `a` is a parameter: unknown caller types.
+        let h = types_of("fn helper(a) {\n return a + 1\n}\nfn main() {\n print(helper(1))\n}\n", "helper").unwrap();
+        assert_eq!(h["a"], Ty::Any);
+    }
+
+    #[test]
+    fn read_before_any_store_sees_null() {
+        let f = func(serde_json::json!([
+            {"op": "load", "name": "z"}, {"op": "pop"},
+            {"op": "push_int", "value": 2}, {"op": "store", "name": "z"},
+            {"op": "push_null"}, {"op": "ret"}
+        ]));
+        let t = infer_local_types(&f, &HashMap::new()).unwrap();
+        assert_eq!(t["z"], Ty::Any, "Null on one path, Int on another");
+    }
+
+    #[test]
+    fn unknown_opcode_disables_typing() {
+        let f = func(serde_json::json!([
+            {"op": "push_int", "value": 1}, {"op": "store", "name": "n"},
+            {"op": "frobnicate"}, {"op": "push_null"}, {"op": "ret"}
+        ]));
+        assert!(infer_local_types(&f, &HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn mismatched_stack_depth_at_merge_disables_typing() {
+        // Path A reaches pc 3 with one value on the stack, path B with none.
+        let f = func(serde_json::json!([
+            {"op": "push_bool", "value": true}, {"op": "jmp_if", "target": 3},
+            {"op": "push_int", "value": 1},
+            {"op": "push_null"}, {"op": "ret"}
+        ]));
+        assert!(infer_local_types(&f, &HashMap::new()).is_none());
+    }
+}
