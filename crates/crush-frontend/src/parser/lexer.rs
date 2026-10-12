@@ -459,6 +459,11 @@ impl Lexer {
             "true" | "sahi" | "真" | "本当" => Token::Bool(true, location),
             "false" | "galat" | "假" | "偽" => Token::Bool(false, location),
             "null" => Token::Null(location),
+            // Word forms of the logical operators (the guide documents them as
+            // identical to `&&` / `||` / `!`).
+            "and" => Token::And(location),
+            "or" => Token::Or(location),
+            "not" => Token::Not(location),
             _ => Token::Ident(value, location),
         }
     }
