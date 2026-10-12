@@ -1332,6 +1332,10 @@ mod tests {
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::Int(5, SourceLocation { line: 1, col: 5 })
+        );
+    }
+
+    #[test]
     fn test_lex_hex_literal() {
         let mut lexer = Lexer::new("0xFF");
         assert_eq!(
@@ -1377,6 +1381,10 @@ mod tests {
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::DotDot(SourceLocation { line: 1, col: 2 })
+        );
+    }
+
+    #[test]
     fn test_lex_binary_all_ones() {
         let mut lexer = Lexer::new("0b11111111");
         assert_eq!(
