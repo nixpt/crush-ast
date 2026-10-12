@@ -1,0 +1,13 @@
+[package]
+name = "jsaot"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+crush-walker-core = { path = "../../../../crates/crush-walker-core" }
+crush-lang-js = { path = "../../../../crates/crush-lang-js" }
+crush-frontend = { path = "../../../../crates/crush-frontend" }
+crush-aot = { path = "../../../../crates/crush-aot" }
