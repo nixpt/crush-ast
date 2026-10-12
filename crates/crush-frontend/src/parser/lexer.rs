@@ -337,6 +337,18 @@ impl Lexer {
     fn read_number(&mut self) -> Result<Token, ParseError> {
         let start_line = self.line;
         let start_col = self.col;
+
+        // Check for hex (0x) or binary (0b) prefix
+        if self.peek() == Some('0') {
+            if let Some(next) = self.peek_ahead(1) {
+                if next == 'x' || next == 'X' {
+                    return self.read_radix_number(16, start_line, start_col);
+                } else if next == 'b' || next == 'B' {
+                    return self.read_radix_number(2, start_line, start_col);
+                }
+            }
+        }
+
         let mut value = String::new();
         let mut is_float = false;
 
@@ -391,6 +403,57 @@ impl Lexer {
                     value,
                 }),
             }
+        }
+    }
+
+    /// Read a hex (0x) or binary (0b) integer literal. The `0x`/`0b` prefix
+    /// has not been consumed yet when this is called.
+    fn read_radix_number(
+        &mut self,
+        radix: u32,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token, ParseError> {
+        // Consume the '0' and the 'x'/'b' prefix
+        self.advance();
+        self.advance();
+
+        let mut value = String::new();
+        while let Some(ch) = self.peek() {
+            let valid = match radix {
+                16 => ch.is_ascii_hexdigit(),
+                2 => ch == '0' || ch == '1',
+                _ => false,
+            };
+            if valid {
+                value.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if value.is_empty() {
+            return Err(ParseError::InvalidNumber {
+                line: start_line,
+                col: start_col,
+                value: format!("0{}", if radix == 16 { "x" } else { "b" }),
+            });
+        }
+
+        match i64::from_str_radix(&value, radix) {
+            Ok(i) => Ok(Token::Int(
+                i,
+                SourceLocation {
+                    line: start_line,
+                    col: start_col,
+                },
+            )),
+            Err(_) => Err(ParseError::InvalidNumber {
+                line: start_line,
+                col: start_col,
+                value,
+            }),
         }
     }
 
@@ -1225,5 +1288,85 @@ mod tests {
             Token::LangBody(_, _, deps) => assert!(deps.is_empty()),
             other => panic!("expected LangBody, got {other:?}"),
         }
+    }
+    #[test]
+    fn test_lex_hex_literal() {
+        let mut lexer = Lexer::new("0xFF");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_lowercase() {
+        let mut lexer = Lexer::new("0xdeadbeef");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(0xdeadbeef, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_zero() {
+        let mut lexer = Lexer::new("0x0");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(0, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_binary_literal() {
+        let mut lexer = Lexer::new("0b1010");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(10, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_binary_all_ones() {
+        let mut lexer = Lexer::new("0b11111111");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_stops_at_non_hexdigit() {
+        // 0xFF followed by 'g' lexes as 255 then an identifier
+        let mut lexer = Lexer::new("0xFFg");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::Ident(name, _) => assert_eq!(name, "g"),
+            other => panic!("expected Ident, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lex_bare_hex_prefix_is_error() {
+        let mut lexer = Lexer::new("0x");
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_lex_bare_binary_prefix_is_error() {
+        let mut lexer = Lexer::new("0b");
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_lex_binary_rejects_2() {
+        // 0b102: '2' is not a binary digit, so this lexes as 2 then '2'
+        let mut lexer = Lexer::new("0b102");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(2, SourceLocation { line: 1, col: 1 })
+        );
     }
 }
