@@ -80,6 +80,7 @@ Plan + ordering: surfer-browser `.jagent/planning/tickets/SURF-ENGINE-2.md`.
 - [ ] **CRUSH-253** — Python walker → DOM ops ("python-dom", no CPython). (P2)
 - [ ] **CRUSH-254** — host-driven job queue: persistent VM session, microtasks, callbacks, budgets. (P1)
 - [ ] **CRUSH-255** — publish crush-vm 0.4.1 so surfer and exo-light share one `HostCap` trait (exo-light EXOLIGHT-12). (P2)
+- [ ] **CRUSH-256** — GC predictor without ONNX Runtime: generated Rust rules (or tract on wasm); ort out of crush-vm's default `native-plugins`. (P2)
 
 ## P0 — Build & Core Health ✅
 
