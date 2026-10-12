@@ -378,10 +378,19 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
 
 fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> {
     Ok(Some(match stmt {
-        Stmt::Expr(ExprStmt { expr, span, .. }) => Statement::ExprStmt {
-            expr: lower_expr(expr, ctx)?,
-            meta: meta(span, ctx),
-        },
+        Stmt::Expr(ExprStmt { expr, span, .. }) => {
+            let mut stmts = expr_to_stmts(expr, span, ctx)?;
+            if stmts.len() == 1 {
+                stmts.pop().unwrap()
+            } else {
+                Statement::If {
+                    condition: Expression::BoolLiteral { value: true, meta: meta(span, ctx) },
+                    then_body: stmts,
+                    else_body: None,
+                    meta: meta(span, ctx),
+                }
+            }
+        }
         Stmt::Decl(decl) => match decl {
             Decl::Fn(fn_decl) => lower_fn_decl(fn_decl, ctx)?,
             Decl::Var(var_decl) => {
@@ -389,10 +398,17 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 for d in &var_decl.decls {
                     stmts.extend(lower_var_declarator(d, ctx)?);
                 }
-                if stmts.is_empty() {
-                    return Ok(None);
+                match stmts.len() {
+                    0 => return Ok(None),
+                    1 => stmts.into_iter().next().unwrap(),
+                    // `var a = 1, b = 2;` — keep every declarator, not just the first.
+                    _ => Statement::If {
+                        condition: Expression::BoolLiteral { value: true, meta: meta(&var_decl.span, ctx) },
+                        then_body: stmts,
+                        else_body: None,
+                        meta: meta(&var_decl.span, ctx),
+                    },
                 }
-                stmts.into_iter().next().unwrap()
             }
             Decl::Class(class_decl) => lower_class_decl(class_decl, ctx)?,
             Decl::Using(using) => {
@@ -458,15 +474,31 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: meta(span, ctx),
             }
         }
+        // `do { body } while (test)` runs the body first:
+        // `while (true) { body; if (!test) break; }`, and a `continue` checks the test too.
         Stmt::DoWhile(DoWhileStmt { test, body, span, .. }) => {
-            let condition = lower_expr(test, ctx)?;
-            let body = block_or_stmt_to_vec(body, ctx)?;
+            let exit_check = Statement::If {
+                condition: Expression::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(lower_expr(test, ctx)?),
+                    meta: meta(span, ctx),
+                },
+                then_body: vec![Statement::Break { meta: meta(span, ctx) }],
+                else_body: None,
+                meta: meta(span, ctx),
+            };
+            let mut body = rewrite_continue(block_or_stmt_to_vec(body, ctx)?, &[exit_check.clone()]);
+            body.push(exit_check);
             Statement::While {
-                condition: Box::new(condition),
+                condition: Box::new(Expression::BoolLiteral { value: true, meta: meta(span, ctx) }),
                 body,
                 meta: meta(span, ctx),
             }
         }
+        // `for (init; test; update) body` → `init; while (test) { body; update }`.
+        // It used to iterate a variable hard-coded as `i` over `make_range()`
+        // (a 0..100 default), dropping `init`: loops stopped after 100
+        // iterations, other names read an uninitialised slot, steps were ignored.
         Stmt::For(ForStmt {
             init,
             test,
@@ -475,46 +507,36 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             span,
             ..
         }) => {
-            let variable = match init {
-                Some(_) => "i".to_string(),
-                None => "i".to_string(),
-            };
-            let test_expr = match test {
-                Some(t) => lower_expr(t, ctx)?,
-                None => Expression::BoolLiteral {
-                    value: true,
-                    meta: meta(span, ctx),
-                },
-            };
-            let mut body_stmts = block_or_stmt_to_vec(body, ctx)?;
-            if let Some(upd) = update {
-                let update_expr = lower_expr(upd, ctx)?;
-                body_stmts.push(Statement::ExprStmt {
-                    expr: update_expr,
-                    meta: meta(&swc_common::DUMMY_SP, ctx),
-                });
+            let mut out = Vec::new();
+            match init {
+                Some(VarDeclOrExpr::VarDecl(var_decl)) => {
+                    for d in &var_decl.decls {
+                        out.extend(lower_var_declarator(d, ctx)?);
+                    }
+                }
+                Some(VarDeclOrExpr::Expr(e)) => out.extend(expr_to_stmts(e, span, ctx)?),
+                None => {}
             }
-            body_stmts.insert(
-                0,
-                Statement::If {
-                    condition: Expression::UnaryOp {
-                        operator: "!".to_string(),
-                        operand: Box::new(test_expr),
-                        meta: meta(span, ctx),
-                    },
-                    then_body: vec![Statement::Break { meta: meta(span, ctx) }],
-                    else_body: None,
-                    meta: meta(span, ctx),
-                },
-            );
-            Statement::For {
-                variable,
-                iterable: Box::new(Expression::Call {
-                    function: "make_range".to_string(),
-                    args: vec![],
-                    meta: meta(span, ctx),
-                }),
+            let condition = match test {
+                Some(t) => lower_expr(t, ctx)?,
+                None => Expression::BoolLiteral { value: true, meta: meta(span, ctx) },
+            };
+            let update_stmts = match update {
+                Some(u) => expr_to_stmts(u, span, ctx)?,
+                None => Vec::new(),
+            };
+            let mut body_stmts = rewrite_continue(block_or_stmt_to_vec(body, ctx)?, &update_stmts);
+            body_stmts.extend(update_stmts);
+            out.push(Statement::While {
+                condition: Box::new(condition),
                 body: body_stmts,
+                meta: meta(span, ctx),
+            });
+            // One statement: `if (true) { ... }` groups init and loop.
+            Statement::If {
+                condition: Expression::BoolLiteral { value: true, meta: meta(span, ctx) },
+                then_body: out,
+                else_body: None,
                 meta: meta(span, ctx),
             }
         }
@@ -619,6 +641,59 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
         }
         Stmt::Block(_) | Stmt::Debugger(_) | Stmt::Empty(_) => return Ok(None),
     }))
+}
+
+fn unparen(e: &Expr) -> &Expr {
+    match e {
+        Expr::Paren(p) => unparen(&p.expr),
+        e => e,
+    }
+}
+
+/// An expression in statement position; `a, b` becomes two statements.
+fn expr_to_stmts(e: &Expr, span: &swc_common::Span, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
+    match unparen(e) {
+        Expr::Seq(SeqExpr { exprs, .. }) => {
+            let mut out = Vec::new();
+            for e in exprs {
+                out.extend(expr_to_stmts(e.as_ref(), span, ctx)?);
+            }
+            Ok(out)
+        }
+        e => Ok(vec![Statement::ExprStmt { expr: lower_expr(e, ctx)?, meta: meta(span, ctx) }]),
+    }
+}
+
+/// Make every `continue` that belongs to the enclosing loop run `prefix` first
+/// (a C-style `for`'s update, a `do-while`'s test). Nested loops and functions
+/// own their own `continue`s and are left alone.
+pub(crate) fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> Vec<Statement> {
+    if prefix.is_empty() {
+        return stmts;
+    }
+    let mut out = Vec::with_capacity(stmts.len());
+    for s in stmts {
+        match s {
+            Statement::Continue { meta } => {
+                out.extend(prefix.iter().cloned());
+                out.push(Statement::Continue { meta });
+            }
+            Statement::If { condition, then_body, else_body, meta } => out.push(Statement::If {
+                condition,
+                then_body: rewrite_continue(then_body, prefix),
+                else_body: else_body.map(|e| rewrite_continue(e, prefix)),
+                meta,
+            }),
+            Statement::TryCatch { body, error_var, handler, meta } => out.push(Statement::TryCatch {
+                body: rewrite_continue(body, prefix),
+                error_var,
+                handler: rewrite_continue(handler, prefix),
+                meta,
+            }),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
@@ -994,9 +1069,17 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
+        // `(a, b)` in value position: only the last value survives. Statement
+        // positions are split by `expr_to_stmts`; here a side-effecting
+        // earlier part would be silently lost, so refuse it.
         Expr::Seq(SeqExpr { exprs, .. }) => {
             let mut last = Expression::NullLiteral { meta: m.clone() };
-            for e in exprs {
+            for (i, e) in exprs.iter().enumerate() {
+                if i + 1 < exprs.len()
+                    && matches!(unparen(e), Expr::Assign(_) | Expr::Update(_) | Expr::Call(_) | Expr::New(_) | Expr::Await(_))
+                {
+                    anyhow::bail!("comma expression with side effects in value position is not supported");
+                }
                 last = lower_expr(e, ctx)?;
             }
             Ok(last)

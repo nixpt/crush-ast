@@ -21,6 +21,8 @@ pub mod assembler;
 pub mod bytecode;
 pub mod ai_args;
 pub mod arithmetic;
+pub mod make_range;
+pub mod map_ops;
 pub mod caps;
 pub mod cap_inference;
 pub mod debug;

@@ -22,6 +22,28 @@ pub fn format_io_print_line(parts: &[impl AsRef<str>]) -> String {
     line
 }
 
+/// Python `print()`-shaped line: args joined with a single space, trailing newline.
+pub fn format_py_print_line(parts: &[impl AsRef<str>]) -> String {
+    let mut line = parts
+        .iter()
+        .map(|p| p.as_ref())
+        .collect::<Vec<_>>()
+        .join(" ");
+    line.push('\n');
+    line
+}
+
+/// Render a [`crate::vm::Value`] the way CPython's `print` would for bool/None,
+/// otherwise the canonical Crush `Display` / `as_text` form.
+pub fn py_value_to_text(v: &crate::vm::Value) -> String {
+    match v {
+        crate::vm::Value::Bool(true) => "True".to_string(),
+        crate::vm::Value::Bool(false) => "False".to_string(),
+        crate::vm::Value::Null => "None".to_string(),
+        other => other.as_text(),
+    }
+}
+
 /// Render a [`RuntimeValue`] the same way `io.print` expects for its argument.
 ///
 /// Mirrors the canonical `Value` Display used by the scheduler/portable VM:
@@ -128,6 +150,12 @@ mod tests {
         assert_eq!(format_io_print_line(&["hello".to_string()]), "hello\n");
         assert_eq!(format_io_print_line(&["a".to_string(), "b".to_string()]), "ab\n");
         assert_eq!(format_io_print_line(&[] as &[String]), "\n");
+    }
+
+    #[test]
+    fn format_py_print_line_joins_with_space() {
+        assert_eq!(format_py_print_line(&["1".to_string(), "2".to_string(), "a".to_string()]), "1 2 a\n");
+        assert_eq!(format_py_print_line(&[] as &[String]), "\n");
     }
 
     #[test]

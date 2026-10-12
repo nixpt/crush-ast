@@ -227,4 +227,79 @@ mod tests {
             "42"
         );
     }
+
+    // ── CRUSH-200: Python semantics vs Crush defaults ─────────────────────
+
+    #[test]
+    fn crush200_true_div_floor_div_mod() {
+        assert_eq!(run_python("print(7 / 2)").unwrap(), "3.5");
+        assert_eq!(run_python("print(-7 // 2)").unwrap(), "-4");
+        assert_eq!(run_python("print(-7 % 2)").unwrap(), "1");
+    }
+
+    #[test]
+    fn crush200_range_with_step() {
+        assert_eq!(
+            run_python(
+                "out = []\nfor j in range(1, 10, 3):\n    out.append(j)\nprint(out[0], out[1], out[2])\n"
+            )
+            .unwrap(),
+            "1 4 7"
+        );
+    }
+
+    #[test]
+    fn crush200_dict_set_and_iterate() {
+        assert_eq!(
+            run_python(
+                "d = {\"a\": 1, \"b\": 2}\nd[\"c\"] = 3\nprint(d[\"c\"])\nkeys = []\nfor k in d:\n    keys.append(k)\nprint(keys[0], keys[1], keys[2])\n"
+            )
+            .unwrap(),
+            "3\na b c"
+        );
+    }
+
+    #[test]
+    fn crush200_dict_missing_key_and_int_key_fail_loud() {
+        let err = run_python("d = {\"a\": 1}\nprint(d[\"missing\"])\n").unwrap_err();
+        assert!(
+            err.to_string().contains("absent key") || err.to_string().contains("present map key"),
+            "expected missing-key error, got: {err}"
+        );
+        let err = run_python("d = {}\nd[1] = 2\n").unwrap_err();
+        assert!(
+            err.to_string().contains("string key"),
+            "expected non-string key rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn crush200_print_sep_and_bool_none() {
+        assert_eq!(run_python("print(1, 2, \"a\")").unwrap(), "1 2 a");
+        assert_eq!(run_python("print(True, None, False)").unwrap(), "True None False");
+    }
+
+    #[test]
+    fn crush200_decorator_and_for_else_fail_loud() {
+        let err = run_python("@twice\ndef g():\n    return 21\nprint(g())\n").unwrap_err();
+        assert!(
+            err.to_string().contains("decorator"),
+            "expected decorator bail, got: {err}"
+        );
+        let err = run_python("for i in range(1):\n    pass\nelse:\n    print(1)\n").unwrap_err();
+        assert!(
+            err.to_string().contains("for ... else"),
+            "expected for-else bail, got: {err}"
+        );
+    }
+
+    #[test]
+    fn crush200_default_args_fail_loud() {
+        let err = run_python("def g(n, greeting=\"Hello\"):\n    print(greeting, n)\ng(\"Bob\")\n")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("default argument"),
+            "expected default-arg bail, got: {err}"
+        );
+    }
 }

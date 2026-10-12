@@ -837,3 +837,9 @@ Rejected alternatives:
 - **Register only math.\***: picks a subset by hand; the browser would drift from crush-run again as the stdlib grows
 - **Stdlib always compiled in**: a page that only needs the core language pays ~450 KB gzipped for regex it never uses
 - **Report sys.exit as an error/throw**: an exit status is the program's chosen result, not a failure; throwing from execute() would also discard the output printed before it
+
+## 2026-10-12T15:16:33-05:00 — CRUSH-200 Python walker true/floor div and py.print
+
+Reason:
+Python / // % must not inherit Crush truncating DIV/MOD; shared arithmetic helpers + dedicated caps keep one implementation for every backend. py.print (space sep + True/None) is Python-shaped without changing Crush io.print concatenation. make_range 3-arg step lives in one module used by scheduler and portable_vm.
+

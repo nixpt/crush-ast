@@ -40,6 +40,34 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "write args (concatenated) to output",
         });
         reg(CapabilitySpec {
+            name: "py.print",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "Python print: space-separated args, True/False/None spelling",
+        });
+        reg(CapabilitySpec {
+            name: "math.floordiv",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "Python-style floor division (toward −∞)",
+        });
+        reg(CapabilitySpec {
+            name: "math.floormod",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "Python-style modulo (sign follows divisor)",
+        });
+        reg(CapabilitySpec {
+            name: "math.truediv",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "Python-style true division (always float)",
+        });
+        reg(CapabilitySpec {
             name: "io.read",
             argc: Some(0),
             returns: true,
@@ -108,14 +136,14 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             argc: None,
             returns: true,
             privileged: false,
-            summary: "set an array element at index; returns the modified array",
+            summary: "set an array/map element at index; returns the modified container",
         });
         reg(CapabilitySpec {
             name: "arr_get",
             argc: None,
             returns: true,
             privileged: false,
-            summary: "get an array element at index",
+            summary: "get an array/map element at index",
         });
         reg(CapabilitySpec {
             name: "arr_slice",
@@ -126,10 +154,10 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
         });
         reg(CapabilitySpec {
             name: "make_range",
-            argc: None,  // variadic: 0, 1, or 2 args
+            argc: None,  // variadic: 1, 2, or 3 args
             returns: true,
             privileged: false,
-            summary: "create an integer range [start..end)",
+            summary: "create an integer range [start..stop) with optional step",
         });
         reg(CapabilitySpec {
             name: "conv.chr",
