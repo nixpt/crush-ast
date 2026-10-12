@@ -295,8 +295,7 @@ fn max_output_flag_hits_output_quota_on_continue() {
 }
 
 /// Verify that `--max-call-depth` sets the call depth quota and `continue`
-/// reports a clean "quota exceeded" message when a recursive function
-/// exceeds it.
+/// reports a clean "quota exceeded" message when hit.
 #[test]
 fn max_call_depth_flag_hits_call_depth_quota_on_continue() {
     // call_depth.crush has a recursive function that calls itself.
@@ -844,7 +843,7 @@ fn unknown_or_incomplete_debug_grants_are_rejected() {
             "--cap",
             "debug.everything",
         ],
-        b"quit\n",
+        b"",
     );
     assert!(!success);
     assert!(
@@ -859,7 +858,7 @@ fn unknown_or_incomplete_debug_grants_are_rejected() {
             "--cap",
             "debug.inspect",
         ],
-        b"quit\n",
+        b"",
     );
     assert!(!success);
     assert!(stderr.contains("needs `--cap debug.step`"), "{stderr}");
