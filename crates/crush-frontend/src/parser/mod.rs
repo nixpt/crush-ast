@@ -284,6 +284,7 @@ impl Parser {
             Token::Semicolon(loc) => (loc.line, loc.col),
             Token::Dot(loc) => (loc.line, loc.col),
             Token::DotDot(loc) => (loc.line, loc.col),
+            Token::DotDotEq(loc) => (loc.line, loc.col),
             Token::Question(loc) => (loc.line, loc.col),
             Token::Newline(loc) => (loc.line, loc.col),
             Token::EOF(loc) => (loc.line, loc.col),
@@ -1374,6 +1375,7 @@ impl Parser {
                 // Range binds looser than every arithmetic/comparison op, so `0..n+1`
                 // is `0..(n+1)` — the same choice Rust makes.
                 Token::DotDot(_) => ("..", 15, false),
+                Token::DotDotEq(_) => ("..=", 15, false),
                 Token::Or(_) => ("||", 20, false),
                 Token::And(_) => ("&&", 30, false),
                 Token::Eq(_) => ("==", 40, false),
@@ -1406,6 +1408,24 @@ impl Parser {
                 Expression::Range {
                     start: Box::new(left),
                     end: Box::new(end),
+                    meta: self.make_meta(),
+                }
+            } else if op == "..=" {
+                // Inclusive range: desugar `a..=b` to `a..(b+1)`
+                let end = self.parse_expression_with_precedence(next_min_prec)?;
+                let one = Expression::IntLiteral {
+                    value: 1,
+                    meta: self.make_meta(),
+                };
+                let end_plus_one = Expression::BinaryOp {
+                    operator: "+".to_string(),
+                    left: Box::new(end),
+                    right: Box::new(one),
+                    meta: self.make_meta(),
+                };
+                Expression::Range {
+                    start: Box::new(left),
+                    end: Box::new(end_plus_one),
                     meta: self.make_meta(),
                 }
             } else if op == "|>" {
@@ -3541,5 +3561,68 @@ fn heavy() {
         let func = program.functions.get("heavy").expect("heavy should exist");
         let ann = func.annotations.as_ref().expect("annotations should be set");
         assert_eq!(ann.complexity, Some(75));
+    }
+    #[test]
+    fn test_parse_inclusive_range_desugars() {
+        // `1..=5` desugars to `1..(5+1)`
+        let program = Parser::parse("let r = 1..=5").unwrap();
+        let main = program.functions.get("main").unwrap();
+        let stmt = &main.body[0];
+        match stmt {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::Range { start, end, .. } => {
+                    assert!(matches!(start.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    match end.as_ref() {
+                        Expression::BinaryOp { operator, left, right, .. } => {
+                            assert_eq!(operator, "+");
+                            assert!(matches!(left.as_ref(), Expression::IntLiteral { value: 5, .. }));
+                            assert!(matches!(right.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                        }
+                        other => panic!("expected BinaryOp end, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Range, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inclusive_range_with_expr_end() {
+        // `0..=n` desugars to `0..(n+1)` — the +1 binds to the end expr
+        let program = Parser::parse("let r = 0..=n").unwrap();
+        let main = program.functions.get("main").unwrap();
+        let stmt = &main.body[0];
+        match stmt {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::Range { end, .. } => match end.as_ref() {
+                    Expression::BinaryOp { operator, right, .. } => {
+                        assert_eq!(operator, "+");
+                        assert!(matches!(right.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    }
+                    other => panic!("expected BinaryOp end, got {other:?}"),
+                },
+                other => panic!("expected Range, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_exclusive_range_unchanged() {
+        // `1..5` still parses to a plain Range (no desugar)
+        let program = Parser::parse("let r = 1..5").unwrap();
+        let main = program.functions.get("main").unwrap();
+        let stmt = &main.body[0];
+        match stmt {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::Range { start, end, .. } => {
+                    assert!(matches!(start.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    assert!(matches!(end.as_ref(), Expression::IntLiteral { value: 5, .. }));
+                }
+                other => panic!("expected Range, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
     }
 }

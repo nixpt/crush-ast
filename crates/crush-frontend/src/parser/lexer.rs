@@ -129,6 +129,7 @@ pub enum Token {
     Semicolon(SourceLocation), // ;
     Dot(SourceLocation),       // .
     DotDot(SourceLocation),    // ..
+    DotDotEq(SourceLocation),  // ..=
     Question(SourceLocation),  // ?
 
     // Special
@@ -220,6 +221,7 @@ impl Token {
             Token::Semicolon(_) => "`;`".to_string(),
             Token::Dot(_) => "`.`".to_string(),
             Token::DotDot(_) => "`..`".to_string(),
+            Token::DotDotEq(_) => "`..=`".to_string(),
             Token::Question(_) => "`?`".to_string(),
 
             Token::Newline(_) => "newline".to_string(),
@@ -958,7 +960,12 @@ impl Lexer {
                 self.advance();
                 if self.peek() == Some('.') {
                     self.advance();
-                    Ok(Token::DotDot(location))
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        Ok(Token::DotDotEq(location))
+                    } else {
+                        Ok(Token::DotDot(location))
+                    }
                 } else {
                     Ok(Token::Dot(location))
                 }
@@ -1312,6 +1319,23 @@ mod tests {
         }
     }
     #[test]
+    fn test_lex_dotdoteq() {
+        let mut lexer = Lexer::new("1..=5");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(1, SourceLocation { line: 1, col: 1 })
+        );
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::DotDotEq(SourceLocation { line: 1, col: 2 })
+        );
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(5, SourceLocation { line: 1, col: 5 })
+        );
+    }
+
+    #[test]
     fn test_lex_hex_literal() {
         let mut lexer = Lexer::new("0xFF");
         assert_eq!(
@@ -1344,6 +1368,19 @@ mod tests {
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::Int(10, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_dotdot_still_works() {
+        let mut lexer = Lexer::new("1..5");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(1, SourceLocation { line: 1, col: 1 })
+        );
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::DotDot(SourceLocation { line: 1, col: 2 })
         );
     }
 
