@@ -1233,4 +1233,33 @@ mod tests {
             other => panic!("expected LangBody, got {other:?}"),
         }
     }
+    #[test]
+    fn test_lex_dotdoteq() {
+        let mut lexer = Lexer::new("1..=5");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(1, SourceLocation { line: 1, col: 1 })
+        );
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::DotDotEq(SourceLocation { line: 1, col: 2 })
+        );
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(5, SourceLocation { line: 1, col: 5 })
+        );
+    }
+
+    #[test]
+    fn test_lex_dotdot_still_works() {
+        let mut lexer = Lexer::new("1..5");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(1, SourceLocation { line: 1, col: 1 })
+        );
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::DotDot(SourceLocation { line: 1, col: 2 })
+        );
+    }
 }

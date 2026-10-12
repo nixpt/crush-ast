@@ -3410,4 +3410,67 @@ fn heavy() {
         let ann = func.annotations.as_ref().expect("annotations should be set");
         assert_eq!(ann.complexity, Some(75));
     }
+    #[test]
+    fn test_parse_inclusive_range_desugars() {
+        // `1..=5` desugars to `1..(5+1)`
+        let program = Parser::parse("let r = 1..=5").unwrap();
+        let main = program.functions.get("main").unwrap();
+        let stmt = &main.body[0];
+        match stmt {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::Range { start, end, .. } => {
+                    assert!(matches!(start.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    match end.as_ref() {
+                        Expression::BinaryOp { operator, left, right, .. } => {
+                            assert_eq!(operator, "+");
+                            assert!(matches!(left.as_ref(), Expression::IntLiteral { value: 5, .. }));
+                            assert!(matches!(right.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                        }
+                        other => panic!("expected BinaryOp end, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Range, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inclusive_range_with_expr_end() {
+        // `0..=n` desugars to `0..(n+1)` — the +1 binds to the end expr
+        let program = Parser::parse("let r = 0..=n").unwrap();
+        let main = program.functions.get("main").unwrap();
+        let stmt = &main.body[0];
+        match stmt {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::Range { end, .. } => match end.as_ref() {
+                    Expression::BinaryOp { operator, right, .. } => {
+                        assert_eq!(operator, "+");
+                        assert!(matches!(right.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    }
+                    other => panic!("expected BinaryOp end, got {other:?}"),
+                },
+                other => panic!("expected Range, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_exclusive_range_unchanged() {
+        // `1..5` still parses to a plain Range (no desugar)
+        let program = Parser::parse("let r = 1..5").unwrap();
+        let main = program.functions.get("main").unwrap();
+        let stmt = &main.body[0];
+        match stmt {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::Range { start, end, .. } => {
+                    assert!(matches!(start.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    assert!(matches!(end.as_ref(), Expression::IntLiteral { value: 5, .. }));
+                }
+                other => panic!("expected Range, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
+    }
 }
