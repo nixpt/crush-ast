@@ -372,6 +372,7 @@ pub fn disassemble(program: &Program) -> String {
         (VECTOR_PUSH, "VECTOR_PUSH"),
         (NEW_SET, "NEW_SET"),
         (SET_PUSH, "SET_PUSH"),
+        (MAP_KEYS, "MAP_KEYS"),
         (HALT, "HALT"),
     ]
     .iter()
@@ -512,6 +513,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "VECTOR_PUSH" => Some(VECTOR_PUSH),
         "NEW_SET" => Some(NEW_SET),
         "SET_PUSH" => Some(SET_PUSH),
+        "MAP_KEYS" => Some(MAP_KEYS),
         "SPAWN" => Some(SPAWN),
         "YIELD" => Some(YIELD),
         "AWAIT" => Some(AWAIT),

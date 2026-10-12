@@ -655,6 +655,29 @@ pub fn execute_one(
             }
         }
 
+        FastOp::MapKeys => {
+            let val = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = val {
+                if let Some(Object::Map(map)) = arena.get(ptr) {
+                    let mut keys: Vec<String> = map.keys().cloned().collect();
+                    keys.sort();
+                    let mut key_vals = Vec::with_capacity(keys.len());
+                    for k in keys {
+                        let s_ptr = arena.alloc(Object::Str(k));
+                        key_vals.push(RuntimeValue::Ref(s_ptr));
+                    }
+                    let arr_ptr = arena.alloc(Object::Array(key_vals));
+                    stack.push(RuntimeValue::Ref(arr_ptr));
+                } else {
+                    // Not a map, push back unchanged
+                    stack.push(RuntimeValue::Ref(ptr));
+                }
+            } else {
+                // Not a ref, push back unchanged
+                stack.push(val);
+            }
+        }
+
         FastOp::NewObj => {
             let ptr = arena.alloc(Object::Object {
                 lang: "crush".to_string(),

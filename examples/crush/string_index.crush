@@ -1,0 +1,18 @@
+// String indexing (#148): s[i] is the i-th character on every engine.
+fn main() {
+    let s = "abc"
+    print(s[0])
+    print(s[2])
+    print(s[-1])
+    print(s[0] == "a")
+    let u = "héllo, wörld"
+    print(u[1])
+    print(u[8])
+    let i = 0
+    let out = ""
+    while i < 3 {
+        out = out + s[i]
+        i = i + 1
+    }
+    print(out)
+}

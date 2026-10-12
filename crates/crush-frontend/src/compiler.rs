@@ -21,6 +21,11 @@ pub struct Compiler {
     /// default; toggle via [`Compiler::with_invariant_runtime`].
     invariant_runtime: bool,
     lambdas: HashMap<String, CasmFunction>,
+    /// While compiling a lambda body: the enclosing scopes' variables. Lambdas are
+    /// lifted to plain functions with no environment, so touching one of these
+    /// from inside a lambda is a capture we can't honour yet (CRUSH-251) — it is
+    /// reported at compile time instead of faulting at run time.
+    lambda_outer_vars: Vec<HashSet<String>>,
 }
 
 struct LoopInfo {
@@ -46,7 +51,24 @@ impl Compiler {
             declared_vars: HashSet::new(),
             invariant_runtime: false,
             lambdas: HashMap::new(),
+            lambda_outer_vars: Vec::new(),
         }
+    }
+
+    /// #78: a lambda body may not read or assign the enclosing function's
+    /// variables — lambdas don't capture yet (CRUSH-251).
+    fn check_lambda_capture(&self, name: &str) -> Result<()> {
+        if !self.lambda_outer_vars.is_empty()
+            && !self.declared_vars.contains(name)
+            && !self.local_functions.contains(name)
+            && self.lambda_outer_vars.iter().any(|outer| outer.contains(name))
+        {
+            bail!(
+                "lambda uses `{name}` from the enclosing function; lambdas can't capture \
+                 variables yet (CRUSH-251) — pass `{name}` in as a parameter"
+            );
+        }
+        Ok(())
     }
 
     /// Builder: enable (`true`) or disable (`false`) emission of
@@ -521,6 +543,7 @@ impl Compiler {
             Statement::Assign {
                 target, value, meta
             } => {
+                self.check_lambda_capture(target)?;
                 self.declared_vars.insert(target.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(target))?;
                 instrs.push(self.create_typed_instr(OpCode::Store(target.clone()), meta)?);
@@ -654,6 +677,8 @@ impl Compiler {
 
                 // Compile iterable and store in temp var
                 self.compile_expr(iterable, instrs)?;
+                // Convert maps to key arrays (arrays/strings pass through unchanged)
+                instrs.push(self.create_instr("map_keys", serde_json::json!({}), meta));
                 instrs.push(self.create_instr("store", serde_json::json!({"name": arr_var}), meta));
 
                 // Initialize index to 0
@@ -1371,6 +1396,7 @@ impl Compiler {
                 instrs.push(self.create_typed_instr(OpCode::PushNull, meta)?);
             }
             Expression::Var { name, meta } => {
+                self.check_lambda_capture(name)?;
                 instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
             }
             Expression::BinaryOp {
@@ -1421,6 +1447,21 @@ impl Compiler {
                 args,
                 meta,
             } => {
+                // #78: `f(x)` where `f` is a variable (a lambda passed in as an
+                // argument, say) would otherwise compile to a capability call
+                // named "f". Calling function values needs an indirect call the VMs
+                // don't have yet (CRUSH-251); a lambda bound with `let f = |..| ..`
+                // is lifted to a function named `f` and is callable directly.
+                if !function.contains('.')
+                    && self.declared_vars.contains(function.as_str())
+                    && !self.local_functions.contains(function.as_str())
+                {
+                    bail!(
+                        "`{function}` is a variable, not a function: calling a function value \
+                         isn't supported yet (CRUSH-251). Call the lambda by the name it was \
+                         bound to (`let {function} = |x| ...` in the same function), or a named fn"
+                    );
+                }
                 if function == "len" {
                     if args.len() != 1 {
                         bail!("len() expects exactly 1 argument");
@@ -2061,9 +2102,19 @@ impl Compiler {
                         meta,
                     ));
                 }
-                for inner_stmt in body {
-                    self.compile_stmt(inner_stmt, &mut func_instrs)?;
-                }
+                // The lifted function has its own scope: its parameters, plus what
+                // its body declares. The enclosing scope is kept to detect captures.
+                let outer = std::mem::replace(
+                    &mut self.declared_vars,
+                    params.iter().map(|(n, _)| n.clone()).collect(),
+                );
+                self.lambda_outer_vars.push(outer.clone());
+                let body_result: Result<()> = body
+                    .iter()
+                    .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                self.lambda_outer_vars.pop();
+                self.declared_vars = outer;
+                body_result?;
                 self.ensure_return(&mut func_instrs, Some(meta));
 
                 let hints = extract_type_hints(params, body);

@@ -112,6 +112,7 @@ pub enum Token {
     Not(SourceLocation),         // !
     Assign(SourceLocation),      // =
     Pipe(SourceLocation),        // |>
+    Bar(SourceLocation),       // |   (lambda parameters)
     Arrow(SourceLocation),       // ->
     FatArrow(SourceLocation),    // =>  (match arm separator)
     DoubleColon(SourceLocation), // ::
@@ -204,6 +205,7 @@ impl Token {
             Token::Not(_) => "`!`".to_string(),
             Token::Assign(_) => "`=`".to_string(),
             Token::Pipe(_) => "`|>`".to_string(),
+            Token::Bar(_) => "`|`".to_string(),
             Token::Arrow(_) => "`->`".to_string(),
             Token::FatArrow(_) => "`=>`".to_string(),
             Token::DoubleColon(_) => "`::`".to_string(),
@@ -293,13 +295,19 @@ impl Lexer {
     }
 
     fn read_string(&mut self) -> Result<Token, ParseError> {
+        self.read_quoted('"')
+    }
+
+    /// A string literal delimited by `quote` (`"` or `'`; #142). Same escapes
+    /// for both, plus `\'` and `\"` either way.
+    fn read_quoted(&mut self, quote: char) -> Result<Token, ParseError> {
         let start_line = self.line;
         let start_col = self.col;
         self.advance(); // Skip opening quote
 
         let mut value = String::new();
         while let Some(ch) = self.peek() {
-            if ch == '"' {
+            if ch == quote {
                 self.advance(); // Skip closing quote
                 return Ok(Token::String(
                     value,
@@ -316,6 +324,7 @@ impl Lexer {
                     Some('r') => value.push('\r'),
                     Some('\\') => value.push('\\'),
                     Some('"') => value.push('"'),
+                    Some('\'') => value.push('\''),
                     Some(c) => value.push(c),
                     None => {
                         return Err(ParseError::UnterminatedString {
@@ -339,6 +348,18 @@ impl Lexer {
     fn read_number(&mut self) -> Result<Token, ParseError> {
         let start_line = self.line;
         let start_col = self.col;
+
+        // Check for hex (0x) or binary (0b) prefix
+        if self.peek() == Some('0') {
+            if let Some(next) = self.peek_ahead(1) {
+                if next == 'x' || next == 'X' {
+                    return self.read_radix_number(16, start_line, start_col);
+                } else if next == 'b' || next == 'B' {
+                    return self.read_radix_number(2, start_line, start_col);
+                }
+            }
+        }
+
         let mut value = String::new();
         let mut is_float = false;
 
@@ -393,6 +414,57 @@ impl Lexer {
                     value,
                 }),
             }
+        }
+    }
+
+    /// Read a hex (0x) or binary (0b) integer literal. The `0x`/`0b` prefix
+    /// has not been consumed yet when this is called.
+    fn read_radix_number(
+        &mut self,
+        radix: u32,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token, ParseError> {
+        // Consume the '0' and the 'x'/'b' prefix
+        self.advance();
+        self.advance();
+
+        let mut value = String::new();
+        while let Some(ch) = self.peek() {
+            let valid = match radix {
+                16 => ch.is_ascii_hexdigit(),
+                2 => ch == '0' || ch == '1',
+                _ => false,
+            };
+            if valid {
+                value.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if value.is_empty() {
+            return Err(ParseError::InvalidNumber {
+                line: start_line,
+                col: start_col,
+                value: format!("0{}", if radix == 16 { "x" } else { "b" }),
+            });
+        }
+
+        match i64::from_str_radix(&value, radix) {
+            Ok(i) => Ok(Token::Int(
+                i,
+                SourceLocation {
+                    line: start_line,
+                    col: start_col,
+                },
+            )),
+            Err(_) => Err(ParseError::InvalidNumber {
+                line: start_line,
+                col: start_col,
+                value,
+            }),
         }
     }
 
@@ -461,6 +533,11 @@ impl Lexer {
             "true" | "sahi" | "真" | "本当" => Token::Bool(true, location),
             "false" | "galat" | "假" | "偽" => Token::Bool(false, location),
             "null" => Token::Null(location),
+            // Word forms of the logical operators (the guide documents them as
+            // identical to `&&` / `||` / `!`).
+            "and" => Token::And(location),
+            "or" => Token::Or(location),
+            "not" => Token::Not(location),
             _ => Token::Ident(value, location),
         }
     }
@@ -795,7 +872,15 @@ impl Lexer {
                 Ok(Token::Newline(location))
             }
             '"' => self.read_string(),
+            '\'' => self.read_quoted('\''),
             '0'..='9' => self.read_number(),
+            // `b"..."`: bytes literals have no runtime type yet (the guide lists
+            // them as not available). Say so instead of "Undefined variable: b".
+            'b' if self.peek_ahead(1) == Some('"') => Err(ParseError::UnexpectedToken {
+                line: location.line,
+                col: location.col,
+                msg: "bytes literals (b\"...\") are not supported yet; use a string, or an array of byte values".to_string(),
+            }),
             c if c.is_alphabetic() || c == '_' => Ok(self.read_identifier()),
             '+' => {
                 self.advance();
@@ -942,7 +1027,7 @@ impl Lexer {
                     self.advance();
                     Ok(Token::Or(location))
                 } else {
-                    Ok(Token::Ident("|".to_string(), location)) // Single | as ident for now
+                    Ok(Token::Bar(location)) // `|`: lambda parameter delimiters (#78)
                 }
             }
             '#' => {
@@ -1247,6 +1332,38 @@ mod tests {
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::Int(5, SourceLocation { line: 1, col: 5 })
+    fn test_lex_hex_literal() {
+        let mut lexer = Lexer::new("0xFF");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_lowercase() {
+        let mut lexer = Lexer::new("0xdeadbeef");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(0xdeadbeef, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_zero() {
+        let mut lexer = Lexer::new("0x0");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(0, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_binary_literal() {
+        let mut lexer = Lexer::new("0b1010");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(10, SourceLocation { line: 1, col: 1 })
         );
     }
 
@@ -1260,6 +1377,47 @@ mod tests {
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::DotDot(SourceLocation { line: 1, col: 2 })
+    fn test_lex_binary_all_ones() {
+        let mut lexer = Lexer::new("0b11111111");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_stops_at_non_hexdigit() {
+        // 0xFF followed by 'g' lexes as 255 then an identifier
+        let mut lexer = Lexer::new("0xFFg");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::Ident(name, _) => assert_eq!(name, "g"),
+            other => panic!("expected Ident, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lex_bare_hex_prefix_is_error() {
+        let mut lexer = Lexer::new("0x");
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_lex_bare_binary_prefix_is_error() {
+        let mut lexer = Lexer::new("0b");
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_lex_binary_rejects_2() {
+        // 0b102: '2' is not a binary digit, so this lexes as 2 then '2'
+        let mut lexer = Lexer::new("0b102");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(2, SourceLocation { line: 1, col: 1 })
         );
     }
 }

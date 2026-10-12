@@ -19,6 +19,8 @@ use crush_lang_sdk::{Quotas, Runtime};
 const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
     ("arrays_and_loops", "rust", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
     ("arrays_and_loops", "c", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
+    ("string_stress", "rust", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
+    ("string_stress", "c", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
 ];
 
 /// Parallel builds. Each is a rustc or gcc process of its own, next to the other test

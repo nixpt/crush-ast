@@ -738,7 +738,7 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else if let Some(RuntimeValue::String(ref s)) = __arr {{ /* #148: index by character, like the VM */ let __v = match __idx {{ RuntimeValue::Int(i) => wrap_index(i, s.chars().count()).and_then(|j| s.chars().nth(j)).map(|c| RuntimeValue::String(c.to_string())).unwrap_or(RuntimeValue::Null), _ => RuntimeValue::Null }}; stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_set" => {{
@@ -747,6 +747,10 @@ fn emit_body(
         }}
         "arr_len" | "len" => {{
             out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __l = match &__v {{ RuntimeValue::Array(a) => a.borrow().len() as i64, RuntimeValue::String(s) => s.len() as i64, _ => 0 }}; stack.push(RuntimeValue::Int(__l)); }}\n"));
+            out.push_str(&next_pc_str);
+        }}
+        "map_keys" => {{
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Object(m) => {{ let mut __k: Vec<String> = m.borrow().keys().cloned().collect(); __k.sort(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_push" | "array_push" => {{

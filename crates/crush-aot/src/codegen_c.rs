@@ -281,6 +281,28 @@ static char* _str_new(size_t len) {
     return p;
 }
 
+// #148: `s[i]` on a string — the i-th character (UTF-8 scalar), negative
+// indices wrap; null when out of range. Matches the VM's ARR_GET on Str.
+static Value _str_char_at(const char* s, int64_t idx) {
+    if (!s) return mk_null();
+    int64_t count = 0;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        if ((*p & 0xC0) != 0x80) count++;
+    }
+    if (idx < 0) idx += count;
+    if (idx < 0 || idx >= count) return mk_null();
+    const unsigned char* p = (const unsigned char*)s;
+    int64_t n = -1;
+    for (; *p; p++) {
+        if ((*p & 0xC0) != 0x80 && ++n == idx) break;
+    }
+    size_t w = 1;
+    while (p[w] && (p[w] & 0xC0) == 0x80) w++;
+    char* out = _str_new(w);
+    memcpy(out, p, w);
+    return mk_string(out);
+}
+
 static void _reset_strings(void) {
     for (size_t i = 0; i < _str_block_count; i++) free(_str_blocks[i]);
     _str_block_count = 0;
@@ -1332,13 +1354,18 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ int __ai = _alloc_array(); _push(__ai >= 0 ? mk_array(__ai) : mk_null()); }} _pc={next_pc}; break;\n"));
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else if (__arr_v.tag == TAG_STRING && __idx_v.tag == TAG_INT) {{ _push(_str_char_at(__arr_v.s, __idx_v.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_set" => {{
             out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_len" | "len" => {{
             out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
+        }}
+        "map_keys" => {{
+            // C backend has no map support; pass through unchanged.
+            // Maps were already unsupported here before this op existed.
+            out.push_str(&format!("                {{ Value __v = _pop(); _push(__v); }} _pc={next_pc}; break;\n"));
         }}
         "arr_push" | "array_push" => {{
             out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break;\n"));

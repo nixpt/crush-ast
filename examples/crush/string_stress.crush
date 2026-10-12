@@ -1,0 +1,65 @@
+# string_stress.crush - stress test string operations
+# Tests: concat, indexing, len, comparison, escapes, empty strings
+
+fn test_concat() {
+  let a = "hello"
+  let b = "world"
+  let c = a + " " + b
+  if c == "hello world" { print("concat: PASS") } else { print("concat: FAIL got [" + c + "]") }
+  return 0
+}
+
+fn test_indexing() {
+  let s = "abcdef"
+  if s[0] == "a" { print("index0: PASS") } else { print("index0: FAIL") }
+  if s[5] == "f" { print("index5: PASS") } else { print("index5: FAIL") }
+  if s[2] == "c" { print("index2: PASS") } else { print("index2: FAIL") }
+  return 0
+}
+
+fn test_len() {
+  if len("") == 0 { print("len-empty: PASS") } else { print("len-empty: FAIL") }
+  if len("abc") == 3 { print("len-abc: PASS") } else { print("len-abc: FAIL") }
+  if len("hello world") == 11 { print("len-space: PASS") } else { print("len-space: FAIL") }
+  return 0
+}
+
+fn test_compare() {
+  if "abc" == "abc" { print("eq: PASS") } else { print("eq: FAIL") }
+  if "abc" != "abd" { print("ne: PASS") } else { print("ne: FAIL") }
+  # NOTE: "a" < "b" is a runtime type error (issue #76), not tested
+  return 0
+}
+
+fn test_escapes() {
+  let n = "a\nb"
+  if len(n) == 3 { print("escape-n-len: PASS") } else { print("escape-n-len: FAIL got " + len(n)) }
+  let t = "a\tb"
+  if len(t) == 3 { print("escape-t-len: PASS") } else { print("escape-t-len: FAIL") }
+  let q = "a\"b"
+  if len(q) == 3 { print("escape-quote-len: PASS") } else { print("escape-quote-len: FAIL") }
+  let bs = "a\\b"
+  if len(bs) == 3 { print("escape-backslash-len: PASS") } else { print("escape-backslash-len: FAIL") }
+  return 0
+}
+
+fn test_empty() {
+  let e = ""
+  let c = e + "x"
+  if c == "x" { print("empty-concat: PASS") } else { print("empty-concat: FAIL") }
+  let d = "x" + e
+  if d == "x" { print("concat-empty: PASS") } else { print("concat-empty: FAIL") }
+  return 0
+}
+
+fn main() {
+  print("=== string stress tests ===")
+  test_concat()
+  test_indexing()
+  test_len()
+  test_compare()
+  test_escapes()
+  test_empty()
+  print("=== done ===")
+  return
+}

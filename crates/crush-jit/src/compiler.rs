@@ -17,7 +17,7 @@ use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_MAP_KEYS, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -1154,6 +1154,7 @@ fn emit_one(
         ListPush   => emit_helper_call(b, ctx, OP_LIST_PUSH, 0, _ptr_ty, helper_sig),
         VectorPush => emit_helper_call(b, ctx, OP_VECTOR_PUSH, 0, _ptr_ty, helper_sig),
         SetPush    => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
+        MapKeys    => emit_helper_call(b, ctx, OP_MAP_KEYS, 0, _ptr_ty, helper_sig),
         GetField   => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
         SetField   => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
         NewObj => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig), // M2 Phase 6: infallible
