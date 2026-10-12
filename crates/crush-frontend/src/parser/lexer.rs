@@ -1289,4 +1289,84 @@ mod tests {
             other => panic!("expected LangBody, got {other:?}"),
         }
     }
+    #[test]
+    fn test_lex_hex_literal() {
+        let mut lexer = Lexer::new("0xFF");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_lowercase() {
+        let mut lexer = Lexer::new("0xdeadbeef");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(0xdeadbeef, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_zero() {
+        let mut lexer = Lexer::new("0x0");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(0, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_binary_literal() {
+        let mut lexer = Lexer::new("0b1010");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(10, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_binary_all_ones() {
+        let mut lexer = Lexer::new("0b11111111");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+    }
+
+    #[test]
+    fn test_lex_hex_stops_at_non_hexdigit() {
+        // 0xFF followed by 'g' lexes as 255 then an identifier
+        let mut lexer = Lexer::new("0xFFg");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(255, SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::Ident(name, _) => assert_eq!(name, "g"),
+            other => panic!("expected Ident, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lex_bare_hex_prefix_is_error() {
+        let mut lexer = Lexer::new("0x");
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_lex_bare_binary_prefix_is_error() {
+        let mut lexer = Lexer::new("0b");
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_lex_binary_rejects_2() {
+        // 0b102: '2' is not a binary digit, so this lexes as 2 then '2'
+        let mut lexer = Lexer::new("0b102");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::Int(2, SourceLocation { line: 1, col: 1 })
+        );
+    }
 }
