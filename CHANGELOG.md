@@ -14,6 +14,111 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-12
+
+- Merge pull request #169 from nixpt/agent/vega/fix-main-dup-unparen
+- fix(js-walker): drop duplicate unparen — main fails to compile after #164 + #167
+- Merge pull request #167 from nixpt/agent/nixp/CRUSH-200
+- Merge pull request #166 from nixpt/agent/vega/CRUSH-197-rust-walker
+- Merge pull request #165 from nixpt/agent/vega/CRUSH-257-typed-locals
+- Merge pull request #164 from nixpt/agent/vega/CRUSH-260-js-length-numbers
+- fix(python): address CRUSH-200 review — overflow, map keys, range end
+- Merge branch 'pr-168' into agent/nixp/CRUSH-200
+- fix(js-walker): C-style for loops, do-while, comma sequences, multi-declarator var
+- fix(rust-walker): println!/format! args, tail-expr returns, inclusive ranges; match/loop/vec! (CRUSH-197)
+- fix(python): CRUSH-200 walker semantics + AOT vs CPython bench (CRUSH-262)
+- feat(aot-c): sound CFG local-type inference; re-enable unboxed int64/double locals (CRUSH-257)
+- planning: CRUSH-199 += array method calls, compile_cast vs walker helpers, JS number printing
+- fix(js): `x.length` lowers to `len` on strings and arrays (CRUSH-260)
+- Merge pull request #163 from nixpt/agent/vega/js-aot-compute-gap
+- planning+bench: JS → AOT vs Node compute gap (CRUSH-257..261)
+- Merge pull request #146 from pranix/bro/fix-inclusive-range
+- Merge pull request #160 from nixpt/agent/vega/CRUSH-256-drop-ort
+- Merge pull request #162 from nixpt/agent/vega/CRUSH-91-web-polyglot-grants
+- Merge pull request #158 from nixpt/agent/vega/aot-value-text
+- Merge pull request #159 from nixpt/agent/vega/CRUSH-256-gc-model-no-ort
+- feat(crush-web): run @lang blocks through a host executor; capability grants (#91)
+- build: drop ort (ONNX Runtime) from crush-vm and crush-lint (CRUSH-256)
+- planning: CRUSH-256 — GC predictor without ONNX Runtime (generated rules / tract); ort out of crush-vm defaults
+- fix(aot): arrays/objects as text match the VM; parity reports the outputs
+- Merge pull request #157 from nixpt/agent/vega/parity-string-stress
+- test(aot): drop stale string_stress KNOWN_DIVERGENCES (main is red)
+- fix(frontend): repair test_lex_dotdoteq / test_lex_dotdot_still_works after the main merge
+- Merge branch 'main' into bro/fix-inclusive-range
+- Merge pull request #156 from nixpt/agent/vega/CRUSH-78-lambdas
+- Merge pull request #155 from nixpt/agent/vega/CRUSH-137-struct-literals
+- Merge pull request #154 from nixpt/agent/vega/CRUSH-148-aot-string-index
+- Merge pull request #153 from nixpt/agent/vega/CRUSH-142-quotes-bytes
+- Merge pull request #152 from nixpt/agent/vega/CRUSH-138-and-or-not
+- Merge pull request #151 from nixpt/agent/vega/bozo-js-plan
+- Merge pull request #150 from pranix/bro/fix-for-over-map-keys
+- Merge pull request #149 from nixpt/agent/vega/CRUSH-143-match-arms
+- Merge pull request #145 from pranix/bro/add-stress-tests
+- Merge pull request #144 from pranix/bro/fix-hex-binary-literals
+- test: move for-over-map e2e tests to crush-lang-sdk/tests
+- test(vm): e2e tests for for-over-map iteration
+- fix(frontend): lambdas `|x| => expr` parse and run; captures are compile errors (#78)
+- test(frontend): parser + lexer tests for inclusive range
+- test(frontend): lexer tests for hex/binary literals
+- feat(frontend): struct literals `Name { field: expr }` (#137)
+- fix(aot): string indexing s[i] returns the character, like the VM (#148)
+- fix(frontend): single-quoted strings; clear error for b"..." bytes literals (#142)
+- fix(frontend): annotation kebab names may contain and/or/not
+- fix(frontend): `and` / `or` / `not` keywords (#138)
+- fix(aot): map_keys codegen used RuntimeValue::Map; the AOT runtime variant is Object
+- planning: CRUSH-255 — publish crush-vm 0.4.1 (shared HostCap trait for exo-light in surfer)
+- planning: CRUSH-250..254 — browser JS on crush (Boa parser default, object model, real dom_native, python-dom, job queue)
+- feat: map_keys opcode for for-over-map iteration (all backends)
+- wip: map_keys opcode for for-over-map (CVM1, PortableVM, FastVM)
+- test(aot): mark string_stress as known divergence (CRUSH-217)
+- examples: add language stress tests (strings, arrays, maps, control flow, arithmetic)
+- fix: match arms — void call underflow (#143) and lost assignments under the optimizer (#147)
+- fix(frontend): support inclusive range 1..=5
+- fix(frontend): support hex (0x) and binary (0b) integer literals
+- Merge pull request #136 from nixpt/ccr-12236bee-uj4oar
+- chore: ignore crush-web's own target dir
+- feat(crush-web): browser runs get the stdlib, sys.args and sys.exit (CRUSH-244)
+- Merge pull request #134 from nixpt/ccr-12236bee-uj4oar
+- fix(sdk): net host caps handle HostCapError::Exit (all-features build)
+- test(scripting): pin the bash side to LC_ALL=C so sort order doesn't depend on the host locale
+- Merge remote-tracking branch 'origin/main' into agent/foreman/pr134-fix
+- chore: renumber declared-capabilities ticket CRUSH-232 -> CRUSH-243 (CRUSH-232 landed as the casm_to_vm lowering ticket)
+- Merge pull request #135 from nixpt/agent/panini/CRUSH-232
+- feat(sdk): casm_to_vm lowers 33 more CASM ops; completeness test over every OpCode (CRUSH-232)
+- feat(scripting): sys.args, sys.exit, streamed output; void host caps return null (CRUSH-183)
+- Merge origin/main into ccr-12236bee-uj4oar
+- test(aot): examples_parity skips interactive examples instead of reading its own stdin
+- Merge pull request #133 from nixpt/agent/foreman/examples-stdin
+- docs(agents): never run io.read examples with stdin open — blackjack_interactive hangs the session
+- Merge pull request #132 from nixpt/agent/naka/CRUSH-231
+- feat: programs declare capabilities; crush-run checks grants before running (CRUSH-232)
+- Merge remote-tracking branch 'origin/main' into agent/naka/CRUSH-231
+- ci: run every crate's tests; drop the dead 1.85 pin; add an MSRV job (CRUSH-231)
+- Merge pull request #131 from nixpt/agent/panini/CRUSH-224-226
+- docs(dejavue): record CRUSH-226 and CRUSH-224 decisions
+- fix(polyglot): carry use @lang imports into later blocks (CRUSH-224)
+- chore(planning): file CRUSH-232..238 from the agents + polyglot use-case review
+- fix(vm): EXEC_LANG enforces declared caps and allowed_caps (CRUSH-226)
+- Merge pull request #129 from nixpt/agent/foreman/CRUSH-231
+- Merge pull request #128 from nixpt/ccr-12236bee-uj4oar
+- chore(planning): CRUSH-231 — note PR #128 covers crush-aot
+- Merge origin/main into ccr-12236bee-uj4oar (keep one CRUSH-227 row, checked)
+- chore(planning): file CRUSH-231 (CI toolchain pin dead, 24 crates never run tests)
+- Merge pull request #127 from nixpt/agent/foreman/CRUSH-224-226
+- docs: close CRUSH-227; record the C collector decision and its invariant
+- feat(aot): C runtime frees memory during a run; CI runs the AOT tests (CRUSH-227)
+- Merge pull request #126 from nixpt/ccr-12236bee-uj4oar
+- chore(planning): file CRUSH-224..226 (polyglot imports, session state, EXEC_LANG cap check)
+- chore(planning): file CRUSH-227..230 from the PR #126 review
+- fix(aot): address PR #126 review — mat_mul bounds, long string results, name mangling, C overflow
+- test(aot): every example the VM runs must print the same under AOT (CRUSH-220)
+- fix(aot): C backend stack, arrays and objects grow instead of dropping values (CRUSH-223)
+- fix(aot): C backend strings, io.print stack contract, float text (CRUSH-216)
+- fix(aot): Rust backend compiles int / and %, and keyword function names (CRUSH-214)
+- chore(planning): file CRUSH-222..223 from the AOT test drive; add evidence to 214/216/217/220
+
+
+
 - **`crush-web`: the browser gets the standard library, `sys.args` and
   `sys.exit` (CRUSH-244).** Every entry point now registers what `crush-run`
   gives a program with no grant flags: `math.*`, `str.*`, `system.*` and the
