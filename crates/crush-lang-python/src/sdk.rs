@@ -260,6 +260,20 @@ mod tests {
     }
 
     #[test]
+    fn crush200_dict_missing_key_and_int_key_fail_loud() {
+        let err = run_python("d = {\"a\": 1}\nprint(d[\"missing\"])\n").unwrap_err();
+        assert!(
+            err.to_string().contains("absent key") || err.to_string().contains("present map key"),
+            "expected missing-key error, got: {err}"
+        );
+        let err = run_python("d = {}\nd[1] = 2\n").unwrap_err();
+        assert!(
+            err.to_string().contains("string key"),
+            "expected non-string key rejection, got: {err}"
+        );
+    }
+
+    #[test]
     fn crush200_print_sep_and_bool_none() {
         assert_eq!(run_python("print(1, 2, \"a\")").unwrap(), "1 2 a");
         assert_eq!(run_python("print(True, None, False)").unwrap(), "True None False");

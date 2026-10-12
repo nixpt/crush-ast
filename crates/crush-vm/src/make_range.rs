@@ -62,13 +62,21 @@ pub fn make_range_values(args: &[Value]) -> Result<Value, VmError> {
         let mut i = start;
         while i < stop {
             elems.push(Value::Int(i));
-            i = i.checked_add(step).ok_or(VmError::ArithmeticOverflow)?;
+            // Python `range` just ends when the next step would overflow;
+            // do not surface ArithmeticOverflow.
+            match i.checked_add(step) {
+                Some(next) => i = next,
+                None => break,
+            }
         }
     } else {
         let mut i = start;
         while i > stop {
             elems.push(Value::Int(i));
-            i = i.checked_add(step).ok_or(VmError::ArithmeticOverflow)?;
+            match i.checked_add(step) {
+                Some(next) => i = next,
+                None => break,
+            }
         }
     }
     Ok(Value::new_array(elems))

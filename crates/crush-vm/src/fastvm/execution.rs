@@ -504,16 +504,17 @@ pub fn execute_one(
                         }
                     }
                     Some(Object::Map(map)) => {
-                        if let RuntimeValue::Ref(key_ptr) = &key {
-                            if let Some(Object::Str(s)) = arena.get(*key_ptr) {
-                                let val = map.get(s).cloned().unwrap_or(RuntimeValue::Null);
-                                stack.push(val);
-                            } else {
-                                stack.push(RuntimeValue::Null);
-                            }
-                        } else {
-                            stack.push(RuntimeValue::Null);
-                        }
+                        // String keys only (no int→string coercion); missing key is an error.
+                        let RuntimeValue::Ref(key_ptr) = &key else {
+                            return Err(FastError::TypeMismatch);
+                        };
+                        let Some(Object::Str(s)) = arena.get(*key_ptr) else {
+                            return Err(FastError::TypeMismatch);
+                        };
+                        let Some(val) = map.get(s) else {
+                            return Err(FastError::TypeMismatch);
+                        };
+                        stack.push(val.clone());
                     }
                     Some(Object::Str(s)) => {
                         if let RuntimeValue::Int(idx) = key {
@@ -741,6 +742,7 @@ pub fn execute_one(
             let container = stack.pop().ok_or(FastError::StackUnderflow)?;
             if let RuntimeValue::Ref(ptr) = container {
                 // Resolve string keys before taking a mutable borrow of `arena`.
+                // Int keys are rejected for maps (no `1`/`"1"` collision).
                 let map_key = match &key {
                     RuntimeValue::Ref(key_ptr) => {
                         if let Some(Object::Str(s)) = arena.get(*key_ptr) {
@@ -749,7 +751,6 @@ pub fn execute_one(
                             None
                         }
                     }
-                    RuntimeValue::Int(i) => Some(i.to_string()),
                     _ => None,
                 };
                 match arena.get_mut(ptr) {
@@ -762,9 +763,10 @@ pub fn execute_one(
                         }
                     }
                     Ok(Object::Map(map)) => {
-                        if let Some(k) = map_key {
-                            map.insert(k, val);
-                        }
+                        let Some(k) = map_key else {
+                            return Err(FastError::TypeMismatch);
+                        };
+                        map.insert(k, val);
                     }
                     _ => {}
                 }

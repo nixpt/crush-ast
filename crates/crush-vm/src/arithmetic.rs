@@ -140,6 +140,9 @@ pub fn mod_values(a: &Value, b: &Value) -> Result<Value, VmError> {
 }
 
 /// Python-style true division (`/`) — always yields a float.
+///
+/// Both operands are converted through `f64`, so integer results are only
+/// exact below 2⁵³ (same trade-off as JS number semantics / CRUSH-260).
 pub fn true_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
     require_numeric(a, b)?;
     let bf = to_f64(b);
@@ -152,7 +155,8 @@ pub fn true_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
 /// Python-style floor division (`//`) — rounds toward −∞.
 ///
 /// Integer operands stay integers; any float operand promotes the result to
-/// float (matching CPython).
+/// float (matching CPython). `i64::MIN // -1` is `ArithmeticOverflow` (Rust
+/// and x86 cannot represent the quotient in i64).
 pub fn floor_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
     require_numeric(a, b)?;
     if is_float(a) || is_float(b) {
@@ -168,8 +172,8 @@ pub fn floor_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
             return Err(VmError::DivByZero);
         }
         // Floor div for integers: (a / b) toward −∞, not truncating toward 0.
-        let q = ai / bi;
-        let r = ai % bi;
+        let q = ai.checked_div(bi).ok_or(VmError::ArithmeticOverflow)?;
+        let r = ai.checked_rem(bi).ok_or(VmError::ArithmeticOverflow)?;
         if r != 0 && (ai ^ bi) < 0 {
             Ok(Value::Int(q - 1))
         } else {
@@ -197,6 +201,8 @@ pub fn floor_mod_values(a: &Value, b: &Value) -> Result<Value, VmError> {
         let Value::Int(q) = floor_div_values(a, b)? else {
             unreachable!("int floor_div returns Int");
         };
+        // `ai - bi * q` is exact for floormod when floor_div succeeded; the
+        // MIN/-1 case already erred above.
         Ok(Value::Int(ai - bi * q))
     }
 }
@@ -289,6 +295,18 @@ mod tests {
         assert_eq!(floor_mod_values(&Value::Int(7), &Value::Int(2)).unwrap(), Value::Int(1));
         assert_eq!(floor_mod_values(&Value::Int(-7), &Value::Int(2)).unwrap(), Value::Int(1));
         assert_eq!(floor_mod_values(&Value::Int(7), &Value::Int(-2)).unwrap(), Value::Int(-1));
+    }
+
+    #[test]
+    fn floor_div_min_neg_one_overflows() {
+        assert!(matches!(
+            floor_div_values(&Value::Int(i64::MIN), &Value::Int(-1)),
+            Err(VmError::ArithmeticOverflow)
+        ));
+        assert!(matches!(
+            floor_mod_values(&Value::Int(i64::MIN), &Value::Int(-1)),
+            Err(VmError::ArithmeticOverflow)
+        ));
     }
 
     #[test]

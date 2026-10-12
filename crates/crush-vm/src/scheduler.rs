@@ -894,17 +894,8 @@ fn execute_one(
             let arr_v = pop!();
             match arr_v {
                 Value::Map(map_rc) => {
-                    let key = match &idx_v {
-                        Value::Str(s) => s.clone(),
-                        Value::Int(i) => i.to_string(),
-                        other => {
-                            return Err(VmError::TypeError {
-                                expected: "string or int key",
-                                got: other.type_name(),
-                            });
-                        }
-                    };
-                    push!(map_rc.borrow().get(&key).cloned().unwrap_or(Value::Null));
+                    let key = crate::map_ops::map_key_string(&idx_v)?;
+                    push!(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                 }
                 Value::Array(arr_rc) => {
                     let idx = need_array_index(&idx_v)?;
@@ -929,16 +920,7 @@ fn execute_one(
             let arr_v = pop!();
             match arr_v {
                 Value::Map(map_rc) => {
-                    let key = match &idx_v {
-                        Value::Str(s) => s.clone(),
-                        Value::Int(i) => i.to_string(),
-                        other => {
-                            return Err(VmError::TypeError {
-                                expected: "string or int key",
-                                got: other.type_name(),
-                            });
-                        }
-                    };
+                    let key = crate::map_ops::map_key_string(&idx_v)?;
                     map_rc.borrow_mut().insert(key, val);
                     push!(Value::Map(map_rc));
                 }
@@ -1668,16 +1650,7 @@ fn dispatch_cap(
                         Ok(Some(args[0].clone()))
                     }
                     Value::Map(map) => {
-                        let key = match &args[1] {
-                            Value::Str(s) => s.clone(),
-                            Value::Int(i) => i.to_string(),
-                            other => {
-                                return Err(VmError::TypeError {
-                                    expected: "string or int key",
-                                    got: other.type_name(),
-                                });
-                            }
-                        };
+                        let key = crate::map_ops::map_key_string(&args[1])?;
                         map.borrow_mut().insert(key, args[2].clone());
                         Ok(Some(args[0].clone()))
                     }
@@ -1692,17 +1665,8 @@ fn dispatch_cap(
                         Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
                     }
                     Value::Map(map) => {
-                        let key = match &args[1] {
-                            Value::Str(s) => s.clone(),
-                            Value::Int(i) => i.to_string(),
-                            other => {
-                                return Err(VmError::TypeError {
-                                    expected: "string or int key",
-                                    got: other.type_name(),
-                                });
-                            }
-                        };
-                        Ok(Some(map.borrow().get(&key).cloned().unwrap_or(Value::Null)))
+                        let key = crate::map_ops::map_key_string(&args[1])?;
+                        Ok(Some(crate::map_ops::map_get(&map.borrow(), &key)?))
                     }
                     _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
                 }
