@@ -2982,6 +2982,12 @@ impl Parser {
     fn kw_text(token: &Token) -> Option<&'static str> {
         match token {
             Token::If(_) => Some("if"),
+            // Word-form logical operators (#138) — e.g. `rc-refcell-not-send`.
+            // Only consulted after a kebab `-`, so the `&&`/`||`/`!` spellings
+            // of these tokens never reach here in practice.
+            Token::And(_) => Some("and"),
+            Token::Or(_) => Some("or"),
+            Token::Not(_) => Some("not"),
             Token::Else(_) => Some("else"),
             Token::While(_) => Some("while"),
             Token::For(_) => Some("for"),
