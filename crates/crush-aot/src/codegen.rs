@@ -738,7 +738,7 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else if let Some(RuntimeValue::String(ref s)) = __arr {{ /* #148: index by character, like the VM */ let __v = match __idx {{ RuntimeValue::Int(i) => wrap_index(i, s.chars().count()).and_then(|j| s.chars().nth(j)).map(|c| RuntimeValue::String(c.to_string())).unwrap_or(RuntimeValue::Null), _ => RuntimeValue::Null }}; stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_set" => {{
