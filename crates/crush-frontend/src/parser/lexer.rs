@@ -291,13 +291,19 @@ impl Lexer {
     }
 
     fn read_string(&mut self) -> Result<Token, ParseError> {
+        self.read_quoted('"')
+    }
+
+    /// A string literal delimited by `quote` (`"` or `'`; #142). Same escapes
+    /// for both, plus `\'` and `\"` either way.
+    fn read_quoted(&mut self, quote: char) -> Result<Token, ParseError> {
         let start_line = self.line;
         let start_col = self.col;
         self.advance(); // Skip opening quote
 
         let mut value = String::new();
         while let Some(ch) = self.peek() {
-            if ch == '"' {
+            if ch == quote {
                 self.advance(); // Skip closing quote
                 return Ok(Token::String(
                     value,
@@ -314,6 +320,7 @@ impl Lexer {
                     Some('r') => value.push('\r'),
                     Some('\\') => value.push('\\'),
                     Some('"') => value.push('"'),
+                    Some('\'') => value.push('\''),
                     Some(c) => value.push(c),
                     None => {
                         return Err(ParseError::UnterminatedString {
@@ -861,7 +868,15 @@ impl Lexer {
                 Ok(Token::Newline(location))
             }
             '"' => self.read_string(),
+            '\'' => self.read_quoted('\''),
             '0'..='9' => self.read_number(),
+            // `b"..."`: bytes literals have no runtime type yet (the guide lists
+            // them as not available). Say so instead of "Undefined variable: b".
+            'b' if self.peek_ahead(1) == Some('"') => Err(ParseError::UnexpectedToken {
+                line: location.line,
+                col: location.col,
+                msg: "bytes literals (b\"...\") are not supported yet; use a string, or an array of byte values".to_string(),
+            }),
             c if c.is_alphabetic() || c == '_' => Ok(self.read_identifier()),
             '+' => {
                 self.advance();
