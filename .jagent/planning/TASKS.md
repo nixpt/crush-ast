@@ -68,6 +68,18 @@ CRUSH-115, CRUSH-116, and CRUSH-117 are implemented on `origin/main` as of
 - [x] **CRUSH-117** — `conv.chr`/`conv.ord`: always-on portable codepoint conversion with VM, PortableVM, Rust AOT, C AOT, and AOT-C coverage.
 - [x] **CRUSH-118** — a real interactive demo proving `io.read` end-to-end, not just registered. **Done 2026-10-07** — `examples/crush/blackjack_interactive.crush` plays natively (piped stdin) and in headless Chromium via crush-web `Session` (pause on `io.read`, resume on `provide`) and `execute_with({ stdin })`; `crush_vm::InputSource` on `PortableVm`. Scheduler parity is the open gap below.
 
+## Filed — browser JS on crush (2026-10-12, vega; surfer-browser `SURF-ENGINE-2`; bozo M7)
+
+Goal: surfer-browser runs page JS through bozo's frontend on crush (CVM1/FastVM/JIT/AOT)
+and keeps only Boa's **parser** — dropping `boa_engine` (≈153k LOC) and swc from its JS path.
+Plan + ordering: surfer-browser `.jagent/planning/tickets/SURF-ENGINE-2.md`.
+
+- [ ] **CRUSH-250** — crush-lang-js Boa parser backend → 0.22, default for `.js`, swc only for TS; `lower_boa` parity. (P1)
+- [ ] **CRUSH-251** — VM primitives for a JS object model: prototype lookup, closure cells, `this`/`new`. (P1)
+- [ ] **CRUSH-252** — `dom_native.*` real provider via a shared `DomBridge` trait in crush-lang-sdk (CRUSH-33 caps stop echoing). (P1)
+- [ ] **CRUSH-253** — Python walker → DOM ops ("python-dom", no CPython). (P2)
+- [ ] **CRUSH-254** — host-driven job queue: persistent VM session, microtasks, callbacks, budgets. (P1)
+
 ## P0 — Build & Core Health ✅
 
 - [x] **CRUSH-26**: `Build (release)` CI job fails workspace-wide on every
