@@ -60,6 +60,13 @@ fn main() -> anyhow::Result<()> {
             for a in &args { print!("{a}"); } println!(); Ok(None)
         }
     }
+    struct WalkIoWrite;
+    impl HostCap for WalkIoWrite {
+        fn spec(&self) -> HostCapSpec { HostCapSpec { name: "io.write".into(), argc: None, returns: false } }
+        fn call(&self, args: Vec<crush_vm::vm::Value>) -> Result<Option<crush_vm::vm::Value>, String> {
+            for a in &args { print!("{a}"); } Ok(None)
+        }
+    }
     struct WalkNop { name: String }
     impl HostCap for WalkNop {
         fn spec(&self) -> HostCapSpec { HostCapSpec { name: self.name.clone(), argc: None, returns: true } }
@@ -68,6 +75,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     host_caps.register(Box::new(WalkIoPrint));
+    host_caps.register(Box::new(WalkIoWrite));
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
@@ -86,14 +94,16 @@ fn main() -> anyhow::Result<()> {
         let result = crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps));
         exec_times.push(t2.elapsed());
         if run_i == 0 {
+            // Program output verbatim — trimming hid trailing spaces and
+            // newline-free `io.write` output (C printf, Rust print!).
             output = match result {
-                Ok(r) => r.output.trim().to_string(),
-                Err(e) => format!("Error: {e}"),
+                Ok(r) => r.output,
+                Err(e) => format!("Error: {e}\n"),
             };
         }
     }
 
-    if cli.runs == 1 { println!("{output}"); }
+    if cli.runs == 1 { print!("{output}"); }
     if cli.timing {
         let w = walk_time.as_micros() as f64;
         let c = compile_time.as_micros() as f64;

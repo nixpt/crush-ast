@@ -116,14 +116,14 @@ mod tests {
 
     #[test]
     fn test_simple_arithmetic() {
-        let src = "int main() { printf(2 + 3 * 4); return 0; }";
+        let src = "int main() { printf(\"%d\\n\", 2 + 3 * 4); return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "14");
     }
 
     #[test]
     fn test_variable_and_if() {
-        let src = "int main() { int x = 5; if (x > 3) { printf(100); } else { printf(0); } return 0; }";
+        let src = "int main() { int x = 5; if (x > 3) { printf(\"%d\\n\", 100); } else { printf(\"%d\\n\", 0); } return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "100");
     }
@@ -131,21 +131,21 @@ mod tests {
     #[test]
     fn test_for_loop_sum() {
         let src =
-            "int main() { int sum = 0; for (int i = 0; i < 10; i++) { sum = sum + i; } printf(sum); return 0; }";
+            "int main() { int sum = 0; for (int i = 0; i < 10; i++) { sum = sum + i; } printf(\"%d\\n\", sum); return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "45");
     }
 
     #[test]
     fn test_while_loop() {
-        let src = "int main() { int i = 0; while (i < 5) { i = i + 1; } printf(i); return 0; }";
+        let src = "int main() { int i = 0; while (i < 5) { i = i + 1; } printf(\"%d\\n\", i); return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "5");
     }
 
     #[test]
     fn test_switch_case() {
-        let src = "int main() { int x = 2; int r = 0; switch (x) { case 1: r = 100; break; case 2: r = 200; break; default: r = 0; break; } printf(r); return 0; }";
+        let src = "int main() { int x = 2; int r = 0; switch (x) { case 1: r = 100; break; case 2: r = 200; break; default: r = 0; break; } printf(\"%d\\n\", r); return 0; }";
         let result = run_c(src, "test.c").unwrap();
         assert_eq!(result, "200");
     }
@@ -179,7 +179,7 @@ mod tests {
 
         let path = so_path.to_string_lossy().replace('\\', "/");
         let src = format!(
-            "int main() {{ __crush_ffi__(\"{path}\", \"math.add\", 10, 32); printf(99); return 0; }}"
+            "int main() {{ __crush_ffi__(\"{path}\", \"math.add\", 10, 32); printf(\"%d\\n\", 99); return 0; }}"
         );
 
         // Walk C → CAST
@@ -219,7 +219,7 @@ mod tests {
 
         let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
         let result = crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps)).unwrap();
-        // printf(99) should produce output; the FFI call runs silently
+        // printf(\"%d\\n\", 99) should produce output; the FFI call runs silently
         assert_eq!(result.output.trim(), "99");
     }
 }

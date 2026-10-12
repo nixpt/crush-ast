@@ -1588,6 +1588,16 @@ impl PortableVm {
                     self.out_parts.push(line);
                     Ok(None)
                 }
+                // Like io.print but without the newline (C printf, Rust print!).
+                "io.write" => {
+                    let text: String = args.iter().map(|a| a.as_text()).collect();
+                    self.out_len += text.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.out_parts.push(text);
+                    Ok(None)
+                }
                 "py.print" => {
                     let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
                     let line = crate::io_print::format_py_print_line(&parts);

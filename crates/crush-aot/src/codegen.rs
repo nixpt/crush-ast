@@ -820,6 +820,10 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "io.write" => {
+                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", __v); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "py.print" => {
                     // Python print: space-separated, True/False/None (CRUSH-200).
                     out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(match &__v {{ RuntimeValue::Bool(true) => \"True\".to_string(), RuntimeValue::Bool(false) => \"False\".to_string(), RuntimeValue::Null => \"None\".to_string(), other => other.to_string() }}); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));

@@ -40,6 +40,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "write args (concatenated) to output",
         });
         reg(CapabilitySpec {
+            name: "io.write",
+            argc: Some(1),
+            returns: false,
+            privileged: false,
+            summary: "write one value's text to output, without a newline",
+        });
+        reg(CapabilitySpec {
             name: "py.print",
             argc: None,
             returns: false,

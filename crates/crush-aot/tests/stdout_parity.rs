@@ -219,3 +219,23 @@ fn many_maps() {
         "4950\n",
     );
 }
+
+// CRUSH-201: `io.write` prints without a newline on both AOT backends — C's
+// `printf("%d ", i)` in a loop must stay on one line.
+#[test]
+fn io_write_has_no_implicit_newline() {
+    let cast = crush_lang_c::sdk::c_to_cast(
+        r#"#include <stdio.h>
+           int main() { for (int i = 0; i < 3; i++) printf("%d ", i); printf("|%c\n", 'x'); return 0; }"#,
+        "t.c",
+    )
+    .expect("c walker");
+    let program = crush_frontend::compiler::Compiler::new().compile(cast).expect("compile");
+    let compiler = AotCompiler::new();
+    let so = compiler.compile_casm(&program, "io_write_rust").expect("rust backend");
+    assert_eq!(program_stdout(&so), "0 1 2 |x\n", "rust backend");
+    if cc_available("gcc") {
+        let so = compiler.compile_c(&program, "io_write_c", "gcc").expect("c backend");
+        assert_eq!(program_stdout(&so), "0 1 2 |x\n", "c backend");
+    }
+}
