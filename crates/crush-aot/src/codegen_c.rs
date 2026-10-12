@@ -1573,6 +1573,9 @@ fn emit_c_instr(
                     // caller's pending operand instead (CRUSH-216).
                     out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
                 }
+                "io.write" => {
+                    out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pv, __tb), stdout); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.write\n"));
+                }
                 "py.print" => {
                     // Python print: space-separated, True/False/None spelling (CRUSH-200).
                     if argc == 0 {

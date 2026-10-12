@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-201 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | In review |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | none |
 | **Estimated effort** | S |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build) |
@@ -22,6 +22,17 @@
 
 ## Success criteria
 
-- [ ] `for` lowers so `continue` runs the update (use a continue-target block).
-- [ ] `printf` handles `%d %s %f %c %%` and `\n \t \\` escapes.
-- [ ] Output tests against `gcc`.
+- [x] `for` lowers so `continue` runs the update (use a continue-target block).
+- [x] `printf` handles `%d %s %c %%` and `\n \t \\` escapes. `%f` (and widths/precision/hex) fail loudly — no float-formatting capability yet.
+- [x] Output tests against `gcc`.
+
+## Result (2026-10-12)
+
+`agent/vega/CRUSH-201-c-walker-loud`. On `main` 0/13 test programs matched gcc; now 13/13 of the
+supported subset do, and the rest fail by name. Fixed: `for`+`continue` hang, `do-while` (copied
+body; `continue` didn't compile), printf formats + escapes, **every `else` branch was dropped**
+(`else_clause` hit the catch-all), arrays (`{..}` initialisers, `a[i] = v`, `int a[N]`), struct
+values, `char` literals, comparisons/`!` yield ints 1/0. Unknown statements and expressions are now
+errors instead of being dropped / becoming null. New `io.write` capability (no newline) in both
+VMs and both AOT backends — usable by Rust `print!` and bash `echo -n` next. Pointers, `sizeof`,
+`goto`, `%f` remain unsupported (loud).

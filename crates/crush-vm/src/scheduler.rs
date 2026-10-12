@@ -1514,6 +1514,16 @@ fn dispatch_cap(
                 out_parts.push(line);
                 Ok(None)
             }
+            // Like io.print but without the newline (C printf, Rust print!).
+            "io.write" => {
+                let text: String = args.iter().map(|a| a.as_text()).collect();
+                *out_len += text.len();
+                if *out_len > quotas.max_output {
+                    return Err(VmError::OutputQuota(quotas.max_output));
+                }
+                out_parts.push(text);
+                Ok(None)
+            }
             "py.print" => {
                 let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
                 let line = crate::io_print::format_py_print_line(&parts);

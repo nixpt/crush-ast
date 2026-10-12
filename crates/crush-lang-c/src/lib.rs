@@ -115,7 +115,11 @@ impl<'a> Visitor<'a> {
                         let name_node = child.child_by_field_name("declarator").unwrap();
                         let name = self.extract_name_from_declarator(name_node)?.to_string();
                         if let Some(value_node) = child.child_by_field_name("value") {
-                            let value = self.visit_expression(value_node)?;
+                            let value = if value_node.kind() == "initializer_list" {
+                                self.initializer_list(value_node)?
+                            } else {
+                                self.visit_expression(value_node)?
+                            };
                             decls.push(Statement::VarDecl {
                                 name,
                                 value,
@@ -126,17 +130,25 @@ impl<'a> Visitor<'a> {
                             // Bare declarator with no value (e.g., `int x;` inside init_declarator)
                             decls.push(Statement::VarDecl {
                                 name,
-                                value: Expression::NullLiteral { meta: meta.clone() },
+                                value: self.default_value(node, name_node, &meta)?,
                                 type_hint: CastType::Any,
                                 meta: meta.clone(),
                             });
                         }
+                    } else if child.kind() == "identifier" {
+                        // `int i, j;` — plain declarators are bare identifiers.
+                        decls.push(Statement::VarDecl {
+                            name: self.base.text(child)?.to_string(),
+                            value: self.default_value(node, child, &meta)?,
+                            type_hint: CastType::Any,
+                            meta: meta.clone(),
+                        });
                     } else if child.kind() == "declarator" || child.kind() == "array_declarator" {
                         // Multi-variable declarations: `int i, j;` or `int arr[10];`
                         let name = self.extract_name_from_declarator(child)?.to_string();
                         decls.push(Statement::VarDecl {
                             name,
-                            value: Expression::NullLiteral { meta: meta.clone() },
+                            value: self.default_value(node, child, &meta)?,
                             type_hint: CastType::Any,
                             meta: meta.clone(),
                         });
@@ -147,7 +159,7 @@ impl<'a> Visitor<'a> {
                         let name = self.extract_name_from_declarator(decl)?;
                         decls.push(Statement::VarDecl {
                             name: name.to_string(),
-                            value: Expression::NullLiteral { meta: meta.clone() },
+                            value: self.default_value(node, decl, &meta)?,
                             type_hint: CastType::Any,
                             meta: meta.clone(),
                         });
@@ -240,6 +252,14 @@ impl<'a> Visitor<'a> {
 
                 let mut else_body = None;
                 if let Some(alt_node) = node.child_by_field_name("alternative") {
+                    // tree-sitter-c wraps the else branch in `else_clause`; it
+                    // used to fall into the catch-all and be dropped, so every
+                    // `else` body was silently skipped (CRUSH-201).
+                    let alt_node = if alt_node.kind() == "else_clause" {
+                        alt_node.named_child(0).ok_or_else(|| anyhow::anyhow!("empty else clause"))?
+                    } else {
+                        alt_node
+                    };
                     else_body = Some(self.visit_block_or_statement(alt_node)?);
                 }
                 Ok(vec![Statement::If {
@@ -279,18 +299,22 @@ impl<'a> Visitor<'a> {
                     Expression::BoolLiteral { value: true, meta: meta.clone() }
                 };
                 
-                // 3. Body
-                let body_node = node.child_by_field_name("body").unwrap();
-                let mut while_body = self.visit_block_or_statement(body_node)?;
-                
-                // 4. Update
+                // 3. Update — runs after the body and before every `continue`
+                // (appending it only to the body made `continue` skip it: an
+                // infinite loop).
+                let mut update = Vec::new();
                 if let Some(update_node) = node.child_by_field_name("update") {
                     let update_expr = self.visit_expression(update_node)?;
-                    while_body.push(Statement::ExprStmt {
+                    update.push(Statement::ExprStmt {
                         expr: update_expr,
                         meta: self.base.create_meta(update_node, "c", self.file_name),
                     });
                 }
+
+                // 4. Body
+                let body_node = node.child_by_field_name("body").unwrap();
+                let mut while_body = rewrite_continue(self.visit_block_or_statement(body_node)?, &update);
+                while_body.extend(update);
                 
                 for_statements.push(Statement::While {
                     condition: Box::new(condition),
@@ -316,14 +340,22 @@ impl<'a> Visitor<'a> {
                     .child(1)
                     .unwrap(); // inside parens
                 let condition = self.visit_expression(cond_node)?;
-                // Desugar: body + while(condition) { body }
-                let mut stmts = body.clone();
-                stmts.push(Statement::While {
-                    condition: Box::new(condition),
-                    body,
+                // `while (1) { body; if (!cond) break; }` — a `continue` checks the
+                // condition too (the old `body; while (cond) body` copy made
+                // `continue` in the first copy a compile error).
+                let exit_check = Statement::If {
+                    condition: c_not(condition, &meta),
+                    then_body: vec![Statement::Break { meta: meta.clone() }],
+                    else_body: None,
                     meta: meta.clone(),
-                });
-                Ok(stmts)
+                };
+                let mut body = rewrite_continue(body, std::slice::from_ref(&exit_check));
+                body.push(exit_check);
+                Ok(vec![Statement::While {
+                    condition: Box::new(Expression::BoolLiteral { value: true, meta: meta.clone() }),
+                    body,
+                    meta,
+                }])
             }
             "switch_statement" => {
                 // switch (expr) { case val1: ... case val2: ... default: ... }
@@ -464,7 +496,19 @@ impl<'a> Visitor<'a> {
             "compound_statement" => {
                 self.visit_block(node)
             }
-            _ => Ok(vec![]),
+            // Nothing to run: comments, `#include`, empty statements, and type
+            // definitions (`struct P { ... };` — struct values are maps).
+            "comment" | "preproc_include" | ";" | "struct_specifier" | "type_definition" => Ok(vec![]),
+            "ERROR" => anyhow::bail!(
+                "C parse error at line {}: `{}`",
+                node.start_position().row + 1,
+                self.base.text(node).unwrap_or("").chars().take(60).collect::<String>()
+            ),
+            // CRUSH-201: unknown statements used to be dropped silently.
+            other => anyhow::bail!(
+                "C statement `{other}` is not supported yet (line {})",
+                node.start_position().row + 1
+            ),
         }
     }
 
@@ -520,9 +564,31 @@ impl<'a> Visitor<'a> {
                 }
             }
             "string_literal" => Ok(Expression::StringLiteral {
-                value: self.base.extract_string_literal(node)?,
+                value: decode_c_escapes(&self.base.extract_string_literal(node)?)?,
                 meta,
             }),
+            // `"ab" "cd"` — adjacent literals are one string.
+            "concatenated_string" => {
+                let mut value = String::new();
+                for part in node.children(&mut node.walk()) {
+                    if part.kind() == "string_literal" {
+                        value.push_str(&decode_c_escapes(&self.base.extract_string_literal(part)?)?);
+                    }
+                }
+                Ok(Expression::StringLiteral { value, meta })
+            }
+            // A `char` is an int in C: 'A' == 65.
+            "char_literal" => {
+                let decoded = decode_c_escapes(&self.base.extract_string_literal(node)?)?;
+                let mut chars = decoded.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) => Ok(Expression::IntLiteral { value: c as i64, meta }),
+                    _ => anyhow::bail!("multi-character char literal not supported: {}", self.base.text(node)?),
+                }
+            }
+            "initializer_list" => self.initializer_list(node),
+            // `(int) x` — the walker is untyped; keep the value.
+            "cast_expression" => self.visit_expression(node.child_by_field_name("value").unwrap()),
             "true" => Ok(Expression::BoolLiteral { value: true, meta }),
             "false" => Ok(Expression::BoolLiteral { value: false, meta }),
             "null" => Ok(Expression::NullLiteral { meta }),
@@ -530,19 +596,49 @@ impl<'a> Visitor<'a> {
                 let left = Box::new(self.visit_expression(node.child(0).unwrap())?);
                 let operator = self.base.text(node.child(1).unwrap())?.to_string();
                 let right = Box::new(self.visit_expression(node.child(2).unwrap())?);
-                Ok(Expression::BinaryOp {
-                    operator,
-                    left,
-                    right,
-                    meta,
-                })
+                let is_bool = matches!(operator.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||");
+                let expr = Expression::BinaryOp { operator, left, right, meta: meta.clone() };
+                // C comparisons and logic yield the ints 1 / 0, not booleans
+                // (`printf("%d", a < b)` prints 1).
+                Ok(if is_bool { bool_to_int(expr, &meta) } else { expr })
             }
             "assignment_expression" => {
-                let left_node = node.child_by_field_name("left").unwrap();
+                let left_node = self.base.unwrap_parens(node.child_by_field_name("left").unwrap());
                 let right_node = node.child_by_field_name("right").unwrap();
-                let name = self.base.text(left_node)?.to_string();
                 let right_expr = self.visit_expression(right_node)?;
-                let op_str = self.base.text(node.child_by_field_name("operator").unwrap())?;
+                let op_owned = self.base.text(node.child_by_field_name("operator").unwrap())?.to_string();
+                let op_str = op_owned.as_str();
+                // `a[i] = v` / `a[i] += v`
+                if left_node.kind() == "subscript_expression" {
+                    let target = self.visit_expression(left_node.child_by_field_name("argument").unwrap())?;
+                    let index = self.visit_expression(left_node.child_by_field_name("index").unwrap())?;
+                    let value = match op_str {
+                        "=" => right_expr,
+                        _ => Expression::BinaryOp {
+                            operator: op_str.trim_end_matches('=').to_string(),
+                            left: Box::new(Expression::Call {
+                                function: "__crush_subscript__".to_string(),
+                                args: vec![target.clone(), index.clone()],
+                                meta: meta.clone(),
+                            }),
+                            right: Box::new(right_expr),
+                            meta: meta.clone(),
+                        },
+                    };
+                    return Ok(Expression::Call {
+                        function: "__crush_setindex__".to_string(),
+                        args: vec![target, index, value],
+                        meta,
+                    });
+                }
+                if left_node.kind() != "identifier" {
+                    anyhow::bail!(
+                        "assignment to `{}` is not supported yet (line {})",
+                        self.base.text(left_node)?,
+                        node.start_position().row + 1
+                    );
+                }
+                let name = self.base.text(left_node)?.to_string();
                 
                 let value = match op_str {
                     "=" => right_expr,
@@ -564,7 +660,14 @@ impl<'a> Visitor<'a> {
                 })
             }
             "update_expression" => {
-                let arg_node = node.child_by_field_name("argument").unwrap();
+                let arg_node = self.base.unwrap_parens(node.child_by_field_name("argument").unwrap());
+                if arg_node.kind() != "identifier" {
+                    anyhow::bail!(
+                        "`++`/`--` on `{}` is not supported yet (line {})",
+                        self.base.text(arg_node)?,
+                        node.start_position().row + 1
+                    );
+                }
                 let name = self.base.text(arg_node)?.to_string();
                 let op = self.base.text(node.child(0).unwrap())?;
                 let is_prefix = op == "++" || op == "--";
@@ -590,6 +693,9 @@ impl<'a> Visitor<'a> {
             "call_expression" => {
                 let func_node = node.child_by_field_name("function").unwrap();
                 let args_node = node.child_by_field_name("arguments").unwrap();
+                if self.base.text(func_node)? == "printf" {
+                    return self.lower_printf(args_node, meta);
+                }
                 let mut args = Vec::new();
                 for arg in args_node.children(&mut args_node.walk()) {
                     if arg.kind() != "(" && arg.kind() != ")" && arg.kind() != "," {
@@ -644,9 +750,11 @@ impl<'a> Visitor<'a> {
             "unary_expression" => {
                 let operator = self.base.text(node.child(0).unwrap())?.to_string();
                 let argument = self.visit_expression(node.child(1).unwrap())?;
+                if operator == "!" {
+                    return Ok(c_not(argument, &meta));
+                }
                 let func = match operator.as_str() {
                     "&" => "__crush_addr_of__",
-                    "!" => "__crush_not__",
                     "~" => "__crush_bit_not__",
                     "-" => "__crush_neg__",
                     "+" => "__crush_pos__",
@@ -679,14 +787,114 @@ impl<'a> Visitor<'a> {
                     meta,
                 })
             }
-            _ => {
-                if node.child_count() == 1 {
-                    self.visit_expression(node.child(0).unwrap())
-                } else {
-                    Ok(Expression::NullLiteral { meta })
+            "parenthesized_expression" if node.named_child_count() == 1 => {
+                self.visit_expression(node.named_child(0).unwrap())
+            }
+            // CRUSH-201: unknown expressions used to become null silently
+            // (initializer lists, sizeof, comma expressions, ...).
+            other => anyhow::bail!(
+                "C expression `{other}` is not supported yet (line {}): `{}`",
+                node.start_position().row + 1,
+                self.base.text(node).unwrap_or("").chars().take(60).collect::<String>()
+            ),
+        }
+    }
+
+    /// `{1, 2, 3}` → an array literal.
+    fn initializer_list(&mut self, node: Node) -> Result<Expression> {
+        let meta = self.base.create_meta(node, "c", self.file_name);
+        let mut elements = Vec::new();
+        for item in node.named_children(&mut node.walk()) {
+            if item.kind() == "comment" {
+                continue;
+            }
+            elements.push(self.visit_expression(item)?);
+        }
+        Ok(Expression::ArrayLiteral { elements, meta })
+    }
+
+    /// Value of a declared-but-uninitialised variable: `int a[3]` → three
+    /// zeros, `struct P p` → an empty map, scalars → null.
+    fn default_value(&mut self, decl: Node, declarator: Node, meta: &HashMap<String, serde_json::Value>) -> Result<Expression> {
+        if declarator.kind() == "array_declarator" {
+            let size = declarator
+                .child_by_field_name("size")
+                .ok_or_else(|| anyhow::anyhow!("array without a size is not supported (line {})", declarator.start_position().row + 1))?;
+            let n: usize = self.base.text(size)?.parse().map_err(|_| {
+                anyhow::anyhow!("array size must be an integer literal (line {})", size.start_position().row + 1)
+            })?;
+            return Ok(Expression::ArrayLiteral {
+                elements: vec![Expression::IntLiteral { value: 0, meta: meta.clone() }; n],
+                meta: meta.clone(),
+            });
+        }
+        if decl.child_by_field_name("type").is_some_and(|t| t.kind() == "struct_specifier") {
+            return Ok(Expression::ObjectLiteral { properties: vec![], meta: meta.clone() });
+        }
+        Ok(Expression::NullLiteral { meta: meta.clone() })
+    }
+
+    /// `printf("fmt", args...)` → `io.write("..." + arg + ...)` (CRUSH-201).
+    /// Supports `%d %i %u %ld %lld %s %c %%`; anything else (floats, widths,
+    /// hex) is rejected rather than printed wrong.
+    fn lower_printf(&mut self, args_node: Node, meta: HashMap<String, serde_json::Value>) -> Result<Expression> {
+        let arg_nodes: Vec<Node> = args_node.named_children(&mut args_node.walk()).filter(|n| n.kind() != "comment").collect();
+        let line = args_node.start_position().row + 1;
+        let fmt_node = arg_nodes.first().ok_or_else(|| anyhow::anyhow!("printf without a format (line {line})"))?;
+        let fmt = match fmt_node.kind() {
+            "string_literal" | "concatenated_string" => match self.visit_expression(*fmt_node)? {
+                Expression::StringLiteral { value, .. } => value,
+                _ => unreachable!(),
+            },
+            _ => anyhow::bail!("printf format must be a string literal (line {line})"),
+        };
+        let mut next = 1usize;
+        let mut pieces: Vec<Expression> = Vec::new();
+        let mut lit = String::new();
+        let mut chars = fmt.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '%' {
+                lit.push(c);
+                continue;
+            }
+            let mut spec = String::new();
+            while let Some(&ch) = chars.peek() {
+                spec.push(ch);
+                chars.next();
+                if ch.is_ascii_alphabetic() && !matches!(ch, 'l' | 'h') || ch == '%' {
+                    break;
                 }
             }
+            let conv = match spec.as_str() {
+                "%" => { lit.push('%'); continue; }
+                "d" | "i" | "u" | "ld" | "lld" | "lu" | "llu" | "hd" => "int",
+                "s" => "str",
+                "c" => "char",
+                other => anyhow::bail!("printf conversion `%{other}` is not supported yet (line {line})"),
+            };
+            let node = arg_nodes.get(next).ok_or_else(|| anyhow::anyhow!("printf: more conversions than arguments (line {line})"))?;
+            next += 1;
+            let value = self.visit_expression(*node)?;
+            if !lit.is_empty() {
+                pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: meta.clone() });
+            }
+            pieces.push(if conv == "char" {
+                Expression::CapabilityCall { name: "conv.chr".to_string(), args: vec![value], meta: meta.clone() }
+            } else {
+                value
+            });
         }
+        if next != arg_nodes.len() {
+            anyhow::bail!("printf: {} argument(s) but {} conversion(s) (line {line})", arg_nodes.len() - 1, next - 1);
+        }
+        if !lit.is_empty() {
+            pieces.push(Expression::StringLiteral { value: lit, meta: meta.clone() });
+        }
+        let mut text = Expression::StringLiteral { value: String::new(), meta: meta.clone() };
+        for p in pieces {
+            text = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(text), right: Box::new(p), meta: meta.clone() };
+        }
+        Ok(Expression::CapabilityCall { name: "io.write".to_string(), args: vec![text], meta })
     }
 
     fn extract_name_from_declarator(&self, node: Node) -> Result<&str> {
@@ -700,6 +908,82 @@ impl<'a> Visitor<'a> {
     }
 }
 
+
+/// `cond ? 1 : 0` — C truth values are ints.
+fn bool_to_int(cond: Expression, meta: &HashMap<String, serde_json::Value>) -> Expression {
+    Expression::Call {
+        function: "__crush_ternary__".to_string(),
+        args: vec![
+            cond,
+            Expression::IntLiteral { value: 1, meta: meta.clone() },
+            Expression::IntLiteral { value: 0, meta: meta.clone() },
+        ],
+        meta: meta.clone(),
+    }
+}
+
+/// C `!x`: 1 when x is zero/false, else 0.
+fn c_not(x: Expression, meta: &HashMap<String, serde_json::Value>) -> Expression {
+    Expression::Call {
+        function: "__crush_ternary__".to_string(),
+        args: vec![
+            x,
+            Expression::IntLiteral { value: 0, meta: meta.clone() },
+            Expression::IntLiteral { value: 1, meta: meta.clone() },
+        ],
+        meta: meta.clone(),
+    }
+}
+
+/// Decode C escapes in a literal's body (`\n`, `\t`, `\\`, `\"`, `\'`, `\0`, `\r`).
+fn decode_c_escapes(raw: &str) -> Result<String> {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some('a') => out.push('\u{7}'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('\'') => out.push('\''),
+            Some(other) => anyhow::bail!("C escape `\\{other}` is not supported yet"),
+            None => anyhow::bail!("dangling backslash in C literal"),
+        }
+    }
+    Ok(out)
+}
+
+/// Make each `continue` that belongs to the enclosing loop run `prefix` first
+/// (a `for` update, a `do-while` exit check). Nested loops keep their own.
+fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> Vec<Statement> {
+    if prefix.is_empty() {
+        return stmts;
+    }
+    let mut out = Vec::with_capacity(stmts.len());
+    for s in stmts {
+        match s {
+            Statement::Continue { meta } => {
+                out.extend(prefix.iter().cloned());
+                out.push(Statement::Continue { meta });
+            }
+            Statement::If { condition, then_body, else_body, meta } => out.push(Statement::If {
+                condition,
+                then_body: rewrite_continue(then_body, prefix),
+                else_body: else_body.map(|e| rewrite_continue(e, prefix)),
+                meta,
+            }),
+            other => out.push(other),
+        }
+    }
+    out
+}
 
 #[cfg(test)]
 mod tests {
@@ -739,10 +1023,12 @@ mod tests {
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
         if let Statement::While { condition, body, .. } = &main_func.body[0] {
-            if let Expression::BinaryOp { operator, .. } = &**condition {
-                assert_eq!(operator, ">");
-            } else {
-                panic!("Expected BinaryOp condition");
+            // C comparisons are ints: `(x > 0) ? 1 : 0` (CRUSH-201).
+            match &**condition {
+                Expression::Call { function, args, .. } if function == "__crush_ternary__" => {
+                    assert!(matches!(&args[0], Expression::BinaryOp { operator, .. } if operator == ">"));
+                }
+                other => panic!("Expected ternary-wrapped comparison, got {other:?}"),
             }
             assert_eq!(body.len(), 1);
         } else {
@@ -752,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_for_loop_desugaring() {
-        let program = parse_and_walk("void main() { for (int i = 0; i < 10; i++) { printf(i); } }");
+        let program = parse_and_walk("void main() { for (int i = 0; i < 10; i++) { printf(\"%d\", i); } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 2);
         
@@ -806,7 +1092,8 @@ mod tests {
         assert_eq!(main_func.body.len(), 1);
         if let Statement::ExprStmt { expr, .. } = &main_func.body[0] {
             if let Expression::CapabilityCall { name, .. } = expr {
-                assert_eq!(name, "io.print");
+                // printf → io.write (no implicit newline; CRUSH-201).
+                assert_eq!(name, "io.write");
             } else {
                 panic!("Expected CapabilityCall");
             }
@@ -836,10 +1123,10 @@ mod tests {
             assert_eq!(function, "__crush_neg__");
         } else { panic!("Expected __crush_neg__"); }
 
-        // 4. !flag -> Call __crush_not__
+        // 4. !flag -> `flag ? 0 : 1` (C truth values are ints; CRUSH-201)
         if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[3] {
-            assert_eq!(function, "__crush_not__");
-        } else { panic!("Expected __crush_not__"); }
+            assert_eq!(function, "__crush_ternary__");
+        } else { panic!("Expected __crush_ternary__ for !flag"); }
 
         // 5. arr[5] -> Call __crush_subscript__
         if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[4] {
