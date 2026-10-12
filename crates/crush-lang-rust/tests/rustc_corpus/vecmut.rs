@@ -1,0 +1,1 @@
+fn main() { let mut v = vec![3, 1]; v.push(4); v.push(1); let mut s = 0; for x in v.iter() { s += x; } println!("{} {} {}", v.len(), s, v[2]); let w = "Hello World".to_lowercase(); println!("{} {}", w, w.contains("world")); }

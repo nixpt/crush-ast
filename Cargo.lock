@@ -1251,6 +1251,8 @@ dependencies = [
  "crush-lang-sdk",
  "crush-vm",
  "crush-walker-core",
+ "proc-macro2",
+ "quote",
  "serde",
  "serde_json",
  "syn",

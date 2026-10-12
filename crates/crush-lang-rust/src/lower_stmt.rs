@@ -5,7 +5,7 @@ use crush_walker_core::LowerCtx;
 use crush_cast::{CastType, Expression, Statement};
 use syn::Stmt;
 
-use crate::lower_expr::{lower_expr, pat_to_ident};
+use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
 
 pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
     let meta = ctx.meta_at(0);
@@ -41,10 +41,10 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                         _ => ("_".to_string(), CastType::Any),
                     })
                     .collect();
-                let mut body = Vec::new();
-                for s in &item_fn.block.stmts {
-                    body.push(lower_stmt(s, ctx)?);
-                }
+                // CRUSH-197: a function with a return type returns its tail
+                // expression (`fn f(n: i64) -> i64 { n + 1 }`).
+                let tail = if matches!(item_fn.sig.output, syn::ReturnType::Default) { Tail::Discard } else { Tail::Return };
+                let body = lower_block(&item_fn.block.stmts, ctx, tail)?;
                 Ok(Statement::FunctionDef {
                     name,
                     params,
@@ -130,6 +130,22 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
             syn::Expr::Break(_) => {
                 Ok(Statement::Break { meta })
             }
+            syn::Expr::Continue(_) => Ok(Statement::Continue { meta }),
+            // `loop { ... }` = `while true { ... }` (break/continue work as usual).
+            syn::Expr::Loop(e_loop) => Ok(Statement::While {
+                condition: Box::new(Expression::BoolLiteral { value: true, meta: meta.clone() }),
+                body: lower_block(&e_loop.body.stmts, ctx, Tail::Discard)?,
+                meta,
+            }),
+            syn::Expr::Block(eb) => {
+                let body = lower_block(&eb.block.stmts, ctx, Tail::Discard)?;
+                Ok(Statement::If {
+                    condition: Expression::BoolLiteral { value: true, meta: meta.clone() },
+                    then_body: body,
+                    else_body: None,
+                    meta,
+                })
+            }
             _ => {
                 let expr = lower_expr(expr, ctx)?;
                 Ok(Statement::ExprStmt { expr, meta })
@@ -143,16 +159,79 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                 .map(|i| i.to_string())
                 .unwrap_or_default();
             match mac_name.as_str() {
-                "println" | "print" => Ok(Statement::ExprStmt {
+                // CRUSH-197: the format string and its `{}` arguments are now
+                // lowered (they used to be dropped — every program printed blank
+                // lines). `print!` still ends the line: there is no newline-free
+                // print capability yet.
+                "println" | "print" | "eprintln" | "eprint" => Ok(Statement::ExprStmt {
                     expr: Expression::CapabilityCall {
                         name: "io.print".to_string(),
-                        args: vec![],
+                        args: vec![format_args_to_expr(&mac.mac.tokens, ctx)?],
                         meta,
                     },
                     meta: ctx.meta_at(0),
                 }),
-                _ => anyhow::bail!("macro invocation not supported: {}", mac_name),
+                _ => anyhow::bail!("macro invocation not supported: {}!", mac_name),
             }
         }
     }
+}
+
+/// What a block's final expression (no trailing `;`) means.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tail {
+    /// Evaluated for effect (unit functions, loop bodies).
+    Discard,
+    /// The function's return value.
+    Return,
+    /// The block's value (match arms): kept as the last expression statement.
+    Value,
+}
+
+/// Lower a block's statements; the final expression without `;` is handled per `tail`.
+pub fn lower_block(stmts: &[Stmt], ctx: &LowerCtx<'_>, tail: Tail) -> anyhow::Result<Vec<Statement>> {
+    let mut out = Vec::new();
+    for (i, s) in stmts.iter().enumerate() {
+        let last = i + 1 == stmts.len();
+        match (s, last, tail) {
+            (Stmt::Expr(e, None), true, Tail::Return) => out.extend(lower_tail_return(e, ctx)?),
+            (Stmt::Expr(e, None), true, Tail::Value) if !is_statement_like(e) => {
+                let meta = ctx.meta_at(0);
+                out.push(Statement::ExprStmt { expr: lower_expr(e, ctx)?, meta });
+            }
+            _ => out.push(lower_stmt(s, ctx)?),
+        }
+    }
+    Ok(out)
+}
+
+fn is_statement_like(e: &syn::Expr) -> bool {
+    matches!(
+        e,
+        syn::Expr::If(_) | syn::Expr::While(_) | syn::Expr::ForLoop(_) | syn::Expr::Loop(_)
+            | syn::Expr::Return(_) | syn::Expr::Break(_) | syn::Expr::Continue(_)
+            | syn::Expr::Block(_) | syn::Expr::Macro(_) | syn::Expr::Assign(_)
+    )
+}
+
+/// A tail expression in a function with a return type: branches return their own tails.
+fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+    let meta = ctx.meta_at(0);
+    Ok(match e {
+        syn::Expr::If(e_if) => {
+            let then_body = lower_block(&e_if.then_branch.stmts, ctx, Tail::Return)?;
+            let else_body = match &e_if.else_branch {
+                Some((_, else_expr)) => Some(lower_tail_return(else_expr, ctx)?),
+                None => None,
+            };
+            vec![Statement::If { condition: lower_expr(&e_if.cond, ctx)?, then_body, else_body, meta }]
+        }
+        syn::Expr::Block(eb) => lower_block(&eb.block.stmts, ctx, Tail::Return)?,
+        syn::Expr::Paren(p) => lower_tail_return(&p.expr, ctx)?,
+        syn::Expr::While(_) | syn::Expr::ForLoop(_) | syn::Expr::Loop(_) | syn::Expr::Return(_)
+        | syn::Expr::Break(_) | syn::Expr::Continue(_) | syn::Expr::Assign(_) => {
+            vec![lower_stmt(&Stmt::Expr(e.clone(), None), ctx)?]
+        }
+        _ => vec![Statement::Return { value: Some(lower_expr(e, ctx)?), meta }],
+    })
 }

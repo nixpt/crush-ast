@@ -1,6 +1,23 @@
 //! crush-lang-rust — Rust language support for Crush.
 //!
 //! Uses `syn` to parse Rust source and lower it to CAST.
+//!
+//! # Supported subset
+//!
+//! Free functions (block tail expressions are the return value), `let` /
+//! `let mut`, `if`/`else` (also as expressions), `while`, `loop`, `for` over
+//! `a..b` / `a..=b` / vectors, `break`/`continue`, `return`, `match` with literal,
+//! binding, `_` and `|` patterns, `vec![..]`, indexing, closures, `+= -= *= /= %=`,
+//! `println!`/`print!`/`eprintln!`/`format!` with `{}`, `{:?}`, `{0}`, `{name}`,
+//! and the common `str`/`Vec`/numeric methods (`len`, `push`, `pop`, `contains`,
+//! `to_uppercase`, `abs`, `sqrt`, …). `tests/rustc_corpus/` is checked against
+//! real `rustc` output.
+//!
+//! Not supported — rejected with an error rather than mistranslated: structs,
+//! enums, traits and `impl` blocks, match guards and range patterns, format
+//! width/precision (`{:.2}`, `{:>5}`), `vec![x; n]`, iterator chains (`.map`,
+//! `.sum`, …). Known difference: `print!` ends the line (there is no
+//! newline-free print capability yet).
 
 pub mod lower_expr;
 pub mod lower_stmt;
@@ -127,14 +144,8 @@ mod tests {
     //! (2) import detection parity,
     //! (3) safe-code path-through via `rust_to_cast`.
     //!
-    //! Tests use Rust's *function-call form* `println(x)` rather
-    //! than the *macro form* `println!(x)` because
-    //! `lower_stmt::Stmt::Macro(println)` drops args before lowering.
-    //! The function-call form routes through `lower_expr::Expr::Call`,
-    //! which DOES extract args. Note that `test_rust_lower_safe_code`
-    //! deliberately avoids arithmetic (`x + 1`) because the current
-    //! `lower_expr` does not yet support binary operators — that gap
-    //! is out of scope for this test suite.
+    //! Tests use the *function-call form* `println(x)`; the macro form
+    //! `println!` is covered by `tests/rustc_corpus_test.rs` (CRUSH-197).
 
     use super::{rust_to_cast, RustFrontend};
     use crush_walker_core::Frontend;
