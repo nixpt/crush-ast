@@ -769,6 +769,14 @@ impl<'a> BoaLower<'a> {
             PropertyAccess::Simple(spa) => {
                 let target = Box::new(self.expr(spa.target()));
                 match spa.field() {
+                    // CRUSH-260: same as the swc backend — `x.length` is `len(x)`
+                    // except on an object literal.
+                    PropertyAccessField::Const(id)
+                        if self.sym_str(id.sym()) == "length"
+                            && !matches!(spa.target(), Expression::ObjectLiteral(_)) =>
+                    {
+                        CastExpr::Call { function: "len".to_string(), args: vec![*target], meta: self.meta0() }
+                    }
                     PropertyAccessField::Const(id) => CastExpr::GetField {
                         target,
                         field: self.sym_str(id.sym()),

@@ -796,6 +796,9 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         Expr::Member(MemberExpr { obj, prop, span: _, .. }) => {
             let target = lower_expr(obj, ctx)?;
             match prop {
+                MemberProp::Ident(ident_name) if is_length_read(ident_name.sym.as_ref(), obj) => {
+                    Ok(length_of(target, m))
+                }
                 MemberProp::Ident(ident_name) => Ok(Expression::GetField {
                     target: Box::new(target),
                     field: ident_name.sym.to_string(),
@@ -1149,6 +1152,9 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             OptChainBase::Member(member) => {
                 let target = lower_expr(&member.obj, ctx)?;
                 match &member.prop {
+                    MemberProp::Ident(i) if is_length_read(i.sym.as_ref(), &member.obj) => {
+                        Ok(length_of(target, m))
+                    }
                     MemberProp::Ident(i) => Ok(Expression::GetField {
                         target: Box::new(target),
                         field: i.sym.to_string(),
@@ -1518,4 +1524,26 @@ fn assign_target_subscript_parts(target: &AssignTarget) -> Option<(&Expr, &Expr)
         }
         _ => None,
     }
+}
+
+/// CRUSH-260: `x.length` reads a string's or array's length, so it lowers to
+/// the `len` op (native on every engine, incl. AOT) instead of a field read,
+/// which yielded `null`. An object *literal* keeps the field read
+/// (`({length: 3}).length`); a plain object in a variable with its own
+/// `length` key isn't distinguishable here and gets `len`'s type error.
+/// Strings measure in bytes (crush `len`, CRUSH-114), so `.length` matches JS
+/// for ASCII but not for non-ASCII text (JS counts UTF-16 units).
+fn is_length_read(field: &str, obj: &Expr) -> bool {
+    field == "length" && !matches!(unparen(obj), Expr::Object(_))
+}
+
+fn unparen(e: &Expr) -> &Expr {
+    match e {
+        Expr::Paren(ParenExpr { expr, .. }) => unparen(expr),
+        other => other,
+    }
+}
+
+fn length_of(target: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
+    Expression::Call { function: "len".to_string(), args: vec![target], meta }
 }
