@@ -21,15 +21,134 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<ParseError>,
+    /// Declared structs (name → field names), pre-scanned so `Name { ... }` is
+    /// a struct literal only for a declared struct — never for `if x { ... }`.
+    structs: HashMap<String, Vec<String>>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
+        let structs = Self::scan_struct_decls(&tokens);
         Self {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            structs,
         }
+    }
+
+    /// `struct Name { a: T, b: U }` anywhere in the token stream → `Name → [a, b]`.
+    fn scan_struct_decls(tokens: &[Token]) -> HashMap<String, Vec<String>> {
+        let mut out = HashMap::new();
+        let mut i = 0;
+        while i + 2 < tokens.len() {
+            if let (Token::Struct(_), Token::Ident(name, _), Token::LBrace(_)) =
+                (&tokens[i], &tokens[i + 1], &tokens[i + 2])
+            {
+                let mut fields = Vec::new();
+                let mut j = i + 3;
+                let mut depth = 1usize;
+                let mut expect_field = true;
+                while j < tokens.len() && depth > 0 {
+                    match &tokens[j] {
+                        Token::LBrace(_) => depth += 1,
+                        Token::RBrace(_) => depth -= 1,
+                        Token::Comma(_) | Token::Newline(_) if depth == 1 => expect_field = true,
+                        Token::Ident(f, _) if depth == 1 && expect_field => {
+                            fields.push(f.clone());
+                            expect_field = false;
+                        }
+                        Token::Comment(_, _) => {}
+                        _ => {
+                            if depth == 1 {
+                                expect_field = false;
+                            }
+                        }
+                    }
+                    j += 1;
+                }
+                out.insert(name.clone(), fields);
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// `Name { field: expr, other, ... }` for a declared struct (#137). Lowered to an
+    /// object literal — field access and printing already work on every engine —
+    /// after checking the fields against the declaration (unknown, missing and
+    /// duplicate fields are errors). `other` alone is shorthand for `other: other`.
+    fn parse_struct_literal(&mut self, name: String) -> Result<Expression, ()> {
+        let (line, col) = self.get_location(self.peek());
+        self.expect(Token::LBrace(SourceLocation { line: 0, col: 0 }))?;
+        let declared = self.structs.get(&name).cloned().unwrap_or_default();
+        let mut properties: Vec<(String, Expression)> = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek(), Token::RBrace(_) | Token::EOF(_)) {
+                break;
+            }
+            let field = match self.peek() {
+                Token::Ident(f, _) => {
+                    let f = f.clone();
+                    self.advance();
+                    f
+                }
+                _ => {
+                    let (l, c) = self.get_location(self.peek());
+                    self.errors.push(ParseError::Expected {
+                        line: l,
+                        col: c,
+                        expected: format!("a field of struct {name}"),
+                        found: self.peek().describe(),
+                    });
+                    return Err(());
+                }
+            };
+            let value = if matches!(self.peek(), Token::Colon(_)) {
+                self.advance();
+                self.skip_newlines();
+                self.parse_expression()?
+            } else {
+                Expression::Var { name: field.clone(), meta: self.make_meta() }
+            };
+            if !declared.contains(&field) {
+                self.errors.push(ParseError::UnexpectedToken {
+                    line,
+                    col,
+                    msg: format!("struct {name} has no field `{field}` (fields: {})", declared.join(", ")),
+                });
+            } else if properties.iter().any(|(k, _)| k == &field) {
+                self.errors.push(ParseError::UnexpectedToken {
+                    line,
+                    col,
+                    msg: format!("field `{field}` given twice in {name} {{ ... }}"),
+                });
+            }
+            properties.push((field, value));
+            self.skip_newlines();
+            if matches!(self.peek(), Token::Comma(_)) {
+                self.advance();
+            } else {
+                self.skip_newlines();
+                break;
+            }
+        }
+        self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
+        let missing: Vec<&String> = declared.iter().filter(|f| !properties.iter().any(|(k, _)| k == *f)).collect();
+        if !missing.is_empty() {
+            self.errors.push(ParseError::UnexpectedToken {
+                line,
+                col,
+                msg: format!(
+                    "missing field(s) {} in {name} {{ ... }}",
+                    missing.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+                ),
+            });
+        }
+        Ok(Expression::ObjectLiteral { properties, meta: self.make_meta() })
     }
 
     /// Parse source code into a Program with error recovery
@@ -1485,6 +1604,10 @@ impl Parser {
                         return Err(());
                     }
                 };
+                // `new P { x: 1 }` — the same struct literal as `P { x: 1 }` (#137).
+                if self.structs.contains_key(&name) && matches!(self.peek(), Token::LBrace(_)) {
+                    return self.parse_struct_literal(name);
+                }
                 // `new P()` — the parens are accepted but Expression::NewStruct carries no args,
                 // so a constructor argument would be SILENTLY DROPPED. Reject it loudly instead.
                 if matches!(self.peek(), Token::LParen(_)) {
@@ -1562,6 +1685,9 @@ impl Parser {
             Token::Ident(name, _) => {
                 let n = name.clone();
                 self.advance();
+                if self.structs.contains_key(&n) && matches!(self.peek(), Token::LBrace(_)) {
+                    return self.parse_struct_literal(n);
+                }
                 Ok(Expression::Var {
                     name: n,
                     meta: self.make_meta(),
@@ -3180,6 +3306,7 @@ fn is_bare_main_call(stmt: &Statement) -> bool {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]

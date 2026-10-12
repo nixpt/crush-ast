@@ -1,0 +1,18 @@
+// Struct literals (#137): construct, nest, read and update fields.
+struct Point { x: Int, y: Int }
+struct Rect { origin: Point, w: Int, h: Int }
+
+fn area(r) {
+    return r.w * r.h
+}
+
+fn main() {
+    let p = Point { x: 2, y: 3 }
+    let r = Rect { origin: p, w: 4, h: 5 }
+    print(r.origin.x + r.origin.y)
+    print(area(r))
+    p.x = 10
+    print(p.x)
+    let ps = [Point { x: 1, y: 1 }, new Point { x: 7, y: 8 }]
+    print(ps[1].x + ps[1].y)
+}
