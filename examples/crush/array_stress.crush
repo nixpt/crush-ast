@@ -1,0 +1,66 @@
+# array_stress.crush - stress test array operations
+# Tests: creation, indexing, push, len, iteration, nested arrays
+
+fn test_create() {
+  let a = [1, 2, 3]
+  if len(a) == 3 { print("create-len: PASS") } else { print("create-len: FAIL") }
+  let e = []
+  if len(e) == 0 { print("create-empty: PASS") } else { print("create-empty: FAIL") }
+  return 0
+}
+
+fn test_index() {
+  let a = [10, 20, 30]
+  if a[0] == 10 { print("index0: PASS") } else { print("index0: FAIL") }
+  if a[2] == 30 { print("index2: PASS") } else { print("index2: FAIL") }
+  a[1] = 99
+  if a[1] == 99 { print("index-assign: PASS") } else { print("index-assign: FAIL") }
+  return 0
+}
+
+fn test_push() {
+  let a = [1, 2]
+  a.push(3)
+  if len(a) == 3 { print("push-len: PASS") } else { print("push-len: FAIL") }
+  if a[2] == 3 { print("push-val: PASS") } else { print("push-val: FAIL") }
+  return 0
+}
+
+fn test_iter() {
+  let a = [5, 10, 15]
+  let sum = 0
+  let i = 0
+  while i < len(a) {
+    sum = sum + a[i]
+    i = i + 1
+  }
+  if sum == 30 { print("iter-sum: PASS") } else { print("iter-sum: FAIL got " + sum) }
+  return 0
+}
+
+fn test_nested() {
+  let a = [[1, 2], [3, 4]]
+  if a[0][1] == 2 { print("nested: PASS") } else { print("nested: FAIL") }
+  if len(a[1]) == 2 { print("nested-len: PASS") } else { print("nested-len: FAIL") }
+  return 0
+}
+
+fn test_str_array() {
+  let s = ["a", "b", "c"]
+  if s[1] == "b" { print("str-array: PASS") } else { print("str-array: FAIL") }
+  s.push("d")
+  if s[3] == "d" { print("str-push: PASS") } else { print("str-push: FAIL") }
+  return 0
+}
+
+fn main() {
+  print("=== array stress tests ===")
+  test_create()
+  test_index()
+  test_push()
+  test_iter()
+  test_nested()
+  test_str_array()
+  print("=== done ===")
+  return
+}

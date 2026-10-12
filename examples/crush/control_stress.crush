@@ -1,0 +1,67 @@
+# control_stress.crush - stress test control flow
+# Tests: match, for loops, break/continue, recursion
+# NOTE: lambdas (|x| => ...) do not parse in this build; nested fn not allowed
+
+fn fact(n) {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+
+fn test_match() {
+  let x = 2
+  let result = ""
+  match x {
+    1 => { result = "one" }
+    2 => { result = "two" }
+    _ => { result = "other" }
+  }
+  if result == "two" { print("match-basic: PASS") } else { print("match-basic: FAIL got " + result) }
+  return 0
+}
+
+fn test_for() {
+  let sum = 0
+  for i in 0..5 {
+    sum = sum + i
+  }
+  if sum == 10 { print("for-range: PASS") } else { print("for-range: FAIL got " + sum) }
+  return 0
+}
+
+fn test_break() {
+  let i = 0
+  while true {
+    if i >= 5 { break }
+    i = i + 1
+  }
+  if i == 5 { print("break: PASS") } else { print("break: FAIL") }
+  return 0
+}
+
+fn test_continue() {
+  let sum = 0
+  let i = 0
+  while i < 10 {
+    i = i + 1
+    if i % 2 == 0 { continue }
+    sum = sum + i
+  }
+  if sum == 25 { print("continue: PASS") } else { print("continue: FAIL got " + sum) }
+  return 0
+}
+
+fn test_recursion() {
+  if fact(5) == 120 { print("recursion: PASS") } else { print("recursion: FAIL") }
+  return 0
+}
+
+fn main() {
+  print("=== control flow stress tests ===")
+  test_match()
+  test_for()
+  test_break()
+  test_continue()
+  test_recursion()
+  print("=== done ===")
+  return
+}

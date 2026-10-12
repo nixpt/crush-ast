@@ -1,0 +1,49 @@
+# arith_stress.crush - stress test arithmetic and types
+# Tests: int ops, float ops, mixed, division, modulo, negation
+
+fn test_int() {
+  if 2 + 3 == 5 { print("int-add: PASS") } else { print("int-add: FAIL") }
+  if 10 - 4 == 6 { print("int-sub: PASS") } else { print("int-sub: FAIL") }
+  if 3 * 4 == 12 { print("int-mul: PASS") } else { print("int-mul: FAIL") }
+  if 15 / 3 == 5 { print("int-div: PASS") } else { print("int-div: FAIL") }
+  if 17 % 5 == 2 { print("int-mod: PASS") } else { print("int-mod: FAIL") }
+  return 0
+}
+
+fn test_float() {
+  if 2.5 + 1.5 == 4.0 { print("float-add: PASS") } else { print("float-add: FAIL") }
+  if 5.5 - 2.0 == 3.5 { print("float-sub: PASS") } else { print("float-sub: FAIL") }
+  if 2.0 * 3.5 == 7.0 { print("float-mul: PASS") } else { print("float-mul: FAIL") }
+  if 7.5 / 2.5 == 3.0 { print("float-div: PASS") } else { print("float-div: FAIL") }
+  return 0
+}
+
+fn test_mixed() {
+  let x = 5 + 2.5
+  if x == 7.5 { print("mixed-add: PASS") } else { print("mixed-add: FAIL got " + x) }
+  return 0
+}
+
+fn test_neg() {
+  let x = -5
+  if x == -5 { print("neg: PASS") } else { print("neg: FAIL") }
+  if -x == 5 { print("neg-neg: PASS") } else { print("neg-neg: FAIL") }
+  return 0
+}
+
+fn test_precedence() {
+  if 2 + 3 * 4 == 14 { print("precedence: PASS") } else { print("precedence: FAIL") }
+  if (2 + 3) * 4 == 20 { print("parens: PASS") } else { print("parens: FAIL") }
+  return 0
+}
+
+fn main() {
+  print("=== arithmetic stress tests ===")
+  test_int()
+  test_float()
+  test_mixed()
+  test_neg()
+  test_precedence()
+  print("=== done ===")
+  return
+}

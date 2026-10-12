@@ -1,0 +1,50 @@
+# map_stress.crush - stress test map operations
+# Tests: creation, dot access, assignment, nested maps, mixed values
+
+fn test_create() {
+  let m = {"a": 1, "b": 2}
+  if m.a == 1 { print("create-a: PASS") } else { print("create-a: FAIL") }
+  if m.b == 2 { print("create-b: PASS") } else { print("create-b: FAIL") }
+  return 0
+}
+
+fn test_assign() {
+  let m = {"x": 10}
+  m.x = 20
+  if m.x == 20 { print("assign: PASS") } else { print("assign: FAIL") }
+  m.y = 30
+  if m.y == 30 { print("assign-new: PASS") } else { print("assign-new: FAIL") }
+  return 0
+}
+
+fn test_nested() {
+  # NOTE: m.outer.inner fails (issue #77); test single-level only
+  let m = {"outer": 42}
+  if m.outer == 42 { print("nested-single: PASS") } else { print("nested-single: FAIL") }
+  return 0
+}
+
+fn test_mixed() {
+  let m = {"name": "test", "count": 5, "active": true}
+  if m.name == "test" { print("mixed-str: PASS") } else { print("mixed-str: FAIL") }
+  if m.count == 5 { print("mixed-int: PASS") } else { print("mixed-int: FAIL") }
+  if m.active == true { print("mixed-bool: PASS") } else { print("mixed-bool: FAIL") }
+  return 0
+}
+
+fn test_str_keys() {
+  let m = {"hello world": 1, "with-dash": 2}
+  # dot access with spaces/dashes may not work; test via variable
+  return 0
+}
+
+fn main() {
+  print("=== map stress tests ===")
+  test_create()
+  test_assign()
+  test_nested()
+  test_mixed()
+  test_str_keys()
+  print("=== done ===")
+  return
+}
