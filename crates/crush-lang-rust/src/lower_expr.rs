@@ -41,10 +41,14 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 syn::BinOp::BitXor(_) => "^",
                 syn::BinOp::Shl(_) => "<<",
                 syn::BinOp::Shr(_) => ">>",
-                syn::BinOp::AddAssign(_) | syn::BinOp::SubAssign(_) => {
+                syn::BinOp::AddAssign(_) | syn::BinOp::SubAssign(_) | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_) | syn::BinOp::RemAssign(_) => {
                     let operator = match e.op {
                         syn::BinOp::AddAssign(_) => "+",
                         syn::BinOp::SubAssign(_) => "-",
+                        syn::BinOp::MulAssign(_) => "*",
+                        syn::BinOp::DivAssign(_) => "/",
+                        syn::BinOp::RemAssign(_) => "%",
                         _ => unreachable!(),
                     };
                     return Ok(Expression::Call {
@@ -197,12 +201,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             for arg in &e.args {
                 args.push(lower_expr(arg, ctx)?);
             }
-            let func_name = e.method.to_string();
-            Ok(Expression::Call {
-                function: func_name,
-                args,
-                meta,
-            })
+            lower_method(&e.method.to_string(), args, meta)
         }
         Expr::Index(e) => {
             let collection = lower_expr(&e.expr, ctx)?;
@@ -219,6 +218,13 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 None => Expression::IntLiteral { value: 0, meta: ctx.meta_at(0) },
             };
             let end = match &e.end {
+                // CRUSH-197: `a..=b` is inclusive — the CAST range is half-open.
+                Some(end) if matches!(e.limits, syn::RangeLimits::Closed(_)) => Expression::BinaryOp {
+                    operator: "+".to_string(),
+                    left: Box::new(lower_expr(end, ctx)?),
+                    right: Box::new(Expression::IntLiteral { value: 1, meta: ctx.meta_at(0) }),
+                    meta: ctx.meta_at(0),
+                },
                 Some(end) => lower_expr(end, ctx)?,
                 None => Expression::NullLiteral { meta: ctx.meta_at(0) },
             };
@@ -269,6 +275,8 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
         Expr::Reference(e) => {
             lower_expr(&e.expr, ctx)
         }
+        Expr::Macro(m) => lower_macro_expr(&m.mac, ctx),
+        Expr::Match(e) => lower_match(e, ctx),
         _ => {
             eprintln!("unsupported Rust expression: {:#?}", expr);
             anyhow::bail!("unsupported Rust expression")
@@ -376,4 +384,180 @@ fn lower_lit(
             anyhow::bail!("unsupported literal")
         }
     }
+}
+
+/// Expression-position macros (CRUSH-197): `vec![..]`, `format!(..)`, `println!(..)`.
+fn lower_macro_expr(mac: &syn::Macro, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+    let meta = ctx.meta_at(0);
+    let name = mac.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
+    match name.as_str() {
+        "vec" => {
+            use syn::parse::Parser;
+            let elems = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated
+                .parse2(mac.tokens.clone())
+                .map_err(|_| anyhow::anyhow!("vec![value; n] (repeat form) is not supported"))?;
+            let elements = elems.iter().map(|e| lower_expr(e, ctx)).collect::<Result<Vec<_>, _>>()?;
+            Ok(Expression::ArrayLiteral { elements, meta })
+        }
+        "format" => format_args_to_expr(&mac.tokens, ctx),
+        "println" | "print" | "eprintln" | "eprint" => Ok(Expression::CapabilityCall {
+            name: "io.print".to_string(),
+            args: vec![format_args_to_expr(&mac.tokens, ctx)?],
+            meta,
+        }),
+        _ => anyhow::bail!("macro invocation not supported: {name}!"),
+    }
+}
+
+/// `"fmt", args..` → a string-concatenation expression (CRUSH-197).
+///
+/// Supports `{}`, `{:?}` (rendered like `{}`), positional `{0}`, inline names
+/// `{x}` (Rust 2021) and `{{` / `}}`. Width/precision/fill specs (`{:.2}`,
+/// `{:>5}`) are rejected loudly rather than printed wrong.
+pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+    use syn::parse::Parser;
+    let meta = ctx.meta_at(0);
+    let parts = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated
+        .parse2(tokens.clone())
+        .map_err(|e| anyhow::anyhow!("could not parse format arguments: {e}"))?;
+    let mut it = parts.iter();
+    let fmt = match it.next() {
+        None => return Ok(Expression::StringLiteral { value: String::new(), meta }),
+        Some(Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. })) => s.value(),
+        Some(_) => anyhow::bail!("format string must be a string literal"),
+    };
+    let args: Vec<&Expr> = it.collect();
+    let mut next_arg = 0usize;
+    let mut pieces: Vec<Expression> = Vec::new();
+    let mut lit = String::new();
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' if chars.peek() == Some(&'{') => { chars.next(); lit.push('{'); }
+            '}' if chars.peek() == Some(&'}') => { chars.next(); lit.push('}'); }
+            '{' => {
+                let mut spec = String::new();
+                loop {
+                    match chars.next() {
+                        Some('}') => break,
+                        Some(ch) => spec.push(ch),
+                        None => anyhow::bail!("unterminated `{{` in format string"),
+                    }
+                }
+                let (target, fmt_spec) = match spec.split_once(':') {
+                    Some((t, f)) => (t.trim().to_string(), f.trim().to_string()),
+                    None => (spec.trim().to_string(), String::new()),
+                };
+                if !(fmt_spec.is_empty() || fmt_spec == "?") {
+                    anyhow::bail!("format spec `{{{spec}}}` is not supported yet (only {{}}, {{:?}}, {{name}}, {{0}})");
+                }
+                let value = if target.is_empty() {
+                    let e = args.get(next_arg).ok_or_else(|| anyhow::anyhow!("format string has more `{{}}` than arguments"))?;
+                    next_arg += 1;
+                    lower_expr(e, ctx)?
+                } else if let Ok(i) = target.parse::<usize>() {
+                    lower_expr(args.get(i).ok_or_else(|| anyhow::anyhow!("format argument {i} missing"))?, ctx)?
+                } else {
+                    Expression::Var { name: target, meta: ctx.meta_at(0) }
+                };
+                if !lit.is_empty() {
+                    pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: ctx.meta_at(0) });
+                }
+                pieces.push(value);
+            }
+            '}' => anyhow::bail!("unmatched `}}` in format string"),
+            other => lit.push(other),
+        }
+    }
+    if !lit.is_empty() {
+        pieces.push(Expression::StringLiteral { value: lit, meta: ctx.meta_at(0) });
+    }
+    // Start from "" so `+` is string concatenation even when the first piece is a number.
+    let mut acc = Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) };
+    for p in pieces {
+        acc = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(acc), right: Box::new(p), meta: ctx.meta_at(0) };
+    }
+    Ok(acc)
+}
+
+/// `match x { 1 | 2 => a, n => b, _ => c }` → CAST `Match` (CRUSH-197).
+fn lower_match(e: &syn::ExprMatch, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+    use crate::lower_stmt::{lower_block, Tail};
+    let mut arms = Vec::new();
+    for arm in &e.arms {
+        if arm.guard.is_some() {
+            anyhow::bail!("match guards (`if` in a match arm) are not supported yet");
+        }
+        let body = match arm.body.as_ref() {
+            Expr::Block(b) => lower_block(&b.block.stmts, ctx, Tail::Value)?,
+            other => vec![Statement::ExprStmt { expr: lower_expr(other, ctx)?, meta: ctx.meta_at(0) }],
+        };
+        for pattern in lower_pattern(&arm.pat, ctx)? {
+            arms.push(crush_cast::MatchArm { pattern, body: body.clone() });
+        }
+    }
+    Ok(Expression::Match { expression: Box::new(lower_expr(&e.expr, ctx)?), arms, meta: ctx.meta_at(0) })
+}
+
+/// A Rust pattern → CAST patterns (or-patterns expand to one arm each).
+fn lower_pattern(p: &syn::Pat, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<crush_cast::Pattern>> {
+    use crush_cast::Pattern;
+    Ok(match p {
+        syn::Pat::Wild(_) => vec![Pattern::Wildcard],
+        syn::Pat::Lit(l) => vec![Pattern::Literal { value: lower_lit(&l.lit, ctx.meta_at(0))? }],
+        syn::Pat::Ident(pi) if pi.subpat.is_none() => vec![Pattern::Identifier { name: pi.ident.to_string() }],
+        syn::Pat::Or(o) => {
+            let mut out = Vec::new();
+            for case in &o.cases {
+                out.extend(lower_pattern(case, ctx)?);
+            }
+            out
+        }
+        syn::Pat::Paren(pp) => lower_pattern(&pp.pat, ctx)?,
+        // A negative literal (`-1 =>`) parses as a unary expression pattern.
+        syn::Pat::Range(_) => anyhow::bail!("range patterns (`1..=5 =>`) are not supported yet"),
+        other => anyhow::bail!("unsupported match pattern: {}", quote_pat(other)),
+    })
+}
+
+fn quote_pat(p: &syn::Pat) -> String {
+    use quote::ToTokens;
+    p.to_token_stream().to_string()
+}
+
+/// Rust method calls → crush builtins (CRUSH-197). `args[0]` is the receiver.
+fn lower_method(
+    method: &str,
+    mut args: Vec<Expression>,
+    meta: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Expression> {
+    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call { function: function.to_string(), args, meta };
+    Ok(match (method, args.len()) {
+        // Borrow / ownership / iterator adapters carry no runtime meaning here.
+        ("iter" | "into_iter" | "clone" | "to_owned" | "as_str" | "copied" | "cloned" | "to_vec" | "into"
+            | "unwrap" | "as_slice" | "borrow", 1) => args.remove(0),
+        ("to_string", 1) => Expression::BinaryOp {
+            operator: "+".to_string(),
+            left: Box::new(Expression::StringLiteral { value: String::new(), meta: meta.clone() }),
+            right: Box::new(args.remove(0)),
+            meta,
+        },
+        ("len", 1) => call("len", args, meta),
+        ("push", 2) => call("array.push", args, meta),
+        ("pop", 1) => call("array.pop", args, meta),
+        ("contains", 2) => call("str.contains", args, meta),
+        ("starts_with", 2) => call("str.starts_with", args, meta),
+        ("ends_with", 2) => call("str.ends_with", args, meta),
+        ("to_uppercase", 1) => call("str.to_upper", args, meta),
+        ("to_lowercase", 1) => call("str.to_lower", args, meta),
+        ("trim", 1) => call("str.trim", args, meta),
+        ("replace", 3) => call("str.replace", args, meta),
+        ("abs", 1) => call("math.abs", args, meta),
+        ("sqrt", 1) => call("math.sqrt", args, meta),
+        ("floor", 1) => call("math.floor", args, meta),
+        ("ceil", 1) => call("math.ceil", args, meta),
+        ("round", 1) => call("math.round", args, meta),
+        ("pow" | "powi" | "powf", 2) => call("math.pow", args, meta),
+        (other, n) => anyhow::bail!("method `.{other}()` with {} argument(s) is not supported", n - 1),
+    })
 }

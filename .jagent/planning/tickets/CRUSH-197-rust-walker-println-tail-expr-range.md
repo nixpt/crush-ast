@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-197 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | In review |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | none |
 | **Estimated effort** | S |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build) |
@@ -25,7 +25,18 @@
 
 ## Success criteria
 
-- [ ] `println!`/`print!` with a format string and `{}` args produce the same output as rustc.
-- [ ] Block tail expressions become the block's value / function return.
-- [ ] `..=` inclusive.
-- [ ] Output-comparison tests against `rustc` for a small corpus.
+- [x] `println!`/`print!` with a format string and `{}` args produce the same output as rustc (`print!` still ends the line — no newline-free print capability).
+- [x] Block tail expressions become the block's value / function return.
+- [x] `..=` inclusive.
+- [x] Output-comparison tests against `rustc` for a small corpus.
+
+## Result (2026-10-12)
+
+`agent/vega/CRUSH-197-rust-walker`. Fixed the three bugs and added `match` (literal / binding /
+`_` / `|` patterns), `loop`, `continue`, `vec![..]`, `format!`, compound assignment `*= /= %=`
+and a method map (`len`, `push`, `pop`, `to_string`, string and math methods; borrow/iterator
+adapters pass through). Unsupported constructs — format width/precision, match guards, range
+patterns, structs/impls, iterator chains — fail with a named error. `tests/rustc_corpus/` (9
+programs) is compared with real `rustc` output, and a second test re-derives the `.out` files
+with `rustc` so they can't drift. The supported subset is in the crate's rustdoc (the crate has
+no README of its own).
