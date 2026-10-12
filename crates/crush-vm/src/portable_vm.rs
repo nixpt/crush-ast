@@ -62,6 +62,13 @@ use crate::bytecode::{Program, instruction_size};
 use crate::host::HostCaps;
 use crate::vm::{Quotas, Value, VmError, VmResult};
 
+/// A host-provided runner for `@lang` blocks (#91): `(lang, code, env)` →
+/// the block's stdout (including the result-sentinel line the marshaling
+/// prologue prints) or an error message. Used in place of spawning a
+/// subprocess — e.g. by crush-web, where the page runs `@javascript` in a
+/// Worker/iframe sandbox. The `polyglot.<lang>` capability gate still applies.
+pub type LangExecutor = Box<dyn FnMut(&str, &str, &[(String, String)]) -> Result<String, String>>;
+
 /// A frame in the call stack.
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -108,6 +115,8 @@ pub struct PortableVm {
     out_taken: usize,
     /// Where `io.read` lines come from (process stdin unless the host says otherwise).
     input: crate::io_read::InputSource,
+    /// Runs `@lang` blocks instead of a subprocess when set (#91).
+    lang_executor: Option<LangExecutor>,
     /// Instruction pointer.
     ip: usize,
     /// Total instruction steps executed.
@@ -188,6 +197,7 @@ impl PortableVm {
             out_len: 0,
             out_taken: 0,
             input: crate::io_read::InputSource::Stdin,
+            lang_executor: None,
             ip: start_ip,
             steps: 0,
             jumped: false,
@@ -214,6 +224,13 @@ impl PortableVm {
     /// Register host capabilities.
     pub fn set_host_caps(&mut self, host_caps: HostCaps) {
         self.host_caps = Some(host_caps);
+    }
+
+    /// Run `@lang` blocks through `executor` instead of spawning a subprocess
+    /// (#91). The block still needs its `polyglot.<lang>` grant; the executor
+    /// only decides *where* granted code runs.
+    pub fn set_lang_executor(&mut self, executor: LangExecutor) {
+        self.lang_executor = Some(executor);
     }
 
     /// Choose where `io.read` lines come from. The default is process stdin.
@@ -1409,15 +1426,25 @@ impl PortableVm {
                 // SHARED with scheduler.rs's EXEC_LANG handler (crate::scheduler::run_exec_lang)
                 // — see that function's doc comment for the CRUSH-20 buckets-sandboxing wiring
                 // and the sentinel-scan bug this consolidation fixed in this backend.
-                let outcome = crate::scheduler::run_exec_lang(
-                    lang,
-                    code_str,
-                    &deps,
-                    &env_vars,
-                    crush_line,
-                    &gate,
-                    self.quotas.max_wall_time_ms,
-                )?;
+                let outcome = match self.lang_executor.as_mut() {
+                    // #91: the host runs the block (e.g. a browser Worker).
+                    Some(executor) => match executor(lang, code_str, &env_vars) {
+                        Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                        Err(message) => {
+                            let at = crush_line.map(|l| format!(" (line {l})")).unwrap_or_default();
+                            return Err(VmError::UnknownCap(format!("@{lang} block failed{at}: {message}")));
+                        }
+                    },
+                    None => crate::scheduler::run_exec_lang(
+                        lang,
+                        code_str,
+                        &deps,
+                        &env_vars,
+                        crush_line,
+                        &gate,
+                        self.quotas.max_wall_time_ms,
+                    )?,
+                };
                 self.out_len += outcome.visible.len();
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));

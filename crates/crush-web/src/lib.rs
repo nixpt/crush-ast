@@ -27,14 +27,85 @@
 //! `caison.parse`. Nothing that reaches outside the VM (`fs`, `time`, `env`,
 //! `process`, `net`) is registered.
 //!
-//! `@lang{}` polyglot blocks are unsupported either way: `EXEC_LANG` needs to
-//! spawn a subprocess, which doesn't exist in a browser sandbox. The VM
-//! returns a capability-gated `VmError` for those, same as running with no
-//! `--polyglot` grant natively — not a silent no-op.
+//! `@lang{}` polyglot blocks (#91): a browser can't spawn a subprocess, so a
+//! block runs only when the page (1) grants it — `execute_with`/`Session`
+//! option `grants: ["polyglot.javascript"]` (or `polyglot.python`; bash is never
+//! grantable here) — and (2) supplies an executor with [`set_lang_executor`]
+//! that runs the code where the page chooses (a Worker or sandboxed iframe), so
+//! it never runs with the page's own authority. Without both, the VM refuses
+//! with the same capability error as native with no `--polyglot` grant.
+//! `execute`/`run_blob` take no options and so never run polyglot blocks.
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crush_vm::{HostCaps, InputSource, PortableVm, VmError, VmYield};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+
+/// A host runner for `@lang` blocks: `(lang, code, env)` → the block's stdout
+/// (including the result-sentinel line) or an error message.
+pub type HostLangExecutor = Rc<dyn Fn(&str, &str, &[(String, String)]) -> Result<String, String>>;
+
+thread_local! {
+    static LANG_EXECUTOR: RefCell<Option<HostLangExecutor>> = const { RefCell::new(None) };
+}
+
+/// Install (or with `None`, remove) the runner for granted `@lang` blocks.
+/// Pure-Rust counterpart of [`set_lang_executor`], usable from native tests.
+pub fn set_host_lang_executor(executor: Option<HostLangExecutor>) {
+    LANG_EXECUTOR.with(|e| *e.borrow_mut() = executor);
+}
+
+/// Install the page's runner for granted `@lang` blocks (#91):
+/// `(lang, code, env) => stdout`, called synchronously. `env` maps the
+/// block's input variables to JSON strings (what native passes as environment
+/// variables, read by the marshaling prologue as `process.env[name]`); return
+/// everything the block printed, including the result-sentinel line. Throw to
+/// fail the block. Pass `null` to remove it.
+#[wasm_bindgen]
+pub fn set_lang_executor(executor: JsValue) -> Result<(), JsValue> {
+    if executor.is_null() || executor.is_undefined() {
+        set_host_lang_executor(None);
+        return Ok(());
+    }
+    let func: js_sys::Function = executor
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("set_lang_executor expects a function or null"))?;
+    set_host_lang_executor(Some(Rc::new(move |lang: &str, code: &str, env: &[(String, String)]| {
+        let env_obj = js_sys::Object::new();
+        for (k, v) in env {
+            let _ = js_sys::Reflect::set(&env_obj, &JsValue::from_str(k), &JsValue::from_str(v));
+        }
+        match func.call3(&JsValue::NULL, &JsValue::from_str(lang), &JsValue::from_str(code), &env_obj) {
+            Ok(out) => out.as_string().ok_or_else(|| "executor must return a string".to_string()),
+            Err(err) => Err(err
+                .as_string()
+                .or_else(|| js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|m| m.as_string()))
+                .unwrap_or_else(|| "executor threw".to_string())),
+        }
+    })));
+    Ok(())
+}
+
+/// Grants a page may give a program in the browser (#91). `polyglot.bash` is
+/// never grantable here; nothing else reaches outside the VM.
+const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python"];
+
+fn apply_grants(caps: &mut HostCaps, grants: &[String]) -> Result<(), String> {
+    for grant in grants {
+        if GRANTABLE.contains(&grant.as_str()) {
+            let lang = &grant["polyglot.".len()..];
+            caps.register(crush_vm::host::polyglot_gate(lang));
+        } else {
+            return Err(format!(
+                "`{grant}` can't be granted in a browser (grantable: {})",
+                GRANTABLE.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// The capabilities every browser run gets: what `crush-run` registers when
 /// given no grant flags. That is the pure standard library (`math.*`,
@@ -133,6 +204,9 @@ pub struct RunOptions {
     pub max_steps: Option<usize>,
     /// What `sys.args()` returns. Absent means none.
     pub args: Option<Vec<String>>,
+    /// Capabilities the page grants this run (#91): `polyglot.javascript`,
+    /// `polyglot.python`. A granted block runs through [`set_lang_executor`].
+    pub grants: Option<Vec<String>>,
 }
 
 fn parse_options(options: JsValue) -> Result<RunOptions, JsValue> {
@@ -170,16 +244,21 @@ pub struct Report {
     pub steps: usize,
 }
 
-fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) -> PortableVm {
+fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) -> Result<PortableVm, String> {
     let mut quotas = crush_vm::Quotas::default();
     if let Some(max_steps) = options.max_steps {
         quotas.max_steps = max_steps;
     }
+    let mut caps = browser_caps(options.args.clone().unwrap_or_default());
+    apply_grants(&mut caps, options.grants.as_deref().unwrap_or_default())?;
     let mut vm = PortableVm::new(program);
     vm.set_quotas(quotas);
     vm.set_input(input);
-    vm.set_host_caps(browser_caps(options.args.clone().unwrap_or_default()));
-    vm
+    vm.set_host_caps(caps);
+    if let Some(executor) = LANG_EXECUTOR.with(|e| e.borrow().clone()) {
+        vm.set_lang_executor(Box::new(move |lang, code, env| executor(lang, code, env)));
+    }
+    Ok(vm)
 }
 
 /// Where [`drive`] stopped: the status, the error for `Status::Error`, and
@@ -242,7 +321,12 @@ pub fn execute_with_options(source: &str, options: &RunOptions) -> ExecuteWithRe
         }
     };
     let stdin = options.stdin.clone().unwrap_or_default();
-    let mut vm = new_vm(program, options, InputSource::supplied(stdin));
+    let mut vm = match new_vm(program, options, InputSource::supplied(stdin)) {
+        Ok(vm) => vm,
+        Err(e) => {
+            return ExecuteWithResult { ok: false, output: String::new(), error: Some(e), exit_code: None, steps: 0 };
+        }
+    };
     let (status, error, exit_code) = drive(&mut vm);
     ExecuteWithResult {
         ok: status == Status::Done && exit_code.unwrap_or(0) == 0,
@@ -253,7 +337,7 @@ pub fn execute_with_options(source: &str, options: &RunOptions) -> ExecuteWithRe
     }
 }
 
-/// Compile and run Crush source with options `{ stdin?, max_steps?, args? }`,
+/// Compile and run Crush source with options `{ stdin?, max_steps?, args?, grants? }`,
 /// returning `{ ok, output, error?, exit_code?, steps }`. `io.read` takes lines from
 /// `stdin` and returns `""` once it runs out. Compile and runtime errors come
 /// back as `ok: false` with output printed before the error kept; only
@@ -297,7 +381,7 @@ pub struct Session {
 
 #[wasm_bindgen]
 impl Session {
-    /// Compile `source` with options `{ max_steps?, args? }` (`stdin` is ignored —
+    /// Compile `source` with options `{ max_steps?, args?, grants? }` (`stdin` is ignored —
     /// use `provide`). Nothing runs until [`Session::run`].
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str, options: JsValue) -> Result<Session, JsValue> {
@@ -333,9 +417,12 @@ fn to_js(report: &Report) -> Result<JsValue, JsValue> {
 /// Pure-Rust surface of [`Session`], usable from native tests.
 impl Session {
     pub fn with_options(source: &str, options: &RunOptions) -> Self {
-        match crush_lang_sdk::compile::compile_crush_source(source) {
-            Ok(program) => Session {
-                vm: Some(new_vm(program, options, InputSource::interactive())),
+        let vm = crush_lang_sdk::compile::compile_crush_source(source)
+            .map_err(|e| format!("compile error: {e}"))
+            .and_then(|program| new_vm(program, options, InputSource::interactive()));
+        match vm {
+            Ok(vm) => Session {
+                vm: Some(vm),
                 status: None,
                 error: None,
                 exit_code: None,
@@ -344,7 +431,7 @@ impl Session {
             Err(e) => Session {
                 vm: None,
                 status: Some(Status::Error),
-                error: Some(format!("compile error: {e}")),
+                error: Some(e),
                 exit_code: None,
                 transcript: String::new(),
             },
