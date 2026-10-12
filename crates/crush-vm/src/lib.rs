@@ -12,7 +12,8 @@ mod tests;
 
 pub mod memory;
 // FastVM bakes ai_optimizer::VmOptimizer into its state unconditionally —
-// same native-only gate as ai_optimizer itself.
+// same gate as ai_optimizer. Neither needs native code any more (ort was
+// removed, CRUSH-256); ungating them for wasm/no-default builds is a follow-up.
 #[cfg(feature = "native-plugins")]
 pub mod fastvm;
 pub mod value;

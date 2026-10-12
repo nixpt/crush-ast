@@ -1,23 +1,10 @@
 use crush_diagnostics::DiagRecord;
-use ort::session::Session;
 use serde::Serialize;
-use std::sync::Arc;
-use parking_lot::Mutex;
 
-pub const LINT_MODEL_PATH: &str = "crates/crush-lint/models/lint_model.onnx";
 const DEFAULT_DEJAVUE_DIR: &str = ".dejavue";
 
 /// The AI Linter Engine that augments standard compiler errors.
 pub struct AiLinter {
-    /// Stub field for future embedding inference. Currently always `None`
-    /// because `try_load_session` only succeeds when the bundled ONNX
-    /// model is present (typically not in CI/test environments). Kept
-    /// on the struct so the public API contract ("model-backed linter")
-    /// is documented and stable while the embedding path is still
-    /// scaffolded. Will be consumed by `augment_diagnostic` once the
-    /// inference loop lands.
-    #[allow(dead_code)]
-    session: Option<Arc<Mutex<Session>>>,
     enabled: bool,
     /// Directory the linter reads `.dejavue/decisions.md` from and
     /// appends `<dir>/timeline.jsonl` to. Defaults to `.dejavue`
@@ -43,22 +30,12 @@ struct DejavueTimelineEntry<'a> {
 
 impl AiLinter {
     /// Construct a linter pointing at the production Dejavue directory
-    /// (`.dejavue/`). When `enabled` is true, attempts to load the
-    /// bundled ONNX model from [`LINT_MODEL_PATH`]. If the model file
-    /// is missing or fails to load (corrupt, wrong format, ORT builder
-    /// error), the linter silently falls back to the enabled-but-no-
-    /// session path — the heuristic hint generator still runs without
-    /// embeddings. This avoids `.unwrap()` panics in production builds
-    /// where the model may not yet exist or may be a developer-machine-
-    /// specific file checked out of sync.
+    /// (`.dejavue/`). The hint generator is heuristic (diagnostic + Dejavue
+    /// memory + source line); there is no model inference — the ONNX
+    /// session stub and its `ort` dependency were removed (CRUSH-256), as no
+    /// model was ever shipped.
     pub fn new(enabled: bool) -> Self {
-        let session = if enabled {
-            Self::try_load_session(LINT_MODEL_PATH).ok()
-        } else {
-            None
-        };
         Self {
-            session,
             enabled,
             dejavue_dir: DEFAULT_DEJAVUE_DIR.to_string(),
         }
@@ -88,40 +65,6 @@ impl AiLinter {
         self
     }
 
-    /// Attempt to build and load the ONNX session. Returns `Err` on any
-    /// failure (builder init, model file missing, `commit_from_file`
-    /// rejection). Callers should downgrade gracefully (`.ok()` and
-    /// continue without embeddings) rather than panic — a broken model
-    /// is an environment issue, not a request error.
-    ///
-    /// Returns [`std::io::Error`] so callers can `.ok()` without
-    /// depending on ORT's private error API; the ORT error is wrapped
-    /// in a stage-labelled message (`"ORT builder: ..."` /
-    /// `"ORT commit_from_file: ..."`) for debugability.
-    ///
-    /// Mirrors the proven pattern from `crush-vm/src/ai_optimizer`:
-    /// `Session::builder()?.commit_from_file(path)?` — both methods take
-    /// `&self` and return owned results, so the chain is straight-line
-    /// `?`-propagation on `Result<_, std::io::Error>` (lifted via a
-    /// single inline `map_err`) without any mutable-borrow dance.
-    fn try_load_session(path: &str) -> Result<Arc<Mutex<Session>>, std::io::Error> {
-        use std::io::Error;
-        use std::path::Path;
-        if !Path::new(path).exists() {
-            return Err(Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("linter model file not found: {path}"),
-            ));
-        }
-        let sess = ort::session::Session::builder()
-            .map_err(|e| Error::other(format!("ORT builder: {e}")))?
-            .commit_from_file(path)
-            .map_err(|e| {
-                Error::other(format!("ORT commit_from_file({path}): {e}"))
-            })?;
-        Ok(Arc::new(Mutex::new(sess)))
-    }
-
     /// Augment a standard diagnostic record with an AI-generated hint.
     ///
     /// When the linter is disabled (`enabled = false` at construction),
@@ -134,15 +77,11 @@ impl AiLinter {
     ///
     /// The hint is printed to stderr (not returned on the record) because
     /// [`DiagRecord<'a>`] borrows from the caller — synthesized `String`
-    /// hints cannot outlive this function without an arena. Future
-    /// work: integrate embeddings via `self.session` (currently a stub).
+    /// hints cannot outlive this function without an arena.
     pub fn augment_diagnostic<'a>(&self, diag: DiagRecord<'a>, source_context: &str) -> DiagRecord<'a> {
         if !self.enabled {
             return diag;
         }
-
-        // In a real implementation, we would convert `source_context` to an embedding
-        // vector and run it through `self.session`.
 
         // --- Dejavue Context Protocol (DCP) Integration ---
         // An AI-Native linter should be aware of project memory.
@@ -232,20 +171,15 @@ mod tests {
     // ── Construction & disabled-linter passthrough ─────────────────────────
 
     #[test]
-    fn disabled_linter_has_no_session() {
+    fn disabled_linter_is_disabled() {
         let linter = AiLinter::new(false);
         assert!(!linter.enabled);
-        assert!(linter.session.is_none());
     }
 
     #[test]
-    fn enabled_linter_without_model_falls_back_gracefully() {
-        // Model file at LINT_MODEL_PATH does not exist in test environment
-        // (the .onnx file is not checked in). The linter must not panic
-        // — it should silently fall back to enabled-but-no-session.
+    fn enabled_linter_constructs() {
         let linter = AiLinter::new(true);
         assert!(linter.enabled);
-        assert!(linter.session.is_none(), "should fall back when model file is absent");
     }
 
     #[test]
@@ -343,7 +277,7 @@ mod tests {
         assert_eq!(linter.dejavue_dir, DEFAULT_DEJAVUE_DIR);
     }
 
-    // ── Enabled-but-no-session linter: end-to-end "doesn't panic" ────────────
+    // ── Enabled linter: end-to-end "doesn't panic" ──────────────────────────
     //
     // Redirection to a scratch Dejavue directory (via `with_dejavue_dir`)
     // keeps the workspace's real `.dejavue/timeline.jsonl` untouched.
@@ -362,7 +296,6 @@ mod tests {
         std::fs::create_dir_all(&scratch).unwrap();
 
         let linter = AiLinter::new(true).with_dejavue_dir(scratch.to_string_lossy());
-        assert!(linter.session.is_none());
         let diag = DiagRecord {
             code: "E-MISSING-SEMI",
             level: "error",

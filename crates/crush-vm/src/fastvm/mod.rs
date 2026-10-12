@@ -159,7 +159,7 @@ impl FastVM {
                 let peak_mem = self.arena.stats().peak_usage as f32;
                 let alloc_rate = 0.0; // Heuristic
                 
-                let inputs = vec![current_mem, peak_mem, self.instructions_since_gc as f32, alloc_rate];
+                let inputs = [current_mem, peak_mem, self.instructions_since_gc as f32, alloc_rate];
                 if self.optimizer.should_gc(inputs) {
                     self.collect_garbage();
                 }

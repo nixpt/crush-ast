@@ -42,7 +42,7 @@ graphics = []
 stdlib = ["dep:regex"]
 repl-helper = ["dep:rustyline"]
 # crush-diff's differential module compares against crush-vm's FastVM
-# backend, which needs crush-vm's own native-plugins (ort/libloading — no
+# backend, which needs crush-vm's own native-plugins (libloading — no
 # wasm32 story). Default on so `crush-run`/`crush-compile`/`crush-repl`/
 # `crushc`/`crush-diff` keep working exactly as before; crush-web is the
 # only consumer that opts out.
