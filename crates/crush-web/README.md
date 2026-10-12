@@ -78,12 +78,44 @@ pending and every later read returns `""`.
   is not thrown. Calls after `done`/`error` return the same status with empty
   output.
 
+### Polyglot blocks (JavaScript, Python)
+
+```js
+import init, { execute_with, set_lang_executor } from "./pkg/crush_web.js";
+await init();
+
+// Runs a granted block where the page decides — here a sandboxed function in a
+// dedicated Worker, never with the page's own authority. Synchronous: return
+// everything the block printed (including the result-sentinel line).
+set_lang_executor((lang, code, env) => runInSandbox(lang, code, env));
+
+execute_with(source, { grants: ["polyglot.javascript"] });
+```
+
+- **Two keys, both required:** the `grants` option (`polyglot.javascript`,
+  `polyglot.python`; `polyglot.bash` and anything else is refused) and an
+  executor. A grant without an executor, or an executor without a grant, is
+  refused by the same `polyglot.<lang>` gate native uses.
+- **`env`** maps the block's input variables to JSON strings — what native
+  passes as environment variables. The marshaling prologue reads them as
+  `process.env[name]`, so the sandbox must provide a `process.env` object.
+- **Typed values in and out** need the `polyglot-javascript` cargo feature
+  (free-variable analysis + guest rewrite via swc; ~1.2 MB more raw `.wasm`).
+  Without it a granted block still runs, but sees no Crush variables and its
+  result is its printed text.
+- Python works through the same hook (e.g. Pyodide in a Worker); its typed
+  marshaling would need `polyglot-python`, which doesn't build for wasm32 yet
+  (tree-sitter's C sources). Until then a variable *assigned* inside `@python`
+  and used after it (`@python { result = base ** 3 }` then `print(result)`) is a
+  compile error here (`Undefined variable: result`), while native — which has
+  the marshaling — prints `125`.
+
 ## What this is not (yet)
 
-- **No `@lang{}` polyglot blocks.** `EXEC_LANG` spawns a subprocess, which
-  doesn't exist in a browser sandbox. Calling one returns a normal
-  capability-gated `VmError`, the same shape you'd get running natively with
-  no `--polyglot` grant — not a silent no-op or a fake success.
+- **`@lang{}` blocks only through a host executor.** There's no subprocess in
+  a browser. A block runs when the page grants it *and* supplies a runner —
+  see [Polyglot blocks](#polyglot-blocks-javascript-python). Otherwise it's
+  the same capability-gated `VmError` as native with no `--polyglot` grant.
 - **No FastVM, no AI optimizer, no native plugin loading.** `crush-vm` is
   pulled in with `default-features = false`: those backends depend on `ort`
   (ONNX Runtime) and `libloading` (dynamic linking), neither of which has a

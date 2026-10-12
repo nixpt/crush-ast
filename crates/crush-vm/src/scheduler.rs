@@ -262,6 +262,29 @@ pub(crate) struct ExecLangOutcome {
     pub(crate) result_value: Value,
 }
 
+/// Split a polyglot block's stdout into what it printed and its result
+/// value (the `CRUSH_RESULT_SENTINEL` line). Shared by the subprocess path
+/// and host-provided executors ([`crate::portable_vm::LangExecutor`]).
+pub(crate) fn parse_exec_lang_stdout(raw: &str) -> ExecLangOutcome {
+    let mut visible_lines: Vec<&str> = Vec::new();
+    let mut result_payload: Option<&str> = None;
+    for line in raw.lines() {
+        match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
+            // Last one wins, matching "the block's final bound output" if it
+            // somehow printed the sentinel more than once.
+            Some(payload) => result_payload = Some(payload),
+            None => visible_lines.push(line),
+        }
+    }
+    let visible = visible_lines.join("\n").trim().to_string();
+    let result_value = match result_payload {
+        Some(payload) => serde_json::from_str::<Value>(payload)
+            .unwrap_or_else(|_| Value::Str(payload.to_string())),
+        None => Value::Str(visible.clone()),
+    };
+    ExecLangOutcome { visible, result_value }
+}
+
 /// Build + run the subprocess for an `EXEC_LANG` polyglot block. SHARED
 /// between scheduler.rs and portable_vm.rs (CRUSH-20) — before this, each
 /// backend inlined its own `Command::new(binary)` plus a copy of the
@@ -340,25 +363,7 @@ pub(crate) fn run_exec_lang(
         };
 
         if output.status.success() {
-            let raw = String::from_utf8_lossy(&output.stdout);
-            let mut visible_lines: Vec<&str> = Vec::new();
-            let mut result_payload: Option<&str> = None;
-            for line in raw.lines() {
-                match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
-                    // Last one wins, matching "the block's final bound
-                    // output" if it somehow printed the sentinel more than
-                    // once.
-                    Some(payload) => result_payload = Some(payload),
-                    None => visible_lines.push(line),
-                }
-            }
-            let visible = visible_lines.join("\n").trim().to_string();
-            let result_value = match result_payload {
-                Some(payload) => serde_json::from_str::<Value>(payload)
-                    .unwrap_or_else(|_| Value::Str(payload.to_string())),
-                None => Value::Str(visible.clone()),
-            };
-            Ok(ExecLangOutcome { visible, result_value })
+            Ok(parse_exec_lang_stdout(&String::from_utf8_lossy(&output.stdout)))
         } else {
             Err(lang_runtime_error(lang, &output.stderr, crush_line))
         }
