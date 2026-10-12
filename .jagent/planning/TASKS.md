@@ -79,6 +79,7 @@ Plan + ordering: surfer-browser `.jagent/planning/tickets/SURF-ENGINE-2.md`.
 - [ ] **CRUSH-252** — `dom_native.*` real provider via a shared `DomBridge` trait in crush-lang-sdk (CRUSH-33 caps stop echoing). (P1)
 - [ ] **CRUSH-253** — Python walker → DOM ops ("python-dom", no CPython). (P2)
 - [ ] **CRUSH-254** — host-driven job queue: persistent VM session, microtasks, callbacks, budgets. (P1)
+- [ ] **CRUSH-255** — publish crush-vm 0.4.1 so surfer and exo-light share one `HostCap` trait (exo-light EXOLIGHT-12). (P2)
 
 ## P0 — Build & Core Health ✅
 
