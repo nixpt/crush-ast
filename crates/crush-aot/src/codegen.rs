@@ -750,7 +750,7 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }}
         "map_keys" => {{
-            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Map(m) => {{ let mut __k: Vec<String> = m.borrow().keys().cloned().collect(); __k.sort(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Object(m) => {{ let mut __k: Vec<String> = m.borrow().keys().cloned().collect(); __k.sort(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_push" | "array_push" => {{
