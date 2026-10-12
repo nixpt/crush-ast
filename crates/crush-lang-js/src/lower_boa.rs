@@ -125,11 +125,22 @@ impl<'a> BoaLower<'a> {
                     meta: self.meta0(),
                 }]
             }
+            // Body first: `while (true) { body; if (!cond) break; }` (a `continue` checks cond too).
             Statement::DoWhileLoop(dw) => {
-                let condition = Box::new(self.expr(dw.cond()));
-                let body = self.stmt_wrap(dw.body());
+                let exit_check = CastStmt::If {
+                    condition: CastExpr::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(self.expr(dw.cond())),
+                        meta: self.meta0(),
+                    },
+                    then_body: vec![CastStmt::Break { meta: self.meta0() }],
+                    else_body: None,
+                    meta: self.meta0(),
+                };
+                let mut body = crate::lower_swc::rewrite_continue(self.stmt_wrap(dw.body()), &[exit_check.clone()]);
+                body.push(exit_check);
                 vec![CastStmt::While {
-                    condition,
+                    condition: Box::new(CastExpr::BoolLiteral { value: true, meta: self.meta0() }),
                     body,
                     meta: self.meta0(),
                 }]
@@ -163,7 +174,13 @@ impl<'a> BoaLower<'a> {
                         value: true,
                         meta: self.meta0(),
                     });
-                let body = self.stmt_wrap(fl.body());
+                // The update runs after the body and before every `continue`.
+                let update: Vec<CastStmt> = fl
+                    .final_expr()
+                    .map(|u| vec![CastStmt::ExprStmt { expr: self.expr(u), meta: self.meta0() }])
+                    .unwrap_or_default();
+                let mut body = crate::lower_swc::rewrite_continue(self.stmt_wrap(fl.body()), &update);
+                body.extend(update);
                 let mut while_body = vec![CastStmt::If {
                     condition: CastExpr::UnaryOp {
                         operator: "!".to_string(),
