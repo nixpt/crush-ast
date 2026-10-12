@@ -1465,6 +1465,8 @@ dependencies = [
  "crush-diagnostics",
  "crush-errors",
  "crush-ffi",
+ "crush-frontend",
+ "crush-lang-sdk",
  "hex",
  "libc",
  "libloading 0.9.0",
