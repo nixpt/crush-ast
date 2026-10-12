@@ -1,0 +1,11 @@
+// Arrays and objects as text, on every engine: print() and string concatenation.
+fn main() {
+    let a = [1, 2, 3]
+    print(a)
+    print("a = " + a)
+    let nested = [[1, 2], ["x", true], []]
+    print(nested)
+    let o = {"k": [4.5, null]}
+    print(o)
+    print("o = " + o)
+}

@@ -4,7 +4,7 @@
 //! runs, and the C backend garbled six games; no test noticed, because the AOT tests
 //! compared only `main`'s return value (CRUSH-220).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -17,8 +17,6 @@ use crush_lang_sdk::{Quotas, Runtime};
 /// backend so a known divergence on one can't hide a regression on the other. Keep it
 /// exact: the test also fails when a pair starts matching, so the list can't go stale.
 const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
-    ("arrays_and_loops", "rust", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
-    ("arrays_and_loops", "c", "string indexing `s[0]` is null on AOT (CRUSH-217)"),
 ];
 
 /// Parallel builds. Each is a rustc or gcc process of its own, next to the other test
@@ -85,7 +83,8 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
     let compiler = AotCompiler::new();
     let compared = AtomicUsize::new(0);
     let next = AtomicUsize::new(0);
-    let diverged = Mutex::new(BTreeSet::new());
+    // (example, backend) -> (VM output, AOT output) for every mismatch.
+    let diverged = Mutex::new(BTreeMap::<(String, String), (String, String)>::new());
     let failures = Mutex::new(Vec::new());
 
     // Each rustc build takes seconds, so build several examples at once.
@@ -125,8 +124,11 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
                         compared.fetch_add(1, Ordering::Relaxed);
                         match aot_stdout(&so) {
                             Ok(got) if got == expected => {}
-                            Ok(_) => {
-                                diverged.lock().unwrap().insert((name.clone(), backend.to_string()));
+                            Ok(got) => {
+                                diverged
+                                    .lock()
+                                    .unwrap()
+                                    .insert((name.clone(), backend.to_string()), (expected.clone(), got));
                             }
                             Err(e) => failures.lock().unwrap().push(format!("{name} [{backend}]: run failed: {e}")),
                         }
@@ -145,14 +147,38 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
         .filter(|(_, backend, _)| use_c || *backend != "c")
         .map(|(name, backend, _)| (name.to_string(), backend.to_string()))
         .collect();
-    for (name, backend) in diverged.difference(&known) {
-        failures.push(format!("{name} [{backend}]: AOT output differs from the VM's"));
+    let diverged_keys: BTreeSet<(String, String)> = diverged.keys().cloned().collect();
+    for key in diverged_keys.difference(&known) {
+        let (name, backend) = key;
+        let (expected, got) = &diverged[key];
+        failures.push(format!(
+            "{name} [{backend}]: AOT output differs from the VM's{}\nexpected (VM):\n{expected:?}\nactual (AOT):\n{got:?}",
+            first_difference(expected, got)
+        ));
     }
-    for (name, backend) in known.difference(&diverged) {
+    for (name, backend) in known.difference(&diverged_keys) {
         failures.push(format!("{name} [{backend}]: now matches the VM; remove it from KNOWN_DIVERGENCES"));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     // Guard against the loop silently skipping everything (e.g. examples moved).
     let floor = if use_c { 36 } else { 18 };
     assert!(compared >= floor, "only {compared} example builds compared");
+}
+
+/// " (first difference at line N: VM `a` vs AOT `b`)" — the line to look at
+/// in a long example's output.
+fn first_difference(expected: &str, got: &str) -> String {
+    let (e, g): (Vec<&str>, Vec<&str>) = (expected.lines().collect(), got.lines().collect());
+    for i in 0..e.len().max(g.len()) {
+        let (a, b) = (e.get(i).copied(), g.get(i).copied());
+        if a != b {
+            return format!(
+                " (first difference at line {}: VM {:?} vs AOT {:?})",
+                i + 1,
+                a.unwrap_or("<end>"),
+                b.unwrap_or("<end>")
+            );
+        }
+    }
+    String::new()
 }

@@ -226,7 +226,8 @@ fn as_text(v: &RuntimeValue) -> String {
         RuntimeValue::Float(f) => crush_float_to_text(*f),
         RuntimeValue::Bool(b) => b.to_string(),
         RuntimeValue::Null => "null".to_string(),
-        other => format!("{:?}", other),
+        // Arrays/objects: the Display impl, which renders like the VM (`[a, b]`).
+        other => other.to_string(),
     }
 }
 

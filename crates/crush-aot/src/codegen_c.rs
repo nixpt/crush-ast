@@ -574,6 +574,8 @@ static const char* _float_text(double f, char* buf) {
 
 // Render a Value to text. Numbers are written into `buf` (TEXTBUF_SIZE bytes);
 // the result is `buf`, a string constant, or `v.s`.
+static const char* _composite_text(Value v);
+
 static inline const char* _to_text_buf(Value v, char* buf) {
     switch (v.tag) {
         case TAG_INT:   snprintf(buf, TEXTBUF_SIZE, "%ld", (long)v.i); return buf;
@@ -581,8 +583,63 @@ static inline const char* _to_text_buf(Value v, char* buf) {
         case TAG_BOOL:  return v.b ? "true" : "false";
         case TAG_NULL:  return "null";
         case TAG_STRING: return v.s;
+        case TAG_ARRAY:
+        case TAG_OBJECT: return _composite_text(v);
         default:        return "[opaque]";
     }
+}
+
+// Growable text buffer for rendering arrays/objects.
+typedef struct { char* p; size_t len, cap; } _TextBuf;
+static void _tb_put(_TextBuf* t, const char* s) {
+    size_t n = strlen(s);
+    if (t->len + n + 1 > t->cap) {
+        size_t cap = t->cap ? t->cap : 64;
+        while (t->len + n + 1 > cap) cap *= 2;
+        char* p = (char*)realloc(t->p, cap);
+        if (!p) { fprintf(stderr, "crush(aotc): out of memory\n"); exit(1); }
+        t->p = p; t->cap = cap;
+    }
+    memcpy(t->p + t->len, s, n);
+    t->len += n;
+    t->p[t->len] = '\0';
+}
+static void _tb_value(_TextBuf* t, Value v, int depth) {
+    char nb[TEXTBUF_SIZE];
+    if (depth > 64) { _tb_put(t, "..."); return; }
+    if (v.tag == TAG_ARRAY && v.array_idx >= 0 && v.array_idx < _array_count) {
+        CrushArray* a = &_arrays[v.array_idx];
+        _tb_put(t, "[");
+        for (int i = 0; i < a->len; i++) {
+            if (i) _tb_put(t, ", ");
+            _tb_value(t, a->data[i], depth + 1);
+        }
+        _tb_put(t, "]");
+    } else if (v.tag == TAG_OBJECT && v.obj_idx >= 0 && v.obj_idx < _object_count) {
+        CrushObject* o = &_objects[v.obj_idx];
+        _tb_put(t, "{");
+        for (int i = 0; i < o->field_count; i++) {
+            if (i) _tb_put(t, ", ");
+            _tb_put(t, o->fields[i].key);
+            _tb_put(t, ": ");
+            _tb_value(t, o->fields[i].val, depth + 1);
+        }
+        _tb_put(t, "}");
+    } else if (v.tag == TAG_ARRAY || v.tag == TAG_OBJECT) {
+        _tb_put(t, "null");
+    } else {
+        _tb_put(t, _to_text_buf(v, nb));
+    }
+}
+// An array or object as text, like the VM's value_to_text: `[a, b]`, `{k: v}`.
+// The result lives in the managed string pool.
+static const char* _composite_text(Value v) {
+    _TextBuf t = {0};
+    _tb_value(&t, v, 0);
+    char* out = _str_new(t.len);
+    if (t.len) memcpy(out, t.p, t.len);
+    free(t.p);
+    return out;
 }
 
 static inline void _crush_arith_error(const char *msg) {
@@ -1423,7 +1480,7 @@ fn emit_c_instr(
                     // Same text as string concatenation (`_to_text_buf`), and pushes null like
                     // the VM: the CASM pops print's result, so pushing nothing popped the
                     // caller's pending operand instead (CRUSH-216).
-                    out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; if (__pv.tag == TAG_ARRAY) printf(\"[array#%d]\\n\", __pv.array_idx); else printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
                 }
                 _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
