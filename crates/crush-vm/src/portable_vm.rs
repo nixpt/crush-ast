@@ -1064,36 +1064,68 @@ impl PortableVm {
             ARR_GET => {
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
-                let idx = need_array_index(&idx_v)?;
                 match arr_v {
+                    Value::Map(map_rc) => {
+                        let key = match &idx_v {
+                            Value::Str(s) => s.clone(),
+                            Value::Int(i) => i.to_string(),
+                            other => {
+                                return Err(VmError::TypeError {
+                                    expected: "string or int key",
+                                    got: other.type_name(),
+                                });
+                            }
+                        };
+                        self.push(map_rc.borrow().get(&key).cloned().unwrap_or(Value::Null));
+                    }
                     Value::Array(arr_rc) => {
+                        let idx = need_array_index(&idx_v)?;
                         let arr = arr_rc.borrow();
                         let len = arr.len();
                         let actual = wrap_index(idx, len)?;
                         self.push(arr[actual].clone());
                     }
                     Value::Str(s) => {
+                        let idx = need_array_index(&idx_v)?;
                         let len = s.chars().count();
                         let actual = wrap_index(idx, len)?;
                         let ch = s.chars().nth(actual).map(|c| c.to_string()).unwrap_or_default();
                         self.push(Value::Str(ch));
                     }
-                    _ => return Err(VmError::TypeError { expected: "array or string", got: arr_v.type_name() }),
+                    _ => return Err(VmError::TypeError { expected: "array, map, or string", got: arr_v.type_name() }),
                 }
             }
             ARR_SET => {
                 let val = self.pop()?;
                 let idx_v = self.pop()?;
                 let arr_v = self.pop()?;
-                let idx = need_array_index(&idx_v)?;
-                let arr_rc = need_array(arr_v)?;
-                {
-                    let mut arr = arr_rc.borrow_mut();
-                    let len = arr.len();
-                    let actual = wrap_index(idx, len)?;
-                    arr[actual] = val;
+                match arr_v {
+                    Value::Map(map_rc) => {
+                        let key = match &idx_v {
+                            Value::Str(s) => s.clone(),
+                            Value::Int(i) => i.to_string(),
+                            other => {
+                                return Err(VmError::TypeError {
+                                    expected: "string or int key",
+                                    got: other.type_name(),
+                                });
+                            }
+                        };
+                        map_rc.borrow_mut().insert(key, val);
+                        self.push(Value::Map(map_rc));
+                    }
+                    other => {
+                        let idx = need_array_index(&idx_v)?;
+                        let arr_rc = need_array(other)?;
+                        {
+                            let mut arr = arr_rc.borrow_mut();
+                            let len = arr.len();
+                            let actual = wrap_index(idx, len)?;
+                            arr[actual] = val;
+                        }
+                        self.push(Value::Array(arr_rc));
+                    }
                 }
-                self.push(Value::Array(arr_rc));
             }
             ARR_LEN => {
                 let v = self.pop()?;
@@ -1344,31 +1376,7 @@ impl PortableVm {
             MAKE_RANGE => {
                 let end_v = self.pop()?;
                 let start_v = self.pop()?;
-                let start = match start_v {
-                    Value::Int(i) => i,
-                    other => {
-                        return Err(VmError::TypeError {
-                            expected: "int",
-                            got: value_type_name(&other),
-                        });
-                    }
-                };
-                let end = match end_v {
-                    Value::Int(i) => i,
-                    other => {
-                        return Err(VmError::TypeError {
-                            expected: "int",
-                            got: value_type_name(&other),
-                        });
-                    }
-                };
-                let mut elems = Vec::new();
-                if start < end {
-                    for i in start..end {
-                        elems.push(Value::Int(i));
-                    }
-                }
-                self.push(Value::new_array(elems));
+                self.push(crate::make_range::make_range_values(&[start_v, end_v])?);
             }
             EXEC_LANG => {
                 let idx = u16::from_be_bytes(
@@ -1598,6 +1606,25 @@ impl PortableVm {
                     self.out_parts.push(line);
                     Ok(None)
                 }
+                "py.print" => {
+                    let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
+                    let line = crate::io_print::format_py_print_line(&parts);
+                    self.out_len += line.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.out_parts.push(line);
+                    Ok(None)
+                }
+                "math.truediv" => {
+                    crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
+                }
+                "math.floordiv" => {
+                    crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)
+                }
+                "math.floormod" => {
+                    crate::arithmetic::floor_mod_values(&args[0], &args[1]).map(Some)
+                }
                 "io.read" => self
                     .input
                     .read_line()
@@ -1703,23 +1730,7 @@ impl PortableVm {
                                         _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                                     }
                                 }
-                                "make_range" => {
-                    let (start, end) = match args.len() {
-                        0 => (0i64, 100i64),
-                        1 => {
-                            let end = match &args[0] { Value::Int(i) => *i, _ => 100 };
-                            (0, end.max(0))
-                        }
-                        _ => {
-                            let s = match &args[0] { Value::Int(i) => *i, _ => 0 };
-                            let e = match &args[1] { Value::Int(i) => *i, _ => 0 };
-                            (s, e)
-                        }
-                    };
-                    let mut elems = Vec::new();
-                    if start < end { for i in start..end { elems.push(Value::Int(i)); } }
-                    Ok(Some(Value::new_array(elems)))
-                }
+                "make_range" => crate::make_range::make_range_values(&args).map(Some),
                 "append" | "push" => {
                     if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
                     match &args[0] {
@@ -1736,7 +1747,21 @@ impl PortableVm {
                             if idx < arr.len() { arr[idx] = args[2].clone(); }
                             Ok(Some(args[0].clone()))
                         }
-                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                        Value::Map(map) => {
+                            let key = match &args[1] {
+                                Value::Str(s) => s.clone(),
+                                Value::Int(i) => i.to_string(),
+                                other => {
+                                    return Err(VmError::TypeError {
+                                        expected: "string or int key",
+                                        got: other.type_name(),
+                                    });
+                                }
+                            };
+                            map.borrow_mut().insert(key, args[2].clone());
+                            Ok(Some(args[0].clone()))
+                        }
+                        _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
                     }
                 }
                 "arr_get" => {
@@ -1746,7 +1771,20 @@ impl PortableVm {
                             let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
                             Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
                         }
-                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                        Value::Map(map) => {
+                            let key = match &args[1] {
+                                Value::Str(s) => s.clone(),
+                                Value::Int(i) => i.to_string(),
+                                other => {
+                                    return Err(VmError::TypeError {
+                                        expected: "string or int key",
+                                        got: other.type_name(),
+                                    });
+                                }
+                            };
+                            Ok(Some(map.borrow().get(&key).cloned().unwrap_or(Value::Null)))
+                        }
+                        _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
                     }
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),

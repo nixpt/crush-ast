@@ -60,8 +60,33 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
     let meta = ctx.meta_at(offset);
     match stmt {
         py_ast::Stmt::FunctionDef(py_ast::StmtFunctionDef {
-            name, args, body, ..
+            name,
+            args,
+            body,
+            decorator_list,
+            ..
         }) => {
+            if !decorator_list.is_empty() {
+                anyhow::bail!(
+                    "decorators are not yet supported — refuse to silently ignore @{}" ,
+                    match &decorator_list[0] {
+                        py_ast::Expr::Name(n) => n.id.to_string(),
+                        py_ast::Expr::Call(c) => match c.func.as_ref() {
+                            py_ast::Expr::Name(n) => n.id.to_string(),
+                            _ => "decorator".to_string(),
+                        },
+                        _ => "decorator".to_string(),
+                    }
+                );
+            }
+            if args.defaults().next().is_some()
+                || args.kwonlyargs.iter().any(|a| a.default.is_some())
+            {
+                anyhow::bail!(
+                    "default argument values are not yet supported — calling a def with \
+                     defaults currently underflows the stack at runtime"
+                );
+            }
             let params: Vec<(String, CastType)> = args
                 .args
                 .iter()
@@ -139,24 +164,45 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
                 _ => anyhow::bail!("augmented assignment target must be a name"),
             };
             let val = lower_expr(value, ctx)?;
-            Ok(Statement::VarDecl {
+            let left = Expression::Var {
                 name: target_name.to_string(),
-                value: Expression::BinaryOp {
-                    operator: match op {
-                        py_ast::Operator::Add => "+",
-                        py_ast::Operator::Sub => "-",
-                        py_ast::Operator::Mult => "*",
-                        py_ast::Operator::Div => "/",
-                        _ => anyhow::bail!("unsupported augmented operator"),
-                    }
-                    .to_string(),
-                    left: Box::new(Expression::Var {
-                        name: target_name.to_string(),
+                meta: meta.clone(),
+            };
+            let rhs = match op {
+                py_ast::Operator::Add | py_ast::Operator::Sub | py_ast::Operator::Mult => {
+                    Expression::BinaryOp {
+                        operator: match op {
+                            py_ast::Operator::Add => "+",
+                            py_ast::Operator::Sub => "-",
+                            py_ast::Operator::Mult => "*",
+                            _ => unreachable!(),
+                        }
+                        .to_string(),
+                        left: Box::new(left),
+                        right: Box::new(val),
                         meta: meta.clone(),
-                    }),
-                    right: Box::new(val),
+                    }
+                }
+                py_ast::Operator::Div => Expression::CapabilityCall {
+                    name: "math.truediv".to_string(),
+                    args: vec![left, val],
                     meta: meta.clone(),
                 },
+                py_ast::Operator::FloorDiv => Expression::CapabilityCall {
+                    name: "math.floordiv".to_string(),
+                    args: vec![left, val],
+                    meta: meta.clone(),
+                },
+                py_ast::Operator::Mod => Expression::CapabilityCall {
+                    name: "math.floormod".to_string(),
+                    args: vec![left, val],
+                    meta: meta.clone(),
+                },
+                _ => anyhow::bail!("unsupported augmented operator"),
+            };
+            Ok(Statement::VarDecl {
+                name: target_name.to_string(),
+                value: rhs,
                 type_hint: CastType::Any,
                 meta,
             })
@@ -194,7 +240,15 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
                 meta,
             })
         }
-        py_ast::Stmt::While(py_ast::StmtWhile { test, body, .. }) => {
+        py_ast::Stmt::While(py_ast::StmtWhile {
+            test,
+            body,
+            orelse,
+            ..
+        }) => {
+            if !orelse.is_empty() {
+                anyhow::bail!("while ... else is not yet supported");
+            }
             let condition = lower_expr(test, ctx)?;
             let body: Vec<Statement> = body
                 .iter()
@@ -207,8 +261,15 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
             })
         }
         py_ast::Stmt::For(py_ast::StmtFor {
-            target, iter, body, ..
+            target,
+            iter,
+            body,
+            orelse,
+            ..
         }) => {
+            if !orelse.is_empty() {
+                anyhow::bail!("for ... else is not yet supported");
+            }
             let variable: String = match target.as_ref() {
                 py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
                 _ => anyhow::bail!("for loop target must be a name"),
@@ -290,8 +351,20 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
         }
         py_ast::Stmt::TypeAlias { .. } => anyhow::bail!("type aliases not yet supported"),
         py_ast::Stmt::AsyncFunctionDef(py_ast::StmtAsyncFunctionDef {
-            name, args, body, ..
+            name,
+            args,
+            body,
+            decorator_list,
+            ..
         }) => {
+            if !decorator_list.is_empty() {
+                anyhow::bail!("decorators are not yet supported on async def");
+            }
+            if args.defaults().next().is_some()
+                || args.kwonlyargs.iter().any(|a| a.default.is_some())
+            {
+                anyhow::bail!("default argument values are not yet supported");
+            }
             let params: Vec<(String, CastType)> = args
                 .args
                 .iter()

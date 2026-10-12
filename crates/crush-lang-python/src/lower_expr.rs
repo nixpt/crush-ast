@@ -69,27 +69,49 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         }) => {
             let left = lower_expr(left, ctx)?;
             let right = lower_expr(right, ctx)?;
-            let operator = match op {
-                py_ast::Operator::Add => "+",
-                py_ast::Operator::Sub => "-",
-                py_ast::Operator::Mult => "*",
-                py_ast::Operator::Div => "/",
-                py_ast::Operator::Mod => "%",
-                py_ast::Operator::Pow => "**",
-                py_ast::Operator::LShift => "<<",
-                py_ast::Operator::RShift => ">>",
-                py_ast::Operator::BitOr => "|",
-                py_ast::Operator::BitXor => "^",
-                py_ast::Operator::BitAnd => "&",
-                py_ast::Operator::FloorDiv => "//",
-                py_ast::Operator::MatMult => "@",
-            };
-            Ok(Expression::BinaryOp {
-                operator: operator.to_string(),
-                left: Box::new(left),
-                right: Box::new(right),
-                meta,
-            })
+            // Python `/` / `//` / `%` differ from Crush's truncating DIV/MOD.
+            // Route them through shared VM helpers (CRUSH-200).
+            match op {
+                py_ast::Operator::Div => Ok(Expression::CapabilityCall {
+                    name: "math.truediv".to_string(),
+                    args: vec![left, right],
+                    meta,
+                }),
+                py_ast::Operator::FloorDiv => Ok(Expression::CapabilityCall {
+                    name: "math.floordiv".to_string(),
+                    args: vec![left, right],
+                    meta,
+                }),
+                py_ast::Operator::Mod => Ok(Expression::CapabilityCall {
+                    name: "math.floormod".to_string(),
+                    args: vec![left, right],
+                    meta,
+                }),
+                _ => {
+                    let operator = match op {
+                        py_ast::Operator::Add => "+",
+                        py_ast::Operator::Sub => "-",
+                        py_ast::Operator::Mult => "*",
+                        py_ast::Operator::Pow => "**",
+                        py_ast::Operator::LShift => "<<",
+                        py_ast::Operator::RShift => ">>",
+                        py_ast::Operator::BitOr => "|",
+                        py_ast::Operator::BitXor => "^",
+                        py_ast::Operator::BitAnd => "&",
+                        py_ast::Operator::MatMult => "@",
+                        // Handled above.
+                        py_ast::Operator::Div
+                        | py_ast::Operator::FloorDiv
+                        | py_ast::Operator::Mod => unreachable!(),
+                    };
+                    Ok(Expression::BinaryOp {
+                        operator: operator.to_string(),
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        meta,
+                    })
+                }
+            }
         }
         py_ast::Expr::UnaryOp(py_ast::ExprUnaryOp { op, operand, .. }) => {
             let operand = lower_expr(operand, ctx)?;
@@ -362,7 +384,7 @@ fn lower_call(
 
     match func_name.as_str() {
         "print" => Ok(Expression::CapabilityCall {
-            name: "io.print".to_string(),
+            name: "py.print".to_string(),
             args: lowered_args,
             meta,
         }),

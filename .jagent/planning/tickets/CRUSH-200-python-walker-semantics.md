@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-200 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | In Progress (semantics slice landed on `agent/nixp/CRUSH-200`) |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | nixp |
 | **Dependencies** | none |
 | **Estimated effort** | M |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build) |
@@ -30,8 +30,20 @@ Compared against `python3`:
 
 ## Success criteria
 
-- [ ] Python numeric operators follow Python semantics (float `/`, floor `//`, sign-of-divisor `%`).
-- [ ] `range(start, stop, step)` incl. negative step.
-- [ ] Dict set/iterate; `print` sep/repr for bool/None.
-- [ ] Unsupported constructs (else-clauses, decorators) fail loudly until implemented.
-- [ ] Output tests against `python3`.
+- [x] Python numeric operators follow Python semantics (float `/`, floor `//`, sign-of-divisor `%`).
+      Shared `math.truediv` / `math.floordiv` / `math.floormod` caps + `arithmetic::{true,floor}_*_values`.
+- [x] `range(start, stop, step)` incl. negative step.
+      Shared `make_range::make_range_values` (1–3 int args; zero step errors; no silent 0/100 coercion).
+- [x] Dict set/iterate; `print` sep/repr for bool/None.
+      `ARR_GET`/`arr_set` accept maps; `for` already uses `map_keys`. `py.print` joins with spaces and spells `True`/`False`/`None`.
+- [x] Unsupported constructs (else-clauses, decorators) fail loudly until implemented.
+      Also default-arg defs (was silent → stack underflow).
+- [x] Output tests against `python3` (`crush-lang-python` `crush200_*` tests).
+
+## Still open (same ticket / follow-ups)
+
+- [ ] Default args actually implemented (currently loud-fail only).
+- [ ] VM arithmetic errors catchable as `ZeroDivisionError`.
+- [ ] `import math; math.sqrt` (CRUSH-112).
+- [ ] Tuple unpacking `a, b = 1, 2`.
+- [ ] `**` / bitwise ops (still loud `Unsupported op` — fine).

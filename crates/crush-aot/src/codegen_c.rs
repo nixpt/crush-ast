@@ -768,6 +768,50 @@ static Value _mod(Value a, Value b) {
     if (fb == 0.0) _crush_arith_error("division by zero");
     return mk_float(fmod(fa, fb));
 }
+/* Python-style ops (CRUSH-200): true `/`, floor `//`, floormod `%`. */
+static Value _true_div(Value a, Value b) {
+    double fa = (a.tag == TAG_INT) ? (double)a.i : (a.tag == TAG_FLOAT) ? a.f : 0.0;
+    double fb = (b.tag == TAG_INT) ? (double)b.i : (b.tag == TAG_FLOAT) ? b.f : 0.0;
+    if (a.tag != TAG_INT && a.tag != TAG_FLOAT) _crush_arith_error("type error: truediv non-numeric");
+    if (b.tag != TAG_INT && b.tag != TAG_FLOAT) _crush_arith_error("type error: truediv non-numeric");
+    if (fb == 0.0) _crush_arith_error("division by zero");
+    return mk_float(fa / fb);
+}
+static Value _floor_div(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i == 0) _crush_arith_error("division by zero");
+        if (a.i == INT64_MIN && b.i == -1) _crush_arith_error("arithmetic overflow");
+        int64_t q = a.i / b.i;
+        int64_t r = a.i % b.i;
+        if (r != 0 && ((a.i ^ b.i) < 0)) q -= 1;
+        return mk_int(q);
+    }
+    double fa = (a.tag == TAG_INT) ? (double)a.i : (a.tag == TAG_FLOAT) ? a.f : 0.0;
+    double fb = (b.tag == TAG_INT) ? (double)b.i : (b.tag == TAG_FLOAT) ? b.f : 0.0;
+    if (a.tag != TAG_INT && a.tag != TAG_FLOAT) _crush_arith_error("type error: floordiv non-numeric");
+    if (b.tag != TAG_INT && b.tag != TAG_FLOAT) _crush_arith_error("type error: floordiv non-numeric");
+    if (fb == 0.0) _crush_arith_error("division by zero");
+    return mk_float(floor(fa / fb));
+}
+static Value _floor_mod(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        Value qv = _floor_div(a, b);
+        return mk_int(a.i - b.i * qv.i);
+    }
+    double fa = (a.tag == TAG_INT) ? (double)a.i : (a.tag == TAG_FLOAT) ? a.f : 0.0;
+    double fb = (b.tag == TAG_INT) ? (double)b.i : (b.tag == TAG_FLOAT) ? b.f : 0.0;
+    if (a.tag != TAG_INT && a.tag != TAG_FLOAT) _crush_arith_error("type error: floormod non-numeric");
+    if (b.tag != TAG_INT && b.tag != TAG_FLOAT) _crush_arith_error("type error: floormod non-numeric");
+    if (fb == 0.0) _crush_arith_error("division by zero");
+    return mk_float(fa - fb * floor(fa / fb));
+}
+static inline const char* _py_to_text_buf(Value v, char* buf) {
+    switch (v.tag) {
+        case TAG_BOOL:  return v.b ? "True" : "False";
+        case TAG_NULL:  return "None";
+        default:        return _to_text_buf(v, buf);
+    }
+}
 static Value _neg(Value v) {
     if (v.tag == TAG_INT) {
         if (v.i == INT64_MIN) _crush_arith_error("arithmetic overflow");
@@ -1481,6 +1525,29 @@ fn emit_c_instr(
                     // the VM: the CASM pops print's result, so pushing nothing popped the
                     // caller's pending operand instead (CRUSH-216).
                     out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                }
+                "py.print" => {
+                    // Python print: space-separated, True/False/None spelling (CRUSH-200).
+                    if argc == 0 {
+                        out.push_str(&format!(
+                            "                {{ putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call py.print\n"
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "                {{ Value __pa[{argc}]; for (int __i = {argc} - 1; __i >= 0; __i--) __pa[__i] = _pop(); \
+                             for (int __i = 0; __i < {argc}; __i++) {{ char __tb[TEXTBUF_SIZE]; if (__i) putchar(' '); fputs(_py_to_text_buf(__pa[__i], __tb), stdout); }} \
+                             putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call py.print\n"
+                        ));
+                    }
+                }
+                "math.truediv" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_true_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.truediv\n"));
+                }
+                "math.floordiv" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_floor_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.floordiv\n"));
+                }
+                "math.floormod" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_floor_mod(__a, __b)); }} _pc={next_pc}; break; // cap_call math.floormod\n"));
                 }
                 _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }

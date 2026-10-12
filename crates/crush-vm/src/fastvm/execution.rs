@@ -740,16 +740,36 @@ pub fn execute_one(
             let key = stack.pop().ok_or(FastError::StackUnderflow)?;
             let container = stack.pop().ok_or(FastError::StackUnderflow)?;
             if let RuntimeValue::Ref(ptr) = container {
-                if let RuntimeValue::Int(idx) = key {
-                    if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
-                        let i = idx as usize;
-                        if i < arr.len() {
-                            arr[i] = val;
+                // Resolve string keys before taking a mutable borrow of `arena`.
+                let map_key = match &key {
+                    RuntimeValue::Ref(key_ptr) => {
+                        if let Some(Object::Str(s)) = arena.get(*key_ptr) {
+                            Some(s.clone())
+                        } else {
+                            None
                         }
                     }
+                    RuntimeValue::Int(i) => Some(i.to_string()),
+                    _ => None,
+                };
+                match arena.get_mut(ptr) {
+                    Ok(Object::Array(arr)) => {
+                        if let RuntimeValue::Int(idx) = key {
+                            let i = idx as usize;
+                            if i < arr.len() {
+                                arr[i] = val;
+                            }
+                        }
+                    }
+                    Ok(Object::Map(map)) => {
+                        if let Some(k) = map_key {
+                            map.insert(k, val);
+                        }
+                    }
+                    _ => {}
                 }
                 // Indexed mutation is also expression-valued and must return
-                // the array for assignment/chaining parity with CVM1.
+                // the container for assignment/chaining parity with CVM1.
                 stack.push(RuntimeValue::Ref(ptr));
             } else {
                 return Err(FastError::TypeMismatch);

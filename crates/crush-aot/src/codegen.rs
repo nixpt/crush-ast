@@ -820,6 +820,23 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "py.print" => {
+                    // Python print: space-separated, True/False/None (CRUSH-200).
+                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(match &__v {{ RuntimeValue::Bool(true) => \"True\".to_string(), RuntimeValue::Bool(false) => \"False\".to_string(), RuntimeValue::Null => \"None\".to_string(), other => other.to_string() }}); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "math.truediv" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(*x as f64 / *y as f64) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "math.floordiv" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ let mut q=x/y; let rem=x%y; if rem!=0 && (x^y)<0 {{ q-=1; }} RuntimeValue::Int(q) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float((x/y).floor()) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float((*x as f64 / y).floor()) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float((x / *y as f64).floor()) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "math.floormod" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ let mut q=x/y; let rem=x%y; if rem!=0 && (x^y)<0 {{ q-=1; }} RuntimeValue::Int(x - y*q) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x - y*(x/y).floor()) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ let xf=*x as f64; RuntimeValue::Float(xf - y*(xf/y).floor()) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ let yf=*y as f64; RuntimeValue::Float(x - yf*(x/yf).floor()) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
         }

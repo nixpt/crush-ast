@@ -86,6 +86,7 @@ Plan + ordering: surfer-browser `.jagent/planning/tickets/SURF-ENGINE-2.md`.
 - [ ] **CRUSH-259** — AOT Rust backend 3-10x slower, ~70x larger than C: port the fixes or default to C. (P2)
 - [ ] **CRUSH-260** — JS walker: `.length` on strings/arrays; JS number semantics for unboxed ints. (P1)
 - [x] **CRUSH-261** — JS → AOT vs Node benchmark harness + baseline (`docs/benchmarks/js_vs_node/`).
+- [x] **CRUSH-262** — Python → AOT vs CPython benchmark harness + baseline (`docs/benchmarks/py_vs_cpython/`).
 
 ## P0 — Build & Core Health ✅
 
@@ -294,7 +295,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-197** (P0, S): Rust walker: `println!` drops its arguments, tail expressions aren't returned, `..=` is exclusive. [ticket](tickets/CRUSH-197-rust-walker-println-tail-expr-range.md)
 - [ ] **CRUSH-198** (P0, S): Go walker silently drops `:=`, `var`, `for`, assignment, `switch`, `defer`. [ticket](tickets/CRUSH-198-go-walker-drops-statements.md)
 - [ ] **CRUSH-199** (P0, S): JS walker: `switch`, bare blocks and `finally` silently dropped; `/` is integer division. [ticket](tickets/CRUSH-199-js-walker-silent-drops-and-division.md)
-- [ ] **CRUSH-200** (P0, M): Python walker semantics: `/`, `//`, `%`, `range` step, dicts, `print` separators, silently-ignored constructs. [ticket](tickets/CRUSH-200-python-walker-semantics.md)
+- [x] **CRUSH-200** (P0, M): Python walker semantics: `/`, `//`, `%`, `range` step, dicts, `print` separators, silently-ignored constructs — **semantics slice done** on `agent/nixp/CRUSH-200` (follow-ups: default-arg impl, catchable ZeroDivisionError, math.sqrt, tuple unpack). [ticket](tickets/CRUSH-200-python-walker-semantics.md)
 - [ ] **CRUSH-201** (P0, S): C walker: `for` with `continue` loops forever; `printf` formats and escapes not applied. [ticket](tickets/CRUSH-201-c-walker-for-continue-printf.md)
 - [ ] **CRUSH-202** (P0, M): Bash/Zsh walkers: `$((…))`, `$(…)`, `${#s}` printed literally; `[ a -op b ]` always true. [ticket](tickets/CRUSH-202-shell-walkers-expansions-and-tests.md)
 - [ ] **CRUSH-203** (P1, S): Zig/Wasm/Dart walkers produce empty or null programs and exit 0; Java panics; Nepali claim is false. [ticket](tickets/CRUSH-203-stub-walkers-exit-zero.md)
