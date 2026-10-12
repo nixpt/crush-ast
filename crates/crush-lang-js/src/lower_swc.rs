@@ -643,13 +643,6 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
     }))
 }
 
-fn unparen(e: &Expr) -> &Expr {
-    match e {
-        Expr::Paren(p) => unparen(&p.expr),
-        e => e,
-    }
-}
-
 /// An expression in statement position; `a, b` becomes two statements.
 fn expr_to_stmts(e: &Expr, span: &swc_common::Span, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     match unparen(e) {
