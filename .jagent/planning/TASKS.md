@@ -201,7 +201,7 @@ for the full done condition.
 ## Captured 2026-09-24 (captain) — from the nanovm / extraction review
 
 - [ ] **CRUSH-121** — a kitchen-shaped GC for `crush-vm` (scoped arenas + precise tracing + owned/returned audit); **step 1: reproduce + fix the root set** (`collect_garbage` roots only the current stack + locals). [ticket](tickets/CRUSH-121.md)
-- [ ] **CRUSH-122** — stdlib convergence (W10): **steps 2–4 landed in #61** (2026-09-25: remaining exosphere stdlib families + nanovm SBL as `system.*`, fs sandbox escape fixed, `array.push/pop` lowering); remaining: step 1 = CRUSH-113 (`stdlib` on by default), step 5 = atlas/playbook correction (outside this repo). [ticket](tickets/CRUSH-122.md)
+- [x] **CRUSH-122** — stdlib convergence (W10): **done in this repo** (2026-10-12). Steps 2–4 landed in #61 (2026-09-25: remaining exosphere stdlib families + nanovm SBL as `system.*`, fs sandbox escape fixed, `array.push/pop` lowering); step 1 = CRUSH-113 (`stdlib` on by default) done; step 5 = atlas/playbook correction is outside this repo (handed off). Remaining gaps: CRUSH-264, CRUSH-265. [ticket](tickets/CRUSH-122.md)
 - [ ] **CRUSH-123** — conformance runner: per-file timeout via child process + fix the frontend hang on `examples/crush/ai_agent_ops.crush` (reproduced: >60 s, no output); full corpus must terminate. [ticket](tickets/CRUSH-123.md)
 
 ## Filed 2026-10-04 — GitHub issues #64–#78 (pranix, while writing a CAISON parser)
@@ -296,6 +296,8 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 - [ ] **CRUSH-198** (P0, S): Go walker silently drops `:=`, `var`, `for`, assignment, `switch`, `defer`. [ticket](tickets/CRUSH-198-go-walker-drops-statements.md)
 - [ ] **CRUSH-199** (P0, S): JS walker: `switch`, bare blocks and `finally` silently dropped; `/` is integer division. [ticket](tickets/CRUSH-199-js-walker-silent-drops-and-division.md)
 - [x] **CRUSH-200** (P0, M): Python walker semantics: `/`, `//`, `%`, `range` step, dicts, `print` separators, silently-ignored constructs — **semantics slice done** on `agent/nixp/CRUSH-200` (follow-ups: default-arg impl, catchable ZeroDivisionError, math.sqrt, tuple unpack). [ticket](tickets/CRUSH-200-python-walker-semantics.md)
+- [ ] **CRUSH-264** (P2, S): stdlib defaults + exosphere compat — `net`/`db` off by default, no `http.*` alias, `time.now` unit undocumented. [ticket](tickets/CRUSH-264-stdlib-defaults-and-exosphere-compat.md)
+- [ ] **CRUSH-265** (P2, S/M): `capability_discovery` / `adaptation_request` / `semantic_switch` compile to a silent NOP — port or fail loudly. [ticket](tickets/CRUSH-265-ai-statements-silent-nop.md)
 - [ ] **CRUSH-201** (P0, S): C walker: `for` with `continue` loops forever; `printf` formats and escapes not applied. [ticket](tickets/CRUSH-201-c-walker-for-continue-printf.md)
 - [ ] **CRUSH-202** (P0, M): Bash/Zsh walkers: `$((…))`, `$(…)`, `${#s}` printed literally; `[ a -op b ]` always true. [ticket](tickets/CRUSH-202-shell-walkers-expansions-and-tests.md)
 - [ ] **CRUSH-203** (P1, S): Zig/Wasm/Dart walkers produce empty or null programs and exit 0; Java panics; Nepali claim is false. [ticket](tickets/CRUSH-203-stub-walkers-exit-zero.md)
@@ -349,7 +351,7 @@ Every area exercised end to end on `main` `554f077`: frontend + optimizer, all e
 
 ## M9 — Cross-project convergence & STDLIB restoration
 
-**Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); stdlib remainder CRUSH-151..155 from the migration inventory (the archive-zip "103 clean / 46 mock" restore, CRUSH-56/57/88–97/108, is superseded by CRUSH-122 — CRUSH-169). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.
+**Proposed**, `.jagent/planning/ROADMAP.md` M9 spec — Surfer's in-tree Crush runtime fully migrated to `crush-ast` (no dual maintenance; two-wave migration); exosphere divergence reconciled (cross-tree `crush` modules merged via the schema-specific design owned by exo's `[main]/buffy` work); CRUSH-23 nakshatra half finalized (`tools/build.crush` artifact on exosphere's frozen in-tree path recorded as canonical); stdlib remainder CRUSH-151..155 from the migration inventory (the archive-zip "103 clean / 46 mock" restore, CRUSH-56/57/88–97/263, is superseded by CRUSH-122 — CRUSH-169). **⚠ Precondition: M5+M6+M7 capability surface stable** (for `@covers`-verified restoration gate). **5 ticket stubs proposed** (CRUSH-54–CRUSH-58, not yet filed). See ROADMAP M9 for full spec.
 
 ## M10 — Performance ceiling & optimization
 

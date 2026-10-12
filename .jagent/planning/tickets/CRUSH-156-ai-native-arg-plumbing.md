@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-156 |
 | **Priority** | P2 |
-| **Status** | Done (PR pending review) |
+| **Status** | Done (merged to main: 6e518e9) |
 | **Phase** | M5 |
 | **Assignee** | nimbus-b |
 | **Dependencies** | none |

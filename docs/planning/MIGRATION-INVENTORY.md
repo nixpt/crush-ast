@@ -18,7 +18,7 @@ pre-crush-ast lineage repos (`nixpt/crush` and siblings, all archived/dormant), 
 |---|---|---|
 | `.jagent/planning/research/2026-09-25-CRUSH-55-delta-inventory.md` | exo front end / CAST / casm / nanovm / vm-runtime / runtimes / crush-common vs ast, per module. Headline: **exo's fork ⊆ ast** for language surface; real ports are engine behaviour behind ast stubs | Yes for the verdicts. Its slice 1 has **landed** (see below) |
 | `.jagent/planning/tickets/CRUSH-122.md` | exo `core/base/stdlib` families + nanovm SBL ported (steps 2–4, #61) | Yes — re-verified in §2 |
-| `.jagent/planning/tickets/CRUSH-56/57/88–97/108` | archive-zip "137 caps, 103 clean / 46 mock" restoration plan | **Mostly superseded** by CRUSH-122 — see §2.5 |
+| `.jagent/planning/tickets/CRUSH-56/57/88–97/263` | archive-zip "137 caps, 103 clean / 46 mock" restoration plan | **Mostly superseded** by CRUSH-122 — see §2.5 |
 
 CRUSH-55 claims re-checked against today's `ast:`:
 
@@ -270,7 +270,7 @@ implementation is the existing CRUSH-113 ticket (S, ~20 turns), placed first in 
 ### 2.5 The archive-zip restoration tickets are superseded
 
 `CRUSH-56` (tracker), `CRUSH-57` (46 mock-tainted caps), `CRUSH-88..97` (ten identical shard templates
-with no cap lists) and `CRUSH-108` (reconcile source) planned a restore from `exosphere-1.0.zip`
+with no cap lists) and `CRUSH-263` (formerly CRUSH-108; reconcile source) planned a restore from `exosphere-1.0.zip`
 (present at a local scratch path, 700 MB). That zip's `crates/core/base/stdlib` is the same crate as
 exosphere's live tree, and its `archive/archived-stdlib` is the older snapshot; CRUSH-122 already
 restored the clean families **from the live tree**, and the 46 "mock-tainted" caps map onto exactly the

@@ -308,9 +308,10 @@ its behavior, not just a smoke test.
       plan)~~ — **superseded** (CRUSH-169, 2026-10-07): CRUSH-122 restored the
       clean families from exosphere's live stdlib; the mock-tainted families
       are dead/out (`docs/planning/MIGRATION-INVENTORY.md` §2.2, §2.5)
-- [ ] stdlib remainder from the migration inventory landed: CRUSH-151
+- [x] stdlib remainder from the migration inventory landed: CRUSH-151
       (fs coreutils), 152 (`async.sleep`), 153 (`env.all`/`env.home_dir`, http
       verbs), 154 (`storage.*` — declined, C-6), 155 (effects metadata)
+      — all five done/declined by 2026-10-07; follow-ups CRUSH-264, CRUSH-265
 
 **Proposed tickets** (`CRUSH-54+`):
 

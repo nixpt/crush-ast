@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-112 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done — verified 2026-10-12 on v0.5.0 (`c1186b8`) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-111 (shared registry); see CRUSH-113 for the `stdlib` feature |
@@ -71,3 +71,11 @@ crushc /tmp/m.crush -o /tmp/m.cvm1 && crush-run run /tmp/m.cvm1 --cap io.print -
 
 - New string/math semantics beyond what the opcodes already implement.
 - The `--stdlib` feature-default question itself (CRUSH-113).
+
+## Result (verified 2026-10-12, v0.5.0 `c1186b8`)
+
+All three reproductions now run (`crushc` + `crush-run run X.cvm1 --cap io.print`):
+`array.pop` → `3` (lowered to an opcode by CRUSH-122, so it is no longer a capability and
+`--cap array.pop` is now a CLI error), `str.starts_with("abc","a")` → `1`, `math.sqrt(9)` → `3.0`
+(the str/math families are default-on since CRUSH-113). Closed by CRUSH-122 + CRUSH-113, no code
+change of its own. Side observation, not this ticket: `str.starts_with` prints `1`, not `true`.

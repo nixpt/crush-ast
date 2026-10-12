@@ -1,8 +1,9 @@
 # CRUSH-122: stdlib convergence — finish absorbing exosphere's `core/base/stdlib` (W10)
 
-**Status**: steps 2–4 landed 2026-09-25 (branch
-`claude/stdlib-nanovm-crush-ast-port-477gv7`); step 1 (CRUSH-113) and step 5
-(atlas / playbook note, outside this repo) remain — captured 2026-09-24
+**Status**: Done in this repo (2026-10-12) — steps 2–4 landed 2026-09-25 (#61),
+step 1 = CRUSH-113 (`stdlib` default-on) done; step 5 (atlas / playbook note) is
+outside this repo and handed to the workspace-meta owner. Remaining stdlib gaps
+are filed as CRUSH-264 (defaults / compat) and CRUSH-265 (AI caps) — captured 2026-09-24
 (captain), from the [main] foreman's nanovm / extraction-playbook review
 **Priority**: medium (blocks exosphere's archive gate, W18)
 **Relates to**: M9 "STDLIB restoration" (proposed), CRUSH-113 (`stdlib` feature
