@@ -81,6 +81,11 @@ Plan + ordering: surfer-browser `.jagent/planning/tickets/SURF-ENGINE-2.md`.
 - [ ] **CRUSH-254** — host-driven job queue: persistent VM session, microtasks, callbacks, budgets. (P1)
 - [ ] **CRUSH-255** — publish crush-vm 0.4.1 so surfer and exo-light share one `HostCap` trait (exo-light EXOLIGHT-12). (P2)
 - [ ] **CRUSH-256** — GC predictor without ONNX Runtime: generated Rust rules (or tract on wasm); ort out of crush-vm's default `native-plugins`. (P2)
+- [ ] **CRUSH-257** — AOT C: sound local type inference; re-enable unboxed int64/double locals (off since f65777c). (P1)
+- [ ] **CRUSH-258** — AOT C: structured codegen (basic blocks + expression trees) instead of per-instruction switch over a boxed stack. (P1)
+- [ ] **CRUSH-259** — AOT Rust backend 3-10x slower, ~70x larger than C: port the fixes or default to C. (P2)
+- [ ] **CRUSH-260** — JS walker: `.length` on strings/arrays; JS number semantics for unboxed ints. (P1)
+- [x] **CRUSH-261** — JS → AOT vs Node benchmark harness + baseline (`docs/benchmarks/js_vs_node/`).
 
 ## P0 — Build & Core Health ✅
 
