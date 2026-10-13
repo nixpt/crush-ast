@@ -330,7 +330,7 @@ fn resolve_in(
     if p.is_absolute() {
         return Err(format!("absolute paths are not allowed: {s}"));
     }
-    let escapes = || format!("path escapes sandbox root: {s}");
+    let escapes = || Unconfined::Escapes.message(&s);
     let root = Path::new(root);
     let root_canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 
@@ -355,40 +355,134 @@ fn resolve_in(
     // Not following the last component: confine its parent, keep the name.
     if !follow && let Some(name) = relative.file_name().map(|n| n.to_os_string()) {
         let parent = relative.parent().unwrap_or(Path::new("")).to_path_buf();
-        let dir = confine(&root_canonical, &parent).ok_or_else(escapes)?;
+        let dir = confine(&root_canonical, &parent).map_err(|e| e.message(&s))?;
         return Ok(dir.join(name));
     }
-    confine(&root_canonical, &relative).ok_or_else(escapes)
+    confine(&root_canonical, &relative).map_err(|e| e.message(&s))
 }
 
-/// Join `relative` onto the canonical root, resolving symlinks through the
-/// deepest ancestor that exists, so a symlink inside the root cannot point a
-/// new file outside it either. `None` if the result leaves the root.
+/// Why [`confine`] refused a path.
+enum Unconfined {
+    Escapes,
+    Loop,
+}
+
+impl Unconfined {
+    fn message(&self, path: &str) -> String {
+        match self {
+            Unconfined::Escapes => format!("path escapes sandbox root: {path}"),
+            Unconfined::Loop => format!("too many levels of symbolic links: {path}"),
+        }
+    }
+}
+
+/// Most symlinks one path may pass through, as the kernel's `ELOOP` limit.
+const MAX_SYMLINKS: usize = 40;
+
+/// Join `relative` onto the canonical root and resolve it one component at a
+/// time, following every symlink — dangling ones included — and refuse the
+/// result unless it is inside the root.
+///
+/// `canonicalize` cannot be used for this: it fails on a dangling link, and
+/// treating that link as a new file under its (in-root) parent let
+/// `fs.write` follow it out of the root (CRUSH-180). Here the resolved prefix
+/// never contains a symlink, so `..` after it is exact, and a link's target
+/// is resolved whether or not it exists. Components past the first missing
+/// one cannot be links and are kept as they are.
 fn confine(
     root_canonical: &std::path::Path,
     relative: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    use std::path::PathBuf;
+) -> Result<std::path::PathBuf, Unconfined> {
+    use std::ffi::OsString;
+    use std::path::{Component, Path};
 
-    let joined = root_canonical.join(relative);
-    let mut existing = joined.as_path();
-    let mut rest = Vec::new();
-    let resolved = loop {
-        if let Ok(canonical) = existing.canonicalize() {
-            break rest
-                .iter()
-                .rev()
-                .fold(canonical, |acc: PathBuf, part| acc.join(part));
-        }
-        match (existing.parent(), existing.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_os_string());
-                existing = parent;
+    // Pending components, last one first, so a link's target can be pushed
+    // in front of what remains.
+    fn queue(path: &Path, pending: &mut Vec<Option<OsString>>) {
+        for c in path.components().rev() {
+            match c {
+                Component::Normal(part) => pending.push(Some(part.to_os_string())),
+                Component::ParentDir => pending.push(None),
+                Component::CurDir => {}
+                // An absolute target restarts from `/`; the root check below
+                // decides whether it is allowed.
+                Component::RootDir | Component::Prefix(_) => {
+                    pending.push(Some(c.as_os_str().to_os_string()))
+                }
             }
-            _ => break joined.clone(),
         }
+    }
+
+    let mut resolved = root_canonical.to_path_buf();
+    let mut pending = Vec::new();
+    queue(relative, &mut pending);
+    let mut links = 0;
+    while let Some(next) = pending.pop() {
+        let Some(part) = next else {
+            resolved.pop();
+            continue;
+        };
+        let candidate = resolved.join(&part); // an absolute `part` replaces it
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                links += 1;
+                if links > MAX_SYMLINKS {
+                    return Err(Unconfined::Loop);
+                }
+                let target = std::fs::read_link(&candidate).map_err(|_| Unconfined::Escapes)?;
+                queue(&target, &mut pending);
+            }
+            // Present and not a link, or missing (so nothing below it can be
+            // a link either): it is part of the resolved path as written.
+            _ => resolved = candidate,
+        }
+    }
+    if resolved.starts_with(root_canonical) {
+        Ok(resolved)
+    } else {
+        Err(Unconfined::Escapes)
+    }
+}
+
+/// Open a path [`FsSandbox::resolve`] returned for writing, creating it if it
+/// does not exist. `truncate` empties an existing file; otherwise it is kept.
+///
+/// The path was symlink-free when it was resolved. This narrows the window
+/// for its last component to be swapped for a link afterwards: a new file is
+/// created with `O_EXCL`, which never follows a link, and an existing one is
+/// opened without truncation and checked to be the same file the path names
+/// (`lstat` vs `fstat`) before anything is written to it.
+pub(crate) fn open_for_write(
+    path: &std::path::Path,
+    truncate: bool,
+) -> std::io::Result<std::fs::File> {
+    use std::io::{Error, ErrorKind};
+    let file = match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?,
+        Err(e) => return Err(e),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(Error::other("refusing to write through a symlink"));
+        }
+        Ok(_) => std::fs::OpenOptions::new().write(true).open(path)?,
     };
-    resolved.starts_with(root_canonical).then_some(resolved)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata()?;
+        let named = std::fs::symlink_metadata(path)?;
+        if named.file_type().is_symlink()
+            || (opened.dev(), opened.ino()) != (named.dev(), named.ino())
+        {
+            return Err(Error::other("path changed while it was being opened"));
+        }
+    }
+    if truncate {
+        file.set_len(0)?;
+    }
+    Ok(file)
 }
 
 /// The `--fs` sandbox one registry's file caps share: the root, plus the
@@ -539,7 +633,8 @@ impl HostCap for FsWriteCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
         let data = crate::caps::value_as_text(&args[1]);
-        std::fs::write(&path, data)
+        open_for_write(&path, true)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, data.as_bytes()))
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
@@ -1044,6 +1139,24 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("escapes sandbox"), "{err}");
         assert!(!outside.join("new.txt").exists());
+    }
+
+    #[test]
+    fn open_for_write_never_follows_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.txt");
+        std::fs::write(&target, "keep").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(open_for_write(&link, true).is_err());
+        let dangling = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("new.txt"), &dangling).unwrap();
+        assert!(open_for_write(&dangling, true).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        assert!(!dir.path().join("new.txt").exists());
+
+        open_for_write(&target, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "");
     }
 
     #[test]
