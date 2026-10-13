@@ -24,7 +24,7 @@ pub fn lower_program(program: ast::Program, _ctx: &LowerCtx) -> anyhow::Result<P
 }
 
 fn line_of<T: SourceLocation>(node: &T) -> usize {
-    node.location().map(|l| l.start.line as usize).unwrap_or(0)
+    node.location().map(|l| l.start.line).unwrap_or(0)
 }
 
 fn word(w: &ast::Word) -> Word {
