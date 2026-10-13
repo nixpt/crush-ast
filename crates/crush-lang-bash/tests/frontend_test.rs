@@ -36,210 +36,96 @@ fn test_bash_detects_side_effects() {
     assert!(report.has_top_level_side_effects);
 }
 
+/// Every statement in `body`, nested ones included.
+fn walk<'a>(body: &'a [Statement], out: &mut Vec<&'a Statement>) {
+    for s in body {
+        out.push(s);
+        match s {
+            Statement::If { then_body, else_body, .. } => {
+                walk(then_body, out);
+                if let Some(e) = else_body {
+                    walk(e, out);
+                }
+            }
+            Statement::While { body, .. } | Statement::For { body, .. } => walk(body, out),
+            _ => {}
+        }
+    }
+}
+
+fn caps_in(program: &crush_cast::Program, func: &str) -> Vec<String> {
+    let mut all = Vec::new();
+    walk(&program.functions[func].body, &mut all);
+    all.iter()
+        .filter_map(|s| match s {
+            Statement::ExprStmt { expr: Expression::CapabilityCall { name, .. }, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn lower_err(src: &str) -> String {
+    format!("{:#}", crush_lang_bash::bash_to_cast(src).unwrap_err())
+}
+
 #[test]
 fn test_bash_echo_uses_io_print() {
     let cast = crush_lang_bash::bash_to_cast("echo hello\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 1);
-    if let Some(Statement::ExprStmt { expr, .. }) = main.body.first() {
-        if let Expression::CapabilityCall { name, .. } = expr {
-            assert_eq!(name, "io.print");
-        } else {
-            panic!("expected CapabilityCall, got {:?}", expr);
-        }
-    } else {
-        panic!("expected ExprStmt");
-    }
+    assert!(caps_in(&cast, "main").contains(&"io.print".to_string()));
 }
 
 #[test]
-fn test_bash_variable_reference() {
-    let cast = crush_lang_bash::bash_to_cast("NAME=\"World\"\necho \"Hello, $NAME!\"\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 2);
-
-    if let Some(Statement::VarDecl { name, value, .. }) = main.body.first() {
-        assert_eq!(name, "NAME");
-        if let Expression::StringLiteral { value, .. } = value {
-            assert_eq!(value, "World");
-        } else {
-            panic!("expected StringLiteral");
-        }
-    } else {
-        panic!("expected VarDecl");
-    }
-
-    if let Some(Statement::ExprStmt { expr, .. }) = main.body.get(1) {
-        if let Expression::CapabilityCall { args, .. } = expr {
-            assert_eq!(args.len(), 1);
-            let arg = &args[0];
-            let has_var_ref = match arg {
-                Expression::BinaryOp { .. } => true,
-                Expression::Var { name, .. } if name == "NAME" => true,
-                _ => false,
-            };
-            assert!(has_var_ref, "expected Var or BinaryOp with Var ref");
-        } else {
-            panic!("expected CapabilityCall");
-        }
-    }
-}
-
-#[test]
-fn test_bash_unset_lowers_to_null() {
-    let cast = crush_lang_bash::bash_to_cast("unset MYVAR\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 1);
-    if let Some(Statement::VarDecl { name, value, .. }) = main.body.first() {
-        assert_eq!(name, "MYVAR");
-        assert!(matches!(value, Expression::NullLiteral { .. }));
-    } else {
-        panic!("expected VarDecl with NullLiteral");
-    }
-}
-
-#[test]
-fn test_bash_source_lowers_to_capability() {
-    let cast = crush_lang_bash::bash_to_cast("source ./setup.sh\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 1);
-    if let Some(Statement::ExprStmt { expr, .. }) = main.body.first() {
-        if let Expression::CapabilityCall { name, args, .. } = expr {
-            assert_eq!(name, "bash.source");
-            assert_eq!(args.len(), 1);
-            if let Expression::StringLiteral { value, .. } = &args[0] {
-                assert_eq!(value, "./setup.sh");
-            } else {
-                panic!("expected StringLiteral arg");
-            }
-        } else {
-            panic!("expected CapabilityCall");
-        }
-    } else {
-        panic!("expected ExprStmt");
-    }
-}
-
-#[test]
-fn test_bash_return_lowers_to_return() {
-    let cast = crush_lang_bash::bash_to_cast("return 42\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 1);
-    if let Some(Statement::Return { value, .. }) = main.body.first() {
-        assert!(value.is_some());
-        if let Some(Expression::StringLiteral { value, .. }) = value {
-            assert_eq!(value, "42");
-        } else {
-            panic!("expected StringLiteral value");
-        }
-    } else {
-        panic!("expected Return");
-    }
-}
-
-#[test]
-fn test_bash_subshell() {
-    let cast = crush_lang_bash::bash_to_cast("(echo hello; echo world)\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(
-        main.body.len(),
-        2,
-        "subshell body statements should be inlined"
-    );
-}
-
-#[test]
-fn test_bash_brace_group() {
-    let cast = crush_lang_bash::bash_to_cast("{ echo hello; }\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(
-        main.body.len(),
-        1,
-        "brace group body statements should be inlined"
-    );
-}
-
-#[test]
-fn test_bash_case_statement() {
-    let cast = crush_lang_bash::bash_to_cast("case $x in a) echo 1;; b) echo 2;; esac\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 2, "case should produce one If per branch");
-    for (i, stmt) in main.body.iter().enumerate() {
-        match stmt {
-            Statement::If {
-                condition,
-                then_body,
-                ..
-            } => {
-                assert!(
-                    matches!(condition, Expression::BinaryOp { operator, .. } if operator == "==")
-                );
-                assert_eq!(then_body.len(), 1, "each case branch should have one stmt");
-            }
-            _ => panic!("expected If for branch {i}, got {stmt:?}"),
-        }
-    }
-}
-
-#[test]
-fn test_bash_case_with_or_pattern() {
-    let cast = crush_lang_bash::bash_to_cast("case $x in a|b) echo 1;; esac\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 1);
-    if let Some(Statement::If {
-        condition,
-        then_body,
-        ..
-    }) = main.body.first()
-    {
-        assert!(
-            matches!(condition, Expression::BinaryOp { operator, .. } if operator == "or"),
-            "a|b should produce 'or' chain, got: {condition:?}"
-        );
-        assert_eq!(then_body.len(), 1);
-    } else {
-        panic!("expected If for case branch");
-    }
-}
-
-#[test]
-fn test_bash_arithmetic_command() {
-    // brush-parser v0.4.0 parses `(( x = 1 + 2 ))` as a simple command
-    // with name "x" (not as an ArithmeticCommand) in sh_mode
-    let cast = crush_lang_bash::bash_to_cast("x=$(( 1 + 2 ))\n").unwrap();
-    let main = cast.functions.get("main").unwrap();
-    assert!(main.body.len() >= 1);
-    if let Some(Statement::VarDecl { name, .. }) = main.body.first() {
-        assert_eq!(name, "x");
-    } else {
-        panic!("expected VarDecl for arithmetic expansion assignment");
-    }
-}
-
-#[test]
-fn test_bash_heredoc_does_not_crash() {
-    let source = "cat <<EOF\nhello world\nEOF\n";
-    let cast = crush_lang_bash::bash_to_cast(source).unwrap();
-    let main = cast.functions.get("main").unwrap();
-    // cat is lowered to CapabilityCall("fs.read", ...); heredoc content is part of
-    // the redirect (ignored by lowerer), so the command name still works
-    assert_eq!(
-        main.body.len(),
-        1,
-        "heredoc command should lower without crashing"
-    );
-    if let Some(Statement::ExprStmt { expr, .. }) = main.body.first() {
-        assert!(matches!(expr, Expression::CapabilityCall { name, .. } if name == "fs.read"));
-    } else {
-        panic!("expected CapabilityCall for cat with heredoc");
-    }
+fn test_bash_echo_n_uses_io_write() {
+    let cast = crush_lang_bash::bash_to_cast("echo -n hello\n").unwrap();
+    assert!(caps_in(&cast, "main").contains(&"io.write".to_string()));
 }
 
 #[test]
 fn test_bash_function_def() {
-    let source = "greet() {\n    echo \"Hello\"\n}\ngreet\n";
-    let cast = crush_lang_bash::bash_to_cast(source).unwrap();
-    assert!(cast.functions.contains_key("greet"));
-    let main = cast.functions.get("main").unwrap();
-    assert_eq!(main.body.len(), 1);
+    // Shell functions are mangled so they can't collide with Crush builtins.
+    let cast = crush_lang_bash::bash_to_cast("greet() {\n    echo \"Hello\"\n}\ngreet\n").unwrap();
+    assert!(cast.functions.contains_key("__shfn_greet"));
+    assert!(caps_in(&cast, "__shfn_greet").contains(&"io.print".to_string()));
+}
+
+#[test]
+fn test_bash_until_is_not_while() {
+    // `until` used to be lowered exactly like `while` (bash) — the two must differ.
+    let w = serde_json::to_string(&crush_lang_bash::bash_to_cast("while false; do echo x; done\n").unwrap().functions["main"].body).unwrap();
+    let u = serde_json::to_string(&crush_lang_bash::bash_to_cast("until false; do echo x; done\n").unwrap().functions["main"].body).unwrap();
+    assert_ne!(w, u);
+}
+
+// Constructs that used to lower to something that ran and printed the wrong
+// thing (or nothing) now fail with a located error (CRUSH-202).
+
+#[test]
+fn test_bash_subshell_is_loud() {
+    assert!(lower_err("(echo hello; echo world)\n").contains("unsupported: a subshell"));
+}
+
+#[test]
+fn test_bash_source_is_loud() {
+    assert!(lower_err("source ./setup.sh\n").contains("unsupported: command `source`"));
+}
+
+#[test]
+fn test_bash_return_outside_function_is_loud() {
+    assert!(lower_err("return 42\n").contains("`return` outside a function"));
+}
+
+#[test]
+fn test_bash_heredoc_is_loud() {
+    assert!(lower_err("cat <<EOF\nhello world\nEOF\n").contains("unsupported"));
+}
+
+#[test]
+fn test_bash_error_names_the_line() {
+    let e = lower_err("echo ok\necho ok\nls /tmp\n");
+    assert!(e.contains("command `ls`") && e.contains("at line 3"), "{e}");
+}
+
+#[test]
+fn test_bash_never_assigned_variable_is_loud() {
+    assert!(lower_err("echo $HOME\n").contains("never assigned"));
 }

@@ -1,883 +1,188 @@
-use std::collections::HashMap;
+//! brush-parser AST → the shared shell IR → CAST.
+//!
+//! All semantics live in `crush_walker_core::shell` (shared with the zsh
+//! walker). This file only maps brush's node types onto that IR, turning the
+//! nodes the IR has no form for (pipelines, redirections, subshells, `[[ ]]`,
+//! …) into `Cmd::Unsupported`, which lowering reports as
+//! `unsupported: <construct> at line N` (CRUSH-202).
 
-use brush_parser::ast::{self, AndOr, AndOrList, Command, CompoundCommand, CompoundList, Pipeline, SourceLocation};
-use crush_cast::{CastType, Expression, Function, Program, Statement};
+use brush_parser::ast::{
+    self, AndOr as BAndOr, AndOrList, CaseItemPostAction, Command, CommandPrefixOrSuffixItem, CompoundCommand,
+    CompoundList, SeparatorOperator, SourceLocation,
+};
+use crush_cast::Program;
 use crush_walker_core::LowerCtx;
-
-/// Get source position metadata from a brush-parser AST node.
-fn node_meta<T: SourceLocation>(node: &T, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
-    node.location()
-        .map(|loc| ctx.meta_lc(loc.start.line, loc.start.column))
-        .unwrap_or_else(|| ctx.meta_at(0))
-}
+use crush_walker_core::shell::{self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Word};
 
 /// Lower a brush-parser Program to a CAST Program.
-pub fn lower_program(program: ast::Program, ctx: &LowerCtx) -> anyhow::Result<Program> {
-    let mut functions: HashMap<String, Function> = HashMap::new();
-    let mut main_body: Vec<Statement> = Vec::new();
-
+pub fn lower_program(program: ast::Program, _ctx: &LowerCtx) -> anyhow::Result<Program> {
+    let mut script = List::new();
     for complete in &program.complete_commands {
-        for item in &complete.0 {
-            let and_or = &item.0;
-            // First pass: extract function definitions
-            if let Some(func_stmt) = extract_function_def(and_or, ctx) {
-                if let Statement::FunctionDef {
-                    name, params, body, ..
-                } = func_stmt
-                {
-                    functions.insert(
-                        name,
-                        Function {
-                            params,
-                            body,
-                            meta: node_meta(&program, ctx),
-                            ..Default::default()
-                        },
-                    );
-                    continue;
-                }
-            }
-            for stmt in lower_and_or_list(and_or, ctx)? {
-                main_body.push(stmt);
-            }
-        }
+        script.extend(list(complete));
     }
-
-    if !main_body.is_empty() {
-        functions.insert(
-            "main".to_string(),
-            Function {
-                params: vec![],
-                body: main_body,
-                meta: node_meta(&program, ctx),
-                ..Default::default()
-            },
-        );
-    }
-
-    Ok(Program {
-        cast_version: "0.2".to_string(),
-        entry: "main".to_string(),
-        lang: Some("bash".to_string()),
-        functions,
-        ai_meta: None,
-        ..Default::default()
-    })
+    shell::lower_script(Dialect::Bash, &script)
 }
 
-fn extract_function_def(and_or: &AndOrList, ctx: &LowerCtx) -> Option<Statement> {
-    let cmd = and_or.first.seq.first()?;
-    match cmd {
-        Command::Function(func) => {
-            let body_stmts = lower_compound_for_body(&func.body.0, ctx);
-            Some(Statement::FunctionDef {
-                name: func.fname.value.clone(),
-                params: vec![],
-                body: body_stmts,
-                meta: node_meta(and_or, ctx),
-            })
-        }
-        _ => None,
-    }
+fn line_of<T: SourceLocation>(node: &T) -> usize {
+    node.location().map(|l| l.start.line as usize).unwrap_or(0)
 }
 
-fn lower_and_or_list(and_or: &AndOrList, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
-    let mut stmts = Vec::new();
-    let first_stmts = lower_pipeline(&and_or.first, ctx)?;
-    let mut prev = if first_stmts.len() == 1 {
-        let s = first_stmts.into_iter().next().unwrap();
-        let expr = expr_from_statement(&s);
-        stmts.push(s);
-        Some(expr)
-    } else {
-        for s in first_stmts {
-            stmts.push(s);
-        }
-        None
-    };
-
-    for additional in &and_or.additional {
-        match additional {
-            AndOr::And(pipeline) => {
-                let cond = prev.take().unwrap_or(Expression::BoolLiteral {
-                    value: true,
-                    meta: node_meta(and_or, ctx),
-                });
-                let body = lower_pipeline(pipeline, ctx)?;
-                stmts.push(Statement::If {
-                    condition: cond,
-                    then_body: body,
-                    else_body: None,
-                    meta: node_meta(and_or, ctx),
-                });
-            }
-            AndOr::Or(pipeline) => {
-                let cond = prev
-                    .take()
-                    .map(|e| Expression::UnaryOp {
-                        operator: "!".to_string(),
-                        operand: Box::new(e),
-                        meta: node_meta(and_or, ctx),
-                    })
-                    .unwrap_or(Expression::BoolLiteral {
-                        value: true,
-                        meta: node_meta(and_or, ctx),
-                    });
-                stmts.push(Statement::If {
-                    condition: cond,
-                    then_body: lower_pipeline(pipeline, ctx)?,
-                    else_body: None,
-                    meta: node_meta(and_or, ctx),
-                });
-            }
-        }
-        prev = None;
-    }
-
-    Ok(stmts)
+fn word(w: &ast::Word) -> Word {
+    Word { raw: w.value.clone(), line: line_of(w) }
 }
 
-fn lower_pipeline(pipeline: &Pipeline, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
-    if pipeline.seq.is_empty() {
-        return Ok(Vec::new());
-    }
-    if pipeline.seq.len() == 1 {
-        return lower_command(&pipeline.seq[0], ctx);
-    }
-    let mut segments = Vec::new();
-    for cmd in &pipeline.seq {
-        let stmts = lower_command(cmd, ctx)?;
-        for s in stmts {
-            segments.push(expr_from_statement(&s));
-        }
-    }
-    Ok(vec![Statement::ExprStmt {
-        expr: Expression::Pipeline {
-            segments,
-            meta: node_meta(pipeline, ctx),
-        },
-        meta: node_meta(pipeline, ctx),
-    }])
+fn unsupported(what: &str, line: usize) -> Cmd {
+    Cmd::Unsupported { what: what.to_string(), line }
 }
 
-fn lower_command(cmd: &Command, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
-    match cmd {
-        Command::Simple(simple) => lower_simple_command(simple, ctx),
-        Command::Compound(compound, _) => lower_compound_command(compound, ctx),
-        Command::Function(_) => Ok(Vec::new()),
-        Command::ExtendedTest(..) => Ok(Vec::new()),
-    }
-}
-
-fn lower_simple_command(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
-    let mut stmts: Vec<Statement> = Vec::new();
-
-    if let Some(prefix) = &simple.prefix {
-        for item in &prefix.0 {
-            if let ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, _w) = item {
-                let name = match &assignment.name {
-                    ast::AssignmentName::VariableName(n) => n.clone(),
-                    ast::AssignmentName::ArrayElementName(n, _) => n.clone(),
-                };
-                let val = match &assignment.value {
-                    ast::AssignmentValue::Scalar(w) => word_to_expr(w, ctx),
-                    ast::AssignmentValue::Array(..) => Expression::StringLiteral {
-                        value: String::new(),
-                        meta: node_meta(simple, ctx),
-                    },
-                };
-                stmts.push(Statement::VarDecl {
-                    name,
-                    value: val,
-                    type_hint: CastType::Any,
-                    meta: node_meta(simple, ctx),
-                });
-            }
-        }
-    }
-
-    let cmd_name = simple
-        .word_or_name
-        .as_ref()
-        .map(|w| w.value.as_str())
-        .unwrap_or("")
-        .to_string();
-    let mut args: Vec<Expression> = Vec::new();
-
-    // Collect suffix words AND assignment words
-    let mut suffix_assignments: Vec<(String, Expression)> = Vec::new();
-    if let Some(suffix) = &simple.suffix {
-        for item in &suffix.0 {
-            match item {
-                ast::CommandPrefixOrSuffixItem::Word(w) => {
-                    args.push(word_to_expr(w, ctx));
-                }
-                ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, _w) => {
-                    let name = match &assignment.name {
-                        ast::AssignmentName::VariableName(n) => n.clone(),
-                        ast::AssignmentName::ArrayElementName(n, _) => n.clone(),
-                    };
-                    let val = match &assignment.value {
-                        ast::AssignmentValue::Scalar(w) => word_to_expr(w, ctx),
-                        ast::AssignmentValue::Array(..) => Expression::StringLiteral {
-                            value: String::new(),
-                            meta: node_meta(simple, ctx),
-                        },
-                    };
-                    suffix_assignments.push((name, val));
-                }
-                ast::CommandPrefixOrSuffixItem::IoRedirect(_) => {}
-                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(..) => {}
-            }
-        }
-    }
-
-    if cmd_name.is_empty() && args.is_empty() && suffix_assignments.is_empty() {
-        return Ok(stmts);
-    }
-
-    match cmd_name.as_str() {
-        "echo" | "printf" => {
-            stmts.push(Statement::ExprStmt {
-                expr: Expression::CapabilityCall {
-                    name: "io.print".to_string(),
-                    args,
-                    meta: cap_meta("io", "print"),
-                },
-                meta: node_meta(simple, ctx),
-            });
-        }
-        "read" => {
-            stmts.push(Statement::ExprStmt {
-                expr: Expression::CapabilityCall {
-                    name: "io.read".to_string(),
-                    args,
-                    meta: cap_meta("io", "read"),
-                },
-                meta: node_meta(simple, ctx),
-            });
-        }
-        "cat" | "head" | "tail" | "wc" | "sort" | "grep" => {
-            stmts.push(Statement::ExprStmt {
-                expr: Expression::CapabilityCall {
-                    name: "fs.read".to_string(),
-                    args,
-                    meta: cap_meta("fs", "read"),
-                },
-                meta: node_meta(simple, ctx),
-            });
-        }
-        "local" => {
-            for (name, val) in suffix_assignments {
-                stmts.push(Statement::VarDecl {
-                    name,
-                    value: val,
-                    type_hint: CastType::Any,
-                    meta: node_meta(simple, ctx),
-                });
-            }
-        }
-        "exit" | "return" => {
-            stmts.push(Statement::Return {
-                value: args.into_iter().next(),
-                meta: node_meta(simple, ctx),
-            });
-        }
-        "unset" => {
-            for arg in args {
-                if let Expression::StringLiteral { value: name, .. } = &arg {
-                    stmts.push(Statement::VarDecl {
-                        name: name.clone(),
-                        value: Expression::NullLiteral {
-                            meta: node_meta(simple, ctx),
-                        },
-                        type_hint: CastType::Any,
-                        meta: node_meta(simple, ctx),
-                    });
-                }
-            }
-        }
-        "source" | "." => {
-            stmts.push(Statement::ExprStmt {
-                expr: Expression::CapabilityCall {
-                    name: "bash.source".to_string(),
-                    args,
-                    meta: cap_meta("bash", "source"),
-                },
-                meta: node_meta(simple, ctx),
-            });
-        }
-        "cd" => {
-            stmts.push(Statement::ExprStmt {
-                expr: Expression::CapabilityCall {
-                    name: "env.set".to_string(),
-                    args: vec![
-                        Expression::StringLiteral {
-                            value: "PWD".to_string(),
-                            meta: node_meta(simple, ctx),
-                        },
-                        args.into_iter()
-                            .next()
-                            .unwrap_or(Expression::StringLiteral {
-                                value: "~".to_string(),
-                                meta: node_meta(simple, ctx),
-                            }),
-                    ],
-                    meta: cap_meta("env", "set"),
-                },
-                meta: node_meta(simple, ctx),
-            });
-        }
-        "export" => {
-            if !suffix_assignments.is_empty() {
-                for (name, val) in suffix_assignments {
-                    stmts.push(Statement::Export {
-                        name,
-                        value: val,
-                        meta: node_meta(simple, ctx),
-                    });
-                }
-            } else if !args.is_empty() {
-                stmts.push(Statement::Export {
-                    name: String::new(),
-                    value: args.into_iter().next().unwrap_or(Expression::NullLiteral {
-                        meta: node_meta(simple, ctx),
-                    }),
-                    meta: node_meta(simple, ctx),
-                });
-            }
-        }
-        "true" | ":" => {}
-        _ => {
-            stmts.push(Statement::ExprStmt {
-                expr: Expression::Call {
-                    function: cmd_name,
-                    args,
-                    meta: node_meta(simple, ctx),
-                },
-                meta: node_meta(simple, ctx),
-            });
-        }
-    }
-
-    Ok(stmts)
-}
-
-fn lower_compound_command(compound: &CompoundCommand, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
-    match compound {
-        CompoundCommand::IfClause(if_cmd) => {
-            let condition = compound_list_to_expr(&if_cmd.condition, ctx);
-            let then_body = lower_compound_list(&if_cmd.then, ctx)?;
-            let else_body = if let Some(elses) = &if_cmd.elses {
-                if elses.is_empty() {
-                    None
-                } else {
-                    let mut else_stmts = Vec::new();
-                    for else_clause in elses {
-                        if let Some(cond) = &else_clause.condition {
-                            let cond_expr = compound_list_to_expr(cond, ctx);
-                            let body = lower_compound_list(&else_clause.body, ctx)?;
-                            else_stmts.push(Statement::If {
-                                condition: cond_expr,
-                                then_body: body,
-                                else_body: None,
-                                meta: node_meta(compound, ctx),
-                            });
-                        } else {
-                            let body = lower_compound_list(&else_clause.body, ctx)?;
-                            else_stmts.extend(body);
-                        }
-                    }
-                    Some(else_stmts)
+fn list(cl: &CompoundList) -> List {
+    cl.0.iter()
+        .map(|item| {
+            if matches!(item.1, SeparatorOperator::Async) {
+                let line = line_of(&item.0);
+                AndOr {
+                    first: Pipeline { negated: false, cmd: unsupported("a background command (`&`)", line) },
+                    rest: vec![],
                 }
             } else {
-                None
-            };
-            Ok(vec![Statement::If {
-                condition,
-                then_body,
-                else_body,
-                meta: node_meta(compound, ctx),
-            }])
-        }
-        CompoundCommand::WhileClause(cmd) | CompoundCommand::UntilClause(cmd) => {
-            let condition = compound_list_to_expr(&cmd.0, ctx);
-            let body = lower_compound_list(&cmd.1.list, ctx)?;
-            Ok(vec![Statement::While {
-                condition: Box::new(condition),
-                body,
-                meta: node_meta(compound, ctx),
-            }])
-        }
-        CompoundCommand::ForClause(for_cmd) => {
-            let iterable = if let Some(values) = &for_cmd.values {
-                let elements: Vec<Expression> = values.iter().map(|w| word_to_expr(w, ctx)).collect();
-                Expression::ArrayLiteral {
-                    elements,
-                    meta: node_meta(compound, ctx),
-                }
-            } else {
-                Expression::Var {
-                    name: "@".to_string(),
-                    meta: node_meta(compound, ctx),
-                }
-            };
-            let body = lower_compound_list(&for_cmd.body.list, ctx)?;
-            Ok(vec![Statement::For {
-                variable: for_cmd.variable_name.clone(),
-                iterable: Box::new(iterable),
-                body,
-                meta: node_meta(compound, ctx),
-            }])
-        }
-        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list, ctx),
-        CompoundCommand::Subshell(ss) => lower_compound_list(&ss.list, ctx),
-        CompoundCommand::CaseClause(case_cmd) => {
-            let subject = word_to_expr(&case_cmd.value, ctx);
-            let mut stmts = Vec::new();
-            for item in &case_cmd.cases {
-                let condition = if item.patterns.len() == 1 {
-                    Expression::BinaryOp {
-                        operator: "==".to_string(),
-                        left: Box::new(subject.clone()),
-                        right: Box::new(word_to_expr(&item.patterns[0], ctx)),
-                        meta: node_meta(compound, ctx),
-                    }
-                } else {
-                    let mut or_chain = Expression::BinaryOp {
-                        operator: "==".to_string(),
-                        left: Box::new(subject.clone()),
-                        right: Box::new(word_to_expr(&item.patterns[0], ctx)),
-                        meta: node_meta(compound, ctx),
-                    };
-                    for pat in &item.patterns[1..] {
-                        or_chain = Expression::BinaryOp {
-                            operator: "or".to_string(),
-                            left: Box::new(or_chain),
-                            right: Box::new(Expression::BinaryOp {
-                                operator: "==".to_string(),
-                                left: Box::new(subject.clone()),
-                                right: Box::new(word_to_expr(pat, ctx)),
-                                meta: node_meta(compound, ctx),
-                            }),
-                            meta: node_meta(compound, ctx),
-                        };
-                    }
-                    or_chain
-                };
-                let body = match &item.cmd {
-                    Some(list) => lower_compound_list(list, ctx)?,
-                    None => Vec::new(),
-                };
-                stmts.push(Statement::If {
-                    condition,
-                    then_body: body,
-                    else_body: None,
-                    meta: node_meta(compound, ctx),
-                });
+                and_or(&item.0)
             }
-            Ok(stmts)
-        }
-        CompoundCommand::Arithmetic(arith) => Ok(vec![Statement::ExprStmt {
-            expr: Expression::CapabilityCall {
-                name: "bash.arithmetic".to_string(),
-                args: vec![Expression::StringLiteral {
-                    value: arith.expr.value.clone(),
-                    meta: node_meta(compound, ctx),
-                }],
-                meta: cap_meta("bash", "arithmetic"),
-            },
-            meta: node_meta(compound, ctx),
-        }]),
-        CompoundCommand::ArithmeticForClause(for_arith) => {
-            let mut desc = String::new();
-            if let Some(init) = &for_arith.initializer {
-                desc.push_str(&init.value);
-            }
-            desc.push_str("; ");
-            if let Some(cond) = &for_arith.condition {
-                desc.push_str(&cond.value);
-            }
-            desc.push_str("; ");
-            if let Some(upd) = &for_arith.updater {
-                desc.push_str(&upd.value);
-            }
-            Ok(vec![Statement::ExprStmt {
-                expr: Expression::CapabilityCall {
-                    name: "bash.arithmetic_for".to_string(),
-                    args: vec![Expression::StringLiteral {
-                        value: desc,
-                        meta: node_meta(compound, ctx),
-                    }],
-                    meta: cap_meta("bash", "arithmetic_for"),
-                },
-                meta: node_meta(compound, ctx),
-            }])
-        }
-        _ => Ok(Vec::new()),
-    }
-}
-
-fn lower_compound_list(list: &CompoundList, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
-    let mut stmts = Vec::new();
-    for item in &list.0 {
-        stmts.extend(lower_and_or_list(&item.0, ctx)?);
-    }
-    Ok(stmts)
-}
-
-fn compound_list_to_expr(list: &CompoundList, ctx: &LowerCtx) -> Expression {
-    let mut last_expr = Expression::BoolLiteral {
-        value: true,
-        meta: node_meta(list, ctx),
-    };
-    for item in &list.0 {
-        let and_or = &item.0;
-        for cmd in &and_or.first.seq {
-            if let Some(expr) = expr_from_command(cmd, ctx) {
-                last_expr = expr;
-            }
-        }
-        for additional in &and_or.additional {
-            match additional {
-                AndOr::And(p) | AndOr::Or(p) => {
-                    for cmd in &p.seq {
-                        if let Some(expr) = expr_from_command(cmd, ctx) {
-                            last_expr = expr;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    last_expr
-}
-
-fn expr_from_command(cmd: &Command, ctx: &LowerCtx) -> Option<Expression> {
-    match cmd {
-        Command::Simple(simple) => expr_from_simple(simple, ctx),
-        _ => None,
-    }
-}
-
-fn expr_from_simple(simple: &ast::SimpleCommand, ctx: &LowerCtx) -> Option<Expression> {
-    let cmd_name = simple
-        .word_or_name
-        .as_ref()
-        .map(|w| w.value.as_str())
-        .unwrap_or("");
-    let args: Vec<Expression> = simple
-        .suffix
-        .as_ref()
-        .map(|s| {
-            s.0.iter()
-                .filter_map(|item| match item {
-                    ast::CommandPrefixOrSuffixItem::Word(w) => Some(word_to_expr(w, ctx)),
-                    _ => None,
-                })
-                .collect()
         })
-        .unwrap_or_default();
+        .collect()
+}
 
-    match cmd_name {
-        "" if !args.is_empty() => Some(args.into_iter().next().unwrap()),
-        "true" | ":" => Some(Expression::BoolLiteral {
-            value: true,
-            meta: node_meta(simple, ctx),
-        }),
-        "false" => Some(Expression::BoolLiteral {
-            value: false,
-            meta: node_meta(simple, ctx),
-        }),
-        "test" => {
-            if args.len() == 3 {
-                // Binary: test ARG1 OP ARG2
-                Some(Expression::BinaryOp {
-                    operator: match &args[1] {
-                        Expression::StringLiteral { value, .. } => value.clone(),
-                        _ => "==".to_string(),
-                    },
-                    left: Box::new(args[0].clone()),
-                    right: Box::new(args[2].clone()),
-                    meta: node_meta(simple, ctx),
-                })
-            } else if args.len() == 2 {
-                // Unary: test OP ARG
-                Some(Expression::Call {
-                    function: format!(
-                        "test_{}",
-                        match &args[0] {
-                            Expression::StringLiteral { value, .. } => value.clone(),
-                            _ => "?".to_string(),
-                        }
-                    ),
-                    args: vec![args[1].clone()],
-                    meta: node_meta(simple, ctx),
-                })
-            } else if args.len() == 1 {
-                Some(args.into_iter().next().unwrap())
-            } else {
-                None
-            }
-        }
-        "[" => {
-            // [ ARG1 OP ARG2 ] or [ OP ARG ]
-            let stripped: Vec<Expression> = args
-                .into_iter()
-                .take_while(
-                    |a| !matches!(a, Expression::StringLiteral { value, .. } if value == "]"),
-                )
-                .collect();
-            if stripped.len() == 3 {
-                Some(Expression::BinaryOp {
-                    operator: match &stripped[1] {
-                        Expression::StringLiteral { value, .. } => value.clone(),
-                        _ => "==".to_string(),
-                    },
-                    left: Box::new(stripped[0].clone()),
-                    right: Box::new(stripped[2].clone()),
-                    meta: node_meta(simple, ctx),
-                })
-            } else if stripped.len() == 2 {
-                Some(Expression::Call {
-                    function: format!(
-                        "test_{}",
-                        match &stripped[0] {
-                            Expression::StringLiteral { value, .. } => value.clone(),
-                            _ => "?".to_string(),
-                        }
-                    ),
-                    args: vec![stripped[1].clone()],
-                    meta: node_meta(simple, ctx),
-                })
-            } else if stripped.len() == 1 {
-                Some(stripped.into_iter().next().unwrap())
-            } else {
-                None
-            }
-        }
-        _ => {
-            if !cmd_name.is_empty() {
-                Some(Expression::Call {
-                    function: cmd_name.to_string(),
-                    args,
-                    meta: node_meta(simple, ctx),
-                })
-            } else {
-                None
-            }
-        }
+fn and_or(a: &AndOrList) -> AndOr {
+    AndOr {
+        first: pipeline(&a.first),
+        rest: a
+            .additional
+            .iter()
+            .map(|x| match x {
+                BAndOr::And(p) => (true, pipeline(p)),
+                BAndOr::Or(p) => (false, pipeline(p)),
+            })
+            .collect(),
     }
 }
 
-fn expr_from_statement(stmt: &Statement) -> Expression {
-    match stmt {
-        Statement::ExprStmt { expr, .. } => expr.clone(),
-        Statement::VarDecl { name, value, .. } => Expression::BinaryOp {
-            operator: "=".to_string(),
-            left: Box::new(Expression::Var {
-                name: name.clone(),
-                meta: HashMap::new(),
-            }),
-            right: Box::new(value.clone()),
-            meta: HashMap::new(),
-        },
-        _ => Expression::BoolLiteral {
-            value: true,
-            meta: HashMap::new(),
-        },
-    }
+fn pipeline(p: &ast::Pipeline) -> Pipeline {
+    let line = line_of(p);
+    let cmd = if p.timed.is_some() {
+        unsupported("`time`", line)
+    } else if p.seq.len() != 1 {
+        unsupported("a pipeline (`|`)", line)
+    } else {
+        command(&p.seq[0], line)
+    };
+    Pipeline { negated: p.bang, cmd }
 }
 
-/// Extract variable names from a string like "Hello $NAME, age $AGE".
-/// Returns Vec of (literal_before, var_name) pairs, ending with a final literal.
-fn extract_var_refs(s: &str) -> (Vec<(String, String)>, String) {
-    let mut parts = Vec::new();
-    let mut remaining = s;
-    loop {
-        let dollar_pos = match remaining.find('$') {
-            Some(p) => p,
-            None => return (parts, remaining.to_string()),
-        };
-
-        let literal_before = remaining[..dollar_pos].to_string();
-        let after_dollar = &remaining[dollar_pos + 1..];
-
-        if after_dollar.starts_with('{') {
-            if let Some(close) = after_dollar.find('}') {
-                let var_name = after_dollar[1..close].to_string();
-                parts.push((literal_before, var_name));
-                remaining = &after_dollar[close + 1..];
-            } else {
-                return (parts, remaining.to_string());
+fn command(c: &Command, line: usize) -> Cmd {
+    match c {
+        Command::Simple(sc) => simple(sc, line),
+        Command::Compound(_, Some(_)) => unsupported("a redirection", line),
+        Command::Compound(cc, None) => compound(cc, line),
+        Command::Function(fd) => {
+            if fd.body.1.is_some() {
+                return unsupported("a redirection on a function body", line);
             }
-        } else {
-            let name_len = after_dollar
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .count();
-            if name_len > 0 {
-                let var_name = after_dollar[..name_len].to_string();
-                parts.push((literal_before, var_name));
-                remaining = &after_dollar[name_len..];
-            } else {
-                return (parts, remaining.to_string());
-            }
-        }
-    }
-}
-
-pub fn word_to_expr(word: &ast::Word, ctx: &LowerCtx) -> Expression {
-    let raw = &word.value;
-
-    // Bare $VAR reference (unquoted)
-    if raw.starts_with('$') && !raw.starts_with('"') && !raw.starts_with('\'') {
-        let name = if raw.starts_with("${") && raw.ends_with('}') {
-            raw[2..raw.len() - 1].to_string()
-        } else {
-            raw[1..].to_string()
-        };
-        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return Expression::Var {
-                name,
-                meta: node_meta(word, ctx),
+            let body = match &fd.body.0 {
+                CompoundCommand::BraceGroup(g) => list(&g.list),
+                other => vec![AndOr { first: Pipeline { negated: false, cmd: compound(other, line) }, rest: vec![] }],
             };
+            Cmd::FuncDef { name: fd.fname.value.clone(), body, line }
         }
-        return Expression::StringLiteral {
-            value: raw.clone(),
-            meta: node_meta(word, ctx),
-        };
+        Command::ExtendedTest(..) => unsupported("`[[ … ]]` (use `[ … ]`)", line),
     }
+}
 
-    // Handle quoted strings
-    let is_single_quoted = raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2;
-    let is_double_quoted = raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2;
-
-    if is_single_quoted || is_double_quoted {
-        let inner = &raw[1..raw.len() - 1];
-
-        if is_single_quoted {
-            return Expression::StringLiteral {
-                value: inner.to_string(),
-                meta: node_meta(word, ctx),
-            };
+fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
+    let line = sc.word_or_name.as_ref().map(line_of).filter(|l| *l > 0).unwrap_or(line);
+    let mut assigns = Vec::new();
+    let mut words = Vec::new();
+    for item in sc.prefix.iter().flat_map(|p| p.0.iter()) {
+        match item {
+            CommandPrefixOrSuffixItem::AssignmentWord(a, _) => match assignment(a) {
+                Ok(a) => assigns.push(a),
+                Err(c) => return c,
+            },
+            CommandPrefixOrSuffixItem::Word(w) => words.push(word(w)),
+            CommandPrefixOrSuffixItem::IoRedirect(_) => return unsupported("a redirection", line),
+            CommandPrefixOrSuffixItem::ProcessSubstitution(..) => return unsupported("process substitution", line),
         }
+    }
+    if let Some(w) = &sc.word_or_name {
+        words.push(word(w));
+    }
+    for item in sc.suffix.iter().flat_map(|s| s.0.iter()) {
+        match item {
+            // `local x=1`, `export x=1`: the builtin parses `name=value` itself.
+            CommandPrefixOrSuffixItem::AssignmentWord(_, w) | CommandPrefixOrSuffixItem::Word(w) => words.push(word(w)),
+            CommandPrefixOrSuffixItem::IoRedirect(_) => return unsupported("a redirection", line),
+            CommandPrefixOrSuffixItem::ProcessSubstitution(..) => return unsupported("process substitution", line),
+        }
+    }
+    Cmd::Simple { assigns, words, line }
+}
 
-        // Double-quoted: expand $VAR references
-        if inner.contains('$') {
-            let (var_parts, final_lit) = extract_var_refs(inner);
+fn assignment(a: &ast::Assignment) -> Result<Assign, Cmd> {
+    let line = line_of(a);
+    let name = match &a.name {
+        ast::AssignmentName::VariableName(n) => n.clone(),
+        ast::AssignmentName::ArrayElementName(n, _) => return Err(unsupported(&format!("array element assignment `{n}[…]=`"), line)),
+    };
+    match &a.value {
+        ast::AssignmentValue::Scalar(w) => Ok(Assign { name, value: word(w), append: a.append, line }),
+        ast::AssignmentValue::Array(_) => Err(unsupported(&format!("array assignment `{name}=(…)`"), line)),
+    }
+}
 
-            if var_parts.is_empty() {
-                return Expression::StringLiteral {
-                    value: inner.to_string(),
-                    meta: node_meta(word, ctx),
-                };
+fn compound(cc: &CompoundCommand, line: usize) -> Cmd {
+    let line = match line_of(cc) {
+        0 => line,
+        l => l,
+    };
+    match cc {
+        CompoundCommand::Arithmetic(a) => Cmd::Arith { expr: a.expr.value.clone(), line },
+        CompoundCommand::ArithmeticForClause(f) => Cmd::ArithFor {
+            init: f.initializer.as_ref().map(|e| e.value.clone()),
+            cond: f.condition.as_ref().map(|e| e.value.clone()),
+            step: f.updater.as_ref().map(|e| e.value.clone()),
+            body: list(&f.body.list),
+            line,
+        },
+        CompoundCommand::BraceGroup(g) => Cmd::Group(list(&g.list)),
+        CompoundCommand::Subshell(_) => unsupported("a subshell `( … )`", line),
+        CompoundCommand::ForClause(f) => Cmd::For {
+            var: f.variable_name.clone(),
+            words: f.values.as_ref().map(|ws| ws.iter().map(word).collect()),
+            body: list(&f.body.list),
+            line,
+        },
+        CompoundCommand::CaseClause(c) => {
+            let mut arms = Vec::new();
+            for item in &c.cases {
+                if !matches!(item.post_action, CaseItemPostAction::ExitCase) {
+                    return unsupported("`;&` / `;;&` in `case`", line);
+                }
+                let body = item.cmd.as_ref().map(list).unwrap_or_default();
+                arms.push((item.patterns.iter().map(word).collect(), body));
             }
-
-            // Build concatenation: parts + final
-            if var_parts.len() == 1 && var_parts[0].0.is_empty() && final_lit.is_empty() {
-                return Expression::Var {
-                    name: var_parts[0].1.clone(),
-                    meta: node_meta(word, ctx),
-                };
-            }
-
-            let mut result: Option<Expression> = None;
-            for (lit, var_name) in &var_parts {
-                if !lit.is_empty() {
-                    let lit_expr = Expression::StringLiteral {
-                        value: lit.clone(),
-                        meta: node_meta(word, ctx),
-                    };
-                    let var_expr = Expression::Var {
-                        name: var_name.clone(),
-                        meta: node_meta(word, ctx),
-                    };
-                    result = Some(match result {
-                        Some(acc) => Expression::BinaryOp {
-                            operator: "+".to_string(),
-                            left: Box::new(acc),
-                            right: Box::new(Expression::BinaryOp {
-                                operator: "+".to_string(),
-                                left: Box::new(lit_expr),
-                                right: Box::new(var_expr),
-                                meta: node_meta(word, ctx),
-                            }),
-                            meta: node_meta(word, ctx),
-                        },
-                        None => Expression::BinaryOp {
-                            operator: "+".to_string(),
-                            left: Box::new(lit_expr),
-                            right: Box::new(var_expr),
-                            meta: node_meta(word, ctx),
-                        },
-                    });
-                } else {
-                    let var_expr = Expression::Var {
-                        name: var_name.clone(),
-                        meta: node_meta(word, ctx),
-                    };
-                    result = Some(match result {
-                        Some(acc) => Expression::BinaryOp {
-                            operator: "+".to_string(),
-                            left: Box::new(acc),
-                            right: Box::new(var_expr),
-                            meta: node_meta(word, ctx),
-                        },
-                        None => var_expr,
-                    });
+            Cmd::Case { word: word(&c.value), arms, line }
+        }
+        CompoundCommand::IfClause(i) => {
+            let mut branches = vec![(list(&i.condition), list(&i.then))];
+            let mut else_body = None;
+            for e in i.elses.iter().flatten() {
+                match &e.condition {
+                    Some(cond) => branches.push((list(cond), list(&e.body))),
+                    None => else_body = Some(list(&e.body)),
                 }
             }
-            if !final_lit.is_empty() {
-                let lit_expr = Expression::StringLiteral {
-                    value: final_lit,
-                    meta: node_meta(word, ctx),
-                };
-                result = Some(match result {
-                    Some(acc) => Expression::BinaryOp {
-                        operator: "+".to_string(),
-                        left: Box::new(acc),
-                        right: Box::new(lit_expr),
-                        meta: node_meta(word, ctx),
-                    },
-                    None => lit_expr,
-                });
-            }
-            return result.unwrap_or(Expression::StringLiteral {
-                value: inner.to_string(),
-                meta: node_meta(word, ctx),
-            });
+            Cmd::If { branches, else_body, line }
         }
-
-        return Expression::StringLiteral {
-            value: inner.to_string(),
-            meta: node_meta(word, ctx),
-        };
-    }
-
-    Expression::StringLiteral {
-        value: raw.to_string(),
-        meta: node_meta(word, ctx),
-    }
-}
-
-fn cap_meta(namespace: &str, method: &str) -> HashMap<String, serde_json::Value> {
-    let mut meta = HashMap::new();
-    meta.insert("capability".to_string(), serde_json::Value::Bool(true));
-    meta.insert(
-        "namespace".to_string(),
-        serde_json::Value::String(namespace.to_string()),
-    );
-    meta.insert(
-        "method".to_string(),
-        serde_json::Value::String(method.to_string()),
-    );
-    meta
-}
-
-fn lower_compound_for_body(compound: &CompoundCommand, ctx: &LowerCtx) -> Vec<Statement> {
-    match compound {
-        CompoundCommand::BraceGroup(group) => lower_compound_list(&group.list, ctx).unwrap_or_default(),
-        _ => lower_compound_command(compound, ctx).unwrap_or_default(),
+        CompoundCommand::WhileClause(w) => Cmd::Loop { cond: list(&w.0), body: list(&w.1.list), until: false, line },
+        CompoundCommand::UntilClause(w) => Cmd::Loop { cond: list(&w.0), body: list(&w.1.list), until: true, line },
+        CompoundCommand::Coprocess(_) => unsupported("`coproc`", line),
     }
 }

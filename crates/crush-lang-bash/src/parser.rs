@@ -5,7 +5,9 @@ pub fn parse_source(source: &str) -> Result<brush_parser::ast::Program> {
     let opts = brush_parser::ParserOptions {
         enable_extended_globbing: true,
         posix_mode: false,
-        sh_mode: true,
+        // Bash, not POSIX sh: `sh_mode` parses `((…))` as nested subshells and
+        // rejects `for ((…))` and `a=(…)` (CRUSH-202).
+        sh_mode: false,
         tilde_expansion_at_word_start: true,
         tilde_expansion_after_colon: false,
         parser_impl: brush_parser::ParserImpl::default(),

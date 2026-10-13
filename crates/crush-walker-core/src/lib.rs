@@ -53,6 +53,8 @@
 //! ```
 
 pub mod adapter;
+/// Shared bash/zsh → CAST lowering (CRUSH-202).
+pub mod shell;
 
 use anyhow::{Context, Result};
 use crush_cast::{self as ast, Program};
