@@ -73,3 +73,7 @@ secrets.json
 
 # agent worktrees live inside the repo (squadron SQ-204)
 .jagent/worktrees/
+
+# jagent rendered views — never tracked (jagent-ticket render)
+.jagent/planning/TASKS.md
+.jagent/planning/STATE.md
