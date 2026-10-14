@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-159 |
 | **Priority** | P2 |
-| **Status** | Done (PR pending merge) |
+| **Status** | Done (merged to main: c2f470f) |
 | **Phase** | M3 |
 | **Assignee** | nimbus-c |
 | **Dependencies** | none |

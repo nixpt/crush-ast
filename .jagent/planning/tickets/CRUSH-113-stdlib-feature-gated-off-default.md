@@ -7,7 +7,7 @@
 | **Status** | Done (2026-10-07) |
 | **Phase** | M1 |
 | **Assignee** | nimbus (lane A1, derby phase 2) |
-| **Dependencies** | none (see CRUSH-108 for the stdlib source-reconciliation ticket) |
+| **Dependencies** | none (see CRUSH-263 (formerly CRUSH-108) for the stdlib source-reconciliation ticket) |
 | **Estimated effort** | S |
 
 ## Problem
@@ -52,7 +52,7 @@ crushc /tmp/c.crush -o /tmp/c.cvm1 && crush-run run /tmp/c.cvm1 --stdlib --cap i
 ## Technical approach
 
 - Either add `"stdlib"` to `default` in `crush-lang-sdk/Cargo.toml` (the `regex` dep is small), or make the `#[cfg(not(feature = "stdlib"))]` arm of `crush-run.rs` a hard error.
-- Cross-check with CRUSH-108: that ticket already found `stdlib.rs` implements and wires 59 stdcaps that CRUSH-56/88..97 don't reference — so this is an availability/flag question, not missing implementations.
+- Cross-check with CRUSH-263 (formerly CRUSH-108): that ticket already found `stdlib.rs` implements and wires 59 stdcaps that CRUSH-56/88..97 don't reference — so this is an availability/flag question, not missing implementations.
 
 ## Files to modify
 

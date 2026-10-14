@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-169 |
 | **Priority** | P4 |
-| **Status** | Done (PR pending foreman approval) |
+| **Status** | Done (on main — CRUSH-56/57/88–97 Superseded, MIGRATION-INVENTORY §2.5) |
 | **Phase** | M9 |
 | **Assignee** | panini-e |
 | **Dependencies** | foreman approval |
@@ -14,7 +14,7 @@
 
 ## Problem
 
-CRUSH-56 (tracker), CRUSH-57 (mock rewrites), CRUSH-88..97 (ten identical shard templates, no cap lists) and CRUSH-108 (source reconcile) plan a restore from `exosphere-1.0.zip`. CRUSH-122 already restored the clean families from exosphere's live tree; the 46 mock-tainted caps are the families MIGRATION-INVENTORY §2.2 classifies dead/out; the real remainder is CRUSH-151..155.
+CRUSH-56 (tracker), CRUSH-57 (mock rewrites), CRUSH-88..97 (ten identical shard templates, no cap lists) and CRUSH-263, formerly CRUSH-108 (source reconcile) plan a restore from `exosphere-1.0.zip`. CRUSH-122 already restored the clean families from exosphere's live tree; the 46 mock-tainted caps are the families MIGRATION-INVENTORY §2.2 classifies dead/out; the real remainder is CRUSH-151..155.
 
 ## Success criteria
 
@@ -47,7 +47,7 @@ Status changes (each ticket gets a `## Resolution` section; files kept, not dele
 |---|---|---|
 | CRUSH-56, CRUSH-57 | Superseded | CRUSH-122 + MIGRATION-INVENTORY §2.5 |
 | CRUSH-88 … CRUSH-97 (10 shards) | Superseded | same; real remainder CRUSH-151..155 |
-| CRUSH-108 (`stdlib-reconcile-source-and-dedupe`) | Superseded | same (its question — zip vs live tree — is answered in §2.3/§2.5) |
+| CRUSH-263, formerly CRUSH-108 (`stdlib-reconcile-source-and-dedupe`) | Superseded | same (its question — zip vs live tree — is answered in §2.3/§2.5) |
 | CRUSH-162 | Declined | captain C-2: no Lua unless someone asks |
 | CRUSH-163 | Deferred | captain C-3: decide with CRUSH-77 |
 | CRUSH-174 | Superseded | crushlang.org/playground (HTTP 200, 2026-10-07) + CRUSH-118 (#93) |
@@ -57,5 +57,5 @@ Planning rows: TASKS (162/163/174/169 rows, the "STDLIB RESTORATION MAP" backlog
 BACKLOG-INDEX (108 row, 121+ note, M9 table), ROADMAP (M9 table row, M9 checklist, proposed-ticket list,
 the "103 + 46 = 149 caps" risk note). Decision recorded with `dejavue decision`.
 
-Found on the way: the ID **CRUSH-108 is used twice** (`CRUSH-108-jit-nan-eq-test-failing-main.md` too).
+Found on the way: the ID **CRUSH-108 is used twice** (fixed 2026-10-12: the stdlib one is now CRUSH-263) (`CRUSH-108-jit-nan-eq-test-failing-main.md` too).
 Only the stdlib one is closed here; captured with `dejavue plan`.

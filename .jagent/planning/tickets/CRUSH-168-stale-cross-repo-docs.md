@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-168 |
 | **Priority** | P4 |
-| **Status** | Done (PR pending review) |
+| **Status** | Done (merged to main: f3e059b) |
 | **Phase** | M0 |
 | **Assignee** | panini-e |
 | **Dependencies** | none |
