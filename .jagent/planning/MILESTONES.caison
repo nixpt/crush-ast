@@ -1,0 +1,120 @@
+@caison { version: "1.0" }
+
+schema: "milestones/1"
+
+project: {
+  name: "crush-ast"
+  kind: "repo"
+  lifecycle: "active" @verified { at: "2026-10-14", by: "mile-seed" }
+  home: "main"
+  ticket_prefix: "CRUSH"
+  summary: "the Crush language toolchain (CAST, CVM/FastVM/JIT/AOT, polyglot walkers); v0.5.0 released and on crates.io 2026-10-12; M0 done, M1/M2/M5 and the publish lane still open in parallel, walker and stdlib work landing under the test-drive sweep"
+  north_star: "write in your language, ship at C speed: AI-native, polyglot, capability-sandboxed"
+  stewards: ["foreman"]
+  stale_after_days: 14
+  evidence: {
+    default_branch: "main"
+    registries: [{ registry: "crates.io", name: "crush-vm" }, { registry: "crates.io", name: "crush-frontend" }]
+  }
+}
+
+milestones: [
+  {
+    id: "M0"
+    title: "foundation & release hygiene"
+    status: "done" ~0.8 @verified { at: "2026-10-14", by: "mile-seed" }
+    done_when: [
+      "parser -> CAST -> semantics -> optimizer -> compiler -> CASM pipeline, CVM1/PortableVM, FastVM, core AOT, polyglot execution and sandbox landed",
+      { claim: "a release is tagged", check: { kind: "tag", pattern: "v0.*" } },
+    ]
+    notes: "TASKS.md: 'effectively complete'; the remaining publish cleanup is tracked under the Publish lane, not here"
+  },
+  {
+    id: "M1"
+    title: "correctness sweep"
+    status: "active" @verified { at: "2026-10-14", by: "mile-seed" }
+    tickets: ["CRUSH-1", "CRUSH-7", "CRUSH-8", "CRUSH-9", "CRUSH-11", "CRUSH-12", "CRUSH-13", "CRUSH-14", "CRUSH-15", "CRUSH-17", "CRUSH-18", "CRUSH-19", "CRUSH-20", "CRUSH-25"]
+    done_when: [
+      { claim: "all M1 tickets closed", check: { kind: "tickets", status: "Done" } },
+      { claim: "CRUSH-1 (AI opcodes execute) and CRUSH-7 (nested indexing/slicing) closed", met: false @verified { at: "2026-10-14", by: "mile-seed" } },
+    ]
+    notes: "CRUSH-1 Backlog, CRUSH-7 Partial. CRUSH-13's ticket file says Done but TASKS.md keeps it open (AOT backends not in the differential closure); treated as open."
+  },
+  {
+    id: "M2"
+    title: "JIT completion"
+    status: "active" ~0.7 @verified { at: "2026-10-14", by: "mile-seed" }
+    done_when: [
+      { claim: "phases 1-5 (skeleton, locals/calls, data/caps, exceptions, ExoLight) landed", met: true @verified { at: "2026-10-14", by: "mile-seed" } },
+      { claim: "full FastOp conformance audit, optimization validation, AOT-from-JIT, differential coverage vs AOT-C", met: false @verified { at: "2026-10-14", by: "mile-seed" } },
+    ]
+    notes: "phases 6/7 are tracked under M10 (CRUSH-60/61); the cranelift fuzz finding (~55 of 86 FastOps disagree) has no ticket yet"
+  },
+  {
+    id: "M3"
+    title: "debugger completion"
+    status: "active" ~0.5 @verified { at: "2026-10-14", by: "mile-seed" }
+    done_when: [
+      "variable inspection (print <var>)",
+      "source -> bytecode sourcemap (unblocked by CRUSH-74/79)",
+      "step-by-step state inspection",
+    ]
+    notes: "partial: breakpoint registry, REPL, VM integration and the NDJSON wire are built"
+  },
+  {
+    id: "M4"
+    title: "cross-project integration"
+    status: "active" ~0.5 @verified { at: "2026-10-14", by: "mile-seed" }
+    tickets: ["CRUSH-23"]
+    done_when: [
+      "surfer's in-tree Crush runtime migrated to crush-ast (tier 3)",
+      "divergence with exosphere's in-tree crush reconciled",
+    ]
+    notes: "partial: the C<->Crush FFI bridge is built. CRUSH-55 closed 2026-10-12 as 'ast is a superset of exo, retire exo runtimes' (3458e7d), which is the exosphere half of this."
+  },
+  {
+    id: "publish"
+    title: "crates.io lane"
+    status: "active" ~0.7 @verified { at: "2026-10-14", by: "mile-seed" }
+    done_when: [
+      { claim: "crush-vm on crates.io", check: { kind: "published", registry: "crates.io", name: "crush-vm" } },
+      { claim: "crush-aot on crates.io (unblocks crush-aotc)", check: { kind: "published", registry: "crates.io", name: "crush-aot" } },
+      "every crate uses version.workspace; walker-core published; the squatted 'walker' package renamed crush-walker",
+    ]
+    notes: "v0.5.0 (2026-10-12): crush-vm, crush-frontend, crush-lang-sdk, crush-pkg, crush-lang-python/js are on crates.io at 0.5.0; walker-core, crush-walker and crush-aot are not"
+  },
+  {
+    id: "M5"
+    title: "AI-native compiler layer"
+    status: "active" @verified { at: "2026-10-14", by: "mile-seed" }
+    tickets: ["CRUSH-27", "CRUSH-28", "CRUSH-29", "CRUSH-30", "CRUSH-31", "CRUSH-32", "CRUSH-33", "CRUSH-34"]
+    depends_on: ["M1"]
+    done_when: [
+      { claim: "all M5 tickets closed", check: { kind: "tickets", status: "Done" } },
+      "annotations are CAST nodes, crush-index is live, AI opcodes execute",
+    ]
+    notes: "ticket files: CRUSH-27/28/29/32 Done, CRUSH-31/33/34 Superseded, CRUSH-30 Backlog (needs a scope ruling). TASKS.md calls 31/33 done and 34 in progress. The VM-side AI opcode contract (CRUSH-1) is the main gap."
+  },
+  {
+    id: "M6"
+    title: "walker parity & multi-language completeness"
+    status: "planned" @verified { at: "2026-10-14", by: "mile-seed" }
+    tickets: ["CRUSH-21", "CRUSH-35", "CRUSH-36", "CRUSH-37", "CRUSH-38", "CRUSH-39"]
+    depends_on: ["M5"]
+    done_when: [
+      "the remaining walker-lowering gaps from VISION.md are closed",
+      "the Frontend / LanguageAdapter trait families are unified",
+    ]
+    notes: "ROADMAP/TASKS: Proposed. Walker fixes landed 2026-10-12 under the test-drive sweep tickets (CRUSH-197 rust, CRUSH-200 python, CRUSH-201 C, CRUSH-260 JS), not under M6's own tickets."
+  },
+  {
+    id: "M9"
+    title: "cross-project convergence & stdlib restoration"
+    status: "planned" @verified { at: "2026-10-14", by: "mile-seed" }
+    depends_on: ["M4"]
+    done_when: [
+      "surfer migrated, exosphere/nakshatra converged, stdlib remainder CRUSH-151..155 landed",
+    ]
+    notes: "ROADMAP/TASKS: Proposed. Stdlib migration hygiene filed CRUSH-264/265 on 2026-10-12."
+  },
+]
