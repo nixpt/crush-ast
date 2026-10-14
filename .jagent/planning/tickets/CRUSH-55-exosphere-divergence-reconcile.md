@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-55 |
 | **Priority** | P2 |
-| **Status** | In progress — inventory done, plan awaiting lane owner |
+| **Status** | Closed (2026-10-12) — ast ⊇ exo (D-1); every exosphere runtime retired (D-2) |
 | **Phase** | M9 — CROSS-REPO (exosphere) |
 
 ## Problem
@@ -30,8 +30,8 @@ A version bump cannot reconcile this — feature sets must merge.
 ## Definition of done
 
 - [x] Delta inventory committed (both repos cited) — `.jagent/planning/research/2026-09-25-CRUSH-55-delta-inventory.md`
-- [ ] Reconcile plan agreed on the bridge with the exosphere lane owner
-- [ ] First slice landed both sides or explicitly deferred with reasons
+- [x] Reconcile plan agreed — decided by the repo owner 2026-10-12 (D-1, D-2; `.dejavue/decisions.md`)
+- [x] crush-ast slices landed: 1 + 4 in #62, 2 = CRUSH-156..158, 3 = CRUSH-159/160; slice 5 (exo-side ecasm/CachedProgram move) dropped — exosphere is retired, nothing repoints onto ast's casm
 
 ## Result (2026-09-25)
 
@@ -77,3 +77,14 @@ the verdicts stand. [`docs/planning/MIGRATION-INVENTORY.md`](../../../docs/plann
 remaining slices are filed: PORT #1 → CRUSH-156–158, PORT #2 → CRUSH-159/160, PORT #4 → CRUSH-164,
 D-3 (Lua) → CRUSH-162, D-4 (FastVM host loop + AI op aliases) → CRUSH-163. D-1/D-2 still need the
 exosphere lane owner / captain.
+
+## Decisions (2026-10-12, repo owner)
+
+- **D-1 — closed as "ast ⊇ exo".** The inventory's finding stands; all four crush-ast-side slices
+  landed; slice 5 is not needed because no exosphere crate will be repointed onto crush-ast.
+- **D-2 — retire every exosphere language runtime (W11).** crush-ast's `EXEC_LANG` set (python,
+  node, bash via buckets) is the only polyglot execution path; a new language is a lang→bucket-spec
+  entry, not a runtime crate. (D-3 Lua: declined, C-2 / CRUSH-162. D-4 FastVM host loop: deferred,
+  C-3 / CRUSH-163.)
+
+Remaining stdlib follow-ups are tracked separately: CRUSH-264, CRUSH-265, CRUSH-180/181/185.

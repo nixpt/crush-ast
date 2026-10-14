@@ -1,6 +1,6 @@
 # CRUSH-108 — test_cmp_eq_nan_never_equal_jit fails deterministically on main
 
-**Status**: IN PROGRESS → fixed, PR #30 open (s418) · **Priority**: P1 (red test on main = gate noise for every merge)
+**Status**: Done — PR #30 merged 2026-08-05 (`b9dd5c1`); `test_cmp_eq_nan_never_equal_jit` is on main (`crates/crush-jit/src/lib.rs`) · **Priority**: P1 (red test on main = gate noise for every merge)
 
 ## Problem
 

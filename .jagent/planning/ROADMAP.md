@@ -308,15 +308,16 @@ its behavior, not just a smoke test.
       plan)~~ — **superseded** (CRUSH-169, 2026-10-07): CRUSH-122 restored the
       clean families from exosphere's live stdlib; the mock-tainted families
       are dead/out (`docs/planning/MIGRATION-INVENTORY.md` §2.2, §2.5)
-- [ ] stdlib remainder from the migration inventory landed: CRUSH-151
+- [x] stdlib remainder from the migration inventory landed: CRUSH-151
       (fs coreutils), 152 (`async.sleep`), 153 (`env.all`/`env.home_dir`, http
       verbs), 154 (`storage.*` — declined, C-6), 155 (effects metadata)
+      — all five done/declined by 2026-10-07; follow-ups CRUSH-264, CRUSH-265
 
 **Proposed tickets** (`CRUSH-54+`):
 
 - [CRUSH-54] Surfer migration wave 1: in-tree runtime → `crush-ast`
   (re-export, drop-in, no behavior change); wave 2: replace in-tree forks
-- [CRUSH-55] Exosphere divergence reconcile (cross-tree)
+- ~~[CRUSH-55] Exosphere divergence reconcile (cross-tree)~~ — closed 2026-10-12: ast ⊇ exo (D-1); exo runtimes retired (D-2)
 - ~~[CRUSH-56] STDLIB clean-restore tracker~~ / ~~[CRUSH-57] STDLIB
   mock-rewrite tracker~~ — superseded by CRUSH-122 + CRUSH-151..155 (CRUSH-169)
 - [CRUSH-58] Nakshatra artifact canonicalization (companion to CRUSH-23)

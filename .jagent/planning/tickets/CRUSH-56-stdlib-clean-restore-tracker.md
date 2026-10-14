@@ -17,7 +17,7 @@ dejavue↔crush-index) is DONE (s412), so this can start.
 
 ## Approach
 
-0. **Do [CRUSH-108](CRUSH-108-stdlib-reconcile-source-and-dedupe.md) first.**
+0. **Do [CRUSH-263](CRUSH-263-stdlib-reconcile-source-and-dedupe.md) (formerly CRUSH-108) first.**
    Live exploration (s439) found a candidate better source-of-truth than the
    zip (exosphere's own live `crates/core/base/stdlib`, mostly mock-free) and
    59 caps already restored/wired here (`crash-lang-sdk/src/stdlib.rs`) that

@@ -126,8 +126,10 @@ Slices, each independently shippable, crush-ast side first (no exosphere change 
 ### Decisions needed
 
 - **D-1 (exo lane owner):** accept that CRUSH-55's "both-ways divergence" is resolved as "ast ⊇ exo",
-  and close CRUSH-55 after slices 1–4 are ticketed?
-- **D-2 (captain):** W11 runtime verdicts above.
+  and close CRUSH-55 after slices 1–4 are ticketed? — **Decided 2026-10-12: yes, closed** (slices 1–4
+  landed; slice 5 dropped).
+- **D-2 (captain):** W11 runtime verdicts above. — **Decided 2026-10-12: retire every exosphere
+  runtime**; `EXEC_LANG` + buckets is the polyglot path.
 - **D-3:** Lua — port an in-process restricted-stdlib Lua `EXEC_LANG` (feature-gated, ~200 L + `mlua`),
   or retire Lua entirely? No live consumer needs it once exo's runtimes retire.
 - **D-4:** the lane-guarded FastVM items (AI op aliases; FastVM has no yield-servicing host loop —
