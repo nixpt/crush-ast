@@ -15,4 +15,3 @@
 # (capture-on-discovery), so it conflicts on exactly the same pattern as the
 # dejavue logs — but was never covered. Added 2026-07-24 after it conflicted
 # on two separate branches in a single cleanup pass.
-.jagent/planning/TASKS.md merge=union
