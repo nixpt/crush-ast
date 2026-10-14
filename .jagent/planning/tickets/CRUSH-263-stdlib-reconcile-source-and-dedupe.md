@@ -1,8 +1,10 @@
-# CRUSH-108 — Reconcile CRUSH-56's restoration source; dedupe against already-wired stdcaps
+# CRUSH-263 — Reconcile CRUSH-56's restoration source; dedupe against already-wired stdcaps
+
+> **Renumbered 2026-10-12** from CRUSH-108: that ID was used twice (the other is the JIT NaN ticket, `CRUSH-108-jit-nan-eq-test-failing-main.md`, which keeps it).
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-108 |
+| **ID** | CRUSH-263 |
 | **Priority** | P2 |
 | **Status** | Superseded (2026-10-07) — CRUSH-122 + MIGRATION-INVENTORY §2.5 (CRUSH-169) |
 | **Phase** | M9 |

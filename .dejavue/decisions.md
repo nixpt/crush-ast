@@ -848,4 +848,36 @@ Python / // % must not inherit Crush truncating DIV/MOD; shared arithmetic helpe
 
 Reason:
 canonicalize fails on a dangling link, which made it look like a new in-root file that the write then followed out of the root. A userspace resolver follows every link whether or not its target exists, so the root check sees the real destination; in-root links (dangling or not) keep working. Rejected openat2(RESOLVE_BENEATH): needs a new libc/rustix dep, is Linux-only so a portable fallback is needed anyway, and no Crush cap can create a symlink, so the only actors able to race a swap mid-call (process.exec, polyglot blocks, external processes) are already unconfined or outside the threat model. Residual: a middle component swapped for a link between resolve and open by a concurrent external process.
+## 2026-10-12T17:46:30-05:00 — [STRATEGIC] [ADOPTED] CRUSH-55 D-1: close the exosphere divergence reconcile as 'ast ⊇ exo'
+
+Reason:
+Decided by the user (repo owner) 2026-10-12. The 2026-09-25 delta inventory found exosphere's Crush fork is a subset of crush-ast: the three 'exosphere-only' features were a stub (execute_in_sandbox), an uncompiled file (polyglot_imports.rs) and identical code (ai_runtime.rs). All four crush-ast-side reconcile slices have landed: slice 1 + 4 (walker binary names, PATH fallback, orphaned polyglot/) in #62, slice 2 (AI engine) as CRUSH-156..158, slice 3 (debugger) as CRUSH-159/160. Slice 5 (move ecasm + CachedProgram into exo-owned crates) is not needed: exosphere is being retired, so no exo crate will repoint onto crush-ast's casm.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **close but keep slice 5 open as an exosphere-side ticket**
+- **keep CRUSH-55 open**
+
+Outcome:
+CRUSH-55 closed; slice 5 dropped
+
+
+## 2026-10-12T17:46:30-05:00 — [STRATEGIC] [ADOPTED] CRUSH-55 D-2: retire every exosphere language runtime (W11)
+
+Reason:
+Decided by the user (repo owner) 2026-10-12, following the W11 verdicts in the CRUSH-55 delta inventory. python/js/c/go are equivalent to or weaker than crush-ast's EXEC_LANG + walkers (exo's c/go 'transpile' modes only compile; native modes break the capability model). rust/zig only build or are likely broken; jvm/swift/bun are unsandboxed subprocesses; lua was declined (D-3/C-2, CRUSH-162); the AI engine was ported (CRUSH-156..158). crush-ast's EXEC_LANG set (python, node, bash via buckets) is the only polyglot execution path; a new language is a lang→bucket-spec entry, not a runtime crate.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **retire only the broken/placeholder runtimes and keep a shortlist**
+- **defer**: record verdicts, retire nothing yet
+
+Outcome:
+all exo runtimes retired; EXEC_LANG + buckets is the polyglot path
 

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-172 |
 | **Priority** | P5 |
-| **Status** | Done (PR pending review) |
+| **Status** | Done (merged to main: #117, 6a5866f) |
 | **Phase** | M4 |
 | **Assignee** | panini |
 | **Dependencies** | CRUSH-151 |
