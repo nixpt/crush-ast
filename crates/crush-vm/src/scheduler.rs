@@ -535,13 +535,12 @@ pub fn run_scheduled_streaming(
             StepAction::Done(ret_val) => {
                 threads[current].done = true;
                 threads[current].return_value = ret_val;
-                if current == 0 {
-                    return Ok(VmResult {
-                        output: threads[0].out_parts.concat(),
-                        steps: threads[0].steps,
-                        halted: true,
-                        stack: threads[0].stack.clone(),
-                    });
+                // Merge this thread's output into main's so spawned task
+                // output isn't lost. (Fixes #174: worker print output was
+                // silently discarded.)
+                if current != 0 {
+                    let parts = std::mem::take(&mut threads[current].out_parts);
+                    threads[0].out_parts.extend(parts);
                 }
                 // Capture return value before iterating to avoid aliasing.
                 let rv = threads[current].return_value.clone().unwrap_or(Value::Null);
@@ -551,6 +550,12 @@ pub fn run_scheduled_streaming(
                         threads[i].stack.push(rv.clone());
                     }
                 }
+                // Do NOT return early when the main thread (0) finishes.
+                // Let the scheduler loop continue until no threads are runnable,
+                // so spawned tasks run to completion. The !any_runnable check
+                // at the top of the loop returns main's result when all threads
+                // are done. (Fixes #174: spawned tasks were abandoned when main
+                // returned.)
             }
         }
 
