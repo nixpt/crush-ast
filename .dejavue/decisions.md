@@ -848,6 +848,10 @@ Python / // % must not inherit Crush truncating DIV/MOD; shared arithmetic helpe
 
 Reason:
 Two lowerers had drifted into the same silent-wrong bugs separately. Shell values must stay strings (an Int 5 != Str "5" under Eq), bash globals are visible to functions while CVM1 locals are per-frame (maps are shared references, so __g passed to every function gives the right semantics), and $?, &&, ||, !, if/while/until and the script's exit code all hang off one status variable. Dialect differences (zsh: no field splitting, empty unquoted expansion dropped, echo escapes, $x[1] subscripts, =cmd) are explicit checks. Rejected: patching each catch-all in place (keeps two implementations and the value-producing defaults); making locals dynamically scoped (rare in scripts; refused loudly instead when a name is local in one function and global in another).
+## 2026-10-13T18:34:42-05:00 — CRUSH-180: fs sandbox resolves paths component-by-component (symlink_metadata/read_link, follows dangling links, ELOOP 40) instead of canonicalize; writes open via open_for_write (create_new for new files, lstat/fstat compare for existing)
+
+Reason:
+canonicalize fails on a dangling link, which made it look like a new in-root file that the write then followed out of the root. A userspace resolver follows every link whether or not its target exists, so the root check sees the real destination; in-root links (dangling or not) keep working. Rejected openat2(RESOLVE_BENEATH): needs a new libc/rustix dep, is Linux-only so a portable fallback is needed anyway, and no Crush cap can create a symlink, so the only actors able to race a swap mid-call (process.exec, polyglot blocks, external processes) are already unconfined or outside the threat model. Residual: a middle component swapped for a link between resolve and open by a concurrent external process.
 ## 2026-10-12T17:46:30-05:00 — [STRATEGIC] [ADOPTED] CRUSH-55 D-1: close the exosphere divergence reconcile as 'ast ⊇ exo'
 
 Reason:

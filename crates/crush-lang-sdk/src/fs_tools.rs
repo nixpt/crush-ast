@@ -17,7 +17,7 @@
 //! Re-implemented over `std::fs`; the names and argument orders follow the
 //! older exosphere / `nixpt/crush` coreutils.
 
-use crate::host_caps::FsSandbox;
+use crate::host_caps::{FsSandbox, open_for_write};
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::path::Path;
@@ -137,7 +137,7 @@ impl HostCap for FsToolCap {
                     }
                     copy_tree(fs, &src, &dst)?;
                 } else {
-                    std::fs::copy(&src, &dst).map_err(|e| {
+                    copy_file(&src, &dst).map_err(|e| {
                         format!("{name} {} -> {}: {e}", fs.display(&src), fs.display(&dst))
                     })?;
                 }
@@ -154,10 +154,7 @@ impl HostCap for FsToolCap {
             }
             "fs.touch" => {
                 let path = fs.resolve(&args[0])?;
-                let file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
+                let file = open_for_write(&path, false)
                     .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
                 file.set_modified(std::time::SystemTime::now())
                     .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
@@ -211,10 +208,28 @@ pub(crate) fn list_dir(cap: &str, dir: &Path, fs: &FsSandbox) -> Result<Value, S
     ))
 }
 
+/// Copy one file's contents and permissions, as `std::fs::copy` does, but
+/// open the destination with [`open_for_write`] so it is never a symlink.
+fn copy_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let mut from = std::fs::File::open(src)?;
+    let permissions = from.metadata()?.permissions();
+    let mut to = open_for_write(dst, true)?;
+    std::io::copy(&mut from, &mut to)?;
+    to.set_permissions(permissions)
+}
+
 /// Recursive copy that never follows a symlink: a link inside the tree could
 /// point outside the sandbox, so it is refused rather than copied through.
+/// The same goes for the destination: only its top was confined, so a link
+/// already sitting at any path below it is refused too (CRUSH-180).
 fn copy_tree(fs: &FsSandbox, src: &Path, dst: &Path) -> Result<(), String> {
     let err = |p: &Path, e: std::io::Error| format!("fs.cp {}: {e}", fs.display(p));
+    if dst.is_symlink() {
+        return Err(format!(
+            "fs.cp {}: refusing to copy onto a symlink in a recursive copy",
+            fs.display(dst)
+        ));
+    }
     std::fs::create_dir_all(dst).map_err(|e| err(dst, e))?;
     for entry in std::fs::read_dir(src).map_err(|e| err(src, e))? {
         let entry = entry.map_err(|e| err(src, e))?;
@@ -229,7 +244,7 @@ fn copy_tree(fs: &FsSandbox, src: &Path, dst: &Path) -> Result<(), String> {
         } else if kind.is_dir() {
             copy_tree(fs, &from, &to)?;
         } else {
-            std::fs::copy(&from, &to).map_err(|e| err(&from, e))?;
+            copy_file(&from, &to).map_err(|e| err(&to, e))?;
         }
     }
     Ok(())
@@ -440,6 +455,117 @@ mod tests {
             std::fs::read_to_string(sb.outside().join("secret.txt")).unwrap(),
             "secret"
         );
+    }
+
+    /// CRUSH-180: a dangling symlink cannot be canonicalized, so it used to
+    /// be treated as a new file inside the root, and the write then followed
+    /// it out. Every create/write/copy/move/mkdir is checked against links
+    /// that point outside the root, dangling or not, at any component.
+    #[test]
+    fn dangling_symlinks_never_lead_out_of_the_root() {
+        use std::os::unix::fs::symlink;
+        let sb = Sandbox::new();
+        let (root, outside) = (sb.root(), sb.outside());
+        symlink("../outside/new.txt", root.join("dangle")).unwrap();
+        symlink(outside.join("abs.txt"), root.join("dangle-abs")).unwrap();
+        symlink("dangle", root.join("chain")).unwrap();
+        symlink("../outside/deep", root.join("dmid")).unwrap();
+        symlink("../outside", root.join("odir")).unwrap();
+        symlink("loop-b", root.join("loop-a")).unwrap();
+        symlink("loop-a", root.join("loop-b")).unwrap();
+
+        for link in ["dangle", "dangle-abs", "chain"] {
+            assert_escape(
+                sb.call_values("fs.write", vec![Value::Str(link.into()), Value::Str("x".into())]),
+                &format!("write {link}"),
+            );
+            assert_escape(sb.call("fs.touch", &[link]), &format!("touch {link}"));
+            assert_escape(sb.call("fs.cp", &["a.txt", link]), &format!("cp -> {link}"));
+            assert_escape(sb.call("fs.mkdir", &[link]), &format!("mkdir {link}"));
+            assert_escape(sb.call_values("fs.mkdir", vec![Value::Str(link.into()), Value::Bool(true)]), &format!("mkdir -p {link}"));
+        }
+        // A dangling or outside-pointing directory link as a middle component.
+        for path in ["dmid/x", "odir/x", "dmid/a/b", "odir/a/b"] {
+            assert_escape(
+                sb.call_values("fs.write", vec![Value::Str(path.into()), Value::Str("x".into())]),
+                &format!("write {path}"),
+            );
+            assert_escape(sb.call("fs.touch", &[path]), &format!("touch {path}"));
+            assert_escape(sb.call("fs.cp", &["a.txt", path]), &format!("cp -> {path}"));
+            assert_escape(sb.call("fs.mv", &["a.txt", path]), &format!("mv -> {path}"));
+            assert_escape(sb.call_values("fs.mkdir", vec![Value::Str(path.into()), Value::Bool(true)]), &format!("mkdir -p {path}"));
+        }
+        let copy = vec![Value::Str("sub".into()), Value::Str("dmid".into()), Value::Bool(true)];
+        assert_escape(sb.call_values("fs.cp", copy), "cp -r -> dangling dir link");
+        // A loop is an error, not a hang and not an escape.
+        assert!(sb.call("fs.touch", &["loop-a"]).is_err());
+
+        let mut entries: Vec<_> = std::fs::read_dir(&outside)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        entries.sort();
+        assert_eq!(entries, ["secret.txt"], "something was created outside the root");
+        assert!(root.join("a.txt").exists(), "mv moved a.txt somewhere");
+    }
+
+    /// `fs.cp -r` into an existing directory: only the destination's top is
+    /// resolved, so links already below it must not be written through.
+    #[test]
+    fn recursive_cp_never_writes_through_a_link_in_the_destination() {
+        use std::os::unix::fs::symlink;
+        let sb = Sandbox::new();
+        let root = sb.root();
+        std::fs::create_dir_all(root.join("tree/sub")).unwrap();
+        std::fs::write(root.join("tree/a.txt"), "A").unwrap();
+        std::fs::write(root.join("tree/sub/b.txt"), "B").unwrap();
+        for (dest, link, target) in [
+            ("d1", "a.txt", "../../outside/pwn"), // dangling file link
+            ("d2", "sub", "../../outside"),       // existing outside dir
+            ("d3", "sub", "../../outside/deep"),  // dangling dir link
+        ] {
+            std::fs::create_dir(root.join(dest)).unwrap();
+            symlink(target, root.join(dest).join(link)).unwrap();
+            let args = vec![Value::Str("tree".into()), Value::Str(dest.into()), Value::Bool(true)];
+            let err = sb.call_values("fs.cp", args).expect_err(dest);
+            assert!(err.contains("symlink"), "{dest}: {err}");
+        }
+        let mut entries: Vec<_> = std::fs::read_dir(sb.outside())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        entries.sort();
+        assert_eq!(entries, ["secret.txt"], "something was created outside the root");
+    }
+
+    /// Links that stay inside the root keep working, dangling ones included:
+    /// writing through them creates their in-root target.
+    #[test]
+    fn symlinks_inside_the_root_still_work() {
+        use std::os::unix::fs::symlink;
+        let sb = Sandbox::new();
+        let root = sb.root();
+        symlink("a.txt", root.join("alink")).unwrap();
+        symlink("sub", root.join("sublink")).unwrap();
+        symlink("sub/fresh.txt", root.join("fresh")).unwrap();
+        symlink("../root/sub/../made", root.join("made-link")).unwrap();
+
+        sb.call_values("fs.write", vec![Value::Str("alink".into()), Value::Str("via".into())])
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "via");
+        assert!(root.join("alink").is_symlink(), "the link itself was replaced");
+
+        sb.call_values("fs.write", vec![Value::Str("sublink/x.txt".into()), Value::Str("x".into())])
+            .unwrap();
+        assert!(root.join("sub/x.txt").is_file());
+
+        sb.call("fs.touch", &["fresh"]).unwrap();
+        assert!(root.join("sub/fresh.txt").is_file());
+
+        sb.call("fs.cp", &["a.txt", "made-link"]).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("made")).unwrap(), "via");
+        sb.call_values("fs.mkdir", vec![Value::Str("sublink/d/e".into()), Value::Bool(true)]).unwrap();
+        assert!(root.join("sub/d/e").is_dir());
     }
 
     #[test]
