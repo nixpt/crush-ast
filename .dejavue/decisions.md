@@ -844,6 +844,10 @@ Reason:
 Python / // % must not inherit Crush truncating DIV/MOD; shared arithmetic helpers + dedicated caps keep one implementation for every backend. py.print (space sep + True/None) is Python-shaped without changing Crush io.print concatenation. make_range 3-arg step lives in one module used by scheduler and portable_vm.
 
 
+## 2026-10-13T18:34:42-05:00 — CRUSH-180: fs sandbox resolves paths component-by-component (symlink_metadata/read_link, follows dangling links, ELOOP 40) instead of canonicalize; writes open via open_for_write (create_new for new files, lstat/fstat compare for existing)
+
+Reason:
+canonicalize fails on a dangling link, which made it look like a new in-root file that the write then followed out of the root. A userspace resolver follows every link whether or not its target exists, so the root check sees the real destination; in-root links (dangling or not) keep working. Rejected openat2(RESOLVE_BENEATH): needs a new libc/rustix dep, is Linux-only so a portable fallback is needed anyway, and no Crush cap can create a symlink, so the only actors able to race a swap mid-call (process.exec, polyglot blocks, external processes) are already unconfined or outside the threat model. Residual: a middle component swapped for a link between resolve and open by a concurrent external process.
 ## 2026-10-12T17:46:30-05:00 — [STRATEGIC] [ADOPTED] CRUSH-55 D-1: close the exosphere divergence reconcile as 'ast ⊇ exo'
 
 Reason:
