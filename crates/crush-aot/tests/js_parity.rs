@@ -68,6 +68,8 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
     ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
     ("scope_catch_shadow", "CRUSH-zorro-5: a `catch` parameter that shadows an outer binding"),
+    ("scope_hoist_block_loop", "CRUSH-250: a nested `function` that uses its enclosing function's locals"),
+    ("scope_hoist_late_let", "CRUSH-250: a nested `function` that uses its enclosing function's locals"),
     ("scope_nested_fn_decl", "CRUSH-250: a nested `function` that uses its enclosing function's locals"),
     ("scope_shadow_closure", "CRUSH-zorro-5: a block `let` that shadows an outer binding"),
     ("scope_shadow_loop", "CRUSH-zorro-5: a loop/block `let` that shadows an outer binding"),
@@ -83,6 +85,8 @@ const RUST_LOUD: &[(&str, &str)] = &[
 const RUST_SILENT: &[(&str, &str, &str)] = &[
     // AOT only (loud on the VM):
     ("fn_default_param", "CRUSH-zorro-26", "AOT reads the missing argument as null, so `a + b` with b = 10 by default prints 1 (node: 11); exposed once #199 made JS `+` treat null as 0"),
+    ("fn_script_late", "CRUSH-zorro-54", "a top-level function reads the script's variables as null: `null: null` (node: `count: 2`)"),
+    ("fn_script_vars", "CRUSH-zorro-54", "a top-level function reads the script's variables as null: `0 []` (node: `61 [ 3, 3, 55 ]`)"),
     ("misc_console_multi", "CRUSH-zorro-12", "`undefined` prints `null`"),
     ("misc_undefined", "CRUSH-zorro-12", "undefined / out-of-range index / missing field print `null`"),
     ("ops_nan", "CRUSH-zorro-12", "`NaN` reads as null, so NaN === NaN is true"),
@@ -104,6 +108,13 @@ const BOA_LOUD: &[(&str, &str)] = &[
     ("ops_optional_chain", "CRUSH-zorro-12: `?.` (refused at walk time)"),
     ("misc_console_multi", "CRUSH-zorro-12: `undefined` as a value (refused at walk time)"),
     ("ops_nan", "CRUSH-zorro-12: `NaN` as a value (refused at walk time)"),
+    // A top-level function using a script variable is a closure over it on
+    // boa (VM exact); AOT can't compile closures yet. On swc these read the
+    // variables as null (CRUSH-zorro-54) or, in ops_ternary_nested, match
+    // only because the function never runs.
+    ("fn_script_late", "closures (CRUSH-251) don't compile on AOT yet"),
+    ("fn_script_vars", "closures (CRUSH-251) don't compile on AOT yet"),
+    ("ops_ternary_nested", "closures (CRUSH-251) don't compile on AOT yet"),
     // Matched on AOT with swc only because AOT reads the unbound name
     // `undefined` as `null`, and `null == undefined` agrees by accident.
     ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` as a value (refused at walk time)"),
