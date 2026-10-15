@@ -183,17 +183,20 @@ impl HostCap for FfiGatewayCap {
             }
 
             let plugin = &*plugin_ptr;
-            let exports_slice = std::slice::from_raw_parts(plugin.exports, plugin.export_count);
+            if plugin.export_count > 0 && plugin.exports.is_null() {
+                return Err("Plugin export table is null".to_string());
+            }
+            let exports_slice = if plugin.export_count == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(plugin.exports, plugin.export_count)
+            };
 
             let export = exports_slice
                 .iter()
                 .find(|exp| {
-                    if exp.name.is_null() {
-                        false
-                    } else {
-                        let name = CStr::from_ptr(exp.name).to_string_lossy();
-                        name == cap_name
-                    }
+                    !exp.name.is_null()
+                        && CStr::from_ptr(exp.name).to_string_lossy() == cap_name
                 })
                 .ok_or_else(|| {
                     format!(
