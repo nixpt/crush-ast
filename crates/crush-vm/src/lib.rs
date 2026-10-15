@@ -20,6 +20,7 @@ pub mod value;
 pub mod assembler;
 pub mod bytecode;
 pub mod cosm_gate;
+pub mod cosm_rt;
 pub mod ai_args;
 pub mod arithmetic;
 pub mod make_range;

@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-37 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Done (fixed by CRUSH-zorro-43, PR: agent/vega/CRUSH-zorro-43) |
 | **Phase** | M9 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | none (the full fix arrives with COSM K1, `docs/design/object-model.md`; this ticket is the interim fix) |
 | **Estimated effort** | S |
 | **Filed by** | vega — 2026-10-15, found during the object-model survey (#206), reproduced on `origin/main` `c864367` |
@@ -44,6 +44,20 @@ struct name is dropped in `casm_to_vm` ("Stubs for unimplemented opcodes"), so t
       keys, a wildcard fallback; AOT exact or loud.
 - [ ] The Python walker's keyword class patterns (lowered to `Pattern::Struct`) get the class check too, or stay
       loud until Python classes exist.
+
+## Resolution
+
+Fixed by **CRUSH-zorro-43** (COSM K1.4), the long-term fix rather than the interim tag: a struct value is a Record
+of its Kind on the scheduler VM and the portable VM, and a struct pattern tests the Kind (`is_kind` / CVM1
+`IS_KIND`) before reading any field. The program above prints `2`:
+`crush-lang-sdk/tests/cosm_k1_records.rs::zorro_37_struct_patterns_test_the_kind`.
+`struct_patterns_nested_maps_and_wildcards` (same file) covers same-field structs, nested struct patterns, a map
+with the same keys (never matches) and a wildcard fallback.
+
+- FastVM, the JIT and AOT Rust/C have no Kinds: `is_kind` is an op they don't know, so a program with a struct
+  pattern is refused when it is lowered/compiled (exact-or-loud); crush-aotc refuses it explicitly.
+- A struct pattern naming no declared struct is a compile error. That keeps the Python walker's keyword class
+  patterns (`case Point(x=…)`) loud until Python classes lower to COSM (K3).
 
 ## Technical approach
 

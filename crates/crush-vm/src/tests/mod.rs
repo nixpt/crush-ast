@@ -187,3 +187,5 @@ mod func_values;
 
 #[cfg(test)]
 mod kind_table;
+// COSM K1.4 (CRUSH-zorro-43): Records, Kinds and the member ops on both VMs.
+mod records;

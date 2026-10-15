@@ -92,6 +92,23 @@ pub(crate) const OP_VECTOR_PUSH: i64 = 28;
 pub(crate) const OP_SET_PUSH: i64 = 29;
 pub(crate) const OP_GET_FIELD: i64 = 30;
 pub(crate) const OP_SET_FIELD: i64 = 31;
+
+/// `ctx.error` for a runtime error whose message is in [`take_error_message`]
+/// (COSM K1.4: a write to a sealed Kind's undeclared field).
+pub(crate) const ERR_COSM: i32 = 5;
+
+thread_local! {
+    static ERROR_MESSAGE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+fn set_error_message(msg: String) {
+    ERROR_MESSAGE.with(|m| *m.borrow_mut() = Some(msg));
+}
+
+/// The message of the last [`ERR_COSM`] error on this thread.
+pub(crate) fn take_error_message() -> Option<String> {
+    ERROR_MESSAGE.with(|m| m.borrow_mut().take())
+}
 pub(crate) const OP_NEW_OBJ: i64 = 32;
 pub(crate) const OP_NEW_STRUCT: i64 = 33;
 pub(crate) const OP_STR_SIM: i64 = 34;
@@ -929,11 +946,19 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             if let Some(ref_idx) = target.to_ref() {
                 if let Some(arena) = arena_mut(ctx.arena) {
-                    if let Ok(Object::Object { fields, .. }) = arena.get_mut(ref_idx) {
+                    if let Ok(Object::Object { fields, class_name, .. }) = arena.get_mut(ref_idx) {
                         let name = strings
                             .and_then(|ss| ss.get(field_name_idx))
                             .cloned()
                             .unwrap_or_default();
+                        // COSM K1.4: an instance of a sealed Kind takes only
+                        // its declared fields, as on the VMs.
+                        if let Err(msg) = crush_vm::fastvm::check_sealed_write(class_name, &name) {
+                            set_error_message(msg);
+                            ctx.error = ERR_COSM;
+                            ctx.push(target);
+                            return;
+                        }
                         fields.insert(name, jit_to_rtv(val));
                     }
                 }
