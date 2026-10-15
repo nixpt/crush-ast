@@ -1,6 +1,6 @@
 //! syn statement → CAST statement lowering.
 
-use crush_walker_core::LowerCtx;
+use crush_walker_core_no_tree_sitter::LowerCtx;
 
 use crush_cast::{CastType, Expression, Statement};
 use quote::ToTokens;

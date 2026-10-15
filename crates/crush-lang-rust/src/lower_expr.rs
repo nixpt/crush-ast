@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crush_walker_core::LowerCtx;
+use crush_walker_core_no_tree_sitter::LowerCtx;
 use quote::ToTokens;
 
 use crush_cast::{CastType, Expression, Statement};
