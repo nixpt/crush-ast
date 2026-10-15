@@ -12,6 +12,7 @@ use std::collections::HashMap;
 /// Fails with [`crate::UnsupportedOps`] if any instruction has no C
 /// translation.
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
+    crate::refuse_cosm(program, "C")?;
     let mut out = String::new();
 
     emit_c_header(&mut out);

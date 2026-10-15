@@ -204,6 +204,22 @@ fn compiler_exposes_the_module() {
     assert_eq!(c.cosm_module(), cosm.as_ref());
 }
 
+/// COSM K1.3 (CRUSH-zorro-42): the CASM program carries the module as its
+/// kind table, on every compile entry point.
+#[test]
+fn the_casm_program_carries_the_kind_table() {
+    let (casm, cosm) = crush_frontend::compile_crush_source_with_cosm(POINT).unwrap();
+    assert!(cosm.is_some());
+    assert_eq!(casm.cosm, cosm);
+    assert_eq!(crush_frontend::compile_crush_source(POINT).unwrap().cosm, cosm);
+    let mut c = crush_frontend::compiler::Compiler::new();
+    let casm = c.compile(crush_frontend::parse_source(POINT).unwrap()).unwrap();
+    assert_eq!(casm.cosm, cosm);
+    // A later compile of a program without declarations doesn't keep it.
+    let casm = c.compile(crush_frontend::parse_source("let x = 1\nprint(x)\n").unwrap()).unwrap();
+    assert_eq!(casm.cosm, None);
+}
+
 #[test]
 fn programs_without_declarations_have_no_module() {
     let (_, cosm) = crush_frontend::compile_crush_source_with_cosm("let x = 1\nprint(x)\n").unwrap();

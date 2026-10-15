@@ -315,6 +315,7 @@ mod tests {
                 permissions: vec!["io.print".to_string()],
             },
             lang: None,
+            cosm: None,
         };
 
         #[derive(Debug)]

@@ -416,6 +416,9 @@ fn run_from(
     mut sink: Option<&mut dyn FnMut(&str)>,
     start: Option<(&str, Vec<Value>)>,
 ) -> Result<VmResult, VmError> {
+    // COSM K1.3: refuse, before running anything, a kind table whose Kinds
+    // wouldn't behave as today's maps (see `cosm_gate`).
+    crate::cosm_gate::check_runnable(program.cosm.as_ref())?;
     let code = &program.code;
     let n = code.len();
     if n == 0 {

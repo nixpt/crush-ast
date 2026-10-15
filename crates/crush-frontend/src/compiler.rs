@@ -293,12 +293,11 @@ impl Compiler {
 
         let mut debug_info = DebugInfo::new();
         let mut source_files: HashMap<String, usize> = HashMap::new();
-        let mut casm_program = CasmProgram {
-            version: program.cast_version,
-            functions: HashMap::new(),
-            lang: program.lang,
-            manifest: Manifest::default(),
-        };
+        let mut casm_program = CasmProgram::new();
+        casm_program.version = program.cast_version;
+        casm_program.lang = program.lang;
+        // COSM K1.3 (CRUSH-zorro-42): the kind table travels with the program.
+        casm_program.cosm = self.cosm.clone();
 
         for (name, func) in program.functions {
             let mut instrs = Vec::new();

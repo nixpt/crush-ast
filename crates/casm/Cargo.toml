@@ -12,6 +12,7 @@ categories = ["compilers"]
 
 [dependencies]
 crush-errors.workspace = true
+crush-cosm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rmp-serde = "1.1"

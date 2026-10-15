@@ -186,11 +186,16 @@ pub struct PortableVm {
     next_watch_id: u32,
     /// Why the last `DebugBreak` happened.
     last_stop: Option<crate::debug::DebugStop>,
+    /// COSM K1.3: why the program's kind table can't run on this VM yet
+    /// (`cosm_gate`), found at load. `step` reports it before running
+    /// anything.
+    load_error: Option<String>,
 }
 
 impl PortableVm {
     /// Create a new portable VM with the given program.
     pub fn new(program: Program) -> Self {
+        let load_error = crate::cosm_gate::unsupported_reason(program.cosm.as_ref());
         // Extract permissions before moving program
         let permissions = program.manifest.permissions.clone();
 
@@ -249,6 +254,7 @@ impl PortableVm {
             watches: Vec::new(),
             next_watch_id: 0,
             last_stop: None,
+            load_error,
         }
     }
 
@@ -537,6 +543,9 @@ impl PortableVm {
     pub fn step(&mut self) -> Result<Option<VmYield>, VmError> {
         if self.halted {
             return Ok(None);
+        }
+        if let Some(reason) = &self.load_error {
+            return Err(VmError::Unsupported(reason.clone()));
         }
 
         // Check breakpoints BEFORE execution. When multiple
