@@ -1,17 +1,27 @@
 //! syn statement → CAST statement lowering.
 
-use crush_walker_core::LowerCtx;
+use crush_walker_core_no_tree_sitter::LowerCtx;
 
 use crush_cast::{CastType, Expression, Statement};
 use quote::ToTokens;
-use syn::Stmt;
+use syn::{Stmt, spanned::Spanned};
 
 use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
 
 pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
-    let meta = ctx.meta_at(0);
+    let start = stmt.span().start();
+    lower_stmt_inner(stmt, ctx).map_err(|error| {
+        anyhow::anyhow!("Rust statement at {}:{}: {error:#}", start.line, start.column + 1)
+    })
+}
+
+fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
+    let start = stmt.span().start();
+    let meta = ctx.meta_lc(start.line, start.column + 1);
     match stmt {
         Stmt::Local(local) => {
+            let mut meta = meta;
+            meta.insert("rust_value_hint".into(), crate::values::hint(&local.pat));
             let name = pat_to_ident(&local.pat)?;
             let value = match &local.init {
                 Some(init) => lower_expr(&init.expr, ctx)?,
@@ -26,6 +36,10 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
         }
         Stmt::Item(item) => match item {
             syn::Item::Fn(item_fn) => {
+                let mut meta = meta;
+                let (params, ret) = crate::values::signature(&item_fn.sig);
+                meta.insert("rust_value_params".into(), params);
+                meta.insert("rust_value_return".into(), ret);
                 let name = item_fn.sig.ident.to_string();
                 let params: Vec<(String, CastType)> = item_fn
                     .sig
@@ -216,7 +230,7 @@ fn is_statement_like(e: &syn::Expr) -> bool {
 }
 
 /// A tail expression in a function with a return type: branches return their own tails.
-fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+pub(crate) fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
     let meta = ctx.meta_at(0);
     Ok(match e {
         syn::Expr::If(e_if) => {

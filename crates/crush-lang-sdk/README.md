@@ -26,6 +26,40 @@ the host capabilities granted to the program. `VmResult::output` captures
 printed text and `VmResult::return_value` carries the entry function's explicit
 `return` value.
 
+The source-compilation APIs below are unreleased and are not in the published
+0.6.0 SDK. Version 0.6.0 supports embedding Crush with `compile_crush_source`
+as shown above.
+
+The SDK can also compile source from enabled walker languages into the same VM
+program type:
+
+```rust,no_run
+use crush_lang_sdk::{Runtime, compile::compile_source};
+
+let program = compile_source("rust", r#"fn main() { println!("hello"); }"#)?;
+let result = Runtime::new().run(&program)?;
+assert_eq!(result.output, "hello\n");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The selector may be a language name (`"rust"`) or extension (`"rs"` or
+`".rs"`). Rust support is controlled by the `polyglot-rust` Cargo feature.
+The default SDK feature set enables it; `default-features = false` omits the
+`crush-lang-rust` walker dependency. Walker source goes through the shared
+`AdapterRegistry`, Crush's compiler, and the same CVM1 assembly path. Crush
+source continues to use `compile::compile_crush_source` so polyglot blocks and
+declared-capability checks keep their existing preparation.
+
+Mapped Rust methods such as `.to_lowercase()` and `.pow()` use named standard
+library capabilities. Embedding hosts enable those with
+`Runtime::new().with_host_caps(HostCapsBuilder::new().stdlib(true).build())`
+(requires the `stdlib` feature). `Runtime::new()` alone does not register the
+SDK standard library or grant filesystem, process, or network access.
+
+Rust source support is a subset with known semantic gaps. The
+[conformance inventory](../../docs/rust-conformance.md) records VM/AOT parity,
+unsupported constructs, and ticket-linked blockers before `.rs` CLI dispatch.
+
 ## Calling a manually built Rust wrapper
 
 `crush-ffi` provides a stable C ABI for small wrapper functions. Build the
@@ -47,7 +81,7 @@ ABI symbols, generics, or arbitrary crate APIs directly.
 ## What's here
 
 - **builder** — configure and drive a compile-and-run flow.
-- **compile** — source → CASM via [crush-frontend](https://crates.io/crates/crush-frontend).
+- **compile** — Crush source and enabled walker languages → CASM/CVM1 via the shared walker registry and [crush-frontend](https://crates.io/crates/crush-frontend).
 - **caps** — declare the host capabilities exposed to running programs.
 - **bus** — message bus for host ↔ program communication.
 - **akg** — application knowledge graph integration.

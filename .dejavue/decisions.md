@@ -1067,6 +1067,16 @@ Outcome:
 casm::kind_unsupported_strategies + cosm_unsupported_reason; Program::refuse_cosm and crush_vm::cosm_gate delegate to it. crush-aotc separately refuses object ops (it has no maps; they used to be dropped silently).
 
 
+## 2026-10-15T14:04:38-05:00 — [TACTICAL] [ADOPTED] CRUSH-xps-7 checks Rust value uses after lexical resolution and copies only flat proven sequences
+
+Reason:
+CAST arrays share storage, whereas Rust Vec/array clones need fresh values. The existing seq.slice implementation agrees across CVM1 and both AOT engines. A bounded value pass can prove scalar/text elements without adding VM ownership or a borrow checker; implicit owned transfers and escaping borrowed views are rejected until their semantics are implemented.
+
+Artifacts: crates/crush-lang-rust/src/values/mod.rs
+
+Outcome:
+Keep type hints in Rust CAST metadata, lower flat clone/to_vec/to_owned to seq.slice, preserve immutable String values, and report unsupported transfers with source locations.
+
 ## 2026-10-15T13:08:42-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] COSM K1.4: every struct is a Record on the two VMs; map engines keep their map path (approach b, at the CASM->CVM1 boundary) (CRUSH-zorro-43)
 
 Reason:

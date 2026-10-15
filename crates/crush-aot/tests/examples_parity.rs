@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crush_aot::AotCompiler;
+use crush_lang_sdk::effects::used_by;
 use crush_lang_sdk::{Quotas, Runtime};
 
 /// `(example, backend)` pairs whose AOT output is known to differ, and why. Keyed by
@@ -35,6 +36,39 @@ fn examples_dir() -> PathBuf {
 
 fn cc_available(cc: &str) -> bool {
     Command::new(cc).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// `// expect-error: <text>` marker on its own line within the first ~20 lines.
+/// When present, a compile failure (or a documented runtime error) is expected
+/// and the example is skipped here; the new `examples_compile` test asserts the
+/// marker is honest.
+fn expect_error_marker(source: &str) -> bool {
+    source
+        .lines()
+        .take(20)
+        .any(|line| line.trim_start().starts_with("// expect-error:"))
+}
+
+/// True when the program can't be run by the VM because it needs a capability
+/// this test doesn't grant — legitimately not comparable (see `vm_stdout`'s
+/// doc comment: "it needs a capability grant").
+fn is_capability_error(source: &str) -> bool {
+    let Ok(program) = crush_lang_sdk::compile::compile_crush_source(source) else {
+        return false;
+    };
+    let quotas = Quotas { max_steps: 20_000_000, ..Quotas::default() };
+    match Runtime::with_quotas(quotas).run(&program) {
+        Err(e) => e.to_string().contains("capability"),
+        _ => false,
+    }
+}
+
+/// First non-empty line of an error string, trimmed.
+fn first_error_line(err: &str) -> String {
+    err.lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+        .unwrap_or_else(|| err.to_string())
 }
 
 /// What `crush-run` prints, or `None` when the VM can't run the program (it needs a
@@ -94,8 +128,42 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
                 while let Some(path) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let name = path.file_stem().unwrap().to_string_lossy().into_owned();
                     let source = std::fs::read_to_string(path).unwrap();
-                    let Some(expected) = vm_stdout(&source) else { continue };
-                    let Ok(program) = crush_frontend::compile_crush_source(&source) else { continue };
+                    let has_marker = expect_error_marker(&source);
+
+                    // A compile failure is a bug unless the file declares an
+                    // expect-error marker (examples_compile asserts each marker
+                    // is honest). Skip only expected errors here.
+                    let Ok(program) = crush_frontend::compile_crush_source(&source) else {
+                        let err = crush_frontend::compile_crush_source(&source).unwrap_err();
+                        if has_marker {
+                            continue;
+                        }
+                        failures.lock().unwrap().push(format!(
+                            "{name}: fails to compile: {}",
+                            first_error_line(&err.to_string())
+                        ));
+                        continue;
+                    };
+
+                    // `io.read` programs can't be compared without input, and
+                    // programs that need a capability this test doesn't grant
+                    // can't be run here; both are legitimately not comparable
+                    // (see `vm_stdout`'s doc comment). Anything else the VM
+                    // can't run is a real finding, not a silent skip.
+                    let io_read = crush_lang_sdk::compile::compile_crush_source(&source)
+                        .ok()
+                        .and_then(|program| used_by(&program).ok())
+                        .map_or(false, |used| used.contains("io.read"));
+                    let Some(expected) = vm_stdout(&source) else {
+                        if has_marker || io_read || is_capability_error(&source) {
+                            continue;
+                        }
+                        failures.lock().unwrap().push(format!(
+                            "{name}: VM cannot run the program \
+                             (not io.read, no expect-error marker)"
+                        ));
+                        continue;
+                    };
 
                     let mut backends: Vec<(&str, Result<PathBuf, String>)> = vec![(
                         "rust",
