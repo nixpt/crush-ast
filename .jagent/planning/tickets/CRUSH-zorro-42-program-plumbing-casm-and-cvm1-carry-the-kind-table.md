@@ -35,12 +35,18 @@ them with objects treated as maps.
   v2 blob. v1/v2 blobs load with `cosm = None`; a pre-K1.3 runtime rejects a v3 blob as an unsupported version.
   Unknown section formats, malformed COSM and trailing bytes are `Error::BadKindTable`.
 - The disassembler prints a summary (comments) and a `.cosm <json>` directive; the assembler reads it back.
-- **Scheduler VM / portable VM:** a kind table whose Kinds behave exactly as today's maps (Crush's defaults:
-  `reference`, `structural`, `literal`; no hooks, accessors or field defaults) runs exactly as before; any other is
-  refused at load (`VmError::Unsupported`, before the first instruction). See `crush_vm::cosm_gate`.
-- **FastVM/JIT** (in the shared lowering, `lower_program` / `lower_bytecode_program`), **crush-aot** (Rust and C
-  code generation) and **crush-aotc** refuse any non-empty kind table. Crush programs that declare a `struct`,
-  `impl` or `trait` no longer run there until those engines implement COSM.
+- **One rule for every engine** (owner decision on #219): `casm::cosm_unsupported_reason`. A Kind that behaves
+  exactly as today's maps — Crush's defaults (`reference`, `structural`, `literal`) with no hooks, accessors or
+  field defaults — runs; any other is refused at load/compile time, naming the engine, the Kind and the strategy,
+  with `(CRUSH-zorro-43)`. Applied by the scheduler VM and portable VM (`crush_vm::cosm_gate`, before the first
+  instruction), FastVM and the JIT (their shared lowering), crush-aot (Rust and C) and crush-aotc
+  (`casm::Program::refuse_cosm`). Crush programs with `struct` / `impl` / `trait` on the defaults run on every
+  engine and agree with the scheduler VM (`crush-aot/tests/cosm_k1_lifted_methods.rs`), as under K1.2.
+- crush-aotc has no objects or maps at all: `new_obj` / `set_field` / `get_field` were dropped as unhandled ops, so
+  every field read returned the last value set (the Point program printed 136, not 129). They are now refused
+  loudly, for any program; crush-aotc stays loud on struct instances until it gets objects.
+- crush-aotc mangles function names injectively with a `cf_` prefix; qualified names (`Point::norm2`) used to reach
+  the C source verbatim.
 - Decision recorded in dejavue (*CVM1 kind table: a version-3 trailing section…*).
 
 ## Technical approach

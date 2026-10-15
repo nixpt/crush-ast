@@ -1037,3 +1037,15 @@ Rejected alternatives:
 Outcome:
 crush_vm::bytecode::{VERSION_NO_KIND_TABLE=2, VERSION_KIND_TABLE=3, KIND_TABLE_FORMAT_JSON=1}; Program.cosm; Error::BadKindTable. casm::Program.cosm is serde-optional (absent=None, omitted when None, last field; binary CASM embeds it as a COSM JSON string). The disassembler prints a comment summary + a '.cosm <json>' directive the assembler reads back. Scheduler/portable VM run map-equivalent Kinds (reference/structural/literal, no hooks/accessors/field defaults) exactly as before and refuse others at load; FastVM/JIT/AOT/aotc refuse any non-empty kind table.
 
+
+## 2026-10-15T12:20:33-05:00 — [STRATEGIC] [ARCHITECTURAL] COSM K1.3: one narrow kind-table rule for every engine (casm::cosm_unsupported_reason)
+
+Reason:
+Owner decision on #219: engines without Kinds refuse only Kinds a plain map can't represent (non-reference semantics, identity equality, non-literal construction, hooks, accessors, field defaults); map-compatible Kinds (Crush's defaults) run on every engine, as under K1.2. The rule lives once in casm so the scheduler/portable VM, FastVM/JIT, crush-aot and crush-aotc can't drift.
+
+Rejected alternatives:
+- **refuse any non-empty kind table on FastVM/JIT/AOT**: regressed struct/impl/trait programs those engines ran correctly as maps
+
+Outcome:
+casm::kind_unsupported_strategies + cosm_unsupported_reason; Program::refuse_cosm and crush_vm::cosm_gate delegate to it. crush-aotc separately refuses object ops (it has no maps; they used to be dropped silently).
+
