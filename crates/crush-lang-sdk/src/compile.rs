@@ -432,6 +432,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         perms.extend(program.manifest.permissions.clone());
     }
 
+    let is_kind = |name: &str| program.kind_table().is_some_and(|m| m.kind(name).is_some());
     for (fname, func) in &program.functions {
         // A GPU kernel (it uses `ptx_*` device ops, CRUSH-zorro-3) runs on the device via
         // `gpu.launch`, which compiles it from CASM with crush-ptx. It has no CVM1
@@ -690,7 +691,14 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 }
                 "halt" => "HALT".to_string(),
                 "exit_try" => "EXIT_TRY".to_string(),
-                "new_obj" => "NEW_OBJ".to_string(),
+                // COSM K1.4: a struct literal is `new_obj` tagged with its
+                // Kind (FastVM/JIT/AOT ignore the tag and build a map); the
+                // VMs build a Record (no constructor runs: a literal writes
+                // the fields itself).
+                "new_obj" => match instr.args.get("kind").and_then(|v| v.as_str()) {
+                    Some(kind) if is_kind(kind) => format!("NEW_RECORD {kind:?}"),
+                    _ => "NEW_OBJ".to_string(),
+                },
                 "get_field" => {
                     let field = instr
                         .args
@@ -713,8 +721,47 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         })?;
                     format!("SET_FIELD {field:?}")
                 }
+                // `new P()`: an instance of the Kind `P` (COSM K1.4); a name
+                // that isn't a Kind still builds a plain object.
+                "new_struct" => match instr.args.get("name").and_then(|v| v.as_str()) {
+                    Some(kind) if is_kind(kind) => construct_asm(program, kind, 0),
+                    _ => "NEW_OBJ".to_string(),
+                },
+                // COSM K1.4 (CRUSH-zorro-43): the generic member ops.
+                "get_member" | "set_member" | "has_member" | "del_member" => {
+                    let name = instr.args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("{} missing name at {fname}:{i}", instr.op)
+                    })?;
+                    format!("{} {name:?}", instr.op.to_uppercase())
+                }
+                "call_member" => {
+                    let name = instr.args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("call_member missing name at {fname}:{i}")
+                    })?;
+                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+                    format!("CALL_MEMBER {name:?} {argc}")
+                }
+                "construct" => {
+                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("construct missing kind at {fname}:{i}")
+                    })?;
+                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+                    construct_asm(program, kind, argc)
+                }
+                "get_slot" | "set_slot" => {
+                    let slot = instr.args.get("slot").and_then(|v| v.as_u64()).ok_or_else(|| {
+                        anyhow::anyhow!("{} missing slot at {fname}:{i}", instr.op)
+                    })?;
+                    format!("{} {slot}", instr.op.to_uppercase())
+                }
+                "is_kind" => {
+                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("is_kind missing kind at {fname}:{i}")
+                    })?;
+                    format!("IS_KIND {kind:?}")
+                }
+                "copy" => "COPY".to_string(),
                 // Stubs for unimplemented opcodes — prevent bailing
-                "new_struct" => "NEW_OBJ".to_string(),
                 "dom_mutate" | "dom_event_listener" | "dom_query" => "NOP".to_string(),
                 // CRUSH-156: the ten `ai_native.*` kinds lower to their AI
                 // opcode with the compiled payload as the string operand
@@ -816,7 +863,26 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     // COSM K1.3 (CRUSH-zorro-42): the kind table goes into the CVM1 program
     // as-is; `to_blob` writes it as the version-3 kind-table section.
     vm_program.cosm = program.cosm.clone();
+    // COSM K1.4: a program with Kinds records each function's arity, which
+    // the VMs need to make function values (bound methods) from members.
+    if vm_program.kind_table().is_some() {
+        for (name, entry) in vm_program.manifest.functions.iter_mut() {
+            entry.arity = program.functions.get(name).and_then(|f| u8::try_from(f.params.len()).ok());
+        }
+    }
     Ok(vm_program)
+}
+
+/// `CONSTRUCT "kind" argc`, followed — for a Kind built by an initialiser
+/// function — by the `POP` of that function's return value the VMs expect
+/// (`crush_vm::cosm_rt::initialises_by_call`).
+fn construct_asm(program: &casm::Program, kind: &str, argc: u64) -> String {
+    let calls = program.kind_table().is_some_and(|module| crush_vm::cosm_rt::initialises_by_call(module, kind));
+    if calls {
+        format!("CONSTRUCT {kind:?} {argc}\n    POP")
+    } else {
+        format!("CONSTRUCT {kind:?} {argc}")
+    }
 }
 
 #[cfg(test)]

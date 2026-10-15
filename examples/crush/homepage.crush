@@ -1,4 +1,4 @@
-// expect-error: [runtime] Parse errors: Expected property name but found newline at line 10, column 13, Unexpecte...
+// expect-error: Parse errors: Expected property name but found newline at line 11
 capability system readonly
 
 fn load_stats() {

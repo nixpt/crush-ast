@@ -1,4 +1,4 @@
-// expect-error: [runtime] Undefined function: str
+// expect-error: Undefined function: str
 capability system readonly
 
 fn factorial(n) {

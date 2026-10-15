@@ -47,6 +47,8 @@ pub fn assemble(
     let mut parsed: Vec<Parsed> = Vec::new();
     let mut labels: HashMap<String, usize> = HashMap::new();
     let mut functions: HashMap<String, usize> = HashMap::new();
+    // `.func name arity` (COSM K1.4): the function's recorded arity.
+    let mut arities: HashMap<String, u8> = HashMap::new();
     let mut entry_name: Option<String> = None;
     let mut consts: Vec<String> = Vec::new();
     let mut const_index: HashMap<String, usize> = HashMap::new();
@@ -111,8 +113,14 @@ pub fn assemble(
             let toks = split_tokens(&line);
             match toks[0].as_str() {
                 ".func" => {
-                    if toks.len() != 2 {
-                        return Err(AssemblyError::new(lineno, ".func needs exactly one name"));
+                    if toks.len() != 2 && toks.len() != 3 {
+                        return Err(AssemblyError::new(lineno, ".func needs a name (and optionally its arity)"));
+                    }
+                    if let Some(a) = toks.get(2) {
+                        let n = parse_int(a, lineno)?;
+                        let n = u8::try_from(n)
+                            .map_err(|_| AssemblyError::new(lineno, format!("arity out of range: {n}")))?;
+                        arities.insert(toks[1].clone(), n);
                     }
                     let fname = toks[1].clone();
                     if !is_valid_ident(&fname) {
@@ -210,11 +218,11 @@ pub fn assemble(
                     .ok_or_else(|| AssemblyError::new(p.line, format!("unknown label {v:?}")))?;
                 code.extend_from_slice(&(target as u32).to_be_bytes());
             }
-            OperandKind::Cap => {
+            OperandKind::Cap | OperandKind::Member => {
                 if p.args.len() != 2 {
                     return Err(AssemblyError::new(
                         p.line,
-                        "CAP_CALL needs <\"cap\"> <argc>",
+                        format!("{} needs <\"name\"> <argc>", p.op),
                     ));
                 }
                 let cap = parse_string(&p.args[0], p.line)?;
@@ -281,7 +289,9 @@ pub fn assemble(
         manifest.runtime = "casm-v1".to_string();
         manifest.functions = functions
             .iter()
-            .map(|(k, &v)| (k.clone(), crate::bytecode::FunctionEntry { entry: v }))
+            .map(|(k, &v)| {
+                (k.clone(), crate::bytecode::FunctionEntry { entry: v, arity: arities.get(k).copied() })
+            })
             .collect();
         manifest.entry = entry_name;
     }
@@ -329,11 +339,11 @@ pub fn disassemble(program: &Program) -> String {
 
     // Collect jump targets and function offsets for label placement.
     let mut jump_targets: std::collections::BTreeSet<usize> = Default::default();
-    let func_at: HashMap<usize, &str> = program
+    let func_at: HashMap<usize, (&str, Option<u8>)> = program
         .manifest
         .functions
         .iter()
-        .map(|(k, v)| (v.entry, k.as_str()))
+        .map(|(k, v)| (v.entry, (k.as_str(), v.arity)))
         .collect();
     let mut scan = 0usize;
     while scan < code.len() {
@@ -451,6 +461,17 @@ pub fn disassemble(program: &Program) -> String {
         (NEW_SET, "NEW_SET"),
         (SET_PUSH, "SET_PUSH"),
         (MAP_KEYS, "MAP_KEYS"),
+        (GET_MEMBER, "GET_MEMBER"),
+        (SET_MEMBER, "SET_MEMBER"),
+        (HAS_MEMBER, "HAS_MEMBER"),
+        (DEL_MEMBER, "DEL_MEMBER"),
+        (CALL_MEMBER, "CALL_MEMBER"),
+        (CONSTRUCT, "CONSTRUCT"),
+        (GET_SLOT, "GET_SLOT"),
+        (SET_SLOT, "SET_SLOT"),
+        (IS_KIND, "IS_KIND"),
+        (COPY, "COPY"),
+        (NEW_RECORD, "NEW_RECORD"),
         (HALT, "HALT"),
     ]
     .iter()
@@ -459,8 +480,10 @@ pub fn disassemble(program: &Program) -> String {
 
     let mut ip = 0usize;
     while ip < code.len() {
-        if let Some(fname) = func_at.get(&ip) {
-            lines.push(format!(".func {fname}"));
+        match func_at.get(&ip) {
+            Some((fname, Some(arity))) => lines.push(format!(".func {fname} {arity}")),
+            Some((fname, None)) => lines.push(format!(".func {fname}")),
+            None => {}
         }
         if jump_targets.contains(&ip) {
             lines.push(format!("L{ip}:"));
@@ -498,7 +521,7 @@ pub fn disassemble(program: &Program) -> String {
                 let t = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap());
                 format!("    {op_name} L{t}")
             }
-            OperandKind::Cap => {
+            OperandKind::Cap | OperandKind::Member => {
                 let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
                 let argc = code[ip + 3];
                 let cap = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
@@ -629,6 +652,17 @@ fn opcode_for(name: &str) -> Option<u8> {
         "STR_TO_UPPER" => Some(STR_TO_UPPER),
         "STR_TO_LOWER" => Some(STR_TO_LOWER),
         "STR_TRIM" => Some(STR_TRIM),
+        "GET_MEMBER" => Some(GET_MEMBER),
+        "SET_MEMBER" => Some(SET_MEMBER),
+        "HAS_MEMBER" => Some(HAS_MEMBER),
+        "DEL_MEMBER" => Some(DEL_MEMBER),
+        "CALL_MEMBER" => Some(CALL_MEMBER),
+        "CONSTRUCT" => Some(CONSTRUCT),
+        "GET_SLOT" => Some(GET_SLOT),
+        "SET_SLOT" => Some(SET_SLOT),
+        "IS_KIND" => Some(IS_KIND),
+        "COPY" => Some(COPY),
+        "NEW_RECORD" => Some(NEW_RECORD),
         "HALT" => Some(HALT),
         _ => None,
     }

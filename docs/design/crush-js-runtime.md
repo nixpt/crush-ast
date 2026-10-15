@@ -222,8 +222,8 @@ The `crush-lang-js` crate implements two parsing backends producing the same CAS
 
 | Backend | Parser | Feature Flag | Handles |
 |---------|--------|-------------|---------|
-| **swc** (default) | `swc_ecma_parser` v41 | none | JS, JSX, TS, TSX, MTS |
-| **boa** (optional) | `boa_parser` v0.21 | `boa-backend` | JS only |
+| **swc** (default) | `swc_ecma_parser` v41 | `swc-backend` (+ `ts` for TS) | JS, JSX, TS, TSX, MTS |
+| **boa** (optional; CRUSH-250 makes it the `.js` default) | `boa_parser` v0.22 | `js-boa` | JS only |
 
 ### What Each Lowerer Handles
 

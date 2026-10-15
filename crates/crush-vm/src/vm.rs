@@ -113,6 +113,11 @@ pub enum VmError {
         crush_line: Option<u32>,
         phase: LangFailurePhase,
     },
+    /// A COSM object operation went wrong (COSM K1.4, CRUSH-zorro-43): an
+    /// unknown member, a write to a sealed Kind, an ambiguous trait method, a
+    /// malformed kind table.
+    #[error("{0}")]
+    Cosm(String),
 }
 
 /// Distinguishes the two ways an `EXEC_LANG` polyglot block can fail at
@@ -200,6 +205,7 @@ pub fn find_func(v: &Value) -> Option<std::rc::Rc<FuncValue>> {
         Value::Tuple(t) => t.iter().find_map(find_func),
         Value::List(l) => l.borrow().iter().find_map(find_func),
         Value::Map(m) => m.borrow().values().find_map(find_func),
+        Value::Record(r) => r.fields().iter().find_map(|(_, v)| find_func(v)),
         _ => None,
     }
 }
@@ -252,6 +258,11 @@ pub enum Value {
     /// `CELL_GET` / `CELL_SET`. Never visible to programs — a cell reaching a
     /// printer or an operator means an unboxing path was missed.
     Cell(std::rc::Rc<std::cell::RefCell<Value>>),
+    /// An instance of a Kind (COSM K1.4, CRUSH-zorro-43): a struct value.
+    /// Shared like a map; a `value(…)` Kind is copied by `COPY`.
+    Record(std::rc::Rc<crate::cosm_rt::RecordValue>),
+    /// A Kind used as a value: the receiver of a `bound_cls` method.
+    Kind(std::rc::Rc<crate::cosm_rt::Kind>),
 }
 
 impl PartialEq for Value {
@@ -291,6 +302,10 @@ impl PartialEq for Value {
             }
             // Two closures over the same variable share its cell.
             (Value::Cell(a), Value::Cell(b)) => std::rc::Rc::ptr_eq(a, b),
+            (Value::Record(_), Value::Record(_) | Value::Map(_)) | (Value::Map(_), Value::Record(_)) => {
+                crate::cosm_rt::record_eq(self, other)
+            }
+            (Value::Kind(a), Value::Kind(b)) => a.name() == b.name(),
             _ => false,
         }
     }
@@ -316,6 +331,8 @@ impl Value {
             Value::Foreign(_) => "foreign",
             Value::Func(_) => "function",
             Value::Cell(_) => "cell",
+            Value::Record(_) => "record",
+            Value::Kind(_) => "kind",
         }
     }
 
@@ -338,6 +355,7 @@ impl Value {
             Value::Foreign(_) => true,
             Value::Func(_) => true,
             Value::Cell(_) => true,
+            Value::Record(_) | Value::Kind(_) => true,
         }
     }
 
@@ -431,6 +449,12 @@ impl std::fmt::Display for Value {
             Value::Foreign(id) => write!(f, "<foreign {id}>"),
             Value::Func(func) => write!(f, "<fn {}>", func.display_name()),
             Value::Cell(_) => write!(f, "<cell>"),
+            // Crush's struct print: the map the struct used to be.
+            Value::Record(r) => {
+                let inner: Vec<String> = r.fields().iter().map(|(k, v)| format!("{k}: {v}")).collect();
+                write!(f, "{{{}}}", inner.join(", "))
+            }
+            Value::Kind(k) => write!(f, "<kind {}>", k.name()),
         }
     }
 }
@@ -525,6 +549,15 @@ impl serde::Serialize for Value {
                 serializer.serialize_str(&format!("<fn {}>", func.display_name()))
             }
             Value::Cell(_) => serializer.serialize_str("<cell>"),
+            Value::Record(r) => {
+                let fields = r.fields();
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for (k, v) in &fields {
+                    map.serialize_entry(k, v)?;
+                }
+                map.end()
+            }
+            Value::Kind(k) => serializer.serialize_str(&format!("<kind {}>", k.name())),
         }
     }
 }

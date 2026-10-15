@@ -161,7 +161,7 @@ impl<'a> BoaAnalyzer<'a> {
                     }
                 }
             }
-            Statement::Continue(_) | Statement::Break(_) | Statement::Empty => {}
+            Statement::Continue(_) | Statement::Break(_) | Statement::Empty | Statement::Debugger => {}
         }
         r.estimated_complexity += 1;
     }
@@ -192,7 +192,10 @@ impl<'a> BoaAnalyzer<'a> {
             }
             Declaration::Lexical(lex) => {
                 let list = match lex {
-                    LexicalDeclaration::Const(list) | LexicalDeclaration::Let(list) => list,
+                    LexicalDeclaration::Const(list)
+                    | LexicalDeclaration::Let(list)
+                    | LexicalDeclaration::Using(list)
+                    | LexicalDeclaration::AwaitUsing(list) => list,
                 };
                 for v in list.as_ref() {
                     if let Some(init) = v.init() {
@@ -316,8 +319,6 @@ impl<'a> BoaAnalyzer<'a> {
             | Expression::Literal(_)
             | Expression::Identifier(_)
             | Expression::Parenthesized(_)
-            | Expression::FormalParameterList(_)
-            | Expression::Debugger
             | Expression::BinaryInPrivate(_)
             | Expression::AsyncArrowFunction(_)
             | Expression::GeneratorExpression(_)

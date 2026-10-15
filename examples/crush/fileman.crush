@@ -1,4 +1,4 @@
-// expect-error: [runtime] Undefined function: format
+// expect-error: Undefined function: format
 capability fs readonly
 
 fn main() {
