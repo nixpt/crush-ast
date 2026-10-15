@@ -66,6 +66,7 @@
 | 239–242 | 2026-10-09 scripting test drive (claude): stdin EOF vs blank line (239), fs.stat/append (240), stderr + run-summary noise (241), process.exec result type (242) |
 | 244–249 | 2026-10-09 CASM↔WASM test drive (claude): crush-web stdlib (244, done), crush-web grant preflight (245), WASM walker keeps only calls (246), .wasm read as UTF-8 (247), export-name mismatch (248), crush-walk-run exit status (249) |
 | 266   | Rust ↔ Crush interop audit and Rust crate access (user-directed, gates native extensions on CRUSH-179) |
+| xps  | Box-scoped Rust ↔ Crush pipeline tickets: xps-1 manual host-approved plugins; xps-2 phased design; xps-3 SDK Rust source API; xps-4 CLI `.rs` dispatch; xps-5 Rust subset conformance/diagnostics |
 | 231 | s476 (kai): CI toolchain pin dead + 24 crates never run tests in CI |
 | 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
 
