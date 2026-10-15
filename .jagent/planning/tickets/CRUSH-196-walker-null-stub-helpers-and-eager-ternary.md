@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-196 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Partial — ternary/if-expression done (2026-10-14); slice / `in` / `is` now fail loudly, not implemented |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | none |
 | **Estimated effort** | M |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build) |
@@ -34,7 +34,20 @@
 
 ## Success criteria
 
-- [ ] Ternary/if-expressions lower to a CAST conditional (branching), not a call.
+- [x] Ternary/if-expressions lower to a CAST conditional (branching), not a call. (JS swc + boa, Python, Rust → the lazy `__crush_ternary__`.)
 - [ ] Slice / `in` / `is` lower to real ops or real shared caps (one implementation,
       every backend — CRUSH-114 rule); no stub returns `Null` silently.
 - [ ] Walker tests assert on *program output*, not just CAST shape.
+
+## Result (2026-10-14, `agent/vega/js-walker-silent-bugs`)
+
+- JS (swc + boa), Python and Rust lower `?:` / `a if c else b` / `if` as a value to
+  `__crush_ternary__`, which the compiler lowers with jumps (only the taken branch runs).
+  Measured on `main` `e83eff6` before: Python `"big" if n > 5 else "small"` → `None`, recursive
+  `fib` through a conditional → `call depth quota exceeded`, Rust `let y = if … {1} else {2}` →
+  `null`; JS `x % 2 === 0 ? "even" : "odd"` → `null`. All now match node / CPython / rustc.
+- The null stubs for `__crush_ifexpr__`, `__crush_slice__`, `__crush_contains__`, `__crush_is__`
+  are removed from `crush-walk-run` and the Python/Rust SDK runners. Slice / `in` / `is` now fail
+  with `unknown capability: __crush_slice__` (etc.) instead of printing `None` — **criterion 2
+  (real implementations) is still open**. The two Python SDK tests that asserted the stubs
+  "don't crash" now assert the loud failure.

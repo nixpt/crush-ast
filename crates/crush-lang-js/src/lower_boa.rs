@@ -597,7 +597,7 @@ impl<'a> BoaLower<'a> {
                 let cons = self.expr(c.if_true());
                 let alt = self.expr(c.if_false());
                 CastExpr::Call {
-                    function: "__crush_ifexpr__".to_string(),
+                    function: "__crush_ternary__".to_string(), // lazy; `__crush_ifexpr__` was an unknown helper
                     args: vec![test, cons, alt],
                     meta: self.meta0(),
                 }
