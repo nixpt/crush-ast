@@ -127,6 +127,27 @@ fn pop2(stack: &mut Vec<RuntimeValue>) -> (RuntimeValue, RuntimeValue) {
     (a, b)
 }
 
+/// `seq.slice` — mirrors crush-vm `seq::slice_indices` (CPython slice.indices).
+fn seq_slice(t: RuntimeValue, a: RuntimeValue, b: RuntimeValue, st: RuntimeValue) -> RuntimeValue {
+    let opt = |v: &RuntimeValue| match v { RuntimeValue::Int(i) => Some(*i), RuntimeValue::Null => None, _ => { eprintln!("crush(aot): slice bounds must be int or null"); std::process::exit(1) } };
+    let step = opt(&st).unwrap_or(1);
+    if step == 0 { eprintln!("crush(aot): slice step cannot be zero"); std::process::exit(1); }
+    let (start, stop) = (opt(&a), opt(&b));
+    let idx = |len: i64| -> Vec<i64> {
+        let norm = |v: i64, lo: i64, hi: i64| { let v = if v < 0 { v + len } else { v }; v.clamp(lo, hi) };
+        let (s, e) = if step > 0 { (start.map_or(0, |v| norm(v, 0, len)), stop.map_or(len, |v| norm(v, 0, len))) }
+                     else { (start.map_or(len - 1, |v| norm(v, -1, len - 1)), stop.map_or(-1, |v| norm(v, -1, len - 1))) };
+        let mut out = Vec::new(); let mut i = s;
+        while (step > 0 && i < e) || (step < 0 && i > e) { out.push(i); i += step; }
+        out
+    };
+    match t {
+        RuntimeValue::String(s) => { let cs: Vec<char> = s.chars().collect(); RuntimeValue::String(idx(cs.len() as i64).into_iter().map(|i| cs[i as usize]).collect()) }
+        RuntimeValue::Array(a) => { let a = a.borrow(); RuntimeValue::Array(std::rc::Rc::new(std::cell::RefCell::new(idx(a.len() as i64).into_iter().map(|i| a[i as usize].clone()).collect()))) }
+        _ => { eprintln!("crush(aot): can only slice a string or array"); std::process::exit(1) }
+    }
+}
+
 fn arith_overflow() -> ! {
     eprintln!("crush(aot): arithmetic overflow");
     std::process::exit(1);
@@ -831,6 +852,14 @@ fn emit_body(
                 }
                 "math.truediv" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(*x as f64 / *y as f64) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "seq.slice" => {
+                    out.push_str(&format!("{ind}{{ let __st = stack.pop().unwrap_or(RuntimeValue::Null); let __b = stack.pop().unwrap_or(RuntimeValue::Null); let __a = stack.pop().unwrap_or(RuntimeValue::Null); let __t = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(seq_slice(__t, __a, __b, __st)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "math.power" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y)) if *y>=0 => {{ match u32::try_from(*y) {{ Ok(e)=>RuntimeValue::Int(x.checked_pow(e).unwrap_or_else(|| arith_overflow())), Err(_)=>match *x {{ 0|1=>RuntimeValue::Int(*x), -1=>RuntimeValue::Int(if *y%2==0 {{1}} else {{-1}}), _=>arith_overflow() }} }} }}, (RuntimeValue::Int(0),RuntimeValue::Int(_))=>div_zero(), (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Float((*x as f64).powf(*y as f64)), (RuntimeValue::Float(x),RuntimeValue::Float(y))=>RuntimeValue::Float(x.powf(*y)), (RuntimeValue::Int(x),RuntimeValue::Float(y))=>RuntimeValue::Float((*x as f64).powf(*y)), (RuntimeValue::Float(x),RuntimeValue::Int(y))=>RuntimeValue::Float(x.powf(*y as f64)), _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "math.floordiv" => {

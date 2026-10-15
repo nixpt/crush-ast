@@ -1611,6 +1611,12 @@ impl PortableVm {
                 "math.truediv" => {
                     crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
                 }
+                "seq.slice" => {
+                    crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
+                }
+                "math.power" => {
+                    crate::arithmetic::power_values(&args[0], &args[1]).map(Some)
+                }
                 "math.floordiv" => {
                     crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)
                 }

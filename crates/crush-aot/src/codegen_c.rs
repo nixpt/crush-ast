@@ -777,6 +777,69 @@ static Value _true_div(Value a, Value b) {
     if (fb == 0.0) _crush_arith_error("division by zero");
     return mk_float(fa / fb);
 }
+/* `seq.slice`: mirrors crush-vm seq::slice_indices (CPython slice.indices). */
+static int64_t _slice_norm(int64_t v, int64_t len, int64_t lo, int64_t hi) {
+    if (v < 0) v += len;
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+static Value _seq_slice(Value t, Value a, Value b, Value st) {
+    if ((a.tag != TAG_INT && a.tag != TAG_NULL) || (b.tag != TAG_INT && b.tag != TAG_NULL) || (st.tag != TAG_INT && st.tag != TAG_NULL))
+        _crush_arith_error("type error: slice bounds must be int or null");
+    int64_t step = st.tag == TAG_INT ? st.i : 1;
+    if (step == 0) _crush_arith_error("slice step cannot be zero");
+    int64_t len;
+    if (t.tag == TAG_STRING) {
+        len = 0;
+        for (const unsigned char* p = (const unsigned char*)t.s; p && *p; p++) if ((*p & 0xC0) != 0x80) len++;
+    } else if (t.tag == TAG_ARRAY && t.array_idx >= 0 && t.array_idx < _array_count) {
+        len = _arrays[t.array_idx].len;
+    } else {
+        _crush_arith_error("type error: can only slice a string or array");
+    }
+    int64_t s, e;
+    if (step > 0) { s = a.tag == TAG_INT ? _slice_norm(a.i, len, 0, len) : 0; e = b.tag == TAG_INT ? _slice_norm(b.i, len, 0, len) : len; }
+    else { s = a.tag == TAG_INT ? _slice_norm(a.i, len, -1, len - 1) : len - 1; e = b.tag == TAG_INT ? _slice_norm(b.i, len, -1, len - 1) : -1; }
+    if (t.tag == TAG_ARRAY) {
+        int idx = _alloc_array(); CrushArray* src = &_arrays[t.array_idx];
+        for (int64_t i = s; (step > 0 && i < e) || (step < 0 && i > e); i += step) {
+            CrushArray* dst = &_arrays[idx]; _array_reserve(dst, dst->len + 1); dst->data[dst->len++] = src->data[i];
+        }
+        return mk_array(idx);
+    }
+    /* string: code-point start offsets, then copy the selected characters */
+    int64_t* off = (int64_t*)malloc((size_t)(len + 1) * sizeof(int64_t));
+    if (!off) _crush_arith_error("out of memory");
+    int64_t k = 0, bytes = 0;
+    for (const unsigned char* p = (const unsigned char*)t.s; *p; p++, bytes++) if ((*p & 0xC0) != 0x80) off[k++] = bytes;
+    off[len] = bytes;
+    size_t total = 0;
+    for (int64_t i = s; (step > 0 && i < e) || (step < 0 && i > e); i += step) total += (size_t)(off[i + 1] - off[i]);
+    char* out = _str_new(total); size_t w = 0;
+    for (int64_t i = s; (step > 0 && i < e) || (step < 0 && i > e); i += step) { size_t n = (size_t)(off[i + 1] - off[i]); memcpy(out + w, t.s + off[i], n); w += n; }
+    free(off);
+    return mk_string(out);
+}
+/* `a ** b`: exact for int ** non-negative int, float otherwise. */
+static Value _power(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i >= 0) {
+            int64_t r = 1, base = a.i, e = b.i;
+            if (base == 0 || base == 1) return mk_int(e == 0 ? 1 : base);
+            if (base == -1) return mk_int((e % 2 == 0) ? 1 : -1);
+            while (e > 0) {
+                if (e & 1) { if (__builtin_mul_overflow(r, base, &r)) _crush_arith_error("arithmetic overflow"); }
+                e >>= 1;
+                if (e > 0 && __builtin_mul_overflow(base, base, &base)) _crush_arith_error("arithmetic overflow");
+            }
+            return mk_int(r);
+        }
+        if (a.i == 0) _crush_arith_error("division by zero");
+    }
+    if ((a.tag != TAG_INT && a.tag != TAG_FLOAT) || (b.tag != TAG_INT && b.tag != TAG_FLOAT)) _crush_arith_error("type error: ** non-numeric");
+    double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
+    double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
+    return mk_float(pow(fa, fb));
+}
 static Value _floor_div(Value a, Value b) {
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         if (b.i == 0) _crush_arith_error("division by zero");
@@ -1592,6 +1655,12 @@ fn emit_c_instr(
                 }
                 "math.truediv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_true_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.truediv\n"));
+                }
+                "seq.slice" => {
+                    out.push_str(&format!("                {{ Value __st = _pop(); Value __b = _pop(); Value __a = _pop(); Value __t = _pop(); _push(_seq_slice(__t, __a, __b, __st)); }} _pc={next_pc}; break; // cap_call seq.slice\n"));
+                }
+                "math.power" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_power(__a, __b)); }} _pc={next_pc}; break; // cap_call math.power\n"));
                 }
                 "math.floordiv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_floor_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.floordiv\n"));
