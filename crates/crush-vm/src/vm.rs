@@ -180,6 +180,14 @@ pub fn callable(callee: &Value, argc: usize) -> Result<std::rc::Rc<FuncValue>, V
     }
 }
 
+/// `CELL_GET` / `CELL_SET`'s operand check.
+pub fn cell(v: &Value) -> Result<std::rc::Rc<std::cell::RefCell<Value>>, VmError> {
+    match v {
+        Value::Cell(c) => Ok(c.clone()),
+        other => Err(VmError::TypeError { expected: "cell", got: other.type_name() }),
+    }
+}
+
 /// The first function value inside `v` (itself or any element), for the
 /// language-styled printers, which reject them (`VmError::PrintFunc`).
 pub fn find_func(v: &Value) -> Option<std::rc::Rc<FuncValue>> {
@@ -236,6 +244,11 @@ pub enum Value {
     Foreign(u64),
     /// A function value (CRUSH-251).
     Func(std::rc::Rc<FuncValue>),
+    /// A box for a variable that closures capture by reference (CRUSH-251):
+    /// the variable's slot holds the cell; reads and writes go through
+    /// `CELL_GET` / `CELL_SET`. Never visible to programs — a cell reaching a
+    /// printer or an operator means an unboxing path was missed.
+    Cell(std::rc::Rc<std::cell::RefCell<Value>>),
 }
 
 impl PartialEq for Value {
@@ -273,6 +286,8 @@ impl PartialEq for Value {
             (Value::Func(a), Value::Func(b)) => {
                 a.name == b.name && a.arity == b.arity && a.captured == b.captured
             }
+            // Two closures over the same variable share its cell.
+            (Value::Cell(a), Value::Cell(b)) => std::rc::Rc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -297,6 +312,7 @@ impl Value {
             Value::Handle(_) => "handle",
             Value::Foreign(_) => "foreign",
             Value::Func(_) => "function",
+            Value::Cell(_) => "cell",
         }
     }
 
@@ -318,6 +334,7 @@ impl Value {
             Value::Handle(_) => true,
             Value::Foreign(_) => true,
             Value::Func(_) => true,
+            Value::Cell(_) => true,
         }
     }
 
@@ -410,6 +427,7 @@ impl std::fmt::Display for Value {
             Value::Handle(id) => write!(f, "<handle {id}>"),
             Value::Foreign(id) => write!(f, "<foreign {id}>"),
             Value::Func(func) => write!(f, "<fn {}>", func.display_name()),
+            Value::Cell(_) => write!(f, "<cell>"),
         }
     }
 }
@@ -503,6 +521,7 @@ impl serde::Serialize for Value {
             Value::Func(func) => {
                 serializer.serialize_str(&format!("<fn {}>", func.display_name()))
             }
+            Value::Cell(_) => serializer.serialize_str("<cell>"),
         }
     }
 }

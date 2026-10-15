@@ -132,6 +132,10 @@ impl Redactor {
     /// `v` as this session may see it.
     pub fn view(&self, v: &Value) -> ValueView {
         use std::hash::BuildHasher;
+        // A boxed variable (CRUSH-251) shows its value, not the cell.
+        if let Value::Cell(c) = v {
+            return self.view(&c.borrow());
+        }
         match self.visibility {
             DebugVisibility::None | DebugVisibility::ControlOnly => ValueView::Hidden,
             DebugVisibility::InspectRedacted => {
@@ -281,6 +285,8 @@ pub fn deep_copy(v: &Value) -> Value {
     use std::rc::Rc;
     let vec = |xs: &Vec<Value>| xs.iter().map(deep_copy).collect::<Vec<_>>();
     match v {
+        // A boxed variable (CRUSH-251): the debugger shows its value.
+        Value::Cell(c) => deep_copy(&c.borrow()),
         Value::Array(a) => Value::Array(Rc::new(RefCell::new(vec(&a.borrow())))),
         Value::Vector(a) => Value::Vector(Rc::new(RefCell::new(vec(&a.borrow())))),
         Value::Set(a) => Value::Set(Rc::new(RefCell::new(vec(&a.borrow())))),
@@ -312,6 +318,9 @@ fn canonical(v: &Value, out: &mut String) {
         out.push(']');
     };
     match v {
+        // A boxed variable (CRUSH-251): compare its value, so a write through
+        // the cell is a change.
+        Value::Cell(c) => canonical(&c.borrow(), out),
         Value::Array(a) => seq("A", &mut a.borrow().iter(), out),
         Value::Vector(a) => seq("V", &mut a.borrow().iter(), out),
         Value::Set(a) => seq("S", &mut a.borrow().iter(), out),
@@ -523,6 +532,33 @@ mod tests {
         }
         assert_eq!(opcode(&vm), LOAD);
         assert!(vm.run().unwrap().halted);
+    }
+
+    #[test]
+    fn watch_sees_a_write_through_a_cell() {
+        // A variable closures capture lives in a cell (CRUSH-251): a write
+        // through the cell is a change, and the watch reports values.
+        let src = r#"
+            .func main
+            PUSH 1
+            CELL_NEW
+            STORE 0
+            PUSH 2
+            LOAD 0
+            CELL_SET
+            HALT
+        "#;
+        let mut vm = vm(src);
+        vm.add_watchpoint(0, WatchScope::Top);
+        vm.run().unwrap(); // the STORE of the cell
+        vm.run().unwrap(); // the CELL_SET
+        match vm.last_stop() {
+            Some(DebugStop::Watch { old: Some(old), new, .. }) => {
+                assert_eq!(old, &Value::Int(1));
+                assert_eq!(new, &Value::Int(2));
+            }
+            other => panic!("expected a watch stop on the cell write, got {other:?}"),
+        }
     }
 
     #[test]
