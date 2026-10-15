@@ -1098,6 +1098,20 @@ impl PortableVm {
                     captured,
                 })));
             }
+            CELL_NEW => {
+                let v = self.pop()?;
+                self.push(Value::Cell(std::rc::Rc::new(std::cell::RefCell::new(v))));
+            }
+            CELL_GET => {
+                let c = crate::vm::cell(&self.pop()?)?;
+                let v = c.borrow().clone();
+                self.push(v);
+            }
+            CELL_SET => {
+                // Stack: value, then the cell on top.
+                let c = crate::vm::cell(&self.pop()?)?;
+                *c.borrow_mut() = self.pop()?;
+            }
             CALL_VALUE => {
                 // Stack: args (pushed last-first, as for CALL), then the callee.
                 let argc = u16::from_be_bytes(
@@ -2162,6 +2176,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Handle(_) => "handle",
         Value::Foreign(_) => "foreign",
         Value::Func(_) => "function",
+        Value::Cell(_) => "cell",
     }
 }
 
@@ -2212,6 +2227,7 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Handle(id) => format!("<handle {}>", id),
         Value::Foreign(id) => format!("<foreign {}>", id),
         Value::Func(func) => format!("<fn {}>", func.display_name()),
+        Value::Cell(_) => "<cell>".to_string(),
     }
 }
 

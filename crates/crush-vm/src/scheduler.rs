@@ -1177,6 +1177,20 @@ fn execute_one(
                 captured,
             })));
         }
+        CELL_NEW => {
+            let v = pop!();
+            push!(Value::Cell(std::rc::Rc::new(std::cell::RefCell::new(v))));
+        }
+        CELL_GET => {
+            let c = crate::vm::cell(&pop!())?;
+            let v = c.borrow().clone();
+            push!(v);
+        }
+        CELL_SET => {
+            // Stack: value, then the cell on top.
+            let c = crate::vm::cell(&pop!())?;
+            *c.borrow_mut() = pop!();
+        }
         CALL_VALUE => {
             // Stack: args (pushed last-first, as for CALL), then the callee.
             let argc = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;

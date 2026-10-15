@@ -53,7 +53,6 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("ctrl_for_in_array", "CRUSH-zorro-23: `for-in` over an array/string is not supported by the JS walker yet"),
     ("ctrl_labels", "CRUSH-zorro-6: a labeled `continue` (`continue label`) is not supported by the JS walker yet"),
     ("ctrl_try_catch", "CRUSH-zorro-19: new Error / e.message"),
-    ("fn_closure_counter", "CRUSH-zorro-20: closure capture (CRUSH-251)"),
     ("fn_default_param", "CRUSH-zorro-18: default parameters"),
     ("fn_rest_param", "CRUSH-zorro-18: rest parameters"),
     ("misc_console_error", "CRUSH-zorro-23: `console.error` / `console.warn` (stderr output) is not supported by the JS walker yet"),

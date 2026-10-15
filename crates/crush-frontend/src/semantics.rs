@@ -465,13 +465,16 @@ impl SemanticAnalyzer {
                         }
                     }
                     Ok(ret_type)
-                } else if let Some(Type::Any) = self.resolve_var(function) {
+                } else if self.resolve_var(function).is_some() {
+                    // A variable holding a function value (CRUSH-251). Its
+                    // static type isn't reliable here (a function returning a
+                    // lambda infers as null; a variable keeps its first type
+                    // after reassignment), so a non-function is caught at run
+                    // time: "<type> is not callable".
                     for arg in args {
                         self.check_expr(arg)?;
                     }
                     Ok(Type::Any)
-                } else if let Some(ty) = self.resolve_var(function) {
-                    bail!("`{}` holds a value of type {}, not a function: it can't be called", function, ty)
                 } else {
                     bail!("Undefined function: {}", function)
                 }
