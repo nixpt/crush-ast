@@ -99,7 +99,7 @@ WGSL has no f64 at all. Options:
 | **WGSL / Vulkan** | **within N ULP** (N measured and pinned): WGSL's `/` is 2.5 ULP and `sqrt` is not correctly rounded; SPIR-V may contract `a*b+c` unless decorated NoContraction; Vulkan may flush subnormals | identical |
 
 Details both paths must agree on:
-- **Integers are i32 in kernels** (i64 math costs ≈1.8× in crush-ptx). crush ints are i64 and
+- **Integers are i32 in kernels** (i64 math was measured at ≈1.8× the cost of i32 for the same kernel algorithm). crush ints are i64 and
   overflow loudly, so a kernel **checks i32 overflow** on `+ - *` and reports it through the error
   flag buffer (§6) — loud, like crush, never a silent wrap. Captured ints are range-checked to i32
   at launch; float→int conversion follows crush's rule (truncation toward zero, out-of-range is an
