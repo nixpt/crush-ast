@@ -1253,8 +1253,8 @@ impl PortableVm {
                 let val = self.pop()?;
                 match val {
                     Value::Map(m) => {
-                        let mut keys: Vec<String> = m.borrow().keys().cloned().collect();
-                        keys.sort();
+                        // Insertion order (MapStore is an IndexMap).
+                        let keys: Vec<String> = m.borrow().keys().cloned().collect();
                         let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
                         self.push(Value::new_array(key_vals));
                     }
@@ -1682,6 +1682,12 @@ impl PortableVm {
                 }
                 "math.truediv" => {
                     crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
+                }
+                "seq.slice" => {
+                    crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
+                }
+                "math.power" => {
+                    crate::arithmetic::power_values(&args[0], &args[1]).map(Some)
                 }
                 "math.floordiv" => {
                     crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)

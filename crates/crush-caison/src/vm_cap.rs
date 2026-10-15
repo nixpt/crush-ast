@@ -72,11 +72,8 @@ fn node_to_value(node: CaisonNode) -> Value {
             Value::Array(Rc::new(RefCell::new(vec)))
         }
         CaisonValue::Object(obj) => {
-            let mut map = std::collections::HashMap::new();
-            for (k, v) in obj {
-                map.insert(k, node_to_value(v));
-            }
-            Value::Map(Rc::new(RefCell::new(map)))
+            // Document key order (Value::Map is insertion-ordered).
+            Value::new_map(obj.into_iter().map(|(k, v)| (k, node_to_value(v))))
         }
     }
 }

@@ -54,6 +54,20 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "Python print: space-separated args, True/False/None spelling",
         });
         reg(CapabilitySpec {
+            name: "seq.slice",
+            argc: Some(4),
+            returns: true,
+            privileged: false,
+            summary: "Python slice target[start:stop:step] on a string or array (bounds/step may be null)",
+        });
+        reg(CapabilitySpec {
+            name: "math.power",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "a ** b: exact for int ** non-negative int, float otherwise",
+        });
+        reg(CapabilitySpec {
             name: "math.floordiv",
             argc: Some(2),
             returns: true,

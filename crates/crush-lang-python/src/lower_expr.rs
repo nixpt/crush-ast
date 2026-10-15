@@ -258,7 +258,7 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 .iter()
                 .map(|a| lower_expr(a, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
-            lower_call(func, lowered_args, keywords, meta)
+            lower_call(func, lowered_args, keywords, meta, ctx)
         }
         py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => lower_constant(value, meta),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
@@ -364,20 +364,58 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
     }
 }
 
+/// Modules whose functions are called as `module.fn(...)` (dotted builtins),
+/// not as a method on a value.
+const MODULES: &[&str] = &["math", "random", "time", "os", "sys", "json", "re", "string", "py", "io"];
+
+/// A method call on a value → the crush builtin that implements it.
+fn lower_method(
+    receiver: Expression,
+    method: &str,
+    mut args: Vec<Expression>,
+    meta: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Expression> {
+    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call { function: function.to_string(), args, meta };
+    Ok(match (method, args.len()) {
+        ("upper", 0) => call("str.to_upper", vec![receiver], meta),
+        ("lower", 0) => call("str.to_lower", vec![receiver], meta),
+        ("strip", 0) => call("str.trim", vec![receiver], meta),
+        ("startswith", 1) => call("str.starts_with", vec![receiver, args.remove(0)], meta),
+        ("endswith", 1) => call("str.ends_with", vec![receiver, args.remove(0)], meta),
+        ("split", 1) => call("str.split", vec![receiver, args.remove(0)], meta),
+        ("replace", 2) => {
+            let (a, b) = (args.remove(0), args.remove(0));
+            call("str.replace", vec![receiver, a, b], meta)
+        }
+        // `sep.join(items)`: crush's str.join takes the list first.
+        ("join", 1) => call("str.join", vec![args.remove(0), receiver], meta),
+        ("append", 1) => call("array.push", vec![receiver, args.remove(0)], meta),
+        ("pop", 0) => call("array.pop", vec![receiver], meta),
+        ("split", 0) => anyhow::bail!("`.split()` without a separator (whitespace runs) is not supported yet"),
+        (other, n) => anyhow::bail!("method `.{other}()` with {n} argument(s) is not supported yet"),
+    })
+}
+
 fn lower_call(
     func: &py_ast::Expr,
     lowered_args: Vec<Expression>,
     _keywords: &[py_ast::Keyword],
     meta: HashMap<String, serde_json::Value>,
+    ctx: &LowerCtx<'_>,
 ) -> anyhow::Result<Expression> {
     let func_name = match func {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
-            let obj = match value.as_ref() {
-                py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
-                _ => return Err(anyhow::anyhow!("complex method calls not yet supported")),
-            };
-            format!("{}.{}", obj, attr)
+            match value.as_ref() {
+                py_ast::Expr::Name(py_ast::ExprName { id, .. }) if MODULES.contains(&id.as_str()) => {
+                    format!("{}.{}", id, attr)
+                }
+                // A method on a value (`s.upper()`, `"a,b".split(",")`,
+                // `items.append(x)`): used to be rejected unless the receiver
+                // was a plain name, and then emitted a call to a function
+                // literally named "s.upper".
+                receiver => return lower_method(lower_expr(receiver, ctx)?, attr.as_str(), lowered_args, meta),
+            }
         }
         _ => return Err(anyhow::anyhow!("complex function calls not yet supported")),
     };
@@ -649,7 +687,7 @@ pub(crate) fn lower_expr_hoist(
                 hoisted.extend(h);
                 lowered_args.push(e);
             }
-            let call_expr = lower_call(func, lowered_args, keywords, meta)?;
+            let call_expr = lower_call(func, lowered_args, keywords, meta, ctx)?;
             Ok((hoisted, call_expr))
         }
         _ => Ok((Vec::new(), lower_expr(expr, ctx)?)),

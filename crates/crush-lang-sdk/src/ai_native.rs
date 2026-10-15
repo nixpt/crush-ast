@@ -108,7 +108,7 @@ fn stub_map(kind: &str, args: &[Value]) -> Value {
         "echo".to_string(),
         Value::new_array(args.to_vec()),
     );
-    Value::Map(Rc::new(RefCell::new(obj)))
+    Value::new_map(obj)
 }
 
 /// Single-cap declaration. CRUSH-156: a cap receives `[payload, operands…]`
