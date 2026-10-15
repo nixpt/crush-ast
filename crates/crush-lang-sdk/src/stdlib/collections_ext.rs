@@ -13,7 +13,6 @@ use super::get_str;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 pub(super) fn register(caps: &mut HostCaps) {
     caps.register(Box::new(CollKeysCap));
@@ -27,7 +26,7 @@ pub(super) fn register(caps: &mut HostCaps) {
     caps.register(Box::new(CollAllCap));
 }
 
-fn map_arg(cap: &str, v: &Value) -> Result<HashMap<String, Value>, String> {
+fn map_arg(cap: &str, v: &Value) -> Result<crush_vm::vm::MapStore, String> {
     match v {
         Value::Map(m) => Ok(m.borrow().clone()),
         other => Err(format!("{cap}: expected map, got {}", other.type_name())),
@@ -42,7 +41,7 @@ fn array_arg(cap: &str, v: &Value) -> Result<Vec<Value>, String> {
 }
 
 /// Entries sorted by key.
-fn sorted_entries(m: HashMap<String, Value>) -> Vec<(String, Value)> {
+fn sorted_entries(m: crush_vm::vm::MapStore) -> Vec<(String, Value)> {
     let mut entries: Vec<_> = m.into_iter().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     entries
@@ -228,7 +227,7 @@ mod tests {
             pairs
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
+                .collect::<Vec<_>>(),
         )
     }
 

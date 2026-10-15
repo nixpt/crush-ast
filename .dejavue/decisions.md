@@ -898,4 +898,18 @@ Rejected alternatives:
 
 Outcome:
 examples/gpu/vec_add.crush runs via crush-run run --gpu; tests: crush-ptx test_vec_add_crush_source_to_ptx (ptxas), crush-lang-sdk tests/gpu_launch.rs
+## 2026-10-14T23:58:03-05:00 — [STRATEGIC] [ADOPTED] CRUSH-47: decline the embedded RustPython VM lane — parser-only frontends
+
+Reason:
+Decided by the repo owner 2026-10-15: an embedded language VM is a dead path that exosphere's in-tree crush already had, and it dragged in a set of VMs. crush keeps parser-only frontends (rustpython-parser for Python, swc for JS) and runs the lowered program on crush-vm, supporting each language's format and semantics there. Host-language execution stays EXEC_LANG + buckets (CRUSH-55 D-2).
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **embed RustPython VM as runtime=rustpython (feature-gated)**
+
+Outcome:
+CRUSH-47 declined; Python parity pursued in crush-vm (cpython_corpus)
 

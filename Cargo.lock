@@ -1458,6 +1458,7 @@ dependencies = [
  "crush-errors",
  "crush-ffi",
  "hex",
+ "indexmap",
  "libc",
  "libloading 0.9.0",
  "parking_lot",
