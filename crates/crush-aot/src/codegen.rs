@@ -1048,6 +1048,12 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(py_text(&__v)); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "py.print_sep_end" => {
+                    // print(*values, sep=, end=) (CRUSH-zorro-38): args are (sep, end, values..);
+                    // null means CPython's default.
+                    out.push_str(&format!("{ind}{{ let mut __a: Vec<RuntimeValue> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ __a.push(stack.pop().unwrap_or(RuntimeValue::Null)); }} __a.reverse(); let __t = |i: usize, d: &str| match __a.get(i) {{ None | Some(RuntimeValue::Null) => d.to_string(), Some(v) => py_text(v) }}; let (__sep, __end) = (__t(0, \" \"), __t(1, \"\\n\")); let __parts: Vec<String> = __a.iter().skip(2).map(py_text).collect(); print!(\"{{}}{{}}\", __parts.join(&__sep), __end); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "math.truediv" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(*x as f64 / *y as f64) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
                     out.push_str(&next_pc_str);

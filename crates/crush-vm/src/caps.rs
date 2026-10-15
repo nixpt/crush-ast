@@ -54,6 +54,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "Python print: space-separated args, True/False/None spelling",
         });
         reg(CapabilitySpec {
+            name: "py.print_sep_end",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "Python print with sep= / end=: (sep, end, *values); null = default (CRUSH-zorro-38)",
+        });
+        reg(CapabilitySpec {
             name: "js.div",
             argc: Some(2),
             returns: true,

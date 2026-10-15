@@ -1616,6 +1616,16 @@ fn dispatch_cap(
                 out_parts.push(text);
                 Ok(None)
             }
+            "py.print_sep_end" => {
+                crate::vm::reject_func_print(&args)?;
+                let line = crate::io_print::format_py_print_sep_end(&args);
+                *out_len += line.len();
+                if *out_len > quotas.max_output {
+                    return Err(VmError::OutputQuota(quotas.max_output));
+                }
+                out_parts.push(line);
+                Ok(None)
+            }
             "py.print" => {
                 crate::vm::reject_func_print(&args)?;
                 let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();

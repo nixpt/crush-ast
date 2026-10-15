@@ -421,10 +421,40 @@ fn lower_method(
 fn lower_call(
     func: &py_ast::Expr,
     lowered_args: Vec<Expression>,
-    _keywords: &[py_ast::Keyword],
+    keywords: &[py_ast::Keyword],
     meta: HashMap<String, serde_json::Value>,
     ctx: &LowerCtx<'_>,
 ) -> anyhow::Result<Expression> {
+    // CRUSH-zorro-38: no keyword argument may be dropped — they used to be
+    // ignored, so `print('a', end='')` printed a newline. Each one is
+    // supported or a walk-time error naming the callee and the keyword.
+    let callee = match func {
+        py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
+        py_ast::Expr::Attribute(py_ast::ExprAttribute { attr, .. }) => format!(".{attr}()"),
+        _ => "the called value".to_string(),
+    };
+    let mut print_sep = None;
+    let mut print_end = None;
+    for keyword in keywords {
+        let Some(name) = &keyword.arg else {
+            anyhow::bail!("`**` keyword arguments (in a call to `{callee}`) are not supported yet");
+        };
+        match (callee.as_str(), name.as_str()) {
+            ("print", "sep") => print_sep = Some(lower_expr(&keyword.value, ctx)?),
+            ("print", "end") => print_end = Some(lower_expr(&keyword.value, ctx)?),
+            // crush writes output unbuffered and in order: flushing changes nothing.
+            ("print", "flush") => {}
+            (callee, name) => anyhow::bail!(
+                "keyword argument `{name}=` to `{callee}` is not supported yet"
+            ),
+        }
+    }
+    if callee == "print" && (print_sep.is_some() || print_end.is_some()) {
+        let default = || Expression::NullLiteral { meta: meta.clone() };
+        let mut args = vec![print_sep.unwrap_or_else(default), print_end.unwrap_or_else(default)];
+        args.extend(lowered_args);
+        return Ok(Expression::CapabilityCall { name: "py.print_sep_end".to_string(), args, meta });
+    }
     let func_name = match func {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
