@@ -1181,6 +1181,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         Expr::Bin(BinExpr {
             op, left, right, ..
         }) => {
+            let numeric = is_js_number(left) && is_js_number(right);
             let left = lower_expr(left, ctx)?;
             let right = lower_expr(right, ctx)?;
             let operator = match op {
@@ -1210,8 +1211,26 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 BinaryOp::Exp => "**",
                 BinaryOp::NullishCoalescing => "??",
             };
-            if operator == "/" {
-                return Ok(js_div(left, right, m));
+            // JS semantics as `js.*` capabilities (crush-vm js_core); crush's
+            // own operators are unchanged.
+            match operator {
+                "/" => return Ok(js_div(left, right, m)),
+                "+" if !numeric => return Ok(js_cap("js.add", vec![left, right], m)),
+                "==" => return Ok(js_cap("js.loose_eq", vec![left, right], m)),
+                "!=" => {
+                    return Ok(Expression::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(js_cap("js.loose_eq", vec![left, right], m.clone())),
+                        meta: m,
+                    })
+                }
+                // The deciding operand, not a bool (`0 || 'dflt'` is 'dflt');
+                // the right side runs only when the left doesn't decide.
+                "||" | "&&" => {
+                    let function = if operator == "||" { "__crush_js_or__" } else { "__crush_js_and__" };
+                    return Ok(Expression::Call { function: function.to_string(), args: vec![left, right], meta: m });
+                }
+                _ => {}
             }
             Ok(Expression::BinaryOp {
                 operator: operator.to_string(),
@@ -1423,6 +1442,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                     anyhow::bail!("logical assignment (`&&=`, `||=`, `??=`) is not supported yet")
                 }
                 AssignOp::DivAssign => js_div(current(), right, m.clone()),
+                AssignOp::AddAssign => js_cap("js.add", vec![current(), right], m.clone()),
                 _ => Expression::BinaryOp {
                     operator: match op {
                         AssignOp::AddAssign => "+", AssignOp::SubAssign => "-",
@@ -1468,43 +1488,21 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             Ok(last)
         }
         Expr::Tpl(Tpl { exprs, quasis, .. }) => {
-            if exprs.is_empty() {
-                let val = quasis
-                    .iter()
-                    .map(|q| q.raw.to_string())
-                    .collect::<Vec<_>>()
-                    .join("");
-                return Ok(Expression::StringLiteral {
-                    value: val,
-                    meta: m,
-                });
-            }
+            // The cooked text (`\n` is a newline), and each `${…}` through JS
+            // ToString (`${1.5 * 4}` is `6`) via js.add onto the string so far.
             let mut result = Expression::StringLiteral {
-                value: quasis
-                    .first()
-                    .map(|q| q.raw.to_string())
-                    .unwrap_or_default(),
+                value: quasis.first().map(tpl_cooked).transpose()?.unwrap_or_default(),
                 meta: m.clone(),
             };
             for (i, expr) in exprs.iter().enumerate() {
                 let expr = lower_expr(expr, ctx)?;
-                result = Expression::BinaryOp {
-                    operator: "+".to_string(),
-                    left: Box::new(result),
-                    right: Box::new(expr),
-                    meta: m.clone(),
-                };
+                result = js_cap("js.add", vec![result, expr], m.clone());
                 if let Some(quasi) = quasis.get(i + 1) {
-                    let text = Expression::StringLiteral {
-                        value: quasi.raw.to_string(),
-                        meta: m.clone(),
-                    };
-                    result = Expression::BinaryOp {
-                        operator: "+".to_string(),
-                        left: Box::new(result),
-                        right: Box::new(text),
-                        meta: m.clone(),
-                    };
+                    let text = tpl_cooked(quasi)?;
+                    if !text.is_empty() {
+                        let text = Expression::StringLiteral { value: text, meta: m.clone() };
+                        result = js_cap("js.add", vec![result, text], m.clone());
+                    }
                 }
             }
             Ok(result)
@@ -1679,22 +1677,12 @@ fn lower_call_expr(
                 // Node separates console.log arguments with a space; io.print
                 // concatenates, so `console.log(a, b)` printed `ab`.
                 "console.log" | "console.info" | "console.warn" | "console.error" => {
-                    // Numbers print the way JS prints them (`6`, not crush's `6.0`;
-                    // `1e+21`): each argument goes through conv.text(_, "js").
-                    let mut spaced = Vec::with_capacity(lowered_args.len() * 2);
-                    for (i, a) in lowered_args.into_iter().enumerate() {
-                        if i > 0 {
-                            spaced.push(Expression::StringLiteral { value: " ".to_string(), meta: m.clone() });
-                        }
-                        spaced.push(Expression::CapabilityCall {
-                            name: "conv.text".to_string(),
-                            args: vec![a, Expression::StringLiteral { value: "js".to_string(), meta: m.clone() }],
-                            meta: m.clone(),
-                        });
-                    }
+                    // The line node prints: js.format (node's util.format —
+                    // strings as-is, numbers `6` / `1e+21`, arrays and objects
+                    // like util.inspect, space-separated).
                     Ok(Expression::CapabilityCall {
                         name: "io.print".to_string(),
-                        args: spaced,
+                        args: vec![js_cap("js.format", lowered_args, m.clone())],
                         meta: m,
                     })
                 }
@@ -1861,6 +1849,39 @@ fn is_length_read(field: &str, obj: &Expr) -> bool {
 /// zero is a loud error rather than Infinity.
 fn js_div(left: Expression, right: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
     Expression::CapabilityCall { name: "js.div".to_string(), args: vec![left, right], meta }
+}
+
+/// A call to a `js.*` capability: JS semantics implemented once in crush-vm
+/// (`js_core`) and mirrored by the AOT runtimes.
+fn js_cap(name: &str, args: Vec<Expression>, meta: HashMap<String, serde_json::Value>) -> Expression {
+    Expression::CapabilityCall { name: name.to_string(), args, meta }
+}
+
+/// Whether JS evaluates `e` to a number whatever the variables hold: number
+/// literals and arithmetic on them. Such a `+` stays crush's numeric `+`;
+/// any other `+` may involve a string and goes through `js.add`.
+fn is_js_number(e: &Expr) -> bool {
+    match unparen(e) {
+        Expr::Lit(Lit::Num(_)) => true,
+        Expr::Unary(UnaryExpr { op: UnaryOp::Minus, arg, .. }) => is_js_number(arg),
+        Expr::Bin(BinExpr { op, left, right, .. }) => {
+            matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Exp)
+                && is_js_number(left)
+                && is_js_number(right)
+        }
+        _ => false,
+    }
+}
+
+/// A template literal part's cooked text (escapes applied).
+fn tpl_cooked(q: &TplElement) -> anyhow::Result<String> {
+    match &q.cooked {
+        Some(text) => match text.as_str() {
+            Some(text) => Ok(text.to_string()),
+            None => anyhow::bail!("a template literal with a lone surrogate escape is not supported yet"),
+        },
+        None => anyhow::bail!("invalid escape sequence in template literal `{}`", q.raw),
+    }
 }
 
 fn unparen(e: &Expr) -> &Expr {

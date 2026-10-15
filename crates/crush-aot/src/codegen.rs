@@ -10,6 +10,9 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
     emit_header(&mut out);
     emit_runtime_value(&mut out);
     emit_helpers(&mut out);
+    if uses_js_core(program) {
+        emit_js_core(&mut out);
+    }
     emit_ai_stub(&mut out);
     emit_dom_stub(&mut out);
 
@@ -26,6 +29,87 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
 
     emit_entry_point(&mut out);
     Ok(out)
+}
+
+/// Whether the program calls a `js.*` capability that runs crush-vm's
+/// `js_core` (embedded only then: it is ~500 lines for rustc to compile).
+fn uses_js_core(program: &casm::Program) -> bool {
+    program.functions.values().flat_map(|f| &f.body).any(|i| {
+        i.op == "cap_call"
+            && i.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| matches!(n, "js.add" | "js.truthy" | "js.loose_eq" | "js.format"))
+    })
+}
+
+/// The JS runtime: crush-vm's `js_core.rs` verbatim (the VM runs the same
+/// code), plus the conversions between it and `RuntimeValue`.
+fn emit_js_core(out: &mut String) {
+    out.push_str("#[allow(dead_code)]\nmod js_core {\n");
+    out.push_str(crush_vm::js_ops::JS_CORE_SRC);
+    out.push_str(r#"}
+
+/// A value as JS sees it (mirrors crush-vm `js_ops::owned_node`).
+fn js_node(v: &RuntimeValue, expand: usize) -> js_core::JsNode<'static> {
+    use js_core::JsNode;
+    match v {
+        RuntimeValue::Null => JsNode::Null,
+        RuntimeValue::Bool(b) => JsNode::Bool(*b),
+        RuntimeValue::Int(i) => JsNode::Int(*i),
+        RuntimeValue::Float(f) => JsNode::Float(*f),
+        RuntimeValue::String(s) => JsNode::Str(std::borrow::Cow::Owned(s.clone())),
+        RuntimeValue::Array(a) => {
+            let items = a.borrow();
+            JsNode::Array {
+                id: Rc::as_ptr(a) as *const () as usize,
+                len: items.len(),
+                items: (expand > 0).then(|| items.iter().take(js_core::ITEMS).map(|x| js_node(x, expand - 1)).collect()),
+            }
+        }
+        RuntimeValue::Object(m) => {
+            let entries = m.borrow();
+            JsNode::Object {
+                id: Rc::as_ptr(m) as *const () as usize,
+                len: entries.len(),
+                entries: (expand > 0).then(|| entries.iter().map(|(k, x)| (k.clone(), js_node(x, expand - 1))).collect()),
+            }
+        }
+    }
+}
+
+fn js_fail(e: String) -> ! {
+    if e == "arithmetic overflow" { arith_overflow() }
+    eprintln!("crush(aot): not supported: {e}");
+    std::process::exit(1);
+}
+
+fn js_add(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    if let (RuntimeValue::String(x), RuntimeValue::String(y)) = (a, b) {
+        return RuntimeValue::String(format!("{x}{y}"));
+    }
+    match js_core::add(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(js_core::JsNode::Int(i)) => RuntimeValue::Int(i),
+        Ok(js_core::JsNode::Float(f)) => RuntimeValue::Float(f),
+        Ok(js_core::JsNode::Str(s)) => RuntimeValue::String(s.into_owned()),
+        Ok(_) => RuntimeValue::Null,
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_loose_eq(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    match js_core::loose_eq(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(r) => RuntimeValue::Bool(r),
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_format(args: &[RuntimeValue]) -> RuntimeValue {
+    let nodes: Vec<js_core::JsNode> = args.iter().map(|a| js_node(a, js_core::EXPAND)).collect();
+    match js_core::format(&nodes) {
+        Ok(s) => RuntimeValue::String(s),
+        Err(e) => js_fail(e),
+    }
+}
+
+"#);
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -970,6 +1054,22 @@ fn emit_body(
                 }
                 "js.div" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(_),RuntimeValue::Int(0))=>div_zero(), (RuntimeValue::Int(x),RuntimeValue::Int(y)) if x.checked_rem(*y)==Some(0) => RuntimeValue::Int(x.checked_div(*y).unwrap_or_else(|| arith_overflow())), (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Float(*x as f64 / *y as f64), (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.add" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_add(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.truthy" => {
+                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(RuntimeValue::Bool(js_core::truthy(&js_node(&__v, 0)))); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.loose_eq" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_loose_eq(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.format" => {
+                    out.push_str(&format!("{ind}{{ let __at = stack.len().saturating_sub({argc}); let __args: Vec<RuntimeValue> = stack.split_off(__at); stack.push(js_format(&__args)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "conv.text" => {

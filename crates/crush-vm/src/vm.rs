@@ -56,6 +56,10 @@ pub enum VmError {
     ArithmeticOverflow,
     #[error("capability not declared in manifest: {0}")]
     CapNotDeclared(String),
+    /// A language construct the runtime can't execute exactly yet (e.g. a
+    /// JS `+` on an object, which needs ToPrimitive). Loud instead of wrong.
+    #[error("not supported: {0}")]
+    Unsupported(String),
     #[error("capability denied by host: {0}")]
     CapDenied(String),
     #[error("unknown capability: {0}")]

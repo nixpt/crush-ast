@@ -383,6 +383,9 @@ static inline const char* io_read_line(void) {
 
 // ── Stack ───────────────────────────────────────────────────────────────────
 
+/// The C mirror of crush-vm's `js_core.rs` (the `js.*` capabilities).
+const JS_RUNTIME_C: &str = include_str!("js_runtime.c");
+
 fn emit_c_helpers(out: &mut String) {
     out.push_str(r#"// ── Stack ──────────────────────────────────────────────────────────
 // Grows on demand. (CRUSH-223: a fixed 512 slots silently dropped pushes past
@@ -858,6 +861,9 @@ static Value _conv_text(Value v, Value style) {
     return mk_string(r);
 }
 
+"#);
+    out.push_str(JS_RUNTIME_C);
+    out.push_str(r#"
 /* `seq.slice`: mirrors crush-vm seq::slice_indices (CPython slice.indices). */
 static int64_t _slice_norm(int64_t v, int64_t len, int64_t lo, int64_t hi) {
     if (v < 0) v += len;
@@ -1822,6 +1828,19 @@ fn emit_c_instr(
                 }
                 "js.div" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_js_div(__a, __b)); }} _pc={next_pc}; break; // cap_call js.div\n"));
+                }
+                "js.add" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_js_add(__a, __b)); }} _pc={next_pc}; break; // cap_call js.add\n"));
+                }
+                "js.truthy" => {
+                    out.push_str(&format!("                {{ Value __v = _pop(); _push(mk_bool(_js_truthy(__v))); }} _pc={next_pc}; break; // cap_call js.truthy\n"));
+                }
+                "js.loose_eq" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(mk_bool(_js_loose_eq(__a, __b))); }} _pc={next_pc}; break; // cap_call js.loose_eq\n"));
+                }
+                "js.format" => {
+                    let n = argc;
+                    out.push_str(&format!("                {{ Value __fa[{}]; for (int __i = {n} - 1; __i >= 0; __i--) __fa[__i] = _pop(); _push(_js_format(__fa, {n})); }} _pc={next_pc}; break; // cap_call js.format\n", n.max(1)));
                 }
                 "conv.text" => {
                     out.push_str(&format!("                {{ Value __st = _pop(); Value __v = _pop(); _push(_conv_text(__v, __st)); }} _pc={next_pc}; break; // cap_call conv.text\n"));
