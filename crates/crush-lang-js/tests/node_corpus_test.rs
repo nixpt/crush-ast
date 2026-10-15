@@ -40,6 +40,8 @@ use std::path::{Path, PathBuf};
 const KNOWN_LOUD: &[(&str, &str)] = &[
     ("arr_basic", "CRUSH-zorro-15: indexOf/includes"),
     ("arr_hof", "CRUSH-zorro-20: map/filter/reduce callbacks"),
+    ("arr_push_loop_multi", "CRUSH-250: `push` with several arguments (fixed on boa)"),
+    ("arr_push_multi", "CRUSH-250: `push` with several arguments (fixed on boa)"),
     ("arr_slice_splice", "CRUSH-zorro-15: slice/splice"),
     ("arr_sort", "CRUSH-zorro-15/20: sort, sort(cmp)"),
     ("arr_spread", "CRUSH-zorro-23: array spread loses `...` (loud only via the out-of-range read)"),
@@ -92,6 +94,8 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
 /// Programs the boa lowering (CRUSH-250) runs exactly that the swc lowering
 /// can't: on boa they are expected to match, not to be loud.
 const BOA_FIXED: &[(&str, &str)] = &[
+    ("arr_push_loop_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
+    ("arr_push_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
     ("fn_script_late", "a top-level function using script variables is a closure over them"),
     ("fn_script_vars", "a top-level function using script variables is a closure over them"),
     ("scope_block_shadow", "block bindings get their own crush local (alpha-renamed)"),

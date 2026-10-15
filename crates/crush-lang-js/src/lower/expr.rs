@@ -613,7 +613,7 @@ impl Lower<'_> {
     }
 
     /// The crush name a callee refers to, if it is a user binding.
-    fn user_binding(&self, sym: boa_interner::Sym) -> Option<String> {
+    pub(super) fn user_binding(&self, sym: boa_interner::Sym) -> Option<String> {
         if self.scopes.resolve(sym).is_some() || self.toplevel_fns.contains(&sym) {
             Some(self.resolve(sym))
         } else {
@@ -672,6 +672,32 @@ impl Lower<'_> {
                     function: format!("{recv}.{cap}"),
                     args,
                     meta: m,
+                }
+            }
+            Lowering::Push => {
+                let Some(Expression::Identifier(recv)) = receiver.map(unparen) else {
+                    return Err(self.unsupported(
+                        "calling a method on anything but a plain name (`a.b.m()`, `\"s\".m()`, `f().m()`)",
+                        span,
+                    ));
+                };
+                let recv = self.resolve(recv.sym());
+                let target = CastExpr::Var { name: recv.clone(), meta: m.clone() };
+                match args.len() {
+                    // Nothing to append: the receiver (statement) or its length.
+                    0 if statement => target,
+                    0 => length_of(target, m),
+                    1 => {
+                        let call = CastExpr::Call { function: format!("{recv}.push"), args, meta: m.clone() };
+                        if statement { call } else { length_of(call, m) }
+                    }
+                    // Statement position is expanded by `push_statements`.
+                    n => {
+                        return Err(self.unsupported(
+                            format!("using the result of `{shown}` with {n} arguments"),
+                            span,
+                        ));
+                    }
                 }
             }
             Lowering::Planned(_) => unreachable!("refused above"),

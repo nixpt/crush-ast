@@ -1088,8 +1088,20 @@ fn expr_to_stmts(e: &Expr, span: &swc_common::Span, ctx: &LowerCtx) -> anyhow::R
             }
             Ok(out)
         }
+        // A call's value is discarded here: `xs.push(v);` stays the plain call.
+        Expr::Call(CallExpr { callee, args, .. }) => Ok(vec![Statement::ExprStmt {
+            expr: lower_call_expr(callee, args, ctx.meta_at(0), ctx)?,
+            meta: meta(span, ctx),
+        }]),
         e => Ok(vec![Statement::ExprStmt { expr: lower_expr(e, ctx)?, meta: meta(span, ctx) }]),
     }
+}
+
+/// `xs.push(…)` on a plain name.
+fn is_push_call(callee: &Callee) -> bool {
+    matches!(callee, Callee::Expr(e) if matches!(unparen(e), Expr::Member(MemberExpr {
+        obj, prop: MemberProp::Ident(p), ..
+    }) if p.sym.as_ref() == "push" && matches!(unparen(obj), Expr::Ident(_))))
 }
 
 fn lower_var_declarator(
@@ -1317,6 +1329,11 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 args: vec![test, cons, alt],
                 meta: m,
             })
+        }
+        // The `push` capability returns the array; JS's `push` returns the
+        // new length, which is `len` of that array (CRUSH-250).
+        Expr::Call(CallExpr { callee, args, .. }) if is_push_call(callee) => {
+            Ok(length_of(lower_call_expr(callee, args, m.clone(), ctx)?, m))
         }
         Expr::Call(CallExpr { callee, args, .. }) => lower_call_expr(callee, args, m, ctx),
         Expr::New(NewExpr { callee, args, span: _, .. }) => {
@@ -1806,6 +1823,13 @@ fn lower_call_expr(
                     args: lowered_args,
                     meta: m,
                 }),
+                // The `push` capability appends one value: `xs.push(a, b)`
+                // appended only `a` (silently wrong). The boa lowering
+                // expands it (CRUSH-250).
+                name if name.ends_with(".push") && lowered_args.len() != 1 => Err(unsupported(&format!(
+                    "`.push()` with {} arguments",
+                    lowered_args.len()
+                ))),
                 _ => Ok(Expression::Call {
                     function: func_name,
                     args: lowered_args,

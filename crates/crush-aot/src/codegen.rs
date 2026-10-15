@@ -1031,8 +1031,14 @@ fn emit_body(
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
+                // Returns the array, as the VM's `push` does: a statement's
+                // `pop` then balances, and `len(xs.push(v))` sees it.
+                // One value per push; anything else would pop the wrong slots.
+                "append" | "push" | "arr.push" | "array.push" if argc != 2 => {
+                    unsupported = Some(format!("cap_call '{cap_name}' with {argc} arguments (one value per push)"));
+                }
                 "append" | "push" | "arr.push" | "array.push" => {
-                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ a.borrow_mut().push(__val); }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ a.borrow_mut().push(__val); }} stack.push(__arr.unwrap_or(RuntimeValue::Null)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "arr_get" => {

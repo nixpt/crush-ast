@@ -1829,8 +1829,13 @@ fn emit_c_instr(
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
+                // Returns the array, as the VM's `push` does.
+                // One value per push; anything else would pop the wrong slots.
+                "append" | "push" | "arr.push" | "array.push" if argc != 2 => {
+                    unsupported = Some(format!("cap_call '{cap_name}' with {argc} arguments (one value per push)"));
+                }
                 "append" | "push" | "arr.push" | "array.push" => {
-                    out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} }} _pc={next_pc}; break; // cap_call append/push\n"));
+                    out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break; // cap_call append/push\n"));
                 }
                 "arr_get" => {
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));

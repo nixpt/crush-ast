@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::convert::Infallible;
 use std::ops::ControlFlow;
 
+use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
 use boa_ast::expression::{Expression, Identifier};
 use boa_ast::function::FunctionDeclaration;
 use boa_ast::function::{FormalParameterList, FunctionBody};
@@ -21,6 +22,7 @@ use crush_cast::{
 };
 
 use super::scope::{self, lexical_syms, param_syms, var_syms};
+use super::builtins;
 use super::{Lower, Meta, group};
 use crate::lower_common::{contains_loop_continue, for_in_guarded, rewrite_continue};
 
@@ -1013,6 +1015,12 @@ impl Lower<'_> {
         for p in parts {
             let meta = self.meta(Some(p.span()));
             // A call's value is discarded here (`a.push(x);`).
+            if let Expression::Call(c) = unparen(p)
+                && let Some(stmts) = self.push_statements(c, Some(p.span()))
+            {
+                out.extend(stmts?);
+                continue;
+            }
             let expr = match unparen(p) {
                 Expression::Call(c) => {
                     self.call(c.function(), c.args(), true, Some(p.span()), meta.clone())?
@@ -1022,6 +1030,52 @@ impl Lower<'_> {
             out.push(CastStmt::ExprStmt { expr, meta });
         }
         Ok(out)
+    }
+
+    /// `xs.push(a, b, …);` with two or more arguments: JS evaluates every
+    /// argument before appending any, so they go into hidden locals first,
+    /// then each is pushed on its own (the `push` capability appends one
+    /// value). `None` if `c` isn't such a call.
+    fn push_statements(
+        &mut self,
+        c: &boa_ast::expression::Call,
+        span: Option<Span>,
+    ) -> Option<anyhow::Result<Vec<CastStmt>>> {
+        let Expression::PropertyAccess(PropertyAccess::Simple(s)) = unparen(c.function()) else {
+            return None;
+        };
+        let PropertyAccessField::Const(prop) = s.field() else { return None };
+        let Expression::Identifier(recv) = unparen(s.target()) else { return None };
+        if c.args().len() < 2
+            || self.name(prop.sym()) != "push"
+            || c.args().iter().any(|a| matches!(a, Expression::Spread(_)))
+        {
+            return None;
+        }
+        let recv = self.user_binding(recv.sym())?;
+        if !matches!(builtins::method("push").map(|r| r.lower), Some(builtins::Lowering::Push)) {
+            return None;
+        }
+        Some((|| {
+            let m = self.meta(span);
+            let mut out = Vec::new();
+            let mut temps = Vec::new();
+            for a in c.args() {
+                let t = self.hidden("__push_");
+                let value = self.expr(a)?;
+                out.push(self.var_decl_stmt(t.clone(), value, false, Some(a.span())));
+                temps.push(t);
+            }
+            for t in temps {
+                let expr = CastExpr::Call {
+                    function: format!("{recv}.push"),
+                    args: vec![CastExpr::Var { name: t, meta: m.clone() }],
+                    meta: m.clone(),
+                };
+                out.push(CastStmt::ExprStmt { expr, meta: m.clone() });
+            }
+            Ok(out)
+        })())
     }
 
     /// The crush local `sym` names (a global keeps its spelling).
