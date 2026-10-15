@@ -1223,7 +1223,10 @@ mod tests {
             Some(Value::Str("/sandbox/home".into()))
         );
 
-        let ungranted = HostCapsBuilder::new().stdlib(true).time(true).build();
+        let builder = HostCapsBuilder::new().time(true);
+        #[cfg(feature = "stdlib")]
+        let builder = builder.stdlib(true);
+        let ungranted = builder.build();
         for cap in ["env.get", "env.all", "env.home_dir"] {
             assert!(ungranted.get(cap).is_none(), "{cap} without --env");
         }
@@ -1264,7 +1267,10 @@ mod tests {
 
     #[test]
     fn sleep_caps_need_the_time_grant() {
-        let caps = HostCapsBuilder::new().stdlib(true).fs(true).build();
+        let builder = HostCapsBuilder::new().fs(true);
+        #[cfg(feature = "stdlib")]
+        let builder = builder.stdlib(true);
+        let caps = builder.build();
         assert!(caps.get("time.sleep").is_none());
         assert!(caps.get("async.sleep").is_none());
         let caps = HostCapsBuilder::new().time(true).build();

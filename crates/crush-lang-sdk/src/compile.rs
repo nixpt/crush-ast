@@ -1135,6 +1135,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "polyglot-python", feature = "polyglot-javascript"))]
     fn test_dedent_strips_common_indent_only() {
         assert_eq!(dedent("    a\n    b\n"), "a\nb");
         assert_eq!(dedent("  a\n    b\n"), "a\n  b");
@@ -1237,5 +1238,29 @@ mod tests {
     fn test_use_lang_emits_no_exec_lang_of_its_own() {
         let prog = compile_crush_source("use @lang python \"math\"\nlet x = 1\n").expect("compile");
         assert!(!prog.manifest.permissions.iter().any(|p| p.starts_with("polyglot.")));
+    }
+}
+
+#[cfg(all(
+    test,
+    not(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    ))
+))]
+mod source_dispatch_without_adapters {
+    #[test]
+    fn rust_is_rejected_and_crush_remains_available() {
+        let error = super::compile_source("rust", "fn main() {}").unwrap_err();
+        assert!(
+            error.to_string().contains("no walker adapters enabled"),
+            "{error}"
+        );
+        let program = super::compile_source("crush", "fn main() { return 42; }").unwrap();
+        assert_eq!(
+            crate::Runtime::new().run(&program).unwrap().return_value,
+            Some(crate::Value::Int(42))
+        );
     }
 }

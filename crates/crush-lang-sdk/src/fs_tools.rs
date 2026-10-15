@@ -388,7 +388,10 @@ mod tests {
 
     #[test]
     fn every_coreutil_needs_the_fs_grant() {
-        let caps = HostCapsBuilder::new().stdlib(true).build();
+        let builder = HostCapsBuilder::new();
+        #[cfg(feature = "stdlib")]
+        let builder = builder.stdlib(true);
+        let caps = builder.build();
         for cap in [
             "fs.ls", "fs.cat", "fs.pwd", "fs.cd", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv",
             "fs.touch", "fs.find",
