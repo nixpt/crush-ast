@@ -361,9 +361,61 @@ impl std::fmt::Display for LowerError {
 
 impl std::error::Error for LowerError {}
 
+/// COSM K1.4: on the VMs `type_of` a struct instance is its Kind's name;
+/// here a struct is a map. A program with Kinds that asks for a type name is
+/// refused rather than answered differently.
+fn typeof_of_a_struct() -> LowerError {
+    LowerError::CosmUnsupported(format!(
+        "`type_of` in a program with Kinds isn't supported on {FASTVM_ENGINES}: a struct instance is a map \
+         here, while the scheduler VM and the portable VM name its Kind (CRUSH-zorro-43)"
+    ))
+}
+
+/// Separates the parts of a sealed struct's class name ([`sealed_class`]).
+const SEALED_SEP: char = '\u{1f}';
+
+/// COSM K1.4: the class name a struct map gets when its Kind is sealed —
+/// the Kind and its declared fields, which [`check_sealed_write`] reads back
+/// (FastVM and the JIT build struct instances as `Object`s; the class name is
+/// never printed).
+pub fn sealed_class(kind: &str, fields: &[&str]) -> String {
+    let mut class = format!("{SEALED_SEP}{kind}");
+    for f in fields {
+        class.push(SEALED_SEP);
+        class.push_str(f);
+    }
+    class
+}
+
+/// A field write to an `Object` of class `class_name`: `Err` with the shared
+/// message (`casm::sealed_field_error`) when the object is an instance of a
+/// sealed Kind that doesn't declare `field` — what the VMs refuse too.
+pub fn check_sealed_write(class_name: &str, field: &str) -> Result<(), String> {
+    let Some(rest) = class_name.strip_prefix(SEALED_SEP) else {
+        return Ok(());
+    };
+    let mut parts = rest.split(SEALED_SEP);
+    let kind = parts.next().unwrap_or_default();
+    let fields: Vec<&str> = parts.collect();
+    if fields.contains(&field) { Ok(()) } else { Err(casm::sealed_field_error(kind, field, &fields)) }
+}
+
+/// The struct map a sealed Kind's instance starts as: `NewStruct` with its
+/// [`sealed_class`]; `None` for any other Kind (a plain `NewObj`).
+fn sealed_new(module: Option<&crush_cosm::CosmModule>, kind: Option<&str>, symbols: &mut SymbolTables) -> Option<FastInstr> {
+    let fields = casm::sealed_fields(module?, kind?)?;
+    let idx = symbols.intern_string(&sealed_class(kind?, &fields));
+    Some(FastInstr::new(FastOp::NewStruct, idx as u64, 0))
+}
+
 /// Lower a CASM program to FastInstr representation
 pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
     program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
+    if program.kind_table().is_some()
+        && program.functions.values().flat_map(|f| &f.body).any(|i| i.op == "type_of")
+    {
+        return Err(typeof_of_a_struct());
+    }
     let mut symbols = SymbolTables::new();
     let mut instructions = Vec::new();
     let mut label_positions: HashMap<String, usize> = HashMap::new();
@@ -412,14 +464,22 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
         }
 
         for instr in &func.body {
-            let fast = lower_instruction(
-                instr,
-                func_name,
-                &mut symbols,
-                &label_positions,
-                &mut pending_jumps,
-                pc,
-            )?;
+            // COSM K1.4: a struct literal of a sealed Kind (`new_obj` tagged
+            // with it) remembers its declared fields, so a write of any
+            // other field is refused as on the VMs.
+            let tag = (instr.op == "new_obj").then(|| instr.args.get("kind").and_then(|v| v.as_str())).flatten();
+            let sealed = sealed_new(program.kind_table(), tag, &mut symbols);
+            let fast = match sealed {
+                Some(fast) => fast,
+                None => lower_instruction(
+                    instr,
+                    func_name,
+                    &mut symbols,
+                    &label_positions,
+                    &mut pending_jumps,
+                    pc,
+                )?,
+            };
             instructions.push(fast);
             pc += 1;
         }
@@ -597,6 +657,7 @@ pub fn lower_bytecode_program(
             SHL    => FastInstr::simple(FastOp::Shl),
             SHR    => FastInstr::simple(FastOp::Shr),
             
+            TYPEOF if program.kind_table().is_some() => return Err(typeof_of_a_struct()),
             TYPEOF => FastInstr::simple(FastOp::TypeOf),
             
             LOAD => {
@@ -749,6 +810,25 @@ pub fn lower_bytecode_program(
             AWAIT => FastInstr::simple(FastOp::Await),
             
             HALT => FastInstr::simple(FastOp::Halt),
+
+            // COSM K1.4 (CRUSH-zorro-43): struct instances are maps here. The
+            // shared rule (`refuse_cosm` above) already refused every Kind a
+            // map can't represent, so `CONSTRUCT k 0` / `NEW_RECORD k` of a
+            // remaining one is exactly `NEW_OBJ` (its fields follow as
+            // `SET_FIELD`s). Every
+            // other member op needs Kinds: refuse it, never drop it.
+            CONSTRUCT | NEW_RECORD if opcode == NEW_RECORD || code.get(pc + 3) == Some(&0) => {
+                let idx = u16::from_be_bytes([code[pc + 1], code[pc + 2]]) as usize;
+                let kind = program.consts.get(idx).map(String::as_str);
+                sealed_new(program.kind_table(), kind, &mut symbols).unwrap_or(FastInstr::simple(FastOp::NewObj))
+            }
+            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT | GET_SLOT
+            | SET_SLOT | IS_KIND | COPY => {
+                return Err(LowerError::UnknownOpcode(format!(
+                    "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
+                     which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"
+                )));
+            }
             
             _ => FastInstr::simple(FastOp::Nop),
         };

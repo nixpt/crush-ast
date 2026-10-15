@@ -27,6 +27,21 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
         out.push_str(&format!("static Value fn_{fn_name}(void);\n"));
     }
     out.push_str("\n");
+    // COSM K1.4: the declared fields of each sealed Kind (NULL-terminated),
+    // which a struct map of that Kind checks every write against.
+    if let Some(module) = program.kind_table() {
+        for (i, k) in module.kinds.iter().enumerate() {
+            if let Some(fields) = casm::sealed_fields(module, &k.name) {
+                let list: Vec<String> =
+                    fields.iter().map(|f| format!("\"{}\"", f.escape_default())).collect();
+                out.push_str(&format!(
+                    "static const char* const _cosm_sealed_{i}[] = {{{}NULL}};\n",
+                    list.iter().map(|f| format!("{f}, ")).collect::<String>()
+                ));
+            }
+        }
+        out.push('\n');
+    }
 
     let mut unsupported = Vec::new();
     for (name, func) in &program.functions {
@@ -169,6 +184,10 @@ typedef struct {
     int   field_count;
     bool  alive;
     bool  mark;
+    /* COSM K1.4: a struct of a sealed Kind — its name and its declared
+       fields (NULL-terminated); NULL for a plain map. */
+    const char* sealed_kind;
+    const char* const* sealed_fields;
 } CrushObject;
 
 static CrushObject _objects[OBJ_POOL_MAX];
@@ -188,6 +207,8 @@ static inline int _alloc_object(void) {
     }
     _objects[idx].field_count = 0;
     _objects[idx].alive = true;
+    _objects[idx].sealed_kind = NULL;
+    _objects[idx].sealed_fields = NULL;
     _gc_allocated += sizeof(CrushObject);
     return idx;
 }
@@ -205,6 +226,19 @@ static void _obj_set(CrushObject* obj, const char* key, Value val) {
         if (strcmp(obj->fields[i].key, key) == 0) {
             obj->fields[i].val = val;
             return;
+        }
+    }
+    if (obj->sealed_kind) {
+        bool declared = false;
+        for (const char* const* f = obj->sealed_fields; *f; f++)
+            if (strcmp(*f, key) == 0) { declared = true; break; }
+        if (!declared) {
+            fprintf(stderr, "crush(aotc): `%s` is sealed: it has no field `%s` (fields: ", obj->sealed_kind, key);
+            if (!obj->sealed_fields[0]) fprintf(stderr, "none");
+            for (const char* const* f = obj->sealed_fields; *f; f++)
+                fprintf(stderr, "%s%s", f == obj->sealed_fields ? "" : ", ", *f);
+            fprintf(stderr, ")\n");
+            exit(1);
         }
     }
     if (obj->field_count >= OBJ_FIELD_CAP) _crush_arith_error("object has too many fields (max 16)");
@@ -1106,6 +1140,18 @@ struct LocalMeta {
     ty: LocalType,
 }
 
+/// A `new_obj` tagged with a sealed Kind: the Kind's name and the index of
+/// its `_cosm_sealed_<i>` field list.
+fn sealed_new_obj<'p>(program: &'p casm::Program, instr: &'p casm::Instruction) -> Option<(&'p str, usize)> {
+    if instr.op != "new_obj" {
+        return None;
+    }
+    let kind = instr.args.get("kind")?.as_str()?;
+    let module = program.kind_table()?;
+    casm::sealed_fields(module, kind)?;
+    Some((kind, module.kinds.iter().position(|k| k.name == kind)?))
+}
+
 fn emit_c_function(
     out: &mut String,
     name: &str,
@@ -1140,7 +1186,15 @@ fn emit_c_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            case {i}: {{\n"));
-        if let Some(op) = emit_c_instr(out, instr, i, n, &local_index) {
+        if let Some((kind, idx)) = sealed_new_obj(program, instr) {
+            // COSM K1.4: a struct literal of a sealed Kind — the object
+            // remembers the Kind's fields and refuses any other (as the VMs do).
+            let next_pc = (i + 1).min(n);
+            out.push_str(&format!(
+                "                {{ int __oi = _alloc_object(); if (__oi >= 0) {{ _objects[__oi].sealed_kind = \"{}\"; _objects[__oi].sealed_fields = _cosm_sealed_{idx}; }} _push(__oi >= 0 ? mk_object(__oi) : mk_null()); }} _pc={next_pc}; break;\n",
+                kind.escape_default()
+            ));
+        } else if let Some(op) = emit_c_instr(out, instr, i, n, &local_index) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
