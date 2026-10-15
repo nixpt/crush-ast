@@ -45,7 +45,10 @@ fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
         | Value::List(_)
         | Value::Vector(_)
         | Value::Set(_)
-        | Value::Map(_) => {
+        | Value::Map(_)
+        // A struct instance (COSM K1.4) serializes as the map of its fields.
+        | Value::Record(_)
+        | Value::Kind(_) => {
             rusqlite::types::Value::Text(serde_json::to_string(v).unwrap_or_default())
         }
         Value::Error(e) => rusqlite::types::Value::Text(format!("error({})", e)),

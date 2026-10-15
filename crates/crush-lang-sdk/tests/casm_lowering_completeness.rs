@@ -195,12 +195,23 @@ fn probe(op: &OpCode) -> (usize, Instruction) {
         OpCode::StrSplit => (107, ins("str_split", none())),
         OpCode::StrReplace => (108, ins("str_replace", none())),
         OpCode::StrJoin => (109, ins("str_join", none())),
+        // COSM K1.4 (CRUSH-zorro-43): the generic member ops.
+        OpCode::GetMember(_) => (110, ins("get_member", json!({"name": "f"}))),
+        OpCode::SetMember(_) => (111, ins("set_member", json!({"name": "f"}))),
+        OpCode::HasMember(_) => (112, ins("has_member", json!({"name": "f"}))),
+        OpCode::DelMember(_) => (113, ins("del_member", json!({"name": "f"}))),
+        OpCode::CallMember { .. } => (114, ins("call_member", json!({"name": "m", "argc": 0}))),
+        OpCode::Construct { .. } => (115, ins("construct", json!({"kind": "P", "argc": 0}))),
+        OpCode::GetSlot(_) => (116, ins("get_slot", json!({"slot": 0}))),
+        OpCode::SetSlot(_) => (117, ins("set_slot", json!({"slot": 0}))),
+        OpCode::IsKind(_) => (118, ins("is_kind", json!({"kind": "P"}))),
+        OpCode::Copy => (119, ins("copy", none())),
     }
 }
 
 /// One value per variant. Keep in step with `probe` (the ordinal check below
 /// fails if a variant is missing here or duplicated).
-const VARIANT_COUNT: usize = 110;
+const VARIANT_COUNT: usize = 120;
 
 fn all_opcodes() -> Vec<OpCode> {
     let v = || json!({});
@@ -333,6 +344,16 @@ fn all_opcodes() -> Vec<OpCode> {
         OpCode::StrSplit,
         OpCode::StrReplace,
         OpCode::StrJoin,
+        OpCode::GetMember(String::new()),
+        OpCode::SetMember(String::new()),
+        OpCode::HasMember(String::new()),
+        OpCode::DelMember(String::new()),
+        OpCode::CallMember { name: String::new(), argc: 0 },
+        OpCode::Construct { kind: String::new(), argc: 0 },
+        OpCode::GetSlot(0),
+        OpCode::SetSlot(0),
+        OpCode::IsKind(String::new()),
+        OpCode::Copy,
     ]
 }
 

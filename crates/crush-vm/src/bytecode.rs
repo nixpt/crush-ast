@@ -33,7 +33,15 @@
 //!   MAKE_CLOSURE u16 const-pool idx (function) + u8 arity + u8 captured count
 //!   CALL_VALUE   u16 argc
 //!   NEW_ARRAY u16 element count
+//!   GET_MEMBER/SET_MEMBER/HAS_MEMBER/DEL_MEMBER/IS_KIND/NEW_RECORD u16 const-pool idx
+//!   CALL_MEMBER/CONSTRUCT u16 const-pool idx (member / Kind name) + u8 argc
+//!   GET_SLOT/SET_SLOT u16 slot index
 //!   others    no operand
+//!
+//! The COSM ops (0xC0–0xCA, K1.4, CRUSH-zorro-43) run on the scheduler VM and
+//! the portable VM (see `cosm_rt`). A program that uses them carries a kind
+//! table, and its function table records each function's arity (`arity` in
+//! the manifest), which function values made from members need.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -184,6 +192,36 @@ pub const STR_TO_UPPER: u8 = 0xB2;
 pub const STR_TO_LOWER: u8 = 0xB3;
 pub const STR_TRIM: u8 = 0xB4;
 
+// COSM K1.4 (CRUSH-zorro-43): the generic member ops (see `cosm_rt`).
+/// Pop an object, push its member (`GET_MEMBER "name"`).
+pub const GET_MEMBER: u8 = 0xC0;
+/// Pop a value, then an object; write the member; push the object back.
+pub const SET_MEMBER: u8 = 0xC1;
+/// Pop an object, push whether it has the member.
+pub const HAS_MEMBER: u8 = 0xC2;
+/// Pop an object, delete the member, push the object back.
+pub const DEL_MEMBER: u8 = 0xC3;
+/// `CALL_MEMBER "name" argc`: the receiver on top of `argc` arguments
+/// (pushed last-first, as for `CALL`); call the method its Kind resolves.
+pub const CALL_MEMBER: u8 = 0xC4;
+/// `CONSTRUCT "Kind" argc`: create an instance from `argc` arguments by the
+/// Kind's `construct` strategy. For a Kind built by a constructor function
+/// the next instruction is a `POP` of that function's return value.
+pub const CONSTRUCT: u8 = 0xC5;
+/// Pop a Record, push the declared field at slot `i`.
+pub const GET_SLOT: u8 = 0xC6;
+/// Pop a value, then a Record; write slot `i`; push the Record back.
+pub const SET_SLOT: u8 = 0xC7;
+/// Pop a value, push whether it is an instance of the Kind (or of one that
+/// has it in its resolution order).
+pub const IS_KIND: u8 = 0xC8;
+/// Pop a value, push a copy if it is an instance of a `value(…)` Kind.
+pub const COPY: u8 = 0xC9;
+/// Push a fresh instance of the Kind (field defaults applied), without
+/// running any constructor: what a struct literal builds before it writes
+/// its fields (`SET_FIELD`s follow).
+pub const NEW_RECORD: u8 = 0xCA;
+
 pub const HALT: u8 = 0xFF;
 
 /// CRUSH-32: map an AI-opcode byte (0x90-0x99) to its `ai_native.<kind>`
@@ -310,6 +348,10 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         MAKE_CLOSURE => Some(OperandKind::Closure),
         CALL_VALUE => Some(OperandKind::Count),
         CELL_NEW | CELL_GET | CELL_SET => Some(OperandKind::None),
+        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD => Some(OperandKind::Str),
+        CALL_MEMBER | CONSTRUCT => Some(OperandKind::Cap),
+        GET_SLOT | SET_SLOT => Some(OperandKind::Count),
+        COPY => Some(OperandKind::None),
         EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
         NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
@@ -327,6 +369,10 @@ pub fn instruction_size(opcode: u8) -> Option<usize> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionEntry {
     pub entry: usize,
+    /// The function's parameter count. Recorded for programs with a kind
+    /// table (COSM K1.4): a method used as a value (a bound method) needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arity: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

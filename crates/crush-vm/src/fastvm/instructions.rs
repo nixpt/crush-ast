@@ -361,9 +361,24 @@ impl std::fmt::Display for LowerError {
 
 impl std::error::Error for LowerError {}
 
+/// COSM K1.4: on the VMs `type_of` a struct instance is its Kind's name;
+/// here a struct is a map. A program with Kinds that asks for a type name is
+/// refused rather than answered differently.
+fn typeof_of_a_struct() -> LowerError {
+    LowerError::CosmUnsupported(format!(
+        "`type_of` in a program with Kinds isn't supported on {FASTVM_ENGINES}: a struct instance is a map \
+         here, while the scheduler VM and the portable VM name its Kind (CRUSH-zorro-43)"
+    ))
+}
+
 /// Lower a CASM program to FastInstr representation
 pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
     program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
+    if program.kind_table().is_some()
+        && program.functions.values().flat_map(|f| &f.body).any(|i| i.op == "type_of")
+    {
+        return Err(typeof_of_a_struct());
+    }
     let mut symbols = SymbolTables::new();
     let mut instructions = Vec::new();
     let mut label_positions: HashMap<String, usize> = HashMap::new();
@@ -597,6 +612,7 @@ pub fn lower_bytecode_program(
             SHL    => FastInstr::simple(FastOp::Shl),
             SHR    => FastInstr::simple(FastOp::Shr),
             
+            TYPEOF if program.kind_table().is_some() => return Err(typeof_of_a_struct()),
             TYPEOF => FastInstr::simple(FastOp::TypeOf),
             
             LOAD => {
@@ -749,6 +765,22 @@ pub fn lower_bytecode_program(
             AWAIT => FastInstr::simple(FastOp::Await),
             
             HALT => FastInstr::simple(FastOp::Halt),
+
+            // COSM K1.4 (CRUSH-zorro-43): struct instances are maps here. The
+            // shared rule (`refuse_cosm` above) already refused every Kind a
+            // map can't represent, so `CONSTRUCT k 0` / `NEW_RECORD k` of a
+            // remaining one is exactly `NEW_OBJ` (its fields follow as
+            // `SET_FIELD`s). Every
+            // other member op needs Kinds: refuse it, never drop it.
+            CONSTRUCT if code.get(pc + 3) == Some(&0) => FastInstr::simple(FastOp::NewObj),
+            NEW_RECORD => FastInstr::simple(FastOp::NewObj),
+            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT | GET_SLOT
+            | SET_SLOT | IS_KIND | COPY => {
+                return Err(LowerError::UnknownOpcode(format!(
+                    "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
+                     which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"
+                )));
+            }
             
             _ => FastInstr::simple(FastOp::Nop),
         };

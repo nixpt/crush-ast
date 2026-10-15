@@ -110,7 +110,8 @@ impl Mover {
                 self.cells.insert(key, id);
                 Moved::Cell(id, Box::new(self.out_at(&c.borrow(), d)?))
             }
-            Value::Handle(_) | Value::Foreign(_) => {
+            // COSM K1.4: a worker would need the Kinds rebuilt on its thread.
+            Value::Handle(_) | Value::Foreign(_) | Value::Record(_) | Value::Kind(_) => {
                 return Err(VmError::Parallel(format!(
                     "a {} can't be moved into a parallel_map worker",
                     v.type_name()
