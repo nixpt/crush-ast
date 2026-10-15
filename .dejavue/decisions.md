@@ -886,6 +886,10 @@ Outcome:
 all exo runtimes retired; EXEC_LANG + buckets is the polyglot path
 
 
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] HALT in a spawned task ends only that task
+
+Reason:
+Decided by the repo owner 2026-10-15. A task's HALT finishes the task like RET: its top-of-stack is its result and its waiters wake; only main's HALT ends the program. Consistent with Go-style 'main returning ends the program' (#177) and with #176 scopes. Today the scheduler returns StepAction::Finish (whole program) from any thread, and crush-vm's spawn_await_roundtrip test only passes because of that (#181); it gets rewritten to test through AWAIT.
 ## 2026-10-14T23:58:03-05:00 — [STRATEGIC] [ADOPTED] CRUSH-47: decline the embedded RustPython VM lane — parser-only frontends
 
 Reason:
@@ -896,6 +900,58 @@ Domain owner: nixpt
 Author type: human
 
 Rejected alternatives:
+- **HALT in any task ends the whole program (exit-like)**
+
+Outcome:
+scheduler + portable VM: task HALT = task finish; fix spawn_await_roundtrip
+
+
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] #176 scope { } blocks on exit and evaluates to its children's results
+
+Reason:
+Decided by the repo owner 2026-10-15. Scope exit awaits every task spawned inside it; let r = scope { ... } evaluates to the list of their results in spawn order. No cancellation in v1 (an explicit cancel can come later). Compile error on AOT/FastVM until #161 makes them run spawned tasks — never a silent no-op.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **value-less scope (statement only); cancel running children on exit**
+
+Outcome:
+scope = join-all + results list, no cancel in v1
+
+
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] #175 parallel_map waits for CRUSH-251 closures
+
+Reason:
+Decided by the repo owner 2026-10-15. Closures / function values (CRUSH-251) come first — needed for higher-order functions anyway — then parallel_map with move-only closures, share-nothing worker VMs, output and errors in input order, and a sequential fallback with identical results on wasm/FastVM/JIT. The cited fib(35) gap vs Node is single-thread and is CRUSH-258's (codegen), not parallelism's.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **named-function interim parallel_map(xs, fib) now; defer #175 entirely**
+
+Outcome:
+order: CRUSH-251, then #175 closure form
+
+
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] collections.keys/values/entries follow insertion order
+
+Reason:
+Decided by the repo owner 2026-10-15. Value::Map is insertion-ordered (#184); sorting existed only because HashMap order was random. keys/values/entries now match for-in iteration, printing, Python dict.keys() and JS Object.keys(); docs and tests updated in the same change.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **keep the documented sorted output**
+
+Outcome:
+collections.* return insertion order
 - **embed RustPython VM as runtime=rustpython (feature-gated)**
 
 Outcome:
