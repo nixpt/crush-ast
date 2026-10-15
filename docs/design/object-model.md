@@ -96,9 +96,9 @@ KindDecl {
   semantics:   reference | value(copy | move | clone_explicit)
   parents:     [KindRef]
   resolution:  none | single | c3 | prototype_chain | embedding_promotion
-  receiver:    dynamic_this | bound_self | explicit_value | explicit_ref
+  receiver:    dynamic_this | bound_self | bound_cls | explicit_value | explicit_ref | explicit_ref_mut
   construct:   literal | ctor(fn) | js_new(ctor_fn) | py_new_init(new_fn?, init_fn)
-  members:     { name: method(fn) | field | accessor(get?, set?) | static(value | fn) }
+  members:     { name: method(fn, receiver?) | field | accessor(get?, set?) | static(value | fn) }   // a member may override the Kind's receiver
   hooks:       { missing, set, call, iter, op:<op>, op_reflected:<op>, eq, hash, cmp, str, repr }
   conforms:    [ InterfaceRef + check: nominal | structural ]
   equality:    identity | structural          // default when no `eq` hook
@@ -185,7 +185,7 @@ Laziness lives in the wrapper; the core is shared. This also unblocks #175 `para
 | dimension | strategies | used by |
 |---|---|---|
 | member lookup (`resolution`) | `none` · `single` · `c3` · `prototype_chain` · `embedding_promotion` | Rust/C/Go-methods · Java/Kotlin · Python/Dart · JS · Go embedding |
-| receiver binding | `dynamic_this` · `bound_self` · `explicit_value` · `explicit_ref` | JS · Python · Rust `self`/Go value receivers · Rust `&self`/Go pointer receivers |
+| receiver binding | `dynamic_this` · `bound_self` · `bound_cls` · `explicit_value` · `explicit_ref` · `explicit_ref_mut` | JS · Python · Python `@classmethod` · Rust `self`/Go value receivers · Rust `&self` · Rust `&mut self`/Go pointer receivers |
 | construction | `literal` · `ctor` · `js_new` · `py_new_init` | Rust/Go/C/Crush · Dart/Java · JS · Python |
 | storage | `sealed` · `open_dict` · `open_dict_with_slots` | Rust/Go/C/Crush/Dart · JS/Python · Python `__slots__` |
 | value semantics | `reference` · `value(copy)` · `value(move)` · `clone_explicit` | JS/Python/Dart · C/Go/Rust `Copy` · Rust · Rust `Clone` |
@@ -200,6 +200,106 @@ added deliberately. That keeps the catalogue closed and reviewed.
 **What's left of "kind libraries"** is small: native helpers for the strategies (the C3 linearisation, the
 structural-interface check, the `js_new`/`py_new_init` sequences), and per-language default hooks (how Python
 `repr`s an instance, JS's default `toString`). They live once, beside the VM, not in each walker.
+
+### 4b. Worked examples
+
+#### A Rust struct with impls and a trait
+
+```rust
+#[derive(Clone, PartialEq)]
+struct Point { x: i64, y: i64 }
+
+impl Point {
+    fn new(x: i64, y: i64) -> Self { Point { x, y } }
+    fn norm2(&self) -> i64 { self.x * self.x + self.y * self.y }
+    fn shift(&mut self, d: i64) { self.x += d; }
+}
+impl std::ops::Add for Point { type Output = Point; fn add(self, o: Point) -> Point { /* … */ } }
+trait Shape { fn area(&self) -> f64; }
+impl Shape for Point { fn area(&self) -> f64 { 0.0 } }
+```
+
+The walker collects **every** `impl` block for `Point` in the file (they can appear anywhere) into one declaration:
+
+```text
+KindDecl Point  (home: rust)
+  storage:    sealed { x: Int, y: Int }              slot 0 = x, slot 1 = y
+  semantics:  value(move) + clone hook               not Copy, so assignment moves; derive(Clone) = deep copy
+  resolution: none                                   no inheritance
+  construct:  literal                                Point { x, y }
+  members:
+    new    : static(fn Point::new)
+    norm2  : method(fn, receiver: explicit_ref)       &self
+    shift  : method(fn, receiver: explicit_ref_mut)   &mut self
+  hooks:      op:+ → <Point as Add>::add ;  eq → derived structural
+  conforms:   Shape (nominal) → members Shape::area
+InterfaceDecl Shape { area(&self) -> f64 ; satisfaction: nominal }
+```
+
+| Rust code | what happens |
+|---|---|
+| `let q = p;` | **move**: the compiler marks `p` moved; a later use of `p` is a compile-time error, as with rustc |
+| `let q = p.clone();` | deep copy via the clone hook (today `clone` is a no-op, so mutating `q` mutates `p`) |
+| `p.shift(3)` | the receiver is passed by reference, so the change is visible through `p`; a `self`-by-value method receives a moved or copied value |
+| `a + b` | `OP +` → the `Add` impl |
+| `p.area()` | inherent methods first, then traits in scope; two traits with the same method name → an ambiguity error at compile time |
+| `let s: &dyn Shape = &p; s.area()` | a dynamic call through the `conforms` table (a vtable); every other call is direct |
+| `enum Shape { Circle { r }, Rect { w, h } }` | a sum Kind with one Kind per variant; `match` tests the variant's Kind (the long-term fix for CRUSH-zorro-37) |
+| `struct Wrapper<T> { v: T }` | erased on the VM (values carry their Kind); loud on AOT until monomorphised (decision 2) |
+
+Everything about `Point` is known at compile time. `p.x` compiles to `GET_SLOT 0` and `p.norm2()` to a direct
+`CALL`, with no dynamic dispatch, so AOT compiles it immediately.
+
+#### A Python class hierarchy
+
+```python
+class Animal:
+    kind = "animal"
+    def __init__(self, name): self.name = name
+    def speak(self): return f"{self.name} makes a sound"
+    def __repr__(self): return f"Animal({self.name!r})"
+
+class Dog(Animal):
+    def speak(self): return super().speak() + " (woof)"
+    def __eq__(self, other): return isinstance(other, Dog) and self.name == other.name
+```
+
+```text
+KindDecl Animal  (home: python)
+  storage:    open_dict                    instances can gain attributes at any time
+  semantics:  reference
+  parents:    [object] ; resolution: c3
+  receiver:   bound_self
+  construct:  py_new_init(init: Animal.__init__)
+  members:    kind  : static("animal")     class attribute
+              speak : method
+  hooks:      repr → Animal.__repr__
+
+KindDecl Dog  (home: python)
+  parents:    [Animal] ; resolution: c3      MRO [Dog, Animal, object], computed and checked at compile time
+  members:    speak : method
+  hooks:      eq → Dog.__eq__ ; hash → none   Python rule: defining __eq__ without __hash__ makes instances unhashable
+```
+
+| Python code | what happens |
+|---|---|
+| `d = Dog("rex")` | `CONSTRUCT`: allocate a Record (open dict), run `__init__` with `self` bound |
+| `d.speak()` | `CALL_MEMBER`: walk the MRO, find `Dog.speak`, bind `self` |
+| `super().speak()` | look up the next class after `Dog` in `type(self)`'s MRO → `Animal.speak`; correct under multiple inheritance and diamonds |
+| `f = d.speak; f()` | `GET_MEMBER` on a `bound_self` Kind returns a bound method; under JS's `dynamic_this` the same code loses `this`, as in JS |
+| `d.age = 3` · `d.kind` · `d.kind = "x"` | add an instance attribute · read the class attribute through the MRO · shadow it on the instance only |
+| `print(d)` | no `__str__`, so it falls back to `__repr__`, as Python does |
+| `d == e` · `1 + d` | `OP` → `__eq__` · Python's reflected-operator rule (`__radd__`) from the strategy table |
+| `@property` · `@staticmethod` · `@classmethod` | an accessor member · a static member · a method with `receiver: bound_cls` |
+| `Dog.bark = lambda self: "!"` | patches the live Kind (version bump keeps caches correct); common enough to support |
+| metaclasses, descriptors beyond `property`, `__getattribute__` overrides | **loud** (decision 2) |
+| an impossible MRO | a compile error (Python raises `TypeError` at class creation, so a class created conditionally defers the check to run time) |
+
+#### Across languages
+
+A Python `Dog` passed to JavaScript code keeps Python behaviour: `dog.speak()` from JS still walks Python's MRO
+and binds `self`, because the operation asks the object's own Kind. When Dart (mixins) or Kotlin arrive, they reuse
+the existing C3 or single-inheritance strategies instead of bringing their own runtime.
 
 ### 5. Value semantics
 
