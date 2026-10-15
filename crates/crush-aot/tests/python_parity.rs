@@ -4,19 +4,28 @@
 //! (walker → CASM) by the Rust and C backends. A run that succeeds must print
 //! exactly what CPython printed (`<name>.out`); anything else must fail
 //! visibly — a compile error or a non-zero exit — never print something
-//! different. The Rust backend must be exact on the whole corpus; the C
-//! backend may be loud only for the programs in `LOUD_ON_C`, and that list
-//! fails when an entry starts matching (so it can't go stale).
+//! different. Each backend may be loud only for the programs in its list
+//! (`LOUD_ON_RUST`, `LOUD_ON_C`), and a list fails when an entry starts
+//! matching (so it can't go stale).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crush_aot::AotCompiler;
 
+/// Function values and closures run on the VMs only (CRUSH-251: VM first;
+/// the AOT backends refuse make_closure / call_value).
+const CLOSURES: &str = "function values / closures are VM-only (CRUSH-251)";
+
+/// Rust backend gaps that must stay loud (compile error), not wrong.
+const LOUD_ON_RUST: &[(&str, &str)] = &[("21_lambda", CLOSURES), ("22_closures", CLOSURES)];
+
 /// C backend gaps that must stay loud (compile error), not wrong.
 const LOUD_ON_C: &[(&str, &str)] = &[
     ("06_strmeth", "str_split is not implemented in the C runtime"),
     ("18_methods", "str_split is not implemented in the C runtime"),
+    ("21_lambda", CLOSURES),
+    ("22_closures", CLOSURES),
 ];
 
 fn corpus() -> Vec<PathBuf> {
@@ -88,8 +97,8 @@ fn check(backend: &str, allowed_loud: &[(&str, &str)]) {
 }
 
 #[test]
-fn rust_backend_is_exact() {
-    check("rust", &[]);
+fn rust_backend_is_exact_or_loud() {
+    check("rust", LOUD_ON_RUST);
 }
 
 #[test]

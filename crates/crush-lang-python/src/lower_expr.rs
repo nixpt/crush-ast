@@ -127,8 +127,30 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 meta,
             })
         }
-        py_ast::Expr::Lambda { .. } => {
-            anyhow::bail!("lambda expressions not yet supported")
+        py_ast::Expr::Lambda(py_ast::ExprLambda { args, body, .. }) => {
+            if args.defaults().next().is_some()
+                || args.vararg.is_some()
+                || args.kwarg.is_some()
+                || !args.kwonlyargs.is_empty()
+                || !args.posonlyargs.is_empty()
+            {
+                anyhow::bail!(
+                    "lambda with default, keyword-only, positional-only or */** parameters \
+                     is not supported yet"
+                );
+            }
+            let params: Vec<(String, CastType)> = args
+                .args
+                .iter()
+                .map(|a| (a.def.arg.to_string(), CastType::Any))
+                .collect();
+            let (mut stmts, value) = lower_expr_hoist(body, ctx)?;
+            stmts.push(Statement::Return { value: Some(value), meta: meta.clone() });
+            Ok(Expression::Lambda {
+                params,
+                body: stmts,
+                meta: crate::lower_stmt::python_lambda_meta(&meta, Vec::new()),
+            })
         }
         py_ast::Expr::IfExp(py_ast::ExprIfExp {
             test, body, orelse, ..
@@ -681,6 +703,31 @@ pub(crate) fn lower_expr_hoist(
             ..
         }) => {
             let mut hoisted = Vec::new();
+            // Calling a value that isn't a name or a method (`make_adder(3)(4)`,
+            // `fs[0]()`): evaluate the callee first — Python's order — into a
+            // temporary and call that (a call through a variable is
+            // `call_value`, CRUSH-251). Only where statements can be hoisted;
+            // elsewhere it stays an error (CRUSH-zorro-24).
+            let temp_callee;
+            let func = if matches!(func.as_ref(), py_ast::Expr::Name(_) | py_ast::Expr::Attribute(_)) {
+                func.as_ref()
+            } else {
+                let (h, callee) = lower_expr_hoist(func, ctx)?;
+                hoisted.extend(h);
+                let temp = fresh_comp_temp();
+                hoisted.push(Statement::VarDecl {
+                    name: temp.clone(),
+                    value: callee,
+                    type_hint: CastType::Any,
+                    meta: meta.clone(),
+                });
+                temp_callee = py_ast::Expr::Name(py_ast::ExprName {
+                    range: func.range(),
+                    id: temp.as_str().into(),
+                    ctx: py_ast::ExprContext::Load,
+                });
+                &temp_callee
+            };
             let mut lowered_args = Vec::new();
             for a in args {
                 let (h, e) = lower_expr_hoist(a, ctx)?;
