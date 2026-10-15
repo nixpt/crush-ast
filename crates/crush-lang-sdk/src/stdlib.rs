@@ -614,6 +614,7 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
         Value::Error(_) => Value::Int(1),
         Value::Bytes(b) => Value::Int(if b.is_empty() { 0 } else { 1 }),
         Value::Handle(_) => Value::Int(1),
+        Value::Func(_) => Value::Int(1),
         _ => Value::Int(0),
     };
     Ok(Some(result))
@@ -655,6 +656,7 @@ conv_cap!(ConvTypeOfCap, "type_of", 1, |args: &[Value]| {
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
         Value::Handle(_) => "handle",
+        Value::Func(_) => "function",
         _ => "unknown",
     };
     Ok(Some(Value::Str(type_name.to_string())))

@@ -337,9 +337,12 @@ impl SemanticAnalyzer {
             Expression::StringLiteral { .. } => Ok(Type::String),
             Expression::BoolLiteral { .. } => Ok(Type::Bool),
             Expression::NullLiteral { .. } => Ok(Type::Null),
-            Expression::Var { name, .. } => self
-                .resolve_var(name)
-                .ok_or_else(|| anyhow::anyhow!("Undefined variable: {}", name)),
+            Expression::Var { name, .. } => match self.resolve_var(name) {
+                Some(ty) => Ok(ty),
+                // A function's name used as a value (CRUSH-251).
+                None if self.functions.contains_key(name) => Ok(Type::Any),
+                None => Err(anyhow::anyhow!("Undefined variable: {}", name)),
+            },
             Expression::BinaryOp {
                 operator,
                 left,
@@ -467,6 +470,8 @@ impl SemanticAnalyzer {
                         self.check_expr(arg)?;
                     }
                     Ok(Type::Any)
+                } else if let Some(ty) = self.resolve_var(function) {
+                    bail!("`{}` holds a value of type {}, not a function: it can't be called", function, ty)
                 } else {
                     bail!("Undefined function: {}", function)
                 }

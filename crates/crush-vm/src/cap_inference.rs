@@ -70,7 +70,8 @@ pub fn capabilities_used(program: &Program) -> Result<BTreeSet<String>, String> 
             OperandKind::Cap => {
                 f.caps.insert(constant(ip + 1)?.to_string());
             }
-            OperandKind::Func => f.calls.push(constant(ip + 1)?.to_string()),
+            // A closure's function is reachable as soon as the closure is made.
+            OperandKind::Func | OperandKind::Closure => f.calls.push(constant(ip + 1)?.to_string()),
             OperandKind::Str => {
                 let text = constant(ip + 1)?;
                 if op == bytecode::PUSH_STR {

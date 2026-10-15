@@ -470,6 +470,22 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         format!("CAP_CALL {fn_name:?} {argc}")
                     }
                 }
+                // CRUSH-251: function values.
+                "make_closure" => {
+                    let fn_name = instr.args["function"].as_str().ok_or_else(|| {
+                        anyhow::anyhow!("make_closure missing function at {fname}:{i}")
+                    })?;
+                    let arity = instr.args.get("arity").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let ncap = instr.args.get("ncap").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if !local_funcs.contains(fn_name) {
+                        anyhow::bail!("make_closure over unknown function `{fn_name}` at {fname}:{i}");
+                    }
+                    format!("MAKE_CLOSURE {fn_name} {arity} {ncap}")
+                }
+                "call_value" => {
+                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+                    format!("CALL_VALUE {argc}")
+                }
                 "cap_call" => {
                     let name = instr.args["name"]
                         .as_str()

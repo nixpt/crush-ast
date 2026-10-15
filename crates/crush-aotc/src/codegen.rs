@@ -456,6 +456,14 @@ impl AotcCompiler {
                     // Control flow within loops — emit as-is
                     writeln!(out, "    /* {} */", instr.op)?;
                 }
+                // Function values (CRUSH-251) run on the VMs only: refuse
+                // them here rather than drop them as an unhandled op.
+                "make_closure" | "call_value" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (function values, CRUSH-251) isn't supported by this backend",
+                        instr.op
+                    );
+                }
                 _ => {
                     writeln!(out, "    /* unhandled op: {} */", instr.op)?;
                 }
@@ -583,6 +591,15 @@ pub fn compile_to_so(c_source: &str, opts: &AotcOpts) -> anyhow::Result<std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // CRUSH-251: function values must be refused, not dropped as unhandled ops.
+    #[test]
+    fn function_values_are_refused() {
+        let source = "fn apply(f, v) {\n  return f(v)\n}\nfn main() {\n  return apply(|x| x * 2, 21)\n}\n";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let e = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("must refuse");
+        assert!(e.to_string().contains("function values, CRUSH-251"), "{e}");
+    }
 
     #[test]
     fn test_emit_simple_add() {

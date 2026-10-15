@@ -52,6 +52,7 @@ fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
         Value::Bytes(b) => rusqlite::types::Value::Blob(b.clone()),
         Value::Handle(h) => rusqlite::types::Value::Text(format!("<handle {}>", h)),
         Value::Foreign(id) => rusqlite::types::Value::Text(format!("<foreign {}>", id)),
+        Value::Func(f) => rusqlite::types::Value::Text(format!("<fn {}>", f.display_name())),
     }
 }
 

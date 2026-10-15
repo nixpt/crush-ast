@@ -41,6 +41,7 @@ pub fn text_as(v: &Value, style: &Value) -> Result<Value, VmError> {
         Value::Str(s) if s == "js" || s == "rust" => s.as_str(),
         other => return Err(VmError::TypeError { expected: "style \"js\" or \"rust\"", got: other.type_name() }),
     };
+    crate::vm::reject_func_print(std::slice::from_ref(v))?;
     Ok(Value::Str(match v {
         Value::Str(s) => s.clone(),
         Value::Float(f) => float_text(*f, style),

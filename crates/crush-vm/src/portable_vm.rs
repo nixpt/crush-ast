@@ -1076,6 +1076,46 @@ impl PortableVm {
                 self.call_stack.push(Frame::new(Some(next_ip)));
                 self.jump_to(func_entry);
             }
+            MAKE_CLOSURE => {
+                let code = &self.program.code;
+                let idx = u16::from_be_bytes(code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let (arity, ncap) = (code[self.ip + 3], code[self.ip + 4] as usize);
+                let fname = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
+                self.get_function_entry(&fname)?;
+                let mut captured = Vec::with_capacity(ncap);
+                for _ in 0..ncap {
+                    captured.push(self.pop()?);
+                }
+                captured.reverse();
+                self.push(Value::Func(std::rc::Rc::new(crate::vm::FuncValue {
+                    name: fname,
+                    arity,
+                    captured,
+                })));
+            }
+            CALL_VALUE => {
+                // Stack: args (pushed last-first, as for CALL), then the callee.
+                let argc = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let callee = self.pop()?;
+                let func = crate::vm::callable(&callee, argc)?;
+                let func_entry = self.get_function_entry(&func.name)?;
+                if self.call_stack.len() >= self.quotas.max_call_depth {
+                    return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                }
+                // Captured values are the callee's leading parameters.
+                for v in func.captured.iter().rev() {
+                    self.push(v.clone());
+                }
+                self.call_stack.push(Frame::new(Some(next_ip)));
+                self.jump_to(func_entry);
+            }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
                 // A `return` from inside a `try` leaves its handler behind; it
@@ -1573,7 +1613,8 @@ impl PortableVm {
                         });
                         self.push(Value::Handle(id as u64));
                     }
-                    None => self.push(Value::Null),
+                    // Not a null handle: `await` would turn it into a null result.
+                    None => return Err(VmError::UnknownFunction(fn_name)),
                 }
             }
             YIELD => {
@@ -1677,6 +1718,7 @@ impl PortableVm {
                     Ok(None)
                 }
                 "py.print" => {
+                    crate::vm::reject_func_print(&args)?;
                     let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
                     let line = crate::io_print::format_py_print_line(&parts);
                     self.out_len += line.len();
@@ -2119,6 +2161,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Bytes(_) => "bytes",
         Value::Handle(_) => "handle",
         Value::Foreign(_) => "foreign",
+        Value::Func(_) => "function",
     }
 }
 
@@ -2168,6 +2211,7 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         Value::Handle(id) => format!("<handle {}>", id),
         Value::Foreign(id) => format!("<foreign {}>", id),
+        Value::Func(func) => format!("<fn {}>", func.display_name()),
     }
 }
 

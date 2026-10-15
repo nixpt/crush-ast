@@ -48,6 +48,12 @@ pub struct Compiler {
     lambda_aliases: Vec<HashMap<String, Option<String>>>,
     /// Program-wide counter for unique lambda names.
     lambda_counter: usize,
+    /// Names bound more than once in the top-level function being compiled
+    /// (see `rebound_names`): a lambda bound to one gets no alias.
+    rebound: HashSet<String>,
+    /// Arity of every program function (top-level and nested defs), for
+    /// `make_closure` when a function's name is used as a value.
+    function_arity: HashMap<String, usize>,
 }
 
 struct LoopInfo {
@@ -76,6 +82,8 @@ impl Compiler {
             lambda_outer_vars: Vec::new(),
             lambda_aliases: Vec::new(),
             lambda_counter: 0,
+            rebound: HashSet::new(),
+            function_arity: HashMap::new(),
         }
     }
 
@@ -135,8 +143,10 @@ impl Compiler {
         self.lambdas.clear();
         self.lambda_aliases.clear();
         self.lambda_counter = 0;
-        for name in program.functions.keys() {
+        self.function_arity.clear();
+        for (name, func) in &program.functions {
             self.local_functions.insert(name.clone());
+            self.function_arity.insert(name.clone(), func.params.len());
         }
         // Pre-pass: track VarDecls and populate LangBlock variables
         for func in program.functions.values_mut() {
@@ -152,8 +162,9 @@ impl Compiler {
                         declared.push(target.clone());
                         self.declared_vars.insert(target.clone());
                     }
-                    Statement::FunctionDef { name, .. } => {
+                    Statement::FunctionDef { name, params, .. } => {
                         self.local_functions.insert(name.clone());
+                        self.function_arity.insert(name.clone(), params.len());
                     }
                     Statement::LangBlock { variables, .. } if variables.is_empty() => {
                         *variables = declared.clone();
@@ -175,6 +186,7 @@ impl Compiler {
         for (name, func) in program.functions {
             let mut instrs = Vec::new();
             self.lambda_aliases.push(HashMap::new());
+            self.rebound = rebound_names(&func.params, &func.body);
 
             // First pass: Handle nested FunctionDef nodes
             for stmt in &func.body {
@@ -1461,8 +1473,21 @@ impl Compiler {
                 instrs.push(self.create_typed_instr(OpCode::PushNull, meta)?);
             }
             Expression::Var { name, meta } => {
-                self.check_lambda_capture(name)?;
-                instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
+                let outer = self.lambda_outer_vars.iter().any(|o| o.contains(name.as_str()));
+                match self.function_arity.get(name.as_str()) {
+                    // A function's name used as a value (`apply(fib, 3)`).
+                    Some(&arity) if !self.declared_vars.contains(name.as_str()) && !outer => {
+                        instrs.push(self.create_instr(
+                            "make_closure",
+                            serde_json::json!({"function": name, "arity": arity, "ncap": 0}),
+                            meta,
+                        ));
+                    }
+                    _ => {
+                        self.check_lambda_capture(name)?;
+                        instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
+                    }
+                }
             }
             Expression::BinaryOp {
                 operator,
@@ -1528,23 +1553,30 @@ impl Compiler {
             } => {
                 // #78: `f(x)` where `f` is a variable (a lambda passed in as an
                 // argument, say) would otherwise compile to a capability call
-                // named "f". Calling function values needs an indirect call the VMs
-                // don't have yet (CRUSH-251); a lambda bound with `let f = |..| ..`
-                // is lifted to a function named `f` and is callable directly.
-                // A `let`-bound lambda in scope: call its lifted function.
+                // named "f". It holds a function value: call it through the
+                // value (CRUSH-251). A `let`-bound lambda alias in scope is
+                // called directly.
                 let aliased = self.resolve_lambda_alias(function);
-                let function: &String = aliased.as_ref().unwrap_or(function);
-                if !function.contains('.')
-                    && self.declared_vars.contains(function.as_str())
-                    && !self.local_functions.contains(function.as_str())
-                {
-                    bail!(
-                        "`{function}` is a variable, not a function: calling a function value \
-                         isn't supported yet (CRUSH-251). Call the lambda by the name it was \
-                         bound to (`let {function} = |x| ...` in the same function), or a named fn"
-                    );
+                if aliased.is_none() && !function.contains('.') {
+                    // `f` from an enclosing function would be a capture (step 3).
+                    self.check_lambda_capture(function)?;
                 }
-                if function == "len" {
+                let function: &String = aliased.as_ref().unwrap_or(function);
+                if aliased.is_none()
+                    && !function.contains('.')
+                    && self.declared_vars.contains(function.as_str())
+                {
+                    // Args last-first (as for `call`), then the callee on top.
+                    for arg in args.iter().rev() {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
+                    instrs.push(self.create_instr(
+                        "call_value",
+                        serde_json::json!({"argc": args.len()}),
+                        meta,
+                    ));
+                } else if function == "len" {
                     if args.len() != 1 {
                         bail!("len() expects exactly 1 argument");
                     }
@@ -2063,6 +2095,17 @@ impl Compiler {
                 // before the function name. The scheduler will pop argc
                 // args + fn_name, then create a new thread with args
                 // pre-loaded on the stack.
+                // A `let`-bound lambda spawns its lifted function; a variable
+                // holding a function value can't be spawned until SPAWN takes
+                // one (CRUSH-251 step 5).
+                let aliased = self.resolve_lambda_alias(function);
+                if aliased.is_none() && self.declared_vars.contains(function.as_str()) {
+                    bail!(
+                        "spawning `{function}`, a variable holding a function value, isn't \
+                         supported yet (CRUSH-251 step 5); spawn a named function"
+                    );
+                }
+                let function = aliased.as_ref().unwrap_or(function);
                 for arg in args {
                     self.compile_expr(arg, instrs)?;
                 }
@@ -2239,7 +2282,10 @@ impl Compiler {
                     None => format!("__lambda_{}", self.lambda_counter),
                 };
                 self.lambda_counter += 1;
-                if let Some(hint) = name_hint {
+                // Only a name bound exactly once keeps the direct-call alias;
+                // otherwise which lambda it holds depends on control flow, so
+                // calls go through the value (`call_value`).
+                if let Some(hint) = name_hint.filter(|h| !self.rebound.contains(*h)) {
                     if self.lambda_aliases.is_empty() {
                         self.lambda_aliases.push(HashMap::new());
                     }
@@ -2284,8 +2330,8 @@ impl Compiler {
                 );
 
                 instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": lambda_name}),
+                    "make_closure",
+                    serde_json::json!({"function": lambda_name, "arity": params.len(), "ncap": 0}),
                     meta,
                 ));
             }
@@ -2763,4 +2809,58 @@ fn extract_type_hints(params: &[(String, CastType)], body: &[Statement]) -> Hash
     }
     scan_stmts(body, &mut hints);
     hints
+}
+
+/// CRUSH-251: names bound more than once anywhere in a top-level function —
+/// its parameters, `let`s, assignments, loop variables, nested `def` names and
+/// parameters, lambda parameters, walker `__crush_assign__` targets. A
+/// `let`-bound lambda keeps its direct-call alias only when its name is bound
+/// exactly once; otherwise which lambda the name holds depends on control flow
+/// (a reassignment in a loop or a branch, a shadowing inner binding), so calls
+/// go through the value with `call_value`. Walks the serialized CAST so a new
+/// kind of node can't slip past unseen.
+fn rebound_names(params: &[(String, CastType)], body: &[Statement]) -> HashSet<String> {
+    use serde_json::Value as J;
+    fn bind(name: Option<&str>, counts: &mut HashMap<String, usize>) {
+        if let Some(n) = name {
+            *counts.entry(n.to_string()).or_default() += 1;
+        }
+    }
+    fn walk(v: &J, counts: &mut HashMap<String, usize>) {
+        match v {
+            J::Array(items) => items.iter().for_each(|i| walk(i, counts)),
+            J::Object(o) => {
+                let field = |k: &str| o.get(k).and_then(J::as_str);
+                match field("type") {
+                    Some("VarDecl") => bind(field("name"), counts),
+                    Some("Assign") => bind(field("target"), counts),
+                    Some("FunctionDef") | Some("Lambda") => {
+                        if o.get("type").and_then(J::as_str) == Some("FunctionDef") {
+                            bind(field("name"), counts);
+                        }
+                        for p in o.get("params").and_then(J::as_array).into_iter().flatten() {
+                            bind(p.get(0).and_then(J::as_str), counts);
+                        }
+                    }
+                    Some("Call") if field("function") == Some("__crush_assign__") => bind(
+                        o.get("args")
+                            .and_then(|a| a.get(0))
+                            .and_then(|t| t.get("name"))
+                            .and_then(J::as_str),
+                        counts,
+                    ),
+                    _ => {}
+                }
+                bind(field("variable"), counts);
+                o.values().for_each(|c| walk(c, counts));
+            }
+            _ => {}
+        }
+    }
+    let mut counts = HashMap::new();
+    for (p, _) in params {
+        bind(Some(p), &mut counts);
+    }
+    walk(&serde_json::to_value(body).unwrap_or_default(), &mut counts);
+    counts.into_iter().filter(|(_, n)| *n > 1).map(|(k, _)| k).collect()
 }

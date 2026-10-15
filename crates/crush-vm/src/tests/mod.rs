@@ -181,3 +181,6 @@ mod async_green;
 #[cfg(test)]
 mod matrix;
 
+
+#[cfg(test)]
+mod func_values;

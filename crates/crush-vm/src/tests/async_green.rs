@@ -325,15 +325,19 @@ loop:
     assert_eq!(run_both(src), "worker\nmain\n");
 }
 
+// Spawning an unknown function used to hand back null, and `await` turned
+// that into a null result (`spawn w(21)` after #192 printed `null`, not `42`).
 #[test]
-fn engines_agree_spawn_of_unknown_function_is_null() {
-    let src = "\
-.func main
-    PUSH_STR \"nope\"
-    SPAWN 0
-    CAP_CALL \"io.print\" 1
-    RET";
-    assert_eq!(run_both(src), "null\n");
+fn engines_agree_spawn_of_unknown_function_is_an_error() {
+    let prog = assemble(".func main\n    PUSH_STR \"nope\"\n    SPAWN 0\n    RET", None, None)
+        .expect("assembly");
+    let native = run(&prog, &Quotas::default()).map(|r| r.output).map_err(|e| e.to_string());
+    let portable = crate::portable_vm::PortableVm::new(prog)
+        .run()
+        .map(|r| r.output)
+        .map_err(|e| e.to_string());
+    assert_eq!(portable, native, "portable VM and scheduler disagree");
+    assert_eq!(native, Err("call to unknown function: nope".to_string()));
 }
 
 #[test]
