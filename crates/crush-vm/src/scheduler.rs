@@ -548,12 +548,13 @@ pub fn run_scheduled_streaming(
             StepAction::Spawn(fn_name, args) => {
                 threads[current].ip = next_ip;
                 let new_id = threads.len() as u64;
-                if let Some(&entry) = func_entry.get(fn_name.as_str()) {
-                    threads.push(GreenThread::with_args(entry, args));
-                    threads[current].stack.push(Value::Handle(new_id));
-                } else {
-                    threads[current].stack.push(Value::Null);
-                }
+                // An unknown function used to spawn nothing and hand back
+                // null, which `await` then turned into a null result.
+                let entry = *func_entry
+                    .get(fn_name.as_str())
+                    .ok_or_else(|| VmError::UnknownFunction(fn_name.clone()))?;
+                threads.push(GreenThread::with_args(entry, args));
+                threads[current].stack.push(Value::Handle(new_id));
             }
             StepAction::Finish(result) => {
                 return Ok(result);
@@ -1158,6 +1159,47 @@ fn execute_one(
             thread.ip = entry;
             return Ok(StepAction::Jump);
         }
+        MAKE_CLOSURE => {
+            let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let (arity, ncap) = (code[ip + 3], code[ip + 4] as usize);
+            let fname = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?;
+            if !func_entry.contains_key(fname.as_str()) {
+                return Err(VmError::UnknownFunction(fname.clone()));
+            }
+            let mut captured = Vec::with_capacity(ncap);
+            for _ in 0..ncap {
+                captured.push(pop!());
+            }
+            captured.reverse();
+            push!(Value::Func(std::rc::Rc::new(crate::vm::FuncValue {
+                name: fname.clone(),
+                arity,
+                captured,
+            })));
+        }
+        CALL_VALUE => {
+            // Stack: args (pushed last-first, as for CALL), then the callee.
+            let argc = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let func = crate::vm::callable(&pop!(), argc)?;
+            let entry = func_entry
+                .get(func.name.as_str())
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(func.name.clone()))?;
+            if call_stack.len() >= quotas.max_call_depth {
+                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
+            }
+            // Captured values are the callee's leading parameters, so they go
+            // on top: its first `store` pops the first one.
+            for v in func.captured.iter().rev() {
+                push!(v.clone());
+            }
+            call_stack.push(Frame {
+                return_ip: Some(next_ip),
+                memory: HashMap::new(),
+            });
+            thread.ip = entry;
+            return Ok(StepAction::Jump);
+        }
         RET => {
             let frame = call_stack.pop().expect("call stack invariant");
             // A `return` from inside a `try` leaves its handler behind; it must
@@ -1561,6 +1603,7 @@ fn dispatch_cap(
                 Ok(None)
             }
             "py.print" => {
+                crate::vm::reject_func_print(&args)?;
                 let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
                 let line = crate::io_print::format_py_print_line(&parts);
                 *out_len += line.len();

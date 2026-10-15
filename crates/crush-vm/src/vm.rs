@@ -41,6 +41,15 @@ pub enum VmError {
     BadJump(usize),
     #[error("call to unknown function: {0}")]
     UnknownFunction(String),
+    /// `CALL_VALUE` on something that isn't a function value (CRUSH-251).
+    #[error("{0} is not callable: only functions can be called")]
+    NotCallable(&'static str),
+    #[error("function `{function}` takes {expected} argument(s), got {got}")]
+    FuncArity { function: String, expected: usize, got: usize },
+    /// A language-styled printer (`py.print`, `conv.text`) met a function
+    /// value; its format isn't pinned by any corpus yet (CRUSH-251).
+    #[error("printing a function value (`{0}`) isn't supported in this language's print yet (CRUSH-251)")]
+    PrintFunc(String),
     #[error("type error: expected {expected}, got {got}")]
     TypeError {
         expected: &'static str,
@@ -127,6 +136,67 @@ impl std::fmt::Display for LangFailurePhase {
     }
 }
 
+/// A function used as a value (CRUSH-251): a program function plus the values
+/// its lambda captured. Called with `CALL_VALUE`; made by `MAKE_CLOSURE`.
+#[derive(Debug)]
+pub struct FuncValue {
+    /// The program function to call (`fib`, `__lambda_3_h`).
+    pub name: String,
+    /// The arity callers see (the function's parameters minus `captured`).
+    pub arity: u8,
+    /// Captured values, passed ahead of the call's arguments (empty until
+    /// captures land in CRUSH-251 step 3).
+    pub captured: Vec<Value>,
+}
+
+impl FuncValue {
+    /// The name users see: `h` for `__lambda_3_h`, `lambda` for `__lambda_3`.
+    pub fn display_name(&self) -> &str {
+        match self.name.strip_prefix("__lambda_") {
+            Some(rest) => match rest.split_once('_') {
+                Some((_, hint)) => hint,
+                None => "lambda",
+            },
+            None => &self.name,
+        }
+    }
+}
+
+/// `CALL_VALUE`'s callee check: only a function value is callable, and only
+/// with the arity it was made with.
+pub fn callable(callee: &Value, argc: usize) -> Result<std::rc::Rc<FuncValue>, VmError> {
+    match callee {
+        Value::Func(f) if f.arity as usize == argc => Ok(f.clone()),
+        Value::Func(f) => Err(VmError::FuncArity {
+            function: f.display_name().to_string(),
+            expected: f.arity as usize,
+            got: argc,
+        }),
+        other => Err(VmError::NotCallable(other.type_name())),
+    }
+}
+
+/// The first function value inside `v` (itself or any element), for the
+/// language-styled printers, which reject them (`VmError::PrintFunc`).
+pub fn find_func(v: &Value) -> Option<std::rc::Rc<FuncValue>> {
+    match v {
+        Value::Func(f) => Some(f.clone()),
+        Value::Array(a) | Value::Vector(a) | Value::Set(a) => a.borrow().iter().find_map(find_func),
+        Value::Tuple(t) => t.iter().find_map(find_func),
+        Value::List(l) => l.borrow().iter().find_map(find_func),
+        Value::Map(m) => m.borrow().values().find_map(find_func),
+        _ => None,
+    }
+}
+
+/// `Err(PrintFunc)` if any of `args` holds a function value.
+pub fn reject_func_print(args: &[Value]) -> Result<(), VmError> {
+    match args.iter().find_map(find_func) {
+        Some(f) => Err(VmError::PrintFunc(f.display_name().to_string())),
+        None => Ok(()),
+    }
+}
+
 /// Stack value — the types the CVM1 supports.
 /// The storage behind `Value::Map`. Insertion-ordered, like Python dicts and
 /// JS objects: iteration and printing follow the order keys were added
@@ -160,6 +230,8 @@ pub enum Value {
     Handle(u64),
     /// Foreign object handle — opaque reference to an external environment object.
     Foreign(u64),
+    /// A function value (CRUSH-251).
+    Func(std::rc::Rc<FuncValue>),
 }
 
 impl PartialEq for Value {
@@ -194,6 +266,9 @@ impl PartialEq for Value {
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
             (Value::Handle(a), Value::Handle(b)) => a == b,
             (Value::Foreign(a), Value::Foreign(b)) => a == b,
+            (Value::Func(a), Value::Func(b)) => {
+                a.name == b.name && a.arity == b.arity && a.captured == b.captured
+            }
             _ => false,
         }
     }
@@ -217,6 +292,7 @@ impl Value {
             Value::Bytes(_) => "bytes",
             Value::Handle(_) => "handle",
             Value::Foreign(_) => "foreign",
+            Value::Func(_) => "function",
         }
     }
 
@@ -237,6 +313,7 @@ impl Value {
             Value::Bytes(b) => !b.is_empty(),
             Value::Handle(_) => true,
             Value::Foreign(_) => true,
+            Value::Func(_) => true,
         }
     }
 
@@ -328,6 +405,7 @@ impl std::fmt::Display for Value {
             Value::Bytes(b) => write!(f, "<{} bytes>", b.len()),
             Value::Handle(id) => write!(f, "<handle {id}>"),
             Value::Foreign(id) => write!(f, "<foreign {id}>"),
+            Value::Func(func) => write!(f, "<fn {}>", func.display_name()),
         }
     }
 }
@@ -417,6 +495,9 @@ impl serde::Serialize for Value {
             }
             Value::Foreign(id) => {
                 serializer.serialize_str(&format!("<foreign {id}>"))
+            }
+            Value::Func(func) => {
+                serializer.serialize_str(&format!("<fn {}>", func.display_name()))
             }
         }
     }

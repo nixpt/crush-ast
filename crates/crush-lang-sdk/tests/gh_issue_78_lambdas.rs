@@ -1,6 +1,6 @@
 //! #78: the documented lambda forms parse and run; what lambdas can't do yet
-//! (capture, being called through a variable) is a compile error, not a
-//! runtime fault or a bogus capability call.
+//! (capture) is a compile error, not a runtime fault or a bogus capability
+//! call. Calling one through a variable works since CRUSH-251 step 2.
 
 use crush_lang_sdk::{HostCapsBuilder, Runtime};
 
@@ -56,8 +56,10 @@ fn capture_is_a_compile_error() {
     assert!(err.contains("`k`"), "{err}");
 }
 
+// Was a compile error ("`f` is a variable, not a function") until CRUSH-251
+// step 2 gave the VMs function values.
 #[test]
-fn calling_a_function_value_is_a_compile_error() {
-    let err = compile_err("fn apply(f, v) { return f(v) }\nfn main() { print(apply(|x| => x * 2, 21)) }");
-    assert!(err.contains("`f` is a variable, not a function"), "{err}");
+fn calling_a_function_value_through_a_parameter() {
+    let out = run("fn apply(f, v) { return f(v) }\nfn main() { print(apply(|x| => x * 2, 21)) }");
+    assert_eq!(out, "42\n");
 }

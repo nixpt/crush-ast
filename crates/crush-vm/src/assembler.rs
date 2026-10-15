@@ -225,6 +225,32 @@ pub fn assemble(
                 let idx = intern(v.to_string(), &mut consts, &mut const_index);
                 code.extend_from_slice(&(idx as u16).to_be_bytes());
             }
+            OperandKind::Closure => {
+                if p.args.len() != 3 {
+                    return Err(AssemblyError::new(
+                        p.line,
+                        "MAKE_CLOSURE needs <function> <arity> <captured>",
+                    ));
+                }
+                let v = p.args[0].as_str();
+                if !functions.contains_key(v) {
+                    return Err(AssemblyError::new(
+                        p.line,
+                        format!("closure over unknown function {v:?}"),
+                    ));
+                }
+                let byte = |s: &str, what: &str| -> Result<u8, AssemblyError> {
+                    let n = parse_int(s, p.line)?;
+                    u8::try_from(n).map_err(|_| {
+                        AssemblyError::new(p.line, format!("{what} out of range: {n}"))
+                    })
+                };
+                let (arity, ncap) = (byte(&p.args[1], "arity")?, byte(&p.args[2], "captured count")?);
+                let idx = intern(v.to_string(), &mut consts, &mut const_index);
+                code.extend_from_slice(&(idx as u16).to_be_bytes());
+                code.push(arity);
+                code.push(ncap);
+            }
         }
     }
 
@@ -320,6 +346,8 @@ pub fn disassemble(program: &Program) -> String {
         (PRINT, "PRINT"),
         (CAP_CALL, "CAP_CALL"),
         (CALL, "CALL"),
+        (MAKE_CLOSURE, "MAKE_CLOSURE"),
+        (CALL_VALUE, "CALL_VALUE"),
         (RET, "RET"),
         (ENTER_TRY, "ENTER_TRY"),
         (EXIT_TRY, "EXIT_TRY"),
@@ -431,6 +459,11 @@ pub fn disassemble(program: &Program) -> String {
                 let fname = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
                 format!("    {op_name} {fname}")
             }
+            OperandKind::Closure => {
+                let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+                let fname = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
+                format!("    {op_name} {fname} {} {}", code[ip + 3], code[ip + 4])
+            }
         };
         lines.push(line);
         ip += 1 + kind.byte_width();
@@ -486,6 +519,8 @@ fn opcode_for(name: &str) -> Option<u8> {
         "PRINT" => Some(PRINT),
         "CAP_CALL" => Some(CAP_CALL),
         "CALL" => Some(CALL),
+        "MAKE_CLOSURE" => Some(MAKE_CLOSURE),
+        "CALL_VALUE" => Some(CALL_VALUE),
         "RET" => Some(RET),
         "EXEC_LANG" => Some(EXEC_LANG),
         "ENTER_TRY" => Some(ENTER_TRY),

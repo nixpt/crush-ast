@@ -12,6 +12,8 @@
 //!   JMP/JZ/JNZ u32 byte offset
 //!   CAP_CALL  u16 const-pool idx + u8 argc
 //!   CALL      u16 const-pool idx (function name)
+//!   MAKE_CLOSURE u16 const-pool idx (function) + u8 arity + u8 captured count
+//!   CALL_VALUE   u16 argc
 //!   NEW_ARRAY u16 element count
 //!   others    no operand
 
@@ -96,6 +98,12 @@ pub const GET_FIELD: u8 = 0x73;
 pub const SPAWN: u8 = 0x80;
 pub const YIELD: u8 = 0x81;
 pub const AWAIT: u8 = 0x82;
+/// Push a function value (CRUSH-251): pops the captured values, pushes
+/// `Func { function, arity, captured }`.
+pub const MAKE_CLOSURE: u8 = 0x83;
+/// Call a function value: pops the callee (above the args), checks it is a
+/// function of arity `argc`, pushes its captured values, calls it.
+pub const CALL_VALUE: u8 = 0x84;
 pub const AI_QUERY: u8 = 0x90;
 pub const AI_SYNTHESIZE: u8 = 0x91;
 pub const AI_AGENT_DELEGATION: u8 = 0x92;
@@ -230,6 +238,7 @@ pub enum OperandKind {
     Cap,   // 2B const-pool idx + 1B argc
     Func,  // 2B const-pool index
     Count, // 2B element count
+    Closure, // 2B const-pool idx (function) + 1B arity + 1B captured count
 }
 
 impl OperandKind {
@@ -241,6 +250,7 @@ impl OperandKind {
             OperandKind::Str | OperandKind::Slot | OperandKind::Func | OperandKind::Count => 2,
             OperandKind::Addr => 4,
             OperandKind::Cap => 3,
+            OperandKind::Closure => 4,
         }
     }
 }
@@ -263,6 +273,8 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
+        MAKE_CLOSURE => Some(OperandKind::Closure),
+        CALL_VALUE => Some(OperandKind::Count),
         EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
         NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
