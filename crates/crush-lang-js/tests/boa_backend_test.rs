@@ -385,3 +385,33 @@ fn test_boa_push_forms() {
         name, value: crush_cast::Expression::Call { function, .. }, ..
     } if name == "n" && function == "len")));
 }
+
+// CRUSH-zorro-18: a `function` declaration's calls are adapted to its
+// parameters. What can't be adapted is refused at walk time.
+#[test]
+fn test_boa_parameter_adaptation_refusals() {
+    // A missing plain argument is `undefined` (CRUSH-zorro-12).
+    let msg = loud("function f(a, b) { return a; }\nconsole.log(f(1));");
+    assert!(msg.contains("calling `f` without its argument 2"), "{msg}");
+    // An extra argument with side effects (pure ones are dropped).
+    let msg = loud("let n = 0;\nfunction f(a) { return a; }\nconsole.log(f(1, n++));");
+    assert!(msg.contains("extra argument that has side effects"), "{msg}");
+    // Its hidden arguments come from direct calls only.
+    let msg = loud("function f(a = 1) { return a; }\nconst g = f;\nconsole.log(g());");
+    assert!(msg.contains("using `f` as a value"), "{msg}");
+    // Arrow functions and function expressions can be called from anywhere.
+    assert!(loud("const f = (a = 1) => a;\nconsole.log(f());").contains("outside a `function` declaration"));
+    assert!(loud("const f = (...xs) => xs;\nconsole.log(f());").contains("outside a `function` declaration"));
+}
+
+// The ABI: defaults take a hidden "given" flag after the parameters; a rest
+// parameter takes an array.
+#[test]
+fn test_boa_parameter_abi() {
+    let program = test_lower("function f(a, b = a, ...rest) { return rest; }\nconsole.log(f(1), f(1, 2, 3, 4));\n");
+    let f = &program.functions["f"];
+    let names: Vec<&str> = f.params.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names.len(), 4, "{names:?}");
+    assert_eq!(&names[..3], ["a", "b", "rest"]);
+    assert!(names[3].starts_with("__has_b_"), "{names:?}");
+}

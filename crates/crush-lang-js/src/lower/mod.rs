@@ -69,6 +69,8 @@ pub(crate) struct Lower<'a> {
     next_id: u32,
     /// The script's top-level `function` names: globals, not captures.
     toplevel_fns: std::collections::HashSet<Sym>,
+    /// Their parameters, for adapting calls from anywhere (CRUSH-zorro-18).
+    toplevel_sigs: HashMap<Sym, scope::Sig>,
 }
 
 impl<'a> Lower<'a> {
@@ -79,6 +81,7 @@ impl<'a> Lower<'a> {
             scopes: Scopes::default(),
             functions: HashMap::new(),
             toplevel_fns: Default::default(),
+            toplevel_sigs: HashMap::new(),
             next_id: 0,
         }
     }
