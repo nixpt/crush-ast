@@ -20,8 +20,11 @@ names the crates that need a manual first publish; publish those by hand and
 run again to finish.
 
 Order: normal and build dependencies between workspace crates, dependencies
-first. Dev-dependencies are ignored: crates.io accepts path-only dev-deps,
-and counting them creates false cycles.
+first. Dev-dependencies don't order the set: crates.io accepts path-only
+dev-deps, and counting them creates false cycles. A dev-dep that carries a
+version requirement (e.g. inherited via `.workspace = true`) does make a crate
+wait, though: `cargo package` keeps it, so that version has to be on
+crates.io or in the same publish set.
 
 Safe to re-run: a version already on crates.io is skipped. `cargo publish`
 waits for each crate to appear in the index before the next one starts.
@@ -85,7 +88,23 @@ def workspace():
         )
         for name, p in packages.items()
     }
-    return packages, deps
+    # What `cargo package` must resolve: normal and build deps, plus dev-deps
+    # that carry a version requirement. A path-only dev-dep (req "*") is
+    # stripped from the published manifest; one with a version (e.g. via
+    # `.workspace = true`) is kept, so that version must be on crates.io or
+    # in the same publish set.
+    needs = {
+        name: sorted(
+            set(deps[name])
+            | {
+                d["name"]
+                for d in p["dependencies"]
+                if d["name"] in packages and d["kind"] == "dev" and d["req"] != "*"
+            }
+        )
+        for name, p in packages.items()
+    }
+    return packages, deps, needs
 
 
 def topo_order(names, deps):
@@ -107,7 +126,7 @@ def topo_order(names, deps):
 def main():
     publish = "--publish" in sys.argv[1:]
     verified = "--verified" in sys.argv[1:]
-    packages, deps = workspace()
+    packages, deps, needs = workspace()
     on_registry = {name: crates_io_versions(name) for name in sorted(packages)}
 
     in_set = {n for n, versions in on_registry.items() if versions is not None}
@@ -115,24 +134,33 @@ def main():
 
     # A crate waits if it needs a never-published workspace crate, directly
     # or through another waiting crate. Everything else is published now; a
-    # re-run after the manual first publishes picks up the rest.
-    todo, done, waiting = [], [], {}
-    for name in (n for n in topo_order(in_set, deps) if n in in_set):
-        version = packages[name]["version"]
-        if version in on_registry[name]:
-            done.append(f"{name} {version}")
-            continue
-        needs = sorted(
-            {
-                d for d in deps[name]
+    # re-run after the manual first publishes picks up the rest. A versioned
+    # dev-dep can point either way in the publish order, so iterate to a
+    # fixed point instead of deciding in one ordered pass.
+    pending = [
+        n for n in topo_order(in_set, deps)
+        if n in in_set and packages[n]["version"] not in on_registry[n]
+    ]
+    waiting = {}
+    changed = True
+    while changed:
+        changed = False
+        for name in pending:
+            firsts = {
+                d for d in needs[name]
                 if d not in in_set and packages[d]["version"] not in (on_registry[d] or ())
-            }
-            | {m for d in deps[name] if d in waiting for m in waiting[d]}
-        )
-        if needs:
-            waiting[name] = needs
-        else:
-            todo.append((name, version))
+            } | {m for d in needs[name] if d in waiting for m in waiting[d]}
+            if firsts - waiting.get(name, set()):
+                waiting[name] = waiting.get(name, set()) | firsts
+                changed = True
+    waiting = {name: sorted(waiting[name]) for name in pending if name in waiting}
+
+    done = [
+        f"{n} {packages[n]['version']}"
+        for n in topo_order(in_set, deps)
+        if n in in_set and packages[n]["version"] in on_registry[n]
+    ]
+    todo = [(n, packages[n]["version"]) for n in pending if n not in waiting]
 
     print(f"already on crates.io ({len(done)}): {', '.join(done) or '-'}")
     print(f"never published, left out ({len(not_published)}): {', '.join(not_published) or '-'}")
