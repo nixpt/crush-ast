@@ -1705,6 +1705,9 @@ impl Compiler {
                 args,
                 meta,
             } => {
+                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
+                    intrinsic.validate(function, args)?;
+                }
                 // #78: `f(x)` where `f` is a variable (a lambda passed in as an
                 // argument, say) would otherwise compile to a capability call
                 // named "f". It holds a function value: call it through the

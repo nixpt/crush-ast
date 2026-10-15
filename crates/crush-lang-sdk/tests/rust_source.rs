@@ -3,48 +3,16 @@
 //! avoiding a test-only dependency cycle from the walker back to the SDK.
 #![cfg(feature = "polyglot-rust")]
 
-use crush_lang_sdk::{
-    HostCap, HostCapSpec, HostCaps, Quotas, Runtime, Value, compile::compile_source,
-};
+use crush_lang_sdk::{Quotas, Runtime, compile::compile_source};
 
 /// Rust source → CVM1 execution → output string.
 pub fn run_rust(source: &str) -> anyhow::Result<String> {
     let vm_prog = compile_source("rust", source)?;
-    let mut host_caps = HostCaps::new();
-
-    struct NopCap {
-        name: String,
-    }
-    impl HostCap for NopCap {
-        fn spec(&self) -> HostCapSpec {
-            HostCapSpec {
-                name: self.name.clone(),
-                argc: None,
-                returns: true,
-            }
-        }
-        fn call(&self, _: Vec<Value>) -> Result<Option<Value>, String> {
-            Ok(Some(Value::Null))
-        }
-    }
-    for name in &[
-        "__crush_assign__",
-        "__crush_return__",
-        "__crush_not__",
-        "__crush_neg__",
-    ] {
-        host_caps.register(Box::new(NopCap {
-            name: name.to_string(),
-        }));
-    }
-
     let quotas = Quotas {
         max_steps: 10_000_000,
         ..Default::default()
     };
-    let result = Runtime::with_quotas(quotas)
-        .with_host_caps(host_caps)
-        .run(&vm_prog)?;
+    let result = Runtime::with_quotas(quotas).run(&vm_prog)?;
     Ok(result.output.trim().to_string())
 }
 
@@ -88,6 +56,36 @@ mod tests {
     fn test_for_loop() {
         let src = "fn main() { let mut sum = 0; for i in 0..10 { sum = sum + i; } println(sum); }";
         assert_eq!(run_rust(src).unwrap(), "45");
+    }
+
+    #[test]
+    fn walker_assignment_preserves_loop_carried_values() {
+        assert_eq!(
+            run_rust("fn main() { let mut sum = 1; for i in 0..4 { sum += i; } println(sum); }")
+                .unwrap(),
+            "7"
+        );
+        assert_eq!(run_rust("fn main() { let mut n = 0; while n < 3 { if n == 1 { n += 1; } else { n = n + 1; } } println(n); }").unwrap(), "3");
+    }
+
+    #[test]
+    #[cfg(feature = "polyglot-javascript")]
+    fn javascript_assignment_uses_the_same_compiler_contract() {
+        let p = compile_source("js", "var n = 0; while (n < 3) { n++; } console.log(n);").unwrap();
+        assert_eq!(Runtime::new().run(&p).unwrap().output.trim(), "3");
+    }
+
+    #[test]
+    #[cfg(feature = "polyglot-python")]
+    fn python_invalid_assignment_contract_is_rejected() {
+        // The Python named-expression walker currently reverses the helper's
+        // operands. The shared path must reject it before VM execution.
+        let error = compile_source("py", "(x := 41)\nprint(x)\n").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("__crush_assign__ target must be a variable")
+        );
     }
 
     #[test]
