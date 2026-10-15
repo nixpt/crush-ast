@@ -701,6 +701,18 @@ impl Compiler {
                         scope.insert(name.clone(), None);
                     }
                 }
+                // A Crush `let` is a fresh binding each time it runs (in a loop
+                // body: one per iteration), so closures made in different
+                // iterations don't share it. The cell is made before the
+                // initializer, so a lambda that refers to its own name
+                // captures this binding. Walker-lowered declarations (meta
+                // `lang`) keep their language's scoping: Python variables are
+                // function-scoped; JS `let` vs `var` is CRUSH-251 step 4b.
+                if self.boxed.contains(name.as_str()) && !meta.contains_key("lang") {
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
                 instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }

@@ -106,3 +106,30 @@ fn a_lambda_without_captures_keeps_the_direct_call() {
     assert!(main.body.iter().any(|i| i.op == "call"), "expected a direct call");
     assert!(!main.body.iter().any(|i| i.op == "call_value" || i.op.contains("cell")));
 }
+
+// A `let` is a fresh binding each time it runs: closures made in different
+// loop iterations each keep their own `j` (JS / Rust `let` semantics). One
+// binding shared across iterations gave `22`.
+#[test]
+fn a_let_in_a_loop_body_is_a_fresh_binding_per_iteration() {
+    assert_eq!(
+        ok("fn main() {\n  let fs = []\n  let i = 0\n  while i < 3 {\n    let j = i\n    fs.push(|| j)\n    i = i + 1\n  }\n  let f0 = fs[0]\n  let f2 = fs[2]\n  print(f0() * 10 + f2())\n}\n"),
+        "2\n"
+    );
+}
+
+#[test]
+fn a_shadowing_let_is_a_new_binding() {
+    assert_eq!(
+        ok("fn main() {\n  let x = 1\n  let get = || x\n  let x = 2\n  print(get())\n  print(x)\n}\n"),
+        "1\n2\n"
+    );
+}
+
+#[test]
+fn a_let_bound_lambda_that_refers_to_itself_and_captures() {
+    assert_eq!(
+        ok("fn main() {\n  let base = 1\n  let fact = |n| {\n    if n <= 1 {\n      return base\n    }\n    return n * fact(n - 1)\n  }\n  print(fact(5))\n}\n"),
+        "120\n"
+    );
+}
