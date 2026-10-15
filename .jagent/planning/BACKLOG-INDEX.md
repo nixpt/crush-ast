@@ -209,6 +209,27 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-101 | Notebook self-hosting pipeline | CRUSH-98 |
 | CRUSH-102 | Notebook cross-language state-sharing CI | CRUSH-101 |
 
+## JS/TS parity spike (2026-10-15 — CRUSH-zorro-4..23)
+
+Design + measured baseline: `research/2026-10-15-JS-TS-parity-spike.md` (54 probes: 15 match, 33 loud,
+6 silently wrong). Bar: VM exact vs `node`, AOT exact-or-loud, never silently wrong.
+
+**Parser decided 2026-10-15: option B.** One JS frontend on `boa_parser` 0.22 (CRUSH-250, widened, shared
+with bozo); swc only strips TS types.
+
+| Wave | ID | Title | Gate |
+|------|----|-------|------|
+| 0 | CRUSH-zorro-4 | Harness: feature corpus vs node, TS twin, AOT `js_parity.rs`, both lowerings during migration | — |
+| 1 | CRUSH-zorro-23 | Make silently mis-lowered constructs loud on the swc path (incl. blocks, labels, finally) | — |
+| 1 | CRUSH-zorro-9, 22, 10 | `js.*` runtime: `+` ToString, `&&`/`||`/`==`, console.log inspect | — |
+| 1 | CRUSH-zorro-26 | **AOT Rust/C read missing values as null where the VM errors** (found by the harness; backend-level, P0) | — |
+| 2 | **CRUSH-250** | The JS frontend: boa 0.22 + scope/semantic pass + builtin table; flip `.js` when ≥ swc | z-4 |
+| 2 | CRUSH-zorro-8 | TS: swc blanks types → boa lowering (`ts` feature) | CRUSH-250 |
+| 3 | CRUSH-zorro-5, 6, 7, 16, 18 | blocks/scoping, labels, finally, objects, params — in the new lowering | CRUSH-250 |
+| 3 | CRUSH-zorro-12..15, 17, 19 | operators, number model (owner decision), strings, arrays, builtins, errors (runtime part may start early) | CRUSH-250 |
+| 4 | CRUSH-zorro-20, 21 | closures + callbacks; TypeScript constructs | CRUSH-251 step 3; z-8 |
+| — | ~~CRUSH-zorro-11~~ | superseded by CRUSH-250 | — |
+
 ## Publish lane
 
 | ID | Title | Gate |
