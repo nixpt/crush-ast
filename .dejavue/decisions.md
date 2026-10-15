@@ -1007,6 +1007,23 @@ Outcome:
 CRUSH-250 widened into the JS frontend (wave 2, absorbs BOZO-M7-1); CRUSH-zorro-11 superseded; z-5/6/7/16/18/20 retargeted to the new lowering; z-8 narrowed to TS strip-to-boa; z-23 is the interim loud-making on the swc path; the js.* runtime tickets are unchanged and shared with bozo (absorbs BOZO-M7-2)
 
 
+## 2026-10-15T06:11:31-05:00 — [CONSTITUTIONAL] [ADOPTED] Object model: COSM (Crush Object Semantic Model) — objects are lowered to declarative Kinds, like code to CAST
+
+Reason:
+Owner decision 2026-10-15 (#206). Crush hosts languages whose object models disagree: JS prototypes/dynamic this, Python C3 MRO/dunders/bound methods, Rust/Go/C value semantics, Go structural interfaces, Dart mixins. Today there is no object model at all: maps only, and obj.m(x) is a global capability call. Walkers lower object declarations to COSM KindDecl/InterfaceDecl: serializable data whose language differences are a closed catalogue of strategies (resolution none/single/c3/prototype_chain/embedding_promotion; receiver dynamic_this/bound_self/explicit_value/explicit_ref; construction; storage sealed/open; value semantics reference/copy/move/clone; operator hooks; nominal/structural interfaces). Each strategy is implemented once in the VM. Kinds are COSM declarations instantiated at load time, built or patched at run time only where the language is dynamic. Seven generic ops (GET/SET/CALL/HAS/DEL_MEMBER, CONSTRUCT, OP, ITERATE). Static Kinds compile to direct slots and calls for AOT. Objects keep their home semantics across languages. Fidelity: what each parity corpus needs, the rest loud. Rust: Copy types copy, others move with a loud use-after-move. Crush grows impl+trait in K1. Instance cycles leak through K2; CRUSH-121's root-set fix is a prerequisite of K3.
+
+Artifacts: docs/design/object-model.md
+
+Author type: human
+
+Rejected alternatives:
+- **one fixed object model (JS-like or Python-like) for every language**: lossy, so every mismatch becomes a silently-wrong program
+- **per-walker desugaring to maps and functions**: semantics duplicated across walkers, bozo, AOT and the JIT, and lost at language boundaries
+- **per-language kind libraries as imperative code**: superseded by lowering to declarative COSM with a shared strategy catalogue
+- **running real CPython/V8 for objects**: excluded by the #204 decision (no silent change of trust model)
+
+Outcome:
+docs/design/object-model.md; phases K1-K5; supersedes the JS-specific object-model half of CRUSH-251
 ## 2026-10-15T06:36:37-05:00 — [STRATEGIC] crush-cosm has no workspace deps; CosmType mirrors CastType
 
 Reason:
