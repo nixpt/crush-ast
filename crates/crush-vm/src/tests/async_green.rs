@@ -29,7 +29,9 @@ fn spawn_creates_handle() {
 
 #[test]
 fn spawn_await_roundtrip() {
-    // SPAWN a function, AWAIT it, check result
+    // SPAWN a function, AWAIT it, check result. The worker's HALT ends only
+    // the worker (it used to end the whole program with the worker's stack,
+    // which is why this passed before AWAIT delivered anything).
     let src = "\
 .func main
     PUSH_STR \"worker\"
@@ -333,3 +335,43 @@ fn engines_agree_spawn_of_unknown_function_is_null() {
     RET";
     assert_eq!(run_both(src), "null\n");
 }
+
+#[test]
+fn engines_agree_halt_in_a_task_ends_only_that_task() {
+    // The worker HALTs with 42 on its stack: main keeps running, AWAIT gets
+    // 42, and main's own prints after it still happen.
+    let src = "\
+.func main
+    PUSH_STR \"worker\"
+    SPAWN 0
+    AWAIT
+    CAP_CALL \"io.print\" 1
+    PUSH_STR \"main continues\"
+    CAP_CALL \"io.print\" 1
+    RET
+.func worker
+    PUSH_STR \"worker\"
+    CAP_CALL \"io.print\" 1
+    PUSH 42
+    HALT";
+    assert_eq!(run_both(src), "worker\n42\nmain continues\n");
+}
+
+#[test]
+fn halt_in_main_still_ends_the_program_with_tasks_alive() {
+    let src = "\
+.func main
+    PUSH_STR \"spin\"
+    SPAWN 0
+    POP
+    YIELD
+    PUSH_STR \"bye\"
+    CAP_CALL \"io.print\" 1
+    HALT
+.func spin
+loop:
+    YIELD
+    JMP loop";
+    assert_eq!(run_both(src), "bye\n");
+}
+

@@ -1606,6 +1606,12 @@ impl PortableVm {
                     _ => self.push(Value::Null),
                 }
             }
+            // HALT in a spawned task ends only that task (owner decision
+            // 2026-10-15), like the scheduler; main's HALT ends the program.
+            HALT if self.current_task != 0 => {
+                let result = self.stack.pop().unwrap_or(Value::Null);
+                self.finish_task(result);
+            }
             HALT => {
                 self.halted = true;
             }
