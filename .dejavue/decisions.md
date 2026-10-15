@@ -1067,6 +1067,31 @@ Outcome:
 casm::kind_unsupported_strategies + cosm_unsupported_reason; Program::refuse_cosm and crush_vm::cosm_gate delegate to it. crush-aotc separately refuses object ops (it has no maps; they used to be dropped silently).
 
 
+## 2026-10-15T13:08:42-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] COSM K1.4: every struct is a Record on the two VMs; map engines keep their map path (approach b, at the CASM->CVM1 boundary) (CRUSH-zorro-43)
+
+Reason:
+Struct patterns must test the Kind (closes CRUSH-zorro-37) and p.m() must resolve on the receiver, so default Crush structs need a Kind at run time on the VMs. The CASM for a struct literal stays new_obj + set_field, tagged {kind: P}: FastVM/JIT/AOT ignore the tag and build the same map as before, so the all-engine agreement (crush-aot/tests/cosm_k1_lifted_methods.rs) holds unchanged. casm_to_vm lowers a tagged new_obj to NEW_RECORD (no constructor runs) and new P() / C(...) to CONSTRUCT. GET_FIELD/SET_FIELD on a Record are the member ops (GET_FIELD keeps a map's null for a missing name). Ops only Kinds can run (call_member, is_kind, copy, construct, the member/slot ops) are unknown to FastVM/JIT/AOT, so they refuse them; FastVM refuses type_of in a program with Kinds. The shared rule becomes per-engine-capability (casm::CosmSupport::{Maps,Kinds}), defined once.
+
+Rejected alternatives:
+- **approach (a) — map ops for map-compatible Kinds, Records only for the rest**: default structs would carry no Kind, so zorro-37 stays open and p.m() can't resolve
+- **a construct CASM op for every literal, lowered to new_obj by each map engine**: touches FastVM, AOT Rust, AOT C and aotc for no behavioural gain
+- **Records with a dense slot print order**: a struct literal written out of declaration order would print differently than the map it was
+
+Outcome:
+crush_vm::cosm_rt (Kind, KindTable, RecordValue); Value::Record/Value::Kind; CVM1 0xC0-0xCA (GET_MEMBER SET_MEMBER HAS_MEMBER DEL_MEMBER CALL_MEMBER CONSTRUCT GET_SLOT SET_SLOT IS_KIND COPY NEW_RECORD); FunctionEntry.arity (programs with Kinds); casm::{CosmSupport, kind_unsupported_strategies_on, cosm_unsupported_reason_on, kind_constructor}. Records print fields in first-set order and compare structurally ignoring the Kind (as the maps they were). value(move) = copy at run time.
+
+
+## 2026-10-15T13:24:13-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] COSM structural equality ignores the Kind; sealed fields are enforced on every engine (CRUSH-zorro-43 review)
+
+Reason:
+Review of #222: a write to an undeclared field of a sealed Kind errored on the VMs but the map engines added the key (silent divergence). Fixed at run time on each map engine from the Kind tag new_obj already carries, with one message (casm::sealed_field_error). Equality: structural compares the set fields only, so P{x:1}==Q{x:1} and P{x:1}=={x:1} are true, matching the design doc ('structural — as maps compare today') and the map engines.
+
+Rejected alternatives:
+- **compile-time refusal of set_field keys no Kind declares**: unsound when another Kind declares the key, and refuses plain object literals in programs with structs
+- **structural equality including the Kind**: P{x:1}=={x:1} would change on the VMs only, a cross-engine divergence
+
+Outcome:
+FastVM/JIT: struct maps of sealed Kinds get a class name listing the fields (fastvm::sealed_class / check_sealed_write; JIT error flag 5). AOT Rust OrdMap::sealed, AOT C CrushObject.sealed_kind/sealed_fields. Test crush-aot/tests/cosm_k1_lifted_methods.rs::undeclared_write.
 ## 2026-10-15T13:28:00-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] JS number model (CRUSH-zorro-13): Int promotes to Float on overflow
 
 Reason:

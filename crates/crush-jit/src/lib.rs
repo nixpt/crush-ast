@@ -175,7 +175,9 @@ impl JitEngine {
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
-            let msg = if ctx.error == 3 {
+            let msg = if ctx.error == runtime::ERR_COSM {
+                runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+            } else if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
             } else if ctx.error == 4 {
                 "Capability call failed".to_string()
@@ -256,7 +258,9 @@ impl JitEngine {
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
-            let msg = if ctx.error == 3 {
+            let msg = if ctx.error == runtime::ERR_COSM {
+                runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+            } else if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
             } else if ctx.error == 4 {
                 "Capability call failed".to_string()

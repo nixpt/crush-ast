@@ -11,7 +11,7 @@ pub mod similarity;
 pub mod execution;
 
 pub use types::{FastYield, HostRequest, FastError, FastFrame, ROOT_FRAME_PC};
-pub use instructions::{FastInstr, FastOp, LoweredProgram, SymbolTables, HostCallSite, InterfaceCallSite, ExecLangSite, LowerError, lower_program, lower_bytecode_program};
+pub use instructions::{FastInstr, FastOp, LoweredProgram, SymbolTables, HostCallSite, InterfaceCallSite, ExecLangSite, LowerError, lower_program, lower_bytecode_program, sealed_class, check_sealed_write};
 
 use crate::{Arena, RuntimeValue};
 use std::sync::Arc;

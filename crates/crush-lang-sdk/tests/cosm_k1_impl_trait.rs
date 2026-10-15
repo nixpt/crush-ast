@@ -1,7 +1,7 @@
 //! COSM K1.2 (CRUSH-zorro-41): Crush programs with `impl` / `trait` run their
-//! lifted methods today through qualified calls (`Point::new(3, 4)`,
-//! `Point::norm2(p)`) — on the scheduler VM and the portable VM alike — and
-//! refuse receiver calls (`p.norm2()`) at compile time until K1.4/K1.5.
+//! lifted methods through qualified calls (`Point::new(3, 4)`,
+//! `Point::norm2(p)`) — on the scheduler VM and the portable VM alike — and,
+//! since K1.4 (CRUSH-zorro-43), through the receiver (`p.norm2()`).
 
 use crush_vm::{InputSource, PortableVm, Quotas};
 
@@ -54,10 +54,14 @@ fn qualified_calls_run_the_lifted_methods_on_both_vms() {
 }
 
 #[test]
-fn receiver_calls_are_a_compile_error_not_a_global_capability() {
+fn receiver_calls_resolve_on_the_kind() {
+    // K1.4 (CRUSH-zorro-43): `p.norm2()` is CALL_MEMBER, not the global
+    // capability `norm2`.
     let src = PROGRAM.replace("print(Point::norm2(p))", "print(p.norm2())");
-    let err = format!("{:#}", crush_lang_sdk::compile::compile_crush_source(&src).expect_err("must not compile"));
-    assert!(err.contains("needs COSM K1.4/K1.5 (CRUSH-zorro-43/44)"), "{err}");
+    let program = compile(&src);
+    let want = "25\n0\na shape\n4\n2\n";
+    assert_eq!(on_scheduler(&program), want);
+    assert_eq!(on_portable(&program), want);
 }
 
 #[test]
