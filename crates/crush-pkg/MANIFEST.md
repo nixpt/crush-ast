@@ -138,3 +138,95 @@ granted stops the program with `unknown capability: <name>`.
 cd examples/crush/capsules/squad-bridge-peek
 crush-pkg run --fs --fs-root fixtures --env
 ```
+
+## Host-approved Rust plugins
+
+`crush-pkg` can load a manually built Rust `cdylib` for a Crush package.
+The host supplies both the library path and each export to grant; `capsule.toml`
+cannot select a library or grant native code. Plugins are trusted native code
+and execute in the host process, so only load libraries you trust. Cargo is not
+run by `crush-pkg` to build them.
+
+Build a small wrapper crate against `crush-ffi`:
+
+```toml
+# rust-math/Cargo.toml
+[package]
+name = "rust-math"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+crush-ffi = "0.5"
+num-integer = "0.1"
+```
+
+```rust
+// rust-math/src/lib.rs
+use crush_ffi::{CrushPlugin, CrushPluginExport, FfiType, FfiValue};
+use num_integer::Integer;
+
+extern "C" fn gcd(args: *const FfiValue, count: usize, out: *mut FfiValue) -> bool {
+    if count != 2 || args.is_null() || out.is_null() {
+        return false;
+    }
+    let args = unsafe { std::slice::from_raw_parts(args, count) };
+    if args[0].tag != FfiType::Int || args[1].tag != FfiType::Int {
+        return false;
+    }
+    let left = unsafe { args[0].data.integer };
+    let right = unsafe { args[1].data.integer };
+    unsafe { *out = FfiValue::from_int(left.gcd(&right)) };
+    true
+}
+
+static PLUGIN_NAME: &[u8] = b"rust-math\0";
+static EXPORT_NAME: &[u8] = b"rust.gcd\0";
+static EXPORTS: [CrushPluginExport; 1] = [CrushPluginExport {
+    name: EXPORT_NAME.as_ptr().cast(),
+    func: gcd,
+}];
+static PLUGIN: CrushPlugin = CrushPlugin {
+    plugin_name: PLUGIN_NAME.as_ptr().cast(),
+    exports: EXPORTS.as_ptr(),
+    export_count: EXPORTS.len(),
+};
+
+#[unsafe(no_mangle)]
+pub extern "C" fn crush_plugin_init() -> *const CrushPlugin {
+    &PLUGIN
+}
+```
+
+Build the wrapper separately, then run the package with explicit host grants
+(use `.so`, `.dylib`, or `.dll` as appropriate for the host):
+
+```sh
+cargo build --manifest-path rust-math/Cargo.toml --release
+crush-pkg run --rust-plugin rust-math/target/release/librust_math.so \
+  --plugin-export rust.gcd
+```
+
+Declare the export in the package and call it from its Crush entry file:
+
+```toml
+# capsule.toml
+[capabilities]
+required = ["rust.gcd"]
+```
+
+```crush
+# src/main.crush
+fn main() {
+    io.print(rust.gcd(84, 30))
+}
+```
+
+The wrapper calls `num-integer`'s `gcd` API, so the package prints `6`. The MVP supports
+null, booleans, integers, floats, and strings across the FFI boundary; arrays
+and objects are rejected until their ownership rules are defined. The plugin
+export still has to be declared in the package's `[capabilities].required`
+list for `crush-pkg check` to report a consistent package contract.

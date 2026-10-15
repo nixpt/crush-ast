@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::manifest::{CapsuleType, Manifest, PayloadFormat, ScriptRuntime};
@@ -33,6 +33,13 @@ pub struct CrushRunner {
     pub host_caps: Option<HostCaps>,
 }
 
+/// A native plugin and the exports its host explicitly grants to the package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginGrant {
+    pub library: PathBuf,
+    pub exports: Vec<String>,
+}
+
 impl CapsuleRunner for CrushRunner {
     fn run(
         &self,
@@ -59,14 +66,57 @@ impl CrushRunner {
     /// uses this to run the program `PackageBuilder::build` produced
     /// (entry + path deps) instead of recompiling the entry file alone.
     pub fn run_program(&self, program: &crush_vm::Program) -> anyhow::Result<ExecutionResult> {
+        self.run_program_with_plugins(program, &[])
+    }
+
+    /// Run a compiled package with host-selected native plugins. The library
+    /// handles are held through VM execution, and only the listed exports are
+    /// registered as host capabilities.
+    pub fn run_program_with_plugins(
+        &self,
+        program: &crush_vm::Program,
+        plugins: &[PluginGrant],
+    ) -> anyhow::Result<ExecutionResult> {
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(program, &quotas, self.host_caps.as_ref())?;
+        let mut host_caps = self.host_caps.clone();
+        let mut _loaded_plugins = Vec::with_capacity(plugins.len());
+        for grant in plugins {
+            let exports: Vec<&str> = grant.exports.iter().map(String::as_str).collect();
+            let library = grant.library.to_string_lossy();
+            let loaded = crush_vm::plugin::load_plugin_exports(
+                library.as_ref(),
+                &exports,
+                host_caps.get_or_insert_with(crush_vm::HostCaps::new),
+            )
+            .map_err(|e| anyhow::anyhow!("load Rust plugin {}: {e}", grant.library.display()))?;
+            _loaded_plugins.push(loaded);
+        }
+        let result = crush_vm::run_with_caps(program, &quotas, host_caps.as_ref())?;
 
         if !result.output.is_empty() {
             println!("{}", result.output);
         }
 
         Ok(ExecutionResult::Vm)
+    }
+
+    /// Compile and run a Crush package payload with optional host-selected
+    /// native plugins. Script and native capsules use their own runners.
+    pub fn run_payload_with_plugins(
+        &self,
+        payload_path: &Path,
+        plugins: &[PluginGrant],
+    ) -> anyhow::Result<ExecutionResult> {
+        let ext = payload_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let program = if ext == "casm" || ext == "sno" {
+            let content = std::fs::read_to_string(payload_path)?;
+            let casm_program: ::casm::Program = serde_json::from_str(&content)?;
+            crush_lang_sdk::compile::casm_to_vm(&casm_program)?
+        } else {
+            let source = std::fs::read_to_string(payload_path)?;
+            crush_lang_sdk::compile::compile_crush_source(&source)?
+        };
+        self.run_program_with_plugins(&program, plugins)
     }
 }
 

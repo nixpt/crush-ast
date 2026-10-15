@@ -285,6 +285,13 @@ fn load_plugin_filtered(
                 .map(|allowed| allowed.contains(&name.as_str()))
                 .unwrap_or(true)
             {
+                if host_caps.get(&name).is_some()
+                    || crate::caps::capabilities().get(name.as_str()).is_some()
+                {
+                    return Err(format!(
+                        "Plugin export `{name}` conflicts with an existing Crush capability"
+                    ));
+                }
                 selected.push((name, export.func));
             }
         }

@@ -57,7 +57,7 @@ use std::collections::HashSet;
 
 use crush_pkg::manifest::Manifest;
 use crush_pkg::packer::{pack, unpack};
-use crush_pkg::runners::{ExecutionResult, get_runner_for_payload_with};
+use crush_pkg::runners::{ExecutionResult, PluginGrant, get_runner_for_payload_with};
 use crush_pkg::signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
@@ -141,6 +141,12 @@ struct GrantArgs {
     /// Grant the clock (time.now*, time.elapsed, time.sleep, async.sleep).
     #[arg(long)]
     time: bool,
+    /// Load this host-selected native plugin for a Crush package.
+    #[arg(long, value_name = "LIBRARY")]
+    rust_plugin: Option<PathBuf>,
+    /// Grant one named export from --rust-plugin (repeatable).
+    #[arg(long = "plugin-export", value_name = "EXPORT", requires = "rust_plugin")]
+    plugin_exports: Vec<String>,
 }
 
 impl GrantArgs {
@@ -157,6 +163,26 @@ impl GrantArgs {
     fn runner(&self) -> crush_pkg::runners::CrushRunner {
         crush_pkg::runners::CrushRunner {
             host_caps: Some(self.host_caps()),
+        }
+    }
+
+    fn plugin_grants(&self) -> anyhow::Result<Vec<PluginGrant>> {
+        match (&self.rust_plugin, self.plugin_exports.is_empty()) {
+            (None, false) => anyhow::bail!("--plugin-export requires --rust-plugin"),
+            (Some(_), true) => anyhow::bail!("--rust-plugin requires at least one --plugin-export"),
+            (None, true) => Ok(Vec::new()),
+            (Some(library), false) => {
+                let mut unique = HashSet::new();
+                for export in &self.plugin_exports {
+                    if export.is_empty() || !unique.insert(export) {
+                        anyhow::bail!("plugin export names must be non-empty and unique: `{export}`");
+                    }
+                }
+                Ok(vec![PluginGrant {
+                    library: library.clone(),
+                    exports: self.plugin_exports.clone(),
+                }])
+            }
         }
     }
 }
@@ -660,12 +686,33 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
         );
     }
 
+    let plugin_grants = grants.plugin_grants()?;
     let runner = get_runner_for_payload_with(&payload, &manifest, grants.runner());
     println!(
         "running {} v{} ({})",
         manifest.capsule.name, manifest.capsule.version, manifest.capsule.language
     );
-    let result = runner.run(&manifest, &payload, &args)?;
+    let result = if plugin_grants.is_empty() {
+        runner.run(&manifest, &payload, &args)?
+    } else {
+        use crush_pkg::manifest::{CapsuleType, language_to_capsule_type};
+        let capsule_type = language_to_capsule_type(&manifest.capsule.language);
+        let is_crush_payload = match capsule_type {
+            CapsuleType::Crush => true,
+            CapsuleType::Auto => matches!(
+                format,
+                crush_pkg::manifest::PayloadFormat::Casm
+                    | crush_pkg::manifest::PayloadFormat::Unknown
+            ),
+            _ => false,
+        };
+        if !is_crush_payload {
+            anyhow::bail!("--rust-plugin is supported only for Crush packages");
+        }
+        grants
+            .runner()
+            .run_payload_with_plugins(&payload, &plugin_grants)?
+    };
     match result {
         ExecutionResult::Vm => {}
         ExecutionResult::Process(mut child) => {
@@ -797,9 +844,10 @@ fn handle_default(
     // CrushRunner has no argv channel for Crush programs (same as
     // `crush-pkg run -- ARGS` on a Crush capsule), so `args` stop here.
     let _ = args;
+    let plugin_grants = grants.plugin_grants().map_err(DefaultFailure::Run)?;
     grants
         .runner()
-        .run_program(&output.program)
+        .run_program_with_plugins(&output.program, &plugin_grants)
         .map_err(DefaultFailure::Run)?;
     Ok(())
 }
