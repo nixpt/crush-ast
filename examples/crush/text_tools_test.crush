@@ -1,7 +1,7 @@
 // caps: fs, stdlib
 // expect: Testing advanced text tools
 // expect: Test 1: text.wc
-// expect: [1061, 25, 168]
+// expect: [25, 168, 1061]
 // expect: Test 2: text.head
 // expect: [Copyright (c) 2026 The Crush Authors]
 // expect: All text tool tests passed!
@@ -11,7 +11,7 @@
 io.print("Testing advanced text tools")
 
 io.print("Test 1: text.wc")
-// {chars, lines, words}, values in key order
+// {lines, words, chars}, values in insertion order (as `wc` prints them)
 let stats = text.wc("LICENSE-MIT")
 io.print(collections.values(stats))
 

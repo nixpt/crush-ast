@@ -185,7 +185,7 @@ impl HostCap for MessageBusRecvCap {
         // composition between two canonical `serde` round-trips.
         let payload: Value = serde_json::from_value(msg.payload_json)
             .map_err(|e| format!("message_bus.recv payload deserialize: {e}"))?;
-        let mut map = std::collections::HashMap::new();
+        let mut map = crush_vm::vm::MapStore::new();
         map.insert("topic".to_string(), Value::Str(msg.topic));
         map.insert("payload".to_string(), payload);
         let json = serde_json::to_string(&Value::new_map(map))

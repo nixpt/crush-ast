@@ -598,7 +598,7 @@ impl<'de> serde::Deserialize<'de> for Value {
                 self,
                 mut map: A,
             ) -> Result<Self::Value, A::Error> {
-                let mut out = std::collections::HashMap::new();
+                let mut out = MapStore::new(); // document key order
                 while let Some((key, value)) = map.next_entry::<String, Value>()? {
                     out.insert(key, value);
                 }

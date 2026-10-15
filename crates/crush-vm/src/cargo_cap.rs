@@ -56,7 +56,7 @@ impl HostCap for CargoCap {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                 let success = output.status.success();
                 
-                let mut map = std::collections::HashMap::new();
+                let mut map = crate::vm::MapStore::new();
                 map.insert("stdout".to_string(), Value::Str(stdout));
                 map.insert("stderr".to_string(), Value::Str(stderr));
                 map.insert("success".to_string(), Value::Bool(success));

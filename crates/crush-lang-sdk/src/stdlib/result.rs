@@ -7,7 +7,6 @@
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
-use std::collections::HashMap;
 
 pub(super) fn register(caps: &mut HostCaps) {
     caps.register(Box::new(ResultOkCap));
@@ -17,7 +16,7 @@ pub(super) fn register(caps: &mut HostCaps) {
 }
 
 fn make(ok: bool, value: Value) -> Value {
-    let mut m = HashMap::new();
+    let mut m = crush_vm::vm::MapStore::new();
     m.insert("ok".to_string(), Value::Bool(ok));
     m.insert("value".to_string(), value);
     Value::new_map(m)
@@ -97,7 +96,7 @@ mod tests {
 
     #[test]
     fn arbitrary_maps_are_not_results() {
-        let mut m = HashMap::new();
+        let mut m = std::collections::HashMap::new();
         m.insert("ok".to_string(), Value::Bool(true));
         m.insert("value".to_string(), Value::Int(1));
         m.insert("extra".to_string(), Value::Null);

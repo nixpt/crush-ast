@@ -25,7 +25,6 @@ use crush_index::stale::TempStaleChecker;
 use crush_index::CrushIndex;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Register all `codebase.*` capabilities into `caps`, snapping a
@@ -84,11 +83,8 @@ fn str_list(items: &[String]) -> Value {
 }
 
 fn make_map(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
-    let m: HashMap<String, Value> = pairs
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect();
-    Value::new_map(m)
+    // In the order given (Value::Map is insertion-ordered).
+    Value::new_map(pairs.into_iter().map(|(k, v)| (k.to_string(), v)))
 }
 
 /// Serialise probabilistic error annotations for `codebase.definition`.

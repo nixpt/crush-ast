@@ -26,9 +26,7 @@
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 /// All 10 `dom_native.<kind>` caps registered.
 ///
