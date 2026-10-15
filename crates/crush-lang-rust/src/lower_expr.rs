@@ -11,6 +11,13 @@ use syn::spanned::Spanned;
 
 pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
     let start = expr.span().start();
+    lower_expr_inner(expr, ctx).map_err(|error| {
+        anyhow::anyhow!("Rust expression at {}:{}: {error:#}", start.line, start.column + 1)
+    })
+}
+
+fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+    let start = expr.span().start();
     let meta = ctx.meta_lc(start.line, start.column + 1);
     match expr {
         Expr::Lit(e) => lower_lit(&e.lit, meta),
@@ -256,10 +263,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
         }
         Expr::Macro(m) => lower_macro_expr(&m.mac, ctx),
         Expr::Match(e) => lower_match(e, ctx),
-        _ => {
-            eprintln!("unsupported Rust expression: {:#?}", expr);
-            anyhow::bail!("unsupported Rust expression")
-        },
+        _ => anyhow::bail!("unsupported Rust expression `{}`; this construct has no CAST lowering", expr.to_token_stream()),
     }
 }
 
@@ -340,8 +344,7 @@ fn lower_lit(
             meta,
         }),
         _ => {
-            eprintln!("unsupported literal: {:#?}", lit);
-            anyhow::bail!("unsupported literal")
+            anyhow::bail!("unsupported Rust literal `{}`; this literal has no CAST representation", lit.to_token_stream())
         }
     }
 }

@@ -1,0 +1,82 @@
+# Rust source conformance
+
+The SDK's `compile_source("rust", source)` compiles a Rust **subset** to Crush
+bytecode. It does not invoke Cargo, resolve arbitrary Rust crates, or provide
+Rust's type checker and borrow checker. Rust crate APIs enter through explicit
+host-approved capability/plugin wrappers. Hosts choose their own grants.
+
+## Gate (CRUSH-xps-5)
+
+`crates/crush-lang-sdk/tests/rustc_corpus/` contains runnable Rust programs and
+their stdout. The SDK test recompiles every fixture with real `rustc
+--edition=2021 -O`, checks a successful exit and empty stderr, and compares
+stdout byte-for-byte with its `.out` file. A missing compiler fails the test.
+This oracle uses release overflow behavior; debug overflow traps are not
+claimed as supported.
+
+The same files run through:
+
+- the SDK's public source API and CVM1 runtime, with the host's standard library
+  explicitly registered;
+- CAST → CASM → Rust AOT;
+- CAST → CASM → C AOT.
+
+The policy in `tests/rust_support/mod.rs` is shared by both test targets:
+
+| Classification | Required result |
+|---|---|
+| Exact (the default) | Identical stdout, including whitespace |
+| Known unsupported | Rejection containing the recorded diagnostic and fixing ticket |
+| Known silent divergence | The precise recorded wrong stdout and a fixing ticket |
+
+A new failure, different wrong output, or wrong output from a known unsupported
+fixture fails the gate. When an exception becomes exact, the test fails with
+“now exact — remove it” so the inventory cannot silently go stale. Subprocess
+timeouts and launch failures fail the test; they do not count as unsupported
+language features. stdin is closed for all subprocesses.
+
+**A green inventory audit does not mean all Rust programs are correct.** The
+silent entries are blockers, not supported behavior. CRUSH-xps-4's `.rs` CLI
+dispatch remains gated on xps-5 and closing xps-6–12.
+
+## Current boundaries
+
+The exact baseline covers scalar arithmetic, function calls and returns,
+conditionals, loops and ranges, literal matches, vector indexing/mutation,
+mapped standard methods, and supported scalar closure captures and block bodies.
+See `crush-lang-rust`'s crate docs for the syntax subset. Syntax acceptance alone
+does not establish Rust semantics.
+The baseline uses `println!`. Newline-free `print!` and separate stderr routing
+are outside the conformance claim: the current lowering routes all print macros
+through `io.print`, which appends a newline to stdout.
+
+| Family | Inventory / owner |
+|---|---|
+| Block-local shadowing | Known silent divergence; CRUSH-xps-6 |
+| Vector clone aliasing | Known silent divergence; CRUSH-xps-7 |
+| Mutable strings and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
+| Narrow integer casts and release overflow | Known silent divergence; CRUSH-xps-8 |
+| String `{:?}` quoting | Known silent divergence; CRUSH-xps-9 |
+| Walker assignments / loops | Exact baseline; CRUSH-xps-10 |
+| Supported closures | Exact on VM; AOT rejects closure opcodes (CRUSH-251) |
+| Resolved `str.to_lower`, `str.contains`, `math.pow` capabilities | Exact on VM; both AOT backends reject them (CRUSH-xps-13) |
+| Move/destructured closures | Rejected; CRUSH-xps-11 |
+| Multi-statement blocks in a value position | Rejected with location; CRUSH-xps-12 |
+| Rust imports / crate resolution | Rejected; host wrappers are the supported crate integration path |
+| Format precision and range patterns | Rejected; no lowering implemented |
+
+Rust `Copy`/move/clone semantics must follow COSM's contracts when Rust type
+lowering arrives. The schema and Crush frontend alone do not enable Rust
+structs, traits, enums, or `impl` blocks. Engine support and receiver dispatch
+are tracked in CRUSH-zorro-42–44; Rust's producer belongs to COSM K3.
+
+## Run the gate
+
+```sh
+cargo test -p crush-lang-sdk --test rustc_corpus
+cargo test -p crush-aot --test rust_parity
+```
+
+The second command requires `rustc` and `gcc`. Both test targets run in existing
+CI jobs (`Test (sdk)` and `Test (aot)`). Adding a fixture makes it exact by
+default; adding an exception requires a specific fixing ticket and evidence.
