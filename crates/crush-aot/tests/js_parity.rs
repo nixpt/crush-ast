@@ -15,6 +15,10 @@
 //!   that fixes them. Same bar as the VM: an unlisted silently-wrong program
 //!   fails; a listed one that matches or turns loud must be moved/removed.
 //!
+//! Each backend runs both lowerings: swc (the `.js` default until CRUSH-250
+//! step 6) and boa, whose lists are the swc lists adjusted by `BOA_EXACT` /
+//! `BOA_LOUD`.
+//!
 //! Run with `--nocapture` for the per-area match / loud / silent table.
 
 use std::collections::BTreeMap;
@@ -22,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crush_aot::AotCompiler;
+use crush_lang_js::JsLowering;
 
 /// Rust backend: programs that must stay loud — `(program, why / fixing ticket)`.
 const RUST_LOUD: &[(&str, &str)] = &[
@@ -62,6 +67,10 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("ops_nullish", "CRUSH-zorro-12: ??"),
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
     ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
+    ("scope_catch_shadow", "CRUSH-zorro-5: a `catch` parameter that shadows an outer binding"),
+    ("scope_nested_fn_decl", "CRUSH-250: a nested `function` that uses its enclosing function's locals"),
+    ("scope_shadow_closure", "CRUSH-zorro-5: a block `let` that shadows an outer binding"),
+    ("scope_shadow_loop", "CRUSH-zorro-5: a loop/block `let` that shadows an outer binding"),
     ("str_methods", "CRUSH-zorro-14: string methods"),
     ("str_methods2", "CRUSH-zorro-14: string methods"),
     ("str_replace", "CRUSH-zorro-14: string methods"),
@@ -83,6 +92,28 @@ const RUST_SILENT: &[(&str, &str, &str)] = &[
 /// C backend: identical to the Rust backend today. Split when they diverge.
 const C_LOUD: &[(&str, &str)] = RUST_LOUD;
 const C_SILENT: &[(&str, &str, &str)] = RUST_SILENT;
+
+/// The boa lowering (CRUSH-250) on AOT: the swc lists above, adjusted by
+/// these deltas (both backends). Programs swc can't lower that boa runs
+/// exactly:
+const BOA_EXACT: &[&str] = &["scope_block_shadow", "scope_shadow_loop"];
+/// Silently wrong on AOT with swc, refused at walk time with boa:
+const BOA_LOUD: &[(&str, &str)] = &[
+    ("fn_default_param", "CRUSH-zorro-18: default parameters (refused at walk time)"),
+    ("ops_optional_chain", "CRUSH-zorro-12: `?.` (refused at walk time)"),
+];
+
+/// A backend's swc lists, adjusted for the boa lowering.
+fn boa_lists<'a>(
+    loud: &[(&'a str, &'a str)],
+    silent: &[(&'a str, &'a str, &'a str)],
+) -> (Vec<(&'a str, &'a str)>, Vec<(&'a str, &'a str, &'a str)>) {
+    let moved = |n: &str| BOA_LOUD.iter().any(|e| e.0 == n);
+    let mut l: Vec<_> = loud.iter().copied().filter(|e| !BOA_EXACT.contains(&e.0)).collect();
+    l.extend(BOA_LOUD.iter().copied());
+    let s = silent.iter().copied().filter(|e| !moved(e.0)).collect();
+    (l, s)
+}
 
 fn corpus() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crush-lang-js/tests/node_corpus");
@@ -122,8 +153,9 @@ fn first_line(e: impl std::fmt::Display) -> String {
     format!("{e:#}").lines().next().unwrap_or("").to_string()
 }
 
-fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> Outcome {
-    let cast = match crush_lang_js::js_to_cast(source, "js") {
+fn compile_and_run(backend: &str, lowering: JsLowering, name: &str, source: &str, expected: &str) -> Outcome {
+    let frontend = crush_lang_js::JsFrontend::with_lowering("js", lowering);
+    let cast = match crush_walker_core::frontend_pipeline(&frontend, source).map(|(_, p)| p) {
         Ok(c) => c,
         Err(e) => return Outcome::Loud(format!("walker: {}", first_line(e))),
     };
@@ -132,10 +164,14 @@ fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> O
         Err(e) => return Outcome::Loud(format!("compile: {}", first_line(e))),
     };
     let aot = AotCompiler::new();
+    let tag = match lowering {
+        JsLowering::Swc => "",
+        JsLowering::Boa => "b",
+    };
     let built = if backend == "rust" {
-        aot.compile_casm(&casm, &format!("jsp_{name}_r"))
+        aot.compile_casm(&casm, &format!("jsp_{name}_r{tag}"))
     } else {
-        aot.compile_c(&casm, &format!("jsp_{name}_c"), "gcc")
+        aot.compile_c(&casm, &format!("jsp_{name}_c{tag}"), "gcc")
     };
     match built {
         Ok(so) => run(&so, expected),
@@ -143,7 +179,7 @@ fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> O
     }
 }
 
-fn check(backend: &str, known_loud: &[(&str, &str)], known_silent: &[(&str, &str, &str)]) {
+fn check(backend: &str, lowering: JsLowering, known_loud: &[(&str, &str)], known_silent: &[(&str, &str, &str)]) {
     let files = corpus();
     let mut problems = Vec::new();
     for n in known_loud.iter().map(|e| e.0).chain(known_silent.iter().map(|e| e.0)) {
@@ -152,6 +188,7 @@ fn check(backend: &str, known_loud: &[(&str, &str)], known_silent: &[(&str, &str
         }
     }
     let mut by_area: BTreeMap<String, [usize; 3]> = BTreeMap::new();
+    let backend = &format!("{backend} ({lowering:?} lowering)");
     println!("\nJS corpus on AOT {backend}");
     for path in &files {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -159,7 +196,7 @@ fn check(backend: &str, known_loud: &[(&str, &str)], known_silent: &[(&str, &str
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         let loud_entry = known_loud.iter().find(|e| e.0 == name);
         let silent_entry = known_silent.iter().find(|e| e.0 == name);
-        let outcome = compile_and_run(backend, &name, &source, &expected);
+        let outcome = compile_and_run(backend, lowering, &name, &source, &expected);
         let slot = match outcome {
             Outcome::Exact => 0,
             Outcome::Loud(_) => 1,
@@ -200,7 +237,7 @@ fn check(backend: &str, known_loud: &[(&str, &str)], known_silent: &[(&str, &str
 
 #[test]
 fn rust_backend_is_exact_or_loud() {
-    check("rust", RUST_LOUD, RUST_SILENT);
+    check("rust", JsLowering::Swc, RUST_LOUD, RUST_SILENT);
 }
 
 #[test]
@@ -209,5 +246,22 @@ fn c_backend_is_exact_or_loud() {
         eprintln!("gcc not found; skipping the C backend");
         return;
     }
-    check("c", C_LOUD, C_SILENT);
+    check("c", JsLowering::Swc, C_LOUD, C_SILENT);
+}
+
+
+#[test]
+fn rust_backend_is_exact_or_loud_on_boa() {
+    let (loud, silent) = boa_lists(RUST_LOUD, RUST_SILENT);
+    check("rust", JsLowering::Boa, &loud, &silent);
+}
+
+#[test]
+fn c_backend_is_exact_or_loud_on_boa() {
+    if Command::new("gcc").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+        eprintln!("gcc not found; skipping the C backend");
+        return;
+    }
+    let (loud, silent) = boa_lists(C_LOUD, C_SILENT);
+    check("c", JsLowering::Boa, &loud, &silent);
 }

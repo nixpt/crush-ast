@@ -1,6 +1,7 @@
 //! COSM K1.3 (CRUSH-zorro-42): the CVM1 kind-table section — versioning,
 //! old blobs, round-trips, the disassembler — and what the scheduler VM,
-//! the portable VM and FastVM's CVM1 lowering do with a kind table.
+//! the portable VM and FastVM's CVM1 lowering do with a kind table (since
+//! K1.4, CRUSH-zorro-43, the VMs run Kinds: see `records.rs`).
 
 use crate::assembler::{assemble, disassemble};
 use crate::bytecode::{
@@ -166,33 +167,43 @@ fn value_semantics_module() -> CosmModule {
     m
 }
 
-/// A Kind a map would silently not honour is refused before anything runs.
+/// Since K1.4 (CRUSH-zorro-43) the VMs implement Kinds: a `value(…)` Kind
+/// runs. What they still can't run is refused before anything runs, naming
+/// each strategy — the shared rule at `casm::CosmSupport::Kinds`.
 #[test]
-fn the_scheduler_vm_refuses_kinds_it_would_run_as_maps() {
-    let e = run(&program_with(Some(value_semantics_module())), &Quotas::default()).unwrap_err();
-    assert!(matches!(e, VmError::Unsupported(_)), "{e:?}");
-    let e = e.to_string();
-    assert!(e.contains("COSM objects aren't supported on this VM yet (CRUSH-zorro-43)"), "{e}");
-    assert!(e.contains("`Point` declares semantics: value(move)"), "{e}");
+fn the_scheduler_vm_runs_kinds_and_refuses_only_what_it_cant() {
+    let r = run(&program_with(Some(value_semantics_module())), &Quotas::default()).expect("runs");
+    assert_eq!(r.return_value, Some(Value::Int(7)));
 
-    // Every behaviour-changing strategy is named.
     let mut m = point_module();
-    m.kinds[0].equality = crush_cosm::Equality::Identity;
+    m.kinds[0].resolution = crush_cosm::Resolution::PrototypeChain;
+    m.kinds[0].hooks.eq = Some(crush_cosm::HookImpl::Fn(crush_cosm::FnRef::new("Point::eq")));
     m.kinds[0].hooks.str = Some(crush_cosm::HookImpl::Fn(crush_cosm::FnRef::new("Point::show")));
     m.kinds[0].members.push(crush_cosm::MemberDecl::accessor("len", Some("Point::len".into()), None));
-    let e = run(&program_with(Some(m)), &Quotas::default()).unwrap_err().to_string();
-    for want in ["equality: identity", "protocol hooks", "accessor `len`"] {
+    let e = run(&program_with(Some(m)), &Quotas::default()).unwrap_err();
+    assert!(matches!(e, VmError::Unsupported(_)), "{e:?}");
+    let e = e.to_string();
+    assert!(e.contains("COSM strategies not supported on this VM yet: `Point` declares"), "{e}");
+    for want in ["resolution: prototype_chain", "accessor `len`", "hooks eq"] {
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
+    // `str` is implemented: it isn't named.
+    assert!(!e.contains("eq, str"), "{e}");
 }
 
 #[test]
-fn the_portable_vm_refuses_kinds_it_would_run_as_maps() {
-    let mut vm = crate::portable_vm::PortableVm::new(program_with(Some(value_semantics_module())));
+fn the_portable_vm_refuses_what_it_cant_run_before_running() {
+    let mut m = point_module();
+    m.kinds[0].resolution = crush_cosm::Resolution::EmbeddingPromotion;
+    let mut vm = crate::portable_vm::PortableVm::new(program_with(Some(m)));
     let e = vm.run().unwrap_err().to_string();
-    assert!(e.contains("COSM objects aren't supported on this VM yet (CRUSH-zorro-43)"), "{e}");
+    assert!(e.contains("COSM strategies not supported on this VM yet"), "{e}");
+    assert!(e.contains("resolution: embedding_promotion"), "{e}");
     // Refused before the first instruction: nothing was printed.
     assert_eq!(vm.take_output(), "");
+    // A value Kind runs.
+    let r = crate::portable_vm::PortableVm::new(program_with(Some(value_semantics_module()))).run().expect("runs");
+    assert_eq!(r.output, "hi");
 }
 
 #[test]

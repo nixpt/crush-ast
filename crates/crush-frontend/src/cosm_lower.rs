@@ -17,10 +17,11 @@
 //!    trait, and runs [`crush_cosm::validate`] on the module; its diagnostics
 //!    become compile errors.
 //!
-//! Running methods through the receiver (`p.norm2()`) is K1.4/K1.5
-//! (CRUSH-zorro-43/44); until then the compiler rejects such calls loudly
-//! (see [`receiver_methods`]). Qualified calls (`Point::new(1, 2)`,
-//! `Point::norm2(p)`) are plain calls of the lifted functions and run today.
+//! `p.norm2()` resolves the method on the receiver's Kind (`call_member`,
+//! COSM K1.4, CRUSH-zorro-43; see [`receiver_methods`]) on the scheduler VM
+//! and the portable VM. Qualified calls (`Point::new(1, 2)`,
+//! `Point::norm2(p)`) are plain calls of the lifted functions and run on every
+//! engine.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -519,45 +520,30 @@ fn visit(v: &Value, f: &mut impl FnMut(&serde_json::Map<String, Value>)) {
 }
 
 /// Names of every method that takes `self` in a COSM module — the calls the
-/// compiler must not lower to a global capability (`p.norm2()` would
-/// otherwise become `cap_call "norm2"`). Includes trait methods by their bare
+/// compiler lowers to `call_member` instead of a global capability
+/// (`p.norm2()` would otherwise become `cap_call "norm2"`). Includes trait methods by their bare
 /// name, since `p.area()` names them that way.
 pub fn receiver_methods(module: &crush_cosm::CosmModule) -> BTreeSet<String> {
     cosm_kind::receiver_method_names(module)
 }
 
-/// Code generation can't honour every strategy yet. A Kind whose instances
-/// would *behave differently* from today's maps — `value(…)` semantics
-/// (copies, not shared references), `identity` equality, or a non-`literal`
-/// construction — is refused at compile time until the VMs implement Kinds
-/// (K1.4, CRUSH-zorro-43); compiled today it would silently run as a
-/// `reference` / `structural` / literal-built map. Strategies that only
-/// matter to member lookup and receiver binding (storage, resolution,
-/// parents, receiver) are inert until method calls resolve on the receiver,
-/// which is itself refused (see [`receiver_methods`]).
+/// Strategies no engine runs yet. The scheduler VM and the portable VM run
+/// Kinds (COSM K1.4, CRUSH-zorro-43); what even they refuse — the shared rule
+/// at `casm::CosmSupport::Kinds`, `casm::kind_unsupported_strategies_on` — is
+/// a compile error here, with the struct's position, rather than a load-time
+/// refusal on every engine. (FastVM, the JIT and AOT refuse more: they apply
+/// the same rule at `casm::CosmSupport::Maps` when they load the program.)
 pub fn refuse_unimplemented_strategies(module: &crush_cosm::CosmModule) -> Result<()> {
-    use crush_cosm::{Construct, Equality, Semantics, Strategy};
     let mut errors = Vec::new();
     for k in &module.kinds {
-        let mut chosen = Vec::new();
-        if k.semantics != Semantics::Reference {
-            chosen.push(format!("semantics: {}", k.semantics.as_str()));
-        }
-        if k.equality != Equality::Structural {
-            chosen.push(format!("equality: {}", k.equality.as_str()));
-        }
-        if k.construct != Construct::Literal {
-            chosen.push(format!("construct: {}", k.construct.strategy_name()));
-        }
+        let chosen = casm::kind_unsupported_strategies_on(k, casm::CosmSupport::Kinds);
         if chosen.is_empty() {
             continue;
         }
         let at = k.span.as_ref().map(|s| format!("line {}, col {}: ", s.line, s.col)).unwrap_or_default();
         errors.push(format!(
-            "{at}struct `{}` declares `@kind({})`, which needs COSM K1.4 (CRUSH-zorro-43) to run: \
-             the VMs don't implement Kinds yet, and compiled today its instances would silently \
-             behave as Crush's default (`reference`, `structural`, `literal`). \
-             `crush_frontend::lower_to_cosm` produces its COSM",
+            "{at}struct `{}` declares `@kind({})`, which no engine runs yet (the VMs implement \
+             COSM K1.4, CRUSH-zorro-43). `crush_frontend::lower_to_cosm` produces its COSM",
             k.name,
             chosen.join(", ")
         ));

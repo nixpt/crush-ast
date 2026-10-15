@@ -7,7 +7,7 @@
 //! them, move it to `still_works` with node's output.
 
 // The swc lowering only; the Boa lowering is a separate frontend (CRUSH-250).
-#![cfg(not(feature = "boa-backend"))]
+#![cfg(feature = "ts")]
 
 /// (ext, source, expected error substring)
 const LOUD: &[(&str, &str, &str)] = &[
