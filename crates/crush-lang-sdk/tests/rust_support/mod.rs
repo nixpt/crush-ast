@@ -31,17 +31,94 @@ pub enum Expected {
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
     (
+        "value_array_assignment",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "indexed/field assignment",
+        },
+    ),
+    (
+        "value_string_transfer",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
+        "value_array_transfer",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
+        "value_store_view",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "storing borrowed views",
+        },
+    ),
+    (
+        "value_capture_assignment",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "mutable capture semantics",
+        },
+    ),
+    (
+        "value_capture_owned",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "closure ownership analysis",
+        },
+    ),
+    (
+        "value_borrow_parameter",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "borrow checking",
+        },
+    ),
+    (
+        "value_nested_clone",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "nested/unknown/reference values",
+        },
+    ),
+    (
+        "value_owned_return",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
+        "value_move_argument",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
+        "value_move_assignment",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
+        "value_pop_option",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "Vec.pop needs Option value semantics",
+        },
+    ),
+    (
         "binding_nested_function",
         Expected::Loud {
             ticket: "CRUSH-xps-6",
             diagnostic: "nested function at 2:5",
-        },
-    ),
-    (
-        "audit_vec_clone",
-        Expected::Silent {
-            ticket: "CRUSH-xps-7",
-            output: "4 4\n",
         },
     ),
     (
@@ -124,6 +201,13 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
 ];
 const AOT_ONLY: &[(&str, Expected)] = &[
     (
+        "capability_namespace_bindings",
+        Expected::Loud {
+            ticket: "CRUSH-xps-13",
+            diagnostic: "cap_call 'math.pow'",
+        },
+    ),
+    (
         "binding_intrinsic_names",
         Expected::Loud {
             ticket: "CRUSH-251",
@@ -135,13 +219,6 @@ const AOT_ONLY: &[(&str, Expected)] = &[
         Expected::Loud {
             ticket: "CRUSH-251",
             diagnostic: "make_closure",
-        },
-    ),
-    (
-        "capability_namespace_bindings",
-        Expected::Loud {
-            ticket: "CRUSH-xps-13",
-            diagnostic: "cap_call 'math.pow'",
         },
     ),
     (
@@ -209,7 +286,7 @@ pub fn corpus() -> Vec<PathBuf> {
             "orphan Rust parity exception: {name}"
         );
     }
-    assert!(files.len() >= 37, "Rust corpus shrank: {}", files.len());
+    assert!(files.len() >= 58, "Rust corpus shrank: {}", files.len());
     files
 }
 
@@ -362,7 +439,10 @@ mod tests {
 
     #[test]
     fn fixed_loud_and_silent_entries_must_be_removed() {
-        for (name, expected) in [("audit_value_block", "42\n"), ("audit_vec_clone", "3 4\n")] {
+        for (name, expected) in [
+            ("audit_value_block", "42\n"),
+            ("audit_integer_cast", "44\n"),
+        ] {
             let error =
                 check(name, Engine::Vm, expected, Outcome::Output(expected.into())).unwrap_err();
             assert!(

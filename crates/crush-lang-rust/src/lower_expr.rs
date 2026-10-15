@@ -64,6 +64,8 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                         syn::BinOp::RemAssign(_) => "%",
                         _ => unreachable!(),
                     };
+                    let mut meta = meta;
+                    meta.insert("rust_compound_assign".into(), serde_json::Value::Bool(true));
                     return Ok(Expression::Call {
                         function: "__crush_assign__".to_string(),
                         args: vec![
@@ -234,6 +236,9 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         Expr::Closure(e) => {
+            let mut meta = meta;
+            meta.insert("rust_value_params".into(),
+                serde_json::Value::Array(e.inputs.iter().map(crate::values::hint).collect()));
             if e.capture.is_some() {
                 return Err(unsupported_at(e.span(), "move closure",
                     "value capture requires Rust ownership semantics (CRUSH-xps-7)"));
@@ -262,7 +267,12 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
             })
         }
         Expr::Reference(e) => {
-            lower_expr(&e.expr, ctx)
+            let mut meta = meta;
+            meta.insert("rust_value_method".into(), serde_json::json!("reference"));
+            Ok(Expression::Call {
+                function: "__crush_rust_value__".into(),
+                args: vec![lower_expr(&e.expr, ctx)?], meta,
+            })
         }
         Expr::Macro(m) => lower_macro_expr(&m.mac, ctx),
         Expr::Match(e) => lower_match(e, ctx),
@@ -363,6 +373,8 @@ fn lower_macro_expr(mac: &syn::Macro, ctx: &LowerCtx<'_>) -> anyhow::Result<Expr
                 .parse2(mac.tokens.clone())
                 .map_err(|_| anyhow::anyhow!("vec![value; n] (repeat form) is not supported"))?;
             let elements = elems.iter().map(|e| lower_expr(e, ctx)).collect::<Result<Vec<_>, _>>()?;
+            let mut meta = meta;
+            meta.insert("rust_vec".into(), serde_json::Value::Bool(true));
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         "format" => format_args_to_expr(&mac.tokens, ctx),
@@ -452,7 +464,9 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
     // Start from "" so `+` is string concatenation even when the first piece is a number.
     let mut acc = Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) };
     for p in pieces {
-        acc = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(acc), right: Box::new(p), meta: ctx.meta_at(0) };
+        let mut meta = ctx.meta_at(0);
+        meta.insert("rust_format_piece".into(), serde_json::Value::Bool(true));
+        acc = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(acc), right: Box::new(p), meta };
     }
     Ok(acc)
 }
@@ -521,16 +535,14 @@ fn lower_method(
             Expression::CapabilityCall { name: name.to_string(), args, meta }
         }
     };
+    let mut meta = meta;
+    meta.insert("rust_value_method".into(), serde_json::json!(method));
     Ok(match (method, args.len()) {
-        // Borrow / ownership / iterator adapters carry no runtime meaning here.
+        // The value pass proves and rewrites ownership/iterator adapters.
         ("iter" | "into_iter" | "clone" | "to_owned" | "as_str" | "copied" | "cloned" | "to_vec" | "into"
-            | "unwrap" | "as_slice" | "borrow", 1) => args.remove(0),
-        ("to_string", 1) => Expression::BinaryOp {
-            operator: "+".to_string(),
-            left: Box::new(Expression::StringLiteral { value: String::new(), meta: meta.clone() }),
-            right: Box::new(args.remove(0)),
-            meta,
-        },
+            | "unwrap" | "as_slice" | "borrow", 1) => call("__crush_rust_value__", args, meta),
+        ("to_string", 1) => call("conv.text", vec![args.remove(0),
+            Expression::StringLiteral { value: "rust".into(), meta: meta.clone() }], meta),
         ("len", 1) => call("len", args, meta),
         ("push", 2) => call("array.push", args, meta),
         ("pop", 1) => call("array.pop", args, meta),

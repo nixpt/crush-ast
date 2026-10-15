@@ -20,6 +20,8 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
     let meta = ctx.meta_lc(start.line, start.column + 1);
     match stmt {
         Stmt::Local(local) => {
+            let mut meta = meta;
+            meta.insert("rust_value_hint".into(), crate::values::hint(&local.pat));
             let name = pat_to_ident(&local.pat)?;
             let value = match &local.init {
                 Some(init) => lower_expr(&init.expr, ctx)?,
@@ -34,6 +36,10 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
         }
         Stmt::Item(item) => match item {
             syn::Item::Fn(item_fn) => {
+                let mut meta = meta;
+                let (params, ret) = crate::values::signature(&item_fn.sig);
+                meta.insert("rust_value_params".into(), params);
+                meta.insert("rust_value_return".into(), ret);
                 let name = item_fn.sig.ident.to_string();
                 let params: Vec<(String, CastType)> = item_fn
                     .sig

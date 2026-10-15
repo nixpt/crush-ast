@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Rust flat Vec/array clones now create independent sequences through the shared
+  `seq.slice` operation. Fresh value arguments/reassignment and String clones
+  with local `+=` have differential VM/AOT coverage (CRUSH-xps-7).
+- Rust owned binding transfers, nested/unknown clones, escaping borrowed views,
+  explicit references, owned captures, indexed writes, and unproven ownership
+  adapters now fail with source locations. `pop`/`unwrap` are rejected pending
+  Option semantics; valid Rust moves may require an explicit supported clone.
+
 - Resolve Rust lexical locals to distinct storage names, preserving outer
   bindings across blocks, branches, loops, match arms, and closures. Binding
   metadata retains source identity; nested functions now fail explicitly until

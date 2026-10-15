@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-xps-7 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In progress |
 | **Phase** | M2 / Rust parity |
-| **Assignee** | unassigned |
+| **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5 |
 | **Estimated effort** | L |
 
