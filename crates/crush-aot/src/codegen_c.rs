@@ -1838,6 +1838,10 @@ fn emit_c_instr(
                 "js.loose_eq" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(mk_bool(_js_loose_eq(__a, __b))); }} _pc={next_pc}; break; // cap_call js.loose_eq\n"));
                 }
+                "js.format" => {
+                    let n = argc;
+                    out.push_str(&format!("                {{ Value __fa[{}]; for (int __i = {n} - 1; __i >= 0; __i--) __fa[__i] = _pop(); _push(_js_format(__fa, {n})); }} _pc={next_pc}; break; // cap_call js.format\n", n.max(1)));
+                }
                 "conv.text" => {
                     out.push_str(&format!("                {{ Value __st = _pop(); Value __v = _pop(); _push(_conv_text(__v, __st)); }} _pc={next_pc}; break; // cap_call conv.text\n"));
                 }

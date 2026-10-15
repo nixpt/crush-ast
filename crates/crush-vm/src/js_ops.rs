@@ -86,6 +86,12 @@ pub fn loose_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
     js_core::loose_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
 }
 
+/// `js.format(args...)`: the line `console.log(args...)` prints.
+pub fn format(args: &[Value]) -> Result<Value, VmError> {
+    let nodes: Vec<JsNode> = args.iter().map(|a| node(a, js_core::EXPAND)).collect();
+    js_core::format(&nodes).map(Value::Str).map_err(unsupported)
+}
+
 #[cfg(test)]
 mod tests {
     //! Expected strings come from node v26 (`node -e …`), never by hand.
@@ -199,5 +205,115 @@ mod tests {
         assert_eq!(loose_eq(&a, &arr(vec![Value::Int(1)])).unwrap(), Value::Bool(false));
         assert_eq!(loose_eq(&a, &Value::Null).unwrap(), Value::Bool(false));
         assert!(loose_eq(&a, &Value::Int(1)).unwrap_err().to_string().contains("not supported"));
+    }
+
+    fn log(args: Vec<Value>) -> String {
+        text(format(&args).unwrap())
+    }
+
+    #[test]
+    fn format_matches_node_inspect() {
+        // node -e "console.log([1, 'a', true, null], [6], {a: 1, b: 'two'}, [], {}, -0, [-0, 1.5, 1e21])"
+        assert_eq!(
+            log(vec![
+                arr(vec![Value::Int(1), s("a"), Value::Bool(true), Value::Null]),
+                arr(vec![Value::Float(6.0)]),
+                obj(vec![("a", Value::Int(1)), ("b", s("two"))]),
+                arr(vec![]),
+                obj(vec![]),
+                Value::Float(-0.0),
+                arr(vec![Value::Float(-0.0), Value::Float(1.5), Value::Float(1e21)]),
+            ]),
+            "[ 1, 'a', true, null ] [ 6 ] { a: 1, b: 'two' } [] {} -0 [ -0, 1.5, 1e+21 ]"
+        );
+        // node -e "console.log('s', 1, 'x y')"
+        assert_eq!(log(vec![s("s"), Value::Int(1), s("x y")]), "s 1 x y");
+        assert_eq!(log(vec![]), "");
+    }
+
+    #[test]
+    fn format_quotes_and_escapes_strings_like_node() {
+        // node -e "console.log([\"it's\", 'say \"hi\"', 'both \\' \"', 'all \\' \" \`', 'tab\\there', 'nl\\n', 'back\\\\slash', '\\x1b[0m', 'cafe'])"
+        assert_eq!(
+            log(vec![arr(vec![
+                s("it's"), s("say \"hi\""), s("both ' \""), s("all ' \" `"), s("tab\there"), s("nl\n"),
+                s("back\\slash"), s("\x1b[0m"), s("cafe"),
+            ])]),
+            "[\n  \"it's\",\n  'say \"hi\"',\n  `both ' \"`,\n  'all \\' \" `',\n  'tab\\there',\n  'nl\\n',\n  'back\\\\slash',\n  '\\x1B[0m',\n  'cafe'\n]"
+        );
+        // node -e "console.log(['café', 'ñ', '日本'])"
+        assert_eq!(log(vec![arr(vec![s("café"), s("ñ"), s("日本")])]), "[ 'café', 'ñ', '日本' ]");
+    }
+
+    #[test]
+    fn format_keys_like_node() {
+        // node -e "console.log({b: 1, 2: 'x', 'my-key': 3, 1: 'y', _ok: 4, '': 5})"
+        assert_eq!(
+            log(vec![obj(vec![
+                ("b", Value::Int(1)), ("2", s("x")), ("my-key", Value::Int(3)), ("1", s("y")), ("_ok", Value::Int(4)), ("", Value::Int(5)),
+            ])]),
+            "{ '1': 'y', '2': 'x', b: 1, 'my-key': 3, _ok: 4, '': 5 }"
+        );
+    }
+
+    #[test]
+    fn format_depth_and_nesting_like_node() {
+        // node -e "console.log({a: {b: {c: {d: 1}}}}, [[[[1]]]], [[[[]]]], {x: [1, {y: 2}]})"
+        let deep = obj(vec![("a", obj(vec![("b", obj(vec![("c", obj(vec![("d", Value::Int(1))]))]))]))]);
+        let deep_arr = arr(vec![arr(vec![arr(vec![arr(vec![Value::Int(1)])])])]);
+        let deep_empty = arr(vec![arr(vec![arr(vec![arr(vec![])])])]);
+        let mixed = obj(vec![("x", arr(vec![Value::Int(1), obj(vec![("y", Value::Int(2))])]))]);
+        assert_eq!(
+            log(vec![deep, deep_arr, deep_empty, mixed]),
+            "{ a: { b: { c: [Object] } } } [ [ [ [Array] ] ] ] [ [ [ [] ] ] ] { x: [ 1, { y: 2 } ] }"
+        );
+    }
+
+    #[test]
+    fn format_breaks_long_lines_and_groups_like_node() {
+        // node -e "console.log(Array.from({length: 30}, (_, i) => i * 7))"
+        let nums = arr((0..30).map(|i| Value::Int(i * 7)).collect());
+        assert_eq!(
+            log(vec![nums]),
+            "[\n    0,   7,  14,  21,  28,  35,  42,  49,\n   56,  63,  70,  77,  84,  91,  98, 105,\n  112, 119, 126, 133, 140, 147, 154, 161,\n  168, 175, 182, 189, 196, 203\n]"
+        );
+        // node -e "console.log({alpha: 'aaaaaaaaaaaaaaaa', beta: 'bbbbbbbbbbbbbbbbbbbb', gamma: 'cccccccccccccccccc', delta: 1})"
+        let wide = obj(vec![
+            ("alpha", s("aaaaaaaaaaaaaaaa")), ("beta", s("bbbbbbbbbbbbbbbbbbbb")), ("gamma", s("cccccccccccccccccc")), ("delta", Value::Int(1)),
+        ]);
+        assert_eq!(
+            log(vec![wide]),
+            "{\n  alpha: 'aaaaaaaaaaaaaaaa',\n  beta: 'bbbbbbbbbbbbbbbbbbbb',\n  gamma: 'cccccccccccccccccc',\n  delta: 1\n}"
+        );
+        // node -e "console.log(Array.from({length: 102}, (_, i) => i))"
+        let many = arr((0..102).map(Value::Int).collect());
+        assert_eq!(
+            log(vec![many]),
+            "[\n   0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11,\n  12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,\n  24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,\n  36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,\n  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,\n  60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,\n  72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,\n  84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,\n  96, 97, 98, 99,\n  ... 2 more items\n]"
+        );
+    }
+
+    #[test]
+    fn format_of_ints_past_2_pow_53_prints_js_doubles() {
+        // node -e "console.log(7774233818054199000, [7774233818054199000, -9007199254740993], 9007199254740992)"
+        let big = Value::Int(7_774_233_818_054_199_296);
+        let line = log(vec![
+            big.clone(),
+            arr(vec![big.clone(), Value::Int(-9_007_199_254_740_993)]),
+            Value::Int(9_007_199_254_740_992),
+        ]);
+        assert_eq!(line, "7774233818054199000 [ 7774233818054199000, -9007199254740992 ] 9007199254740992");
+    }
+
+    #[test]
+    fn format_directives_and_cycles_are_loud() {
+        assert!(format(&[s("%d items"), Value::Int(3)]).unwrap_err().to_string().contains("format directives"));
+        // A lone string is printed as is, `%` and all (node: `100%d`).
+        assert_eq!(log(vec![s("100%d")]), "100%d");
+        let a = arr(vec![]);
+        if let Value::Array(inner) = &a {
+            inner.borrow_mut().push(a.clone());
+        }
+        assert!(format(&[a]).unwrap_err().to_string().contains("circular"));
     }
 }

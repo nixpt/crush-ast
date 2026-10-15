@@ -1,6 +1,6 @@
 //! The `js.*` runtime capabilities on the AOT backends: **exact or loud**.
 //!
-//! `js.add`, `js.truthy` and `js.loose_eq` are implemented once
+//! `js.add`, `js.truthy`, `js.loose_eq` and `js.format` are implemented once
 //! in crush-vm (`js_core.rs`, embedded verbatim in the AOT Rust runtime) and
 //! mirrored in the AOT C runtime (`js_runtime.c`). The node corpus programs
 //! that exercise them must print exactly what node printed (`<name>.out`) on
@@ -17,6 +17,8 @@ const PROGRAMS: &[&str] = &[
     "template_escapes",
     "logical_values",
     "loose_equality",
+    "inspect_array",
+    "inspect_object",
 ];
 
 fn have_gcc() -> bool {
@@ -64,6 +66,7 @@ fn check_exact(backend: &str) {
 const LOUD: &[(&str, &str, &str)] = &[
     ("add_object", "console.log('a' + [1]);", "ToPrimitive"),
     ("eq_object", "console.log([1] == 1);", "ToPrimitive"),
+    ("format_directive", "console.log('%d items', 3);", "format directives"),
 ];
 
 fn check_loud(backend: &str) {

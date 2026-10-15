@@ -1446,22 +1446,12 @@ fn lower_call_expr(
                 // Node separates console.log arguments with a space; io.print
                 // concatenates, so `console.log(a, b)` printed `ab`.
                 "console.log" | "console.info" | "console.warn" | "console.error" => {
-                    // Numbers print the way JS prints them (`6`, not crush's `6.0`;
-                    // `1e+21`): each argument goes through conv.text(_, "js").
-                    let mut spaced = Vec::with_capacity(lowered_args.len() * 2);
-                    for (i, a) in lowered_args.into_iter().enumerate() {
-                        if i > 0 {
-                            spaced.push(Expression::StringLiteral { value: " ".to_string(), meta: m.clone() });
-                        }
-                        spaced.push(Expression::CapabilityCall {
-                            name: "conv.text".to_string(),
-                            args: vec![a, Expression::StringLiteral { value: "js".to_string(), meta: m.clone() }],
-                            meta: m.clone(),
-                        });
-                    }
+                    // The line node prints: js.format (node's util.format —
+                    // strings as-is, numbers `6` / `1e+21`, arrays and objects
+                    // like util.inspect, space-separated).
                     Ok(Expression::CapabilityCall {
                         name: "io.print".to_string(),
-                        args: spaced,
+                        args: vec![js_cap("js.format", lowered_args, m.clone())],
                         meta: m,
                     })
                 }

@@ -37,6 +37,17 @@ fn loose_equality_of_object_and_primitive_needs_to_primitive() {
 }
 
 #[test]
+fn console_log_format_directives_are_loud() {
+    loud("console.log('%s and %d', 'a', 1);", "format directives");
+    loud("console.log('100%%', 1);", "format directives");
+}
+
+#[test]
+fn console_log_of_a_circular_array_is_loud() {
+    loud("const a = []; a.push(a); console.log(a);", "circular");
+}
+
+#[test]
 fn the_right_operand_is_not_evaluated_when_the_left_decides() {
     // `boom()` would print; node prints just the two values.
     let out = run("function boom() { console.log('boom'); return 1; }\nconsole.log(1 || boom(), 0 && boom());").unwrap();

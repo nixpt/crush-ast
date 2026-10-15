@@ -82,6 +82,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "JavaScript a == b for primitives (abstract equality); objects by identity",
         });
         reg(CapabilitySpec {
+            name: "js.format",
+            argc: None,
+            returns: true,
+            privileged: false,
+            summary: "the line console.log(args...) prints: strings as-is, other values like node's util.inspect",
+        });
+        reg(CapabilitySpec {
             name: "conv.text",
             argc: Some(2),
             returns: true,
