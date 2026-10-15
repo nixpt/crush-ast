@@ -23,6 +23,8 @@ There is a 14-program `node_corpus/` checked on the VM only. Nothing measures JS
 - [ ] `crates/crush-aot/tests/js_parity.rs`: the same corpus on AOT Rust and AOT C, exact-or-loud, mirroring `python_parity.rs`.
 - [ ] TS twin: `tests/ts_corpus/*.ts`, the JS programs with type annotations added, run through the `ts` dialect and compared against `node <file>.ts` (type stripping).
 - [ ] A freshness test re-runs `node` and fails if a `.out` is stale (skipped when node is absent).
+- [ ] Exact comparison: the current `node_corpus_test.rs` compares after `trim_end`; drop that, as `cpython_corpus_test.rs` did.
+- [ ] Run the VM with the stdlib host capabilities registered (the current test passes `None`, so every `Math.*` fails for a reason unrelated to the JS walker).
 - [ ] Seed the corpus from the spike's 54 baseline probes so the allow-list starts as the measured baseline.
 
 ## Technical approach

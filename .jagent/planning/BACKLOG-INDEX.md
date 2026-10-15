@@ -209,7 +209,7 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-101 | Notebook self-hosting pipeline | CRUSH-98 |
 | CRUSH-102 | Notebook cross-language state-sharing CI | CRUSH-101 |
 
-## JS/TS parity spike (2026-10-15 — CRUSH-zorro-4..21)
+## JS/TS parity spike (2026-10-15 — CRUSH-zorro-4..23)
 
 Design + measured baseline: `research/2026-10-15-JS-TS-parity-spike.md` (54 probes: 15 match, 33 loud,
 6 silently wrong). Bar: VM exact vs `node`, AOT exact-or-loud, never silently wrong.
@@ -217,7 +217,7 @@ Design + measured baseline: `research/2026-10-15-JS-TS-parity-spike.md` (54 prob
 | Wave | ID | Title | Gate |
 |------|----|-------|------|
 | 0 | CRUSH-zorro-4 | Harness: feature corpus vs node, TS twin, AOT `js_parity.rs` | — |
-| 1 | CRUSH-zorro-5..9 | P0 silent bugs: bare blocks, labels, finally, dialect/null, `+` ToString | — |
+| 1 | CRUSH-zorro-5..9, 22, 23 | P0 silent bugs: bare blocks, labels, finally, dialect/null, `+` ToString, `&&`/`||`/`==`, make the rest loud | — |
 | 1 | CRUSH-zorro-10 | `console.log` of arrays/objects like node | z-9 |
 | 2 | CRUSH-zorro-11 | Split `lower_swc.rs` + builtin/method registry | z-4 |
 | 3 | CRUSH-zorro-12..19 | operators, number model (owner decision), strings, arrays, objects, builtins, params, errors | z-11 |

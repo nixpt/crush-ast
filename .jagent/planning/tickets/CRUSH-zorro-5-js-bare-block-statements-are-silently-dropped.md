@@ -13,7 +13,7 @@
 
 ## Problem
 
-A standalone block statement `{ ... }` is dropped entirely by the swc lowering: `{ console.log(5); } console.log(6);` prints only `6`, and `let x = 1; { x = 2; } console.log(x);` prints `1` (node: `2`). Blocks under `if`/loops work.
+Also listed (partly stale) in CRUSH-199; this ticket supersedes its block-statement half. A standalone block statement `{ ... }` is dropped entirely by the swc lowering (`Stmt::Block(_) => None`, lower_swc.rs ~692): `{ console.log(5); } console.log(6);` prints only `6`, and `let x = 1; { x = 2; } console.log(x);` prints `1` (node: `2`). Blocks under `if`/loops work.
 
 ## Success criteria
 

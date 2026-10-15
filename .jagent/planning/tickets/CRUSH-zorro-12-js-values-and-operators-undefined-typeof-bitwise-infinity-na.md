@@ -20,7 +20,9 @@ Baseline, all loud: `undefined` as a value and as a missing property or index (`
 - [ ] Every probe in the spike's *values & operators* group matches node on the VM; AOT exact-or-loud.
 - [ ] `undefined` is distinct from `null` where node distinguishes them (printing, `==` vs `===`, `typeof`), using a dedicated value or a documented encoding.
 - [ ] Bitwise ops use ToInt32/ToUint32 semantics (`-16 >>> 28` = `15`).
-- [ ] Division by zero gives IEEE results under the JS walker only; crush's own `/` is unchanged.
+- [ ] Division by zero: #189 deliberately made JS `÷0` a loud error rather than `Infinity`, which is allowed under the bar. Changing it to IEEE results is a choice for this ticket's PR to raise, not a requirement.
+- [ ] `Infinity`, `NaN` and `undefined` work as identifiers (today they are undefined variables).
+- [ ] `&&`/`||` value semantics and `==` coercion are CRUSH-zorro-22, not this ticket.
 
 ## Technical approach
 

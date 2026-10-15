@@ -19,6 +19,12 @@ Baseline: object literal plus `o.n += 1` plus `Object.keys` ("uninitialised slot
 
 - [ ] Match node: property read/write/compound-assign, computed keys `o[k]`, `in`, `delete`, shorthand properties, `Object.keys`/`values`/`entries`/`assign`, array and object spread, array and object destructuring (declarations, nested, defaults, rest, and in function parameters), `for-in` over own keys in insertion order (after #188).
 - [ ] Key order follows JS rules, including integer-like keys first and ascending, or that case is documented loud.
+- [ ] Fixes what is silently wrong today (until then, CRUSH-zorro-23 makes these loud):
+  - `for (k in arr)` yields elements, not index strings;
+  - object spread `{...o}` is dropped;
+  - every computed key `{[k]: v}` becomes the key `"[]"`;
+  - setter bodies are dropped, and a getter isn't invoked on read;
+  - `.length` on a variable holding `{length: 3}` lowers to `len`.
 
 ## Technical approach
 

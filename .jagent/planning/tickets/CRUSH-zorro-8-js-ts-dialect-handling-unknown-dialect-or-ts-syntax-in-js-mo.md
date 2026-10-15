@@ -13,21 +13,24 @@
 
 ## Problem
 
-`js_to_cast(src, dialect)`: with `"ts"`, TypeScript works (types stripped). But `const n: number = 7; console.log(n);` with dialect `"typescript"` or `"js"` **prints `null`**: neither a result nor a parse error.
+`js_to_cast(src, ext)` takes a **file extension**: `ts`/`tsx`/`mts` select swc's TypeScript syntax (backend/swc.rs:7-25), anything else ES. With ext `"ts"`, TypeScript works (types stripped). But `const n: number = 7; console.log(n);` with ext `"typescript"` or `"js"` **prints `null`**: neither a result nor a parse error. Also: `cts` isn't mapped to TS, and the walker registry's `SubprocessWalker` writes the source to `walker_N.tmp` (crush-frontend/src/language_walkers.rs:138-145), so `js_walker` sees ext `tmp` and parses **TypeScript as ES**.
 
 ## Success criteria
 
-- [ ] Accepted dialects: `js`, `javascript`, `ts`, `typescript` (`mjs`/`cjs` if callers use them). Anything else is a loud error naming the accepted set.
-- [ ] TypeScript syntax under a JS dialect is a loud parse error with the location.
-- [ ] A regression test for each of the three cases above.
+- [ ] TypeScript syntax under an ES extension is a loud parse error with the location, never a `null` program.
+- [ ] An unknown extension is a loud error naming the accepted set (`js mjs cjs jsx ts tsx mts cts`).
+- [ ] `cts` parses as TypeScript.
+- [ ] The walker registry passes the real extension through (e.g. `walker_N.ts`), so a `.ts` file walked via `language_walkers` is parsed as TS.
+- [ ] A regression test for each case.
 
 ## Technical approach
 
-- Find where the dialect string selects the swc `Syntax`, and where a parse failure is turned into a null program instead of an error.
+- Find where an swc parse failure (or its recovery) turns into an empty/null program instead of an error.
 
 ## Files to modify
 
-- `crates/crush-lang-js/src/lib.rs` / `lower_swc.rs` (entry)
+- `crates/crush-lang-js/src/{lib.rs,backend/swc.rs}`
+- `crates/crush-frontend/src/language_walkers.rs`
 
 ## Non-goals
 

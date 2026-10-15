@@ -19,6 +19,7 @@
 
 - [ ] `'x' + 6.0`, `6.0 + 'x'`, `` `${1.5*4}` ``, `'a' + 1e21`, `'a' + 0.1*3` and `'a' + -0` match node.
 - [ ] Number + number is unchanged (still numeric addition).
+- [ ] Template literals use the **cooked** string, not the raw one: today `` `a\nb` `` prints a literal backslash-n (`q.raw` at lower_swc.rs ~1180/1191). Tagged templates keep `raw` for the tag's `.raw`.
 
 ## Technical approach
 

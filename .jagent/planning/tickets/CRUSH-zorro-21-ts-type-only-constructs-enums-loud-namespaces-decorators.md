@@ -13,7 +13,7 @@
 
 ## Problem
 
-The `ts` dialect strips basic annotations and `interface` correctly, but `enum C { R, G } console.log(C.G)` gives "load from uninitialised slot". The rest of TS's type-only surface is unmeasured.
+The `ts` path strips basic annotations and `interface` correctly. But `TsEnum`/`TsModule` (namespaces) are **dropped** (lower_swc.rs ~434 `return Ok(None)`), so `enum C { R, G } console.log(C.G)` fails later with "load from uninitialised slot". `import type` lowers like a value import, and `TsImportEquals`/`TsNamespaceExport` become a no-op comment. Note: node's default type stripping rejects enums and namespaces too; they need `--experimental-transform-types`, so use that flag for the `.out` of those programs. The rest of TS's type-only surface is unmeasured.
 
 ## Success criteria
 

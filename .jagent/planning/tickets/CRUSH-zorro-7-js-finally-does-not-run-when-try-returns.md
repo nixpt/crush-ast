@@ -13,7 +13,7 @@
 
 ## Problem
 
-`function f() { try { return 1; } finally { console.log('fin'); } } console.log(f());` prints `1`; node prints `fin` then `1`. A `return` (and presumably `break`/`continue`/`throw`) leaving a `try` skips its `finally`.
+Also in CRUSH-199 (partly stale); this ticket supersedes its finally half. The swc lowering drops the finalizer outright (`finalizer: _`, lower_swc.rs ~571). `function f() { try { return 1; } finally { console.log('fin'); } } console.log(f());` prints `1`; node prints `fin` then `1`. A `return` (and presumably `break`/`continue`/`throw`) leaving a `try` skips its `finally`.
 
 ## Success criteria
 

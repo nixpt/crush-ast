@@ -1,7 +1,7 @@
 # JS/TS parity spike — baseline, design and dispatch plan
 
 Status: **design, ready to dispatch**. vega, 2026-10-15. Baseline measured on main `5f223a9`
-(after #184 Python parity, #187–#192). Tickets: **CRUSH-zorro-4 … CRUSH-zorro-21**.
+(after #184 Python parity, #187–#192). Tickets: **CRUSH-zorro-4 … CRUSH-zorro-23**.
 
 ## Goal and bar
 
@@ -45,6 +45,22 @@ TypeScript, measured separately:
 A bare block was also confirmed directly: `{ console.log(5); } console.log(6)` prints only `6`, and
 `{ x = 2; }` never assigns.
 
+**More silently-wrong behaviour found by reading `lower_swc.rs` and the compiler.** The probe missed
+these, or hit a loud error first in the same program:
+- `&&`/`||` produce booleans, not operand values: `0 || 'dflt'` → `true` (z-22).
+- `==`/`!=` are lowered as `===`/`!==`: `'1' == 1` → `false` (z-22).
+- Template literals use the raw text: `` `a\nb` `` prints a literal backslash-n (z-9).
+- `for-in` over an array yields elements, not indices (z-16 / z-23).
+- Object spread is dropped; every computed key `{[k]: v}` becomes `"[]"`; setter bodies are emptied (z-16 / z-23).
+- Spread in array literals and call arguments loses its `...` (z-23).
+- Class `constructor` dropped and `extends` ignored; `yield x` just evaluates `x` (z-23; implementation is out of scope).
+- TS `enum`/`namespace` are dropped, so later uses fail as undefined names (z-21 / z-23).
+- `console.error`/`console.warn` write to stdout (z-23).
+- The walker registry parses `.ts` files as ES, because the source goes through `walker_N.tmp` (z-8).
+
+So the true silently-wrong count is well above the 6 the probe found. CRUSH-zorro-23 turns all of these
+loud first; the area tickets then make them correct.
+
 ## Root-cause clusters
 
 1. **Silent drops in the lowering** (blocks, labels, finally, dialect fallback to a null program). These are the P0s.
@@ -62,7 +78,14 @@ A bare block was also confirmed directly: `{ console.log(5); } console.log(6)` p
 5. **Error messages.** About a third of the loud failures say "load from uninitialised slot N", which tells
    the user nothing. Each area ticket owns replacing them with "`X` is not supported by the JS walker yet".
 
-## Decision needed from the owner
+## Decisions needed from the owner
+
+- **Parser for `.js`: swc or boa (CRUSH-250).** Today swc is used everywhere (boa is feature-gated and
+  off). CRUSH-250 (P1, backlog) plans boa 0.22 as the default for `.js`, with swc kept for TS. All the
+  lowering work here targets `lower_swc.rs`; if `.js` moves to boa, JS parity has to be redone on
+  the boa lowering. **Recommendation:** keep swc for both JS and TS during this spike (one lowering,
+  and TS needs swc anyway), and revisit CRUSH-250 against the parity harness afterwards. Decide before
+  wave 2 (CRUSH-zorro-11).
 
 - **Number model (CRUSH-zorro-13).** JS numbers are doubles; crush has `Int(i64)` + `Float(f64)` and errors on
   overflow (`2**53 + 1`, `2**64` fail today). Options:
@@ -71,7 +94,7 @@ A bare block was also confirmed directly: `{ console.log(5); } console.log(6)` p
   - (b) every JS number is a Float.
   - (c) leave overflow loud.
 
-  Everything else in this plan needs no decision.
+  Nothing else in this plan needs a decision.
 
 ## Tickets and dispatch plan
 
@@ -83,6 +106,8 @@ A bare block was also confirmed directly: `{ console.log(5); } console.log(6)` p
 | 1 | CRUSH-zorro-7 | `finally` on return/break/continue/throw | **P0** | — |
 | 1 | CRUSH-zorro-8 | dialect handling; TS-in-JS prints null | **P0** | — |
 | 1 | CRUSH-zorro-9 | `+`/template literals use JS ToString (`js.add`) | **P0** | — |
+| 1 | CRUSH-zorro-22 | `&&`/`||` return operand values; `==` coerces | **P0** | — |
+| 1 | CRUSH-zorro-23 | make every silently mis-lowered construct fail loudly | **P0** | — |
 | 1 | CRUSH-zorro-10 | `console.log` of arrays/objects like node | P1 | z-9 |
 | 2 | **CRUSH-zorro-11** | split `lower_swc.rs` by area + builtin/method registry (no behaviour change) | P1 | z-4 |
 | 3 | CRUSH-zorro-12 | values & operators (`undefined`, `typeof`, `??`, `?.`, `==`, bitwise, Infinity/NaN) | P1 | z-11 |
@@ -98,13 +123,31 @@ A bare block was also confirmed directly: `{ console.log(5); } console.log(6)` p
 
 How to hand it out:
 - **Wave 0** first, one agent: every later ticket's done-condition is "my area's corpus programs leave the allow-list".
-- **Wave 1** in parallel: five small P0s touching different lowering arms.
+- **Wave 1** in parallel: seven small P0s touching different lowering arms. z-23 has the most leverage: it turns the unknown silent bugs into allow-listed loud ones.
 - **Wave 2** alone. A mechanical split plus a registry, landed fast.
 - **Wave 3** in parallel (up to 7 agents). After z-11, most of it is registry rows, so conflicts stay small.
 - **Wave 4** when CRUSH-251 step 4 lands.
 
 Every ticket carries a `## Dispatch` section with the bar, the worktree rule (worktrees go under
 `crush-ast/.jagent/worktrees/`, next to the `buckets` symlink) and the gates.
+
+## Existing tickets this spike touches
+
+- **CRUSH-199** (JS walker silent drops; marked Backlog but partly stale, since switch, `/` and `push` were
+  fixed in #180/#189). Its `finally` and top-level-block halves are superseded by z-7 and z-5. Close it
+  or narrow it to the `compile_cast` semantic-pass issue that remains.
+- **CRUSH-238** (walkers stub unsupported constructs as null). z-23 is its JS-walker slice.
+- **CRUSH-250** (boa as the default for `.js`). See the decisions above.
+- **CRUSH-251** (closures and object model). z-20 is blocked on its step 4; classes wait for its
+  later slices. Step 1 landed in #192, but the ticket's status wasn't updated.
+- **CRUSH-260** (`.length` and the JS number policy). `.length` is done; the number policy is z-13.
+- **CRUSH-261** (JS→AOT vs node benchmark). Complementary: performance, not semantics.
+- `.jagent/knowledge/architecture/language_frontend_matrix.md` marks JS "✅ Complete". Update it to point
+  at this spike's harness numbers once z-4 lands.
+
+Also outside this spike: `crush run` doesn't accept `.js`/`.ts` (only `.crush`/`.casm`/`.cvm1`). JS
+is reachable through the walker CLI, `crush-aotc` and `crush-walk-run`. Worth a small follow-up once
+parity is meaningful.
 
 ## Measuring progress
 
