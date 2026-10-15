@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-3 |
 | **Priority** | P2 |
-| **Status** | In review |
+| **Status** | Done — merged #186 (0360dc3), 2026-10-15 |
 | **Phase** | M11 |
 | **Assignee** | vega |
 | **Dependencies** | crush-ptx (CRUSHAST-PTX-Q6K); relates to CRUSH-210 (no CLI path to PTX) |
