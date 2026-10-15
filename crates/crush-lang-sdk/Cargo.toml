@@ -59,9 +59,11 @@ native-plugins = ["crush-vm/native-plugins"]
 # so there's nothing for the marshaling prep to prepare for.
 polyglot-python = ["dep:crush-lang-python"]
 # @javascript{} free-variable analysis + guest rewrite (CRUSH-68), via
-# crush-lang-js on `boa_parser` (CRUSH-250): no swc. Same wasm32 skip
-# rationale as polyglot-python.
-polyglot-javascript = ["dep:crush-lang-js", "crush-lang-js/js-boa"]
+# crush-lang-js; the analysis runs on `boa_parser` (CRUSH-250). Same wasm32
+# skip rationale as polyglot-python. `swc-backend` stays until CRUSH-250
+# step 6 makes boa the `.js` lowering: without it, anything that walks `.js`
+# through this feature (e.g. `JsAdapter`) would get the boa lowering early.
+polyglot-javascript = ["dep:crush-lang-js", "crush-lang-js/swc-backend", "crush-lang-js/js-boa"]
 # TypeScript support in crush-lang-js (swc), for consumers that walk `.ts`
 # through the SDK. Off by default: it is what pulls swc in.
 polyglot-typescript = ["polyglot-javascript", "crush-lang-js/ts"]
