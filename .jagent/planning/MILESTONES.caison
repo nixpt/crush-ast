@@ -36,7 +36,7 @@ milestones: [
     tickets: ["CRUSH-1", "CRUSH-7", "CRUSH-8", "CRUSH-9", "CRUSH-11", "CRUSH-12", "CRUSH-13", "CRUSH-14", "CRUSH-15", "CRUSH-17", "CRUSH-18", "CRUSH-19", "CRUSH-20", "CRUSH-25"]
     done_when: [
       { claim: "all M1 tickets closed", check: { kind: "tickets", status: "Done" } },
-      { claim: "CRUSH-1 (AI opcodes execute) and CRUSH-7 (nested indexing/slicing) closed", met: true @verified { at: "2026-10-15", by: "opencode" } },
+      { claim: "CRUSH-1 (AI opcodes wired, fail-loud when ungranted — not self-executing; full execution needs an ai_native.* host) and CRUSH-7 (nested indexing/slicing) closed", met: true @verified { at: "2026-10-15", by: "opencode" } },
     ]
     notes: "Closed 2026-10-15. CRUSH-1 done via CRUSH-32 (AI opcodes wired + fail-loud); the remaining silent-NOP AI statements (capability_discovery/adaptation_request/semantic_switch) are CRUSH-265 (M9). CRUSH-7 done for arrays (nested indexing + slice syntax verified); string slicing -> CRUSH-268, .slice() method -> CRUSH-267. CRUSH-13 done (AOT backends differentially tested in crush-aot/tests/)."
   },

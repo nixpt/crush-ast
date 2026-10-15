@@ -5,7 +5,7 @@
 | **ID** | CRUSH-267 |
 | **Priority** | P3 |
 | **Status** | Backlog |
-| **Phase** | M1 |
+| **Phase** | M6 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
 | **Estimated effort** | S |
