@@ -281,12 +281,19 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 .enumerate()
                 .map(|(i, p)| Ok((closure_param(p, i)?, CastType::Any)))
                 .collect::<anyhow::Result<_>>()?;
-            let body_expr = lower_expr(&e.body, ctx)?;
-            Ok(Expression::Lambda {
-                params,
-                body: vec![Statement::Return { value: Some(body_expr), meta: meta.clone() }],
-                meta,
-            })
+            // A block body is lowered like a function body — statements, then the
+            // tail as the return value, `return` as a return. Lowered as an
+            // expression it kept only the block's first statement, so
+            // `|mut x: i32| { x += 1; x }` returned null.
+            let body = match e.body.as_ref() {
+                Expr::Block(b) => crate::lower_stmt::lower_block(
+                    &b.block.stmts,
+                    ctx,
+                    crate::lower_stmt::Tail::Return,
+                )?,
+                other => vec![Statement::Return { value: Some(lower_expr(other, ctx)?), meta: meta.clone() }],
+            };
+            Ok(Expression::Lambda { params, body, meta })
         }
         Expr::Reference(e) => {
             lower_expr(&e.expr, ctx)

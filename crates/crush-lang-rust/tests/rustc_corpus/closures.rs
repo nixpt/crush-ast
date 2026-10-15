@@ -17,4 +17,24 @@ fn main() {
     println!("{}", first(9, 100));
     println!("{}", apply(add_typed, 1));
     println!("{}", x);
+    // Block bodies: statements before the tail, `return`, a nested block.
+    let bump = |mut v: i32| {
+        v += 1;
+        v
+    };
+    let early = |v: i32| {
+        if v > 10 {
+            return 100;
+        }
+        v * 2
+    };
+    let with_let = |v: i32| {
+        let w = v * 10;
+        let z = w + 1;
+        z
+    };
+    println!("{}", bump(1));
+    println!("{}", early(3));
+    println!("{}", early(30));
+    println!("{}", with_let(4));
 }
