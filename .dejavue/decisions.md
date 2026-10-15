@@ -1157,3 +1157,9 @@ Artifacts: .jagent/planning/designs/rust-parity-xps-8-13.md
 Outcome:
 Proposed specification and six existing ticket refinements; xps-8 then xps-9 then typed xps-13 work, with existing review closure before CLI release. Private C bridge and rust.debug contracts require design review.
 
+
+## 2026-10-15T18:20:46-05:00 — Lower only literal Rust integer casts in the first xps-8 slice
+
+Reason:
+The merged specification requires exact conversions or frontend refusal. Constant bounded integer casts can be evaluated in the walker without a new guest ABI or backend kernel; dynamic casts need a later binding/range fact pass and single-evaluation lowering. Retain numeric source syntax separately from ownership Copy metadata, keep overflow policy and the ticket open.
+

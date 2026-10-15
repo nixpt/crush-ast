@@ -130,9 +130,65 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
     ),
     (
         "audit_integer_cast",
-        Expected::Silent {
+        Expected::Loud {
             ticket: "CRUSH-xps-8",
-            output: "300\n",
+            diagnostic: "nonliteral Rust cast operand",
+        },
+    ),
+    (
+        "numeric_cast_call",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "nonliteral Rust cast operand",
+        },
+    ),
+    (
+        "numeric_cast_computed",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "nonliteral Rust cast operand",
+        },
+    ),
+    (
+        "numeric_cast_float",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "noninteger Rust cast operand",
+        },
+    ),
+    (
+        "numeric_cast_char",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "noninteger Rust cast operand",
+        },
+    ),
+    (
+        "numeric_cast_pointer",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "unsupported Rust integer type `usize`",
+        },
+    ),
+    (
+        "numeric_cast_wide",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "unsupported Rust integer type `u64`",
+        },
+    ),
+    (
+        "numeric_literal_f32",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "unsupported Rust float suffix `f32`",
+        },
+    ),
+    (
+        "numeric_literal_u64",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "unsupported Rust integer type `u64`",
         },
     ),
     (
@@ -441,7 +497,7 @@ mod tests {
     fn fixed_loud_and_silent_entries_must_be_removed() {
         for (name, expected) in [
             ("audit_value_block", "42\n"),
-            ("audit_integer_cast", "44\n"),
+            ("audit_integer_overflow", "4\n"),
         ] {
             let error =
                 check(name, Engine::Vm, expected, Outcome::Output(expected.into())).unwrap_err();
