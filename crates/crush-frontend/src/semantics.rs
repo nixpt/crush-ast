@@ -562,7 +562,7 @@ impl SemanticAnalyzer {
             "arr_slice" => Type::Array(Box::new(Type::Any)),
             "str.contains" => Type::Bool,
             "str.split" => Type::Array(Box::new(Type::String)),
-            "str.replace" | "str.join" => Type::String,
+            "str.replace" | "str.join" | "type_of" => Type::String,
             "str.len" | "len" => Type::Int,
             _ => Type::Any,
         }

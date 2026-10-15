@@ -1877,6 +1877,17 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if name == "type_of" {
+                    // The CASM `type_of` op (CVM1 `TYPEOF`): the value's runtime
+                    // type name. Used by the JS walker's `for-in` guard
+                    // (CRUSH-zorro-23). Strings are "str" on the CVM1 VMs and
+                    // "string" on FastVM/JIT; an AOT backend without the op
+                    // refuses it at compile time.
+                    if args.len() != 1 {
+                        bail!("type_of() expects exactly 1 argument");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    instrs.push(self.create_instr("type_of", serde_json::json!({}), meta));
                 } else if (name == "array.push" || name == "array.pop")
                     && !self.declared_vars.contains("array")
                     && !self.local_functions.contains(name)
