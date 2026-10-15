@@ -21,6 +21,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn source_dispatch_accepts_language_names_and_extensions() {
+        for selector in ["rust", "RUST", "rs", ".rs", " .RS "] {
+            let program =
+                compile_source(selector, "fn main() { println!(\"{}\", 40 + 2); }").unwrap();
+            assert_eq!(
+                Runtime::new().run(&program).unwrap().output,
+                "42\n",
+                "{selector}"
+            );
+        }
+        let program = compile_source(".crush", "fn main() { return 42; }").unwrap();
+        assert_eq!(
+            Runtime::new().run(&program).unwrap().return_value,
+            Some(crush_lang_sdk::Value::Int(42))
+        );
+        let error = compile_source("not-a-language", "")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("available:") && error.contains("rust"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn test_simple_arithmetic() {
         assert_eq!(
             run_rust("fn main() { let x = 42; println(x + 1); }").unwrap(),
