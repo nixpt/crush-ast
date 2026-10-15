@@ -1,27 +1,25 @@
-//! COSM K1.3 (CRUSH-zorro-42): what the scheduler VM and the portable VM do
-//! with a program that carries a kind table, until they implement Kinds
-//! (K1.4, CRUSH-zorro-43).
+//! COSM: which kind tables the scheduler VM and the portable VM run.
 //!
 //! Every engine applies the same rule, defined once in casm
-//! ([`casm::cosm_unsupported_reason`]): a Kind whose instances behave exactly
-//! as today's maps (Crush's defaults) runs as before; a Kind that declares
-//! anything a map would silently not honour is refused when the program is
-//! loaded, before any instruction runs. The Crush compiler only emits the
-//! first kind (it refuses the others at compile time,
-//! `crush_frontend::cosm_lower`); this gate keeps a kind table from another
-//! producer — a walker, hand-written CASM, a newer compiler — from running
-//! silently wrong.
+//! ([`casm::cosm_unsupported_reason_on`]), at the level of COSM it
+//! implements. Since K1.4 (CRUSH-zorro-43) these two VMs implement Kinds
+//! ([`casm::CosmSupport::Kinds`], see [`crate::cosm_rt`]): they run Records
+//! with every strategy except the few the rule still lists (prototype chains
+//! and Go embedding, a Python `__new__`, accessors, and hooks other than
+//! `str` / `repr` / `clone`), which are refused when the program is loaded,
+//! before any instruction runs. FastVM, the JIT and AOT apply the same rule
+//! at [`casm::CosmSupport::Maps`].
 
 use crate::vm::VmError;
 use crush_cosm::CosmModule;
 
 /// How the scheduler VM and the portable VM name themselves in a refusal.
-const ENGINE: &str = "this VM";
+const ENGINE: &str = crate::cosm_rt::ENGINE;
 
-/// Why a kind table can't run on the scheduler VM or the portable VM yet;
-/// `None` when every Kind behaves exactly as today's maps.
+/// Why a kind table can't run on the scheduler VM or the portable VM;
+/// `None` when it runs.
 pub fn unsupported_reason(module: Option<&CosmModule>) -> Option<String> {
-    casm::cosm_unsupported_reason(module?, ENGINE)
+    casm::cosm_unsupported_reason_on(module?, ENGINE, casm::CosmSupport::Kinds)
 }
 
 /// Load-time check of a kind table for the scheduler VM and the portable

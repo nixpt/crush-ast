@@ -417,49 +417,56 @@ fn every_error_is_reported_at_once() {
     assert_eq!(err.lines().count(), 3, "{err}");
 }
 
-// ── loud until K1.4/K1.5 ────────────────────────────────────────────────────
+// ── receiver calls and strategies (K1.4, CRUSH-zorro-43) ───────────────────
+
+/// The ops of every function in `src`'s CASM.
+fn ops(src: &str) -> Vec<String> {
+    let p = crush_frontend::compile_crush_source(src).unwrap_or_else(|e| panic!("{e:#}\n{src}"));
+    p.functions.values().flat_map(|f| f.body.iter().map(|i| i.op.clone())).collect()
+}
 
 #[test]
-fn calling_an_impl_method_through_the_receiver_is_loud() {
-    let err = compile_err(&format!("{POINT}let p = Point::new(3, 4)\nprint(p.norm2())\n"));
-    assert_has(
-        &err,
-        &[
-            "line 9",
-            "`p.norm2(…)`: calling methods defined in `impl` needs COSM K1.4/K1.5 (CRUSH-zorro-43/44)",
-            "the global capability `norm2`",
-            "`Type::norm2(p, …)`",
-        ],
-    );
+fn calling_an_impl_method_through_the_receiver_is_call_member() {
+    // `p.norm2()` resolves on the receiver's Kind — never the global
+    // capability `norm2`.
+    let main = |src: &str| {
+        let p = crush_frontend::compile_crush_source(src).unwrap_or_else(|e| panic!("{e:#}"));
+        p.functions["main"].body.clone()
+    };
+    let body = main(&format!("{POINT}let p = Point::new(3, 4)\nprint(p.norm2())\n"));
+    let call = body.iter().find(|i| i.op == "call_member").expect("a call_member");
+    assert_eq!(call.args["name"], "norm2");
+    assert_eq!(call.args["argc"], 0);
+    assert!(!body.iter().any(|i| i.op == "cap_call" && i.args["name"] == "norm2"));
     // A trait method, by its bare name.
-    assert_has(&compile_err(&format!("{POINT}let p = Point::new(3, 4)\nprint(p.describe())\n")), &["`p.describe(…)`"]);
+    assert!(ops(&format!("{POINT}let p = Point::new(3, 4)\nprint(p.describe())\n")).contains(&"call_member".to_string()));
     // Inside a method, through `self`.
-    assert_has(
-        &compile_err("struct P { x }\nimpl P { fn a(self) { return 1 } fn b(self) { return self.a() } }\n"),
-        &["`self.a(…)`"],
-    );
+    assert!(ops("struct P { x }\nimpl P { fn a(self) { return 1 } fn b(self) { return self.a() } }\n")
+        .contains(&"call_member".to_string()));
     // Programs that define no such method keep compiling dotted calls as before.
     crush_frontend::compile_crush_source("struct P { x }\nlet xs = [1]\nxs.push(2)\nprint(len(xs))\n").unwrap();
 }
 
 #[test]
-fn strategies_the_vms_cannot_run_are_refused_at_compile_time() {
+fn strategies_no_engine_runs_are_refused_at_compile_time() {
+    // The VMs run Kinds since K1.4; what even they can't run is the shared
+    // rule at `casm::CosmSupport::Kinds`.
     for (kind, shown) in [
-        ("semantics: value(copy)", "semantics: value(copy)"),
-        ("equality: identity", "equality: identity"),
-        ("construct: ctor(mk)", "construct: ctor"),
+        ("resolution: prototype_chain", "resolution: prototype_chain"),
+        ("resolution: embedding_promotion", "resolution: embedding_promotion"),
     ] {
-        let src = format!("fn mk(x) {{ return 1 }}\n@kind({kind})\nstruct V {{ x }}\nlet a = V {{ x: 1 }}\n");
+        let src = format!("@kind({kind})\nstruct V {{ x }}\nlet a = V {{ x: 1 }}\n");
         lower(&src); // the COSM itself is fine…
         assert_has(
             &compile_err(&src),
-            &[
-                "line 3, col 1",
-                &format!("struct `V` declares `@kind({shown})`, which needs COSM K1.4 (CRUSH-zorro-43) to run"),
-            ],
+            &["line 2, col 1", &format!("struct `V` declares `@kind({shown})`, which no engine runs yet")],
         );
     }
-    // Inert strategies compile (they only matter to member lookup).
+    // …and everything the VMs run compiles.
+    for kind in ["semantics: value(copy)", "semantics: value(move)", "equality: identity", "construct: ctor(mk)"] {
+        let src = format!("fn mk(self, x) {{ self.x = x }}\n@kind({kind})\nstruct V {{ x }}\nlet a = V {{ x: 1 }}\n");
+        crush_frontend::compile_crush_source(&src).unwrap_or_else(|e| panic!("{kind}: {e:#}"));
+    }
     crush_frontend::compile_crush_source(
         "struct B { }\n@kind(storage: open_dict, resolution: c3, parents: [B], receiver: bound_self)\nstruct W { }\n",
     )

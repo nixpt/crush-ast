@@ -148,7 +148,11 @@ impl Parser {
                 ),
             });
         }
-        Ok(Expression::ObjectLiteral { properties, meta: self.make_meta() })
+        // COSM K1.4: the literal remembers its struct, so it builds an
+        // instance of that Kind (and a struct pattern can test it).
+        let mut meta = self.make_meta();
+        meta.insert("struct".to_string(), serde_json::Value::String(name));
+        Ok(Expression::ObjectLiteral { properties, meta })
     }
 
     /// Parse source code into a Program with error recovery
