@@ -1106,3 +1106,14 @@ Domain owner: vega
 Outcome:
 All engines refuse the three ops; none silent. Frontend + casm_to_vm + FastVM + AOT Rust/C + crush-aotc verified. Tests green: crush-frontend, crush-lang-sdk, crush-vm, crush-aot, crush-aotc; examples_parity green.
 
+
+## 2026-10-15T14:42:52-05:00 — [TACTICAL] [PROPOSED] Propose xps-8 through xps-13 parity completion using retained Rust facts and shared kernels
+
+Reason:
+Ownership Copy metadata cannot establish numeric width, char/String/unit Debug behavior, or typed power results. Preserve source facts and evaluate operands once; unsupported domains must be refused before execution. Retain xps-10 through xps-12 implementations in their existing review lane. Shared AOT support must preserve Unicode and representation semantics rather than approximate them independently.
+
+Artifacts: .jagent/planning/designs/rust-parity-xps-8-13.md
+
+Outcome:
+Proposed specification and six existing ticket refinements; xps-8 then xps-9 then typed xps-13 work, with existing review closure before CLI release. Private C bridge and rust.debug contracts require design review.
+

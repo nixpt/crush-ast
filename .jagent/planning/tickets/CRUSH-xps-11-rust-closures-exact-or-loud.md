@@ -64,3 +64,58 @@ lowering with a useful diagnostic before entering the VM.
   Array and closure tests assert concrete results instead of vacuous success.
 - Rust ownership and repeated block/loop binding parity remain CRUSH-xps-6/7;
   the full VM/AOT conformance gate remains CRUSH-xps-5.
+
+## Detailed review specification (2026-10-15)
+
+[Batch spec](../designs/rust-parity-xps-8-13.md#xps-10-12-close-the-existing-review-contracts).
+The implementation remains **In review in PR #213**; PR #217's landed typed
+parameter fix is part of its baseline. This is closure verification of that
+work, not a new closure runtime implementation.
+
+### Supported and refused boundary
+
+| Form | Contract |
+|---|---|
+| Synchronous closure with named/typed/wildcard parameters | Ordered argument slots; wildcard names cannot collide with user locals |
+| Complete statement body with tail/explicit returns | Preserve every supported effect and result, including branches |
+| Scalar read and mutable scalar capture | Existing shared-cell behavior matches valid Rust fixtures; capture refers to xps-6 binding identity |
+| Shadowed parameters, captures, or loop bindings | Distinct storage identity and correct lexical resolution |
+| Owned/unknown collection or String capture | Source-located refusal from xps-7 until ownership semantics exist |
+| Move/async closures, destructured/ref parameter patterns | Explicit lowering refusal, not a late uninitialized slot |
+| Closure-valued programs on AOT | Retain explicit closure-opcode refusal under CRUSH-251 until that backend work lands |
+
+Do not infer Fn/FnMut/FnOnce trait completeness from VM closure execution.
+Numeric precision/width on parameters and results belongs to xps-8; closure
+checks must preserve those facts when its implementation arrives.
+
+### Review matrix
+
+| Case | Required proof |
+|---|---|
+| `let add = |x: i32| x + 1; add(41)` | Exact `42` through the public SDK |
+| Several typed/wildcard parameters and unused arguments | Correct order, arity and collision-free slots |
+| Parameter shadows captured/outer `x` | Correct lexical binding rather than accidental capture |
+| Scalar read and repeated mutable scalar capture calls | Exact rustc outputs across repeated calls |
+| Body declarations, effects, nested branches and early return | All statements retained, tails and returns correct |
+| Wrong call arity and unknown body names | Compile-time rejection before VM execution |
+| Owned/move/async/destructured/ref cases | Construct-specific source diagnostic with the correct owning ticket |
+| Same corpus through Rust/C AOT | Exact where supported or the pinned CRUSH-251 compile-time refusal |
+
+### Review exit
+
+- [ ] Tie every supported/refused form to a regression and an explicit
+      rustc-backed fixture or frontend-only rejection case. No vacuous success
+      assertion, arbitrary nonempty output, or arbitrary runtime error counts.
+- [ ] Recheck capture identity after xps-6 and xps-7 are integrated; no accepted
+      fixture may reach an uninitialized slot or acquire an unproven owned alias.
+- [ ] SDK, shared conformance and supported native proof are recorded on the
+      current integration state. Keep CRUSH-251 separate from this ticket.
+- [ ] Merge PR #213 and required dependent corrections before marking Done;
+      update the supported closure/capture documentation with the same change.
+
+## Dispatch for review closure
+
+Read Rust closure lowering, binding metadata, xps-7 capture checks, shared
+lambda semantic checking and SDK `rust_source`/`rustc_corpus`. Inspect existing
+PR #213 tests before adding anything. Correct only demonstrated gaps in a
+focused worktree; do not expand owned capture or closure traits in this lane.
