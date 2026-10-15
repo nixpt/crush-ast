@@ -606,6 +606,7 @@ fn lower_list_or_set_comprehension(
         meta: meta.clone(),
     };
     let loop_stmt = build_comprehension_loop(generators, 0, vec![push_stmt], ctx, &meta)?;
+    let loop_stmt = comprehension_scope(loop_stmt, generators)?;
     Ok((
         vec![init, loop_stmt],
         Expression::Var {
@@ -613,6 +614,64 @@ fn lower_list_or_set_comprehension(
             meta,
         },
     ))
+}
+
+/// Python 3 gives a comprehension its own scope: its loop variables don't
+/// overwrite a same-named variable of the enclosing function
+/// (`n = 10; [n for n in range(3)]` leaves `n` at 10). The loop is lowered
+/// inline, so rename every target to a fresh name throughout it — a
+/// consistent rename to an unused name keeps the meaning (closures in the
+/// comprehension still share the renamed variable: late binding holds). The
+/// first `for`'s iterable is evaluated in the enclosing scope, so it keeps
+/// the outer names.
+fn comprehension_scope(
+    loop_stmt: Statement,
+    generators: &[py_ast::Comprehension],
+) -> anyhow::Result<Statement> {
+    use serde_json::Value as J;
+    fn rename(v: &mut J, from: &str, to: &str) {
+        match v {
+            J::Array(items) => items.iter_mut().for_each(|i| rename(i, from, to)),
+            J::Object(o) => {
+                for key in ["name", "variable", "target"] {
+                    if o.get(key).and_then(J::as_str) == Some(from) {
+                        o.insert(key.to_string(), J::from(to));
+                    }
+                }
+                if let Some(f) = o.get("function").and_then(J::as_str) {
+                    let renamed = if f == from {
+                        Some(to.to_string())
+                    } else {
+                        f.strip_prefix(from).filter(|rest| rest.starts_with('.')).map(|rest| format!("{to}{rest}"))
+                    };
+                    if let Some(r) = renamed {
+                        o.insert("function".to_string(), J::from(r));
+                    }
+                }
+                if let Some(J::Array(params)) = o.get_mut("params") {
+                    for p in params.iter_mut() {
+                        if p.get(0).and_then(J::as_str) == Some(from) {
+                            p[0] = J::from(to);
+                        }
+                    }
+                }
+                o.values_mut().for_each(|c| rename(c, from, to));
+            }
+            _ => {}
+        }
+    }
+    let mut json = serde_json::to_value(&loop_stmt)?;
+    let first_iterable = json.get("iterable").cloned();
+    for generator in generators {
+        if let py_ast::Expr::Name(py_ast::ExprName { id, .. }) = &generator.target {
+            let fresh = format!("{}_{}", fresh_comp_temp(), id);
+            rename(&mut json, id.as_str(), &fresh);
+        }
+    }
+    if let (Some(original), Some(obj)) = (first_iterable, json.as_object_mut()) {
+        obj.insert("iterable".to_string(), original);
+    }
+    Ok(serde_json::from_value(json)?)
 }
 
 /// Recursively build the (possibly nested, for multiple `for` clauses)
@@ -765,7 +824,8 @@ mod comprehension_lowering_tests {
         }
         match &hoisted[1] {
             Statement::For { variable, body, .. } => {
-                assert_eq!(variable, "i");
+                // Renamed to the comprehension's own scope (`__comp_N_i`).
+                assert!(variable.starts_with("__comp_") && variable.ends_with("_i"), "{variable}");
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     Statement::ExprStmt { expr: Expression::Call { function, args, .. }, .. } => {
