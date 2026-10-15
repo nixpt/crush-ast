@@ -223,6 +223,8 @@ with bozo); swc only strips TS types.
 | 1 | CRUSH-zorro-23 | Make silently mis-lowered constructs loud on the swc path (incl. blocks, labels, finally) | — |
 | 1 | CRUSH-zorro-9, 22, 10 | `js.*` runtime: `+` ToString, `&&`/`||`/`==`, console.log inspect | — |
 | 1 | CRUSH-zorro-26 | **AOT Rust/C read missing values as null where the VM errors** (found by the harness; backend-level, P0) | — |
+| — | CRUSH-zorro-37 | **Crush `match` ignores struct names** (P0, silent; found in the object-model survey #206) | — |
+| — | CRUSH-zorro-38 | **Python walker drops call keyword arguments** (P0, silent; `print(x, end="")`) | — |
 | 2 | **CRUSH-250** | The JS frontend: boa 0.22 + scope/semantic pass + builtin table; flip `.js` when ≥ swc | z-4 |
 | 2 | CRUSH-zorro-8 | TS: swc blanks types → boa lowering (`ts` feature) | CRUSH-250 |
 | 3 | CRUSH-zorro-5, 6, 7, 16, 18 | blocks/scoping, labels, finally, objects, params — in the new lowering | CRUSH-250 |
