@@ -14,6 +14,7 @@ use boa_ast::property::{MethodDefinitionKind, PropertyName};
 use boa_ast::{Span, Spanned};
 use crush_cast::Expression as CastExpr;
 
+use super::builtins::{self, Lowering};
 use super::stmt::{comma_parts, unparen};
 use super::{Lower, Meta};
 use crate::lower_common::{js_cap, js_div, length_of};
@@ -26,10 +27,10 @@ impl Lower<'_> {
         let span = Some(e.span());
         let m = self.meta(span);
         match e {
-            Expression::Identifier(id) => Ok(CastExpr::Var {
-                name: self.resolve(id.sym()),
-                meta: m,
-            }),
+            Expression::Identifier(id) => match self.user_binding(id.sym()) {
+                Some(name) => Ok(CastExpr::Var { name, meta: m }),
+                None => Err(self.unbound(id.sym(), span)),
+            },
             Expression::Literal(lit) => self.literal(lit.kind(), span, m),
             Expression::Parenthesized(p) => self.expr(p.expression()),
             Expression::Unary(u) => {
@@ -63,7 +64,7 @@ impl Lower<'_> {
                     meta: m,
                 })
             }
-            Expression::Call(c) => self.call(c.function(), c.args(), span, m),
+            Expression::Call(c) => self.call(c.function(), c.args(), false, span, m),
             Expression::PropertyAccess(pa) => self.access(pa, span, m),
             Expression::ArrayLiteral(a) => {
                 let mut elements = Vec::new();
@@ -383,6 +384,17 @@ impl Lower<'_> {
     ) -> anyhow::Result<CastExpr> {
         match pa {
             PropertyAccess::Simple(s) => {
+                // `Math.PI`: a namespace value, unless `Math` is a user binding.
+                if let Expression::Identifier(obj) = unparen(s.target())
+                    && self.user_binding(obj.sym()).is_none()
+                    && let PropertyAccessField::Const(prop) = s.field()
+                {
+                    let name = format!("{}.{}", self.name(obj.sym()), self.name(prop.sym()));
+                    return Err(match builtins::value(&name) {
+                        Some(row) => self.planned(row, &format!("`{name}`"), span),
+                        None => self.unbound(obj.sym(), span),
+                    });
+                }
                 let target = self.expr(s.target())?;
                 match s.field() {
                     // CRUSH-260: `x.length` is `len(x)`, except on an object literal.
@@ -523,71 +535,154 @@ impl Lower<'_> {
             .collect()
     }
 
-    /// A call. The callee is lowered to a name (`f`, `obj.m`), as in the swc
-    /// lowering; the builtin/method table (CRUSH-250 step 3) replaces the
-    /// special cases below.
-    fn call(
+    /// A call. A callee that is a user binding (a local, a parameter, a
+    /// top-level or lifted function) is called by its crush name; anything
+    /// else must be a row of the builtin/method table ([`super::builtins`]).
+    /// `statement`: the call's value is discarded.
+    pub(super) fn call(
         &mut self,
         callee: &Expression,
         args: &[Expression],
+        statement: bool,
         span: Option<Span>,
         m: Meta,
     ) -> anyhow::Result<CastExpr> {
-        let func_name = match unparen(callee) {
-            Expression::Identifier(id) => self.resolve(id.sym()),
+        match unparen(callee) {
+            Expression::Identifier(id) => {
+                if let Some(name) = self.user_binding(id.sym()) {
+                    let args = self.args(args)?;
+                    return Ok(CastExpr::Call {
+                        function: name,
+                        args,
+                        meta: m,
+                    });
+                }
+                let name = self.name(id.sym());
+                match builtins::global(&name) {
+                    Some(row) => self.builtin(row, None, args, statement, span, m),
+                    None => {
+                        Err(self
+                            .unsupported(format!("calling `{name}`, which is not defined"), span))
+                    }
+                }
+            }
             Expression::PropertyAccess(PropertyAccess::Simple(s)) => {
-                let Expression::Identifier(obj) = unparen(s.target()) else {
+                let PropertyAccessField::Const(prop) = s.field() else {
+                    return Err(self.unsupported("a computed method call (`o[k]()`)", span));
+                };
+                let method = self.name(prop.sym());
+                // `Math.floor(x)`: a namespace function, unless `Math` is a user binding.
+                if let Expression::Identifier(obj) = unparen(s.target())
+                    && self.user_binding(obj.sym()).is_none()
+                {
+                    let name = format!("{}.{method}", self.name(obj.sym()));
+                    return match builtins::global(&name) {
+                        Some(row) => self.builtin(row, None, args, statement, span, m),
+                        None => Err(self.unsupported(format!("`{name}()`"), span)),
+                    };
+                }
+                match builtins::method(&method) {
+                    Some(row) => self.builtin(row, Some(s.target()), args, statement, span, m),
+                    None => Err(self.unsupported(
+                        format!("the method `.{method}()` (a user object's method waits for the COSM object model)"),
+                        span,
+                    )),
+                }
+            }
+            _ => Err(self.unsupported(
+                "calling an expression that isn't a plain name (`(function () {…})()`, `f()()`)",
+                span,
+            )),
+        }
+    }
+
+    /// The refusal for reading a name no scope binds.
+    fn unbound(&self, sym: boa_interner::Sym, span: Option<Span>) -> anyhow::Error {
+        let name = self.name(sym);
+        if let Some(row) = builtins::value(&name) {
+            return self.planned(row, &format!("`{name}` as a value"), span);
+        }
+        if self.script_names.contains(&sym) {
+            // A top-level function is its own crush function: it can't see
+            // the script's variables (AOT would read them as `null`).
+            return self.unsupported(
+                format!("reading the script's top-level `{name}` from inside a function"),
+                span,
+            );
+        }
+        self.unsupported(format!("`{name}`, which is not defined"), span)
+    }
+
+    fn planned(&self, row: &builtins::Row, shown: &str, span: Option<Span>) -> anyhow::Error {
+        match row.lower {
+            Lowering::Planned(ticket) => self.unsupported(format!("{shown} ({ticket})"), span),
+            _ => self.unsupported(shown.to_string(), span),
+        }
+    }
+
+    /// The crush name a callee refers to, if it is a user binding.
+    fn user_binding(&self, sym: boa_interner::Sym) -> Option<String> {
+        if self.scopes.resolve(sym).is_some() || self.toplevel_fns.contains(&sym) {
+            Some(self.resolve(sym))
+        } else {
+            None
+        }
+    }
+
+    /// A call to a table row; `receiver` for a method.
+    fn builtin(
+        &mut self,
+        row: &builtins::Row,
+        receiver: Option<&Expression>,
+        args: &[Expression],
+        statement: bool,
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        let shown = match receiver {
+            Some(_) => format!(".{}()", row.name),
+            None => format!("{}()", row.name),
+        };
+        if let Lowering::Planned(ticket) = row.lower {
+            return Err(self.unsupported(format!("`{shown}` ({ticket})"), span));
+        }
+        if !row.arity.accepts(args.len()) {
+            return Err(
+                self.unsupported(format!("`{shown}` with {} argument(s)", args.len()), span)
+            );
+        }
+        let args = self.args(args)?;
+        Ok(match row.lower {
+            Lowering::Cap(name) => CastExpr::CapabilityCall {
+                name: name.to_string(),
+                args,
+                meta: m,
+            },
+            // The line node prints: js.format (node's util.format).
+            Lowering::ConsoleLine => CastExpr::CapabilityCall {
+                name: "io.print".to_string(),
+                args: vec![js_cap("js.format", args, m.clone())],
+                meta: m,
+            },
+            Lowering::Receiver { cap, value } => {
+                if !value && !statement {
+                    return Err(self.unsupported(format!("using the result of `{shown}`"), span));
+                }
+                // The compiler dispatches `recv.m(…)` on a variable receiver.
+                let Some(Expression::Identifier(recv)) = receiver.map(unparen) else {
                     return Err(self.unsupported(
                         "calling a method on anything but a plain name (`a.b.m()`, `\"s\".m()`, `f().m()`)",
                         span,
                     ));
                 };
-                let PropertyAccessField::Const(prop) = s.field() else {
-                    return Err(self.unsupported("a computed method call (`o[k]()`)", span));
-                };
-                format!("{}.{}", self.resolve(obj.sym()), self.name(prop.sym()))
+                let recv = self.resolve(recv.sym());
+                CastExpr::Call {
+                    function: format!("{recv}.{cap}"),
+                    args,
+                    meta: m,
+                }
             }
-            _ => {
-                return Err(self.unsupported(
-                    "calling an expression that isn't a plain name (`(function () {…})()`, `f()()`)",
-                    span,
-                ));
-            }
-        };
-        // Node writes these to stderr; the crush VM has no stderr print.
-        if matches!(func_name.as_str(), "console.error" | "console.warn") {
-            return Err(self.unsupported("`console.error` / `console.warn` (stderr output)", span));
-        }
-        let args = self.args(args)?;
-        let cap = |name: &str, args| CastExpr::CapabilityCall {
-            name: name.to_string(),
-            args,
-            meta: m.clone(),
-        };
-        let call = |function: &str, args| CastExpr::Call {
-            function: function.to_string(),
-            args,
-            meta: m.clone(),
-        };
-        Ok(match func_name.as_str() {
-            // The line node prints: js.format (node's util.format).
-            "console.log" | "console.info" => {
-                cap("io.print", vec![js_cap("js.format", args, m.clone())])
-            }
-            "fetch" => cap("net.http_get", args),
-            "xip.invoke" => cap("xip.invoke", args),
-            "parseInt" | "parseFloat" | "Number" | "String" | "Boolean" | "Array" | "Object" => {
-                call(&func_name, args)
-            }
-            "Array.isArray" => call("is_array", args),
-            // CRUSH-65: the lowercase `math.*` capabilities.
-            "Math.abs" | "Math.floor" | "Math.ceil" | "Math.round" | "Math.sqrt" | "Math.pow"
-            | "Math.min" | "Math.max" | "Math.sin" | "Math.cos" | "Math.tan" | "Math.random" => {
-                cap(&format!("math.{}", &func_name["Math.".len()..]), args)
-            }
-            "JSON.parse" => call("json_parse", args),
-            "JSON.stringify" => call("json_stringify", args),
-            _ => call(&func_name, args),
+            Lowering::Planned(_) => unreachable!("refused above"),
         })
     }
 }

@@ -91,6 +91,17 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
      - a nested `function` declaration is refused (it was silently wrong on AOT).
    - Not done yet: TDZ (a read of `let`/`const` before its declaration).
 3. Builtin/method table wired to the `js.*` runtime library.
+   **Done in sub-PR 3:**
+   - `lower/builtins.rs` has three tables:
+     - `GLOBALS`: global and namespace functions;
+     - `METHODS`: receiver methods;
+     - `VALUES`: global names read as values.
+   - Each row has an arity and a lowering: a capability, the `console.log` line, a receiver-dispatched
+     method, or `Planned(ticket)`.
+   - A call or read that is neither a user binding nor a row fails at walk time, naming it (and its
+     ticket). It never reaches "Undefined function", "unknown capability" or "uninitialised slot".
+   - A top-level function reading a script variable is refused (AOT read it as `null`).
+   - Area tickets turn `Planned` rows into lowerings.
 4. Closures/function values (CRUSH-251 steps 2–3).
 5. The constructs listed above (one PR each, or as their tickets).
 6. Flip the `.js` default once the gate passes; retire the swc lowering for JS; update
