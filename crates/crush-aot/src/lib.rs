@@ -46,6 +46,16 @@ pub struct UnsupportedOps {
 }
 pub use loader::Module;
 
+/// COSM K1.3 (CRUSH-zorro-42): AOT doesn't compile Kinds yet. A program whose
+/// kind table declares a Kind that can't run as a plain map is refused before
+/// any code is generated (the rule every engine shares,
+/// `casm::cosm_unsupported_reason`); one whose Kinds all can compiles as before.
+fn refuse_cosm(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+    program
+        .refuse_cosm(&format!("the {backend} AOT backend"))
+        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+}
+
 /// Compile Crush source to native code, load it, and extract an i64 result.
 ///
 /// Convenience function for the common case of calling `main()`.

@@ -233,6 +233,7 @@ fn test_sno_execution() {
         manifest: CasmManifest {
             permissions: vec!["io.print".to_string()],
         },
+        ..Default::default()
     };
 
     let serialized = serde_json::to_string_pretty(&program).unwrap();

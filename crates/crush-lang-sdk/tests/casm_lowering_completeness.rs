@@ -347,12 +347,9 @@ fn program_of(body: Vec<Instruction>) -> Program {
             body,
         },
     );
-    Program {
-        version: "1.0".to_string(),
-        functions,
-        manifest: Manifest::default(),
-        lang: None,
-    }
+    let mut program = Program::new();
+    program.functions = functions;
+    program
 }
 
 #[derive(Debug, PartialEq)]

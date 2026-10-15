@@ -84,8 +84,9 @@ pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program>
 /// `impl` / `trait` / `@kind(…)` declarations lower to, validated. `None` for
 /// a program that declares none of them.
 ///
-/// The CASM program doesn't carry the module yet (CRUSH-zorro-42); its
-/// functions include the lifted methods (`Point::norm2`, …).
+/// The CASM program carries the same module as its kind table
+/// (`casm::Program::cosm`, COSM K1.3, CRUSH-zorro-42); its functions include
+/// the lifted methods (`Point::norm2`, …).
 pub fn compile_cast_with_cosm(
     mut program: crush_cast::Program,
 ) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {

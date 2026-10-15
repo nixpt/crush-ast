@@ -588,8 +588,45 @@ pub struct Program {
     /// Optional language hint for the program (e.g., "crush", "python")
     #[serde(default)]
     pub lang: Option<String>,
+    /// COSM K1.3 (CRUSH-zorro-42): the program's kind table — every object
+    /// declaration (`KindDecl` / `InterfaceDecl`) its source lowered to COSM.
+    /// `None` for a program that declares none, and for CASM written before
+    /// the field existed (it is omitted when `None`, so such a program
+    /// serializes exactly as before).
+    ///
+    /// Keep this the **last** field: the binary format encodes a struct as a
+    /// positional array, and an omitted trailing field is what lets old
+    /// binary CASM (four fields) still load. In the binary format the module
+    /// is embedded as its canonical COSM JSON (see [`cosm_serde`]).
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "cosm_serde")]
+    pub cosm: Option<crush_cosm::CosmModule>,
 }
+
 impl Program {
+    /// A program with no functions, the current [`CASM_VERSION`] and every
+    /// other field empty. Prefer this (or [`Default`]) plus field assignment
+    /// to a struct literal, so a new field doesn't break every construction
+    /// site.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The kind table, if the program has a non-empty one (at least one Kind
+    /// or interface).
+    pub fn kind_table(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref().filter(|m| !cosm_is_empty(m))
+    }
+
+    /// `Err(message)` when the kind table declares a Kind that can't run as a
+    /// plain map yet ([`cosm_unsupported_reason`], the rule every engine
+    /// shares until CRUSH-zorro-43). `engine` names the refusing engine.
+    pub fn refuse_cosm(&self, engine: &str) -> std::result::Result<(), String> {
+        match self.cosm.as_ref().and_then(|m| cosm_unsupported_reason(m, engine)) {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        }
+    }
+
     /// Serialize program to bytes
     pub fn serialize(&self, format: Format) -> Result<Vec<u8>> {
         match format {
@@ -695,6 +732,110 @@ impl Default for Program {
             functions: HashMap::new(),
             manifest: Manifest::default(),
             lang: None,
+            cosm: None,
+        }
+    }
+}
+
+/// Whether a COSM module declares nothing (no Kind, no interface).
+pub fn cosm_is_empty(module: &crush_cosm::CosmModule) -> bool {
+    module.kinds.is_empty() && module.interfaces.is_empty()
+}
+
+/// Why a Kind can't run as a plain map today: each strategy it declares that
+/// a map would silently not honour (empty when it can run as one).
+///
+/// Until the engines implement Kinds (K1.4, CRUSH-zorro-43) a struct instance
+/// is a map and a method is an ordinary function called by its qualified
+/// name. Crush's defaults — `reference` semantics, `structural` equality,
+/// `literal` construction — are exactly how maps behave, and the strategies
+/// that only govern member lookup and receiver binding (storage,
+/// resolution, parents, receiver, conformances) are inert while no call
+/// resolves on the receiver. What a map can't honour:
+/// - `value(…)` semantics (instances would be shared, not copied or moved);
+/// - `identity` equality (maps compare structurally);
+/// - a non-`literal` construction (no constructor would run);
+/// - a protocol hook (`eq`, `str`, operators, …);
+/// - an accessor member (a field read would bypass the getter);
+/// - a field default (a literal that omits the field would leave it unset).
+pub fn kind_unsupported_strategies(k: &crush_cosm::KindDecl) -> Vec<String> {
+    use crush_cosm::{Construct, Equality, Member, Semantics, Strategy};
+    let mut why = Vec::new();
+    if k.semantics != Semantics::Reference {
+        why.push(format!("semantics: {}", k.semantics.as_str()));
+    }
+    if k.equality != Equality::Structural {
+        why.push(format!("equality: {}", k.equality.as_str()));
+    }
+    if k.construct != Construct::Literal {
+        why.push(format!("construct: {}", k.construct.strategy_name()));
+    }
+    if !k.hooks.is_empty() {
+        why.push("protocol hooks".to_string());
+    }
+    for m in &k.members {
+        if matches!(m.member, Member::Accessor { .. }) {
+            why.push(format!("accessor `{}`", m.name));
+        }
+    }
+    for f in k.declared_fields() {
+        if f.default.is_some() {
+            why.push(format!("a default for field `{}`", f.name));
+        }
+    }
+    why
+}
+
+/// The one COSM load/compile-time rule every engine applies until it
+/// implements Kinds (CRUSH-zorro-43): a kind table runs iff every Kind can
+/// run as a plain map ([`kind_unsupported_strategies`] is empty). Returns
+/// the refusal — naming `engine`, each refused Kind and what it declares —
+/// or `None` when the program runs.
+pub fn cosm_unsupported_reason(module: &crush_cosm::CosmModule, engine: &str) -> Option<String> {
+    let problems: Vec<String> = module
+        .kinds
+        .iter()
+        .filter_map(|k| {
+            let why = kind_unsupported_strategies(k);
+            (!why.is_empty()).then(|| format!("`{}` declares {}", k.name, why.join(", ")))
+        })
+        .collect();
+    if problems.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "COSM objects aren't supported on {engine} yet (CRUSH-zorro-43): {}; \
+         without Kinds its instances would silently run as plain maps",
+        problems.join("; ")
+    ))
+}
+
+/// Serde for [`Program::cosm`]: the module as-is in human-readable formats
+/// (CASM JSON), and as its canonical COSM JSON text in binary ones. The COSM
+/// schema omits empty fields, which a positional binary encoding (MessagePack
+/// structs-as-arrays, as [`Format::Binary`] uses) can't represent.
+pub mod cosm_serde {
+    use crush_cosm::CosmModule;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Option<CosmModule>, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            v.serialize(s)
+        } else {
+            v.as_ref().map(CosmModule::to_json).serialize(s)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<CosmModule>, D::Error> {
+        if d.is_human_readable() {
+            Option::<CosmModule>::deserialize(d)
+        } else {
+            match Option::<String>::deserialize(d)? {
+                Some(json) => CosmModule::from_json(&json)
+                    .map(Some)
+                    .map_err(|e| serde::de::Error::custom(format!("kind table: {e}"))),
+                None => Ok(None),
+            }
         }
     }
 }

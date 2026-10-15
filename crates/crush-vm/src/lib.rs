@@ -19,6 +19,7 @@ pub mod fastvm;
 pub mod value;
 pub mod assembler;
 pub mod bytecode;
+pub mod cosm_gate;
 pub mod ai_args;
 pub mod arithmetic;
 pub mod make_range;
@@ -80,4 +81,7 @@ pub enum Error {
     Truncated,
     #[error("malformed manifest: {0}")]
     BadManifest(String),
+    /// The version-3 kind-table section (COSM K1.3) is malformed.
+    #[error("malformed kind table: {0}")]
+    BadKindTable(String),
 }

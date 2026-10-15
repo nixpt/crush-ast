@@ -54,6 +54,10 @@ impl AotcCompiler {
 
     /// Compile a CASM program to a C source string.
     pub fn compile(&self, program: &casm::Program) -> anyhow::Result<String> {
+        // COSM K1.3 (CRUSH-zorro-42): no Kinds here yet — refuse a kind table
+        // with a Kind a plain map can't represent (`casm::cosm_unsupported_reason`)
+        // before generating anything.
+        program.refuse_cosm("crush-aotc").map_err(anyhow::Error::msg)?;
         let mut out = String::with_capacity(8192);
 
         // Emit header
@@ -456,6 +460,17 @@ impl AotcCompiler {
                     // Control flow within loops — emit as-is
                     writeln!(out, "    /* {} */", instr.op)?;
                 }
+                // Objects and maps (struct literals, `{k: v}`, `.field`) have
+                // no representation here: dropped as unhandled ops they made
+                // every field read return garbage (`p.x` read the last value
+                // set — silently wrong). Refuse them, as for function values.
+                "new_obj" | "set_field" | "get_field" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (objects and maps, including struct instances) isn't \
+                         supported by this backend",
+                        instr.op
+                    );
+                }
                 // Function values (CRUSH-251) run on the VMs only: refuse
                 // them here rather than drop them as an unhandled op.
                 "make_closure" | "call_value" => {
@@ -480,12 +495,28 @@ impl AotcCompiler {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// A Crush function name as a C identifier: `main` is `crush_main`; every other
+/// name gets a `cf_` prefix (so it can't collide with a C keyword or a runtime
+/// symbol) and an injective body: ASCII letters and digits are kept, `_`
+/// becomes `__`, any other character `_u<hex>_`. Qualified names such as the
+/// lifted COSM methods `Point::norm2` (CRUSH-zorro-41) used to reach the C
+/// source verbatim and fail to compile; `a.b` and `a__b` used to collide.
 fn mangle(name: &str) -> String {
     if name == "main" {
-        "crush_main".to_string()
-    } else {
-        name.replace('.', "__").replace('-', "_")
+        return "crush_main".to_string();
     }
+    let mut out = String::with_capacity(name.len() + 3);
+    out.push_str("cf_");
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if c == '_' {
+            out.push_str("__");
+        } else {
+            out.push_str(&format!("_u{:x}_", c as u32));
+        }
+    }
+    out
 }
 
 fn mangle_local(name: &str) -> String {
@@ -591,6 +622,16 @@ pub fn compile_to_so(c_source: &str, opts: &AotcOpts) -> anyhow::Result<std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_names_mangle_to_distinct_c_identifiers() {
+        assert_eq!(mangle("main"), "crush_main");
+        assert_eq!(mangle("Point::norm2"), "cf_Point_u3a__u3a_norm2");
+        let names = ["a.b", "a__b", "a_b", "a-b", "a::b", "int", "main_", "Point::Shape::area"];
+        let mangled: std::collections::HashSet<_> = names.iter().map(|n| mangle(n)).collect();
+        assert_eq!(mangled.len(), names.len());
+        assert!(mangled.iter().all(|m| m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')));
+    }
 
     // CRUSH-251: function values must be refused, not dropped as unhandled ops.
     #[test]

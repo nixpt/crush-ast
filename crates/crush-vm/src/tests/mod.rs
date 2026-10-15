@@ -184,3 +184,6 @@ mod matrix;
 
 #[cfg(test)]
 mod func_values;
+
+#[cfg(test)]
+mod kind_table;

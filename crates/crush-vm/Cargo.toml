@@ -36,6 +36,7 @@ crate-type = ["lib"]
 indexmap.workspace = true
 anyhow.workspace = true
 casm.workspace = true
+crush-cosm.workspace = true
 hex = "0.4"
 crush-errors.workspace = true
 serde.workspace = true

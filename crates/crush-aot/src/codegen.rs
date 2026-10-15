@@ -5,6 +5,7 @@
 /// Fails with [`crate::UnsupportedOps`] if any instruction has no Rust
 /// translation.
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
+    crate::refuse_cosm(program, "Rust")?;
     let mut out = String::new();
 
     emit_header(&mut out);

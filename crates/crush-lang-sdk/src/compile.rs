@@ -801,7 +801,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
 
     let assembly = cleaned.join("\n");
     let perms_slice: Vec<&str> = perms.iter().map(|s| s.as_str()).collect();
-    let vm_program = crush_vm::assemble(
+    let mut vm_program = crush_vm::assemble(
         &assembly,
         if perms_slice.is_empty() {
             None
@@ -810,6 +810,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         },
         None,
     )?;
+    // COSM K1.3 (CRUSH-zorro-42): the kind table goes into the CVM1 program
+    // as-is; `to_blob` writes it as the version-3 kind-table section.
+    vm_program.cosm = program.cosm.clone();
     Ok(vm_program)
 }
 

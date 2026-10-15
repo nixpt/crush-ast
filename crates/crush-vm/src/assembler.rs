@@ -63,9 +63,24 @@ pub fn assemble(
             i
         };
 
+    // COSM K1.3 (CRUSH-zorro-42): `.cosm <json>` carries the kind table
+    // (what the disassembler prints), so a disassembly reassembles without
+    // losing it.
+    let mut cosm: Option<crush_cosm::CosmModule> = None;
+
     // Pass 1: compute label byte offsets.
     for (raw_line, raw) in source.lines().enumerate() {
         let lineno = raw_line + 1;
+        // Before comment stripping: the JSON's strings may hold `;` or `#`.
+        if let Some(json) = raw.trim_start().strip_prefix(".cosm").filter(|r| r.starts_with(char::is_whitespace)) {
+            if cosm.is_some() {
+                return Err(AssemblyError::new(lineno, "duplicate .cosm kind table"));
+            }
+            let module = crush_cosm::CosmModule::from_json(json.trim())
+                .map_err(|e| AssemblyError::new(lineno, format!("malformed .cosm kind table: {e}")))?;
+            cosm = Some(module);
+            continue;
+        }
         let mut line = strip_comment(raw).trim().to_string();
         if line.is_empty() {
             continue;
@@ -271,7 +286,36 @@ pub fn assemble(
         manifest.entry = entry_name;
     }
 
-    Ok(Program::with_source_map(code, consts, manifest, source_map))
+    let mut program = Program::with_source_map(code, consts, manifest, source_map);
+    program.cosm = cosm;
+    Ok(program)
+}
+
+/// The disassembly's kind-table header: a readable summary as comments, then
+/// the `.cosm` directive that [`assemble`] reads back.
+fn disassemble_kind_table(module: &crush_cosm::CosmModule, lines: &mut Vec<String>) {
+    let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    lines.push(format!(
+        "; kind table (COSM): {}, {}",
+        plural(module.kinds.len(), "Kind", "Kinds"),
+        plural(module.interfaces.len(), "interface", "interfaces"),
+    ));
+    for k in &module.kinds {
+        let fields: Vec<&str> = k.declared_fields().iter().map(|f| f.name.as_str()).collect();
+        let members: Vec<&str> = k.members.iter().map(|m| m.name.as_str()).collect();
+        lines.push(format!(
+            ";   kind {} ({}): fields [{}], members [{}]",
+            k.name,
+            k.home_lang,
+            fields.join(", "),
+            members.join(", ")
+        ));
+    }
+    for i in &module.interfaces {
+        let members: Vec<&str> = i.members.iter().map(|m| m.name.as_str()).collect();
+        lines.push(format!(";   interface {} ({}): [{}]", i.name, i.home_lang, members.join(", ")));
+    }
+    lines.push(format!(".cosm {}", module.to_json()));
 }
 
 pub fn disassemble(program: &Program) -> String {
@@ -279,6 +323,9 @@ pub fn disassemble(program: &Program) -> String {
 
     let code = &program.code;
     let mut lines: Vec<String> = Vec::new();
+    if let Some(module) = program.kind_table() {
+        disassemble_kind_table(module, &mut lines);
+    }
 
     // Collect jump targets and function offsets for label placement.
     let mut jump_targets: std::collections::BTreeSet<usize> = Default::default();
