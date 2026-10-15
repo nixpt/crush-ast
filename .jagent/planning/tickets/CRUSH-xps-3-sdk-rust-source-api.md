@@ -4,10 +4,10 @@
 |-------|-------|
 | **ID** | CRUSH-xps-3 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In progress |
 | **Phase** | M1 / SDK |
-| **Assignee** | unassigned |
-| **Dependencies** | CRUSH-xps-2, CRUSH-197 |
+| **Assignee** | nixp |
+| **Dependencies** | CRUSH-xps-2, CRUSH-197, CRUSH-xps-10, CRUSH-xps-11 |
 | **Estimated effort** | M |
 
 ## Problem
@@ -52,3 +52,9 @@ pipeline work, and must not become the public API unchanged.
 
 - Changing the supported Rust subset or invoking `rustc`/Cargo.
 - Automatically granting host capabilities based on Rust source.
+
+## Notes
+
+- Implementation is tracked in [PR #213](https://github.com/nixpt/crush-ast/pull/213).
+- Its first CI run exposed semantic-analysis and closure-path failures; track
+  those fixes in CRUSH-xps-10 and CRUSH-xps-11 before marking this ticket done.

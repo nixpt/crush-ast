@@ -27,7 +27,7 @@ CRUSH-xps-4 enables Rust in `crush run`.
       "now exact — remove it" message when parity is fixed.
 - [ ] Known-silent cases are keyed to fixing tickets; an unlisted silent
       divergence fails the audit.
-- [ ] Initial known-silent entries link to CRUSH-xps-6 through CRUSH-xps-9;
+- [ ] Initial known-silent entries link to CRUSH-xps-6 through CRUSH-xps-12;
       `.rs` CLI work stays blocked until those tickets close.
 - [ ] Unsupported syntax reports source location, construct, and current
       limitation; unsupported constructs never lower to a no-op.
@@ -35,7 +35,7 @@ CRUSH-xps-4 enables Rust in `crush run`.
       parser acceptance alone does not count as support.
 - [ ] Initial corpus includes block shadowing, `Vec`/`String`/struct value
       semantics, integer widths/casts/overflow, and `{:?}`; fixing these
-      families is tracked separately in CRUSH-xps-6 through CRUSH-xps-9.
+      families is tracked separately in CRUSH-xps-6 through CRUSH-xps-12.
 
 ## Technical approach
 
