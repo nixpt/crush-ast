@@ -69,3 +69,16 @@ pipeline work, and must not become the public API unchanged.
   output, and ran a `.crush` file that returned `Some(Int(42))`.
 - Hosts explicitly register the SDK standard library for mapped methods;
   compilation does not grant host authority.
+
+## v0.6.0 compatibility audit
+
+Both review branches include the exact v0.6.0 tag. Internal dependency pins
+remain 0.6.0; the VM, CASM and FFI source is unchanged. The public
+`compile_source`/`compile_rust_source` APIs are additions after 0.6.0, not APIs
+already available in the published SDK. Release notes now keep all SDK work
+under Unreleased, preserving the tagged release history byte-for-byte.
+
+Fresh locked source-API/corpus tests: 29 passed; disabled-adapter library test:
+1 passed. The no-default normal dependency graph excludes Rust/tree-sitter.
+Crates.io still has no crush-lang-rust entry as of this audit; that crate needs
+a first publish before the next default-feature SDK release can publish.

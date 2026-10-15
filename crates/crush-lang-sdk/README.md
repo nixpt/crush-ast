@@ -26,6 +26,10 @@ the host capabilities granted to the program. `VmResult::output` captures
 printed text and `VmResult::return_value` carries the entry function's explicit
 `return` value.
 
+The source-compilation APIs below are unreleased and are not in the published
+0.6.0 SDK. Version 0.6.0 supports embedding Crush with `compile_crush_source`
+as shown above.
+
 The SDK can also compile source from enabled walker languages into the same VM
 program type:
 
