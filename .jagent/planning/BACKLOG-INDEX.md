@@ -230,6 +230,19 @@ with bozo); swc only strips TS types.
 | 4 | CRUSH-zorro-20, 21 | closures + callbacks; TypeScript constructs | CRUSH-251 step 3; z-8 |
 | — | ~~CRUSH-zorro-11~~ | superseded by CRUSH-250 | — |
 
+## COSM — the Crush Object Semantic Model, phase K1 (2026-10-15 — CRUSH-zorro-40..44)
+
+Design: `docs/design/object-model.md` (#206). Objects are lowered to declarative Kinds, like code to CAST.
+Tickets zorro-40..49 are reserved for COSM.
+
+| ID | Title | Gate |
+|----|-------|------|
+| CRUSH-zorro-40 | K1.1 `crush-cosm` crate: schema, serde, validation (C3, conformance) | — |
+| CRUSH-zorro-41 | K1.2 Crush `impl` / `trait` / `@kind(…)` → COSM | zorro-40 (lowering) |
+| CRUSH-zorro-42 | K1.3 CASM + CVM1 carry the kind table; FastVM/JIT/AOT loud | zorro-40 |
+| CRUSH-zorro-43 | K1.4 VM: Records, Kinds, member ops, CONSTRUCT, receivers; struct patterns test the Kind (closes zorro-37) | zorro-42 |
+| CRUSH-zorro-44 | K1.5 `o.m(x)` resolves on the receiver | zorro-43, zorro-41 |
+
 ## Publish lane
 
 | ID | Title | Gate |
