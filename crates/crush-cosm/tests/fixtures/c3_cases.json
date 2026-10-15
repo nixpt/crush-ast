@@ -1,0 +1,833 @@
+{
+ "generated_by": "crates/crush-cosm/tests/gen_c3_cases.py",
+ "python": "CPython 3.14.7",
+ "cases": [
+  {
+   "name": "single_chain",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "B",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "B"
+     ],
+     "mro": [
+      "C",
+      "B",
+      "A",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diamond",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "B",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "C",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "D",
+     "parents": [
+      "B",
+      "C"
+     ],
+     "mro": [
+      "D",
+      "B",
+      "C",
+      "A",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diamond_reversed",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "B",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "C",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "D",
+     "parents": [
+      "C",
+      "B"
+     ],
+     "mro": [
+      "D",
+      "C",
+      "B",
+      "A",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "mro23_example1",
+   "classes": [
+    {
+     "name": "F",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "F",
+      "object"
+     ]
+    },
+    {
+     "name": "E",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "E",
+      "object"
+     ]
+    },
+    {
+     "name": "D",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "D",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "D",
+      "F"
+     ],
+     "mro": [
+      "C",
+      "D",
+      "F",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "D",
+      "E"
+     ],
+     "mro": [
+      "B",
+      "D",
+      "E",
+      "object"
+     ]
+    },
+    {
+     "name": "A",
+     "parents": [
+      "B",
+      "C"
+     ],
+     "mro": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "mro23_example2",
+   "classes": [
+    {
+     "name": "F",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "F",
+      "object"
+     ]
+    },
+    {
+     "name": "E",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "E",
+      "object"
+     ]
+    },
+    {
+     "name": "D",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "D",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "D",
+      "F"
+     ],
+     "mro": [
+      "C",
+      "D",
+      "F",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "E",
+      "D"
+     ],
+     "mro": [
+      "B",
+      "E",
+      "D",
+      "object"
+     ]
+    },
+    {
+     "name": "A",
+     "parents": [
+      "B",
+      "C"
+     ],
+     "mro": [
+      "A",
+      "B",
+      "E",
+      "C",
+      "D",
+      "F",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "wikipedia",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "B",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "C",
+      "object"
+     ]
+    },
+    {
+     "name": "D",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "D",
+      "object"
+     ]
+    },
+    {
+     "name": "E",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "E",
+      "object"
+     ]
+    },
+    {
+     "name": "K1",
+     "parents": [
+      "A",
+      "B",
+      "C"
+     ],
+     "mro": [
+      "K1",
+      "A",
+      "B",
+      "C",
+      "object"
+     ]
+    },
+    {
+     "name": "K2",
+     "parents": [
+      "D",
+      "B",
+      "E"
+     ],
+     "mro": [
+      "K2",
+      "D",
+      "B",
+      "E",
+      "object"
+     ]
+    },
+    {
+     "name": "K3",
+     "parents": [
+      "D",
+      "A"
+     ],
+     "mro": [
+      "K3",
+      "D",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "Z",
+     "parents": [
+      "K1",
+      "K2",
+      "K3"
+     ],
+     "mro": [
+      "Z",
+      "K1",
+      "K2",
+      "K3",
+      "D",
+      "A",
+      "B",
+      "C",
+      "E",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "mixins",
+   "classes": [
+    {
+     "name": "Base",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "Base",
+      "object"
+     ]
+    },
+    {
+     "name": "M1",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "M1",
+      "object"
+     ]
+    },
+    {
+     "name": "M2",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "M2",
+      "object"
+     ]
+    },
+    {
+     "name": "Widget",
+     "parents": [
+      "M1",
+      "M2",
+      "Base"
+     ],
+     "mro": [
+      "Widget",
+      "M1",
+      "M2",
+      "Base",
+      "object"
+     ]
+    },
+    {
+     "name": "Button",
+     "parents": [
+      "Widget",
+      "M2"
+     ],
+     "mro": [
+      "Button",
+      "Widget",
+      "M1",
+      "M2",
+      "Base",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "deep_diamond",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "B",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "A"
+     ],
+     "mro": [
+      "C",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "D",
+     "parents": [
+      "B"
+     ],
+     "mro": [
+      "D",
+      "B",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "E",
+     "parents": [
+      "C"
+     ],
+     "mro": [
+      "E",
+      "C",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "F",
+     "parents": [
+      "D",
+      "E"
+     ],
+     "mro": [
+      "F",
+      "D",
+      "B",
+      "E",
+      "C",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "G",
+     "parents": [
+      "F",
+      "C"
+     ],
+     "mro": [
+      "G",
+      "F",
+      "D",
+      "B",
+      "E",
+      "C",
+      "A",
+      "object"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "inconsistent_classic",
+   "classes": [
+    {
+     "name": "X",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "X",
+      "object"
+     ]
+    },
+    {
+     "name": "Y",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "Y",
+      "object"
+     ]
+    },
+    {
+     "name": "A",
+     "parents": [
+      "X",
+      "Y"
+     ],
+     "mro": [
+      "A",
+      "X",
+      "Y",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "Y",
+      "X"
+     ],
+     "mro": [
+      "B",
+      "Y",
+      "X",
+      "object"
+     ]
+    },
+    {
+     "name": "Z",
+     "parents": [
+      "A",
+      "B"
+     ],
+     "error": "Cannot create a consistent method resolution order (MRO) for bases X, Y"
+    }
+   ]
+  },
+  {
+   "name": "inconsistent_base_before_subclass",
+   "classes": [
+    {
+     "name": "X",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "X",
+      "object"
+     ]
+    },
+    {
+     "name": "Y",
+     "parents": [
+      "X"
+     ],
+     "mro": [
+      "Y",
+      "X",
+      "object"
+     ]
+    },
+    {
+     "name": "Z",
+     "parents": [
+      "X",
+      "Y"
+     ],
+     "error": "Cannot create a consistent method resolution order (MRO) for bases X, Y"
+    }
+   ]
+  },
+  {
+   "name": "inconsistent_three_way",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "B",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "C",
+      "object"
+     ]
+    },
+    {
+     "name": "P",
+     "parents": [
+      "A",
+      "B"
+     ],
+     "mro": [
+      "P",
+      "A",
+      "B",
+      "object"
+     ]
+    },
+    {
+     "name": "Q",
+     "parents": [
+      "B",
+      "C"
+     ],
+     "mro": [
+      "Q",
+      "B",
+      "C",
+      "object"
+     ]
+    },
+    {
+     "name": "R",
+     "parents": [
+      "C",
+      "A"
+     ],
+     "mro": [
+      "R",
+      "C",
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "S",
+     "parents": [
+      "P",
+      "Q",
+      "R"
+     ],
+     "error": "Cannot create a consistent method resolution order (MRO) for bases A, B, C"
+    }
+   ]
+  },
+  {
+   "name": "inconsistent_object_head",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "object",
+      "A"
+     ],
+     "error": "Cannot create a consistent method resolution order (MRO) for bases object, A"
+    }
+   ]
+  },
+  {
+   "name": "duplicate_base",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "A",
+      "A"
+     ],
+     "error": "duplicate base class A"
+    }
+   ]
+  },
+  {
+   "name": "duplicate_base_later",
+   "classes": [
+    {
+     "name": "A",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "A",
+      "object"
+     ]
+    },
+    {
+     "name": "B",
+     "parents": [
+      "object"
+     ],
+     "mro": [
+      "B",
+      "object"
+     ]
+    },
+    {
+     "name": "C",
+     "parents": [
+      "A",
+      "B",
+      "A"
+     ],
+     "error": "duplicate base class A"
+    }
+   ]
+  }
+ ]
+}
