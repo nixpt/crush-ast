@@ -1,4 +1,4 @@
-// expect-error: [runtime] Cannot access field 'used_gb' on non-struct type any
+// expect-error: Undefined function: str
 capability system readonly
 
 fn main() {
