@@ -391,12 +391,12 @@ impl Program {
         self.cosm.as_ref().filter(|m| !casm::cosm_is_empty(m))
     }
 
-    /// `Err(message)` when the program has a non-empty kind table: the
-    /// load-time refusal of an engine that doesn't implement COSM objects
-    /// yet (see [`casm::Program::refuse_cosm`]).
+    /// `Err(message)` when the kind table declares a Kind that can't run as
+    /// a plain map yet — the rule every engine shares
+    /// ([`casm::cosm_unsupported_reason`], see [`casm::Program::refuse_cosm`]).
     pub fn refuse_cosm(&self, engine: &str) -> Result<(), String> {
-        match self.kind_table() {
-            Some(module) => Err(casm::cosm_unsupported_message(module, engine)),
+        match self.cosm.as_ref().and_then(|m| casm::cosm_unsupported_reason(m, engine)) {
+            Some(reason) => Err(reason),
             None => Ok(()),
         }
     }

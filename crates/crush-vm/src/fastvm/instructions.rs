@@ -338,8 +338,9 @@ pub enum LowerError {
     MissingArgument(String),
     InvalidJumpTarget(String),
     FunctionNotFound(String),
-    /// The program has a kind table (COSM K1.3): FastVM and the JIT, which
-    /// both run this lowering's output, don't implement COSM objects yet.
+    /// The program's kind table declares a Kind that can't run as a plain map
+    /// (COSM K1.3, `casm::cosm_unsupported_reason`): FastVM and the JIT,
+    /// which both run this lowering's output, don't implement Kinds yet.
     CosmUnsupported(String),
 }
 

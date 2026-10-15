@@ -612,18 +612,17 @@ impl Program {
     }
 
     /// The kind table, if the program has a non-empty one (at least one Kind
-    /// or interface). An engine that doesn't implement COSM must refuse such
-    /// a program (see [`Program::refuse_cosm`]).
+    /// or interface).
     pub fn kind_table(&self) -> Option<&crush_cosm::CosmModule> {
         self.cosm.as_ref().filter(|m| !cosm_is_empty(m))
     }
 
-    /// `Err(message)` when the program has a non-empty kind table: the
-    /// load/compile-time refusal of an engine that doesn't implement COSM
-    /// objects yet. `engine` names it in the message.
+    /// `Err(message)` when the kind table declares a Kind that can't run as a
+    /// plain map yet ([`cosm_unsupported_reason`], the rule every engine
+    /// shares until CRUSH-zorro-43). `engine` names the refusing engine.
     pub fn refuse_cosm(&self, engine: &str) -> std::result::Result<(), String> {
-        match self.kind_table() {
-            Some(module) => Err(cosm_unsupported_message(module, engine)),
+        match self.cosm.as_ref().and_then(|m| cosm_unsupported_reason(m, engine)) {
+            Some(reason) => Err(reason),
             None => Ok(()),
         }
     }
@@ -743,23 +742,72 @@ pub fn cosm_is_empty(module: &crush_cosm::CosmModule) -> bool {
     module.kinds.is_empty() && module.interfaces.is_empty()
 }
 
-/// The refusal an engine without COSM support gives a program with a kind
-/// table: names the engine, the follow-up ticket and what the program
-/// declares.
-pub fn cosm_unsupported_message(module: &crush_cosm::CosmModule, engine: &str) -> String {
-    let mut declared = Vec::new();
-    if !module.kinds.is_empty() {
-        let names: Vec<&str> = module.kinds.iter().map(|k| k.name.as_str()).collect();
-        declared.push(format!("Kinds {}", names.join(", ")));
+/// Why a Kind can't run as a plain map today: each strategy it declares that
+/// a map would silently not honour (empty when it can run as one).
+///
+/// Until the engines implement Kinds (K1.4, CRUSH-zorro-43) a struct instance
+/// is a map and a method is an ordinary function called by its qualified
+/// name. Crush's defaults — `reference` semantics, `structural` equality,
+/// `literal` construction — are exactly how maps behave, and the strategies
+/// that only govern member lookup and receiver binding (storage,
+/// resolution, parents, receiver, conformances) are inert while no call
+/// resolves on the receiver. What a map can't honour:
+/// - `value(…)` semantics (instances would be shared, not copied or moved);
+/// - `identity` equality (maps compare structurally);
+/// - a non-`literal` construction (no constructor would run);
+/// - a protocol hook (`eq`, `str`, operators, …);
+/// - an accessor member (a field read would bypass the getter);
+/// - a field default (a literal that omits the field would leave it unset).
+pub fn kind_unsupported_strategies(k: &crush_cosm::KindDecl) -> Vec<String> {
+    use crush_cosm::{Construct, Equality, Member, Semantics, Strategy};
+    let mut why = Vec::new();
+    if k.semantics != Semantics::Reference {
+        why.push(format!("semantics: {}", k.semantics.as_str()));
     }
-    if !module.interfaces.is_empty() {
-        let names: Vec<&str> = module.interfaces.iter().map(|i| i.name.as_str()).collect();
-        declared.push(format!("interfaces {}", names.join(", ")));
+    if k.equality != Equality::Structural {
+        why.push(format!("equality: {}", k.equality.as_str()));
     }
-    format!(
-        "COSM objects aren't supported on {engine} yet (CRUSH-zorro-43): the program declares {}",
-        declared.join(" and ")
-    )
+    if k.construct != Construct::Literal {
+        why.push(format!("construct: {}", k.construct.strategy_name()));
+    }
+    if !k.hooks.is_empty() {
+        why.push("protocol hooks".to_string());
+    }
+    for m in &k.members {
+        if matches!(m.member, Member::Accessor { .. }) {
+            why.push(format!("accessor `{}`", m.name));
+        }
+    }
+    for f in k.declared_fields() {
+        if f.default.is_some() {
+            why.push(format!("a default for field `{}`", f.name));
+        }
+    }
+    why
+}
+
+/// The one COSM load/compile-time rule every engine applies until it
+/// implements Kinds (CRUSH-zorro-43): a kind table runs iff every Kind can
+/// run as a plain map ([`kind_unsupported_strategies`] is empty). Returns
+/// the refusal — naming `engine`, each refused Kind and what it declares —
+/// or `None` when the program runs.
+pub fn cosm_unsupported_reason(module: &crush_cosm::CosmModule, engine: &str) -> Option<String> {
+    let problems: Vec<String> = module
+        .kinds
+        .iter()
+        .filter_map(|k| {
+            let why = kind_unsupported_strategies(k);
+            (!why.is_empty()).then(|| format!("`{}` declares {}", k.name, why.join(", ")))
+        })
+        .collect();
+    if problems.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "COSM objects aren't supported on {engine} yet (CRUSH-zorro-43): {}; \
+         without Kinds its instances would silently run as plain maps",
+        problems.join("; ")
+    ))
 }
 
 /// Serde for [`Program::cosm`]: the module as-is in human-readable formats

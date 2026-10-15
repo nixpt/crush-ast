@@ -97,15 +97,37 @@ fn old_binary_casm_still_loads() {
     assert_eq!(new.serialize(Format::Binary).unwrap(), bytes);
 }
 
+/// The one rule every engine applies: a Kind that behaves as a plain map runs;
+/// one with a strategy a map can't honour is refused, naming the engine, the
+/// Kind and the strategy.
 #[test]
-fn engines_without_cosm_get_a_loud_refusal() {
+fn engines_refuse_only_kinds_maps_cant_represent() {
     assert_eq!(program(None).refuse_cosm("X"), Ok(()));
-    // An empty module is no kind table.
     assert_eq!(program(Some(CosmModule::default())).refuse_cosm("X"), Ok(()));
     assert!(program(Some(CosmModule::default())).kind_table().is_none());
+    // Point/Shape uses Crush's defaults: it runs as maps everywhere.
+    assert_eq!(program(Some(point_module())).refuse_cosm("X"), Ok(()));
+
+    let mut m = point_module();
+    m.kinds[0].semantics = crush_cosm::Semantics::Value(crush_cosm::ValueMode::Move);
+    m.kinds[0].equality = crush_cosm::Equality::Identity;
     assert_eq!(
-        program(Some(point_module())).refuse_cosm("the X backend").unwrap_err(),
+        program(Some(m)).refuse_cosm("the X backend").unwrap_err(),
         "COSM objects aren't supported on the X backend yet (CRUSH-zorro-43): \
-         the program declares Kinds Point and interfaces Shape"
+         `Point` declares semantics: value(move), equality: identity; \
+         without Kinds its instances would silently run as plain maps"
     );
+
+    // Every strategy a map can't honour is named.
+    let mut m = point_module();
+    m.kinds[0].construct = crush_cosm::Construct::Ctor { func: "Point::new".into() };
+    m.kinds[0].hooks.str = Some(crush_cosm::HookImpl::Fn("Point::show".into()));
+    m.kinds[0].members.push(crush_cosm::MemberDecl::accessor("len", Some("Point::len".into()), None));
+    if let crush_cosm::Storage::Sealed { fields } = &mut m.kinds[0].storage {
+        fields[0].default = Some(crush_cosm::Const::Int(0));
+    }
+    let e = program(Some(m)).refuse_cosm("X").unwrap_err();
+    for want in ["construct: ctor", "protocol hooks", "accessor `len`", "a default for field `x`"] {
+        assert!(e.contains(want), "missing {want:?}: {e}");
+    }
 }

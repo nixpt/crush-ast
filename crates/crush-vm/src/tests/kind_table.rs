@@ -196,16 +196,17 @@ fn the_portable_vm_refuses_kinds_it_would_run_as_maps() {
 }
 
 #[test]
-fn fastvm_refuses_a_cvm1_program_with_a_kind_table() {
-    let Err(e) = crate::fastvm::lower_bytecode_program(&program_with(Some(point_module()))) else {
-        panic!("a kind table must be refused");
+fn fastvm_applies_the_same_rule_to_a_cvm1_kind_table() {
+    // A map-equivalent kind table lowers as before.
+    assert!(crate::fastvm::lower_bytecode_program(&program_with(Some(point_module()))).is_ok());
+    // One a map can't represent is refused, like on the VMs.
+    let Err(e) = crate::fastvm::lower_bytecode_program(&program_with(Some(value_semantics_module()))) else {
+        panic!("a value(move) Kind must be refused");
     };
     let e = e.to_string();
     assert!(
         e.starts_with("COSM objects aren't supported on FastVM or the JIT yet (CRUSH-zorro-43)"),
         "{e}"
     );
-    assert!(e.contains("Kinds Point and interfaces Shape"), "{e}");
-    // Without one, lowering is unchanged.
-    assert!(crate::fastvm::lower_bytecode_program(&program_with(None)).is_ok());
+    assert!(e.contains("`Point` declares semantics: value(move)"), "{e}");
 }
