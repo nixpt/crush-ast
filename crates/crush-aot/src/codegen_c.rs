@@ -1823,6 +1823,18 @@ fn emit_c_instr(
                         ));
                     }
                 }
+                "py.print_sep_end" if argc >= 2 => {
+                    // print(*values, sep=, end=) (CRUSH-zorro-38): (sep, end, values..);
+                    // null means CPython's default.
+                    out.push_str(&format!(
+                        "                {{ Value __pa[{argc}]; for (int __i = {argc} - 1; __i >= 0; __i--) __pa[__i] = _pop(); \
+                         char __sb[TEXTBUF_SIZE]; char __eb[TEXTBUF_SIZE]; \
+                         const char* __sep = __pa[0].tag == TAG_NULL ? \" \" : _py_to_text_buf(__pa[0], __sb); \
+                         const char* __end = __pa[1].tag == TAG_NULL ? \"\\n\" : _py_to_text_buf(__pa[1], __eb); \
+                         for (int __i = 2; __i < {argc}; __i++) {{ char __tb[TEXTBUF_SIZE]; if (__i > 2) fputs(__sep, stdout); fputs(_py_to_text_buf(__pa[__i], __tb), stdout); }} \
+                         fputs(__end, stdout); _push(mk_null()); }} _pc={next_pc}; break; // cap_call py.print_sep_end\n"
+                    ));
+                }
                 "math.truediv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_true_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.truediv\n"));
                 }

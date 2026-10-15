@@ -33,6 +33,11 @@ impl SemanticAnalyzer {
             .insert("len".to_string(), (vec![Type::Any], Type::Int));
         self.functions
             .insert("print".to_string(), (vec![Type::Any], Type::Null));
+        // `parallel_map(items, f)` (#175): a VM capability.
+        self.functions.insert(
+            "parallel_map".to_string(),
+            (vec![Type::Any, Type::Any], Type::Array(Box::new(Type::Any))),
+        );
 
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;

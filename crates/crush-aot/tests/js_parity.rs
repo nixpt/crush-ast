@@ -48,6 +48,7 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("fn_arrow_two", "CRUSH-251: AOT backends can't compile `make_closure` (function values, #194) yet"),
     ("fn_closure_counter", "CRUSH-zorro-20: closure capture (CRUSH-251)"),
     ("fn_higher_order", "CRUSH-zorro-20: function values (CRUSH-251)"),
+    ("fn_closure_let_loop", "closures are VM-only (CRUSH-251)"),
     ("fn_rest_param", "CRUSH-zorro-18: a rest parameter (`...args`) is not supported by the JS walker yet"),
     ("misc_console_error", "CRUSH-zorro-23: `console.error` / `console.warn` (stderr output) is not supported by the JS walker yet"),
     ("obj_computed_key", "CRUSH-zorro-23: a computed property key (`[k]: v`) is not supported by the JS walker yet"),

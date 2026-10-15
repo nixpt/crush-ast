@@ -1,0 +1,11 @@
+print('a', end='')
+print('b')
+print('c', 'd', sep='-')
+print(1, 2, 3, sep=', ', end='!\n')
+print('x', end='')
+print()
+print('q', flush=True)
+for i in range(3):
+    print(i, end=' ')
+print()
+print(True, None, 2.5, [1, 'a'], sep='|')

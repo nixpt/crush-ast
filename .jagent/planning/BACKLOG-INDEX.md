@@ -224,12 +224,27 @@ with bozo); swc only strips TS types.
 | 1 | CRUSH-zorro-23 | Make silently mis-lowered constructs loud on the swc path (incl. blocks, labels, finally) | — |
 | 1 | CRUSH-zorro-9, 22, 10 | `js.*` runtime: `+` ToString, `&&`/`||`/`==`, console.log inspect | — |
 | 1 | CRUSH-zorro-26 | **AOT Rust/C read missing values as null where the VM errors** (found by the harness; backend-level, P0) | — |
+| — | CRUSH-zorro-37 | **Crush `match` ignores struct names** (P0, silent; found in the object-model survey #206) | — |
+| — | CRUSH-zorro-38 | **Python walker drops call keyword arguments** (P0, silent; `print(x, end="")`) | — |
 | 2 | **CRUSH-250** | The JS frontend: boa 0.22 + scope/semantic pass + builtin table; flip `.js` when ≥ swc | z-4 |
 | 2 | CRUSH-zorro-8 | TS: swc blanks types → boa lowering (`ts` feature) | CRUSH-250 |
 | 3 | CRUSH-zorro-5, 6, 7, 16, 18 | blocks/scoping, labels, finally, objects, params — in the new lowering | CRUSH-250 |
 | 3 | CRUSH-zorro-12..15, 17, 19 | operators, number model (owner decision), strings, arrays, builtins, errors (runtime part may start early) | CRUSH-250 |
 | 4 | CRUSH-zorro-20, 21 | closures + callbacks; TypeScript constructs | CRUSH-251 step 3; z-8 |
 | — | ~~CRUSH-zorro-11~~ | superseded by CRUSH-250 | — |
+
+## COSM — the Crush Object Semantic Model, phase K1 (2026-10-15 — CRUSH-zorro-40..44)
+
+Design: `docs/design/object-model.md` (#206). Objects are lowered to declarative Kinds, like code to CAST.
+Tickets zorro-40..49 are reserved for COSM.
+
+| ID | Title | Gate |
+|----|-------|------|
+| CRUSH-zorro-40 | K1.1 `crush-cosm` crate: schema, serde, validation (C3, conformance) | — |
+| CRUSH-zorro-41 | K1.2 Crush `impl` / `trait` / `@kind(…)` → COSM | zorro-40 (lowering) |
+| CRUSH-zorro-42 | K1.3 CASM + CVM1 carry the kind table; FastVM/JIT/AOT loud | zorro-40 |
+| CRUSH-zorro-43 | K1.4 VM: Records, Kinds, member ops, CONSTRUCT, receivers; struct patterns test the Kind (closes zorro-37) | zorro-42 |
+| CRUSH-zorro-44 | K1.5 `o.m(x)` resolves on the receiver | zorro-43, zorro-41 |
 
 ## Publish lane
 

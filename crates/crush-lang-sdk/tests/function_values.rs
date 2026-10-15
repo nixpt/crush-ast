@@ -108,14 +108,13 @@ fn printing_a_function_value() {
     );
 }
 
+// Was a compile error until CRUSH-251 step 5 (SPAWN takes a function value).
 #[test]
-fn spawning_a_function_variable_is_loud_until_step_5() {
-    let e = format!(
-        "{:#}",
-        crush_frontend::compile_crush_source("fn w(x) {\n  return x\n}\nfn main() {\n  let f = w\n  let h = spawn f(1)\n}\n")
-            .expect_err("must not compile")
+fn spawning_a_function_variable() {
+    assert_eq!(
+        ok("fn w(x) {\n  return x * 2\n}\nfn main() {\n  let f = w\n  let h = spawn f(21)\n  yield\n  print(await h)\n}\n"),
+        "42\n"
     );
-    assert!(e.contains("CRUSH-251 step 5"), "{e}");
 }
 
 // #192 lifted `let w = |..|` as `__lambda_N_w` but `spawn w(..)` still pushed
