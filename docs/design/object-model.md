@@ -9,6 +9,14 @@ from `origin/main` at `c864367`.
 **Naming:** **COSM** (Crush Object Semantic Model) is the lowered, declarative object model, the object-side
 sibling of CAST (code) and CASM (instructions). A **Kind** is a COSM declaration instantiated at run time.
 
+**COSM vs CAISON.** They're different layers. **CAISON** (the `caison` crate, formerly CSON) is a *data
+notation*: how a document or config is written down (`MILESTONES.caison`), parsed into plain values. **COSM** is
+a *semantic model*: what a type is and how its instances behave at run time. They meet in two places:
+- COSM declarations need a serialized form. Like CAST's JSON, COSM can be serialized as **CAISON**, dogfooding
+  the house format.
+- A CAISON document's `schema:` can be expressed as a COSM `KindDecl`, so parsing yields typed, validated
+  objects instead of untyped maps.
+
 ## The problem
 
 Crush hosts many languages. Their object models genuinely disagree:
