@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
 use swc_ecma_ast::*;
@@ -14,6 +14,16 @@ fn wtf8_str<'a>(a: &'a swc_atoms::Wtf8Atom) -> &'a str {
 }
 
 pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> {
+    let top_level: Vec<&Stmt> = module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(s) => Some(s),
+            ModuleItem::ModuleDecl(_) => None,
+        })
+        .collect();
+    check_shadowing_in(&top_level, std::iter::empty())?;
+
     let mut main_body: Vec<Statement> = Vec::new();
     let mut functions: HashMap<String, Function> = HashMap::new();
 
@@ -80,13 +90,42 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
     })
 }
 
+/// The walker's name for an unsupported construct, as one error message.
+/// CRUSH-zorro-23: every construct the swc lowering can't represent fails here,
+/// at walk time, instead of being dropped or mis-lowered.
+fn unsupported(construct: &str) -> anyhow::Error {
+    anyhow::anyhow!("{construct} is not supported by the JS walker yet")
+}
+
+/// Lower a function's parameters, refusing the ones the walker would bind
+/// wrongly (rest and destructuring parameters).
+fn lower_params<'a>(pats: impl IntoIterator<Item = &'a Pat>) -> anyhow::Result<Vec<(String, CastType)>> {
+    pats.into_iter()
+        .map(|p| {
+            if matches!(p, Pat::Rest(_)) {
+                return Err(unsupported("a rest parameter (`...args`)"));
+            }
+            Ok((pat_to_name(p)?, CastType::Any))
+        })
+        .collect()
+}
+
+/// The checks every `function` (declaration, expression, method) needs before
+/// its body is lowered: generators aren't supported, and a nested `let`/`const`
+/// may not shadow an outer binding (see [`check_lexical_shadowing`]).
+fn check_function(function: &swc_ecma_ast::Function) -> anyhow::Result<()> {
+    if function.is_generator {
+        return Err(unsupported("a generator function (`function*`)"));
+    }
+    if let Some(body) = &function.body {
+        check_lexical_shadowing(&body.stmts, function.params.iter().map(|p| &p.pat))?;
+    }
+    Ok(())
+}
+
 fn lower_fn_decl(fn_decl: &FnDecl, ctx: &LowerCtx) -> anyhow::Result<Statement> {
-    let params: Vec<(String, CastType)> = fn_decl
-        .function
-        .params
-        .iter()
-        .map(|p| (pat_to_name(&p.pat), CastType::Any))
-        .collect();
+    check_function(&fn_decl.function)?;
+    let params = lower_params(fn_decl.function.params.iter().map(|p| &p.pat))?;
 
     let mut body = Vec::new();
     if let Some(block) = &fn_decl.function.body {
@@ -106,19 +145,32 @@ fn lower_fn_decl(fn_decl: &FnDecl, ctx: &LowerCtx) -> anyhow::Result<Statement> 
 }
 
 fn lower_class_decl(class: &ClassDecl, ctx: &LowerCtx) -> anyhow::Result<Statement> {
-    let name = class.ident.sym.to_string();
+    Ok(Statement::VarDecl {
+        name: class.ident.sym.to_string(),
+        value: lower_class(&class.class, ctx)?,
+        type_hint: CastType::Any,
+        meta: meta(&class.class.span, ctx),
+    })
+}
 
+/// A class becomes an object holding its methods and static fields. Every
+/// member that shape can't represent is refused (CRUSH-zorro-23): they used to
+/// be dropped (`constructor`, static blocks, private members) or stored as the
+/// wrong thing (a getter as a plain method, an instance field on the class).
+fn lower_class(class: &Class, ctx: &LowerCtx) -> anyhow::Result<Expression> {
+    if class.super_class.is_some() {
+        return Err(unsupported("class inheritance (`extends`)"));
+    }
     let mut properties = Vec::new();
-    for member in &class.class.body {
+    for member in &class.body {
         match member {
             ClassMember::Method(method) => {
-                let key = prop_name_to_string(&method.key);
-                let params: Vec<(String, CastType)> = method
-                    .function
-                    .params
-                    .iter()
-                    .map(|p| (pat_to_name(&p.pat), CastType::Any))
-                    .collect();
+                if method.kind != MethodKind::Method {
+                    return Err(unsupported("a class getter or setter (`get x()` / `set x(v)`)"));
+                }
+                let key = prop_name_to_string(&method.key)?;
+                check_function(&method.function)?;
+                let params = lower_params(method.function.params.iter().map(|p| &p.pat))?;
                 let body = match &method.function.body {
                     Some(b) => stmts_to_vec(&b.stmts, ctx)?,
                     None => vec![],
@@ -132,26 +184,29 @@ fn lower_class_decl(class: &ClassDecl, ctx: &LowerCtx) -> anyhow::Result<Stateme
                     },
                 ));
             }
-            ClassMember::ClassProp(prop) => {
-                let key = prop_name_to_string(&prop.key);
+            // `declare x: T` is a TS type-only field: no runtime effect.
+            ClassMember::ClassProp(prop) if prop.declare => {}
+            ClassMember::ClassProp(prop) if prop.is_static => {
+                let key = prop_name_to_string(&prop.key)?;
                 let val = match &prop.value {
                     Some(v) => lower_expr(v, ctx)?,
                     None => Expression::NullLiteral { meta: meta(&prop.span, ctx) },
                 };
                 properties.push((key, val));
             }
-            _ => {}
+            ClassMember::ClassProp(_) => return Err(unsupported("a class instance field (`x = …` in a class body)")),
+            ClassMember::Constructor(_) => return Err(unsupported("a class `constructor`")),
+            ClassMember::PrivateMethod(_) => return Err(unsupported("a private class method (`#m()`)")),
+            ClassMember::PrivateProp(_) => return Err(unsupported("a private class field (`#x`)")),
+            ClassMember::StaticBlock(_) => return Err(unsupported("a class `static { … }` block")),
+            ClassMember::AutoAccessor(_) => return Err(unsupported("a class `accessor` field")),
+            // A TS index signature is type-only; a stray `;` is a no-op.
+            ClassMember::TsIndexSignature(_) | ClassMember::Empty(_) => {}
         }
     }
-
-    Ok(Statement::VarDecl {
-        name,
-        value: Expression::ObjectLiteral {
-            properties,
-            meta: meta(&class.class.span, ctx),
-        },
-        type_hint: CastType::Any,
-        meta: meta(&class.class.span, ctx),
+    Ok(Expression::ObjectLiteral {
+        properties,
+        meta: meta(&class.span, ctx),
     })
 }
 
@@ -195,7 +250,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 // One Export per declarator — `export let a, b` must export both.
                 let mut out = Vec::with_capacity(var_decl.decls.len());
                 for d in &var_decl.decls {
-                    let name = pat_to_name(&d.name);
+                    let name = pat_to_name(&d.name)?;
                     out.push(Statement::Export {
                         name: name.clone(),
                         value: Expression::Var { name, meta: meta(&d.span, ctx) },
@@ -212,35 +267,22 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                     meta: meta(&export.span, ctx),
                 }])
             }
-            Decl::Using(using) => {
-                let mut out = Vec::with_capacity(using.decls.len());
-                for d in &using.decls {
-                    let name = pat_to_name(&d.name);
-                    out.push(Statement::Export {
-                        name,
-                        value: Expression::NullLiteral { meta: meta(&d.span, ctx) },
-                        meta: meta(&export.span, ctx),
-                    });
-                }
-                Ok(out)
+            Decl::Using(_) => Err(unsupported("a `using` declaration")),
+            // Type-only exports have no runtime effect. They used to become a
+            // `// export — not lowered` polyglot block, which then failed for
+            // want of the `polyglot.javascript` capability.
+            Decl::TsInterface(_) | Decl::TsTypeAlias(_) => Ok(vec![]),
+            // `export enum` / `export namespace`: refused (or dropped when
+            // `declare`d) exactly as the un-exported forms are.
+            Decl::TsEnum(_) | Decl::TsModule(_) => {
+                lower_stmt(&Stmt::Decl(export.decl.clone()), ctx)?;
+                Ok(vec![])
             }
-            _ => Ok(vec![Statement::LangBlock {
-                lang: "javascript".to_string(),
-                code: "// export — not lowered".to_string(),
-                variables: vec![],
-                imports: vec![],
-                deps: vec![],
-                meta: meta(&export.span, ctx),
-            }]),
         },
         ModuleDecl::ExportDefaultDecl(export_default) => match &export_default.decl {
             DefaultDecl::Fn(fn_expr) => {
-                let params: Vec<(String, CastType)> = fn_expr
-                    .function
-                    .params
-                    .iter()
-                    .map(|p| (pat_to_name(&p.pat), CastType::Any))
-                    .collect();
+                check_function(&fn_expr.function)?;
+                let params = lower_params(fn_expr.function.params.iter().map(|p| &p.pat))?;
                 let body = match &fn_expr.function.body {
                     Some(b) => stmts_to_vec(&b.stmts, ctx)?,
                     None => vec![],
@@ -267,14 +309,8 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                     meta: meta(&export_default.span, ctx),
                 }])
             }
-            _ => Ok(vec![Statement::LangBlock {
-                lang: "javascript".to_string(),
-                code: "// export default — not lowered".to_string(),
-                variables: vec![],
-                imports: vec![],
-                deps: vec![],
-                meta: meta(&export_default.span, ctx),
-            }]),
+            // `export default interface I {}` is type-only.
+            DefaultDecl::TsInterfaceDecl(_) => Ok(vec![]),
         },
         ModuleDecl::ExportDefaultExpr(expr) => {
             let val = lower_expr(&expr.expr, ctx)?;
@@ -290,8 +326,14 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 // re-export from another module: emit as import
                 let mut selective = Vec::new();
                 for spec in &named.specifiers {
-                    if let ExportSpecifier::Named(ns) = spec {
-                        selective.push(ns.orig.atom().to_string());
+                    match spec {
+                        ExportSpecifier::Named(ns) => selective.push(ns.orig.atom().to_string()),
+                        ExportSpecifier::Namespace(_) => {
+                            return Err(unsupported("a namespace re-export (`export * as ns from …`)"));
+                        }
+                        ExportSpecifier::Default(_) => {
+                            return Err(unsupported("a default re-export (`export x from …`)"));
+                        }
                     }
                 }
                 Ok(vec![Statement::Import {
@@ -306,22 +348,23 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 // One Export per named specifier — `export { a, b }` must export both.
                 let mut out = Vec::new();
                 for spec in &named.specifiers {
-                    if let ExportSpecifier::Named(ns) = spec {
-                        let name = ns
-                            .exported
-                            .as_ref()
-                            .map(|m| m.atom().to_string())
-                            .unwrap_or_else(|| ns.orig.atom().to_string());
-                        let orig = ns.orig.atom().to_string();
-                        out.push(Statement::Export {
-                            name,
-                            value: Expression::Var {
-                                name: orig,
-                                meta: meta(&named.span, ctx),
-                            },
+                    let ExportSpecifier::Named(ns) = spec else {
+                        return Err(unsupported("this `export { … }` specifier"));
+                    };
+                    let name = ns
+                        .exported
+                        .as_ref()
+                        .map(|m| m.atom().to_string())
+                        .unwrap_or_else(|| ns.orig.atom().to_string());
+                    let orig = ns.orig.atom().to_string();
+                    out.push(Statement::Export {
+                        name,
+                        value: Expression::Var {
+                            name: orig,
                             meta: meta(&named.span, ctx),
-                        });
-                    }
+                        },
+                        meta: meta(&named.span, ctx),
+                    });
                 }
                 Ok(out)
             }
@@ -337,26 +380,10 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 meta: meta(&all.span, ctx),
             }])
         }
-        ModuleDecl::TsImportEquals(ts) => {
-            let mod_name = match &ts.module_ref {
-                TsModuleRef::TsEntityName(e) => match e {
-                    TsEntityName::Ident(id) => id.sym.to_string(),
-                    TsEntityName::TsQualifiedName(q) => match &q.left {
-                        TsEntityName::Ident(id) => id.sym.to_string(),
-                        _ => "ts-qualified".to_string(),
-                    },
-                },
-                TsModuleRef::TsExternalModuleRef(ext) => wtf8_str(&ext.expr.value).to_string(),
-            };
-            Ok(vec![Statement::LangBlock {
-                lang: "javascript".to_string(),
-                code: format!("// ts import equals: {}", mod_name),
-                variables: vec![],
-                imports: vec![],
-                deps: vec![],
-                meta: meta(&ts.span, ctx),
-            }])
-        }
+        // `import type X = …` is type-only; a value `import x = require(…)` /
+        // `import x = N.y` used to become a comment-only polyglot block.
+        ModuleDecl::TsImportEquals(ts) if ts.is_type_only => Ok(vec![]),
+        ModuleDecl::TsImportEquals(_) => Err(unsupported("TypeScript `import x = …`")),
         ModuleDecl::TsExportAssignment(ts) => {
             let val = lower_expr(&ts.expr, ctx)?;
             Ok(vec![Statement::Export {
@@ -365,14 +392,8 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 meta: meta(&ts.span, ctx),
             }])
         }
-        ModuleDecl::TsNamespaceExport(ts) => Ok(vec![Statement::LangBlock {
-            lang: "javascript".to_string(),
-            code: format!("// ts namespace export: {}", ts.id.sym),
-            variables: vec![],
-            imports: vec![],
-            deps: vec![],
-            meta: meta(&ts.span, ctx),
-        }]),
+        // `export as namespace X` (UMD) only declares a global type name.
+        ModuleDecl::TsNamespaceExport(_) => Ok(vec![]),
     }
 }
 
@@ -411,29 +432,18 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 }
             }
             Decl::Class(class_decl) => lower_class_decl(class_decl, ctx)?,
-            Decl::Using(using) => {
-                let mut stmts = Vec::new();
-                for d in &using.decls {
-                    let name = pat_to_name(&d.name);
-                    let value = match &d.init {
-                        Some(init) => lower_expr(init, ctx)?,
-                        None => Expression::NullLiteral { meta: meta(&d.span, ctx) },
-                    };
-                    stmts.push(Statement::VarDecl {
-                        name,
-                        value,
-                        type_hint: CastType::Any,
-                        meta: meta(&d.span, ctx),
-                    });
-                }
-                if stmts.is_empty() {
-                    return Ok(None);
-                }
-                stmts.into_iter().next().unwrap()
-            }
-            Decl::TsInterface(_) | Decl::TsTypeAlias(_) | Decl::TsEnum(_) | Decl::TsModule(_) => {
-                return Ok(None);
-            }
+            // `using` disposes its value at scope exit, and only the first
+            // declarator was kept.
+            Decl::Using(_) => return Err(unsupported("a `using` declaration")),
+            // Type-only declarations, and `declare`d (ambient) enums and
+            // namespaces, have no runtime effect.
+            Decl::TsInterface(_) | Decl::TsTypeAlias(_) => return Ok(None),
+            Decl::TsEnum(e) if e.declare => return Ok(None),
+            Decl::TsModule(m) if m.declare => return Ok(None),
+            // These do create runtime values; dropping them left every later
+            // use reading an uninitialised slot.
+            Decl::TsEnum(_) => return Err(unsupported("a TypeScript `enum`")),
+            Decl::TsModule(_) => return Err(unsupported("a TypeScript `namespace`")),
         },
         Stmt::Return(ReturnStmt { arg, span, .. }) => {
             let value = match arg {
@@ -540,10 +550,16 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: meta(span, ctx),
             }
         }
+        // `for-in` iterates keys, but the lowering is crush's `for`, which
+        // yields an array's or string's *elements*. Arrays can't be told apart
+        // from objects statically, so only an object literal is accepted.
+        Stmt::ForIn(ForInStmt { right, .. }) if !matches!(unparen(right), Expr::Object(_)) => {
+            return Err(unsupported("`for-in` (over anything but an object literal)"));
+        }
         Stmt::ForIn(ForInStmt {
             left, right, body, span, ..
         }) => {
-            let variable = for_head_to_var(left);
+            let variable = for_head_to_var(left)?;
             let iterable = lower_expr(right, ctx)?;
             Statement::For {
                 variable,
@@ -555,7 +571,7 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
         Stmt::ForOf(ForOfStmt {
             left, right, body, span, ..
         }) => {
-            let variable = for_head_to_var(left);
+            let variable = for_head_to_var(left)?;
             let iterable = lower_expr(right, ctx)?;
             Statement::For {
                 variable,
@@ -568,17 +584,22 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             let TryStmt {
                 block,
                 handler,
-                finalizer: _,
+                finalizer,
                 span,
                 ..
             } = box_try.as_ref();
+            // `finally` was dropped, so it never ran — not on return, not on throw.
+            if finalizer.is_some() {
+                return Err(unsupported("`try … finally`"));
+            }
             let body = stmts_to_vec(&block.stmts, ctx)?;
             let (error_var, handler_body) = match handler {
                 Some(catch) => {
                     let var = catch
                         .param
                         .as_ref()
-                        .map(|p| pat_to_name(p))
+                        .map(pat_to_name)
+                        .transpose()?
                         .unwrap_or_else(|| "err".to_string());
                     (var, stmts_to_vec(&catch.body.stmts, ctx)?)
                 }
@@ -683,14 +704,245 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: sm,
             }
         }
+        // A labeled jump used to lose its label and act on the innermost loop.
+        Stmt::Break(BreakStmt { label: Some(_), .. }) => return Err(unsupported("a labeled `break` (`break label`)")),
+        Stmt::Continue(ContinueStmt { label: Some(_), .. }) => {
+            return Err(unsupported("a labeled `continue` (`continue label`)"))
+        }
         Stmt::Break(bs) => Statement::Break { meta: meta(&bs.span, ctx) },
         Stmt::Continue(cs) => Statement::Continue { meta: meta(&cs.span, ctx) },
         Stmt::With(_) => anyhow::bail!("`with` statements are not supported"),
+        // A label nothing jumps to is harmless (labeled jumps are refused
+        // above), so the labeled statement is lowered as itself.
         Stmt::Labeled(LabeledStmt { body, .. }) => {
             return lower_stmt(body, ctx);
         }
-        Stmt::Block(_) | Stmt::Debugger(_) | Stmt::Empty(_) => return Ok(None),
+        // Statement lists inside if/loop/try/switch bodies, arrows and methods
+        // flatten nested blocks (`stmts_to_vec`, kept sound by
+        // `check_lexical_shadowing`). A block that reaches here — at the top
+        // level of the script or of a `function` declaration, or as a labeled
+        // statement — used to be dropped with everything in it.
+        Stmt::Block(_) => return Err(unsupported("a bare block statement `{ … }` here")),
+        Stmt::Debugger(_) | Stmt::Empty(_) => return Ok(None),
     }))
+}
+
+/// CRUSH-zorro-23: the walker gives each name one slot per function — nested
+/// blocks are flattened into their parent, and an `if`/loop/`try`/`switch`
+/// body shares the function's slots too. So a `let`/`const`/`class` (or a
+/// `for`/`catch` binding) in a nested scope that reuses the name of an
+/// enclosing binding overwrites the outer variable, and the outer code then
+/// reads the inner value (`let x = 1; if (c) { let x = 2; } x` gave 2).
+/// That shadowing is refused; nested bindings with fresh names, and sibling
+/// scopes reusing a name, are sound and stay allowed.
+///
+/// `body` is one function body (or the script's top level); `params` are its
+/// parameters. Nested functions are checked when their own body is lowered.
+fn check_lexical_shadowing<'a>(body: &'a [Stmt], params: impl IntoIterator<Item = &'a Pat>) -> anyhow::Result<()> {
+    check_shadowing_in(&body.iter().collect::<Vec<_>>(), params)
+}
+
+fn check_shadowing_in<'a>(body: &[&'a Stmt], params: impl IntoIterator<Item = &'a Pat>) -> anyhow::Result<()> {
+    // The function scope: parameters, plus every `var` anywhere in the body
+    // (hoisted), plus the body's own top-level declarations.
+    let mut root = HashSet::new();
+    for p in params {
+        bound_names(p, &mut root);
+    }
+    for s in body {
+        hoisted_vars(s, &mut root);
+    }
+    let mut frames = vec![root];
+    shadow_list(body, &mut frames, false)
+}
+
+/// Names a binding pattern introduces.
+fn bound_names(pat: &Pat, out: &mut HashSet<String>) {
+    match pat {
+        Pat::Ident(b) => {
+            out.insert(b.id.sym.to_string());
+        }
+        Pat::Array(a) => a.elems.iter().flatten().for_each(|p| bound_names(p, out)),
+        Pat::Object(o) => {
+            for prop in &o.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => bound_names(&kv.value, out),
+                    ObjectPatProp::Assign(a) => {
+                        out.insert(a.key.sym.to_string());
+                    }
+                    ObjectPatProp::Rest(r) => bound_names(&r.arg, out),
+                }
+            }
+        }
+        Pat::Assign(a) => bound_names(&a.left, out),
+        Pat::Rest(r) => bound_names(&r.arg, out),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
+}
+
+/// `var` declarations anywhere in `s` (not inside nested functions).
+fn hoisted_vars(s: &Stmt, out: &mut HashSet<String>) {
+    let var_decl = |d: &VarDecl, out: &mut HashSet<String>| {
+        if d.kind == VarDeclKind::Var {
+            d.decls.iter().for_each(|d| bound_names(&d.name, out));
+        }
+    };
+    match s {
+        Stmt::Decl(Decl::Var(d)) => var_decl(d, out),
+        Stmt::Block(b) => b.stmts.iter().for_each(|s| hoisted_vars(s, out)),
+        Stmt::If(i) => {
+            hoisted_vars(&i.cons, out);
+            if let Some(alt) = &i.alt {
+                hoisted_vars(alt, out);
+            }
+        }
+        Stmt::While(w) => hoisted_vars(&w.body, out),
+        Stmt::DoWhile(w) => hoisted_vars(&w.body, out),
+        Stmt::For(f) => {
+            if let Some(VarDeclOrExpr::VarDecl(d)) = &f.init {
+                var_decl(d, out);
+            }
+            hoisted_vars(&f.body, out);
+        }
+        Stmt::ForIn(ForInStmt { left, body, .. }) | Stmt::ForOf(ForOfStmt { left, body, .. }) => {
+            if let ForHead::VarDecl(d) = left {
+                var_decl(d, out);
+            }
+            hoisted_vars(body, out);
+        }
+        Stmt::Labeled(l) => hoisted_vars(&l.body, out),
+        Stmt::Try(t) => {
+            t.block.stmts.iter().for_each(|s| hoisted_vars(s, out));
+            if let Some(h) = &t.handler {
+                h.body.stmts.iter().for_each(|s| hoisted_vars(s, out));
+            }
+            if let Some(f) = &t.finalizer {
+                f.stmts.iter().for_each(|s| hoisted_vars(s, out));
+            }
+        }
+        Stmt::Switch(sw) => sw.cases.iter().flat_map(|c| &c.cons).for_each(|s| hoisted_vars(s, out)),
+        _ => {}
+    }
+}
+
+/// Block-scoped names a statement list declares directly.
+fn lexical_names(stmts: &[&Stmt]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for s in stmts {
+        match s {
+            Stmt::Decl(Decl::Var(d)) if d.kind != VarDeclKind::Var => {
+                d.decls.iter().for_each(|d| bound_names(&d.name, &mut out));
+            }
+            Stmt::Decl(Decl::Class(c)) => {
+                out.insert(c.ident.sym.to_string());
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Open a nested scope declaring `names`, refusing any that an enclosing scope
+/// already binds.
+fn push_scope(names: HashSet<String>, frames: &mut Vec<HashSet<String>>) -> anyhow::Result<()> {
+    // The first offending name, in a stable order.
+    let shadowing = names.iter().filter(|n| frames.iter().any(|f| f.contains(*n))).min();
+    if let Some(name) = shadowing {
+        return Err(unsupported(&format!(
+            "a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `{name}`"
+        )));
+    }
+    frames.push(names);
+    Ok(())
+}
+
+fn shadow_list(stmts: &[&Stmt], frames: &mut Vec<HashSet<String>>, nested: bool) -> anyhow::Result<()> {
+    let names = lexical_names(stmts);
+    if nested {
+        push_scope(names, frames)?;
+    } else {
+        frames.last_mut().expect("root frame").extend(names);
+    }
+    for s in stmts {
+        shadow_stmt(s, frames)?;
+    }
+    if nested {
+        frames.pop();
+    }
+    Ok(())
+}
+
+/// A loop/if body: a block is its own scope; a single statement can't
+/// declare a lexical binding, but may contain nested scopes.
+fn shadow_body(s: &Stmt, frames: &mut Vec<HashSet<String>>) -> anyhow::Result<()> {
+    match s {
+        Stmt::Block(b) => shadow_list(&b.stmts.iter().collect::<Vec<_>>(), frames, true),
+        other => shadow_stmt(other, frames),
+    }
+}
+
+/// A `for` head's `let`/`const` bindings (a scope around the loop body).
+fn for_head_scope(d: &VarDecl) -> HashSet<String> {
+    let mut names = HashSet::new();
+    if d.kind != VarDeclKind::Var {
+        d.decls.iter().for_each(|d| bound_names(&d.name, &mut names));
+    }
+    names
+}
+
+fn shadow_stmt(s: &Stmt, frames: &mut Vec<HashSet<String>>) -> anyhow::Result<()> {
+    match s {
+        Stmt::Block(b) => shadow_list(&b.stmts.iter().collect::<Vec<_>>(), frames, true),
+        Stmt::If(i) => {
+            shadow_body(&i.cons, frames)?;
+            match &i.alt {
+                Some(alt) => shadow_body(alt, frames),
+                None => Ok(()),
+            }
+        }
+        Stmt::While(w) => shadow_body(&w.body, frames),
+        Stmt::DoWhile(w) => shadow_body(&w.body, frames),
+        Stmt::Labeled(l) => shadow_stmt(&l.body, frames),
+        Stmt::For(f) => {
+            let head = match &f.init {
+                Some(VarDeclOrExpr::VarDecl(d)) => for_head_scope(d),
+                _ => HashSet::new(),
+            };
+            push_scope(head, frames)?;
+            shadow_body(&f.body, frames)?;
+            frames.pop();
+            Ok(())
+        }
+        Stmt::ForIn(ForInStmt { left, body, .. }) | Stmt::ForOf(ForOfStmt { left, body, .. }) => {
+            let head = match left {
+                ForHead::VarDecl(d) => for_head_scope(d),
+                _ => HashSet::new(),
+            };
+            push_scope(head, frames)?;
+            shadow_body(body, frames)?;
+            frames.pop();
+            Ok(())
+        }
+        Stmt::Try(t) => {
+            shadow_list(&t.block.stmts.iter().collect::<Vec<_>>(), frames, true)?;
+            if let Some(h) = &t.handler {
+                let mut param = HashSet::new();
+                if let Some(p) = &h.param {
+                    bound_names(p, &mut param);
+                }
+                push_scope(param, frames)?;
+                shadow_list(&h.body.stmts.iter().collect::<Vec<_>>(), frames, true)?;
+                frames.pop();
+            }
+            if let Some(f) = &t.finalizer {
+                shadow_list(&f.stmts.iter().collect::<Vec<_>>(), frames, true)?;
+            }
+            Ok(())
+        }
+        // All `case`s share one block scope.
+        Stmt::Switch(sw) => shadow_list(&sw.cases.iter().flat_map(|c| &c.cons).collect::<Vec<_>>(), frames, true),
+        _ => Ok(()),
+    }
 }
 
 /// Does `stmts` contain a `continue` that belongs to the enclosing loop
@@ -758,7 +1010,7 @@ fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<
     if !matches!(&decl.name, Pat::Ident(_)) {
         anyhow::bail!("destructuring declarations are not supported yet");
     }
-    let name = pat_to_name(&decl.name);
+    let name = pat_to_name(&decl.name)?;
     let value = match &decl.init {
         Some(init) => lower_expr(init, ctx)?,
         None => Expression::NullLiteral { meta: meta(&decl.span, ctx) },
@@ -771,37 +1023,30 @@ fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<
     }])
 }
 
-fn for_head_to_var(head: &ForHead) -> String {
+fn for_head_to_var(head: &ForHead) -> anyhow::Result<String> {
     match head {
-        ForHead::VarDecl(var_decl) => var_decl
-            .decls
-            .first()
-            .map(|d| pat_to_name(&d.name))
-            .unwrap_or_else(|| "i".to_string()),
+        ForHead::VarDecl(var_decl) => match var_decl.decls.as_slice() {
+            [d] => pat_to_name(&d.name),
+            _ => Err(unsupported("this `for` loop head")),
+        },
         ForHead::Pat(pat) => pat_to_name(pat),
-        ForHead::UsingDecl(using) => using
-            .decls
-            .first()
-            .map(|d| pat_to_name(&d.name))
-            .unwrap_or_else(|| "i".to_string()),
+        ForHead::UsingDecl(_) => Err(unsupported("a `using` declaration")),
     }
 }
 
-fn pat_to_name(pat: &Pat) -> String {
+/// The variable a binding pattern names. Destructuring patterns used to bind
+/// a placeholder (`_arr`, `_obj`, `_expr`), leaving the real names unbound.
+fn pat_to_name(pat: &Pat) -> anyhow::Result<String> {
     match pat {
-        Pat::Ident(binding) => binding.id.sym.to_string(),
-        Pat::Array(_) => "_arr".to_string(),
-        Pat::Object(_) => "_obj".to_string(),
+        Pat::Ident(binding) => Ok(binding.id.sym.to_string()),
+        Pat::Array(_) | Pat::Object(_) => Err(unsupported("a destructuring pattern")),
         Pat::Assign(assign) => pat_to_name(&assign.left),
-        Pat::Rest(rest) => pat_to_name(&rest.arg),
-        Pat::Expr(expr) => {
-            if let Expr::Ident(i) = expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        Pat::Invalid(_) => "_invalid".to_string(),
+        Pat::Rest(_) => Err(unsupported("a rest element (`...x`)")),
+        Pat::Expr(expr) => match unparen(expr) {
+            Expr::Ident(i) => Ok(i.sym.to_string()),
+            _ => Err(unsupported("assigning a loop variable to a property (`for (o.x of …)`)")),
+        },
+        Pat::Invalid(_) => anyhow::bail!("invalid pattern in source code"),
     }
 }
 
@@ -922,13 +1167,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         Expr::New(NewExpr { callee, args, span: _, .. }) => {
             let callee_str = match callee.as_ref() {
                 Expr::Ident(i) => i.sym.to_string(),
-                _ => "Object".to_string(),
+                // Used to become `new Object`, whatever the callee was.
+                _ => return Err(unsupported("`new` on anything but a plain name (`new a.B()`)")),
             };
             let mut lowered_args = Vec::new();
             if let Some(args_list) = args {
-                for a in args_list {
-                    lowered_args.push(lower_expr(&a.expr, ctx)?);
-                }
+                lowered_args = lower_args(args_list, ctx)?;
             }
             Ok(Expression::Call {
                 function: format!("new {}", callee_str),
@@ -966,6 +1210,10 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             let mut elements = Vec::new();
             for elem in elems {
                 match elem {
+                    // `[...a]` used to lose its `...` and nest `a` as one element.
+                    Some(ExprOrSpread { spread: Some(_), .. }) => {
+                        return Err(unsupported("array spread (`[...a]`)"));
+                    }
                     Some(expr_or_spread) => {
                         elements.push(lower_expr(&expr_or_spread.expr, ctx)?);
                     }
@@ -982,7 +1230,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 match prop {
                     PropOrSpread::Prop(box_prop) => match box_prop.as_ref() {
                         Prop::KeyValue(kv) => {
-                            let key = prop_name_to_string(&kv.key);
+                            let key = prop_name_to_string(&kv.key)?;
                             let val = lower_expr(&kv.value, ctx)?;
                             properties.push((key, val));
                         }
@@ -997,13 +1245,9 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                             ));
                         }
                         Prop::Method(method) => {
-                            let key = prop_name_to_string(&method.key);
-                            let params: Vec<(String, CastType)> = method
-                                .function
-                                .params
-                                .iter()
-                                .map(|p| (pat_to_name(&p.pat), CastType::Any))
-                                .collect();
+                            let key = prop_name_to_string(&method.key)?;
+                            check_function(&method.function)?;
+                            let params = lower_params(method.function.params.iter().map(|p| &p.pat))?;
                             let body = match &method.function.body {
                                 Some(b) => stmts_to_vec(&b.stmts, ctx)?,
                                 None => vec![],
@@ -1017,36 +1261,16 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                                 },
                             ));
                         }
-                        Prop::Getter(getter) => {
-                            let key = prop_name_to_string(&getter.key);
-                            let body = match &getter.body {
-                                Some(b) => stmts_to_vec(&b.stmts, ctx)?,
-                                None => vec![],
-                            };
-                            properties.push((
-                                key,
-                                Expression::Lambda {
-                                    params: vec![],
-                                    body,
-                                    meta: m.clone(),
-                                },
-                            ));
-                        }
-                        Prop::Setter(setter) => {
-                            let key = prop_name_to_string(&setter.key);
-                            let param_name = pat_to_name(&setter.param);
-                            properties.push((
-                                key,
-                                Expression::Lambda {
-                                    params: vec![(param_name, CastType::Any)],
-                                    body: vec![],
-                                    meta: m.clone(),
-                                },
-                            ));
-                        }
-                        Prop::Assign(_) => {}
+                        // A getter was stored as a plain function (reading the
+                        // property gave the function, not its result), and a
+                        // setter's body was thrown away.
+                        Prop::Getter(_) => return Err(unsupported("an object getter (`get x()`)")),
+                        Prop::Setter(_) => return Err(unsupported("an object setter (`set x(v)`)")),
+                        // `{a = 1}` is only valid as a destructuring pattern.
+                        Prop::Assign(_) => return Err(unsupported("a shorthand default (`{a = 1}`)")),
                     },
-                    PropOrSpread::Spread(_) => {}
+                    // Used to be dropped: `{...a, y: 2}` had no `a` fields.
+                    PropOrSpread::Spread(_) => return Err(unsupported("object spread (`{...o}`)")),
                 }
             }
             Ok(Expression::ObjectLiteral {
@@ -1055,12 +1279,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             })
         }
         Expr::Arrow(ArrowExpr { params, body, .. }) => {
-            let params: Vec<(String, CastType)> = params
-                .iter()
-                .map(|p| (pat_to_name(p), CastType::Any))
-                .collect();
+            let lowered_params = lower_params(params)?;
             let body = match body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(block) => stmts_to_vec(&block.stmts, ctx)?,
+                BlockStmtOrExpr::BlockStmt(block) => {
+                    check_lexical_shadowing(&block.stmts, params)?;
+                    stmts_to_vec(&block.stmts, ctx)?
+                }
                 BlockStmtOrExpr::Expr(expr) => {
                     vec![Statement::Return {
                         value: Some(lower_expr(expr, ctx)?),
@@ -1069,7 +1293,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 }
             };
             Ok(Expression::Lambda {
-                params,
+                params: lowered_params,
                 body,
                 meta: m,
             })
@@ -1077,11 +1301,8 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         Expr::Fn(FnExpr {
             ident: _, function, ..
         }) => {
-            let params: Vec<(String, CastType)> = function
-                .params
-                .iter()
-                .map(|p| (pat_to_name(&p.pat), CastType::Any))
-                .collect();
+            check_function(function)?;
+            let params = lower_params(function.params.iter().map(|p| &p.pat))?;
             let body = match &function.body {
                 Some(b) => stmts_to_vec(&b.stmts, ctx)?,
                 None => vec![],
@@ -1215,38 +1436,9 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             }
             Ok(result)
         }
-        Expr::TaggedTpl(TaggedTpl { tag, tpl, .. }) => {
-            let tag_str = match tag.as_ref() {
-                Expr::Ident(i) => i.sym.to_string(),
-                Expr::Member(m) => {
-                    let obj = match m.obj.as_ref() {
-                        Expr::Ident(i) => i.sym.to_string(),
-                        _ => "_".to_string(),
-                    };
-                    match &m.prop {
-                        MemberProp::Ident(i) => format!("{}.{}", obj, i.sym),
-                        _ => "tagged_template".to_string(),
-                    }
-                }
-                _ => "tagged_template".to_string(),
-            };
-            let mut args: Vec<Expression> = tpl
-                .quasis
-                .iter()
-                .map(|q| Expression::StringLiteral {
-                    value: q.raw.to_string(),
-                    meta: m.clone(),
-                })
-                .collect();
-            for expr in &tpl.exprs {
-                args.push(lower_expr(expr, ctx)?);
-            }
-            Ok(Expression::Call {
-                function: tag_str,
-                args,
-                meta: m,
-            })
-        }
+        // A tag receives the strings as one array (plus `.raw`), then the
+        // values; this passed every string as its own argument.
+        Expr::TaggedTpl(_) => Err(unsupported("a tagged template literal (tag`…`)")),
         Expr::Await(AwaitExpr { arg, .. }) => {
             let arg = lower_expr(arg, ctx)?;
             Ok(Expression::Await {
@@ -1254,19 +1446,16 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
-        Expr::Yield(YieldExpr { arg, .. }) => {
-            if let Some(arg) = arg {
-                lower_expr(arg, ctx)
-            } else {
-                Ok(Expression::NullLiteral { meta: m })
-            }
-        }
+        // `yield x` used to evaluate to `x`. Generator functions are refused
+        // in `check_function`; this catches any `yield` that gets here anyway.
+        Expr::Yield(_) => Err(unsupported("`yield`")),
         Expr::Update(UpdateExpr {
             op, arg, prefix, span: _, ..
         }) => {
-            let name = match arg.as_ref() {
+            let name = match unparen(arg) {
                 Expr::Ident(i) => i.sym.to_string(),
-                _ => "_expr".to_string(),
+                // Used to update a variable named `_expr`.
+                _ => return Err(unsupported("`++`/`--` on a property or element")),
             };
             let fname = match (op, prefix) {
                 (UpdateOp::PlusPlus, true) => "__crush_pre_inc__",
@@ -1283,28 +1472,14 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
-        Expr::SuperProp(SuperPropExpr { obj: _, prop, span: _, .. }) => {
-            let field = match prop {
-                SuperProp::Ident(i) => i.sym.to_string(),
-                SuperProp::Computed(_) => "[]".to_string(),
-            };
-            Ok(Expression::GetField {
-                target: Box::new(Expression::Var {
-                    name: "super".to_string(),
-                    meta: m.clone(),
-                }),
-                field,
-                meta: m,
-            })
-        }
+        // There is no `super` binding; this read a variable named `super`.
+        Expr::SuperProp(_) => Err(unsupported("`super.x`")),
         Expr::This(ThisExpr { span: _, .. }) => Ok(Expression::Var {
             name: "this".to_string(),
             meta: m,
         }),
-        Expr::MetaProp(_) => Ok(Expression::Var {
-            name: "import.meta".to_string(),
-            meta: m,
-        }),
+        // Both `import.meta` and `new.target` read a variable named `import.meta`.
+        Expr::MetaProp(_) => Err(unsupported("`import.meta` / `new.target`")),
         Expr::PrivateName(priv_name) => Ok(Expression::GetField {
             target: Box::new(Expression::Var {
                 name: "this".to_string(),
@@ -1352,45 +1527,15 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 lower_call_expr(&callee, &call.args, m, ctx)
             }
         },
-        Expr::Class(ClassExpr { class, .. }) => {
-            let mut properties = Vec::new();
-            for member in &class.body {
-                if let ClassMember::Method(method) = member {
-                    let key = prop_name_to_string(&method.key);
-                    let params: Vec<(String, CastType)> = method
-                        .function
-                        .params
-                        .iter()
-                        .map(|p| (pat_to_name(&p.pat), CastType::Any))
-                        .collect();
-                    let body = match &method.function.body {
-                        Some(b) => stmts_to_vec(&b.stmts, ctx)?,
-                        None => vec![],
-                    };
-                    properties.push((
-                        key,
-                        Expression::Lambda {
-                            params,
-                            body,
-                            meta: m.clone(),
-                        },
-                    ));
-                }
-            }
-            Ok(Expression::ObjectLiteral {
-                properties,
-                meta: m,
-            })
-        }
+        // Same lowering (and the same refusals) as a class declaration; it
+        // used to keep only the methods and drop every other member.
+        Expr::Class(ClassExpr { class, .. }) => lower_class(class, ctx),
+        // Used to become a call to an undefined `__crush_jsx__`.
         Expr::JSXElement(_)
         | Expr::JSXFragment(_)
         | Expr::JSXMember(_)
         | Expr::JSXNamespacedName(_)
-        | Expr::JSXEmpty(_) => Ok(Expression::Call {
-            function: "__crush_jsx__".to_string(),
-            args: vec![],
-            meta: m,
-        }),
+        | Expr::JSXEmpty(_) => Err(unsupported("JSX")),
         Expr::Invalid(_) => {
             anyhow::bail!("invalid expression in source code")
         }
@@ -1419,30 +1564,43 @@ fn lower_call_expr(
     m: HashMap<String, serde_json::Value>,
     ctx: &LowerCtx,
 ) -> anyhow::Result<Expression> {
-    let lowered_args: Vec<Expression> = args
-        .iter()
-        .map(|a| lower_expr(&a.expr, ctx))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let lowered_args = lower_args(args, ctx)?;
 
     match callee {
         Callee::Expr(callee_expr) => {
             let expr = callee_expr.as_ref();
+            // The callee is lowered to a name. Anything that has no name used to
+            // become a placeholder (`_expr.m`, `o.[]`, `__crush_call__`).
             let func_name = match expr {
                 Expr::Ident(ident) => ident.sym.to_string(),
                 Expr::Member(MemberExpr { obj, prop, .. }) => {
                     let obj_str = match obj.as_ref() {
                         Expr::Ident(i) => i.sym.to_string(),
-                        _ => "_expr".to_string(),
+                        _ => {
+                            return Err(unsupported(
+                                "calling a method on anything but a plain name (`a.b.m()`, `\"s\".m()`, `f().m()`)",
+                            ));
+                        }
                     };
                     let prop_str = match prop {
                         MemberProp::Ident(i) => i.sym.to_string(),
-                        MemberProp::Computed(_) => "[]".to_string(),
+                        MemberProp::Computed(_) => return Err(unsupported("a computed method call (`o[k]()`)")),
                         MemberProp::PrivateName(pn) => format!("#{}", pn.name),
                     };
                     format!("{}.{}", obj_str, prop_str)
                 }
-                _ => "__crush_call__".to_string(),
+                _ => {
+                    return Err(unsupported(
+                        "calling an expression that isn't a plain name (`(function () {…})()`, `f()()`)",
+                    ));
+                }
             };
+
+            // Node writes these to stderr; the crush VM has no stderr print
+            // capability, and stdout would interleave them with real output.
+            if matches!(func_name.as_str(), "console.error" | "console.warn") {
+                return Err(unsupported("`console.error` / `console.warn` (stderr output)"));
+            }
 
             match func_name.as_str() {
                 // Node separates console.log arguments with a space; io.print
@@ -1531,17 +1689,22 @@ fn lower_call_expr(
                 }),
             }
         }
-        Callee::Super(_) => Ok(Expression::Call {
-            function: "super".to_string(),
-            args: lowered_args,
-            meta: m,
-        }),
-        Callee::Import(_) => Ok(Expression::Call {
-            function: "import".to_string(),
-            args: lowered_args,
-            meta: m,
-        }),
+        Callee::Super(_) => Err(unsupported("`super(…)`")),
+        Callee::Import(_) => Err(unsupported("dynamic `import(…)`")),
     }
+}
+
+/// Call / `new` arguments. A spread argument used to lose its `...` and be
+/// passed as a single value.
+fn lower_args(args: &[ExprOrSpread], ctx: &LowerCtx) -> anyhow::Result<Vec<Expression>> {
+    args.iter()
+        .map(|a| {
+            if a.spread.is_some() {
+                return Err(unsupported("a spread argument (`f(...args)`)"));
+            }
+            lower_expr(&a.expr, ctx)
+        })
+        .collect()
 }
 
 fn lower_lit(lit: &Lit, ctx: &LowerCtx) -> anyhow::Result<Expression> {
@@ -1569,31 +1732,9 @@ fn lower_lit(lit: &Lit, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             meta: m,
         }),
         Lit::Null(_) => Ok(Expression::NullLiteral { meta: m }),
-        Lit::Regex(regex) => Ok(Expression::Call {
-            function: "RegExp".to_string(),
-            args: vec![
-                Expression::StringLiteral {
-                    value: regex.exp.to_string(),
-                    meta: m.clone(),
-                },
-                Expression::StringLiteral {
-                    value: regex.flags.to_string(),
-                    meta: m.clone(),
-                },
-            ],
-            meta: m,
-        }),
-        Lit::BigInt(bi) => {
-            let val = bi.value.to_string();
-            Ok(Expression::Call {
-                function: "BigInt".to_string(),
-                args: vec![Expression::StringLiteral {
-                    value: val,
-                    meta: m.clone(),
-                }],
-                meta: m,
-            })
-        }
+        // Both used to become calls to functions nothing defines.
+        Lit::Regex(_) => Err(unsupported("a regular expression literal")),
+        Lit::BigInt(_) => Err(unsupported("a BigInt literal (`1n`)")),
         Lit::JSXText(jsx_text) => Ok(Expression::StringLiteral {
             value: jsx_text.value.to_string(),
             meta: m,
@@ -1618,14 +1759,15 @@ fn simple_assign_target_ident(target: &SimpleAssignTarget) -> Option<String> {
     }
 }
 
-fn prop_name_to_string(key: &PropName) -> String {
-    match key {
+fn prop_name_to_string(key: &PropName) -> anyhow::Result<String> {
+    Ok(match key {
         PropName::Ident(ident_name) => ident_name.sym.to_string(),
         PropName::Str(s) => wtf8_str(&s.value).to_string(),
         PropName::Num(n) => n.value.to_string(),
-        PropName::Computed(_) => "[]".to_string(),
+        // Every computed key used to become the literal key "[]".
+        PropName::Computed(_) => return Err(unsupported("a computed property key (`[k]: v`)")),
         PropName::BigInt(bi) => bi.value.to_string(),
-    }
+    })
 }
 
 /// CRUSH-260: `x.length` reads a string's or array's length, so it lowers to

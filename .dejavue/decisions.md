@@ -969,3 +969,16 @@ collections.* return insertion order
 Outcome:
 CRUSH-47 declined; Python parity pursued in crush-vm (cpython_corpus)
 
+
+## 2026-10-15T02:57:23-05:00 — [TACTICAL] JS swc lowering: nested let/const shadowing and for-in are refused, not lowered (CRUSH-zorro-23)
+
+Reason:
+lower_swc gives each name one slot per function and flattens nested blocks, so a nested let/const/class/for/catch binding reusing an enclosing name overwrote the outer variable (let x=1; if(c){let x=2} x -> 2). A pre-pass (check_lexical_shadowing) refuses that shadowing at walk time; fresh names and sibling scopes stay allowed. for-in lowers to crush 'for', which yields array/string elements; arrays can't be told from objects statically and crush-vm has no native type_of (sibling lane owns crush-vm), so for-in is refused except over an object literal.
+
+Rejected alternatives:
+- **runtime is_array/type_of guard for for-in**: no native capability on VM/AOT
+- **flatten top-level/function-body bare blocks too**: ticket says loud; z-5 implements blocks in the boa lowering
+
+Outcome:
+All silent swc mis-lowerings are walk-time errors '<construct> is not supported by the JS walker yet'; tests/loud_constructs_test.rs
+
