@@ -844,6 +844,10 @@ Reason:
 Python / // % must not inherit Crush truncating DIV/MOD; shared arithmetic helpers + dedicated caps keep one implementation for every backend. py.print (space sep + True/None) is Python-shaped without changing Crush io.print concatenation. make_range 3-arg step lives in one module used by scheduler and portable_vm.
 
 
+## 2026-10-13T18:51:02-05:00 — CRUSH-202: bash and zsh share one lowering (crush_walker_core::shell) over a small shell IR; shell semantics modelled explicitly (string values, globals in a shared map __g, exit status __st, positional array __a)
+
+Reason:
+Two lowerers had drifted into the same silent-wrong bugs separately. Shell values must stay strings (an Int 5 != Str "5" under Eq), bash globals are visible to functions while CVM1 locals are per-frame (maps are shared references, so __g passed to every function gives the right semantics), and $?, &&, ||, !, if/while/until and the script's exit code all hang off one status variable. Dialect differences (zsh: no field splitting, empty unquoted expansion dropped, echo escapes, $x[1] subscripts, =cmd) are explicit checks. Rejected: patching each catch-all in place (keeps two implementations and the value-producing defaults); making locals dynamically scoped (rare in scripts; refused loudly instead when a name is local in one function and global in another).
 ## 2026-10-13T18:34:42-05:00 — CRUSH-180: fs sandbox resolves paths component-by-component (symlink_metadata/read_link, follows dangling links, ELOOP 40) instead of canonicalize; writes open via open_for_write (create_new for new files, lstat/fstat compare for existing)
 
 Reason:
