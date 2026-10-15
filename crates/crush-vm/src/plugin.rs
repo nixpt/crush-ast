@@ -106,7 +106,7 @@ fn ffi_to_value(ffi: FfiValue) -> Value {
         }
         FfiType::Object => {
             // Object FFI decode not yet implemented — return empty map
-            Value::Map(std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())))
+            Value::new_map(Vec::new())
         }
     }
 }

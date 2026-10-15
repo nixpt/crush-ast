@@ -1,6 +1,8 @@
 //! Tests for `for` loops over map keys (PR #150: MAP_KEYS opcode).
 //!
-//! `for k in {"b": 2, "a": 1}` must iterate the keys in sorted order.
+//! `for k in {"b": 2, "a": 1}` iterates the keys in insertion order (maps
+//! are insertion-ordered, like Python dicts and JS objects; they used to be
+//! a `HashMap` whose keys `MAP_KEYS` sorted).
 //! Arrays and strings pass through unchanged.
 
 use crush_vm::{Quotas, run};
@@ -14,7 +16,7 @@ fn run_source(source: &str) -> String {
 }
 
 #[test]
-fn for_over_map_iterates_sorted_keys() {
+fn for_over_map_iterates_in_insertion_order() {
     let out = run_source(
         r#"
 fn main() {
@@ -24,7 +26,7 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "a\nb", "map keys must iterate in sorted order");
+    assert_eq!(out.trim(), "b\na", "map keys must iterate in insertion order");
 }
 
 #[test]
