@@ -416,9 +416,9 @@ fn run_from(
     mut sink: Option<&mut dyn FnMut(&str)>,
     start: Option<(&str, Vec<Value>)>,
 ) -> Result<VmResult, VmError> {
-    // COSM K1.3: refuse, before running anything, a kind table whose Kinds
-    // wouldn't behave as today's maps (see `cosm_gate`).
-    crate::cosm_gate::check_runnable(program.cosm.as_ref())?;
+    // COSM K1.4: the program's Kinds, built (or refused, see `cosm_gate`)
+    // before anything runs.
+    let kinds = crate::cosm_rt::KindTable::load(program)?;
     let code = &program.code;
     let n = code.len();
     if n == 0 {
@@ -546,6 +546,7 @@ fn run_from(
         let action = execute_one(
             &mut threads[current], code, ip, next_ip, n, program, quotas,
             &declared, host_caps, &func_entry, &mut shared_out_parts, &mut shared_out_len,
+            &kinds,
         );
         // Before acting on an error: what the program printed so far still goes out.
         // Stream from the shared buffer so worker thread output appears live too.
@@ -638,6 +639,7 @@ fn execute_one(
     func_entry: &HashMap<&str, usize>,
     shared_out_parts: &mut Vec<String>,
     shared_out_len: &mut usize,
+    kinds: &crate::cosm_rt::KindTable,
 ) -> Result<StepAction, VmError> {
     // Convenience aliases for thread state
     let stack = &mut thread.stack;
@@ -670,6 +672,58 @@ fn execute_one(
                 });
             }
             v
+        }};
+    }
+
+    // COSM K1.4: call `callee` as `CALL_VALUE` calls a function value — its
+    // leading values (the receiver) on top of the arguments already pushed.
+    macro_rules! call_fn {
+        ($callee:expr) => {{
+            let callee: crate::cosm_rt::Callee = $callee;
+            let entry = func_entry
+                .get(callee.func.as_str())
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(callee.func.clone()))?;
+            if call_stack.len() >= quotas.max_call_depth {
+                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
+            }
+            for v in callee.leading.iter().rev() {
+                push!(v.clone());
+            }
+            call_stack.push(Frame {
+                return_ip: Some(next_ip),
+                memory: HashMap::new(),
+            });
+            thread.ip = entry;
+            return Ok(StepAction::Jump);
+        }};
+    }
+    // COSM K1.4: print a Record through its Kind's `str`/`repr` hook — the
+    // hook runs to completion in a nested run of this program.
+    macro_rules! render_hooked {
+        ($v:expr) => {{
+            if !kinds.has_print_hooks() {
+                None
+            } else {
+                let mut hook = |f: &str, recv: Value| -> Result<Value, VmError> {
+                    let r = run_from(program, quotas, host_caps, None, Some((f, vec![recv])))?;
+                    if !r.output.is_empty() {
+                        *out_len += r.output.len();
+                        if *out_len > quotas.max_output {
+                            return Err(VmError::OutputQuota(quotas.max_output));
+                        }
+                        out_parts.push(r.output);
+                    }
+                    Ok(r.return_value.unwrap_or(Value::Null))
+                };
+                crate::cosm_rt::render_hooked(&$v, &mut hook)?
+            }
+        }};
+    }
+    macro_rules! const_str {
+        () => {{
+            let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone()
         }};
     }
 
@@ -917,7 +971,8 @@ fn execute_one(
         }
         TYPEOF => {
             let v = pop!();
-            push!(Value::Str(v.type_name().to_string()));
+            let name = crate::cosm_rt::type_name(&v).unwrap_or_else(|| v.type_name().to_string());
+            push!(Value::Str(name));
         }
         CAST => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
@@ -960,6 +1015,7 @@ fn execute_one(
                     let key = crate::map_ops::map_key_string(&idx_v)?;
                     push!(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                 }
+                Value::Record(r) => push!(crate::cosm_rt::index_get(&r, &idx_v)?),
                 Value::Array(arr_rc) => {
                     let idx = need_array_index(&idx_v)?;
                     let arr = arr_rc.borrow();
@@ -986,6 +1042,11 @@ fn execute_one(
                     let key = crate::map_ops::map_key_string(&idx_v)?;
                     map_rc.borrow_mut().insert(key, val);
                     push!(Value::Map(map_rc));
+                }
+                rec @ Value::Record(_) => {
+                    let key = crate::map_ops::map_key_string(&idx_v)?;
+                    crate::cosm_rt::set_member(&rec, &key, val)?;
+                    push!(rec);
                 }
                 other => {
                     let idx = need_array_index(&idx_v)?;
@@ -1101,6 +1162,7 @@ fn execute_one(
                     let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
                     push!(Value::new_array(key_vals));
                 }
+                Value::Record(r) => push!(crate::cosm_rt::keys(&r)),
                 // Arrays and strings pass through unchanged
                 other => push!(other),
             }
@@ -1138,7 +1200,8 @@ fn execute_one(
             }
         }
         PRINT => {
-            let s = pop!().as_text();
+            let v = pop!();
+            let s = render_hooked!(v).unwrap_or(v).as_text();
             *out_len += s.len();
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));
@@ -1158,6 +1221,19 @@ fn execute_one(
                 args.push(pop!());
             }
             args.reverse();
+            if crate::cosm_rt::is_text_cap(&cap) {
+                for a in args.iter_mut() {
+                    if let Some(text) = render_hooked!(a) {
+                        *a = text;
+                    }
+                }
+            }
+            if crate::cosm_rt::is_index_cap(&cap, &args) {
+                check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
+                push!(crate::cosm_rt::index_cap(&cap, &args)?);
+                return Ok(StepAction::Continue);
+            }
+            let args = crate::cosm_rt::cap_args(&cap, args)?;
             if cap == "parallel_map" {
                 // Needs the program to start workers, so it isn't in dispatch_cap.
                 check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
@@ -1489,6 +1565,12 @@ fn execute_one(
             let val = pop!();
             let map_rc = match pop!() {
                 Value::Map(m) => m,
+                // A struct instance (COSM K1.4): SET_MEMBER.
+                rec @ Value::Record(_) => {
+                    crate::cosm_rt::set_member(&rec, &field, val)?;
+                    push!(rec);
+                    return Ok(StepAction::Continue);
+                }
                 other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
             };
             map_rc.borrow_mut().insert(field, val);
@@ -1499,10 +1581,101 @@ fn execute_one(
             let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
             let map_rc = match pop!() {
                 Value::Map(m) => m,
+                // A struct instance (COSM K1.4): GET_MEMBER, but a name the
+                // instance doesn't have reads `null`, as on a map.
+                target @ (Value::Record(_) | Value::Kind(_)) => {
+                    push!(crate::cosm_rt::get_member(&target, &field, false)?);
+                    return Ok(StepAction::Continue);
+                }
                 other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
             };
             let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
             push!(val);
+        }
+        // ── COSM K1.4 (CRUSH-zorro-43): the generic member ops (`cosm_rt`) ──
+        GET_MEMBER => {
+            let name = const_str!();
+            let target = pop!();
+            push!(crate::cosm_rt::get_member(&target, &name, true)?);
+        }
+        SET_MEMBER => {
+            let name = const_str!();
+            let val = pop!();
+            let target = pop!();
+            crate::cosm_rt::set_member(&target, &name, val)?;
+            push!(target);
+        }
+        HAS_MEMBER => {
+            let name = const_str!();
+            let target = pop!();
+            push!(Value::Bool(crate::cosm_rt::has_member(&target, &name)?));
+        }
+        DEL_MEMBER => {
+            let name = const_str!();
+            let target = pop!();
+            crate::cosm_rt::del_member(&target, &name)?;
+            push!(target);
+        }
+        CALL_MEMBER => {
+            let name = const_str!();
+            let argc = code[ip + 3] as usize;
+            let recv = pop!();
+            match crate::cosm_rt::call_member(&recv, &name, argc)? {
+                crate::cosm_rt::MemberCall::Call(callee) => call_fn!(callee),
+                crate::cosm_rt::MemberCall::Done(v) => push!(v),
+            }
+        }
+        CONSTRUCT => {
+            let kind = kinds.get(&const_str!())?.clone();
+            let argc = code[ip + 3] as usize;
+            let base = stack.len().checked_sub(argc).ok_or(VmError::StackUnderflow)?;
+            // First argument first (they were pushed last-first).
+            let args: Vec<Value> = stack[base..].iter().rev().cloned().collect();
+            match crate::cosm_rt::construct(&kind, &args)? {
+                crate::cosm_rt::Construction::Done(v) => {
+                    stack.truncate(base);
+                    push!(v);
+                }
+                crate::cosm_rt::Construction::Call { instance, callee } => {
+                    // An initialiser's instance stays below the arguments; the
+                    // `POP` after this instruction drops its return value.
+                    if let Some(instance) = instance {
+                        if stack.len() >= quotas.max_stack {
+                            return Err(VmError::StackQuota(quotas.max_stack));
+                        }
+                        stack.insert(base, instance);
+                    }
+                    call_fn!(callee)
+                }
+            }
+        }
+        NEW_RECORD => {
+            let kind = kinds.get(&const_str!())?;
+            push!(crate::cosm_rt::new_record(kind));
+        }
+        GET_SLOT | SET_SLOT => {
+            let slot = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let val = if opcode == SET_SLOT { Some(pop!()) } else { None };
+            let target = pop!();
+            let Value::Record(r) = &target else {
+                return Err(VmError::TypeError { expected: "record", got: target.type_name() });
+            };
+            match val {
+                Some(v) => {
+                    r.set_slot(slot, v)?;
+                    push!(target);
+                }
+                None => push!(r.slot(slot)?),
+            }
+        }
+        IS_KIND => {
+            let name = const_str!();
+            let v = pop!();
+            push!(Value::Bool(crate::cosm_rt::is_kind(&v, &name)));
+        }
+        COPY => {
+            let v = pop!();
+            push!(crate::cosm_rt::copy_value(&v));
         }
         SPAWN => {
             let argc = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;

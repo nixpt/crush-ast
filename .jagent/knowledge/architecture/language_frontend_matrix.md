@@ -26,7 +26,7 @@
 ## Feature Completeness per Language
 
 ### JavaScript (`crush-lang-js`)
-**Parser:** swc_ecma_parser 41 (default) / boa_parser 0.21 (optional `boa-backend` feature)
+**Parser:** swc_ecma_parser 41 (`swc-backend`, default; the `.js` lowering until CRUSH-250 flips it; `ts` for TypeScript) / boa_parser 0.22 (`js-boa`: no swc; the `.js` lowering when `swc-backend` is off, and the `@javascript{}` free-variable analysis whenever it is on)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -44,7 +44,7 @@
 | Return/if/while/for | ✅ |  |
 | Capability detection | ✅ | `meta()` via swc Span positions; centralized `map_to_capability()` for known calls |
 | Source positions | ✅ | swc nodes have `.span: Span { lo: BytePos }` — extracted in `meta(span, ctx)` |
-| Boa backend | ✅ | Feature-gated (`boa-backend`). Lower source positions via `meta0()` fallback |
+| Boa backend | 🚧 | `js-boa` (boa_parser 0.22, default feature): the one JS frontend (CRUSH-250), `src/lower/` with a scope pass (alpha-renamed block bindings) and typed `Unsupported`. Enforced on the parity harness (VM + AOT) and ahead of swc there; becomes the `.js` default at CRUSH-250 step 6 |
 | **Known gaps** | | Try/catch, generators, async/await, regex literals not yet lowered |
 
 ### Python (`crush-lang-python`)

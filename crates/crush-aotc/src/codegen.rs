@@ -471,6 +471,15 @@ impl AotcCompiler {
                         instr.op
                     );
                 }
+                // COSM member ops (K1.4, CRUSH-zorro-43) need Kinds, which
+                // run on the scheduler VM and the portable VM only.
+                "get_member" | "set_member" | "has_member" | "del_member" | "call_member" | "construct"
+                | "get_slot" | "set_slot" | "is_kind" | "copy" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (COSM objects, CRUSH-zorro-43) isn't supported by this backend",
+                        instr.op
+                    );
+                }
                 // Function values (CRUSH-251) run on the VMs only: refuse
                 // them here rather than drop them as an unhandled op.
                 "make_closure" | "call_value" => {

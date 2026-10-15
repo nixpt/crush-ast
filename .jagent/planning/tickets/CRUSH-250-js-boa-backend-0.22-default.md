@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-250 |
 | **Priority** | P1 — wave 2 of the JS/TS parity spike; first step of the browser's "drop boa_engine" path |
-| **Status** | Backlog |
+| **Status** | In Progress |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | CRUSH-zorro-4 (parity harness); CRUSH-251 step 2 (function values, #194) for closures; later CRUSH-251 slices for the object model |
 | **Estimated effort** | L (split into the sub-PRs below) |
 
@@ -65,7 +65,31 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
 ## Sub-PRs (suggested)
 
 1. Bump to 0.22 + feature layout (`js-boa`, `ts`); no behaviour change on the swc default.
+   **Done in sub-PR 1:** boa 0.22; features `swc-backend` (the `.js` lowering until step 6), `ts`
+   (implies it), `js-boa`; `.js` stays on swc while `swc-backend` is on, so turning `js-boa` on via
+   unification changes nothing; `freevars` has a boa twin (kept in step with swc by a test) and is what
+   crush-lang-sdk's `polyglot-javascript` now uses (the feature keeps `swc-backend` until step 6, so
+   `.js` walked through the SDK stays on swc; step 6 drops it and swc leaves the SDK's default tree);
+   `polyglot-typescript` carries `ts`. `JsLowering`/`JsFrontend::with_lowering` pick a lowering
+   explicitly.
 2. Scope/semantic pass + statement/expression lowering to parity with `lower_swc.rs` on the harness.
+   **Done in sub-PR 2:**
+   - `lower/` (`mod.rs`, `scope.rs`, `stmt.rs`, `expr.rs`) replaces `lower_boa.rs`.
+     - Scope pass: function-level bindings keep their names (hoisted on entry); block bindings get fresh
+       names, so shadowing is sound.
+     - A nested `function` is a hoisted closure; `var x;` is hoisted (no reset on re-run).
+     - Typed `Unsupported { construct, at }` with line/column, and no placeholder `null`s. Classes, `new`
+       and `this` stay loud until COSM's JS walker slice.
+     - Integer literals past `i64` lower to `Float` (CRUSH-zorro-13 (a)).
+   - `js-boa` is a default feature, so the harness runs and **enforces** boa on every build (`BOA_FIXED`
+     on the VM, `BOA_EXACT`/`BOA_LOUD` on AOT) and prints the switch-over gate.
+   - Results:
+     - VM: boa 68/40/0 vs swc 63/45/0.
+     - AOT Rust/C: boa 61/44/3 vs swc 59/44/5; boa's 3 silent are swc's known CRUSH-zorro-12 ones.
+   - swc fixes found by the new corpus programs:
+     - `var x;` no longer resets `x` (it was silently wrong);
+     - a nested `function` declaration is refused (it was silently wrong on AOT).
+   - Not done yet: TDZ (a read of `let`/`const` before its declaration).
 3. Builtin/method table wired to the `js.*` runtime library.
 4. Closures/function values (CRUSH-251 steps 2–3).
 5. The constructs listed above (one PR each, or as their tickets).

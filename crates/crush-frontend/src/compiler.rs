@@ -65,8 +65,8 @@ pub struct Compiler {
     /// `struct` / `impl` / `trait` declarations lowered to.
     cosm: Option<crush_cosm::CosmModule>,
     /// Names of methods (with `self`) defined in the program's `impl`s. A
-    /// `x.m(…)` call naming one is rejected until receiver dispatch lands
-    /// (K1.4/K1.5) — compiled today it would silently call the global
+    /// `x.m(…)` call naming one compiles to `call_member` (COSM K1.4): the
+    /// method resolves on the receiver's Kind, never as the global
     /// capability `m`.
     receiver_methods: std::collections::BTreeSet<String>,
 }
@@ -110,6 +110,52 @@ impl Compiler {
     /// it declares no struct, impl or trait.
     pub fn cosm_module(&self) -> Option<&crush_cosm::CosmModule> {
         self.cosm.as_ref()
+    }
+
+    /// The program's Kind named `name` (COSM K1.4).
+    fn kind(&self, name: &str) -> Option<&crush_cosm::KindDecl> {
+        self.cosm.as_ref().and_then(|m| m.kind(name))
+    }
+
+    /// Whether the program declares a `value(copy)` / `value(move)` Kind: then
+    /// assignment, argument passing and `return` copy the value (`copy` — a
+    /// no-op on anything but an instance of such a Kind). The compiler doesn't
+    /// know a variable's Kind statically, so with no such Kind in the program
+    /// it emits nothing and every other program compiles exactly as before.
+    fn copies_values(&self) -> bool {
+        self.cosm.as_ref().is_some_and(|m| {
+            m.kinds.iter().any(|k| {
+                matches!(
+                    k.semantics,
+                    crush_cosm::Semantics::Value(crush_cosm::ValueMode::Copy | crush_cosm::ValueMode::Move)
+                )
+            })
+        })
+    }
+
+    /// `copy` after a value that is assigned, passed or returned (see
+    /// [`Compiler::copies_values`]).
+    fn emit_value_copy(&self, instrs: &mut Vec<Instruction>, meta: &HashMap<String, serde_json::Value>) {
+        if self.copies_values() {
+            instrs.push(self.create_instr("copy", serde_json::json!({}), meta));
+        }
+    }
+
+    /// An argument: the expression, copied if it is a value-semantics instance.
+    fn compile_arg(&mut self, arg: &Expression, instrs: &mut Vec<Instruction>) -> Result<()> {
+        self.compile_expr(arg, instrs)?;
+        self.emit_value_copy(instrs, &HashMap::new());
+        Ok(())
+    }
+
+    /// The Kind `C(…)` constructs: a Kind built by a constructor function
+    /// (`@kind(construct: ctor(f) | js_new(f) | py_new_init(…))`), when no
+    /// function of that name shadows it.
+    fn constructed_kind(&self, function: &str) -> Option<String> {
+        let k = self.kind(function)?;
+        let constructed = !matches!(k.construct, crush_cosm::Construct::Literal);
+        (constructed && !self.local_functions.contains(function) && !self.declared_vars.contains(function))
+            .then(|| k.name.clone())
     }
 
     /// Compile a CAST program whose `impl` / `trait` declarations
@@ -639,7 +685,28 @@ impl Compiler {
                     &HashMap::new(),
                 ));
             }
-            Pattern::Struct { name: _, fields } => {
+            Pattern::Struct { name, fields } => {
+                // COSM K1.4 (closes CRUSH-zorro-37): a struct pattern tests the
+                // value's Kind first — fields alone used to decide, so the first
+                // arm with the same field names won, whatever the struct.
+                if self.kind(name).is_none() {
+                    bail!(
+                        "struct pattern `{name} {{ … }}`: no struct `{name}` is declared, so no value \
+                         can match it (a struct pattern tests the value's Kind)"
+                    );
+                }
+                instrs.push(self.create_instr(
+                    "load",
+                    serde_json::json!({"name": matched_val}),
+                    &HashMap::new(),
+                ));
+                instrs.push(self.create_instr("is_kind", serde_json::json!({"kind": name}), &HashMap::new()));
+                fail_jumps.push(instrs.len());
+                instrs.push(self.create_instr(
+                    "jmp_if_not",
+                    serde_json::json!({"target": 0}),
+                    &HashMap::new(),
+                ));
                 for (field_name, sub_pattern) in fields {
                     instrs.push(self.create_instr(
                         "load",
@@ -757,6 +824,7 @@ impl Compiler {
                     instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
                 }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
+                self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }
             Statement::Assign {
@@ -766,6 +834,7 @@ impl Compiler {
                 self.check_lambda_capture(target)?;
                 self.declared_vars.insert(target.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(target))?;
+                self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_typed_instr(OpCode::Store(target.clone()), meta)?);
             }
             Statement::Export { name, value, meta } => {
@@ -788,6 +857,7 @@ impl Compiler {
             Statement::Return { value, meta } => {
                 if let Some(val) = value {
                     self.compile_expr(val, instrs)?;
+                    self.emit_value_copy(instrs, meta);
                 } else {
                     instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 }
@@ -998,6 +1068,7 @@ impl Compiler {
             } => {
                 self.compile_expr(target, instrs)?;
                 self.compile_expr(value, instrs)?;
+                self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_instr(
                     "set_field",
                     serde_json::json!({"name": field}),
@@ -1666,7 +1737,7 @@ impl Compiler {
                 {
                     // Args last-first (as for `call`), then the callee on top.
                     for arg in args.iter().rev() {
-                        self.compile_expr(arg, instrs)?;
+                        self.compile_arg(arg, instrs)?;
                     }
                     instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
                     instrs.push(self.create_instr(
@@ -2042,11 +2113,22 @@ impl Compiler {
                             self.compile_expr(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
+                    } else if let Some(kind) = self.constructed_kind(function) {
+                        // COSM K1.4: `C(…)` of a Kind built by a constructor
+                        // function — CONSTRUCT (arguments last-first, as for `call`).
+                        for arg in args.iter().rev() {
+                            self.compile_arg(arg, instrs)?;
+                        }
+                        instrs.push(self.create_instr(
+                            "construct",
+                            serde_json::json!({"kind": kind, "argc": args.len()}),
+                            meta,
+                        ));
                     } else {
                         // Push args in REVERSE order so the callee's `store param` instructions
                         // pop them in the correct order (stack is LIFO: last pushed = first popped).
                         for arg in args.iter().rev() {
-                            self.compile_expr(arg, instrs)?;
+                            self.compile_arg(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), &meta));
                     }
@@ -2120,7 +2202,7 @@ impl Compiler {
                     // Last-to-first, like every other `call`: the callee's
                     // `store <param1>` pops the first argument (CRUSH-138).
                     for arg in args.iter().rev() {
-                        self.compile_expr(arg, instrs)?;
+                        self.compile_arg(arg, instrs)?;
                     }
                     instrs.push(self.create_instr(
                         "call",
@@ -2139,20 +2221,23 @@ impl Compiler {
                         let dot_pos = name.find('.').unwrap();
                         let obj_name = &name[..dot_pos];
                         let method = &name[dot_pos + 1..];
-                        if self.receiver_methods.contains(method) {
-                            let at = match (
-                                meta.get("line").and_then(|v| v.as_u64()),
-                                meta.get("col").and_then(|v| v.as_u64()),
-                            ) {
-                                (Some(l), Some(c)) => format!("line {l}, col {c}: "),
-                                _ => String::new(),
-                            };
-                            bail!(
-                                "{at}`{obj_name}.{method}(…)`: calling methods defined in `impl` needs \
-                                 COSM K1.4/K1.5 (CRUSH-zorro-43/44) — compiled today it would call the \
-                                 global capability `{method}`, not the method. Call the lifted function \
-                                 directly instead (`Type::{method}({obj_name}, …)`)"
-                            );
+                        if self.receiver_methods.contains(method)
+                            || (method == "clone" && self.cosm.as_ref().is_some_and(|m| !m.kinds.is_empty()))
+                        {
+                            // COSM K1.4: `p.norm2(…)` resolves the method on the
+                            // receiver's Kind (CALL_MEMBER: arguments last-first,
+                            // the receiver on top) — never a global capability.
+                            // `clone()` is built in for every struct instance.
+                            for arg in args.iter().rev() {
+                                self.compile_arg(arg, instrs)?;
+                            }
+                            instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), meta));
+                            instrs.push(self.create_instr(
+                                "call_member",
+                                serde_json::json!({"name": method, "argc": args.len()}),
+                                meta,
+                            ));
+                            return Ok(());
                         }
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
@@ -2400,9 +2485,20 @@ impl Compiler {
                 // — e.g. THROW's `error_var` binding — once anything with
                 // >1 property or a nested Array/Object value was built).
                 // No `dup` needed: stack stays exactly `[map]` throughout.
-                instrs.push(self.create_instr("new_obj", serde_json::json!({}), meta));
+                // COSM K1.4: a struct literal (`P { … }`, tagged by the parser)
+                // carries its Kind; the VMs build a Record (NEW_RECORD), FastVM,
+                // the JIT and AOT a map, as before. A literal builds the
+                // instance directly, whatever the Kind's `construct` (a
+                // factory constructor is written with one).
+                let kind = meta.get("struct").and_then(|v| v.as_str()).filter(|k| self.kind(k).is_some());
+                let args = match kind {
+                    Some(k) => serde_json::json!({"kind": k}),
+                    None => serde_json::json!({}),
+                };
+                instrs.push(self.create_instr("new_obj", args, meta));
                 for (key, value) in properties {
                     self.compile_expr(value, instrs)?;
+                    self.emit_value_copy(instrs, meta);
                     instrs.push(self.create_instr(
                         "set_field",
                         serde_json::json!({"name": key}),
