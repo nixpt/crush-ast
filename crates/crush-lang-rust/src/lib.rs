@@ -22,6 +22,10 @@
 //! APIs need an explicit Crush capability/plugin; a Rust `use` is not treated
 //! as a runtime import. Known difference: `print!` ends the line (there is no
 //! newline-free print capability yet).
+//! Multi-statement blocks are supported as function/closure bodies and
+//! statement blocks. In a value position (e.g. `let x = { ... }` or branches
+//! of an assigned `if` expression), only empty blocks or a single tail
+//! expression are supported; other forms are rejected with a source location.
 //!
 //! Closures can read implicit scalar captures through shared cells. Rust
 //! ownership/copy behavior and repeated block/loop bindings remain gated by

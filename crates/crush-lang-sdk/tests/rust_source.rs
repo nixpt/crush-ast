@@ -155,4 +155,38 @@ mod tests {
             assert!(error.to_string().contains(expected), "{src}: {error:#}");
         }
     }
+
+    #[test]
+    fn expression_blocks_are_exact_or_rejected_at_their_source_location() {
+        assert_eq!(
+            run_rust(
+                "fn main() { let x = { 40 + 2 }; let y = if true { x } else { 0 }; println(y); }"
+            )
+            .unwrap(),
+            "42"
+        );
+        for src in [
+            "fn main() {\n    let x = { 1; 42 };\n}",
+            "fn main() {\n    let x = { let y = 1; y + 41 };\n}",
+            "fn main() {\n    let x = { 42; };\n}",
+            "fn main() {\n    let x = if true { println!(\"effect\"); 42 } else { 0 };\n}",
+        ] {
+            let error = compile_source("rust", src).unwrap_err().to_string();
+            assert!(
+                error.contains("unsupported Rust block expression at 2:"),
+                "{src}: {error}"
+            );
+            assert!(!error.contains("Undefined function"), "{error}");
+        }
+    }
+
+    #[test]
+    fn returns_in_value_positions_fail_during_lowering() {
+        let src = "fn main() {\n    let x = (return);\n}";
+        let error = compile_source("rust", src).unwrap_err().to_string();
+        assert!(
+            error.contains("unsupported Rust return in a value expression at 2:"),
+            "{error}"
+        );
+    }
 }

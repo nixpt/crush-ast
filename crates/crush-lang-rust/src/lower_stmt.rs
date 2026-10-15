@@ -216,7 +216,7 @@ fn is_statement_like(e: &syn::Expr) -> bool {
 }
 
 /// A tail expression in a function with a return type: branches return their own tails.
-fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+pub(crate) fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
     let meta = ctx.meta_at(0);
     Ok(match e {
         syn::Expr::If(e_if) => {
