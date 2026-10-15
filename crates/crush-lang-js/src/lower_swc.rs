@@ -51,7 +51,7 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
                 for decl in &var_decl.decls {
-                    main_body.extend(lower_var_declarator(decl, ctx)?);
+                    main_body.extend(lower_var_declarator(decl, var_decl.kind, ctx)?);
                 }
             }
             ModuleItem::Stmt(stmt) => {
@@ -417,7 +417,7 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             Decl::Var(var_decl) => {
                 let mut stmts = Vec::new();
                 for d in &var_decl.decls {
-                    stmts.extend(lower_var_declarator(d, ctx)?);
+                    stmts.extend(lower_var_declarator(d, var_decl.kind, ctx)?);
                 }
                 match stmts.len() {
                     0 => return Ok(None),
@@ -518,23 +518,44 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             ..
         }) => {
             let mut out = Vec::new();
+            // `for (let i ..)`: each iteration gets its own `i` (the spec's
+            // CreatePerIterationEnvironment), copied before the update so
+            // `i++` changes the new binding and a closure made in iteration k
+            // keeps k. `__crush_rebind__` does it (only if a closure captures
+            // `i`; otherwise it compiles to nothing). `var` shares one.
+            let mut per_iteration = Vec::new();
             match init {
                 Some(VarDeclOrExpr::VarDecl(var_decl)) => {
                     for d in &var_decl.decls {
-                        out.extend(lower_var_declarator(d, ctx)?);
+                        out.extend(lower_var_declarator(d, var_decl.kind, ctx)?);
+                    }
+                    if var_decl.kind != VarDeclKind::Var {
+                        per_iteration.extend(for_head_scope(var_decl));
                     }
                 }
                 Some(VarDeclOrExpr::Expr(e)) => out.extend(expr_to_stmts(e, span, ctx)?),
                 None => {}
             }
+            let mut per_iteration: Vec<String> = per_iteration.into_iter().collect();
+            per_iteration.sort();
             let condition = match test {
                 Some(t) => lower_expr(t, ctx)?,
                 None => Expression::BoolLiteral { value: true, meta: meta(span, ctx) },
             };
-            let update_stmts = match update {
-                Some(u) => expr_to_stmts(u, span, ctx)?,
-                None => Vec::new(),
-            };
+            let mut update_stmts: Vec<Statement> = per_iteration
+                .iter()
+                .map(|name| Statement::ExprStmt {
+                    expr: Expression::Call {
+                        function: "__crush_rebind__".to_string(),
+                        args: vec![Expression::Var { name: name.clone(), meta: meta(span, ctx) }],
+                        meta: meta(span, ctx),
+                    },
+                    meta: meta(span, ctx),
+                })
+                .collect();
+            if let Some(u) = update {
+                update_stmts.extend(expr_to_stmts(u, span, ctx)?);
+            }
             let mut body_stmts = rewrite_continue(block_or_stmt_to_vec(body, ctx)?, &update_stmts);
             body_stmts.extend(update_stmts);
             out.push(Statement::While {
@@ -557,8 +578,8 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
         Stmt::ForIn(ForInStmt {
             left, right, body, span, ..
         }) => {
-            let variable = for_head_to_var(left)?;
-            let body = block_or_stmt_to_vec(body, ctx)?;
+            let (variable, body) =
+                per_iteration_head(for_head_to_var(left)?, left, block_or_stmt_to_vec(body, ctx)?, span, ctx);
             let iterable = lower_expr(right, ctx)?;
             let sm = meta(span, ctx);
             if matches!(unparen(right), Expr::Object(_)) {
@@ -570,12 +591,13 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
         Stmt::ForOf(ForOfStmt {
             left, right, body, span, ..
         }) => {
-            let variable = for_head_to_var(left)?;
+            let (variable, body) =
+                per_iteration_head(for_head_to_var(left)?, left, block_or_stmt_to_vec(body, ctx)?, span, ctx);
             let iterable = lower_expr(right, ctx)?;
             Statement::For {
                 variable,
                 iterable: Box::new(iterable),
-                body: block_or_stmt_to_vec(body, ctx)?,
+                body,
                 meta: meta(span, ctx),
             }
         }
@@ -1077,7 +1099,11 @@ pub(crate) fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> V
     out
 }
 
-fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
+fn lower_var_declarator(
+    decl: &VarDeclarator,
+    kind: VarDeclKind,
+    ctx: &LowerCtx,
+) -> anyhow::Result<Vec<Statement>> {
     // `const [a, b] = …` / `const {x} = …` used to bind a placeholder named
     // `_arr` / `_obj`, leaving a and b uninitialised.
     if !matches!(&decl.name, Pat::Ident(_)) {
@@ -1088,12 +1114,51 @@ fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<
         Some(init) => lower_expr(init, ctx)?,
         None => Expression::NullLiteral { meta: meta(&decl.span, ctx) },
     };
+    // `let` / `const` are block bindings: a fresh one each time the
+    // declaration runs (CRUSH-251 step 4b, applied by the compiler); `var` is
+    // one function-scoped binding.
+    let mut decl_meta = meta(&decl.span, ctx);
+    if kind != VarDeclKind::Var {
+        decl_meta.insert("binding".to_string(), serde_json::json!("block"));
+    }
     Ok(vec![Statement::VarDecl {
         name,
         value,
         type_hint: CastType::Any,
-        meta: meta(&decl.span, ctx),
+        meta: decl_meta,
     }])
+}
+
+/// `for (let x of ..)` / `for (const k in ..)` bind a fresh `x` each
+/// iteration (CRUSH-251 step 4b): iterate a hidden variable and start the
+/// body with a block-binding `x = hidden`, which the compiler gives a new
+/// binding every time it runs. `var` heads keep one binding.
+fn per_iteration_head(
+    variable: String,
+    head: &ForHead,
+    mut body: Vec<Statement>,
+    span: &swc_common::Span,
+    ctx: &LowerCtx,
+) -> (String, Vec<Statement>) {
+    let ForHead::VarDecl(decl) = head else {
+        return (variable, body);
+    };
+    if decl.kind == VarDeclKind::Var {
+        return (variable, body);
+    }
+    let hidden = format!("__iter_{}_{}", span.lo.0, variable);
+    let mut decl_meta = meta(span, ctx);
+    decl_meta.insert("binding".to_string(), serde_json::json!("block"));
+    body.insert(
+        0,
+        Statement::VarDecl {
+            name: variable,
+            value: Expression::Var { name: hidden.clone(), meta: meta(span, ctx) },
+            type_hint: CastType::Any,
+            meta: decl_meta,
+        },
+    );
+    (hidden, body)
 }
 
 fn for_head_to_var(head: &ForHead) -> anyhow::Result<String> {

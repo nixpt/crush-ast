@@ -701,14 +701,17 @@ impl Compiler {
                         scope.insert(name.clone(), None);
                     }
                 }
-                // A Crush `let` is a fresh binding each time it runs (in a loop
-                // body: one per iteration), so closures made in different
-                // iterations don't share it. The cell is made before the
-                // initializer, so a lambda that refers to its own name
-                // captures this binding. Walker-lowered declarations (meta
-                // `lang`) keep their language's scoping: Python variables are
-                // function-scoped; JS `let` vs `var` is CRUSH-251 step 4b.
-                if self.boxed.contains(name.as_str()) && !meta.contains_key("lang") {
+                // A Crush `let` — or a walker declaration marked as a block
+                // binding (JS `let` / `const`) — is a fresh binding each time
+                // it runs (in a loop body: one per iteration), so closures
+                // made in different iterations don't share it. The cell is
+                // made before the initializer, so a lambda that refers to its
+                // own name captures this binding. Other walker declarations
+                // keep one binding: Python variables and JS `var` are
+                // function-scoped.
+                let block_binding = !meta.contains_key("lang")
+                    || meta.get("binding").and_then(|b| b.as_str()) == Some("block");
+                if self.boxed.contains(name.as_str()) && block_binding {
                     instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                     instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
                     instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
@@ -1825,6 +1828,20 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_rebind__" {
+                    // A fresh binding holding the variable's current value
+                    // (JS `for (let ..)` per-iteration copy, CRUSH-251 step
+                    // 4b): closures made so far keep the old binding. Only a
+                    // boxed (captured) variable has a binding to renew.
+                    let Some(Expression::Var { name, .. }) = args.first() else {
+                        bail!("__crush_rebind__ expects a variable");
+                    };
+                    if self.boxed.contains(name.as_str()) {
+                        instrs.push(self.create_instr("load_cell", serde_json::json!({"name": name}), meta));
+                        instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                    }
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 } else if function == "__crush_assign__" {
                     // Intrinsic: assignment lowered from walker (e.g., `x = 42` in JS)
                     // args[0] = target Var, args[1] = value expression
