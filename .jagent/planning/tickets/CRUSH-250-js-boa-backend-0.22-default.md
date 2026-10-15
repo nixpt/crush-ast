@@ -130,6 +130,7 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
      - boa must not become the default while this is loud.
    - `#235`'s argument-order fix lands before `push` (or any method row) accepts more than one
      argument.
+   - CRUSH-zorro-54 lands first: AOT reads an unassigned local as a run-time error, never `null`.
 
 ## Not this ticket
 

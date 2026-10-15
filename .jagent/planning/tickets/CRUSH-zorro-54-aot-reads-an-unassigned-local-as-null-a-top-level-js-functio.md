@@ -7,7 +7,7 @@
 | **Status** | Backlog |
 | **Phase** | M6 |
 | **Assignee** | unassigned |
-| **Dependencies** | none (CRUSH-250 step 6 makes it moot for `.js`) |
+| **Dependencies** | none. **Must land before CRUSH-250 step 6** (a gate item there) |
 | **Estimated effort** | M |
 
 ## Problem
@@ -20,15 +20,20 @@ Both are listed in `RUST_SILENT` in `crates/crush-aot/tests/js_parity.rs`, keyed
 
 **Why it isn't refused at walk time on swc.** The same pattern, a function that reads and writes a script variable, also appears in `ops_ternary_nested`, where the function is never called. That program matches node on main on the VM and on AOT. A static walk-time refusal can't tell the two apart, and it would turn `ops_ternary_nested` loud on the default path.
 
+## The fix
+
+**AOT must treat a read of an unassigned local the way the VM does: a run-time error ("load from uninitialised slot"), never `null`.** This fixes the whole class, on both JS lowerings and for every walker, so the pins can be removed. Decided 2026-10-15: keep the `RUST_SILENT` pins until then. A walk-time refusal on the swc lowering was rejected, because it would also turn `ops_ternary_nested` loud, and that program matches node on every engine on main.
+
 ## Success criteria
 
-- [ ] AOT never yields `null` for a local that has no value yet. It fails at run time ("load from uninitialised slot"), as the VM does, or at compile time when a load can't be reached by a store.
-- [ ] `fn_script_vars` / `fn_script_late` leave `RUST_SILENT` (loud on AOT with swc).
+- [ ] AOT Rust and C fail at run time on a read of a local that has no value yet, with the VM's message ("load from uninitialised slot"). A read that is provably unreachable from any store may fail at compile time instead.
+- [ ] `fn_script_vars` / `fn_script_late` leave `RUST_SILENT` (loud on AOT with swc), and `ops_ternary_nested` keeps matching (its function never runs).
+- [ ] Lands before CRUSH-250 step 6.
 
 ## Technical approach
 
 - In the AOT backends (`crates/crush-aot/src/codegen.rs`, `codegen_c.rs`), give non-parameter locals an "unassigned" sentinel and check it on `load`. Keep the cost low by checking only loads not dominated by a store in the same function.
-- Or: retire the swc lowering for `.js` (CRUSH-250 step 6). The boa lowering makes such functions closures over the script bindings (exact on the VM, refused by AOT until closures compile there).
+- Retiring swc for `.js` (CRUSH-250 step 6) is not a substitute. The class isn't JS-specific: any walker whose output reads a local before assigning it gets `null` on AOT.
 
 ## Non-goals
 
