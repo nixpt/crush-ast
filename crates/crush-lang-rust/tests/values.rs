@@ -84,3 +84,18 @@ fn scalar_captures_and_borrowed_str_parameters_stay_supported() {
         fn main() { let mut n = 0; let mut f = || { n += 1; n }; println!("{} {}", f(), size("hi")); }
     "#).unwrap();
 }
+
+#[test]
+fn assignments_have_a_unit_result_and_keep_the_targets_owned_type() {
+    rust_to_cast(
+        r#"
+        fn accept(_: ()) {}
+        fn main() {
+            let a = vec![1]; let mut b = vec![2];
+            accept(b = a.clone());
+            let c = b.clone();
+        }
+    "#,
+    )
+    .unwrap();
+}

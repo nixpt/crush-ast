@@ -373,7 +373,9 @@ impl Check<'_> {
                     ));
                 }
                 self.bind(&name, kind.clone());
-                Ok(kind)
+                // The shared assignment intrinsic yields null (Rust unit),
+                // regardless of the value stored in the target binding.
+                Ok(Kind::Copy)
             }
             E::Call {
                 function,

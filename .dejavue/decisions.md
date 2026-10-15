@@ -1076,6 +1076,7 @@ Artifacts: crates/crush-lang-rust/src/values/mod.rs
 
 Outcome:
 Keep type hints in Rust CAST metadata, lower flat clone/to_vec/to_owned to seq.slice, preserve immutable String values, and report unsupported transfers with source locations.
+
 ## 2026-10-15T13:28:00-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] JS number model (CRUSH-zorro-13): Int promotes to Float on overflow
 
 Reason:
