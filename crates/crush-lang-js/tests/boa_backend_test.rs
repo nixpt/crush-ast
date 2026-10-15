@@ -17,6 +17,21 @@ fn test_lower(source: &str) -> crush_cast::Program {
     program
 }
 
+/// What the lowering refuses: a typed error naming the construct, at walk time.
+fn loud(source: &str) -> String {
+    let err = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        err.chain().any(|e| e.downcast_ref::<crush_lang_js::lower::Unsupported>().is_some()),
+        "not an Unsupported error: {msg}"
+    );
+    msg
+}
+
 #[test]
 fn test_boa_var_decl_and_arithmetic() {
     let source = "const x = 42;\nlet y = x + 1;\n";
@@ -147,12 +162,11 @@ fn test_boa_property_access() {
     assert!(program.functions.contains_key("main"));
 }
 
+// `this`, `new` and classes wait for the COSM object model.
 #[test]
-fn test_boa_this_keyword() {
-    let source = "function f() { return this; }";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
-    assert!(program.functions.contains_key("f"));
+fn test_boa_this_keyword_is_loud() {
+    let msg = loud("function f() { return this; }");
+    assert!(msg.contains("`this`") && msg.contains("line 1, column 23"), "{msg}");
 }
 
 #[test]
@@ -162,11 +176,11 @@ fn test_boa_dowhile_loop() {
     assert!(program.functions.contains_key("main"));
 }
 
+// A labeled jump would act on the innermost loop (CRUSH-zorro-6).
 #[test]
-fn test_boa_labeled_statement() {
-    let source = "loop1: for (let i = 0; i < 3; i++) { break loop1; }";
-    let program = test_lower(source);
-    assert!(program.functions.contains_key("main"));
+fn test_boa_labeled_break_is_loud() {
+    let msg = loud("loop1: for (let i = 0; i < 3; i++) { break loop1; }");
+    assert!(msg.contains("labeled `break`"), "{msg}");
 }
 
 #[test]
@@ -178,10 +192,9 @@ fn test_boa_switch() {
 
 #[test]
 fn test_boa_throw() {
-    let source = "throw new Error('bad');";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let program = test_lower("throw 'bad';");
     assert!(program.functions.contains_key("main"));
+    assert!(loud("throw new Error('bad');").contains("`new`"));
 }
 
 #[test]
@@ -220,10 +233,8 @@ fn test_boa_update_operators() {
 }
 
 #[test]
-fn test_boa_tagged_template() {
-    let source = "const r = String.raw`hello\nworld`;";
-    let program = test_lower(source);
-    assert!(program.functions.contains_key("main"));
+fn test_boa_tagged_template_is_loud() {
+    assert!(loud("const r = String.raw`hello\nworld`;").contains("tagged template"));
 }
 
 #[test]
@@ -232,4 +243,45 @@ fn test_boa_nested_functions() {
     let (_report, program) =
         crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
     assert!(program.functions.contains_key("outer"));
+}
+
+// CRUSH-zorro-13, option (a): an integer literal an `i64` can't hold lowers to
+// a float; one it can stays an int (indexing, loops).
+#[test]
+fn test_boa_integer_literals_past_i64_are_floats() {
+    let program = test_lower("const big = 1e19;\nconst edge = 9223372036854775807;\nconst ok = 9007199254740993;\n");
+    let main = program.functions.get("main").unwrap();
+    let value = |n: &str| {
+        main.body
+            .iter()
+            .find_map(|s| match s {
+                crush_cast::Statement::VarDecl { name, value, .. } if name == n => Some(value.clone()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert!(matches!(value("big"), crush_cast::Expression::FloatLiteral { .. }), "{:?}", value("big"));
+    // 9223372036854775807 is 2^63 as a double: past i64::MAX.
+    assert!(matches!(value("edge"), crush_cast::Expression::FloatLiteral { .. }), "{:?}", value("edge"));
+    assert!(matches!(value("ok"), crush_cast::Expression::IntLiteral { value: 9007199254740992, .. }), "{:?}", value("ok"));
+}
+
+// CRUSH-250 scope pass: a block binding that shadows an outer one gets its own
+// crush local; the outer name is untouched.
+#[test]
+fn test_boa_block_shadowing_renames_the_inner_binding() {
+    let program = test_lower("let x = 1;\n{ let x = 2; console.log(x); }\nconsole.log(x);\n");
+    let main = program.functions.get("main").unwrap();
+    let names: Vec<&str> = main
+        .body
+        .iter()
+        .filter_map(|s| match s {
+            crush_cast::Statement::VarDecl { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert_eq!(names[0], "x");
+    assert_ne!(names[1], "x");
+    assert!(names[1].starts_with("x__"), "{names:?}");
 }

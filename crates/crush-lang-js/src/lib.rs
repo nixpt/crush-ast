@@ -10,7 +10,7 @@ pub mod sdk;
 #[cfg(feature = "js-boa")]
 pub mod analyzer_boa;
 #[cfg(feature = "js-boa")]
-pub mod lower_boa;
+pub mod lower;
 
 use std::any::Any;
 
@@ -163,7 +163,7 @@ impl Frontend for JsFrontend {
             Ok(tuple_box) => {
                 let (source, parsed) = *tuple_box;
                 let ctx = LowerCtx::new(&source, "input.js", "javascript");
-                return crate::lower_boa::lower_boa(parsed.ast, &ctx);
+                return crate::lower::lower_boa(parsed.ast, &ctx);
             }
             Err(a) => a,
         };

@@ -24,10 +24,11 @@
 //! The file prefix up to the first `_` is the feature area; run with
 //! `--nocapture` for the per-area match / loud / silent table.
 //!
-//! With `--features js-boa` the harness also runs the Boa lowering (report
-//! only) and prints its table next to swc's, so CRUSH-250 can see when boa is
-//! at least as good as swc in every area. A swc-less build
-//! (`--no-default-features --features js-boa`) prints the boa table alone.
+//! With `js-boa` (a default feature) the harness also runs the Boa lowering
+//! (CRUSH-250) against the same lists, minus `BOA_FIXED` (programs only boa
+//! runs exactly), and prints the step-6 switch-over gate: boa at least as good
+//! as swc in every area, with nothing silently wrong. A swc-less build
+//! (`--no-default-features --features js-boa`) runs boa alone.
 
 #![cfg(any(feature = "swc-backend", feature = "js-boa"))]
 
@@ -75,9 +76,23 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("ops_optional_chain", "CRUSH-zorro-12: ?."),
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
     ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
+    ("scope_catch_shadow", "CRUSH-zorro-5: a `catch` parameter that shadows an outer binding"),
+    ("scope_nested_fn_decl", "CRUSH-250: a `function` declaration inside a function or block (fixed on boa)"),
+    ("scope_shadow_closure", "CRUSH-zorro-5: a block `let` that shadows an outer binding"),
+    ("scope_shadow_loop", "CRUSH-zorro-5: a loop/block `let` that shadows an outer binding"),
     ("str_methods", "CRUSH-zorro-14: string methods"),
     ("str_methods2", "CRUSH-zorro-14: string methods"),
     ("str_replace", "CRUSH-zorro-14: string methods"),
+];
+
+/// Programs the boa lowering (CRUSH-250) runs exactly that the swc lowering
+/// can't: on boa they are expected to match, not to be loud.
+const BOA_FIXED: &[(&str, &str)] = &[
+    ("scope_block_shadow", "block bindings get their own crush local (alpha-renamed)"),
+    ("scope_catch_shadow", "block bindings get their own crush local (alpha-renamed)"),
+    ("scope_nested_fn_decl", "a nested `function` is a hoisted closure"),
+    ("scope_shadow_closure", "block bindings get their own crush local (alpha-renamed)"),
+    ("scope_shadow_loop", "block bindings get their own crush local (alpha-renamed)"),
 ];
 
 /// Programs that are silently wrong on the VM today: `(program, fixing ticket, symptom)`.
@@ -148,7 +163,7 @@ fn lower(source: &str, how: Lowering) -> anyhow::Result<crush_cast::Program> {
         Lowering::Boa => {
             let ast = crush_lang_js::backend::boa::parse(source)?;
             let ctx = crush_walker_core::LowerCtx::new(source, "input.js", "javascript");
-            crush_lang_js::lower_boa::lower_boa(ast, &ctx)
+            crush_lang_js::lower::lower_boa(ast, &ctx)
         }
     }
 }
@@ -257,7 +272,6 @@ fn check(
     (tally, problems)
 }
 
-#[cfg(feature = "swc-backend")]
 fn assert_clean(title: &str, problems: Vec<String>) {
     assert!(problems.is_empty(), "{} problem(s) in {title}:\n{}", problems.len(), problems.join("\n"));
 }
@@ -266,30 +280,44 @@ fn assert_clean(title: &str, problems: Vec<String>) {
 fn crush_output_matches_node() {
     let files = corpus("tests/node_corpus", "js");
     assert!(files.len() >= 90, "corpus shrank: {}", files.len());
+    let mut problems = Vec::new();
     #[cfg(feature = "swc-backend")]
-    let (swc, problems) = check("JS corpus on the VM (swc lowering)", &files, Lowering::Swc, KNOWN_LOUD, KNOWN_SILENT);
+    let swc = {
+        let (tally, p) = check("JS corpus on the VM (swc lowering)", &files, Lowering::Swc, KNOWN_LOUD, KNOWN_SILENT);
+        problems.extend(p);
+        tally
+    };
     #[cfg(feature = "js-boa")]
     {
-        // Report only until CRUSH-250 makes boa the `.js` lowering.
-        let title = "JS corpus on the VM (boa lowering, report only)";
-        let (boa, boa_problems) = check(title, &files, Lowering::Boa, KNOWN_LOUD, KNOWN_SILENT);
+        for (n, _) in BOA_FIXED {
+            if !KNOWN_LOUD.iter().any(|e| e.0 == *n) {
+                problems.push(format!("{n}: in BOA_FIXED but not in KNOWN_LOUD (fixed on swc too? drop it)"));
+            }
+        }
+        let boa_loud: Vec<(&str, &str)> =
+            KNOWN_LOUD.iter().copied().filter(|(n, _)| !BOA_FIXED.iter().any(|f| f.0 == *n)).collect();
+        let title = "JS corpus on the VM (boa lowering)";
+        let (boa, p) = check(title, &files, Lowering::Boa, &boa_loud, KNOWN_SILENT);
+        problems.extend(p.into_iter().map(|p| format!("[boa] {p}")));
         #[cfg(feature = "swc-backend")]
         {
+            // CRUSH-250 step 6 flips `.js` to boa once this holds.
             println!("\nswc vs boa per area [match, loud, silent]:");
+            let mut gate = true;
             for (a, s) in &swc.by_area {
                 let b = boa.by_area.get(a).copied().unwrap_or_default();
-                println!("  {a:<10} swc {s:?}  boa {b:?}");
+                let ok = b[0] >= s[0] && b[2] == 0;
+                gate &= ok;
+                println!("  {a:<10} swc {s:?}  boa {b:?}{}", if ok { "" } else { "  <- boa behind" });
             }
+            println!("switch-over gate (boa >= swc in every area, 0 silent): {}", if gate { "PASS" } else { "not yet" });
         }
         #[cfg(not(feature = "swc-backend"))]
         let _ = boa;
-        println!("boa: {} list mismatch(es), not enforced:\n{}", boa_problems.len(), boa_problems.join("\n"));
     }
     #[cfg(feature = "swc-backend")]
-    {
-        let _ = swc;
-        assert_clean("the JS corpus", problems);
-    }
+    let _ = swc;
+    assert_clean("the JS corpus", problems);
 }
 
 #[cfg(feature = "ts")]

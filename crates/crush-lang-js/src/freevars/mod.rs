@@ -37,7 +37,7 @@ pub fn free_variables(source: &str) -> Result<FreeVars, String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "js-boa", feature = "swc-backend")))]
 mod tests {
     use super::*;
 
