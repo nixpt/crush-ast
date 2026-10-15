@@ -44,7 +44,7 @@
 | Return/if/while/for | ✅ |  |
 | Capability detection | ✅ | `meta()` via swc Span positions; centralized `map_to_capability()` for known calls |
 | Source positions | ✅ | swc nodes have `.span: Span { lo: BytePos }` — extracted in `meta(span, ctx)` |
-| Boa backend | 🚧 | `js-boa` (boa_parser 0.22). Being rebuilt as the one JS frontend (CRUSH-250); report-only on the parity harness until then |
+| Boa backend | 🚧 | `js-boa` (boa_parser 0.22, default feature): the one JS frontend (CRUSH-250), `src/lower/` with a scope pass (alpha-renamed block bindings) and typed `Unsupported`. Enforced on the parity harness (VM + AOT) and ahead of swc there; becomes the `.js` default at CRUSH-250 step 6 |
 | **Known gaps** | | Try/catch, generators, async/await, regex literals not yet lowered |
 
 ### Python (`crush-lang-python`)

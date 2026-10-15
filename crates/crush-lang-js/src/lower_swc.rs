@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
 use swc_ecma_ast::*;
 use crush_walker_core::LowerCtx;
-use crate::lower_common::rewrite_continue;
+use crate::lower_common::{contains_loop_continue, for_in_guarded, js_cap, js_div, length_of, rewrite_continue};
 
 fn meta(span: &swc_common::Span, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
     let offset = span.lo.0 as usize;
@@ -69,6 +69,11 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
         }
     }
 
+    for f in functions.values() {
+        check_nested_captures(&f.params, &f.body)?;
+    }
+    check_nested_captures(&[], &main_body)?;
+
     if !main_body.is_empty() && !functions.contains_key("main") {
         functions.insert(
             "main".to_string(),
@@ -89,6 +94,98 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
         ai_meta: None,
         ..Default::default()
     })
+}
+
+/// A nested `function` declaration is lowered to a `FunctionDef`, which the
+/// compiler makes a crush function of its own: it can't see the enclosing
+/// function's locals. Reading one was a loud error on the VM but `null` on AOT,
+/// which printed a wrong result (CRUSH-250's `scope_nested_fn_decl`). Refuse a
+/// nested function that uses a binding of an enclosing function; one that uses
+/// only its own names and globals keeps working. (The boa lowering makes a
+/// nested function a closure instead.)
+fn check_nested_captures(params: &[(String, CastType)], body: &[Statement]) -> anyhow::Result<()> {
+    let body = serde_json::to_value(body)?;
+    let mut enclosing: HashSet<String> = params.iter().map(|(n, _)| n.clone()).collect();
+    cast_bound(&body, &mut enclosing);
+    check_nested_in(&body, &enclosing)
+}
+
+fn check_nested_in(v: &serde_json::Value, enclosing: &HashSet<String>) -> anyhow::Result<()> {
+    match v {
+        serde_json::Value::Object(o) if o.get("type").and_then(|t| t.as_str()) == Some("FunctionDef") => {
+            let body = o.get("body").cloned().unwrap_or_default();
+            let mut own: HashSet<String> = o
+                .get("params")
+                .and_then(|p| p.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.get(0).and_then(|n| n.as_str()).map(str::to_string))
+                .collect();
+            cast_bound(&body, &mut own);
+            let mut reads = HashSet::new();
+            cast_reads(&body, &mut reads);
+            let mut captured: Vec<&String> = reads.iter().filter(|n| !own.contains(*n) && enclosing.contains(*n)).collect();
+            captured.sort();
+            if let Some(name) = captured.first() {
+                let f = o.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                return Err(unsupported(&format!(
+                    "a nested `function {f}` that uses its enclosing function's `{name}`"
+                )));
+            }
+            let inner: HashSet<String> = enclosing.union(&own).cloned().collect();
+            check_nested_in(&body, &inner)
+        }
+        serde_json::Value::Object(o) => o.values().try_for_each(|v| check_nested_in(v, enclosing)),
+        serde_json::Value::Array(a) => a.iter().try_for_each(|v| check_nested_in(v, enclosing)),
+        _ => Ok(()),
+    }
+}
+
+/// Names lowered CAST binds (declarations, loop and catch variables, lambda
+/// parameters), not looking into nested `FunctionDef`s.
+fn cast_bound(v: &serde_json::Value, out: &mut HashSet<String>) {
+    match v {
+        serde_json::Value::Object(o) => {
+            let field = |k: &str| o.get(k).and_then(|n| n.as_str()).map(str::to_string);
+            match o.get("type").and_then(|t| t.as_str()) {
+                Some("FunctionDef") => return,
+                Some("VarDecl") => out.extend(field("name")),
+                Some("For") => out.extend(field("variable")),
+                Some("TryCatch") => out.extend(field("error_var")),
+                Some("Lambda") => out.extend(
+                    o.get("params")
+                        .and_then(|p| p.as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|p| p.get(0).and_then(|n| n.as_str()).map(str::to_string)),
+                ),
+                _ => {}
+            }
+            o.values().for_each(|v| cast_bound(v, out));
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|v| cast_bound(v, out)),
+        _ => {}
+    }
+}
+
+/// Names lowered CAST reads: variables, and the receiver or name of a call
+/// (`f(…)`, `o.m(…)`), not looking into nested `FunctionDef`s.
+fn cast_reads(v: &serde_json::Value, out: &mut HashSet<String>) {
+    match v {
+        serde_json::Value::Object(o) => {
+            match o.get("type").and_then(|t| t.as_str()) {
+                Some("FunctionDef") => return,
+                Some("Var") => out.extend(o.get("name").and_then(|n| n.as_str()).map(str::to_string)),
+                Some("Call") => out.extend(
+                    o.get("function").and_then(|n| n.as_str()).and_then(|f| f.split('.').next()).map(str::to_string),
+                ),
+                _ => {}
+            }
+            o.values().for_each(|v| cast_reads(v, out));
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|v| cast_reads(v, out)),
+        _ => {}
+    }
 }
 
 /// The walker's name for an unsupported construct, as one error message.
@@ -414,6 +511,9 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             }
         }
         Stmt::Decl(decl) => match decl {
+            // A nested declaration becomes a crush function of its own, which
+            // can't see the enclosing locals: `check_nested_captures` refuses
+            // the ones that use them.
             Decl::Fn(fn_decl) => lower_fn_decl(fn_decl, ctx)?,
             Decl::Var(var_decl) => {
                 let mut stmts = Vec::new();
@@ -760,69 +860,6 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
     }))
 }
 
-/// `for (variable in iterable) body` over a value whose type isn't known
-/// statically:
-///   let __forin_N = iterable;
-///   let __forin_ty_N = type_of(__forin_N);
-///   if (__forin_ty_N == "array" || … "str" | "string" …) throw "…";
-///   for variable in __forin_N { body }
-/// grouped in one `if (true) { … }`. The type names cover every engine
-/// (CVM1 says "str", FastVM/JIT "string"); objects and maps iterate their keys
-/// as before. AOT backends without `type_of` refuse it at compile time.
-fn for_in_guarded(
-    variable: String,
-    iterable: Expression,
-    body: Vec<Statement>,
-    id: u32,
-    sm: HashMap<String, serde_json::Value>,
-) -> Statement {
-    let obj = format!("__forin_{id}");
-    let ty = format!("__forin_ty_{id}");
-    let var = |name: &str| Expression::Var { name: name.to_string(), meta: sm.clone() };
-    let is_sequence = ["array", "str", "string", "list", "vector", "tuple"]
-        .iter()
-        .map(|t| Expression::BinaryOp {
-            operator: "==".to_string(),
-            left: Box::new(var(&ty)),
-            right: Box::new(Expression::StringLiteral { value: t.to_string(), meta: sm.clone() }),
-            meta: sm.clone(),
-        })
-        .reduce(|a, b| Expression::BinaryOp {
-            operator: "||".to_string(),
-            left: Box::new(a),
-            right: Box::new(b),
-            meta: sm.clone(),
-        })
-        .expect("non-empty");
-    Statement::If {
-        condition: Expression::BoolLiteral { value: true, meta: sm.clone() },
-        then_body: vec![
-            Statement::VarDecl { name: obj.clone(), value: iterable, type_hint: CastType::Any, meta: sm.clone() },
-            Statement::VarDecl {
-                name: ty.clone(),
-                value: Expression::CapabilityCall { name: "type_of".to_string(), args: vec![var(&obj)], meta: sm.clone() },
-                type_hint: CastType::Any,
-                meta: sm.clone(),
-            },
-            Statement::If {
-                condition: is_sequence,
-                then_body: vec![Statement::Throw {
-                    value: Expression::StringLiteral {
-                        value: "`for-in` over an array/string is not supported by the JS walker yet".to_string(),
-                        meta: sm.clone(),
-                    },
-                    meta: sm.clone(),
-                }],
-                else_body: None,
-                meta: sm.clone(),
-            },
-            Statement::For { variable, iterable: Box::new(var(&obj)), body, meta: sm.clone() },
-        ],
-        else_body: None,
-        meta: sm,
-    }
-}
-
 /// CRUSH-zorro-23: the walker gives each name one slot per function — nested
 /// blocks are flattened into their parent, and an `if`/loop/`try`/`switch`
 /// body shares the function's slots too. So a `let`/`const`/`class` (or a
@@ -1041,19 +1078,6 @@ fn shadow_stmt(s: &Stmt, frames: &mut Vec<HashSet<String>>) -> anyhow::Result<()
     }
 }
 
-/// Does `stmts` contain a `continue` that belongs to the enclosing loop
-/// (i.e. not inside a nested loop or function)?
-fn contains_loop_continue(stmts: &[Statement]) -> bool {
-    stmts.iter().any(|s| match s {
-        Statement::Continue { .. } => true,
-        Statement::If { then_body, else_body, .. } => {
-            contains_loop_continue(then_body) || else_body.as_deref().is_some_and(contains_loop_continue)
-        }
-        Statement::TryCatch { body, handler, .. } => contains_loop_continue(body) || contains_loop_continue(handler),
-        _ => false,
-    })
-}
-
 /// An expression in statement position; `a, b` becomes two statements.
 fn expr_to_stmts(e: &Expr, span: &swc_common::Span, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
     match unparen(e) {
@@ -1081,6 +1105,11 @@ fn lower_var_declarator(
     let name = pat_to_name(&decl.name)?;
     let value = match &decl.init {
         Some(init) => lower_expr(init, ctx)?,
+        // `var x;` declares nothing new at run time: lowering it to `x = null`
+        // reset `x` whenever it ran again (in a loop: CRUSH-250's
+        // scope_var_redeclare printed `2 3` for node's `3 3`). A read before
+        // any assignment now fails loudly instead of yielding `null`.
+        None if kind == VarDeclKind::Var => return Ok(vec![]),
         None => Expression::NullLiteral { meta: meta(&decl.span, ctx) },
     };
     // `let` / `const` are block bindings: a fresh one each time the
@@ -1876,21 +1905,6 @@ fn is_length_read(field: &str, obj: &Expr) -> bool {
     field == "length" && !matches!(unparen(obj), Expr::Object(_))
 }
 
-/// JS `/` is real division (`7 / 2` is 3.5; crush's `/` on two ints
-/// truncates). An exact quotient of two ints stays an int (`4 / 2` is `2`,
-/// usable as an array index and printed `2` even inside string
-/// concatenation) — JS has one number type, so that is safe. Division by
-/// zero is a loud error rather than Infinity.
-fn js_div(left: Expression, right: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::CapabilityCall { name: "js.div".to_string(), args: vec![left, right], meta }
-}
-
-/// A call to a `js.*` capability: JS semantics implemented once in crush-vm
-/// (`js_core`) and mirrored by the AOT runtimes.
-fn js_cap(name: &str, args: Vec<Expression>, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::CapabilityCall { name: name.to_string(), args, meta }
-}
-
 /// Whether JS evaluates `e` to a number whatever the variables hold: number
 /// literals and arithmetic on them. Such a `+` stays crush's numeric `+`;
 /// any other `+` may involve a string and goes through `js.add`.
@@ -1923,8 +1937,4 @@ fn unparen(e: &Expr) -> &Expr {
         Expr::Paren(ParenExpr { expr, .. }) => unparen(expr),
         other => other,
     }
-}
-
-fn length_of(target: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::Call { function: "len".to_string(), args: vec![target], meta }
 }

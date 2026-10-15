@@ -12,10 +12,12 @@ name = "js_walker"
 path = "src/bin/walker.rs"
 
 [features]
-# No behaviour change yet: `.js` still lowers through swc by default. CRUSH-250
-# flips `.js` to `js-boa` once the parity harness says boa >= swc in every area,
-# then retires the swc lowering for JS (swc then remains only behind `ts`).
-default = ["swc-backend", "ts"]
+# `.js` still lowers through swc by default (swc wins while `swc-backend` is
+# on). `js-boa` is built too so the parity harness runs it on every build.
+# CRUSH-250 step 6 flips `.js` to boa once the harness says boa >= swc in
+# every area, then retires the swc lowering for JS (swc then remains only
+# behind `ts`).
+default = ["swc-backend", "ts", "js-boa"]
 # The swc parser and its JS lowering (`lower_swc.rs`). While it is on, it
 # lowers `.js`/`.mjs`/`.cjs`/`.jsx`; the browser build leaves it off.
 swc-backend = ["dep:swc_ecma_parser", "dep:swc_ecma_ast", "dep:swc_common", "dep:swc_atoms"]
