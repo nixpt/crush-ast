@@ -127,6 +127,24 @@ fn pop2(stack: &mut Vec<RuntimeValue>) -> (RuntimeValue, RuntimeValue) {
     (a, b)
 }
 
+/// `conv.text` — mirrors crush-vm `num_text::text_as` / `float_text`.
+fn conv_text(v: &RuntimeValue, style: &RuntimeValue) -> RuntimeValue {
+    let js = match style { RuntimeValue::String(s) if s == "js" => true, RuntimeValue::String(s) if s == "rust" => false, _ => { eprintln!("crush(aot): conv.text style must be \"js\" or \"rust\""); std::process::exit(1) } };
+    RuntimeValue::String(match v {
+        RuntimeValue::String(s) => s.clone(),
+        RuntimeValue::Float(f) => {
+            let f = *f;
+            if f.is_nan() { "NaN".to_string() }
+            else if f.is_infinite() { match (js, f > 0.0) { (true, true) => "Infinity", (true, false) => "-Infinity", (false, true) => "inf", (false, false) => "-inf" }.to_string() }
+            else if js && f != 0.0 && !(1e-6..1e21).contains(&f.abs()) {
+                let e = format!("{f:e}"); let (m, x) = e.split_once('e').unwrap();
+                if x.starts_with('-') { format!("{m}e{x}") } else { format!("{m}e+{x}") }
+            } else { format!("{f}") }
+        }
+        other => other.to_string(),
+    })
+}
+
 /// `seq.slice` — mirrors crush-vm `seq::slice_indices` (CPython slice.indices).
 fn seq_slice(t: RuntimeValue, a: RuntimeValue, b: RuntimeValue, st: RuntimeValue) -> RuntimeValue {
     let opt = |v: &RuntimeValue| match v { RuntimeValue::Int(i) => Some(*i), RuntimeValue::Null => None, _ => { eprintln!("crush(aot): slice bounds must be int or null"); std::process::exit(1) } };
@@ -929,7 +947,12 @@ fn emit_body(
                     out.push_str(&next_pc_str);
                 }
                 "io.print" | "print" => {
-                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
+                    // All `argc` arguments, concatenated like the VM (it used to
+                    // pop one, so `console.log(a, b)` printed only `b`).
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("{ind}print!(\"\\n\");\n")); } else {
+                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({n}); for _ in 0..{n} {{ __parts.push(stack.pop().unwrap_or(RuntimeValue::Null).to_string()); }} __parts.reverse(); let __refs: Vec<&str> = __parts.iter().map(|s| s.as_str()).collect(); print!(\"{{}}\", io_print_line(&__refs)); }}\n"));
+                    }
                     out.push_str(&next_pc_str);
                 }
                 "io.write" => {
@@ -943,6 +966,10 @@ fn emit_body(
                 }
                 "math.truediv" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(*x as f64 / *y as f64) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "conv.text" => {
+                    out.push_str(&format!("{ind}{{ let __st = stack.pop().unwrap_or(RuntimeValue::Null); let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_text(&__v, &__st)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "seq.slice" => {

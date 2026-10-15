@@ -800,6 +800,55 @@ static Value _true_div(Value a, Value b) {
     if (fb == 0.0) _crush_arith_error("division by zero");
     return mk_float(fa / fb);
 }
+/* `conv.text`: mirrors crush-vm num_text::float_text. Shortest round-trip
+   digits (try precisions until strtod gives the value back), then plain
+   decimal — or JS exponent form outside 1e-6 <= |x| < 1e21. */
+static const char* _num_text(double f, bool js) {
+    char buf[64], out[400];
+    if (f != f) return "NaN";
+    if (f == 1.0 / 0.0) return js ? "Infinity" : "inf";
+    if (f == -1.0 / 0.0) return js ? "-Infinity" : "-inf";
+    int p = 0;
+    for (; p < 17; p++) { snprintf(buf, sizeof buf, "%.*e", p, f); if (strtod(buf, NULL) == f) break; }
+    /* buf = [-]D[.DDD]e[+-]XX */
+    char* e = strchr(buf, 'e'); int exp = atoi(e + 1); *e = '\0';
+    const char* m = buf; bool neg = (*m == '-'); if (neg) m++;
+    char digits[32]; int nd = 0;
+    for (const char* c = m; *c; c++) if (*c != '.') digits[nd++] = *c;
+    while (nd > 1 && digits[nd - 1] == '0') nd--;
+    double a = f < 0 ? -f : f;
+    size_t w = 0;
+    if (neg || (f == 0.0 && 1.0 / f < 0)) out[w++] = '-';
+    if (js && a != 0.0 && (a < 1e-6 || a >= 1e21)) {
+        out[w++] = digits[0];
+        if (nd > 1) { out[w++] = '.'; for (int i = 1; i < nd; i++) out[w++] = digits[i]; }
+        w += (size_t)snprintf(out + w, sizeof out - w, "e%c%d", exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+    } else if (exp >= 0) {
+        for (int i = 0; i <= exp; i++) out[w++] = i < nd ? digits[i] : '0';
+        if (nd > exp + 1) { out[w++] = '.'; for (int i = exp + 1; i < nd; i++) out[w++] = digits[i]; }
+    } else {
+        out[w++] = '0'; out[w++] = '.';
+        for (int i = -1; i > exp; i--) out[w++] = '0';
+        for (int i = 0; i < nd; i++) out[w++] = digits[i];
+    }
+    out[w] = '\0';
+    char* r = _str_new(w);
+    memcpy(r, out, w);
+    return r;
+}
+static Value _conv_text(Value v, Value style) {
+    if (style.tag != TAG_STRING || (strcmp(style.s, "js") != 0 && strcmp(style.s, "rust") != 0))
+        _crush_arith_error("conv.text style must be \"js\" or \"rust\"");
+    if (v.tag == TAG_STRING) return v;
+    if (v.tag == TAG_FLOAT) return mk_string(_num_text(v.f, strcmp(style.s, "js") == 0));
+    char buf[TEXTBUF_SIZE];
+    const char* t = _to_text_buf(v, buf);
+    size_t n = strlen(t);
+    char* r = _str_new(n);
+    memcpy(r, t, n);
+    return mk_string(r);
+}
+
 /* `seq.slice`: mirrors crush-vm seq::slice_indices (CPython slice.indices). */
 static int64_t _slice_norm(int64_t v, int64_t len, int64_t lo, int64_t hi) {
     if (v < 0) v += len;
@@ -1735,8 +1784,12 @@ fn emit_c_instr(
                 "io.print" | "print" => {
                     // Same text as string concatenation (`_to_text_buf`), and pushes null like
                     // the VM: the CASM pops print's result, so pushing nothing popped the
-                    // caller's pending operand instead (CRUSH-216).
-                    out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    // caller's pending operand instead (CRUSH-216). All `argc` arguments are
+                    // printed, concatenated like the VM (it used to pop one).
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("                {{ putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n")); } else {
+                    out.push_str(&format!("                {{ Value __pa[{n}]; for (int __i = {n} - 1; __i >= 0; __i--) __pa[__i] = _pop(); for (int __i = 0; __i < {n}; __i++) {{ char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pa[__i], __tb), stdout); }} putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    }
                 }
                 "io.write" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pv, __tb), stdout); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.write\n"));
@@ -1757,6 +1810,9 @@ fn emit_c_instr(
                 }
                 "math.truediv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_true_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.truediv\n"));
+                }
+                "conv.text" => {
+                    out.push_str(&format!("                {{ Value __st = _pop(); Value __v = _pop(); _push(_conv_text(__v, __st)); }} _pc={next_pc}; break; // cap_call conv.text\n"));
                 }
                 "seq.slice" => {
                     out.push_str(&format!("                {{ Value __st = _pop(); Value __b = _pop(); Value __a = _pop(); Value __t = _pop(); _push(_seq_slice(__t, __a, __b, __st)); }} _pc={next_pc}; break; // cap_call seq.slice\n"));
