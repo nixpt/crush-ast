@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+### Added
+
+- `crush-lang-sdk::compile::compile_source(language_or_extension, source)`
+  compiles enabled walker languages through the shared compiler into a CVM1
+  program for `Runtime`. The default SDK features include `polyglot-rust`;
+  `compile_rust_source` is a convenience wrapper over the same registry.
+
 ### Breaking changes
 
 - `crush-vm::VmResult` now includes `return_value`; downstream Rust code that
@@ -26,6 +33,17 @@ add its entry after yours.
 - Rust walker inputs containing unsupported top-level items such as `use`
   declarations or structs now fail with diagnostics instead of compiling while
   silently ignoring those items.
+- Rust move/async closures and unsupported closure parameter patterns now fail
+  during lowering. Multi-statement or semicolon-ending blocks in value positions
+  report their source location instead of dropping statements; function and
+  closure bodies continue to lower their complete statement sequences.
+
+### Fixed
+
+- Walker assignment intrinsics and loop bindings pass semantic validation, and
+  optimization preserves assignment targets and loop-carried values. Rust
+  mapped methods use host-registered standard-library capabilities even when
+  source bindings are named `array`, `str`, or `math`.
 
 ## [0.5.0] - 2026-10-12
 
