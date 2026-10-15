@@ -990,4 +990,19 @@ Reviewer: block rule was inconsistent (loud in function bodies, flattened in arr
 
 Outcome:
 Supersedes the for-in/block part of the earlier CRUSH-zorro-23 decision
+## 2026-10-15T02:27:21-05:00 — [STRATEGIC] [ADOPTED] JS parser: one JS frontend on boa_parser 0.22 in crush-ast, shared with bozo; swc only strips TypeScript types
+
+Reason:
+Owner decision 2026-10-15 on the JS/TS parity spike (option B). bozo planned its own boa-based JS frontend (BOZO-M7-1), runtime library (M7-2) and conformance gate (M7-5), which would duplicate crush-lang-js's semantic work. Measured with cargo tree: boa_parser 0.22 adds 1 crate to surfer (which already has boa_engine 0.22) vs 36 for the swc parser; after dropping boa_engine, boa is 60 crates vs swc 88. TS keeps one lowering by using the swc parser only to blank type spans (swc_fast_ts_strip measured at 146 crates and stale). Most of the spike's work (harness, js.* runtime library, number model) is parser-independent.
+
+Artifacts: .jagent/planning/research/2026-10-15-JS-TS-parity-spike.md
+
+Author type: human
+
+Rejected alternatives:
+- **A**: keep swc for JS and TS: +36 crates for the browser, swc in surfer's build against SURF-BUILD-1, and bozo would still build a second frontend
+- **swc_fast_ts_strip for TS**: 146 crates, last release 2025-06
+
+Outcome:
+CRUSH-250 widened into the JS frontend (wave 2, absorbs BOZO-M7-1); CRUSH-zorro-11 superseded; z-5/6/7/16/18/20 retargeted to the new lowering; z-8 narrowed to TS strip-to-boa; z-23 is the interim loud-making on the swc path; the js.* runtime tickets are unchanged and shared with bozo (absorbs BOZO-M7-2)
 
