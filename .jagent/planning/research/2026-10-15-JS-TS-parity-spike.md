@@ -1,6 +1,6 @@
 # JS/TS parity spike — baseline, design and dispatch plan
 
-Status: **design, ready to dispatch**. vega, 2026-10-15. Baseline measured on main `5f223a9`
+Status: **design, ready to dispatch. Parser decided 2026-10-15 (option B).** vega, 2026-10-15. Baseline measured on main `5f223a9`
 (after #184 Python parity, #187–#192). Tickets: **CRUSH-zorro-4 … CRUSH-zorro-23**.
 
 ## Goal and bar
@@ -165,16 +165,19 @@ After surfer drops `boa_engine` (its goal), its JS parser costs 60 crates with b
 - **Coordinate with bozo:** BOZO-M7-1 and M7-2 move upstream into crush-ast, or are closed as superseded
   here, and bozo keeps the browser-specific parts (DomBridge, sandbox, XIP, the event loop of M7-3).
 
-## Decisions needed from the owner
+## Decisions
 
-- **Parser for `.js`: option A (keep swc) or option B (one JS frontend on `boa_parser` 0.22 in crush-ast,
+- **DECIDED 2026-10-15 (owner): option B.** One JS frontend in crush-ast on `boa_parser` 0.22, shared with
+  bozo; swc only to strip TS types. CRUSH-250 is widened into that frontend (wave 2) and CRUSH-zorro-11 is
+  superseded. The tickets are retargeted as listed under *What changes in this plan under B*.
+  *Original framing, kept for context:* **Parser for `.js`: option A (keep swc) or option B (one JS frontend on `boa_parser` 0.22 in crush-ast,
   shared with bozo; swc only for TS).** See *Parser choice* above. **Recommendation: B.** It's what the
   browser needs (+1 crate for surfer instead of +36, and no swc in the default build), and it avoids two JS
   frontends (crush-lang-js and bozo-frontend) doing the same semantic work. Most of this spike's work is
   parser-independent either way. Decide before wave 2. Under B, wave 2 becomes CRUSH-250 (widened) instead
   of z-11.
 
-- **Number model (CRUSH-zorro-13).** JS numbers are doubles; crush has `Int(i64)` + `Float(f64)` and errors on
+- **Still open: number model (CRUSH-zorro-13).** JS numbers are doubles; crush has `Int(i64)` + `Float(f64)` and errors on
   overflow (`2**53 + 1`, `2**64` fail today). Options:
   - (a) JS arithmetic promotes to Float on overflow. **Recommended:** ints stay ints for indexing and loops,
     and output matches node for all safe integers.
@@ -188,32 +191,35 @@ After surfer drops `boa_engine` (its goal), its JS parser costs 60 crates with b
 | wave | ticket | what | pri | depends on |
 |---|---|---|---|---|
 | 0 | **CRUSH-zorro-4** | harness: feature corpus vs node, known-loud allow-list, SILENTLY-WRONG fails, AOT `js_parity.rs`, TS twin, freshness | P1 | — |
-| 1 | CRUSH-zorro-5 | bare blocks dropped (+ loud statement catch-all) | **P0** | — |
-| 1 | CRUSH-zorro-6 | labeled break/continue | **P0** | — |
-| 1 | CRUSH-zorro-7 | `finally` on return/break/continue/throw | **P0** | — |
-| 1 | CRUSH-zorro-8 | dialect handling; TS-in-JS prints null | **P0** | — |
-| 1 | CRUSH-zorro-9 | `+`/template literals use JS ToString (`js.add`) | **P0** | — |
-| 1 | CRUSH-zorro-22 | `&&`/`||` return operand values; `==` coerces | **P0** | — |
-| 1 | CRUSH-zorro-23 | make every silently mis-lowered construct fail loudly | **P0** | — |
-| 1 | CRUSH-zorro-10 | `console.log` of arrays/objects like node | P1 | z-9 |
-| 2 | **CRUSH-zorro-11** | split `lower_swc.rs` by area + builtin/method registry (no behaviour change) | P1 | z-4 |
-| 3 | CRUSH-zorro-12 | values & operators (`undefined`, `typeof`, `??`, `?.`, `==`, bitwise, Infinity/NaN) | P1 | z-11 |
+| 1 | CRUSH-zorro-23 | make every silently mis-lowered construct fail loudly on the swc path (incl. bare blocks, labels, `finally`) | **P0** | — |
+| 1 | CRUSH-zorro-9 | `+`/template literals use JS ToString (`js.add`; durable runtime capability) | **P0** | — |
+| 1 | CRUSH-zorro-22 | `&&`/`||` return operand values; `==` coerces (durable runtime capabilities) | **P0** | — |
+| 1 | CRUSH-zorro-10 | `console.log` of arrays/objects like node (`js.inspect`) | P1 | z-9 |
+| 2 | **CRUSH-250** (widened) | **the JS frontend:** `boa_parser` 0.22 lowering + scope/semantic pass + builtin table; flips `.js` once ≥ swc on the harness | P1 | z-4, CRUSH-251 step 2 |
+| 2 | CRUSH-zorro-8 | TS: swc parser blanks types → boa lowering (`ts` feature); loud on bad extensions | P1 | CRUSH-250 |
+| 3 | CRUSH-zorro-5 / 6 / 7 | bare blocks + scoping / labeled loops / `finally`, in the new lowering | P1 | CRUSH-250 |
+| — | ~~CRUSH-zorro-11~~ | superseded by CRUSH-250 | — | — |
+| 3 | CRUSH-zorro-12 | values & operators (`undefined`, `typeof`, `??`, `?.`, bitwise, Infinity/NaN) | P1 | CRUSH-250 (runtime part can start earlier) |
 | 3 | CRUSH-zorro-13 | number model (owner decision first) | P1 | decision |
-| 3 | CRUSH-zorro-14 | string methods | P1 | z-11 |
-| 3 | CRUSH-zorro-15 | array methods (non-callback; `sort()` is string order) | P1 | z-11 |
-| 3 | CRUSH-zorro-16 | objects: mutation, `Object.*`, spread, destructuring, for-in | P1 | z-11 |
-| 3 | CRUSH-zorro-17 | builtins: Math, conversions, JSON, Map/Set | P1 | z-11 |
-| 3 | CRUSH-zorro-18 | default and rest parameters | P1 | z-11 |
-| 3 | CRUSH-zorro-19 | errors: throw / `new Error` / `e.message` / catch binding | P1 | z-11 |
-| 4 | CRUSH-zorro-20 | callbacks + closures (map/filter/reduce/sort(cmp)/closures) | P1 | **CRUSH-251 step 4**, z-15 |
-| 4 | CRUSH-zorro-21 | TS: erase type-only constructs, enums, loud namespaces/decorators | P2 | z-4, z-8 (enums need z-16) |
+| 3 | CRUSH-zorro-14 | string methods | P1 | CRUSH-250 (runtime part can start earlier) |
+| 3 | CRUSH-zorro-15 | array methods (non-callback; `sort()` is string order) | P1 | CRUSH-250 (runtime part can start earlier) |
+| 3 | CRUSH-zorro-16 | objects: mutation, `Object.*`, spread, destructuring, for-in | P1 | CRUSH-250 |
+| 3 | CRUSH-zorro-17 | builtins: Math, conversions, JSON, Map/Set | P1 | CRUSH-250 (runtime part can start earlier) |
+| 3 | CRUSH-zorro-18 | default and rest parameters | P1 | CRUSH-250 |
+| 3 | CRUSH-zorro-19 | errors: throw / `new Error` / `e.message` / catch binding | P1 | CRUSH-250 (runtime part can start earlier) |
+| 4 | CRUSH-zorro-20 | callbacks + closures (map/filter/reduce/sort(cmp)/closures) | P1 | CRUSH-250, CRUSH-251 step 3, z-15 |
+| 4 | CRUSH-zorro-21 | TS: erase type-only constructs, enums, loud namespaces/decorators | P2 | z-8, CRUSH-250 (enums need z-16) |
 
 How to hand it out:
 - **Wave 0** first, one agent: every later ticket's done-condition is "my area's corpus programs leave the allow-list".
-- **Wave 1** in parallel: seven small P0s touching different lowering arms. z-23 has the most leverage: it turns the unknown silent bugs into allow-listed loud ones.
-- **Wave 2** alone. A mechanical split plus a registry, landed fast.
-- **Wave 3** in parallel (up to 7 agents). After z-11, most of it is registry rows, so conflicts stay small.
-- **Wave 4** when CRUSH-251 step 4 lands.
+- **Wave 1** in parallel:
+  - z-23 makes the swc path stop being silently wrong (blocks, labels, `finally` and the rest fail loudly);
+  - z-9, z-22 and z-10 build durable `js.*` runtime capabilities.
+- **Wave 2:** CRUSH-250, the new frontend. It's the critical path, best done by one agent in the sub-PR
+  order in its ticket. z-8 (TS) follows once its lowering exists.
+- **Wave 3** in parallel. The **runtime-library halves** of z-12/14/15/17/19 can start during wave 2
+  (capabilities in crush-vm, unit-tested); their wiring and z-5/6/7/16/18 go into the new lowering.
+- **Wave 4:** closures (z-20) once CRUSH-251 step 3 lands, and TS constructs (z-21).
 
 Every ticket carries a `## Dispatch` section with the bar, the worktree rule (worktrees go under
 `crush-ast/.jagent/worktrees/`, next to the `buckets` symlink) and the gates.
