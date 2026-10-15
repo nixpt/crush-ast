@@ -3,6 +3,24 @@
 //! Wire layout: MAGIC(4) | version(1) | manifest_len(2 BE) | manifest_json |
 //!              n_consts(2 BE) | consts[each: len(2 BE) + utf-8] |
 //!              code_len(4 BE) | code
+//!              [ version >= 3: kind_table ]
+//!
+//! The kind table (COSM K1.3, CRUSH-zorro-42) is the program's COSM module —
+//! its `KindDecl`s and `InterfaceDecl`s:
+//!
+//!   kind_table = kt_format(1) | kt_len(4 BE) | kt_bytes
+//!   kt_format 1 = the module's canonical COSM JSON (`CosmModule::to_json`)
+//!
+//! Versioning: the container version says whether the section is present.
+//! [`Program::to_blob`] writes version [`VERSION_KIND_TABLE`] (3) only when
+//! the program has a non-empty kind table; every other program is written
+//! exactly as before, as version [`VERSION_NO_KIND_TABLE`] (2), byte for
+//! byte. Versions 1 and 2 have no kind table and load with `cosm = None`. A
+//! runtime that predates the section rejects a version-3 blob as an
+//! unsupported version, so a kind table is never silently dropped. The
+//! section's own format byte lets its encoding change without another
+//! container bump; an unknown one is an error. Nothing may follow the
+//! section.
 //!
 //! Operand encoding per opcode:
 //!   PUSH      i64  8B signed BE
@@ -21,8 +39,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const MAGIC: &[u8; 4] = b"CVM1";
-pub const VERSION: u8 = 2;
+/// The newest container version this runtime reads (and writes, for a
+/// program with a kind table).
+pub const VERSION: u8 = VERSION_KIND_TABLE;
 pub const MIN_VERSION: u8 = 1;
+/// The version written for a program without a kind table (unchanged since
+/// frame-local slots).
+pub const VERSION_NO_KIND_TABLE: u8 = 2;
+/// The first version with a kind-table section (COSM K1.3, CRUSH-zorro-42).
+pub const VERSION_KIND_TABLE: u8 = 3;
+/// Kind-table encoding: the module's canonical COSM JSON.
+pub const KIND_TABLE_FORMAT_JSON: u8 = 1;
 
 pub const NOP: u8 = 0x00;
 pub const PUSH: u8 = 0x01;
@@ -327,6 +354,10 @@ pub struct Program {
     /// Not serialized in the binary blob — only populated by
     /// `assemble()`.
     pub source_map: Vec<(usize, usize)>,
+    /// The kind table (COSM K1.3, CRUSH-zorro-42): the program's object
+    /// declarations, or `None`. Serialized as the version-3 kind-table
+    /// section when non-empty (see the module docs).
+    pub cosm: Option<crush_cosm::CosmModule>,
 }
 
 impl Program {
@@ -336,6 +367,7 @@ impl Program {
             consts,
             manifest,
             source_map: Vec::new(),
+            cosm: None,
         }
     }
 
@@ -350,15 +382,32 @@ impl Program {
             consts,
             manifest,
             source_map,
+            cosm: None,
+        }
+    }
+
+    /// The kind table, if non-empty (at least one Kind or interface).
+    pub fn kind_table(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref().filter(|m| !casm::cosm_is_empty(m))
+    }
+
+    /// `Err(message)` when the program has a non-empty kind table: the
+    /// load-time refusal of an engine that doesn't implement COSM objects
+    /// yet (see [`casm::Program::refuse_cosm`]).
+    pub fn refuse_cosm(&self, engine: &str) -> Result<(), String> {
+        match self.kind_table() {
+            Some(module) => Err(casm::cosm_unsupported_message(module, engine)),
+            None => Ok(()),
         }
     }
 
     pub fn to_blob(&self) -> Vec<u8> {
         let manifest_json = serde_json::to_string(&self.manifest).expect("manifest serialization");
         let mb = manifest_json.as_bytes();
+        let kind_table = self.kind_table().map(crush_cosm::CosmModule::to_json);
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
-        out.push(VERSION);
+        out.push(if kind_table.is_some() { VERSION_KIND_TABLE } else { VERSION_NO_KIND_TABLE });
         out.extend_from_slice(&(mb.len() as u16).to_be_bytes());
         out.extend_from_slice(mb);
         out.extend_from_slice(&(self.consts.len() as u16).to_be_bytes());
@@ -369,6 +418,11 @@ impl Program {
         }
         out.extend_from_slice(&(self.code.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.code);
+        if let Some(json) = kind_table {
+            out.push(KIND_TABLE_FORMAT_JSON);
+            out.extend_from_slice(&(json.len() as u32).to_be_bytes());
+            out.extend_from_slice(json.as_bytes());
+        }
         out
     }
 
@@ -407,11 +461,43 @@ impl Program {
             return Err(crate::Error::Truncated);
         }
         let code = blob[off..off + code_len].to_vec();
+        off += code_len;
+        let cosm = if version >= VERSION_KIND_TABLE {
+            if off >= blob.len() {
+                return Err(crate::Error::Truncated);
+            }
+            let format = blob[off];
+            off += 1;
+            if format != KIND_TABLE_FORMAT_JSON {
+                return Err(crate::Error::BadKindTable(format!(
+                    "unknown kind-table format {format}"
+                )));
+            }
+            let len = rd_u32(blob, &mut off)? as usize;
+            if off + len > blob.len() {
+                return Err(crate::Error::Truncated);
+            }
+            let json = std::str::from_utf8(&blob[off..off + len])
+                .map_err(|e| crate::Error::BadKindTable(e.to_string()))?;
+            let module = crush_cosm::CosmModule::from_json(json)
+                .map_err(|e| crate::Error::BadKindTable(e.to_string()))?;
+            off += len;
+            if off != blob.len() {
+                return Err(crate::Error::BadKindTable(format!(
+                    "{} trailing byte(s) after the kind table",
+                    blob.len() - off
+                )));
+            }
+            Some(module)
+        } else {
+            None
+        };
         Ok(Self {
             code,
             consts,
             manifest,
             source_map: Vec::new(),
+            cosm,
         })
     }
 }

@@ -338,7 +338,13 @@ pub enum LowerError {
     MissingArgument(String),
     InvalidJumpTarget(String),
     FunctionNotFound(String),
+    /// The program has a kind table (COSM K1.3): FastVM and the JIT, which
+    /// both run this lowering's output, don't implement COSM objects yet.
+    CosmUnsupported(String),
 }
+
+/// The engines that run a [`LoweredProgram`], as a COSM refusal names them.
+const FASTVM_ENGINES: &str = "FastVM or the JIT";
 
 impl std::fmt::Display for LowerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -347,6 +353,7 @@ impl std::fmt::Display for LowerError {
             LowerError::MissingArgument(msg) => write!(f, "Missing argument: {}", msg),
             LowerError::InvalidJumpTarget(t) => write!(f, "Invalid jump target: {}", t),
             LowerError::FunctionNotFound(name) => write!(f, "Function not found: {}", name),
+            LowerError::CosmUnsupported(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -355,6 +362,7 @@ impl std::error::Error for LowerError {}
 
 /// Lower a CASM program to FastInstr representation
 pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
+    program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
     let mut symbols = SymbolTables::new();
     let mut instructions = Vec::new();
     let mut label_positions: HashMap<String, usize> = HashMap::new();
@@ -455,6 +463,7 @@ pub fn lower_bytecode_program(
     program: &crate::bytecode::Program,
 ) -> Result<LoweredProgram, LowerError> {
     use crate::bytecode::*;
+    program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
     
     let mut symbols = SymbolTables::new();
     let mut instructions: Vec<FastInstr> = Vec::new();
