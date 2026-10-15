@@ -4,16 +4,16 @@
 |-------|-------|
 | **ID** | CRUSH-179 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | In progress |
 | **Phase** | M7 |
-| **Assignee** | unassigned |
+| **Assignee** | nixp (user-directed prerequisite to CRUSH-266) |
 | **Dependencies** | none |
 | **Estimated effort** | S |
 | **Filed by** | claude — 2026-10-09 test-drive sweep, reproduced on `main` `554f077` (debug build) |
 
 ## Problem
 
-The `crush-vm` binary registers two powerful host caps for every program, with
+The `crush-vm` binary registered two powerful host caps for every program, with
 no host-side flag: `CargoCap` (runs `cargo` with program-chosen args and cwd)
 and `FfiGatewayCap` (`dlopen`s any path the program names). Both sit behind the
 `native-plugins` feature, which is on by default. The only gate is the
@@ -53,11 +53,14 @@ the missing `crush_plugin_init` symbol is reported).
 
 ## Success criteria
 
-- [ ] `crush-vm run` registers neither cap unless the host passes an explicit flag
-      (e.g. `--cap os.cargo`, `--plugin <path>` with an allowlist of plugin paths).
-- [ ] FFI loading is restricted to host-named libraries; a program cannot pick the path.
-- [ ] Regression test: the repro above fails with a capability error without the flag.
-- [ ] Readiness matrix entry for FFI updated to reflect the gate.
+- [x] `crush-vm run` registers neither cap. Native capabilities are available
+      only to embedders that deliberately construct a host registry; the CLI
+      does not expose a guest-controlled opt-in flag.
+- [x] The standalone runner no longer gives guest bytecode a library path to
+      load. The `load_plugin(path, host_caps)` API remains host-directed.
+- [x] Regression tests prove `os.cargo` and `__crush_ffi__` calls fail in the
+      standalone runner, even when the guest manifest declares those names.
+- [x] Readiness matrix entry for FFI updated to reflect the gate.
 
 ## Related
 
