@@ -55,6 +55,8 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         // --crypto
         "crypto.sha256" => &[],
         "crypto.random" => &["crypto/random"],
+        // --gpu: runs code on the GPU
+        "gpu.launch" => &["gpu/launch"],
         // --graphics: an in-memory canvas
         n if n.starts_with("graphics.") => &[],
         // --net
@@ -120,6 +122,8 @@ pub fn catalog() -> Vec<CapInfo> {
         ("--crypto", new().crypto(true)),
         ("--polyglot", new().polyglot(&["python", "javascript", "bash"])),
     ]);
+    #[cfg(feature = "gpu")]
+    grants.push(("--gpu", new().gpu(true)));
     #[cfg(feature = "graphics")]
     grants.push(("--graphics", new().graphics(true)));
     #[cfg(feature = "net")]

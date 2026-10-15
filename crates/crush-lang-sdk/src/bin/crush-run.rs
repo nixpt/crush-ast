@@ -107,6 +107,11 @@ struct RunArgs {
     #[arg(long)]
     crypto: bool,
 
+    /// Enable `gpu.launch`: run the program's GPU kernels on an NVIDIA GPU
+    /// (CRUSH-zorro-3). Needs a build with the `gpu` feature.
+    #[arg(long)]
+    gpu: bool,
+
     /// Enable graphics host capabilities (graphics.canvas/rect/circle/text/to_svg).
     #[arg(long)]
     graphics: bool,
@@ -503,6 +508,22 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         .akg(args.akg)
         .process(args.process)
         .crypto(args.crypto);
+
+    // `gpu.launch` compiles kernels from the program's CASM, which the CVM1
+    // program doesn't keep — so give the capability its own compile of the source.
+    #[cfg(feature = "gpu")]
+    if args.gpu {
+        builder = builder.gpu(true);
+        if ext == "crush" {
+            let source = std::fs::read_to_string(&args.path)?;
+            let casm = crush_lang_sdk::compile::compile_crush_to_casm(&source).map_err(CompileFailed)?;
+            builder = builder.gpu_program(std::sync::Arc::new(casm));
+        }
+    }
+    #[cfg(not(feature = "gpu"))]
+    if args.gpu {
+        anyhow::bail!("--gpu requires the 'gpu' feature, which this build of crush-run was compiled without");
+    }
 
     #[cfg(feature = "graphics")]
     {

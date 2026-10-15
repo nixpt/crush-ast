@@ -48,6 +48,8 @@ mod util;
 pub mod graphics;
 mod fs_tools;
 pub mod host_caps;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod repl;

@@ -25,6 +25,10 @@ pub struct HostCapsBuilder {
     akg: bool,
     process: bool,
     crypto: bool,
+    #[cfg(feature = "gpu")]
+    gpu: bool,
+    #[cfg(feature = "gpu")]
+    gpu_program: Option<Arc<casm::Program>>,
     #[cfg(feature = "graphics")]
     graphics: bool,
     #[cfg(feature = "net")]
@@ -126,6 +130,22 @@ impl HostCapsBuilder {
     /// Enable process capabilities (`process.exec`).
     pub fn process(mut self, enable: bool) -> Self {
         self.process = enable;
+        self
+    }
+
+    /// Enable `gpu.launch` (CRUSH-zorro-3). Kernels come from the program given to
+    /// [`Self::gpu_program`]; without one, every launch fails with "no function".
+    #[cfg(feature = "gpu")]
+    pub fn gpu(mut self, enable: bool) -> Self {
+        self.gpu = enable;
+        self
+    }
+
+    /// The program whose kernel functions `gpu.launch` may compile and run: the
+    /// CASM of the program being executed.
+    #[cfg(feature = "gpu")]
+    pub fn gpu_program(mut self, program: Arc<casm::Program>) -> Self {
+        self.gpu_program = Some(program);
         self
     }
 
@@ -271,6 +291,10 @@ impl HostCapsBuilder {
         if self.crypto {
             caps.register(Box::new(CryptoSha256Cap));
             caps.register(Box::new(CryptoRandomCap));
+        }
+        #[cfg(feature = "gpu")]
+        if self.gpu {
+            crate::gpu::register(&mut caps, self.gpu_program.clone());
         }
         #[cfg(feature = "graphics")]
         if self.graphics {

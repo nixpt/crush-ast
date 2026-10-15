@@ -125,6 +125,18 @@ impl PtxCompiler {
                     instrs.push(format!("\tmov.u64 {}, {};", r.name(), val));
                     self.stack.push(r);
                 }
+                // `push_null` / `pop`: the frontend gives every expression statement a
+                // value and pops it, and ends a function without an explicit `return` with
+                // `push_null; ret` (CRUSH-zorro-3). A kernel has no use for the value, so null
+                // is a zero register and `pop` just drops the compile-time stack slot.
+                "push_null" => {
+                    let r = self.next_reg(PtxType::S64);
+                    instrs.push(format!("\tmov.u64 {}, 0;", r.name()));
+                    self.stack.push(r);
+                }
+                "pop" => {
+                    self.stack.pop().ok_or("Stack underflow on pop")?;
+                }
                 "push_float" => {
                     let val = instr.args.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let r = self.next_reg(PtxType::F64);
@@ -274,6 +286,12 @@ impl PtxCompiler {
                         "f16" => PtxType::F16,
                         _ => return Err(format!("Unsupported cvt dest type: {}", to_ty_str)),
                     };
+                    // Same type: nothing to convert (`gpu.store_f32` always narrows its
+                    // value, which is often already f32).
+                    if a.ty == to_ty {
+                        self.stack.push(a);
+                        continue;
+                    }
                     let r = self.next_reg(to_ty.clone());
                     // PTX ISA requires a rounding modifier on `cvt` whenever the destination
                     // is an integer converted from a float (`.rni`), or a float narrowed from
@@ -438,4 +456,23 @@ pub fn compile_program(program: &Program) -> Result<String, String> {
         out.push_str(&ptx);
     }
     Ok(out)
+}
+
+/// Compile ONE function of `program` to a standalone PTX module (its own `.version`
+/// header and a single `.visible .entry <name>`). Uses a fresh [`PtxCompiler`], so no
+/// registers, locals or stack leak in from other functions — unlike
+/// [`compile_program`], which shares one compiler across every function. This is what
+/// a host launches (CRUSH-zorro-3 `gpu.launch`).
+pub fn compile_kernel(program: &Program, name: &str) -> Result<String, String> {
+    let func = program
+        .functions
+        .get(name)
+        .ok_or_else(|| format!("no function named `{name}` to compile as a GPU kernel"))?;
+    PtxCompiler::new().compile_function(name, func)
+}
+
+/// True if `func` uses a device-only `ptx_*` op, i.e. it is a GPU kernel that cannot
+/// run on the host VM (CRUSH-zorro-3).
+pub fn is_device_function(func: &casm::Function) -> bool {
+    func.body.iter().any(|i| i.op.starts_with("ptx_"))
 }

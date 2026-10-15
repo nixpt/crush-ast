@@ -1274,7 +1274,9 @@ dependencies = [
  "crush-index",
  "crush-lang-js",
  "crush-lang-python",
+ "crush-ptx",
  "crush-vm",
+ "cudarc",
  "getrandom 0.2.17",
  "rand",
  "regex",
@@ -1505,6 +1507,15 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "cudarc"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a5bd4d1eee570c3b2ac64ed114125517dd1e541d88dd28fc259f1de4dba8d60"
+dependencies = [
+ "libloading 0.8.9",
 ]
 
 [[package]]
