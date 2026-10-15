@@ -102,6 +102,13 @@ mod tests {
 
     #[test]
     #[cfg(feature = "polyglot-python")]
+    fn python_assignment_loop_uses_the_same_compiler_contract() {
+        let program = compile_source("py", "n = 0\nwhile n < 3:\n    n += 1\nprint(n)\n").unwrap();
+        assert_eq!(Runtime::new().run(&program).unwrap().output.trim(), "3");
+    }
+
+    #[test]
+    #[cfg(feature = "polyglot-python")]
     fn python_invalid_assignment_contract_is_rejected() {
         // The Python named-expression walker currently reverses the helper's
         // operands. The shared path must reject it before VM execution.
