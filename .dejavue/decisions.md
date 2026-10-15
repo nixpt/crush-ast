@@ -1066,3 +1066,20 @@ Rejected alternatives:
 Outcome:
 casm::kind_unsupported_strategies + cosm_unsupported_reason; Program::refuse_cosm and crush_vm::cosm_gate delegate to it. crush-aotc separately refuses object ops (it has no maps; they used to be dropped silently).
 
+
+## 2026-10-15T13:23:36-05:00 — [STRATEGIC] [ADOPTED] CRUSH-265: decline capability_discovery / adaptation_request / semantic_switch, fail loudly instead of NOP
+
+Reason:
+DECLINE for now (vega, owner's decision). The three AI statements compile to CASM ops that lower to a silent NOP on CVM1. Instead of porting onto ai_native (later ticket), each now fails loudly at compile time naming the statement. Frontend compile_ai_statement (crates/crush-frontend/src/compiler.rs) bails with "<statement> isn't supported yet (CRUSH-265): it would compile to a no-op" for capability_discovery, adaptation_request and semantic_switch. Hand-built CASM is refused by casm_to_vm (Unsupported CVM1 opcode) and FastVM lower_program (UnknownOpcode); AOT Rust/C and crush-aotc also refuse the ops. semantic_switch is NOT implemented via semantic_match — its ai_semantic_switch opcode lowers to NOP so dispatch never selects a case by target. NOP_STUBS updated (three removed, added to UNSUPPORTED with reasons). Tests added per statement plus an every-engine-refusal test. ai_agent_ops.crush marked // expect-error (intentional compile failure).
+
+Artifacts: crates/crush-frontend/src/compiler.rs,crates/crush-lang-sdk/src/compile.rs,crates/crush-lang-sdk/tests/casm_lowering_completeness.rs,crates/crush-aotc/src/codegen.rs,examples/crush/ai_agent_ops.crush
+
+Tensions: silent-wrong-vs-loud-error
+
+Values: nothing-is-silently-wrong
+
+Domain owner: vega
+
+Outcome:
+All engines refuse the three ops; none silent. Frontend + casm_to_vm + FastVM + AOT Rust/C + crush-aotc verified. Tests green: crush-frontend, crush-lang-sdk, crush-vm, crush-aot, crush-aotc; examples_parity green.
+
