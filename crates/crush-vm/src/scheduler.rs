@@ -444,6 +444,11 @@ pub fn run_scheduled_streaming(
     // How many of the main thread's output parts `sink` has seen.
     let mut streamed: usize = 0;
     let mut slice_remaining = SLICE_SIZE;
+    // Shared output buffer: all threads' prints go here in execution order,
+    // so interleaved output appears in the right sequence. (Fixes #174 review:
+    // per-thread buffers merged on finish produced wrong order.)
+    let mut shared_out_parts: Vec<String> = Vec::new();
+    let mut shared_out_len: usize = 0;
 
     loop {
         // --- round-robin: find a runnable thread ---
@@ -462,9 +467,10 @@ pub fn run_scheduled_streaming(
         }
         if !any_runnable {
             // Every thread is done or blocked — return main thread result
+            // with output from the shared buffer (all threads' prints in order).
             let main = &threads[0];
             return Ok(VmResult {
-                output: main.out_parts.concat(),
+                output: shared_out_parts.concat(),
                 steps: main.steps,
                 halted: true,
                 stack: main.stack.clone(),
@@ -499,16 +505,15 @@ pub fn run_scheduled_streaming(
         // Borrow ends when execute_one returns — index access is safe in the match below.
         let action = execute_one(
             &mut threads[current], code, ip, next_ip, n, program, quotas,
-            &declared, host_caps, &func_entry,
+            &declared, host_caps, &func_entry, &mut shared_out_parts, &mut shared_out_len,
         );
         // Before acting on an error: what the program printed so far still goes out.
-        if current == 0
-            && let Some(sink) = sink.as_deref_mut()
-        {
-            for part in &threads[0].out_parts[streamed..] {
+        // Stream from the shared buffer so worker thread output appears live too.
+        if let Some(sink) = sink.as_deref_mut() {
+            for part in &shared_out_parts[streamed..] {
                 sink(part);
             }
-            streamed = threads[0].out_parts.len();
+            streamed = shared_out_parts.len();
         }
         let action = action?;
 
@@ -535,14 +540,6 @@ pub fn run_scheduled_streaming(
             StepAction::Done(ret_val) => {
                 threads[current].done = true;
                 threads[current].return_value = ret_val;
-                if current == 0 {
-                    return Ok(VmResult {
-                        output: threads[0].out_parts.concat(),
-                        steps: threads[0].steps,
-                        halted: true,
-                        stack: threads[0].stack.clone(),
-                    });
-                }
                 // Capture return value before iterating to avoid aliasing.
                 let rv = threads[current].return_value.clone().unwrap_or(Value::Null);
                 for i in 0..threads.len() {
@@ -550,6 +547,18 @@ pub fn run_scheduled_streaming(
                         threads[i].waiting_for = None;
                         threads[i].stack.push(rv.clone());
                     }
+                }
+                // Go-style semantics (per #174 review): main returning ends the
+                // program. Use `await` on a spawn handle when you need a task
+                // to complete. Output uses the shared buffer, so interleaved
+                // prints appear in execution order.
+                if current == 0 {
+                    return Ok(VmResult {
+                        output: shared_out_parts.concat(),
+                        steps: threads[0].steps,
+                        halted: true,
+                        stack: threads[0].stack.clone(),
+                    });
                 }
             }
         }
@@ -578,13 +587,18 @@ fn execute_one(
     declared: &std::collections::HashSet<&str>,
     host_caps: Option<&HostCaps>,
     func_entry: &HashMap<&str, usize>,
+    shared_out_parts: &mut Vec<String>,
+    shared_out_len: &mut usize,
 ) -> Result<StepAction, VmError> {
     // Convenience aliases for thread state
     let stack = &mut thread.stack;
     let call_stack = &mut thread.call_stack;
     let try_stack = &mut thread.try_stack;
-    let out_parts = &mut thread.out_parts;
-    let out_len = &mut thread.out_len;
+    // Output goes to the shared buffer so interleaved prints from all threads
+    // appear in execution order. (Fixes #174 review: per-thread buffers
+    // produced wrong order.)
+    let out_parts = shared_out_parts;
+    let out_len = shared_out_len;
 
     macro_rules! pop {
         () => {{ stack.pop().ok_or(VmError::StackUnderflow)? }};
