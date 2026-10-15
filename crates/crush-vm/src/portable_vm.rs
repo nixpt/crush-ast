@@ -87,6 +87,32 @@ impl Frame {
     }
 }
 
+/// Instructions a green task runs before the next one gets a turn — the same
+/// slice the native scheduler uses (`scheduler.rs` `SLICE_SIZE`), so both
+/// engines interleave spawned tasks identically.
+const TASK_SLICE: usize = 50;
+
+/// A parked task's execution context.
+#[derive(Debug, Default)]
+struct TaskCtx {
+    stack: Vec<Value>,
+    call_stack: Vec<Frame>,
+    ip: usize,
+    try_stack: Vec<crate::vm::TryHandler>,
+}
+
+/// One cooperative green task (#161).
+#[derive(Debug, Default)]
+struct GreenTask {
+    /// Saved context while parked; `None` while running (or finished).
+    ctx: Option<TaskCtx>,
+    done: bool,
+    /// The finished task's return value.
+    result: Option<Value>,
+    /// Handle id this task is blocked on in `AWAIT`.
+    waiting_for: Option<usize>,
+}
+
 /// Portable bytecode interpreter.
 ///
 /// This is a self-contained CVM1 bytecode interpreter that doesn't
@@ -129,10 +155,18 @@ pub struct PortableVm {
     privileged_allowed: bool,
     /// Active try blocks, innermost last.
     try_stack: Vec<crate::vm::TryHandler>,
-    /// Next task ID for async spawn.
-    next_task_id: u64,
-    /// Scheduled tasks: task_id → (function name, args).
-    scheduled_tasks: std::collections::HashMap<u64, (String, Vec<Value>)>,
+    /// Green tasks (#161), indexed by handle id; `tasks[0]` is main. Empty
+    /// until the first `SPAWN`, so programs that never spawn pay nothing.
+    /// The running task's context lives in `stack` / `call_stack` / `ip` /
+    /// `try_stack`; parked tasks keep theirs in `GreenTask::ctx`.
+    tasks: Vec<GreenTask>,
+    /// Handle id of the running task.
+    current_task: usize,
+    /// Instructions left in the running task's time slice.
+    slice_remaining: usize,
+    /// Set by `YIELD`, a blocking `AWAIT`, or a task finishing: switch tasks
+    /// after the current instruction.
+    switch_requested: bool,
     /// Bytecode-level breakpoints (instruction offsets).
     breakpoints: Vec<usize>,
     /// Per-IP counter: how many breakpoint hits have been reported
@@ -204,8 +238,10 @@ impl PortableVm {
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
-            next_task_id: 1,
-            scheduled_tasks: std::collections::HashMap::new(),
+            tasks: Vec::new(),
+            current_task: 0,
+            slice_remaining: TASK_SLICE,
+            switch_requested: false,
             breakpoints: Vec::new(),
             breakpoint_hit: std::collections::HashMap::new(),
             breakpoint_count: std::collections::HashMap::new(),
@@ -573,6 +609,13 @@ impl PortableVm {
             self.ip = next_ip;
         }
         self.steps += 1;
+        if !self.tasks.is_empty() && !self.halted {
+            self.slice_remaining = self.slice_remaining.saturating_sub(1);
+            if self.switch_requested || self.slice_remaining == 0 {
+                self.switch_requested = false;
+                self.switch_task();
+            }
+        }
         self.last_stop = None;
         if let Some(req) = self.step_request.as_mut() {
             req.executed = true;
@@ -1040,6 +1083,12 @@ impl PortableVm {
                 let depth = self.call_stack.len();
                 self.try_stack.retain(|h| h.call_depth <= depth);
                 match frame.return_ip {
+                    // A spawned task's entry function returned: the task is
+                    // done; main returning ends the program (Go-style, #177).
+                    None if self.current_task != 0 => {
+                        let result = self.stack.pop().unwrap_or(Value::Null);
+                        self.finish_task(result);
+                    }
                     None => {
                         self.halted = true;
                     }
@@ -1505,34 +1554,57 @@ impl PortableVm {
                     args.push(self.pop()?);
                 }
                 args.reverse();
-                let task_id = self.next_task_id;
-                self.next_task_id += 1;
-                self.scheduled_tasks.insert(task_id, (fn_name, args));
-                self.push(Value::Int(task_id as i64));
+                // A real green task, like the native scheduler: it runs at the
+                // next YIELD / slice boundary, not only when awaited (#161).
+                match self.func_entry.get(&fn_name) {
+                    Some(&entry) => {
+                        if self.tasks.is_empty() {
+                            self.tasks.push(GreenTask::default()); // main, running
+                        }
+                        let id = self.tasks.len();
+                        self.tasks.push(GreenTask {
+                            ctx: Some(TaskCtx {
+                                stack: args,
+                                call_stack: vec![Frame::new(None)],
+                                ip: entry,
+                                try_stack: Vec::new(),
+                            }),
+                            ..GreenTask::default()
+                        });
+                        self.push(Value::Handle(id as u64));
+                    }
+                    None => self.push(Value::Null),
+                }
             }
             YIELD => {
-                // No OS threads on wasm32 — cooperative single-threaded execution
-                // already yields nothing to yield to, so this is a no-op there.
-                #[cfg(not(target_arch = "wasm32"))]
-                std::thread::yield_now();
+                if self.tasks.is_empty() {
+                    // Nothing spawned: no other task to hand control to.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::yield_now();
+                } else {
+                    self.switch_requested = true;
+                }
             }
             AWAIT => {
                 let handle = self.pop()?;
-                if let Value::Int(task_id) = handle {
-                    if let Some((fn_name, args)) = self.scheduled_tasks.remove(&(task_id as u64)) {
-                        if let Some(&entry) = self.func_entry.get(&fn_name) {
-                            if self.call_stack.len() >= self.quotas.max_call_depth {
-                                return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
-                            }
-                            self.stack.extend(args);
-                            self.call_stack
-                                .push(Frame::new(Some(next_ip)));
-                            self.jump_to(entry);
-                            return Ok(());
-                        }
+                let target = match handle {
+                    Value::Handle(id) => Some(id as usize),
+                    _ => None,
+                };
+                match target.and_then(|id| self.tasks.get(id).map(|t| (id, t.done))) {
+                    // Already finished: its result right away.
+                    Some((id, true)) => {
+                        let v = self.tasks[id].result.clone().unwrap_or(Value::Null);
+                        self.push(v);
                     }
+                    // Still running: block until it finishes; `finish_task`
+                    // pushes the result onto this task's stack.
+                    Some((id, false)) if id != self.current_task => {
+                        self.tasks[self.current_task].waiting_for = Some(id);
+                        self.switch_requested = true;
+                    }
+                    _ => self.push(Value::Null),
                 }
-                self.push(Value::Null);
             }
             HALT => {
                 self.halted = true;
@@ -1845,6 +1917,66 @@ impl PortableVm {
             return Err(VmError::StackQuota(self.quotas.max_stack));
         }
         Ok(())
+    }
+
+    /// The running task finished with `result`: record it, wake its waiters,
+    /// and switch away.
+    fn finish_task(&mut self, result: Value) {
+        let me = self.current_task;
+        for (i, t) in self.tasks.iter_mut().enumerate() {
+            if i != me && t.waiting_for == Some(me) {
+                t.waiting_for = None;
+                if let Some(ctx) = t.ctx.as_mut() {
+                    ctx.stack.push(result.clone());
+                }
+            }
+        }
+        let task = &mut self.tasks[me];
+        task.done = true;
+        task.result = Some(result);
+        self.switch_requested = true;
+    }
+
+    /// Whether task `i` can run: not finished and not blocked.
+    fn task_runnable(&self, i: usize) -> bool {
+        let t = &self.tasks[i];
+        !t.done && t.waiting_for.is_none()
+    }
+
+    /// Park the running task (unless it finished) and resume the next runnable
+    /// one, round-robin. If nothing is runnable — every task finished or blocked
+    /// — the program ends, as in the native scheduler.
+    fn switch_task(&mut self) {
+        self.slice_remaining = TASK_SLICE;
+        let n = self.tasks.len();
+        let cur = self.current_task;
+        let next = (1..=n).map(|k| (cur + k) % n).find(|&i| self.task_runnable(i));
+        // Nothing runnable: the program ends with main's result, as natively.
+        let Some(next) = next.or((cur != 0).then_some(0)) else {
+            self.halted = true;
+            return;
+        };
+        if !self.task_runnable(next) {
+            self.halted = true;
+        }
+        if next == cur {
+            return;
+        }
+        let parked = TaskCtx {
+            stack: std::mem::take(&mut self.stack),
+            call_stack: std::mem::take(&mut self.call_stack),
+            ip: self.ip,
+            try_stack: std::mem::take(&mut self.try_stack),
+        };
+        if !self.tasks[cur].done {
+            self.tasks[cur].ctx = Some(parked);
+        }
+        let ctx = self.tasks[next].ctx.take().unwrap_or_default();
+        self.stack = ctx.stack;
+        self.call_stack = ctx.call_stack;
+        self.ip = ctx.ip;
+        self.try_stack = ctx.try_stack;
+        self.current_task = next;
     }
 
     fn take_result(&self) -> VmResult {
