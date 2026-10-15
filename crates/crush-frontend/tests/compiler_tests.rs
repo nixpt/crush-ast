@@ -1,4 +1,5 @@
 use casm::OpCode;
+use crush_cast::ai::{AIStatement, AdaptationType, DiscoveryStrategy};
 use crush_cast::manifest::{Invariant, ModuleManifest};
 use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
@@ -1307,4 +1308,56 @@ fn typed_stack_emission_preserves_legacy_instruction_view() {
         .expect("tuple literal emits dup");
     assert_eq!(dup.args, serde_json::json!({}));
     assert_eq!(dup.to_opcode().unwrap(), OpCode::Dup);
+}
+
+// CRUSH-265: `capability_discovery`, `adaptation_request` and `semantic_switch`
+// compile to CASM ops that used to lower to a silent NOP on CVM1. The frontend
+// now refuses them at compile time with a loud error naming the statement.
+
+#[test]
+fn capability_discovery_fails_loudly_naming_statement() {
+    let body = vec![Statement::AI(AIStatement::CapabilityDiscovery {
+        domain: "search".to_string(),
+        requirements: vec!["index".to_string()],
+        discovery_strategy: DiscoveryStrategy::Broadcast,
+    })];
+    let mut compiler = Compiler::new();
+    let err = compiler.compile(create_program(body)).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("capability_discovery") && msg.contains("CRUSH-265") && msg.contains("no-op"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn adaptation_request_fails_loudly_naming_statement() {
+    let body = vec![Statement::AI(AIStatement::AdaptationRequest {
+        adaptation_type: AdaptationType::Performance,
+        reason: "latency".to_string(),
+        parameters: HashMap::new(),
+    })];
+    let mut compiler = Compiler::new();
+    let err = compiler.compile(create_program(body)).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("adaptation_request") && msg.contains("CRUSH-265") && msg.contains("no-op"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn semantic_switch_fails_loudly_naming_statement() {
+    let body = vec![Statement::AI(AIStatement::SemanticSwitch {
+        target: Box::new(var("intent_text")),
+        cases: vec![],
+        fallback: None,
+    })];
+    let mut compiler = Compiler::new();
+    let err = compiler.compile(create_program(body)).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("semantic_switch") && msg.contains("CRUSH-265") && msg.contains("no-op"),
+        "{msg}"
+    );
 }

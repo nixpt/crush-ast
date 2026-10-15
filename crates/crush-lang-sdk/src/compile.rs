@@ -758,8 +758,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         format!("{opcode} {payload:?}")
                     }
                 }
-                "ai_capability_discovery" | "ai_adaptation_request" => "NOP".to_string(),
-                "ai_semantic_switch" => "NOP".to_string(),
+                // CRUSH-265: `ai_capability_discovery`, `ai_adaptation_request` and
+                // `ai_semantic_switch` used to lower to `NOP` here — a silent no-op.
+                // They now fail loudly (see the frontend's `compile_ai_statement` and
+                // the `Unsupported CVM1 opcode` arm below) instead of being silently
+                // dropped; porting onto `ai_native` is a later ticket.
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));
