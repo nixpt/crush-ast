@@ -1,0 +1,7 @@
+# jagent writer namespace for the xps box.
+# Ticket IDs in this namespace are distinct from other-box CRUSH-zorro IDs.
+namespace = "xps"
+kind = "box"
+owner = "nixpt"
+host = "xps"
+retired = false
