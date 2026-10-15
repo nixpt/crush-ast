@@ -24,6 +24,8 @@ pub mod arithmetic;
 pub mod make_range;
 pub mod seq;
 pub mod num_text;
+pub mod js_core;
+pub mod js_ops;
 pub mod map_ops;
 pub mod caps;
 pub mod cap_inference;

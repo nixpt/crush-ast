@@ -61,6 +61,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "JavaScript a / b: an exact int quotient stays an int, otherwise float",
         });
         reg(CapabilitySpec {
+            name: "js.add",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a + b: string concatenation with JS ToString when either side is a string, else numeric",
+        });
+        reg(CapabilitySpec {
             name: "conv.text",
             argc: Some(2),
             returns: true,

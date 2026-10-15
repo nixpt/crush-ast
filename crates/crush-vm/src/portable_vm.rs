@@ -1692,6 +1692,7 @@ impl PortableVm {
                 "js.div" => {
                     crate::arithmetic::js_div_values(&args[0], &args[1]).map(Some)
                 }
+                "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
                 "conv.text" => {
                     crate::num_text::text_as(&args[0], &args[1]).map(Some)
                 }
