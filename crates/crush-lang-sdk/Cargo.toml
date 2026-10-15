@@ -41,6 +41,10 @@ graphics = []
 # `default-features = false`; `--stdlib` then fails loudly instead of no-oping.
 stdlib = ["dep:regex"]
 repl-helper = ["dep:rustyline"]
+# `gpu.launch` (CRUSH-zorro-3): run a crush kernel on an NVIDIA GPU. Off by default —
+# it pulls in the CUDA driver bindings (loaded at runtime, so building needs no CUDA
+# toolkit) and crush-ptx. `crush run --gpu` grants it.
+gpu = ["dep:crush-ptx", "dep:cudarc"]
 # crush-diff's differential module compares against crush-vm's FastVM
 # backend, which needs crush-vm's own native-plugins (libloading — no
 # wasm32 story). Default on so `crush-run`/`crush-compile`/`crush-repl`/
@@ -66,6 +70,8 @@ casm.workspace = true
 crush-frontend.workspace = true
 crush-lang-python = { path = "../crush-lang-python", version = "0.5.0", optional = true }
 crush-lang-js = { path = "../crush-lang-js", version = "0.5.0", optional = true }
+crush-ptx = { path = "../crush-ptx", version = "0.1.0", optional = true }
+cudarc = { version = "0.11", features = ["driver", "nvrtc", "cuda-12040"], optional = true }
 crush-errors.workspace = true
 crush-index.workspace = true
 crush-caison.workspace = true

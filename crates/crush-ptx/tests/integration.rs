@@ -211,3 +211,45 @@ fn test_q6k_gemv_emits_ptxas_valid_kernel() {
         }
     }
 }
+
+/// CRUSH-zorro-3: a kernel written in crush source, using the `gpu.*` intrinsics,
+/// compiles to a standalone PTX entry through `compile_kernel` — and, when `ptxas`
+/// is on PATH, that PTX assembles cleanly. The host part of the same file (with a
+/// generated `main`) is left alone: `compile_kernel` only touches the named function.
+#[test]
+fn test_vec_add_crush_source_to_ptx() {
+    let source = include_str!("../../../examples/gpu/vec_add.crush");
+    let program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let kernel = &program.functions["vec_add"];
+    assert!(crush_ptx::is_device_function(kernel));
+    assert!(!crush_ptx::is_device_function(&program.functions["main"]));
+
+    let ptx = crush_ptx::compile_kernel(&program, "vec_add").expect("compile_kernel");
+    assert!(ptx.contains(".visible .entry vec_add"), "{ptx}");
+    assert!(ptx.contains("ld.global.f32"), "{ptx}");
+    assert!(ptx.contains("st.global.f32"), "{ptx}");
+    assert!(ptx.contains("add.f32"), "{ptx}");
+    assert_eq!(ptx.matches(".entry").count(), 1, "exactly one kernel in the module");
+
+    // Assemble with ptxas when available (CI boxes without CUDA skip this half).
+    let Ok(ptxas) = which_ptxas() else { return };
+    let dir = std::env::temp_dir().join(format!("crush266-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("vec_add.ptx");
+    std::fs::write(&path, &ptx).unwrap();
+    let out = std::process::Command::new(ptxas)
+        .args(["--gpu-name", "sm_80", "-o", "/dev/null"])
+        .arg(&path)
+        .output()
+        .expect("run ptxas");
+    assert!(out.status.success(), "ptxas rejected the PTX:\n{}\n{ptx}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn which_ptxas() -> Result<std::path::PathBuf, ()> {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .map(|d| d.join("ptxas"))
+        .find(|p| p.is_file())
+        .ok_or(())
+}

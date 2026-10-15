@@ -4,6 +4,18 @@ use casm::{Function as CasmFunction, Instruction, Manifest, OpCode, Program as C
 use crush_cast::*;
 use std::collections::{HashMap, HashSet};
 
+/// Device-side GPU intrinsics lowered to `ptx_*` CASM ops (CRUSH-zorro-3). Host-side
+/// `gpu.launch` is deliberately NOT here: it stays an ordinary capability call.
+const GPU_INTRINSICS: &[&str] = &[
+    "gpu.thread_idx",
+    "gpu.block_idx",
+    "gpu.block_dim",
+    "gpu.global_id",
+    "gpu.load_f32",
+    "gpu.store_f32",
+    "gpu.f32",
+];
+
 pub type CompileError = anyhow::Error;
 
 pub struct Compiler {
@@ -1807,6 +1819,11 @@ impl Compiler {
                         instrs.push(self.create_instr("swap", serde_json::json!({}), meta));
                         instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
                     }
+                } else if GPU_INTRINSICS.contains(&name.as_str())
+                    && !self.declared_vars.contains("gpu")
+                    && !self.local_functions.contains(name)
+                {
+                    self.compile_gpu_intrinsic(name, args, meta, instrs)?;
                 } else if self.local_functions.contains(name) {
                     // Last-to-first, like every other `call`: the callee's
                     // `store <param1>` pops the first argument (CRUSH-138).
@@ -2457,6 +2474,86 @@ impl Compiler {
                     meta,
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Lower a device-side `gpu.*` intrinsic (CRUSH-zorro-3) to the `ptx_*` CASM ops that
+    /// crush-ptx compiles. A function using any of these is a GPU kernel: crush-ptx turns
+    /// it into PTX, and the CVM1 lowering skips it (it cannot run on the host VM).
+    ///
+    /// Every integer result is widened to s64, the type crush-ptx gives kernel
+    /// parameters and integer literals, so `gpu.global_id() < n` type-checks without a
+    /// manual `cvt`. Buffers are f32 device pointers; `gpu.load_f32` / `gpu.store_f32`
+    /// take an element index and scale it by 4 themselves.
+    fn compile_gpu_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Expression],
+        meta: &HashMap<String, serde_json::Value>,
+        instrs: &mut Vec<Instruction>,
+    ) -> Result<()> {
+        let expect = |n: usize| -> Result<()> {
+            if args.len() != n {
+                bail!("{name}() expects exactly {n} argument(s), got {}", args.len());
+            }
+            Ok(())
+        };
+        let op = |s: &Self, op: &str, args: serde_json::Value| s.create_instr(op, args, meta);
+        let s64 = || serde_json::json!({"type": "s64"});
+        // `buf + i*4`: the f32 element address, left on the stack.
+        let f32_addr = |s: &mut Self, instrs: &mut Vec<Instruction>| -> Result<()> {
+            s.compile_expr(&args[0], instrs)?;
+            s.compile_expr(&args[1], instrs)?;
+            instrs.push(op(s, "push_int", serde_json::json!({"value": 2})));
+            instrs.push(op(s, "shl", serde_json::json!({})));
+            instrs.push(op(s, "add", serde_json::json!({})));
+            Ok(())
+        };
+        match name {
+            "gpu.thread_idx" | "gpu.block_idx" | "gpu.block_dim" => {
+                expect(0)?;
+                let ptx = match name {
+                    "gpu.thread_idx" => "ptx_thread_idx_x",
+                    "gpu.block_idx" => "ptx_block_idx_x",
+                    _ => "ptx_block_dim_x",
+                };
+                instrs.push(op(self, ptx, serde_json::json!({})));
+                instrs.push(op(self, "cvt", s64()));
+            }
+            "gpu.global_id" => {
+                // block_idx * block_dim + thread_idx (x dimension).
+                expect(0)?;
+                for ptx in ["ptx_block_idx_x", "ptx_block_dim_x"] {
+                    instrs.push(op(self, ptx, serde_json::json!({})));
+                    instrs.push(op(self, "cvt", s64()));
+                }
+                instrs.push(op(self, "mul", serde_json::json!({})));
+                instrs.push(op(self, "ptx_thread_idx_x", serde_json::json!({})));
+                instrs.push(op(self, "cvt", s64()));
+                instrs.push(op(self, "add", serde_json::json!({})));
+            }
+            "gpu.load_f32" => {
+                expect(2)?;
+                f32_addr(self, instrs)?;
+                instrs.push(op(self, "ptx_ld_global", serde_json::json!({"type": "f32"})));
+            }
+            "gpu.store_f32" => {
+                expect(3)?;
+                f32_addr(self, instrs)?;
+                self.compile_expr(&args[2], instrs)?;
+                instrs.push(op(self, "cvt", serde_json::json!({"type": "f32"})));
+                instrs.push(op(self, "ptx_st_global", serde_json::json!({})));
+                // A store is a statement; give the expression its usual null value so
+                // the `ExprStmt` pop stays balanced.
+                instrs.push(op(self, "push_null", serde_json::json!({})));
+            }
+            "gpu.f32" => {
+                expect(1)?;
+                self.compile_expr(&args[0], instrs)?;
+                instrs.push(op(self, "cvt", serde_json::json!({"type": "f32"})));
+            }
+            _ => bail!("unknown GPU intrinsic {name}"),
         }
         Ok(())
     }

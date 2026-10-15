@@ -369,6 +369,12 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     }
 
     for (fname, func) in &program.functions {
+        // A GPU kernel (it uses `ptx_*` device ops, CRUSH-zorro-3) runs on the device via
+        // `gpu.launch`, which compiles it from CASM with crush-ptx. It has no CVM1
+        // form, so it is left out of the host program.
+        if func.body.iter().any(|i| i.op.starts_with("ptx_")) {
+            continue;
+        }
         let mut slot_map: HashMap<String, u16> = HashMap::new();
         let mut next_slot: u16 = 0;
         let local_funcs: HashSet<String> = program.functions.keys().cloned().collect();

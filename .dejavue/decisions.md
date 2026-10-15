@@ -885,3 +885,17 @@ Rejected alternatives:
 Outcome:
 all exo runtimes retired; EXEC_LANG + buckets is the polyglot path
 
+
+## 2026-10-15T00:18:41-05:00 — [TACTICAL] [VERIFIED] GPU kernels in .crush: gpu.* intrinsics lower to ptx_* CASM ops; gpu.launch compiles them from CASM at launch
+
+Reason:
+CRUSH-zorro-3 (vector-add milestone). A kernel is any function using device intrinsics. The frontend lowers gpu.* dotted calls straight to the ptx_* ops crush-ptx already compiles, widening integer results to s64 to match the kernel's s64 params. The CVM1 lowering skips such functions, since the VM never runs them. CVM1 bytecode drops CASM, so gpu.launch (crush-lang-sdk feature gpu, cudarc 0.11) is handed the program's CASM by crush-run and compiles one kernel with crush_ptx::compile_kernel, a fresh compiler per kernel. Arrays are uploaded as f32 buffers and written back in place, which keeps the host API one call with no buffer handles. Verified on the 5070 Ti: vec_add.crush gives 0 mismatches over 1000 elements.
+
+Rejected alternatives:
+- **@gpu.launch syntax**: '@' is not callable in crush source; dotted capability calls are the language's form, and the renderer prints them with @
+- **compile_program on the whole module**: it shares registers/locals across functions and fails on host functions
+- **buffer handles (gpu.alloc/upload/download)**: more surface than the milestone needs; in-place write-back covers it, handles can come with device-resident buffers
+
+Outcome:
+examples/gpu/vec_add.crush runs via crush-run run --gpu; tests: crush-ptx test_vec_add_crush_source_to_ptx (ptxas), crush-lang-sdk tests/gpu_launch.rs
+
