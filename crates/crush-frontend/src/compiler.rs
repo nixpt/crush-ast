@@ -1408,6 +1408,20 @@ impl Compiler {
                 if matches!(operator.as_str(), "and" | "&&" | "or" | "||") {
                     return self.compile_short_circuit(operator, left, right, meta, instrs);
                 }
+                // `a ** b`: exact for int ** non-negative int, float otherwise
+                // (one shared implementation in every engine; `math_pow` is
+                // always float).
+                if operator == "**" {
+                    self.all_permissions.insert("math.power".to_string());
+                    self.compile_expr(left, instrs)?;
+                    self.compile_expr(right, instrs)?;
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "math.power", "argc": 2}),
+                        meta,
+                    ));
+                    return Ok(());
+                }
                 self.compile_expr(left, instrs)?;
                 self.compile_expr(right, instrs)?;
                 let opcode = match operator.as_str() {
@@ -1584,7 +1598,23 @@ impl Compiler {
                         bail!("array.pop() expects exactly 1 argument");
                     }
                     self.compile_expr(&args[0], instrs)?;
+                    // The `array_pop` op leaves [array, value]; `array.pop(a)` is
+                    // an expression whose value is the element, so drop the
+                    // array — otherwise it shifts the operands of whatever
+                    // encloses the call (`print(len(a), a.pop())` printed the array).
                     instrs.push(self.create_instr("array_pop", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("swap", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                } else if function == "__crush_slice__" {
+                    // `t[start:stop:step]` (null bounds = from the edge).
+                    if args.len() != 4 {
+                        bail!("slice as a value (outside a subscript) is not supported yet");
+                    }
+                    self.all_permissions.insert("seq.slice".to_string());
+                    for a in args {
+                        self.compile_expr(a, instrs)?;
+                    }
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "seq.slice", "argc": 4}), &meta));
                 } else if function == "__crush_setindex__" {
                     // Intrinsic: indexed assignment lowered from walker (e.g., `arr[i] = val`)
                     // args[0] = target, args[1] = index, args[2] = value

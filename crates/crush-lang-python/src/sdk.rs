@@ -89,13 +89,12 @@ mod tests {
         );
     }
 
-    // CRUSH-196: slicing and `in` have no implementation yet. They used to
-    // run against stubs that returned None (`print(arr[0:2])` printed
-    // `None`); until they are implemented they must fail loudly instead.
+    // CRUSH-196: slicing used to run against a stub that returned None; it is
+    // now `seq.slice` (CPython slice semantics). `in` is still unimplemented
+    // and must fail loudly.
     #[test]
-    fn test_slice_fails_loudly_until_implemented() {
-        let err = run_python("arr = [1,2,3]\nprint(arr[0:2])").unwrap_err();
-        assert!(err.to_string().contains("__crush_slice__"), "{err}");
+    fn test_slice() {
+        assert_eq!(run_python("arr = [1,2,3]\nprint(arr[0:2])").unwrap(), "[1, 2]");
     }
 
     #[test]

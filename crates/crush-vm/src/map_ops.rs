@@ -6,7 +6,6 @@
 //! null.
 
 use crate::vm::{Value, VmError};
-use std::collections::HashMap;
 
 pub fn map_key_string(v: &Value) -> Result<String, VmError> {
     match v {
@@ -18,7 +17,7 @@ pub fn map_key_string(v: &Value) -> Result<String, VmError> {
     }
 }
 
-pub fn map_get(map: &HashMap<String, Value>, key: &str) -> Result<Value, VmError> {
+pub fn map_get(map: &crate::vm::MapStore, key: &str) -> Result<Value, VmError> {
     map.get(key).cloned().ok_or(VmError::TypeError {
         expected: "present map key",
         got: "absent key",

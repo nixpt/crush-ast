@@ -36,12 +36,83 @@ pub fn format_py_print_line(parts: &[impl AsRef<str>]) -> String {
 /// Render a [`crate::vm::Value`] the way CPython's `print` would for bool/None,
 /// otherwise the canonical Crush `Display` / `as_text` form.
 pub fn py_value_to_text(v: &crate::vm::Value) -> String {
+    // `print(x)` is `str(x)`: a top-level string prints raw; everything else
+    // (and every element inside a container) is `repr`.
     match v {
-        crate::vm::Value::Bool(true) => "True".to_string(),
-        crate::vm::Value::Bool(false) => "False".to_string(),
-        crate::vm::Value::Null => "None".to_string(),
+        crate::vm::Value::Str(s) => s.clone(),
+        other => py_repr(other),
+    }
+}
+
+/// CPython `repr()` for a crush value: `True`/`False`/`None`, quoted strings,
+/// `[...]` lists, `(x,)` tuples, `{'k': v}` dicts (insertion order), and
+/// floats with Python's switch to exponent notation.
+pub fn py_repr(v: &crate::vm::Value) -> String {
+    use crate::vm::Value;
+    let seq = |items: &mut dyn Iterator<Item = String>| items.collect::<Vec<_>>().join(", ");
+    match v {
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Null => "None".to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => py_float(*f),
+        Value::Str(s) => py_str_repr(s),
+        Value::Array(a) | Value::Vector(a) => format!("[{}]", seq(&mut a.borrow().iter().map(py_repr))),
+        Value::List(l) => format!("[{}]", seq(&mut l.borrow().iter().map(py_repr))),
+        Value::Tuple(t) if t.len() == 1 => format!("({},)", py_repr(&t[0])),
+        Value::Tuple(t) => format!("({})", seq(&mut t.iter().map(py_repr))),
+        Value::Set(s) if s.borrow().is_empty() => "set()".to_string(),
+        Value::Set(s) => format!("{{{}}}", seq(&mut s.borrow().iter().map(py_repr))),
+        Value::Map(m) => format!(
+            "{{{}}}",
+            seq(&mut m.borrow().iter().map(|(k, v)| format!("{}: {}", py_str_repr(k), py_repr(v))))
+        ),
         other => other.as_text(),
     }
+}
+
+/// CPython float repr: shortest round-trip digits, `.0` on integral values,
+/// exponent form (`1e+21`, `1.5e-07`) outside 1e-4 <= |f| < 1e16.
+pub fn py_float(f: f64) -> String {
+    if f.is_nan() {
+        return "nan".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "inf" } else { "-inf" }.to_string();
+    }
+    let a = f.abs();
+    if a == 0.0 || (1e-4..1e16).contains(&a) {
+        return if f.fract() == 0.0 { format!("{f:.1}") } else { format!("{f}") };
+    }
+    // Rust `{:e}` gives the shortest digits as `1.5e-7`; CPython writes `1.5e-07`.
+    let e = format!("{f:e}");
+    let (mant, exp) = e.split_once('e').expect("exponent form");
+    let exp: i32 = exp.parse().expect("exponent");
+    format!("{mant}e{}{:02}", if exp < 0 { '-' } else { '+' }, exp.abs())
+}
+
+/// CPython `repr()` of a string: single quotes unless the text contains a
+/// single quote and no double quote.
+pub fn py_str_repr(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == q => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push(q);
+    out
 }
 
 /// Render a [`RuntimeValue`] the same way `io.print` expects for its argument.
@@ -150,6 +221,25 @@ mod tests {
         assert_eq!(format_io_print_line(&["hello".to_string()]), "hello\n");
         assert_eq!(format_io_print_line(&["a".to_string(), "b".to_string()]), "ab\n");
         assert_eq!(format_io_print_line(&[] as &[String]), "\n");
+    }
+
+    #[test]
+    fn py_repr_matches_cpython() {
+        use crate::vm::Value;
+        let list = Value::new_array(vec![
+            Value::Str("a".into()), Value::Int(1), Value::Float(2.5), Value::Bool(true), Value::Null,
+            Value::new_array(vec![Value::Str("it's".into())]),
+        ]);
+        // python3 -c "print(['a', 1, 2.5, True, None, [\"it's\"]])"
+        assert_eq!(py_value_to_text(&list), "['a', 1, 2.5, True, None, [\"it's\"]]");
+        let d = Value::new_map(vec![("zeta".to_string(), Value::Int(1)), ("a b".to_string(), Value::Str("x\ny".into()))]);
+        assert_eq!(py_value_to_text(&d), "{'zeta': 1, 'a b': 'x\\ny'}");
+        assert_eq!(py_value_to_text(&Value::Tuple(vec![Value::Int(1)])), "(1,)");
+        assert_eq!(py_value_to_text(&Value::Str("raw".into())), "raw");
+        for (f, want) in [(6.0, "6.0"), (0.1 + 0.2, "0.30000000000000004"), (1e21, "1e+21"), (1.5e-7, "1.5e-07"),
+                          (1e16, "1e+16"), (123456789012345.0, "123456789012345.0"), (0.0001, "0.0001"), (-0.0, "-0.0")] {
+            assert_eq!(py_float(f), want, "{f}");
+        }
     }
 
     #[test]

@@ -890,6 +890,10 @@ all exo runtimes retired; EXEC_LANG + buckets is the polyglot path
 
 Reason:
 Decided by the repo owner 2026-10-15. A task's HALT finishes the task like RET: its top-of-stack is its result and its waiters wake; only main's HALT ends the program. Consistent with Go-style 'main returning ends the program' (#177) and with #176 scopes. Today the scheduler returns StepAction::Finish (whole program) from any thread, and crush-vm's spawn_await_roundtrip test only passes because of that (#181); it gets rewritten to test through AWAIT.
+## 2026-10-14T23:58:03-05:00 — [STRATEGIC] [ADOPTED] CRUSH-47: decline the embedded RustPython VM lane — parser-only frontends
+
+Reason:
+Decided by the repo owner 2026-10-15: an embedded language VM is a dead path that exosphere's in-tree crush already had, and it dragged in a set of VMs. crush keeps parser-only frontends (rustpython-parser for Python, swc for JS) and runs the lowered program on crush-vm, supporting each language's format and semantics there. Host-language execution stays EXEC_LANG + buckets (CRUSH-55 D-2).
 
 Domain owner: nixpt
 
@@ -948,4 +952,8 @@ Rejected alternatives:
 
 Outcome:
 collections.* return insertion order
+- **embed RustPython VM as runtime=rustpython (feature-gated)**
+
+Outcome:
+CRUSH-47 declined; Python parity pursued in crush-vm (cpython_corpus)
 
