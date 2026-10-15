@@ -1,3 +1,4 @@
+// expect-error: Unknown annotation: @kernel
 // Q6_K dequant → GEMV, authored in crush.  Illustrative surface for the
 // crush→PTX backend (docs/design/crush-ptx-backend.md).  NOT yet compilable.
 //

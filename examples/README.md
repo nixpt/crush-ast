@@ -51,3 +51,21 @@ a ticket, just noting it here since it's directly adjacent to what this
 section is about.
 
 See `cookbook.md` in `docs/cast/` for the full index.
+
+## Compile expectations (`// expect-error:`)
+
+Every file under `examples/` is compiled by `crates/crush-lang-sdk/tests/examples_compile.rs`
+as part of `cargo test`. Two rules apply:
+
+- An **unmarked** file must compile cleanly. A compile failure there is a bug and
+  fails the test.
+- A file may carry a `// expect-error: <substring>` marker on its own line within
+  the first ~20 lines. It must then *fail* with an error containing `<substring>`
+  (either at compile time or at run time). If it compiles and runs cleanly, the
+  marker is stale and must be removed — never delete an example to silence the
+  test.
+
+The marker exists so examples that intentionally can't compile (or can't run)
+still exercise the test suite instead of being silently skipped — the gap found
+in CRUSH-226/#226, where `crates/crush-aot/tests/examples_parity.rs` skipped any
+example that failed to compile.
