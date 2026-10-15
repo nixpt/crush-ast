@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crush_cast::{CastType, Expression, Function, ImportStatement, Program, Statement};
 use swc_ecma_ast::*;
 use crush_walker_core::LowerCtx;
+use crate::lower_common::rewrite_continue;
 
 fn meta(span: &swc_common::Span, ctx: &LowerCtx) -> HashMap<String, serde_json::Value> {
     let offset = span.lo.0 as usize;
@@ -1065,38 +1066,6 @@ fn expr_to_stmts(e: &Expr, span: &swc_common::Span, ctx: &LowerCtx) -> anyhow::R
         }
         e => Ok(vec![Statement::ExprStmt { expr: lower_expr(e, ctx)?, meta: meta(span, ctx) }]),
     }
-}
-
-/// Make every `continue` that belongs to the enclosing loop run `prefix` first
-/// (a C-style `for`'s update, a `do-while`'s test). Nested loops and functions
-/// own their own `continue`s and are left alone.
-pub(crate) fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> Vec<Statement> {
-    if prefix.is_empty() {
-        return stmts;
-    }
-    let mut out = Vec::with_capacity(stmts.len());
-    for s in stmts {
-        match s {
-            Statement::Continue { meta } => {
-                out.extend(prefix.iter().cloned());
-                out.push(Statement::Continue { meta });
-            }
-            Statement::If { condition, then_body, else_body, meta } => out.push(Statement::If {
-                condition,
-                then_body: rewrite_continue(then_body, prefix),
-                else_body: else_body.map(|e| rewrite_continue(e, prefix)),
-                meta,
-            }),
-            Statement::TryCatch { body, error_var, handler, meta } => out.push(Statement::TryCatch {
-                body: rewrite_continue(body, prefix),
-                error_var,
-                handler: rewrite_continue(handler, prefix),
-                meta,
-            }),
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 fn lower_var_declarator(

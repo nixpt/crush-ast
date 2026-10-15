@@ -2,7 +2,7 @@
 name = "crush-lang-js"
 version.workspace = true
 edition = "2024"
-description = "JavaScript/TypeScript language support for Crush — dual-backend JS/TS frontend (swc primary + boa optional)"
+description = "JavaScript/TypeScript language support for Crush — JS/TS frontend: boa_parser for JS, swc for TS (and for JS until CRUSH-250 flips the default)"
 readme = "../../README.md"
 license.workspace = true
 repository.workspace = true
@@ -12,9 +12,20 @@ name = "js_walker"
 path = "src/bin/walker.rs"
 
 [features]
-default = ["swc-backend"]
-swc-backend = []
-boa-backend = ["boa_ast", "boa_parser", "boa_interner"]
+# No behaviour change yet: `.js` still lowers through swc by default. CRUSH-250
+# flips `.js` to `js-boa` once the parity harness says boa >= swc in every area,
+# then retires the swc lowering for JS (swc then remains only behind `ts`).
+default = ["swc-backend", "ts"]
+# The swc parser and its JS lowering (`lower_swc.rs`). While it is on, it
+# lowers `.js`/`.mjs`/`.cjs`/`.jsx`; the browser build leaves it off.
+swc-backend = ["dep:swc_ecma_parser", "dep:swc_ecma_ast", "dep:swc_common", "dep:swc_atoms"]
+# TypeScript (`.ts`/`.tsx`/`.mts`). Today through the swc lowering; with
+# CRUSH-zorro-8, through swc type-stripping into the boa lowering.
+ts = ["swc-backend"]
+# The `boa_parser` 0.22 frontend (CRUSH-250): no swc. Lowers `.js` when
+# `swc-backend` is off, and is what `freevars` (the `@javascript {}` polyglot
+# analysis) uses whenever it is on.
+js-boa = ["dep:boa_ast", "dep:boa_parser", "dep:boa_interner"]
 
 [dependencies]
 crush-cast.workspace = true
@@ -22,13 +33,14 @@ crush-walker-core = { path = "../crush-walker-core", version = "0.6.0", default-
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-swc_ecma_parser = "41"
-swc_ecma_ast = "25"
-swc_common = "23"
-swc_atoms = "9"
-boa_parser = { version = "0.21", optional = true }
-boa_ast = { version = "0.21", optional = true }
-boa_interner = { version = "0.21", optional = true }
+swc_ecma_parser = { version = "41", optional = true }
+swc_ecma_ast = { version = "25", optional = true }
+swc_common = { version = "23", optional = true }
+swc_atoms = { version = "9", optional = true }
+# One Boa version across crush-ast, bozo and surfer (which is on 0.22).
+boa_parser = { version = "0.22", optional = true }
+boa_ast = { version = "0.22", optional = true }
+boa_interner = { version = "0.22", optional = true }
 
 [dev-dependencies]
 crush-frontend = { path = "../crush-frontend" }

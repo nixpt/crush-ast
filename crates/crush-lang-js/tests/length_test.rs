@@ -4,6 +4,9 @@
 //! `total = total + s.length` failed with "arithmetic on non-numeric operands".
 //! It now lowers to the `len` op, which every engine (incl. AOT) implements.
 
+// The swc lowering (the `.js` default while `swc-backend` is on).
+#![cfg(feature = "swc-backend")]
+
 use crush_lang_js::js_to_cast;
 
 fn run_js(source: &str) -> String {

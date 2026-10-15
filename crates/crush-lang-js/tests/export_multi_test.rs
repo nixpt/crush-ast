@@ -4,6 +4,9 @@
 //! the loop returned on the first iteration (`clippy::never_loop`). These tests
 //! assert every exported name reaches CAST.
 
+// The swc lowering (the `.js` default while `swc-backend` is on).
+#![cfg(feature = "swc-backend")]
+
 use crush_cast::Statement;
 use crush_lang_js::js_to_cast;
 

@@ -2,7 +2,8 @@
 //! message naming what isn't supported — never print something node wouldn't.
 //! (What it does support is pinned by the node corpus.)
 
-#![cfg(not(feature = "boa-backend"))]
+// `js_to_cast(.., "js")` is the swc lowering while `swc-backend` is on.
+#![cfg(feature = "swc-backend")]
 
 fn run(source: &str) -> anyhow::Result<String> {
     let cast = crush_lang_js::js_to_cast(source, "js")?;

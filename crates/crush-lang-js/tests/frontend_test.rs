@@ -1,3 +1,6 @@
+// The swc lowering (`.js` default while `swc-backend` is on) and TypeScript.
+#![cfg(feature = "ts")]
+
 use crush_lang_js::JsFrontend;
 use crush_walker_core::Frontend;
 

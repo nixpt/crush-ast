@@ -11,6 +11,9 @@
 //! compilation succeeded. A "did it compile" test reproduces the exact blind
 //! spot that let this ship: the broken form compiled fine.
 
+// The swc lowering (the `.js` default while `swc-backend` is on).
+#![cfg(feature = "swc-backend")]
+
 use crush_lang_js::js_to_cast;
 
 /// JS source → CAST → CASM → VM, returning the trimmed `io.print` output.
