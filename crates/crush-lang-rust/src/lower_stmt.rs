@@ -3,6 +3,7 @@
 use crush_walker_core::LowerCtx;
 
 use crush_cast::{CastType, Expression, Statement};
+use quote::ToTokens;
 use syn::Stmt;
 
 use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
@@ -52,10 +53,10 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                     meta,
                 })
             }
-            _ => Ok(Statement::ExprStmt {
-                expr: Expression::NullLiteral { meta: meta.clone() },
-                meta,
-            }),
+            _ => anyhow::bail!(
+                "unsupported Rust item in a block: `{}`",
+                item.to_token_stream()
+            ),
         },
         Stmt::Expr(expr, _) => match expr {
             syn::Expr::Return(e_ret) => {

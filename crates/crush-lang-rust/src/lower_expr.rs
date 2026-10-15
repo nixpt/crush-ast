@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crush_walker_core::LowerCtx;
+use quote::ToTokens;
 
 use crush_cast::{CastType, Expression, Statement};
 use syn::Expr;
@@ -15,7 +16,10 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             let name = e
                 .path
                 .get_ident()
-                .ok_or_else(|| anyhow::anyhow!("complex path not supported"))?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Rust path `{}` cannot be resolved by the Crush walker; Rust modules/crates must be exposed through an explicit Crush capability/plugin",
+                    e.path.to_token_stream()
+                ))?
                 .to_string();
             Ok(Expression::Var { name, meta })
         }
@@ -95,13 +99,15 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 .map(|a| lower_expr(a, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             let func_name = match e.func.as_ref() {
-                Expr::Path(p) => p
-                    .path
-                    .segments
-                    .iter()
-                    .map(|s| s.ident.to_string())
-                    .collect::<Vec<_>>()
-                    .join("::"),
+                Expr::Path(p) => {
+                    let name = p.path.to_token_stream().to_string();
+                    if p.path.segments.len() != 1 {
+                        anyhow::bail!(
+                            "Rust call `{name}` cannot be resolved by the Crush walker; Rust modules/crates must be exposed through an explicit Crush capability/plugin"
+                        );
+                    }
+                    name
+                }
                 _ => anyhow::bail!("complex function expression not supported"),
             };
             match func_name.as_str() {

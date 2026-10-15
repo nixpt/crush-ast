@@ -16,7 +16,9 @@
 //! Not supported — rejected with an error rather than mistranslated: structs,
 //! enums, traits and `impl` blocks, match guards and range patterns, format
 //! width/precision (`{:.2}`, `{:>5}`), `vec![x; n]`, iterator chains (`.map`,
-//! `.sum`, …). Known difference: `print!` ends the line (there is no
+//! `.sum`, …), `use` declarations and qualified module/crate paths. Rust crate
+//! APIs need an explicit Crush capability/plugin; a Rust `use` is not treated
+//! as a runtime import. Known difference: `print!` ends the line (there is no
 //! newline-free print capability yet).
 
 pub mod lower_expr;
@@ -29,6 +31,7 @@ use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
 use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
+use quote::ToTokens;
 
 pub struct RustFrontend;
 
@@ -106,10 +109,14 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
                     );
                 }
             }
-            _ => {
-                let stmt = syn::Stmt::Item(item.clone());
-                main_body.push(lower_stmt::lower_stmt(&stmt, &ctx)?);
-            }
+            // A `use`, `struct`, or other Rust item cannot be represented by
+            // this expression-only CAST surface. Do not turn it into a null
+            // statement: that made imported crate calls look as if they had
+            // been accepted, then fail later or silently do nothing.
+            _ => anyhow::bail!(
+                "unsupported Rust top-level item `{}`; Rust imports and crate APIs need an explicit Crush capability/plugin",
+                item.to_token_stream()
+            ),
         }
     }
 

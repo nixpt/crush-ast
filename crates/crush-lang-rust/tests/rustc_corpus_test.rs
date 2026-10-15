@@ -79,3 +79,24 @@ fn unsupported_methods_fail_loudly() {
     let err = crush_lang_rust::rust_to_cast("fn main() { let v = vec![1]; let s: i64 = v.iter().sum(); println!(\"{}\", s); }").unwrap_err();
     assert!(format!("{err:#}").contains(".sum()"), "{err:#}");
 }
+
+#[test]
+fn imports_and_qualified_crate_calls_fail_loudly() {
+    let import_err = crush_lang_rust::rust_to_cast(
+        "use std::collections::HashMap; fn main() {}",
+    )
+    .unwrap_err();
+    assert!(
+        format!("{import_err:#}").contains("Rust imports and crate APIs"),
+        "{import_err:#}"
+    );
+
+    let call_err = crush_lang_rust::rust_to_cast(
+        "fn main() { std::mem::drop(1); }",
+    )
+    .unwrap_err();
+    assert!(
+        format!("{call_err:#}").contains("Rust modules/crates must be exposed"),
+        "{call_err:#}"
+    );
+}

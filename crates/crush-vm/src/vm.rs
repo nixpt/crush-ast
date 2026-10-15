@@ -744,6 +744,9 @@ pub struct VmResult {
     pub steps: usize,
     pub halted: bool,
     pub stack: Vec<Value>,
+    /// Value returned by the program's entry function, if it used `return`.
+    /// HALT-based programs and older bytecode without a return value yield `None`.
+    pub return_value: Option<Value>,
 }
 
 pub struct Frame {
