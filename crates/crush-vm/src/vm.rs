@@ -41,6 +41,9 @@ pub enum VmError {
     BadJump(usize),
     #[error("call to unknown function: {0}")]
     UnknownFunction(String),
+    /// `parallel_map` couldn't run an item, or an item failed (#175).
+    #[error("parallel_map: {0}")]
+    Parallel(String),
     /// `CALL_VALUE` on something that isn't a function value (CRUSH-251).
     #[error("{0} is not callable: only functions can be called")]
     NotCallable(&'static str),

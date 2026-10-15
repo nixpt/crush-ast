@@ -1049,9 +1049,22 @@ impl PortableVm {
                 }
                 args.reverse();
 
-                let result = self.dispatch_cap(&cap, args)?;
-                if let Some(v) = result {
-                    self.push(v);
+                if cap == "parallel_map" {
+                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
+                    let (output, results) = self.parallel_map(&args)?;
+                    if !output.is_empty() {
+                        self.out_len += output.len();
+                        if self.out_len > self.quotas.max_output {
+                            return Err(VmError::OutputQuota(self.quotas.max_output));
+                        }
+                        self.out_parts.push(output);
+                    }
+                    self.push(results);
+                } else {
+                    let result = self.dispatch_cap(&cap, args)?;
+                    if let Some(v) = result {
+                        self.push(v);
+                    }
                 }
             }
             CALL => {
@@ -1602,12 +1615,13 @@ impl PortableVm {
                 let argc = u16::from_be_bytes(
                     self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
                 ) as usize;
-                let fn_name = value_to_text(&self.pop()?);
+                let callee = self.pop()?;
                 let mut args = Vec::with_capacity(argc);
                 for _ in 0..argc {
                     args.push(self.pop()?);
                 }
                 args.reverse();
+                let fn_name = crate::scheduler::spawn_target(callee, argc, &mut args)?;
                 // A real green task, like the native scheduler: it runs at the
                 // next YIELD / slice boundary, not only when awaited (#161).
                 match self.func_entry.get(&fn_name) {
@@ -1693,6 +1707,33 @@ impl PortableVm {
                 .allowed_caps
                 .as_ref()
                 .is_none_or(|allowed| allowed.iter().any(|a| a == "io.read"))
+    }
+
+    /// `parallel_map` without threads (wasm): the same share-nothing jobs as
+    /// the native scheduler, one after another, so the results, the output and
+    /// the first error are identical (#175).
+    fn parallel_map(&self, args: &[Value]) -> Result<(String, Value), VmError> {
+        let jobs = crate::parallel::jobs(args)?;
+        let worker = crate::parallel::worker_program(&self.program);
+        let results = jobs
+            .iter()
+            .map(|job| {
+                let entry = *self
+                    .func_entry
+                    .get(&job.function)
+                    .ok_or_else(|| VmError::UnknownFunction(job.function.clone()))?;
+                let mut vm = PortableVm::new(worker.clone());
+                vm.quotas = self.quotas.clone();
+                vm.ip = entry;
+                let (stack, cells) = crate::parallel::start_stack(job);
+                vm.stack = stack;
+                let result = vm.run()?;
+                crate::parallel::check_captured(&cells)?;
+                let value = result.stack.last().cloned().unwrap_or(Value::Null);
+                Ok((result.output, crate::parallel::move_out(&value)?))
+            })
+            .collect();
+        crate::parallel::collect(results)
     }
 
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {

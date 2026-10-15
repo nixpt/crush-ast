@@ -401,7 +401,20 @@ pub fn run_scheduled_streaming(
     program: &crate::bytecode::Program,
     quotas: &Quotas,
     host_caps: Option<&HostCaps>,
+    sink: Option<&mut dyn FnMut(&str)>,
+) -> Result<VmResult, VmError> {
+    run_from(program, quotas, host_caps, sink, None)
+}
+
+/// The scheduler loop. `start`: run that function with that stack (bottom →
+/// top) as the main thread instead of the program's entry — a parallel_map
+/// worker (#175).
+fn run_from(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
     mut sink: Option<&mut dyn FnMut(&str)>,
+    start: Option<(&str, Vec<Value>)>,
 ) -> Result<VmResult, VmError> {
     let code = &program.code;
     let n = code.len();
@@ -440,7 +453,17 @@ pub fn run_scheduled_streaming(
         .and_then(|e| func_entry.get(e).copied())
         .unwrap_or_else(|| func_entry.values().copied().next().unwrap_or(0));
 
-    let mut threads: Vec<GreenThread> = vec![GreenThread::new(start_ip)];
+    let main_thread = match start {
+        Some((function, stack)) => {
+            let entry = func_entry
+                .get(function)
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(function.to_string()))?;
+            GreenThread::with_args(entry, stack)
+        }
+        None => GreenThread::new(start_ip),
+    };
+    let mut threads: Vec<GreenThread> = vec![main_thread];
     let mut current: usize = 0;
     // How many of the main thread's output parts `sink` has seen.
     let mut streamed: usize = 0;
@@ -1132,11 +1155,25 @@ fn execute_one(
                 args.push(pop!());
             }
             args.reverse();
-            let result = dispatch_cap(
-                &cap, args, declared, quotas, out_parts, out_len, host_caps,
-            )?;
-            if let Some(v) = result {
-                push!(v);
+            if cap == "parallel_map" {
+                // Needs the program to start workers, so it isn't in dispatch_cap.
+                check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
+                let (output, results) = parallel_map(program, quotas, &args)?;
+                if !output.is_empty() {
+                    *out_len += output.len();
+                    if *out_len > quotas.max_output {
+                        return Err(VmError::OutputQuota(quotas.max_output));
+                    }
+                    out_parts.push(output);
+                }
+                push!(results);
+            } else {
+                let result = dispatch_cap(
+                    &cap, args, declared, quotas, out_parts, out_len, host_caps,
+                )?;
+                if let Some(v) = result {
+                    push!(v);
+                }
             }
         }
         CALL => {
@@ -1466,12 +1503,13 @@ fn execute_one(
         }
         SPAWN => {
             let argc = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+            let callee = pop!();
             let mut args = Vec::with_capacity(argc);
-            let fn_name = pop!().as_text();
             for _ in 0..argc {
                 args.push(pop!());
             }
             args.reverse();
+            let fn_name = spawn_target(callee, argc, &mut args)?;
             return Ok(StepAction::Spawn(fn_name, args));
         }
         YIELD => {
@@ -1576,6 +1614,82 @@ fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
     } else {
         Err(VmError::ArrayBounds { index: idx, len })
     }
+}
+
+/// What SPAWN starts (CRUSH-251 step 5): a function named by a string, or a
+/// function value — whose captured values become the task's leading
+/// parameters (on top of `args`, which are bottom → top). Green tasks share
+/// this VM, so captured cells are shared with the task as they are.
+pub(crate) fn spawn_target(callee: Value, argc: usize, args: &mut Vec<Value>) -> Result<String, VmError> {
+    match callee {
+        Value::Str(name) => Ok(name),
+        func @ Value::Func(_) => {
+            let func = crate::vm::callable(&func, argc)?;
+            args.extend(func.captured.iter().rev().cloned());
+            Ok(func.name.clone())
+        }
+        other => Err(VmError::NotCallable(other.type_name())),
+    }
+}
+
+/// One parallel_map item in a fresh VM (no host capabilities).
+fn run_item(program: &crate::bytecode::Program, quotas: &Quotas, job: &crate::parallel::Job) -> crate::parallel::ItemResult {
+    let (stack, cells) = crate::parallel::start_stack(job);
+    let result = run_from(program, quotas, None, None, Some((&job.function, stack)))?;
+    crate::parallel::check_captured(&cells)?;
+    let value = result.return_value.unwrap_or(Value::Null);
+    Ok((result.output, crate::parallel::move_out(&value)?))
+}
+
+/// `parallel_map(items, f)` (#175): each item in its own VM, on threads.
+/// Sequential — with identical results — inside a worker (no nested pools),
+/// for a single item, and where there are no threads (wasm).
+pub(crate) fn parallel_map(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    args: &[Value],
+) -> Result<(String, Value), VmError> {
+    use crate::parallel::{IN_WORKER, collect, jobs, worker_program};
+    let jobs = jobs(args)?;
+    let worker = worker_program(program);
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(jobs.len());
+    let sequential = IN_WORKER.with(|w| w.get()) || threads < 2 || cfg!(target_arch = "wasm32");
+    let results: Vec<crate::parallel::ItemResult> = if sequential {
+        jobs.iter()
+            .map(|job| {
+                let was = IN_WORKER.with(|w| w.replace(true));
+                let result = run_item(&worker, quotas, job);
+                IN_WORKER.with(|w| w.set(was));
+                result
+            })
+            .collect()
+    } else {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<crate::parallel::ItemResult>>> =
+            jobs.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
+                    IN_WORKER.with(|w| w.set(true));
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(job) = jobs.get(i) else { break };
+                        let result = run_item(&worker, quotas, job);
+                        *slots[i].lock().expect("slot") = Some(result);
+                    }
+                });
+            }
+        });
+        slots
+            .into_iter()
+            .map(|slot| {
+                slot.into_inner()
+                    .expect("slot")
+                    .unwrap_or_else(|| Err(VmError::Parallel("a worker thread panicked".to_string())))
+            })
+            .collect()
+    };
+    collect(results)
 }
 
 fn dispatch_cap(

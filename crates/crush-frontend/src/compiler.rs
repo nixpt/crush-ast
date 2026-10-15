@@ -403,7 +403,8 @@ impl Compiler {
                     },
                 );
 
-                for (param_name, _) in &func.params {
+                // Last-first, as for a call (see `Expression::Spawn`).
+                for (param_name, _) in func.params.iter().rev() {
                     instrs.push(self.create_instr(
                         "load",
                         serde_json::json!({"name": param_name}),
@@ -1685,6 +1686,21 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if function == "parallel_map" && !self.local_functions.contains("parallel_map") {
+                    // #175: a VM capability (it starts workers); capabilities
+                    // take their arguments in order.
+                    if args.len() != 2 {
+                        bail!("parallel_map(items, f) expects exactly 2 arguments");
+                    }
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    self.all_permissions.insert("parallel_map".to_string());
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "parallel_map", "argc": 2}),
+                        meta,
+                    ));
                 } else if function == "print" {
                     self.all_permissions.insert("io.print".to_string());
                     for arg in args {
@@ -2212,25 +2228,34 @@ impl Compiler {
                 // before the function name. The scheduler will pop argc
                 // args + fn_name, then create a new thread with args
                 // pre-loaded on the stack.
-                // A `let`-bound lambda spawns its lifted function; a variable
-                // holding a function value can't be spawned until SPAWN takes
-                // one (CRUSH-251 step 5).
-                let aliased = self.resolve_lambda_alias(function);
-                if aliased.is_none() && self.declared_vars.contains(function.as_str()) {
-                    bail!(
-                        "spawning `{function}`, a variable holding a function value, isn't \
-                         supported yet (CRUSH-251 step 5); spawn a named function"
-                    );
-                }
-                let function = aliased.as_ref().unwrap_or(function);
-                for arg in args {
+                // Args last-first, as for `call`: the task's first `store` pops
+                // the first argument. (They were pushed first-first, so a
+                // spawned `w(10, 3)` ran as `w(3, 10)`.)
+                for arg in args.iter().rev() {
                     self.compile_expr(arg, instrs)?;
                 }
-                instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": function}),
-                    meta,
-                ));
+                // The task's function is a function value (CRUSH-251 step 5),
+                // so SPAWN checks its arity and passes its captured values as
+                // leading parameters: a variable holds one (a `let`-bound
+                // lambda's variable too); a named function becomes one.
+                if self.declared_vars.contains(function.as_str()) {
+                    self.check_lambda_capture(function)?;
+                    instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
+                } else if let Some(&arity) = self.function_arity.get(function.as_str()) {
+                    instrs.push(self.create_instr(
+                        "make_closure",
+                        serde_json::json!({"function": function, "arity": arity, "ncap": 0}),
+                        meta,
+                    ));
+                } else {
+                    // Unknown here (an async wrapper, a name only the VM has):
+                    // SPAWN resolves it at run time.
+                    instrs.push(self.create_instr(
+                        "push_str",
+                        serde_json::json!({"value": function}),
+                        meta,
+                    ));
+                }
                 instrs.push(self.create_instr(
                     "spawn",
                     serde_json::json!({"argc": args.len()}),
