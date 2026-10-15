@@ -7,7 +7,7 @@
 | **Status** | Backlog |
 | **Phase** | M3 / CLI |
 | **Assignee** | unassigned |
-| **Dependencies** | CRUSH-xps-3, CRUSH-xps-5 |
+| **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7, CRUSH-xps-8, CRUSH-xps-9 |
 | **Estimated effort** | M |
 
 ## Problem

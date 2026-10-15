@@ -21,8 +21,9 @@ unstable ABI or sandbox native code.
 
 - `crush-lang-rust` parses Rust with `syn` and lowers a documented subset to
   CAST. Its corpus tests exercise CAST → CASM → CVM1 and compare printed output
-  with `rustc` for small fixtures. Unsupported imports and top-level items now
-  fail loudly (CRUSH-197 / CRUSH-266).
+  with `rustc` for small fixtures; that corpus is VM-only, with no Rust AOT
+  parity suite yet. Unsupported imports and top-level items now fail loudly
+  (CRUSH-197 / CRUSH-266).
 - `crush-run` compiles Crush source. There is no production SDK or CLI entry
   point that accepts Rust source as a normal run target.
 - Rust hosts can compile Crush with
@@ -66,7 +67,7 @@ registry-backed API, then runs the result through the common compiler/runtime
 and host-capability model. Rust convenience APIs do not create a separate
 dispatch path.
 
-### Phase 2 — Rust exact-or-loud conformance gate (CRUSH-xps-5)
+### Phase 2 — Rust exact-or-loud conformance framework (CRUSH-xps-5)
 
 Build an exact-or-loud Rust parity harness before exposing `.rs` through the
 normal runner. VM behavior must match `rustc`; AOT must match or fail loudly.
@@ -75,28 +76,26 @@ fixture becomes exact, a known-silent list tied to fixing tickets, an
 unlisted-silent-failure guard, and freshness checks that re-run `rustc`.
 Add the AOT twin at `crates/crush-aot/tests/rust_parity.rs`.
 
-The initial silent-miscompile audit must cover:
+The first known-silent entries must point to their fixing tickets:
 
-- block shadowing: alpha-rename `let` bindings per block, or reject shadowing
-  with a clear diagnostic. This is a name-keyed VM slot collision; the
-  CRUSH-251 captured-cell rule is separate. Keep block-binding metadata for
-  closure capture as its own concern;
-- Rust `Vec`/`String`/struct value semantics versus Crush reference-type
-  arrays, including `clone`, assignment, and argument passing;
-- integer widths, `as` casts, wrapping, and overflow against Crush's 64-bit
-  integer representation;
-- `{:?}` formatting.
+- block shadowing → CRUSH-xps-6;
+- Rust `Vec`/`String`/struct value semantics (`clone`, assignment, argument
+  passing) → CRUSH-xps-7;
+- integer widths, `as` casts, wrapping, and overflow → CRUSH-xps-8;
+- `{:?}` formatting → CRUSH-xps-9.
 
 Every accepted fixture must be exact. Unsupported or known-divergent constructs
-must fail loudly until their own parity fix lands.
+must fail loudly until their fixing ticket lands. CRUSH-xps-4 depends on all
+four fixing tickets as well as this harness, so the default runner cannot expose
+these known-silent cases early.
 
 The first silent cases to capture and fix are:
 
 | Area | Rust source | `rustc` result | Current Crush result |
 |---|---|---|---|
-| Block shadowing | `let x = 1; { let x = 2; println!("{}", x); } println!("{}", x);` | `2` / `1` | `2` / `2` |
-| `Vec::clone` | `let a = vec![1,2,3]; let mut b = a.clone(); b.push(4); println!("{} {}", a.len(), b.len());` | `3 4` | `4 4` |
-| Integer cast width | `let big: i64 = 3_000_000_000; println!("{}", big as i32);` | `-1294967296` | `3000000000` |
+| Block shadowing (xps-6) | `let x = 1; { let x = 2; println!("{}", x); } println!("{}", x);` | `2` / `1` | `2` / `2` |
+| `Vec::clone` (xps-7) | `let a = vec![1,2,3]; let mut b = a.clone(); b.push(4); println!("{} {}", a.len(), b.len());` | `3 4` | `4 4` |
+| Integer cast width (xps-8) | `let big: i64 = 3_000_000_000; println!("{}", big as i32);` | `-1294967296` | `3000000000` |
 
 Also put `wrapping_add` in the known-loud set until the operation is exact.
 
@@ -154,7 +153,11 @@ the current implementation authorization.
 | CRUSH-xps-2 | Design / this PR | CRUSH-266 | Ratified phase plan and boundaries |
 | CRUSH-xps-3 | SDK registry-backed compile API | CRUSH-xps-2, CRUSH-197 | One frontend registry API with optional language adapters |
 | CRUSH-xps-5 | Rust exact-or-loud gate | CRUSH-xps-3, CRUSH-197 | Silent mis-lowerings fail loudly; VM/AOT parity harness exists |
-| CRUSH-xps-4 | Shared-registry CLI dispatch | CRUSH-xps-3, CRUSH-xps-5 | `.rs` is enabled only after parity gate; other walkers reuse dispatch |
+| CRUSH-xps-6 | Rust block shadowing | CRUSH-xps-3, CRUSH-xps-5 | Preserve nested binding semantics or reject unsupported shadowing |
+| CRUSH-xps-7 | Rust collection/string value semantics | CRUSH-xps-3, CRUSH-xps-5 | `clone`, assignment, and argument passing are exact or loud |
+| CRUSH-xps-8 | Rust integer widths and casts | CRUSH-xps-3, CRUSH-xps-5 | Width, cast, wrapping, and overflow behavior is exact or loud |
+| CRUSH-xps-9 | Rust debug formatting | CRUSH-xps-3, CRUSH-xps-5 | `{:?}` is exact or rejected |
+| CRUSH-xps-4 | Shared-registry CLI dispatch | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7, CRUSH-xps-8, CRUSH-xps-9 | `.rs` is enabled only after all parity gates; other walkers reuse dispatch |
 
 CRUSH-xps-1 is the in-flight manual plugin MVP, not a prerequisite for the
 source-language SDK phases. CRUSH-179 gates any later Cargo-managed build
