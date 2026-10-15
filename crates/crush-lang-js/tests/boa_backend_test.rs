@@ -341,8 +341,23 @@ fn test_boa_unbound_names_are_loud() {
     assert!(loud("console.log(undefined);").contains("`undefined` as a value (CRUSH-zorro-12"));
     assert!(loud("console.log(Math.PI);").contains("`Math.PI` (CRUSH-zorro-17"));
     assert!(loud("console.log(nothing);").contains("`nothing`, which is not defined"));
-    let msg = loud("let total = 3;\nfunction f() { return total; }\nconsole.log(f());");
-    assert!(msg.contains("reading the script's top-level `total` from inside a function"), "{msg}");
+}
+
+// CRUSH-250 step 4: a top-level function that uses a script variable is a
+// closure in `main` over it; one that doesn't stays a crush function of its
+// own (calls are direct; AOT compiles it).
+#[test]
+fn test_boa_top_level_functions_capture_script_variables() {
+    let program = test_lower(
+        "let total = 3;\nfunction f() { return total + g(); }\nfunction g() { return 1; }\nconsole.log(f());\n",
+    );
+    assert!(program.functions.contains_key("g"), "g captures nothing");
+    assert!(!program.functions.contains_key("f"), "f captures `total`");
+    let main = &program.functions["main"];
+    assert!(main.body.iter().any(|s| matches!(
+        s,
+        crush_cast::Statement::VarDecl { name, value: crush_cast::Expression::Lambda { .. }, .. } if name == "f"
+    )));
 }
 
 // `push`: several values in statement position become hidden locals (all

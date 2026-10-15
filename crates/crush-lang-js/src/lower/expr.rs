@@ -602,14 +602,6 @@ impl Lower<'_> {
         if let Some(row) = builtins::value(&name) {
             return self.planned(row, &format!("`{name}` as a value"), span);
         }
-        if self.script_names.contains(&sym) {
-            // A top-level function is its own crush function: it can't see
-            // the script's variables (AOT would read them as `null`).
-            return self.unsupported(
-                format!("reading the script's top-level `{name}` from inside a function"),
-                span,
-            );
-        }
         self.unsupported(format!("`{name}`, which is not defined"), span)
     }
 

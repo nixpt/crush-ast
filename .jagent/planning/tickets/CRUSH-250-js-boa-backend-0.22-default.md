@@ -103,11 +103,25 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
    - A top-level function reading a script variable is refused (AOT read it as `null`).
    - Area tickets turn `Planned` rows into lowerings.
 4. Closures/function values (CRUSH-251 steps 2–3).
+   **Done in sub-PR 4:**
+   - A top-level `function` that uses script variables is a closure in `main` over them (CRUSH-251
+     cells); one that doesn't stays a crush function of its own.
+   - In a scope with hoisted closures, the scope's `let`/`const` bindings are created on entry (a fresh
+     one per block entry) and their declarations assign. A closure hoisted ahead of a `let` used to see
+     a stale cell, a silent `null` that only boa had.
+   - New corpus programs: `fn_script_vars`, `fn_script_late`, `scope_hoist_late_let`,
+     `scope_hoist_block_loop`.
+   - swc reads script variables as `null` on AOT (pre-existing): CRUSH-zorro-54.
+   - Not done:
+     - calling a value that isn't a name (`f()()`, an IIFE, `arr[i]()`) needs a call-on-value CAST
+       expression (compiler change);
+     - closures on AOT (the backends refuse `make_closure`/cells).
 5. The constructs listed above (one PR each, or as their tickets).
 6. Flip the `.js` default once the gate passes; retire the swc lowering for JS; update
    `language_frontend_matrix.md`.
    **Gate items besides the harness (boa >= swc in every area, VM and AOT, 0 silent):**
-   - **A top-level function that reads a script variable must run.** It is common JS
+   - **A top-level function that reads a script variable must run.** (VM: done in sub-PR 4; AOT waits
+     for closures there.) It is common JS
      (`let total = 0; function add(n) { total += n; }`).
      - Today it is refused at walk time: top-level functions are their own crush functions, AOT read
        the variable as `null`, and the VM failed.
@@ -118,6 +132,7 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
      argument. (Done: #238 fixed the order. `push` takes any number of values: in statement position
      they are evaluated into hidden locals and pushed one by one, since the capability appends one value.
      As a value, `push` is `len` of the returned array; AOT's `push` now returns the array like the VM's.)
+   - CRUSH-zorro-54 lands first: AOT reads an unassigned local as a run-time error, never `null`.
 
 ## Not this ticket
 

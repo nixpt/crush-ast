@@ -15,7 +15,7 @@
 //! - A name no frame declares is a global (`console`, `Math`, a top-level
 //!   function) and keeps its spelling.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use boa_ast::declaration::{Binding, Declaration, LexicalDeclaration, VarDeclaration, Variable};
 use boa_ast::function::FormalParameterList;
@@ -34,6 +34,9 @@ pub(super) struct Scopes {
 pub(super) struct FnScope {
     /// `frames[0]` is the function level; the rest are blocks, innermost last.
     frames: Vec<HashMap<Sym, String>>,
+    /// Per frame: the `let`/`const` bindings whose cell is created on entry
+    /// to the frame (see `Lower::predeclare`); their declaration assigns.
+    predeclared: Vec<HashSet<Sym>>,
 }
 
 impl Scopes {
@@ -42,6 +45,7 @@ impl Scopes {
     pub(super) fn enter_fn(&mut self) {
         self.fns.push(FnScope {
             frames: vec![HashMap::new()],
+            predeclared: vec![HashSet::new()],
         });
     }
 
@@ -70,13 +74,16 @@ impl Scopes {
     }
 
     pub(super) fn push_block(&mut self) {
-        self.current().frames.push(HashMap::new());
+        let f = self.current();
+        f.frames.push(HashMap::new());
+        f.predeclared.push(HashSet::new());
     }
 
     pub(super) fn pop_block(&mut self) {
         let f = self.current();
         debug_assert!(f.frames.len() > 1, "pop_block without push_block");
         f.frames.pop();
+        f.predeclared.pop();
     }
 
     /// Declare (or rebind) a binding of the innermost frame under `name`.
@@ -86,6 +93,23 @@ impl Scopes {
             .last_mut()
             .expect("a frame")
             .insert(sym, name);
+    }
+
+    /// Mark a binding of the innermost frame as created on entry.
+    pub(super) fn predeclare(&mut self, sym: Sym) {
+        self.current()
+            .predeclared
+            .last_mut()
+            .expect("a frame")
+            .insert(sym);
+    }
+
+    /// Was this binding of the innermost frame created on entry?
+    pub(super) fn is_predeclared(&self, sym: Sym) -> bool {
+        self.fns
+            .last()
+            .and_then(|f| f.predeclared.last())
+            .is_some_and(|p| p.contains(&sym))
     }
 
     /// The crush local `sym` refers to, if any frame declares it.

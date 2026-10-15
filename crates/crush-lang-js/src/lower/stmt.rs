@@ -26,6 +26,17 @@ use super::builtins;
 use super::{Lower, Meta, group};
 use crate::lower_common::{contains_loop_continue, for_in_guarded, rewrite_continue};
 
+/// Where `function` declarations are hoisted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Hoist {
+    /// The script's top level (`main`).
+    Script,
+    /// A function's body.
+    Function,
+    /// A block (or a `switch`): a fresh binding each time it runs.
+    Block,
+}
+
 /// A top-level item of a script or a module.
 pub(super) enum TopItem<'a> {
     Stmt(&'a StatementListItem),
@@ -111,23 +122,17 @@ impl Lower<'_> {
                 }
             }
         }
-        self.script_names.extend(syms.iter().copied());
         for sym in syms {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
-        }
-        for item in &list {
-            if let StatementListItem::Declaration(d) = item
-                && let Declaration::FunctionDeclaration(f) = d.as_ref()
-            {
-                self.toplevel_fns.insert(f.name().sym());
-            }
         }
 
         let mut body = Vec::new();
         for item in &list {
             body.extend(self.uninit_vars(std::slice::from_ref(*item)));
         }
+        let owned: Vec<StatementListItem> = list.iter().map(|i| (*i).clone()).collect();
+        body.extend(self.hoisted_functions(&owned, Hoist::Script)?);
         for item in items {
             match item {
                 TopItem::Module(ModuleItem::ImportDeclaration(import)) => {
@@ -136,33 +141,7 @@ impl Lower<'_> {
                 TopItem::Module(ModuleItem::ExportDeclaration(e)) => body.extend(self.export(e)?),
                 _ => {
                     let s = item.stmt().expect("a statement");
-                    if let StatementListItem::Declaration(d) = s
-                        && let Declaration::FunctionDeclaration(f) = d.as_ref()
-                    {
-                        let name = self.name(f.name().sym());
-                        if name == "main" {
-                            // `main` is the crush function the script body becomes.
-                            return Err(self.unsupported(
-                                "a top-level function named `main`",
-                                Some(f.name().span()),
-                            ));
-                        }
-                        let saved = self.scopes.isolate();
-                        let lowered =
-                            self.function(f.parameters(), f.body(), Some(f.name().span()));
-                        self.scopes.restore(saved);
-                        let (params, fbody) = lowered?;
-                        self.functions.insert(
-                            name,
-                            Function {
-                                params,
-                                body: fbody,
-                                ..Default::default()
-                            },
-                        );
-                    } else {
-                        body.extend(self.item(s)?);
-                    }
+                    body.extend(self.item(s)?);
                 }
             }
         }
@@ -298,21 +277,25 @@ impl Lower<'_> {
             self.scopes.declare_root(sym, name);
         }
         let mut out = self.uninit_vars(items);
-        out.extend(self.hoisted_functions(items, false)?);
+        out.extend(self.hoisted_functions(items, Hoist::Function)?);
         out.extend(self.items(items)?);
         Ok((lowered_params, out))
     }
 
-    /// `function f() {}` inside a function or block, before the other
-    /// statements of its scope run (hoisting):
-    /// - one that uses no binding of an enclosing function is **lifted** to a
-    ///   crush function of its own under a fresh name (calls are direct, as
-    ///   for a top-level function, so AOT can compile them);
-    /// - one that does is a closure bound to `f`.
+    /// `function f() {}` in a scope, before the other statements of the
+    /// scope run (hoisting):
+    /// - one that uses no binding of an enclosing function (at the script
+    ///   level: no script binding) is **lifted** to a crush function of its
+    ///   own (calls are direct, so AOT can compile them). A nested one gets a
+    ///   fresh name; a script-level one keeps its own;
+    /// - one that does is a **closure** bound to `f`, capturing those bindings
+    ///   by reference (CRUSH-251 cells). The scope's `let`/`const` bindings are
+    ///   then created first ([`Lower::predeclare`]), so a closure made here
+    ///   sees the binding a later `let` initialises.
     fn hoisted_functions(
         &mut self,
         items: &[StatementListItem],
-        block: bool,
+        at: Hoist,
     ) -> anyhow::Result<Vec<CastStmt>> {
         let decls: Vec<&FunctionDeclaration> = items
             .iter()
@@ -355,12 +338,27 @@ impl Lower<'_> {
         let mut lifted = Vec::new();
         for (i, f) in decls.iter().enumerate() {
             if lift[i] {
-                let global = self.fresh_name(f.name().sym());
-                self.scopes.declare_block(f.name().sym(), global.clone());
-                lifted.push((f.name().sym(), global));
+                let sym = f.name().sym();
+                let global = if at == Hoist::Script {
+                    // A script-level function keeps its name: a global, not a capture.
+                    self.toplevel_fns.insert(sym);
+                    self.name(sym)
+                } else {
+                    self.fresh_name(sym)
+                };
+                if global == "main" {
+                    // `main` is the crush function the script body becomes.
+                    return Err(self
+                        .unsupported("a top-level function named `main`", Some(f.name().span())));
+                }
+                self.scopes.declare_block(sym, global.clone());
+                lifted.push((sym, global));
             }
         }
         let mut out = Vec::new();
+        if lift.iter().any(|l| !l) {
+            out.extend(self.predeclare(items, at));
+        }
         for (i, f) in decls.iter().enumerate() {
             let span = Some(f.name().span());
             if lift[i] {
@@ -384,10 +382,34 @@ impl Lower<'_> {
             } else {
                 let name = self.resolve(f.name().sym());
                 let value = self.lambda(f.parameters(), f.body(), span)?;
-                out.push(self.var_decl_stmt(name, value, block, span));
+                out.push(self.var_decl_stmt(name, value, at == Hoist::Block, span));
             }
         }
         Ok(out)
+    }
+
+    /// Create a scope's `let`/`const` bindings on entry (`x = null`; a fresh
+    /// one per entry in a block), so closures hoisted ahead of the
+    /// declarations capture the same binding. The declarations then assign.
+    fn predeclare(&mut self, items: &[StatementListItem], at: Hoist) -> Vec<CastStmt> {
+        let mut syms = Vec::new();
+        for item in items {
+            if let StatementListItem::Declaration(d) = item
+                && let Declaration::Lexical(lex) = d.as_ref()
+            {
+                scope::lexical_decl_syms(lex, &mut syms);
+            }
+        }
+        syms.into_iter()
+            .map(|sym| {
+                self.scopes.predeclare(sym);
+                let name = self.resolve(sym);
+                let value = CastExpr::NullLiteral {
+                    meta: self.meta(None),
+                };
+                self.var_decl_stmt(name, value, at == Hoist::Block, None)
+            })
+            .collect()
     }
 
     /// Is `sym` a binding of an enclosing function (a capture), as opposed to
@@ -436,7 +458,7 @@ impl Lower<'_> {
         lexical_syms(items, &mut syms);
         self.declare_block_syms(syms);
         let r = (|| {
-            let mut out = self.hoisted_functions(items, true)?;
+            let mut out = self.hoisted_functions(items, Hoist::Block)?;
             out.extend(self.items(items)?);
             Ok(out)
         })();
@@ -520,6 +542,20 @@ impl Lower<'_> {
                 meta: self.meta(span),
             },
         };
+        if block && self.scopes.is_predeclared(id.sym()) {
+            // Created on entry to the scope (`predeclare`): assign it.
+            let m = self.meta(span);
+            let target = CastExpr::Var {
+                name,
+                meta: m.clone(),
+            };
+            let expr = CastExpr::Call {
+                function: "__crush_assign__".to_string(),
+                args: vec![target, value],
+                meta: m.clone(),
+            };
+            return Ok(vec![CastStmt::ExprStmt { expr, meta: m }]);
+        }
         Ok(vec![self.var_decl_stmt(name, value, block, span)])
     }
 
@@ -937,7 +973,7 @@ impl Lower<'_> {
             self.declare_block_syms(syms);
             let mut body = Vec::new();
             for c in cases {
-                body.extend(self.hoisted_functions(c.body().statements(), true)?);
+                body.extend(self.hoisted_functions(c.body().statements(), Hoist::Block)?);
             }
             for (i, case) in cases.iter().enumerate() {
                 let stmts = self.items(case.body().statements())?;
