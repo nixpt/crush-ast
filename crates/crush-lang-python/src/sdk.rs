@@ -293,6 +293,21 @@ mod tests {
         );
     }
 
+    // CRUSH-zorro-38: keyword arguments were dropped (`print('a', end='')`
+    // printed a newline). Unsupported ones are now walk-time errors.
+    #[test]
+    fn unsupported_keyword_arguments_fail_loud() {
+        for (src, want) in [
+            ("def f(a, b):\n    return a - b\nprint(f(b=1, a=10))\n", "keyword argument `b=` to `f`"),
+            ("import sys\nprint('x', file=sys.stderr)\n", "keyword argument `file=` to `print`"),
+            ("print('a,b'.split(sep=','))\n", "keyword argument `sep=` to `.split()`"),
+            ("d = {}\nprint(1, **d)\n", "`**` keyword arguments"),
+        ] {
+            let err = run_python(src).unwrap_err();
+            assert!(err.to_string().contains(want), "{src:?}: {err}");
+        }
+    }
+
     #[test]
     fn crush200_default_args_fail_loud() {
         let err = run_python("def g(n, greeting=\"Hello\"):\n    print(greeting, n)\ng(\"Bob\")\n")

@@ -138,3 +138,53 @@ granted stops the program with `unknown capability: <name>`.
 cd examples/crush/capsules/squad-bridge-peek
 crush-pkg run --fs --fs-root fixtures --env
 ```
+
+## Host-approved Rust plugins
+
+`crush-pkg` can load a manually built Rust `cdylib` for a Crush package.
+The host supplies both the library path and each export to grant; `capsule.toml`
+cannot select a library or grant native code. Plugins are trusted native code
+and execute in the host process, so only load libraries you trust. Cargo is not
+run by `crush-pkg` to build them.
+
+The workspace example at
+[`crates/crush-plugin-example/src/lib.rs`](../crush-plugin-example/src/lib.rs)
+implements `rust.greet` and `rust.version` using `crush-ffi`. The integration
+test builds this crate and runs it through both `crush-pkg run` and the bare
+build-then-run flow, so this recipe stays tied to a compiled wrapper:
+
+Build the wrapper separately, then run the package with explicit host grants
+(use `.so`, `.dylib`, or `.dll` as appropriate for the host):
+
+```sh
+cargo build -p crush-plugin-example --release
+crush-pkg run --rust-plugin target/release/libcrush_plugin_example.so \
+  --plugin-export rust.greet
+```
+
+Declare the export in the package and call it from its Crush entry file:
+
+```toml
+# capsule.toml
+[capabilities]
+required = ["rust.greet"]
+```
+
+```crush
+# src/main.crush
+fn main() {
+    io.print(rust.greet("Crush"))
+}
+```
+
+The package prints `Hello, Crush from Rust Extension!`. The MVP supports null,
+booleans, integers, floats, and strings across the FFI boundary; arrays and
+objects are rejected until their ownership rules are defined.
+
+The manifest declaration describes the package's capability contract; it does
+not grant access to native code. `crush-pkg check` reports a used plugin export
+that is missing from both `required` and `optional`. At run time, the host's
+`--plugin-export` allowlist is the authority: a declared but ungranted export
+fails with `unknown capability`, and a host-granted export may run even if the
+manifest omitted its declaration. This keeps manifest metadata separate from
+host authorization and does not require `run` to perform a separate `check`.

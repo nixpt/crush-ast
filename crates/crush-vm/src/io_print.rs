@@ -33,6 +33,20 @@ pub fn format_py_print_line(parts: &[impl AsRef<str>]) -> String {
     line
 }
 
+/// `print(*values, sep=sep, end=end)` (CRUSH-zorro-38): `None` (crush null)
+/// means CPython's defaults, `" "` and `"\n"`.
+pub fn format_py_print_sep_end(args: &[crate::vm::Value]) -> String {
+    let text = |v: Option<&crate::vm::Value>, default: &str| match v {
+        None | Some(crate::vm::Value::Null) => default.to_string(),
+        Some(v) => py_value_to_text(v),
+    };
+    let (sep, end) = (text(args.first(), " "), text(args.get(1), "\n"));
+    let parts: Vec<String> = args.iter().skip(2).map(py_value_to_text).collect();
+    let mut line = parts.join(&sep);
+    line.push_str(&end);
+    line
+}
+
 /// Render a [`crate::vm::Value`] the way CPython's `print` would for bool/None,
 /// otherwise the canonical Crush `Display` / `as_text` form.
 pub fn py_value_to_text(v: &crate::vm::Value) -> String {
