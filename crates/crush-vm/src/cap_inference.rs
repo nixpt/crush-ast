@@ -15,6 +15,13 @@
 //! concatenation, say) is missed; that is the one way this can under-report.
 //! Capability names themselves are always constants in CVM1 (`CAP_CALL`
 //! takes a const-pool index), so there are no dynamic capability names.
+//!
+//! COSM (K1.4): `CALL_MEMBER` / `CONSTRUCT` name a member or a Kind, never a
+//! capability (their operand is [`OperandKind::Member`]). The functions they
+//! reach are chosen at run time through the Kind, and printing a Record can
+//! run its `str` hook, so every function the kind table names (methods,
+//! statics, trait defaults, constructors, hooks) is treated as reachable — a
+//! safe over-approximation.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -101,6 +108,14 @@ pub fn capabilities_used(program: &Program) -> Result<BTreeSet<String>, String> 
     } else {
         todo.extend(functions.iter().map(|name| Some(*name)));
     }
+    // Everything a Kind can run (see the module docs).
+    if let Some(module) = program.kind_table() {
+        for name in kind_table_functions(module) {
+            if let Some(name) = functions.get(name.as_str()) {
+                todo.push(Some(*name));
+            }
+        }
+    }
     let mut seen: HashSet<Option<&str>> = HashSet::new();
     let mut used = BTreeSet::new();
     while let Some(func) = todo.pop() {
@@ -116,6 +131,40 @@ pub fn capabilities_used(program: &Program) -> Result<BTreeSet<String>, String> 
         }
     }
     Ok(used)
+}
+
+/// Every function a kind table names: method, static and accessor members,
+/// conformance impl tables, interface defaults, constructors and hooks.
+fn kind_table_functions(module: &crush_cosm::CosmModule) -> Vec<String> {
+    use crush_cosm::{Construct, HookImpl, Member, StaticValue};
+    let mut out = Vec::new();
+    let member = |m: &crush_cosm::MemberDecl, out: &mut Vec<String>| match &m.member {
+        Member::Method { func, .. } | Member::Static { value: StaticValue::Fn(func) } => out.push(func.to_string()),
+        Member::Accessor { get, set } => out.extend(get.iter().chain(set).map(|f| f.to_string())),
+        _ => {}
+    };
+    for k in &module.kinds {
+        for m in k.members.iter().chain(k.conforms.iter().flat_map(|c| &c.members)) {
+            member(m, &mut out);
+        }
+        match &k.construct {
+            Construct::Literal => {}
+            Construct::Ctor { func } => out.push(func.to_string()),
+            Construct::JsNew { ctor_fn } => out.push(ctor_fn.to_string()),
+            Construct::PyNewInit { new_fn, init_fn } => out.extend(new_fn.iter().chain(init_fn).map(|f| f.to_string())),
+        }
+        let h = &k.hooks;
+        let hooks = [&h.missing, &h.set, &h.call, &h.iter, &h.eq, &h.hash, &h.cmp, &h.str, &h.repr, &h.clone];
+        let all = hooks.into_iter().flatten().chain(h.op.values()).chain(h.op_reflected.values());
+        out.extend(all.filter_map(|hook| match hook {
+            HookImpl::Fn(f) => Some(f.to_string()),
+            _ => None,
+        }));
+    }
+    for i in &module.interfaces {
+        out.extend(i.members.iter().filter_map(|m| m.default.as_ref().map(|f| f.to_string())));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -174,5 +223,45 @@ mod tests {
     HALT
 "#;
         assert_eq!(used(asm), ["polyglot.cobol", "polyglot.python"]);
+    }
+
+    /// COSM K1.4: a member or Kind name is not a capability, and what a
+    /// method uses is found even though `CALL_MEMBER` picks it at run time.
+    #[test]
+    fn member_and_kind_names_are_not_capabilities() {
+        use crush_cosm::{CosmModule, KindDecl, MemberDecl};
+        let asm = r#"
+.func main
+    CONSTRUCT "P" 0
+    CALL_MEMBER "shout" 0
+    POP
+    PUSH 1
+    CONSTRUCT "Q" 1
+    HALT
+.func P::shout 1
+    STORE 0
+    PUSH_STR "hi"
+    CAP_CALL "io.print" 1
+    PUSH_NULL
+    RET
+.func Q::init 2
+    STORE 0
+    STORE 1
+    PUSH_STR "t"
+    CAP_CALL "fs.cat" 1
+    RET
+.func unused
+    PUSH_STR "x"
+    CAP_CALL "net.fetch" 1
+    RET
+"#;
+        let mut program = assemble(asm, None, None).expect("assemble");
+        let mut p = KindDecl::crush("P");
+        p.members.push(MemberDecl::method("shout", "P::shout"));
+        let mut q = KindDecl::crush("Q");
+        q.construct = crush_cosm::Construct::Ctor { func: "Q::init".into() };
+        program.cosm = Some(CosmModule { kinds: vec![p, q], interfaces: Vec::new() });
+        let used: Vec<String> = capabilities_used(&program).expect("decode").into_iter().collect();
+        assert_eq!(used, ["fs.cat", "io.print"]);
     }
 }

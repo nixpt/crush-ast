@@ -311,6 +311,10 @@ pub enum OperandKind {
     Func,  // 2B const-pool index
     Count, // 2B element count
     Closure, // 2B const-pool idx (function) + 1B arity + 1B captured count
+    /// A member or Kind name + argc (`CALL_MEMBER`, `CONSTRUCT`): encoded like
+    /// [`OperandKind::Cap`] — 2B const-pool idx + 1B argc — but the name is not
+    /// a capability (COSM K1.4).
+    Member,
 }
 
 impl OperandKind {
@@ -321,7 +325,7 @@ impl OperandKind {
             OperandKind::I64 | OperandKind::F64 => 8,
             OperandKind::Str | OperandKind::Slot | OperandKind::Func | OperandKind::Count => 2,
             OperandKind::Addr => 4,
-            OperandKind::Cap => 3,
+            OperandKind::Cap | OperandKind::Member => 3,
             OperandKind::Closure => 4,
         }
     }
@@ -349,7 +353,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         CALL_VALUE => Some(OperandKind::Count),
         CELL_NEW | CELL_GET | CELL_SET => Some(OperandKind::None),
         GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD => Some(OperandKind::Str),
-        CALL_MEMBER | CONSTRUCT => Some(OperandKind::Cap),
+        CALL_MEMBER | CONSTRUCT => Some(OperandKind::Member),
         GET_SLOT | SET_SLOT => Some(OperandKind::Count),
         COPY => Some(OperandKind::None),
         EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
