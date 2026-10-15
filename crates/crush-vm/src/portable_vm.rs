@@ -1714,21 +1714,21 @@ impl PortableVm {
     /// the first error are identical (#175).
     fn parallel_map(&self, args: &[Value]) -> Result<(String, Value), VmError> {
         let jobs = crate::parallel::jobs(args)?;
-        let worker = crate::parallel::worker_program(&self.program);
-        let results = jobs
-            .iter()
-            .map(|job| {
-                let entry = *self
-                    .func_entry
-                    .get(&job.function)
-                    .ok_or_else(|| VmError::UnknownFunction(job.function.clone()))?;
-                let mut vm = PortableVm::new(worker.clone());
+        let program = crate::parallel::worker_program(&self.program);
+        let entry = *self
+            .func_entry
+            .get(&jobs.function)
+            .ok_or_else(|| VmError::UnknownFunction(jobs.function.clone()))?;
+        let mut worker = crate::parallel::Worker::new(&jobs);
+        let results = (0..jobs.items.len())
+            .map(|i| {
+                let mut vm = PortableVm::new(program.clone());
                 vm.quotas = self.quotas.clone();
                 vm.ip = entry;
-                let (stack, captured) = crate::parallel::start_stack(job);
-                vm.stack = stack;
-                let result = vm.run()?;
-                crate::parallel::check_captured(job, &captured)?;
+                vm.stack = worker.stack(i);
+                let result = vm.run();
+                worker.check()?;
+                let result = result?;
                 let value = result.stack.last().cloned().unwrap_or(Value::Null);
                 Ok((result.output, crate::parallel::move_out(&value)?))
             })

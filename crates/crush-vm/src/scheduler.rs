@@ -1632,11 +1632,18 @@ pub(crate) fn spawn_target(callee: Value, argc: usize, args: &mut Vec<Value>) ->
     }
 }
 
-/// One parallel_map item in a fresh VM (no host capabilities).
-fn run_item(program: &crate::bytecode::Program, quotas: &Quotas, job: &crate::parallel::Job) -> crate::parallel::ItemResult {
-    let (stack, captured) = crate::parallel::start_stack(job);
-    let result = run_from(program, quotas, None, None, Some((&job.function, stack)))?;
-    crate::parallel::check_captured(job, &captured)?;
+/// One parallel_map item in a fresh VM (no host capabilities), with the
+/// worker thread's captured values.
+fn run_item(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    worker: &mut crate::parallel::Worker,
+    function: &str,
+    i: usize,
+) -> crate::parallel::ItemResult {
+    let result = run_from(program, quotas, None, None, Some((function, worker.stack(i))));
+    worker.check()?;
+    let result = result?;
     let value = result.return_value.unwrap_or(Value::Null);
     Ok((result.output, crate::parallel::move_out(&value)?))
 }
@@ -1649,47 +1656,66 @@ pub(crate) fn parallel_map(
     quotas: &Quotas,
     args: &[Value],
 ) -> Result<(String, Value), VmError> {
-    use crate::parallel::{IN_WORKER, collect, jobs, worker_program};
+    parallel_map_counted(program, quotas, args).map(|(output, results, _)| (output, results))
+}
+
+/// [`parallel_map`], also returning how many times the captured values were
+/// rebuilt in total (at most once per worker thread unless an item failed —
+/// the scaling contract the tests pin).
+pub(crate) fn parallel_map_counted(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    args: &[Value],
+) -> Result<(String, Value, usize), VmError> {
+    use crate::parallel::{IN_WORKER, ItemResult, Worker, collect, jobs, worker_program};
     let jobs = jobs(args)?;
-    let worker = worker_program(program);
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(jobs.len());
+    let n = jobs.items.len();
+    let program = worker_program(program);
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(n);
     let sequential = IN_WORKER.with(|w| w.get()) || threads < 2 || cfg!(target_arch = "wasm32");
-    let results: Vec<crate::parallel::ItemResult> = if sequential {
-        jobs.iter()
-            .map(|job| {
-                let was = IN_WORKER.with(|w| w.replace(true));
-                let result = run_item(&worker, quotas, job);
-                IN_WORKER.with(|w| w.set(was));
-                result
-            })
-            .collect()
+    let (results, rebuilds): (Vec<ItemResult>, usize) = if sequential {
+        let was = IN_WORKER.with(|w| w.replace(true));
+        let mut worker = Worker::new(&jobs);
+        let results = (0..n).map(|i| run_item(&program, quotas, &mut worker, &jobs.function, i)).collect();
+        IN_WORKER.with(|w| w.set(was));
+        (results, worker.rebuilds)
     } else {
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let slots: Vec<std::sync::Mutex<Option<crate::parallel::ItemResult>>> =
-            jobs.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        let rebuilds = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<ItemResult>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();
         std::thread::scope(|scope| {
             for _ in 0..threads {
                 scope.spawn(|| {
                     IN_WORKER.with(|w| w.set(true));
+                    // Built on this thread's first item: values aren't Send.
+                    let mut worker: Option<Worker> = None;
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(job) = jobs.get(i) else { break };
-                        let result = run_item(&worker, quotas, job);
+                        if i >= n {
+                            break;
+                        }
+                        let worker = worker.get_or_insert_with(|| Worker::new(&jobs));
+                        let result = run_item(&program, quotas, worker, &jobs.function, i);
                         *slots[i].lock().expect("slot") = Some(result);
+                    }
+                    if let Some(w) = worker {
+                        rebuilds.fetch_add(w.rebuilds, std::sync::atomic::Ordering::Relaxed);
                     }
                 });
             }
         });
-        slots
+        let results = slots
             .into_iter()
             .map(|slot| {
                 slot.into_inner()
                     .expect("slot")
                     .unwrap_or_else(|| Err(VmError::Parallel("a worker thread panicked".to_string())))
             })
-            .collect()
+            .collect();
+        (results, rebuilds.into_inner())
     };
-    collect(results)
+    let (output, results) = collect(results)?;
+    Ok((output, results, rebuilds))
 }
 
 fn dispatch_cap(

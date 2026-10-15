@@ -180,22 +180,23 @@ pub fn move_in(m: Moved) -> Value {
     Unmover::default().into_value(m)
 }
 
-/// One item's work: call `function` with the item and the closure's captured
-/// values (moved together, so shared cells stay shared). On the stack the
-/// captured values go on top — they are the leading parameters.
-#[derive(Debug, Clone)]
-pub struct Job {
+/// The work of one `parallel_map` call. The function's captured values are
+/// moved **once** (shared read-only by every worker thread), each item on its
+/// own: capturing a big table and mapping over many items costs one copy of
+/// the table per worker thread, not per item.
+#[derive(Debug)]
+pub struct Jobs {
     pub function: String,
-    pub item: Moved,
-    /// In parameter order; also the snapshot `check_captured` compares with.
+    /// In parameter order; also the snapshot [`Worker::check`] compares with.
     pub captured: Vec<Moved>,
+    pub items: Vec<Moved>,
 }
 
 /// What a worker reports for one item.
 pub type ItemResult = Result<(String, Moved), VmError>;
 
-/// Check `parallel_map`'s arguments and build one job per item.
-pub fn jobs(args: &[Value]) -> Result<Vec<Job>, VmError> {
+/// Check `parallel_map`'s arguments and move the work out of the caller.
+pub fn jobs(args: &[Value]) -> Result<Jobs, VmError> {
     let [items, f] = args else {
         return Err(VmError::CapArity { cap: "parallel_map".to_string(), expected: 2, got: args.len() });
     };
@@ -205,44 +206,115 @@ pub fn jobs(args: &[Value]) -> Result<Vec<Job>, VmError> {
         other => return Err(VmError::TypeError { expected: "array", got: other.type_name() }),
     };
     let func = crate::vm::callable(f, 1)?;
-    items
-        .iter()
-        .map(|item| {
-            let mut mover = Mover::default();
-            let captured = func.captured.iter().map(|c| mover.out(c)).collect::<Result<Vec<_>, _>>()?;
-            Ok(Job { function: func.name.clone(), item: mover.out(item)?, captured })
-        })
-        .collect()
-}
-
-/// A worker's starting stack (bottom → top: the item, then the captured
-/// values, first one on top), and the captured values it starts with.
-pub fn start_stack(job: &Job) -> (Vec<Value>, Vec<Value>) {
-    let mut unmover = Unmover::default();
-    let captured: Vec<Value> = job.captured.iter().cloned().map(|c| unmover.into_value(c)).collect();
-    let item = unmover.into_value(job.item.clone());
-    let mut stack = vec![item];
-    stack.extend(captured.iter().rev().cloned());
-    (stack, captured)
-}
-
-/// After an item ran: did it change anything it captured — a captured
-/// variable, a variable captured by a closure it captured (transitively), or a
-/// captured array or map in place? Nothing comes back from a worker, so the
-/// change would be lost: that is an error, not a silent difference from a
-/// sequential map.
-pub fn check_captured(job: &Job, captured_after: &[Value]) -> Result<(), VmError> {
     let mut mover = Mover::default();
-    let after = captured_after.iter().map(|c| mover.out(c)).collect::<Result<Vec<_>, _>>()?;
-    if after != job.captured {
-        return Err(VmError::Parallel(
+    let captured = func.captured.iter().map(|c| mover.out(c)).collect::<Result<Vec<_>, _>>()?;
+    let items = items.iter().map(move_out).collect::<Result<Vec<_>, _>>()?;
+    Ok(Jobs { function: func.name.clone(), captured, items })
+}
+
+/// One worker thread's side of a `parallel_map`: the captured values, rebuilt
+/// once for all the items this thread runs. Reusing them is sound because an
+/// item that changes anything captured fails ([`Worker::check`]) — and the
+/// items a thread takes come in increasing order, so no later item's result
+/// is ever used after that failure (the first error in item order wins).
+pub struct Worker<'a> {
+    jobs: &'a Jobs,
+    captured: Vec<Value>,
+    /// How many times this worker rebuilt the captured values.
+    pub rebuilds: usize,
+}
+
+impl<'a> Worker<'a> {
+    pub fn new(jobs: &'a Jobs) -> Self {
+        let mut worker = Worker { jobs, captured: Vec::new(), rebuilds: 0 };
+        worker.rebuild();
+        worker
+    }
+
+    fn rebuild(&mut self) {
+        let mut unmover = Unmover::default();
+        self.captured = self.jobs.captured.iter().cloned().map(|c| unmover.into_value(c)).collect();
+        self.rebuilds += 1;
+    }
+
+    /// Item `i`'s starting stack (bottom → top: the item — the worker's own
+    /// copy — then the captured values, the first one on top).
+    pub fn stack(&self, i: usize) -> Vec<Value> {
+        let mut stack = vec![move_in(self.jobs.items[i].clone())];
+        stack.extend(self.captured.iter().rev().cloned());
+        stack
+    }
+
+    /// After an item ran: did it change anything it captured — a captured
+    /// variable, one captured by a closure it captured (transitively), or a
+    /// captured array or map in place? Nothing comes back from a worker, so
+    /// the change would be lost: that is an error, not a silent difference
+    /// from a sequential map. Compares in place, without copying.
+    pub fn check(&mut self) -> Result<(), VmError> {
+        let mut cells = std::collections::HashMap::new();
+        let unchanged = self.captured.len() == self.jobs.captured.len()
+            && self.captured.iter().zip(&self.jobs.captured).all(|(v, m)| same(v, m, &mut cells, 0));
+        if unchanged {
+            return Ok(());
+        }
+        self.rebuild(); // the next item this thread runs starts clean
+        Err(VmError::Parallel(
             "the function changed something it captured (a variable it or a function it calls \
              captured, or a captured array/map); a parallel_map worker shares nothing, so the \
              change would be lost — return the value instead"
                 .to_string(),
-        ));
+        ))
     }
-    Ok(())
+}
+
+/// Is `v` still what `m` was moved from? Cells are matched by identity (the
+/// first time a cell id is seen it binds that cell), floats bit for bit.
+fn same(
+    v: &Value,
+    m: &Moved,
+    cells: &mut std::collections::HashMap<*const std::cell::RefCell<Value>, usize>,
+    depth: usize,
+) -> bool {
+    if depth > MAX_DEPTH {
+        return false;
+    }
+    let d = depth + 1;
+    let seq = |xs: &[Value], ms: &[Moved], cells: &mut _| {
+        xs.len() == ms.len() && xs.iter().zip(ms).all(|(x, m)| same(x, m, cells, d))
+    };
+    match (v, m) {
+        (Value::Null, Moved::Null) => true,
+        (Value::Bool(a), Moved::Bool(b)) => a == b,
+        (Value::Int(a), Moved::Int(b)) => a == b,
+        (Value::Float(a), Moved::Float(b)) => a.to_bits() == b.to_bits(),
+        (Value::Str(a), Moved::Str(b)) => a == b,
+        (Value::Array(a), Moved::Array(b)) | (Value::Vector(a), Moved::Vector(b)) | (Value::Set(a), Moved::Set(b)) => {
+            seq(&a.borrow(), b, cells)
+        }
+        (Value::Tuple(a), Moved::Tuple(b)) => seq(a, b, cells),
+        (Value::List(a), Moved::List(b)) => {
+            let a = a.borrow();
+            a.len() == b.len() && a.iter().zip(b).all(|(x, m)| same(x, m, cells, d))
+        }
+        (Value::Map(a), Moved::Map(b)) => {
+            let a = a.borrow();
+            a.len() == b.len() && a.iter().zip(b).all(|((ka, va), (kb, vb))| ka == kb && same(va, vb, cells, d))
+        }
+        (Value::Error(a), Moved::Error(b)) => a == b,
+        (Value::Bytes(a), Moved::Bytes(b)) => a == b,
+        (Value::Func(f), Moved::Func { name, arity, captured }) => {
+            &f.name == name && f.arity == *arity && seq(&f.captured, captured, cells)
+        }
+        (Value::Cell(c), Moved::Cell(id, inner)) => match cells.get(&std::rc::Rc::as_ptr(c)) {
+            Some(seen) => seen == id,
+            None => {
+                cells.insert(std::rc::Rc::as_ptr(c), *id);
+                same(&c.borrow(), inner, cells, d)
+            }
+        },
+        (Value::Cell(c), Moved::CellRef(id)) => cells.get(&std::rc::Rc::as_ptr(c)) == Some(id),
+        _ => false,
+    }
 }
 
 /// A worker's error, as the caller sees it.
