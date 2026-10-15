@@ -1598,7 +1598,13 @@ impl Compiler {
                         bail!("array.pop() expects exactly 1 argument");
                     }
                     self.compile_expr(&args[0], instrs)?;
+                    // The `array_pop` op leaves [array, value]; `array.pop(a)` is
+                    // an expression whose value is the element, so drop the
+                    // array — otherwise it shifts the operands of whatever
+                    // encloses the call (`print(len(a), a.pop())` printed the array).
                     instrs.push(self.create_instr("array_pop", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("swap", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
                 } else if function == "__crush_slice__" {
                     // `t[start:stop:step]` (null bounds = from the edge).
                     if args.len() != 4 {
