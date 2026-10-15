@@ -14,6 +14,96 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
+- fix(publish): a crate with a versioned dev-dep waits on that crate's first publish (#218)
+- fix(rust): typed closure parameters were dropped — a closure could capture the wrong x (silently) (#217)
+- feat(frontend): Crush impl / trait / @kind(…) lowered to COSM (CRUSH-zorro-41) (#214)
+- feat(cosm): crush-cosm crate — COSM schema, serde, validation, C3 (CRUSH-zorro-40) (#211)
+- planning: CRUSH-zorro-3 — drop a reference to private zorro work (public crush-ast) (#216)
+- planning: file Rust SDK correctness tickets (CRUSH-xps-10..12) (#215)
+- docs: phase the Rust ↔ Crush pipeline (#204)
+- feat(crush-pkg): add host-approved Rust plugins (#196)
+- fix(python): keyword arguments are honoured or loud, never dropped (CRUSH-zorro-38) (#209)
+- feat(vm,frontend): spawn a function value; parallel_map (CRUSH-251 step 5, #175) (#207)
+- planning: COSM K1 tickets (CRUSH-zorro-40..44); zorro-40..49 reserved for COSM (#210)
+- planning: CRUSH-zorro-37 (match ignores struct names), CRUSH-zorro-38 (Python drops kwargs) (#208)
+- Merge pull request #205 from nixpt/agent/vega/CRUSH-251-step4b-js
+- Merge remote-tracking branch 'origin/main' into agent/vega/CRUSH-251-step4b-js
+- Merge pull request #203 from nixpt/agent/vega/CRUSH-251-step4a-python
+- Merge remote-tracking branch 'origin/main' into agent/vega/CRUSH-251-step4a-python
+- Merge pull request #202 from nixpt/agent/vega/CRUSH-251-step3-captures
+- feat(js): let/const are block bindings; per-iteration for-let/of/in (CRUSH-251 step 4b)
+- fix(python): comprehension loop variables get their own scope (CRUSH-251 step 4a)
+- test(python): pin late binding of closures (CRUSH-251 step 4a)
+- feat(python): lambdas, nested-def closures and nonlocal (CRUSH-251 step 4a)
+- fix(frontend): a Crush `let` is a fresh binding each time it runs (CRUSH-251 step 3)
+- test(js): update the parity harness lists after #197/#199/#194 (fixes CI walkers + aot) (#200)
+- feat(vm,frontend): closures capture enclosing variables (CRUSH-251 step 3)
+- planning: CRUSH-zorro-24 (call expressions on values), CRUSH-zorro-25 (crush-aotc silent op drop) (#195)
+- test(js): update the parity harness lists after #197/#199/#194 (fixes CI walkers + aot)
+- feat(vm,frontend): function values — MAKE_CLOSURE / CALL_VALUE (CRUSH-251 step 2) (#194)
+- planning: CRUSH-251 closures design (slice 1) — agreed vega + foreman (#191)
+- fix(js): JS runtime semantics — + ToString, && / || values, == coercion, console.log inspect (CRUSH-zorro-9, -22, -10) (#199)
+- fix(js): make silently mis-lowered constructs fail loudly (CRUSH-zorro-23) (#197)
+- test(js): JS/TS parity harness — feature corpus vs node, AOT exact-or-loud, TS twin (CRUSH-zorro-4) (#198)
+- planning: JS/TS parity spike: baseline, parser decision (boa), 21 tickets (CRUSH-zorro-4..23, 26) (#193)
+- Merge pull request #192 from nixpt/agent/vega/CRUSH-251-step1-unique-lambdas
+- fix(frontend): inner bindings shadow outer lambda aliases (tombstones)
+- fix(frontend): reassigning a lambda binding is a compile error until CRUSH-251 step 2
+- fix(frontend): lift every lambda to a unique function; let bindings are scoped aliases (CRUSH-251 step 1)
+- chore(crush-ptx): follow the workspace version; CRUSH-zorro-3 done (#190)
+- feat(gpu): write a kernel in .crush and run it on the GPU (CRUSH-zorro-3) (#186)
+- fix: JS / is true division; JS and Rust print numbers like node/rustc; AOT io.print prints every argument (#189)
+- fix: task-local HALT; collections.* and native maps in deterministic insertion order (#188)
+- feat: Rust and Crush interoperability MVP (CRUSH-266) (#187)
+- Merge pull request #185 from nixpt/agent/vega/concurrency-decisions
+- Merge remote-tracking branch 'origin/main' into agent/vega/concurrency-decisions
+- Merge pull request #183 from nixpt/agent/vega/capsule-target-ticket
+- Merge pull request #184 from nixpt/agent/vega/python-parity
+- Merge pull request #182 from nixpt/agent/vega/portable-vm-spawn
+- planning: record owner decisions on spawn HALT, #176 scope, #175 order, collections order
+- test+planning: Python e2e parity corpus (VM exact, AOT exact-or-loud); decline CRUSH-47
+- feat: Python repr printing; dict ops, ordered maps and string ops on AOT
+- feat(vm): insertion-ordered maps (Value::Map is an IndexMap)
+- feat(python): method calls on any value; fix array.pop leaving the array on the stack
+- feat: `**` (math.power) and Python slicing (seq.slice) in every engine
+- planning: file CRUSH-zorro-1 — crush AOT target for native Antarikshya capsules
+- fix(portable-vm): real green tasks for spawn/yield/await, matching the scheduler (#161)
+- Merge pull request #181 from nixpt/agent/vega/spawn-regression-tests
+- test(crush-vm): regression tests for #177 — spawned-task output order and exit semantics
+- Merge pull request #177 from pranix/bro/spawn-join-handles
+- Merge pull request #173 from nixpt/agent/panini/CRUSH-202
+- Merge remote-tracking branch 'origin/main' into agent/panini/CRUSH-202
+- Merge pull request #180 from nixpt/agent/vega/js-walker-silent-bugs
+- fix(walkers): JS switch/ternary/member-assign/console.log silently wrong; lazy conditionals in JS, Python, Rust (CRUSH-196)
+- fix: address #177 review feedback
+- Merge pull request #179 from nixpt/agent/vega/planning-rendered-views
+- planning: archive the hand-written TASKS.md verbatim
+- planning: TASKS.md/STATE.md become rendered views (jagent-ticket migrate)
+- chore(planning): reviewed MILESTONES.caison (milestones/1) — MILE-16 (#178)
+- fix: spawned tasks run to completion instead of being abandoned (#174)
+- Merge remote-tracking branch 'origin/main' into agent/panini/CRUSH-202
+- Merge pull request #172 from nixpt/agent/gorkhali/CRUSH-180
+- Merge remote-tracking branch 'origin/main' into agent/panini/CRUSH-202
+- Merge remote-tracking branch 'origin/main' into agent/gorkhali/CRUSH-180
+- Merge pull request #171 from nixpt/agent/vega/planning-hygiene-stdlib
+- Merge branch 'main' into agent/vega/planning-hygiene-stdlib
+- docs(planning): CRUSH-202 result, decision, and captured follow-ups
+- chore(bash-walker): CRUSH-202 drop a redundant cast (clippy)
+- fix(walkers): CRUSH-202 bash/zsh lower correctly or fail loudly
+- test(walkers): CRUSH-202 bash/zsh oracle corpus (red)
+- docs(planning): CRUSH-180 result, decision, and a captured error-prefix issue
+- fix(sdk): CRUSH-180 — fs sandbox: never follow a symlink out of --fs-root
+- Fix debugger integration tests for invalid grant cases by avoiding stdin writes when the process exits during validation.
+- planning: decide CRUSH-55 D-1/D-2 — close as ast ⊇ exo, retire exo runtimes
+- planning: tick the TASKS issue about the duplicate CRUSH-108 ID
+- planning: stdlib migration hygiene; file CRUSH-264/265
+- Merge pull request #170 from nixpt/agent/vega/CRUSH-201-c-walker-loud
+- fix(c-walker): fail loudly instead of silently wrong; printf, else, arrays, loops (CRUSH-201)
+
+
+
 ### Breaking changes
 
 - `crush-vm::VmResult` now includes `return_value`; downstream Rust code that
