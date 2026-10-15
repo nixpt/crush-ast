@@ -33,6 +33,11 @@ impl SemanticAnalyzer {
             .insert("len".to_string(), (vec![Type::Any], Type::Int));
         self.functions
             .insert("print".to_string(), (vec![Type::Any], Type::Null));
+        // `parallel_map(items, f)` (#175): a VM capability.
+        self.functions.insert(
+            "parallel_map".to_string(),
+            (vec![Type::Any, Type::Any], Type::Array(Box::new(Type::Any))),
+        );
 
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;
@@ -465,13 +470,16 @@ impl SemanticAnalyzer {
                         }
                     }
                     Ok(ret_type)
-                } else if let Some(Type::Any) = self.resolve_var(function) {
+                } else if self.resolve_var(function).is_some() {
+                    // A variable holding a function value (CRUSH-251). Its
+                    // static type isn't reliable here (a function returning a
+                    // lambda infers as null; a variable keeps its first type
+                    // after reassignment), so a non-function is caught at run
+                    // time: "<type> is not callable".
                     for arg in args {
                         self.check_expr(arg)?;
                     }
                     Ok(Type::Any)
-                } else if let Some(ty) = self.resolve_var(function) {
-                    bail!("`{}` holds a value of type {}, not a function: it can't be called", function, ty)
                 } else {
                     bail!("Undefined function: {}", function)
                 }

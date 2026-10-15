@@ -15,10 +15,6 @@ fn both(source: &str) -> Result<String, String> {
     native
 }
 
-fn compile_err(source: &str) -> String {
-    format!("{:#}", crush_frontend::compile_crush_source(source).expect_err("must not compile"))
-}
-
 fn ok(source: &str) -> String {
     both(source).expect("runs")
 }
@@ -88,9 +84,8 @@ fn a_parameter_shadowing_an_outer_lambda_holds_what_was_passed() {
 
 #[test]
 fn calling_a_non_function() {
-    // Statically known: a compile error.
-    let e = compile_err("fn main() {\n  let x = 5\n  print(x(1))\n}\n");
-    assert!(e.contains("`x` holds a value of type int, not a function"), "{e}");
+    let e = both("fn main() {\n  let x = 5\n  print(x(1))\n}\n").unwrap_err();
+    assert!(e.contains("int is not callable"), "{e}");
     // An inner `let f = 5` shadows the outer lambda (it used to call it).
     let e = both("fn run() {\n  let f = |x| x + 1\n  let g = |y| {\n    let f = 5\n    return f(y)\n  }\n  return g(1)\n}\nfn main() {\n  print(run())\n}\n").unwrap_err();
     assert!(e.contains("int is not callable"), "{e}");
@@ -113,14 +108,13 @@ fn printing_a_function_value() {
     );
 }
 
+// Was a compile error until CRUSH-251 step 5 (SPAWN takes a function value).
 #[test]
-fn spawning_a_function_variable_is_loud_until_step_5() {
-    let e = format!(
-        "{:#}",
-        crush_frontend::compile_crush_source("fn w(x) {\n  return x\n}\nfn main() {\n  let f = w\n  let h = spawn f(1)\n}\n")
-            .expect_err("must not compile")
+fn spawning_a_function_variable() {
+    assert_eq!(
+        ok("fn w(x) {\n  return x * 2\n}\nfn main() {\n  let f = w\n  let h = spawn f(21)\n  yield\n  print(await h)\n}\n"),
+        "42\n"
     );
-    assert!(e.contains("CRUSH-251 step 5"), "{e}");
 }
 
 // #192 lifted `let w = |..|` as `__lambda_N_w` but `spawn w(..)` still pushed

@@ -1049,9 +1049,22 @@ impl PortableVm {
                 }
                 args.reverse();
 
-                let result = self.dispatch_cap(&cap, args)?;
-                if let Some(v) = result {
-                    self.push(v);
+                if cap == "parallel_map" {
+                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
+                    let (output, results) = self.parallel_map(&args)?;
+                    if !output.is_empty() {
+                        self.out_len += output.len();
+                        if self.out_len > self.quotas.max_output {
+                            return Err(VmError::OutputQuota(self.quotas.max_output));
+                        }
+                        self.out_parts.push(output);
+                    }
+                    self.push(results);
+                } else {
+                    let result = self.dispatch_cap(&cap, args)?;
+                    if let Some(v) = result {
+                        self.push(v);
+                    }
                 }
             }
             CALL => {
@@ -1097,6 +1110,20 @@ impl PortableVm {
                     arity,
                     captured,
                 })));
+            }
+            CELL_NEW => {
+                let v = self.pop()?;
+                self.push(Value::Cell(std::rc::Rc::new(std::cell::RefCell::new(v))));
+            }
+            CELL_GET => {
+                let c = crate::vm::cell(&self.pop()?)?;
+                let v = c.borrow().clone();
+                self.push(v);
+            }
+            CELL_SET => {
+                // Stack: value, then the cell on top.
+                let c = crate::vm::cell(&self.pop()?)?;
+                *c.borrow_mut() = self.pop()?;
             }
             CALL_VALUE => {
                 // Stack: args (pushed last-first, as for CALL), then the callee.
@@ -1588,12 +1615,13 @@ impl PortableVm {
                 let argc = u16::from_be_bytes(
                     self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
                 ) as usize;
-                let fn_name = value_to_text(&self.pop()?);
+                let callee = self.pop()?;
                 let mut args = Vec::with_capacity(argc);
                 for _ in 0..argc {
                     args.push(self.pop()?);
                 }
                 args.reverse();
+                let fn_name = crate::scheduler::spawn_target(callee, argc, &mut args)?;
                 // A real green task, like the native scheduler: it runs at the
                 // next YIELD / slice boundary, not only when awaited (#161).
                 match self.func_entry.get(&fn_name) {
@@ -1681,6 +1709,33 @@ impl PortableVm {
                 .is_none_or(|allowed| allowed.iter().any(|a| a == "io.read"))
     }
 
+    /// `parallel_map` without threads (wasm): the same share-nothing jobs as
+    /// the native scheduler, one after another, so the results, the output and
+    /// the first error are identical (#175).
+    fn parallel_map(&self, args: &[Value]) -> Result<(String, Value), VmError> {
+        let jobs = crate::parallel::jobs(args)?;
+        let program = crate::parallel::worker_program(&self.program);
+        let entry = *self
+            .func_entry
+            .get(&jobs.function)
+            .ok_or_else(|| VmError::UnknownFunction(jobs.function.clone()))?;
+        let mut worker = crate::parallel::Worker::new(&jobs);
+        let results = (0..jobs.items.len())
+            .map(|i| {
+                let mut vm = PortableVm::new(program.clone());
+                vm.quotas = self.quotas.clone();
+                vm.ip = entry;
+                vm.stack = worker.stack(i);
+                let result = vm.run();
+                worker.check()?;
+                let result = result?;
+                let value = result.stack.last().cloned().unwrap_or(Value::Null);
+                Ok((result.output, crate::parallel::move_out(&value)?))
+            })
+            .collect();
+        crate::parallel::collect(results)
+    }
+
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
         // Check permission
         crate::scheduler::check_cap_permitted(cap, self.declared_caps.contains(cap), &self.quotas)?;
@@ -1715,6 +1770,16 @@ impl PortableVm {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
                     self.out_parts.push(text);
+                    Ok(None)
+                }
+                "py.print_sep_end" => {
+                    crate::vm::reject_func_print(&args)?;
+                    let line = crate::io_print::format_py_print_sep_end(&args);
+                    self.out_len += line.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.out_parts.push(line);
                     Ok(None)
                 }
                 "py.print" => {
@@ -2162,6 +2227,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Handle(_) => "handle",
         Value::Foreign(_) => "foreign",
         Value::Func(_) => "function",
+        Value::Cell(_) => "cell",
     }
 }
 
@@ -2212,6 +2278,7 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Handle(id) => format!("<handle {}>", id),
         Value::Foreign(id) => format!("<foreign {}>", id),
         Value::Func(func) => format!("<fn {}>", func.display_name()),
+        Value::Cell(_) => "<cell>".to_string(),
     }
 }
 

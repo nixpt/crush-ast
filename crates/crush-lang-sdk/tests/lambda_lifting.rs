@@ -52,18 +52,17 @@ fn recursion_through_a_lambda_alias() {
     assert_eq!(out, "120\n");
 }
 
-fn compile_error(source: &str) -> String {
-    format!("{:#}", crush_frontend::compile_crush_source(source).expect_err("must not compile"))
-}
-
 // Reassigning a lambda binding (in a loop, a branch, straight-line) and
 // shadowing one in an inner scope were compile errors here until CRUSH-251
 // step 2; they now run correctly — see `function_values.rs`.
 #[test]
 fn rebinding_to_a_non_lambda_drops_the_alias() {
     // `f` is 5 now; calling it must not silently call the old lambda.
-    let e = compile_error(
+    let casm = crush_frontend::compile_crush_source(
         "fn main() {\n  let f = |x| x + 1\n  let r = f(1)\n  let f = 5\n  print(f(2))\n}\n",
-    );
-    assert!(e.contains("`f` holds a value of type int, not a function"), "{e}");
+    )
+    .expect("compile");
+    let program = crush_lang_sdk::compile::casm_to_vm(&casm).expect("lower");
+    let e = run(&program, &Quotas::default()).expect_err("must fail").to_string();
+    assert!(e.contains("int is not callable"), "{e}");
 }

@@ -486,6 +486,17 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
                     format!("CALL_VALUE {argc}")
                 }
+                // CRUSH-251 step 3: a variable closures capture by reference
+                // lives in a cell in its slot.
+                "cell_new" => "CELL_NEW".to_string(),
+                "load_cell" | "store_cell" => {
+                    let name = instr.args["name"].as_str().ok_or_else(|| {
+                        anyhow::anyhow!("{} missing name at {fname}:{i}", instr.op)
+                    })?;
+                    let slot = get_slot(name, &mut slot_map, &mut next_slot);
+                    let op = if instr.op == "load_cell" { "CELL_GET" } else { "CELL_SET" };
+                    format!("LOAD {slot}\n{op}")
+                }
                 "cap_call" => {
                     let name = instr.args["name"]
                         .as_str()

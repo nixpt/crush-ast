@@ -1355,7 +1355,12 @@ impl Parser {
             | Token::Minus(..)
             | Token::Not(..)
             | Token::Await(..)
-            | Token::Spawn(..) => true,
+            | Token::Spawn(..)
+            // A lambda: `|x| ..`, `|| ..`, legacy `|>x|> ..`. Without these,
+            // `return |b| a + b` parsed as a bare `return` (CRUSH-251).
+            | Token::Bar(..)
+            | Token::Or(..)
+            | Token::Pipe(..) => true,
             _ => false,
         }
     }

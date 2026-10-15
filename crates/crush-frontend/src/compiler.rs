@@ -54,6 +54,13 @@ pub struct Compiler {
     /// Arity of every program function (top-level and nested defs), for
     /// `make_closure` when a function's name is used as a value.
     function_arity: HashMap<String, usize>,
+    /// CRUSH-251 step 3: variables of the function being compiled that some
+    /// closure captures by reference (see `boxed_names`). Their slots hold a
+    /// cell; loads and stores go through it (`load_cell` / `store_cell`).
+    boxed: HashSet<String>,
+    /// Names each enclosing scope binds (function, then lambda bodies,
+    /// innermost last) — what a lambda can capture.
+    scopes: Vec<HashSet<String>>,
 }
 
 struct LoopInfo {
@@ -84,6 +91,8 @@ impl Compiler {
             lambda_counter: 0,
             rebound: HashSet::new(),
             function_arity: HashMap::new(),
+            boxed: HashSet::new(),
+            scopes: Vec::new(),
         }
     }
 
@@ -101,6 +110,74 @@ impl Compiler {
             );
         }
         Ok(())
+    }
+
+    /// Scope entry for boxed variables (CRUSH-251 step 3): a boxed parameter's
+    /// incoming value is wrapped in a cell, a boxed local starts as a cell
+    /// holding null. These stores are `raw` (they write the cell itself).
+    fn emit_cell_init(
+        &self,
+        params: &[String],
+        locals: &HashSet<String>,
+        instrs: &mut Vec<Instruction>,
+        meta: &HashMap<String, serde_json::Value>,
+    ) {
+        for p in params.iter().filter(|p| self.boxed.contains(*p)) {
+            instrs.push(self.create_instr("load", serde_json::json!({"name": p, "raw": true}), meta));
+            instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("store", serde_json::json!({"name": p, "raw": true}), meta));
+        }
+        let mut boxed_locals: Vec<&String> = locals
+            .iter()
+            .filter(|l| self.boxed.contains(*l) && !params.contains(*l))
+            .collect();
+        boxed_locals.sort();
+        for l in boxed_locals {
+            instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("store", serde_json::json!({"name": l, "raw": true}), meta));
+        }
+    }
+
+    /// Route every load / store of a boxed variable from `from` on through its
+    /// cell. Renaming in place keeps instruction indices (jump targets) valid.
+    fn rewrite_cells(&self, instrs: &mut [Instruction], from: usize) {
+        if self.boxed.is_empty() {
+            return;
+        }
+        for instr in &mut instrs[from..] {
+            let raw = instr.args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
+            let boxed = instr.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| self.boxed.contains(n));
+            if raw || !boxed {
+                continue;
+            }
+            match instr.op.as_str() {
+                "load" => instr.op = "load_cell".to_string(),
+                "store" => instr.op = "store_cell".to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Set up a function-level scope (a top-level fn or a nested `def`):
+    /// boxed variables, the scope's names, cell init after the param stores.
+    /// Returns where the body starts (for `rewrite_cells`).
+    fn enter_function_scope(
+        &mut self,
+        params: &[(String, CastType)],
+        body: &[Statement],
+        instrs: &mut Vec<Instruction>,
+        meta: &HashMap<String, serde_json::Value>,
+    ) -> usize {
+        let pnames: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
+        let body_json = serde_json::to_value(body).unwrap_or_default();
+        self.boxed = boxed_names(&pnames, &body_json);
+        let mut level = Level::default();
+        scan_level(&body_json, &mut level);
+        let locals: HashSet<String> = level.decls.union(&level.assigns).cloned().collect();
+        self.scopes = vec![pnames.iter().cloned().chain(locals.iter().cloned()).collect()];
+        self.emit_cell_init(&pnames, &locals, instrs, meta);
+        instrs.len()
     }
 
     /// The lifted name a `let`-bound lambda alias resolves to, innermost scope first.
@@ -207,11 +284,13 @@ impl Compiler {
                     }
                     self.lambda_aliases
                         .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
+                    let body_start = self.enter_function_scope(params, body, &mut func_instrs, meta);
                     let nested: Result<()> = body
                         .iter()
                         .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
                     self.lambda_aliases.pop();
                     nested?;
+                    self.rewrite_cells(&mut func_instrs, body_start);
                     self.ensure_return(&mut func_instrs, Some(meta));
                     self.record_debug_info_for_function(
                         name,
@@ -246,6 +325,11 @@ impl Compiler {
                     &func.meta,
                 ));
             }
+            let body_start = if func.is_async {
+                0
+            } else {
+                self.enter_function_scope(&func.params, &func.body, &mut instrs, &func.meta)
+            };
 
             // Optionally emit `cap_call "invariant.evaluate"` for every
             // `@invariant` that targets this function name AND carries a
@@ -295,12 +379,15 @@ impl Compiler {
                         &func.meta,
                     ));
                 }
+                let inner_start =
+                    self.enter_function_scope(&func.params, &func.body, &mut inner_instrs, &func.meta);
 
                 for stmt in &func.body {
                     if !matches!(stmt, Statement::FunctionDef { .. }) {
                         self.compile_stmt(stmt, &mut inner_instrs)?;
                     }
                 }
+                self.rewrite_cells(&mut inner_instrs, inner_start);
 
                 self.ensure_return(&mut inner_instrs, Some(&func.meta));
                 self.record_debug_info_for_function(&inner_name, &inner_instrs, &mut debug_info, &mut source_files);
@@ -316,7 +403,8 @@ impl Compiler {
                     },
                 );
 
-                for (param_name, _) in &func.params {
+                // Last-first, as for a call (see `Expression::Spawn`).
+                for (param_name, _) in func.params.iter().rev() {
                     instrs.push(self.create_instr(
                         "load",
                         serde_json::json!({"name": param_name}),
@@ -355,6 +443,7 @@ impl Compiler {
                         self.compile_stmt(stmt, &mut instrs)?;
                     }
                 }
+                self.rewrite_cells(&mut instrs, body_start);
 
                 self.ensure_return(&mut instrs, Some(&func.meta));
                 self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
@@ -612,6 +701,21 @@ impl Compiler {
                     if let Some(scope) = self.lambda_aliases.last_mut() {
                         scope.insert(name.clone(), None);
                     }
+                }
+                // A Crush `let` — or a walker declaration marked as a block
+                // binding (JS `let` / `const`) — is a fresh binding each time
+                // it runs (in a loop body: one per iteration), so closures
+                // made in different iterations don't share it. The cell is
+                // made before the initializer, so a lambda that refers to its
+                // own name captures this binding. Other walker declarations
+                // keep one binding: Python variables and JS `var` are
+                // function-scoped.
+                let block_binding = !meta.contains_key("lang")
+                    || meta.get("binding").and_then(|b| b.as_str()) == Some("block");
+                if self.boxed.contains(name.as_str()) && block_binding {
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
                 }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
                 instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
@@ -1582,6 +1686,21 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if function == "parallel_map" && !self.local_functions.contains("parallel_map") {
+                    // #175: a VM capability (it starts workers); capabilities
+                    // take their arguments in order.
+                    if args.len() != 2 {
+                        bail!("parallel_map(items, f) expects exactly 2 arguments");
+                    }
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    self.all_permissions.insert("parallel_map".to_string());
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "parallel_map", "argc": 2}),
+                        meta,
+                    ));
                 } else if function == "print" {
                     self.all_permissions.insert("io.print".to_string());
                     for arg in args {
@@ -1725,6 +1844,20 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_rebind__" {
+                    // A fresh binding holding the variable's current value
+                    // (JS `for (let ..)` per-iteration copy, CRUSH-251 step
+                    // 4b): closures made so far keep the old binding. Only a
+                    // boxed (captured) variable has a binding to renew.
+                    let Some(Expression::Var { name, .. }) = args.first() else {
+                        bail!("__crush_rebind__ expects a variable");
+                    };
+                    if self.boxed.contains(name.as_str()) {
+                        instrs.push(self.create_instr("load_cell", serde_json::json!({"name": name}), meta));
+                        instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                    }
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 } else if function == "__crush_assign__" {
                     // Intrinsic: assignment lowered from walker (e.g., `x = 42` in JS)
                     // args[0] = target Var, args[1] = value expression
@@ -2095,25 +2228,34 @@ impl Compiler {
                 // before the function name. The scheduler will pop argc
                 // args + fn_name, then create a new thread with args
                 // pre-loaded on the stack.
-                // A `let`-bound lambda spawns its lifted function; a variable
-                // holding a function value can't be spawned until SPAWN takes
-                // one (CRUSH-251 step 5).
-                let aliased = self.resolve_lambda_alias(function);
-                if aliased.is_none() && self.declared_vars.contains(function.as_str()) {
-                    bail!(
-                        "spawning `{function}`, a variable holding a function value, isn't \
-                         supported yet (CRUSH-251 step 5); spawn a named function"
-                    );
-                }
-                let function = aliased.as_ref().unwrap_or(function);
-                for arg in args {
+                // Args last-first, as for `call`: the task's first `store` pops
+                // the first argument. (They were pushed first-first, so a
+                // spawned `w(10, 3)` ran as `w(3, 10)`.)
+                for arg in args.iter().rev() {
                     self.compile_expr(arg, instrs)?;
                 }
-                instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": function}),
-                    meta,
-                ));
+                // The task's function is a function value (CRUSH-251 step 5),
+                // so SPAWN checks its arity and passes its captured values as
+                // leading parameters: a variable holds one (a `let`-bound
+                // lambda's variable too); a named function becomes one.
+                if self.declared_vars.contains(function.as_str()) {
+                    self.check_lambda_capture(function)?;
+                    instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
+                } else if let Some(&arity) = self.function_arity.get(function.as_str()) {
+                    instrs.push(self.create_instr(
+                        "make_closure",
+                        serde_json::json!({"function": function, "arity": arity, "ncap": 0}),
+                        meta,
+                    ));
+                } else {
+                    // Unknown here (an async wrapper, a name only the VM has):
+                    // SPAWN resolves it at run time.
+                    instrs.push(self.create_instr(
+                        "push_str",
+                        serde_json::json!({"value": function}),
+                        meta,
+                    ));
+                }
                 instrs.push(self.create_instr(
                     "spawn",
                     serde_json::json!({"argc": args.len()}),
@@ -2282,56 +2424,88 @@ impl Compiler {
                     None => format!("__lambda_{}", self.lambda_counter),
                 };
                 self.lambda_counter += 1;
-                // Only a name bound exactly once keeps the direct-call alias;
-                // otherwise which lambda it holds depends on control flow, so
-                // calls go through the value (`call_value`).
-                if let Some(hint) = name_hint.filter(|h| !self.rebound.contains(*h)) {
+                // CRUSH-251 step 3: the enclosing variables this lambda uses
+                // (transitively, through nested lambdas) become hidden leading
+                // parameters; `make_closure` carries their values — the cell
+                // for a boxed variable, so writes are shared.
+                let pnames: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
+                let body_json = serde_json::to_value(body).unwrap_or_default();
+                let enclosing: HashSet<String> = self.scopes.iter().flatten().cloned().collect();
+                let nonlocals = python_nonlocals(serde_json::to_value(meta).ok().as_ref());
+                let captures: Vec<String> =
+                    lambda_captures(&pnames, &body_json, nonlocals.as_ref(), &enclosing)
+                        .into_iter()
+                        .collect();
+                let mut level = Level::default();
+                scan_level(&body_json, &mut level);
+                let locals: HashSet<String> =
+                    lambda_locals(&[], &level, &enclosing, nonlocals.as_ref());
+                // Only a capture-free lambda bound to a name bound exactly once
+                // keeps the direct-call alias (a direct `call` can't pass
+                // captures); otherwise calls go through the value.
+                if let Some(hint) = name_hint
+                    .filter(|h| !self.rebound.contains(*h))
+                    .filter(|_| captures.is_empty())
+                {
                     if self.lambda_aliases.is_empty() {
                         self.lambda_aliases.push(HashMap::new());
                     }
                     self.lambda_aliases.last_mut().expect("scope").insert(hint.to_string(), Some(lambda_name.clone()));
                 }
 
+                // Entry: captures, then parameters, popped in that order. These
+                // stores are raw: a boxed capture arrives as its cell.
                 let mut func_instrs = Vec::new();
-                for (param_name, _) in params {
+                for name in captures.iter().chain(pnames.iter()) {
                     func_instrs.push(self.create_instr(
                         "store",
-                        serde_json::json!({"name": param_name}),
+                        serde_json::json!({"name": name, "raw": true}),
                         meta,
                     ));
                 }
-                // The lifted function has its own scope: its parameters, plus what
-                // its body declares. The enclosing scope is kept to detect captures.
+                self.emit_cell_init(&pnames, &locals, &mut func_instrs, meta);
+                let body_start = func_instrs.len();
+                // The lifted function has its own scope: its parameters and
+                // captures, plus what its body declares.
                 let outer = std::mem::replace(
                     &mut self.declared_vars,
-                    params.iter().map(|(n, _)| n.clone()).collect(),
+                    pnames.iter().chain(captures.iter()).cloned().collect(),
                 );
                 self.lambda_outer_vars.push(outer.clone());
                 self.lambda_aliases
                     .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
+                self.scopes.push(
+                    pnames.iter().chain(captures.iter()).chain(locals.iter()).cloned().collect(),
+                );
                 let body_result: Result<()> = body
                     .iter()
                     .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                self.scopes.pop();
                 self.lambda_aliases.pop();
                 self.lambda_outer_vars.pop();
                 self.declared_vars = outer;
                 body_result?;
                 self.ensure_return(&mut func_instrs, Some(meta));
+                self.rewrite_cells(&mut func_instrs, body_start);
 
                 let hints = extract_type_hints(params, body);
                 self.lambdas.insert(
                     lambda_name.clone(),
                     CasmFunction {
-                        params: params.iter().map(|(n, _)| n.clone()).collect(),
+                        params: captures.iter().chain(pnames.iter()).cloned().collect(),
                         locals: vec![],
                         type_hints: if hints.is_empty() { None } else { Some(hints) },
                         body: func_instrs,
                     },
                 );
 
+                // The captured values, in order (raw: a boxed variable's cell).
+                for name in &captures {
+                    instrs.push(self.create_instr("load", serde_json::json!({"name": name, "raw": true}), meta));
+                }
                 instrs.push(self.create_instr(
                     "make_closure",
-                    serde_json::json!({"function": lambda_name, "arity": params.len(), "ncap": 0}),
+                    serde_json::json!({"function": lambda_name, "arity": params.len(), "ncap": captures.len()}),
                     meta,
                 ));
             }
@@ -2863,4 +3037,198 @@ fn rebound_names(params: &[(String, CastType)], body: &[Statement]) -> HashSet<S
     }
     walk(&serde_json::to_value(body).unwrap_or_default(), &mut counts);
     counts.into_iter().filter(|(_, n)| *n > 1).map(|(k, _)| k).collect()
+}
+
+/// What one scope binds and references at its own level — not inside nested
+/// lambdas (collected in `lambdas`) or nested `def`s (their own scopes).
+#[derive(Default)]
+struct Level<'a> {
+    /// `let`s and loop variables: always local to the scope.
+    decls: HashSet<String>,
+    /// Plain assignment targets: local unless an enclosing scope has the name
+    /// (then the assignment writes the enclosing variable).
+    assigns: HashSet<String>,
+    /// Names read or called.
+    refs: HashSet<String>,
+    lambdas: Vec<&'a serde_json::Value>,
+}
+
+fn scan_level<'a>(v: &'a serde_json::Value, level: &mut Level<'a>) {
+    use serde_json::Value as J;
+    match v {
+        J::Array(items) => items.iter().for_each(|i| scan_level(i, level)),
+        J::Object(o) => {
+            let field = |k: &str| o.get(k).and_then(J::as_str);
+            match field("type") {
+                Some("Lambda") => {
+                    level.lambdas.push(v);
+                    return;
+                }
+                Some("FunctionDef") => return,
+                Some("VarDecl") => {
+                    level.decls.extend(field("name").map(str::to_string));
+                }
+                Some("Assign") => {
+                    level.assigns.extend(field("target").map(str::to_string));
+                }
+                Some("Var") => {
+                    level.refs.extend(field("name").map(str::to_string));
+                }
+                Some("Spawn") => {
+                    level.refs.extend(field("function").map(str::to_string));
+                }
+                // The parser emits `obj.method(..)` as a CapabilityCall named
+                // "obj.method"; it loads `obj` when `obj` is a variable.
+                Some("CapabilityCall") => {
+                    if let Some((receiver, _)) = field("name").and_then(|n| n.split_once('.')) {
+                        level.refs.insert(receiver.to_string());
+                    }
+                }
+                Some("Call") => {
+                    if let Some(f) = field("function") {
+                        if f == "__crush_assign__" {
+                            let target = o
+                                .get("args")
+                                .and_then(|a| a.get(0))
+                                .and_then(|t| t.get("name"))
+                                .and_then(J::as_str);
+                            level.assigns.extend(target.map(str::to_string));
+                        } else {
+                            // `obj.method(..)` loads `obj`.
+                            level.refs.insert(f.split('.').next().unwrap_or(f).to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            level.decls.extend(field("variable").map(str::to_string));
+            o.values().for_each(|c| scan_level(c, level));
+        }
+        _ => {}
+    }
+}
+
+fn lambda_params(lambda: &serde_json::Value) -> Vec<String> {
+    lambda
+        .get("params")
+        .and_then(|p| p.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.get(0).and_then(|n| n.as_str()).map(str::to_string))
+        .collect()
+}
+
+/// Python scoping (CRUSH-251 step 4): the Python walker marks a lambda it
+/// lowered (a `lambda` or a nested `def`) with meta `scope: "python"` and its
+/// `nonlocal` names. There, assigning a name makes it local unless it is
+/// declared `nonlocal` — unlike Crush / JS, where assigning a name an
+/// enclosing scope has writes that variable.
+fn python_nonlocals(meta: Option<&serde_json::Value>) -> Option<HashSet<String>> {
+    let meta = meta?;
+    if meta.get("scope").and_then(|s| s.as_str()) != Some("python") {
+        return None;
+    }
+    Some(
+        meta.get("nonlocal")
+            .and_then(|n| n.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
+/// The names a lambda's scope binds: parameters, `let`s / loop variables, and
+/// assignment targets — those no enclosing scope has, or (Python) those not
+/// declared `nonlocal`.
+fn lambda_locals(
+    params: &[String],
+    level: &Level,
+    enclosing: &HashSet<String>,
+    python_nonlocals: Option<&HashSet<String>>,
+) -> HashSet<String> {
+    let local_assign = |a: &&String| match python_nonlocals {
+        Some(nonlocals) => !nonlocals.contains(*a),
+        None => !enclosing.contains(*a),
+    };
+    // The Python walker lowers every assignment to a `VarDecl`, so a
+    // `nonlocal` name must not become local through one either.
+    let not_nonlocal = |d: &&String| python_nonlocals.is_none_or(|nl| !nl.contains(*d));
+    params
+        .iter()
+        .chain(level.decls.iter().filter(not_nonlocal))
+        .chain(level.assigns.iter().filter(local_assign))
+        .cloned()
+        .collect()
+}
+
+/// CRUSH-251 step 3: the enclosing variables a lambda uses — read, called,
+/// assigned, or needed by a nested lambda (transitive capture: a middle lambda
+/// captures what an inner one needs so it can pass it down). Sorted: the
+/// order of the hidden parameters.
+fn lambda_captures(
+    params: &[String],
+    body: &serde_json::Value,
+    own_nonlocals: Option<&HashSet<String>>,
+    enclosing: &HashSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let mut level = Level::default();
+    scan_level(body, &mut level);
+    let locals = lambda_locals(params, &level, enclosing, own_nonlocals);
+    let inner_enclosing: HashSet<String> = enclosing.union(&locals).cloned().collect();
+    let mut used: HashSet<String> = level.refs.union(&level.assigns).cloned().collect();
+    for nested in &level.lambdas {
+        let body = nested.get("body").unwrap_or(&serde_json::Value::Null);
+        let nonlocals = python_nonlocals(nested.get("meta"));
+        used.extend(lambda_captures(&lambda_params(nested), body, nonlocals.as_ref(), &inner_enclosing));
+    }
+    used.into_iter()
+        .filter(|n| !locals.contains(n) && enclosing.contains(n))
+        .collect()
+}
+
+/// CRUSH-251 step 3: the variables of a function (and of every lambda inside
+/// it) that closures capture by reference, so they live in cells. Capture is
+/// by reference — Python and JS closures see later writes and can write the
+/// variable — so every captured variable is boxed, except a parameter bound
+/// exactly once in the whole function: its value can't change after the
+/// closure is made, so the closure gets a copy.
+fn boxed_names(params: &[String], body: &serde_json::Value) -> HashSet<String> {
+    fn walk(lambdas: &[&serde_json::Value], enclosing: &HashSet<String>, captured: &mut HashSet<String>, all_params: &mut HashSet<String>) {
+        for lambda in lambdas {
+            let ps = lambda_params(lambda);
+            all_params.extend(ps.iter().cloned());
+            let body = lambda.get("body").unwrap_or(&serde_json::Value::Null);
+            let nonlocals = python_nonlocals(lambda.get("meta"));
+            captured.extend(lambda_captures(&ps, body, nonlocals.as_ref(), enclosing));
+            let mut level = Level::default();
+            scan_level(body, &mut level);
+            let inner: HashSet<String> = enclosing
+                .union(&lambda_locals(&ps, &level, enclosing, nonlocals.as_ref()))
+                .cloned()
+                .collect();
+            walk(&level.lambdas, &inner, captured, all_params);
+        }
+    }
+    let mut level = Level::default();
+    scan_level(body, &mut level);
+    let scope: HashSet<String> = params
+        .iter()
+        .chain(level.decls.iter())
+        .chain(level.assigns.iter())
+        .cloned()
+        .collect();
+    let mut captured = HashSet::new();
+    let mut all_params: HashSet<String> = params.iter().cloned().collect();
+    walk(&level.lambdas, &scope, &mut captured, &mut all_params);
+    if captured.is_empty() {
+        return captured;
+    }
+    let cast_params: Vec<(String, CastType)> = params.iter().map(|p| (p.clone(), CastType::Any)).collect();
+    let body_stmts: Vec<Statement> = serde_json::from_value(body.clone()).unwrap_or_default();
+    let rebound = rebound_names(&cast_params, &body_stmts);
+    captured
+        .into_iter()
+        .filter(|n| !(all_params.contains(n) && !rebound.contains(n)))
+        .collect()
 }
