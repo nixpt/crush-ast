@@ -2108,8 +2108,12 @@ impl Compiler {
                         let obj_name = &function[..dot_pos];
                         let method = &function[dot_pos + 1..];
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
-                        // Push args in reverse so callee's store pops them correctly
-                        for arg in args.iter().rev() {
+                        // Push args in order: the receiver is already on the stack, then each
+                        // argument, then cap_call pops them off in the same order the capability
+                        // expects (receiver, arg1, arg2, …). Pushes are in order because the
+                        // stack is LIFO and cap_call reads params bottom-up (unlike the `call`
+                        // user-function path below, where last-to-first is right per CRUSH-138).
+                        for arg in args {
                             self.compile_expr(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
@@ -2241,7 +2245,11 @@ impl Compiler {
                         }
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
-                        for arg in args.iter().rev() {
+                        // Push args in order: the receiver is already on the stack, then each
+                        // argument, then cap_call pops them top-first and reverses, so the
+                        // capability sees (receiver, arg1, arg2, …). (CRUSH-235: the old
+                        // last-to-first push reached the capability as (receiver, argN, … arg1).)
+                        for arg in args {
                             self.compile_expr(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));

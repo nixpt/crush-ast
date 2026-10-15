@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crush_aot::{AotCompiler, Module};
+use crush_lang_sdk::{Quotas, Runtime};
 use crush_vm::RuntimeValue;
 
 fn cc_available() -> bool {
@@ -139,4 +140,89 @@ fn c_mat_mul_multiplies_and_rejects_mismatched_shapes() {
         assert_eq!(out.status.code(), Some(1), "{name}: {stderr}");
         assert!(stderr.contains("mat_mul: shape mismatch"), "{name}: {stderr}");
     }
+}
+
+// ── CRUSH-235: method-call arguments reach capabilities in order ────────
+
+/// Run `source` on the VM (it must `print` the answer) and return the parsed Int.
+fn run_vm_print(source: &str) -> i64 {
+    // Use the SDK's source→VM entry (the same one crush-run routes `.cvm1`
+    // blobs through) so capabilities declared by the frontend are honoured.
+    let program =
+        crush_lang_sdk::compile::compile_crush_source(source).expect("frontend compiles source");
+    let quotas = Quotas {
+        max_steps: 20_000_000,
+        ..Quotas::default()
+    };
+    let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
+    assert!(result.halted, "program did not halt:\n{}", result.output);
+    let first = result.output.lines().next().unwrap_or("");
+    first
+        .trim()
+        .parse::<i64>()
+        .expect(&format!("VM: expected Int output from `{source}`, got `{}`", result.output))
+}
+
+/// Run `source` on every AOT backend (it must `print` the answer) and return
+/// the parsed Int from each.
+fn run_aot_print(source: &str) -> Vec<i64> {
+    let mut outs = Vec::new();
+    for (backend, so) in build_both(&compile(source), "crush_235") {
+        let out = run(&so);
+        assert!(
+            out.status.success(),
+            "{backend}: `{source}` failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        outs.push(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .expect("{backend}: no stdout from `{source}`")
+                .trim()
+                .parse::<i64>()
+                .expect(&format!(
+                    "{backend}: expected Int output from `{source}`",
+                )),
+        );
+    }
+    outs
+}
+
+/// `source` must print `expected` on the VM and on every AOT backend.
+fn expect_print_everywhere(source: &str, expected: i64) {
+    let vm = run_vm_print(source);
+    assert_eq!(vm, expected, "VM: `{source}`");
+    for got in run_aot_print(source) {
+        assert_eq!(got, expected, "AOT: `{source}`");
+    }
+}
+
+#[test]
+fn arr_slice_method_call_slices_in_order() {
+    // CRUSH-235: `xs.arr_slice(1, 3)` must reach arr_slice as (xs, 1, 3),
+    // not (xs, 3, 1). Expected [20, 30].
+    // arr_slice is a VM-only capability (not lowered by the AOT backends),
+    // so this runs on the VM only.
+    let vm = run_vm_print("let xs = [10, 20, 30, 40]; let s = xs.arr_slice(1, 3); print(len(s));");
+    assert_eq!(vm, 2, "VM: arr_slice len");
+    let vm = run_vm_print("let xs = [10, 20, 30, 40]; let s = xs.arr_slice(1, 3); print(s[0]);");
+    assert_eq!(vm, 20, "VM: arr_slice[0]");
+    let vm = run_vm_print("let xs = [10, 20, 30, 40]; let s = xs.arr_slice(1, 3); print(s[1]);");
+    assert_eq!(vm, 30, "VM: arr_slice[1]");
+}
+
+#[test]
+fn arr_set_method_call_sets_index_in_order() {
+    // CRUSH-235: `zs.arr_set(1, 7)` must reach arr_set as (zs, 1, 7), setting
+    // index 1 to 7 — not index 7 to 1.
+    expect_print_everywhere("let zs = [0, 0, 0, 0]; zs.arr_set(1, 7); print(zs[1]);", 7);
+    expect_print_everywhere("let zs = [0, 0, 0, 0]; zs.arr_set(1, 7); print(zs[0]);", 0);
+}
+
+#[test]
+fn push_method_call_appends_in_order() {
+    // `push` takes one value; `xs.push(5)` reaches array_push as (xs, 5).
+    expect_print_everywhere("let xs = [1]; xs.push(5); print(len(xs));", 2);
+    expect_print_everywhere("let xs = [1]; xs.push(5); print(xs[1]);", 5);
 }

@@ -5,7 +5,7 @@ use crush_cast::{
     CastType, DomMutationType, DomQueryType, Expression, ExternalResourceType, Function,
     ImportStatement, MatchArm, Pattern, Program, Statement,
 };
-use crush_frontend::compiler::Compiler;
+use crush_frontend::{compile_crush_source, compiler::Compiler};
 use std::collections::HashMap;
 
 fn meta() -> HashMap<String, serde_json::Value> {
@@ -1359,5 +1359,92 @@ fn semantic_switch_fails_loudly_naming_statement() {
     assert!(
         msg.contains("semantic_switch") && msg.contains("CRUSH-265") && msg.contains("no-op"),
         "{msg}"
+    );
+}
+
+// ── CRUSH-235: method calls push receiver-method arguments in order ────────
+
+/// The ops emitted for `main`'s body, each as `(op, args-json)`.
+fn main_ops_with_args(src: &str) -> Vec<(String, serde_json::Value)> {
+    let program = compile_crush_source(src).expect("compiles");
+    program
+        .functions
+        .get("main")
+        .expect("main function missing")
+        .body
+        .iter()
+        .map(|i| (i.op.clone(), i.args.clone()))
+        .collect()
+}
+
+fn first_cap_call(ops: &[(String, serde_json::Value)]) -> Option<usize> {
+    ops.iter().position(|(op, _)| op == "cap_call")
+}
+
+#[test]
+fn method_call_pushes_args_in_order_for_capability_cap_call() {
+    // `xs.arr_slice(1, 3)` must lower to load xs, push 1, push 3, cap_call arr_slice.
+    // With the old buggy last-to-first push it would be load xs, push 3, push 1,
+    // and the capability would receive (xs, 3, 1) instead of (xs, 1, 3).
+    let ops = main_ops_with_args("fn main() { let xs = [10, 20, 30, 40]; xs.arr_slice(1, 3); }");
+    let cap_idx = first_cap_call(&ops).expect("cap_call missing");
+    assert_eq!(
+        ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
+        Some("arr_slice"),
+        "expected arr_slice cap_call, got {ops:?}"
+    );
+    assert_eq!(
+        ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()),
+        Some(3)
+    );
+    // The two push_int args immediately before cap_call must be 1 then 3 (in order).
+    let arg_vals: Vec<i64> = ops
+        .iter()
+        .take(cap_idx)
+        .filter_map(|(op, args)| {
+            if op == "push_int" {
+                args.get("value").and_then(|v| v.as_i64())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        &arg_vals[arg_vals.len() - 2..],
+        &[1, 3],
+        "method-call args must be pushed in order, got {ops:?}"
+    );
+    // And the op right before the args is the receiver load.
+    assert_eq!(ops[cap_idx - 3].0, "load");
+}
+
+#[test]
+fn arr_set_method_call_pushes_args_in_order() {
+    // `zs.arr_set(1, 7)` → arr_set(zs, 1, 7): receiver, index, value.
+    let ops = main_ops_with_args("fn main() { let zs = [0, 0, 0]; zs.arr_set(1, 7); }");
+    let cap_idx = first_cap_call(&ops).expect("cap_call missing");
+    assert_eq!(
+        ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
+        Some("arr_set")
+    );
+    assert_eq!(
+        ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()),
+        Some(3)
+    );
+    let arg_vals: Vec<i64> = ops
+        .iter()
+        .take(cap_idx)
+        .filter_map(|(op, args)| {
+            if op == "push_int" {
+                args.get("value").and_then(|v| v.as_i64())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        &arg_vals[arg_vals.len() - 2..],
+        &[1, 7],
+        "arr_set args must be pushed in order, got {ops:?}"
     );
 }
