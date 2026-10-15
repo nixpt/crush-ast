@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-7 |
 | **Priority** | P1 |
-| **Status** | Partial — core mutation paths fixed; nested indexing and slicing remain open |
+| **Status** | Done (array scope) — index-assign, chained push, nested indexing, and slice syntax (`xs[1:]`/`xs[1:3]`) all verified working on main (5606db2, 2026-10-15); string slicing (`"hello"[1:3]`) and the `.slice()` method are separate follow-ups |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -120,8 +120,17 @@ starting points for whoever picks this up:
 
 ### Unaddressed (still open)
 
-- **Nested array indexing** (`snake[0]` where `snake = [[5,5],[5,6]]` returns int instead of array) — root cause unclear; may be in `arr_get`/`index` opcode or `array_push` construction of nested arrays. Deferred for separate investigation.
-- **Slicing syntax** (`xs[1:]` / `xs[1:3]`) — parse error. Deferred as non-goal per ticket.
+- **`.slice()` method** (`xs.slice(1)`) — still misroutes to capability dispatch (`not available in this host: slice`). The `xs[1:]` / `xs[1:3]` **slice syntax** is fixed (commit `8f30a96`), so this is the last real gap.
+- **Step slice** `xs[::2]` — parse error (`[E-PP01]`); explicitly a **non-goal** per ticket.
+- **String slice** `s[1:3]` — `type error: expected array, got str`; out of scope (ticket is about arrays).
+
+### Verified on main (2026-10-15, `5606db2`)
+
+Ran the ticket's own reproductions against freshly built `crushc`/`crush-run`:
+
+- `snake[0]` → `2`; `snake[0][1]` → `5`; `m[1][0][1]` → `6` (nested indexing **fixed**)
+- `xs[1:]` → `[2, 3, 4]`; `xs[1:3]` → `[2, 3]` (slice syntax **fixed**)
+- index-assign `xs[0] = 9` → `9`; chained push → `3` (already-fixed paths still green)
 
 ### Verification
 ```bash

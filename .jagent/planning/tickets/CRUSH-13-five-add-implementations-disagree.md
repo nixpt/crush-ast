@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-13 |
 | **Priority** | P0 |
-| **Status** | Done |
+| **Status** | Done — arithmetic/div-by-zero fixed, and AOT backends ARE differentially tested via `crush-aot/tests/{differential_aot,examples_parity,stdout_parity,backend_agreement}.rs` (the `crush-diff` harness itself only covers VM backends A/B/C) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | loosely related to CRUSH-10/CRUSH-11 (same backends), but this is about semantic divergence, not compile/output bugs |

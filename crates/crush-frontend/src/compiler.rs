@@ -1457,88 +1457,30 @@ impl Compiler {
                     meta,
                 ));
             }
-            AIStatement::CapabilityDiscovery {
-                domain,
-                requirements,
-                discovery_strategy,
-            } => {
-                instrs.push(self.create_instr(
-                    "ai_capability_discovery",
-                    serde_json::json!({
-                        "domain": domain,
-                        "requirements": requirements,
-                        "discovery_strategy": format!("{:?}", discovery_strategy)
-                    }),
-                    meta,
-                ));
+            AIStatement::CapabilityDiscovery { .. } => {
+                // CRUSH-265: declined — this would compile to a silent NOP on CVM1.
+                // Fail loudly at compile time instead; porting onto `ai_native` is a
+                // later ticket.
+                bail!(
+                    "`capability_discovery` isn't supported yet (CRUSH-265): it would compile to a no-op"
+                );
             }
-            AIStatement::AdaptationRequest {
-                adaptation_type,
-                reason,
-                parameters,
-            } => {
-                instrs.push(self.create_instr(
-                    "ai_adaptation_request",
-                    serde_json::json!({
-                        "adaptation_type": format!("{:?}", adaptation_type),
-                        "reason": reason,
-                        "parameters": parameters
-                    }),
-                    meta,
-                ));
+            AIStatement::AdaptationRequest { .. } => {
+                // CRUSH-265: declined — this would compile to a silent NOP on CVM1.
+                // Fail loudly at compile time instead; porting onto `ai_native` is a
+                // later ticket.
+                bail!(
+                    "`adaptation_request` isn't supported yet (CRUSH-265): it would compile to a no-op"
+                );
             }
-            AIStatement::SemanticSwitch {
-                target,
-                cases,
-                fallback,
-            } => {
-                self.compile_expr(target, instrs)?;
-
-                let switch_idx = instrs.len();
-                instrs.push(self.create_instr(
-                    "ai_semantic_switch",
-                    serde_json::json!({}), // We'll patch this later
-                    meta,
-                ));
-
-                let mut switch_cases = Vec::new();
-                let mut jump_to_end_indices = Vec::new();
-
-                for (concept, block) in cases {
-                    let start_idx = instrs.len();
-                    for s in block {
-                        self.compile_stmt(s, instrs)?;
-                    }
-                    switch_cases.push(serde_json::json!({
-                        "concept": concept,
-                        "target_pc": start_idx
-                    }));
-                    jump_to_end_indices.push(instrs.len());
-                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
-                }
-
-                let fallback_target = if let Some(fb) = fallback {
-                    let start_idx = instrs.len();
-                    for s in fb {
-                        self.compile_stmt(s, instrs)?;
-                    }
-                    Some(start_idx)
-                } else {
-                    None
-                };
-
-                let end_label = instrs.len();
-
-                // Patch the switch instruction
-                instrs[switch_idx].args = serde_json::json!({
-                    "cases": switch_cases,
-                    "fallback_target": fallback_target.unwrap_or(end_label)
-                });
-
-                // Patch all the jumps
-                for idx in jump_to_end_indices {
-                    instrs[idx].args = serde_json::json!({"target": end_label});
-                }
+            AIStatement::SemanticSwitch { .. } => {
+                // CRUSH-265: declined — the `ai_semantic_switch` opcode lowers to a
+                // silent NOP on CVM1 (the case blocks would run, but the dispatch
+                // itself does nothing, so the first case always wins). Fail loudly
+                // at compile time instead; porting onto `ai_native` is a later ticket.
+                bail!(
+                    "`semantic_switch` isn't supported yet (CRUSH-265): it would compile to a no-op"
+                );
             }
         }
         Ok(())

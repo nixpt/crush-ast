@@ -36,6 +36,18 @@ const UNSUPPORTED: &[(&str, &str)] = &[
         "call_interface",
         "CSCS v1 call through an ObjectHandle/token; CVM1 has no object-handle table or interface dispatch",
     ),
+    (
+        "ai_capability_discovery",
+        "CRUSH-265: declined — would compile to a silent NOP on CVM1; the frontend refuses the source statement, and hand-built CASM must fail here too",
+    ),
+    (
+        "ai_adaptation_request",
+        "CRUSH-265: declined — would compile to a silent NOP on CVM1; the frontend refuses the source statement, and hand-built CASM must fail here too",
+    ),
+    (
+        "ai_semantic_switch",
+        "CRUSH-265: declined — would compile to a silent NOP on CVM1 (the case blocks would run but dispatch always falls to the first case); the frontend refuses the source statement, and hand-built CASM must fail here too",
+    ),
 ];
 
 /// Ops that lower, but only to `NOP` (nothing to run on CVM1 yet). Counted as
@@ -46,9 +58,6 @@ const NOP_STUBS: &[&str] = &[
     "dom_query",
     "dom_mutate",
     "dom_event_listener",
-    "ai_adaptation_request",
-    "ai_capability_discovery",
-    "ai_semantic_switch",
 ];
 
 fn ins(op: &str, args: J) -> Instruction {
@@ -510,6 +519,36 @@ fn unsupported_ops_fail_loudly_with_the_op_name() {
             msg.contains("Unsupported CVM1 opcode") && msg.contains(name),
             "{name}: {msg}"
         );
+    }
+}
+
+/// CRUSH-265: no engine may run `capability_discovery` / `adaptation_request` /
+/// `semantic_switch` silently. CVM1 (scheduler + PortableVm) via `casm_to_vm`,
+/// and FastVM via `lower_program`, must each refuse hand-built CASM containing
+/// these ops instead of lowering them to a no-op.
+#[test]
+fn declined_ai_ops_are_refused_by_every_engine() {
+    let names = [
+        "ai_capability_discovery",
+        "ai_adaptation_request",
+        "ai_semantic_switch",
+    ];
+    for name in names {
+        let instr = all_opcodes()
+            .iter()
+            .map(|o| probe(o).1)
+            .find(|i| i.op == name)
+            .unwrap_or_else(|| panic!("{name} is not a probed op"));
+        // CVM1 engines (scheduler VM, PortableVm) go through casm_to_vm.
+        let err = casm_to_vm(&program_of(vec![instr.clone(), op("ret")])).expect_err(name);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Unsupported CVM1 opcode") && msg.contains(name),
+            "{name} (CVM1): {msg}"
+        );
+        // FastVM rejects unknown opcodes at lowering time.
+        let err = crush_vm::fastvm::lower_program(&program_of(vec![instr, op("ret")])).expect_err(name);
+        assert!(err.to_string().contains(name), "{name} (FastVM): {err}");
     }
 }
 
