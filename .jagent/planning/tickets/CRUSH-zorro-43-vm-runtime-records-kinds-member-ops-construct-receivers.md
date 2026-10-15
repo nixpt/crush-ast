@@ -81,6 +81,19 @@ structs would carry no Kind, so zorro-37 would stay open.
   the same set at compile time. FastVM/JIT/AOT keep the `Maps` level and refuse the member ops they can't run;
   FastVM refuses `type_of` in a program with Kinds (it would name a map). crush-aotc refuses the member ops
   explicitly.
+- **Sealing holds on every engine** (review of #222). A write of a field a `sealed` Kind doesn't declare
+  (`a.z = 5` on `struct P { x }`) fails at run time with one message,
+  `` `P` is sealed: it has no field `z` (fields: x) `` (`casm::sealed_field_error`). The VMs refuse it on the
+  Record. The map engines enforce it at run time on the struct maps they build from the tagged `new_obj`
+  (option (a) on each): FastVM and the JIT give the map a class that names the Kind's fields
+  (`fastvm::sealed_class` / `check_sealed_write`; the JIT reports it with error flag 5 and the message); AOT
+  Rust's `OrdMap` and AOT C's `CrushObject` carry the Kind's field list and exit with the message on a write
+  outside it. crush-aotc still refuses objects. Test: `crush-aot/tests/cosm_k1_lifted_methods.rs::undeclared_write`.
+- **Equality decision.** `structural` equality compares the set fields and **ignores the Kind**:
+  `P { x: 1 } == Q { x: 1 }` and `P { x: 1 } == {x: 1}` are `true`. That is the design doc's "structural — as maps
+  compare today", keeps every engine agreeing (struct instances are maps on FastVM/JIT/AOT), and Rust/Go only
+  compare values of one type anyway. A Kind that must not equal another declares an `eq` hook (K2) or
+  `identity`.
 - Tests: `crush-lang-sdk/tests/cosm_k1_records.rs` (both VMs: construction, field get/set, each receiver, C3
   diamond, value vs reference, bound methods, constructors, identity equality, Kind patterns, the zorro-37
   program), `crush-vm/src/tests/records.rs` (hand-written CVM1: has/del, slots, defaults, positional construct,

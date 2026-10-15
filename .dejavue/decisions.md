@@ -1080,3 +1080,16 @@ Rejected alternatives:
 Outcome:
 crush_vm::cosm_rt (Kind, KindTable, RecordValue); Value::Record/Value::Kind; CVM1 0xC0-0xCA (GET_MEMBER SET_MEMBER HAS_MEMBER DEL_MEMBER CALL_MEMBER CONSTRUCT GET_SLOT SET_SLOT IS_KIND COPY NEW_RECORD); FunctionEntry.arity (programs with Kinds); casm::{CosmSupport, kind_unsupported_strategies_on, cosm_unsupported_reason_on, kind_constructor}. Records print fields in first-set order and compare structurally ignoring the Kind (as the maps they were). value(move) = copy at run time.
 
+
+## 2026-10-15T13:24:13-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] COSM structural equality ignores the Kind; sealed fields are enforced on every engine (CRUSH-zorro-43 review)
+
+Reason:
+Review of #222: a write to an undeclared field of a sealed Kind errored on the VMs but the map engines added the key (silent divergence). Fixed at run time on each map engine from the Kind tag new_obj already carries, with one message (casm::sealed_field_error). Equality: structural compares the set fields only, so P{x:1}==Q{x:1} and P{x:1}=={x:1} are true, matching the design doc ('structural — as maps compare today') and the map engines.
+
+Rejected alternatives:
+- **compile-time refusal of set_field keys no Kind declares**: unsound when another Kind declares the key, and refuses plain object literals in programs with structs
+- **structural equality including the Kind**: P{x:1}=={x:1} would change on the VMs only, a cross-engine divergence
+
+Outcome:
+FastVM/JIT: struct maps of sealed Kinds get a class name listing the fields (fastvm::sealed_class / check_sealed_write; JIT error flag 5). AOT Rust OrdMap::sealed, AOT C CrushObject.sealed_kind/sealed_fields. Test crush-aot/tests/cosm_k1_lifted_methods.rs::undeclared_write.
+
