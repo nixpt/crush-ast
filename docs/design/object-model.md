@@ -295,6 +295,46 @@ KindDecl Dog  (home: python)
 | metaclasses, descriptors beyond `property`, `__getattribute__` overrides | **loud** (decision 2) |
 | an impossible MRO | a compile error (Python raises `TypeError` at class creation, so a class created conditionally defers the check to run time) |
 
+#### Crush's own KindDecl
+
+Crush is the first COSM producer (decision 4). Plain `struct` / `impl` / `trait` lower to a `KindDecl` with
+**Crush's defaults**:
+
+```text
+KindDecl P  (home: crush)
+  storage:    sealed { declared fields }
+  semantics:  reference                 today's behaviour: no existing program changes meaning
+  resolution: none                      traits supply default methods
+  receiver:   explicit_ref              `self` is an ordinary first parameter
+  construct:  literal                   P { … }; `fn new` is a convention (a static member)
+  equality:   structural                as maps compare today
+```
+
+```crush
+struct Point { x: int, y: int }
+impl Point {
+    fn new(x, y) { return Point { x: x, y: y }; }
+    fn norm2(self) { return self.x * self.x + self.y * self.y; }
+}
+trait Shape { fn area(self); fn describe(self) { return "a shape"; } }   // default method
+impl Shape for Point { fn area(self) { return 0; } }
+```
+
+**`@kind(…)` selects any other strategy from the catalogue**, which makes Crush the one language that can write
+*any* KindDecl. That's the textual way to test every strategy before the Python/JS walkers lower to COSM, and the way
+to write Kind helper libraries in Crush itself:
+
+```crush
+@kind(semantics: value(copy))                                   // a Rust/Go-like value type
+struct Vec2 { x: float, y: float }
+
+@kind(storage: open_dict, resolution: c3, parents: [Base, Mixin], receiver: bound_self)
+struct Widget { }                                               // a Python-like class
+```
+
+An `@kind` key or value outside the catalogue is a compile error that lists the valid values. Tickets:
+CRUSH-zorro-40..44 (COSM K1).
+
 #### Across languages
 
 A Python `Dog` passed to JavaScript code keeps Python behaviour: `dog.speak()` from JS still walks Python's MRO
