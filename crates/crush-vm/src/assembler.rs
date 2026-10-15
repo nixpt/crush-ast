@@ -218,7 +218,7 @@ pub fn assemble(
                     .ok_or_else(|| AssemblyError::new(p.line, format!("unknown label {v:?}")))?;
                 code.extend_from_slice(&(target as u32).to_be_bytes());
             }
-            OperandKind::Cap => {
+            OperandKind::Cap | OperandKind::Member => {
                 if p.args.len() != 2 {
                     return Err(AssemblyError::new(
                         p.line,
@@ -521,7 +521,7 @@ pub fn disassemble(program: &Program) -> String {
                 let t = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap());
                 format!("    {op_name} L{t}")
             }
-            OperandKind::Cap => {
+            OperandKind::Cap | OperandKind::Member => {
                 let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
                 let argc = code[ip + 3];
                 let cap = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
