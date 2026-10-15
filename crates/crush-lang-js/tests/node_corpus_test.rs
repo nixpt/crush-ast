@@ -1,66 +1,329 @@
-//! JS loops must print what Node prints.
+//! JS/TS parity harness (CRUSH-zorro-4): crush must print what `node` prints.
 //!
-//! Each `tests/node_corpus/<name>.js` runs through the walker → CAST → CASM →
-//! VM pipeline and is compared with `<name>.out`, produced by `node`.
-//! `expected_outputs_match_node` re-derives the `.out` files with `node` when
-//! it is on PATH, so they can't go stale.
+//! Each `tests/node_corpus/<area>_<name>.js` runs through the walker → CAST →
+//! CASM → VM pipeline (with the stdlib host capabilities registered) and is
+//! compared **byte-for-byte** with `<name>.out`, produced by `node`. The TS
+//! twin does the same for `tests/ts_corpus/*.ts` through the `ts` dialect,
+//! against `node <file>.ts` (node strips the types itself). The AOT backends
+//! run the JS corpus in `crates/crush-aot/tests/js_parity.rs`.
+//!
+//! Every program lands in one of three classes:
+//! - **MATCH**: ran and printed exactly what node printed;
+//! - **LOUD**: the walker, compiler or VM returned an error;
+//! - **SILENTLY WRONG**: ran without error and printed something else.
+//!
+//! The bar is "never silently wrong". The lists below are the progress meter:
+//! - `KNOWN_LOUD` — programs crush can't run yet. Each must stay loud; once it
+//!   matches, the test fails and asks for the entry to be removed.
+//! - `KNOWN_SILENT` — silently-wrong programs that exist today, each keyed to
+//!   the ticket that fixes it. A listed program that starts matching, or turns
+//!   loud, fails the test so the entry is moved/removed. Any silently-wrong
+//!   program *not* listed here fails outright. Don't grow this list for new
+//!   work: a new silent bug gets a ticket and a loud error first.
+//!
+//! The file prefix up to the first `_` is the feature area; run with
+//! `--nocapture` for the per-area match / loud / silent table.
+//!
+//! With `--features boa-backend` the harness also runs the Boa lowering
+//! (report only) and prints its table next to swc's, so CRUSH-250 can see when
+//! boa is at least as good as swc in every area.
 
-// The swc path only: the Boa lowering can't run these yet (it has no plain
-// `=` assignment lowering; tracked with the Boa frontend work, CRUSH-250).
-#![cfg(not(feature = "boa-backend"))]
-
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-fn corpus() -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/node_corpus");
+/// Programs that must fail loudly (an error, never wrong output) on the VM.
+/// `(program, why it's loud today / which ticket fixes it)`.
+const KNOWN_LOUD: &[(&str, &str)] = &[
+    ("arr_basic", "CRUSH-zorro-15: indexOf/includes"),
+    ("arr_hof", "CRUSH-zorro-20: map/filter/reduce callbacks"),
+    ("arr_slice_splice", "CRUSH-zorro-15: slice/splice"),
+    ("arr_sort", "CRUSH-zorro-15/20: sort, sort(cmp)"),
+    ("arr_spread", "CRUSH-zorro-23: array spread loses `...` (loud only via the out-of-range read)"),
+    ("arr_spread_call", "CRUSH-zorro-23: call-argument spread"),
+    ("async_generator", "out of scope: generators"),
+    ("async_then", "out of scope: async/Promise"),
+    ("builtin_json", "CRUSH-zorro-17: JSON"),
+    ("builtin_map_set", "CRUSH-zorro-17: Map/Set"),
+    ("builtin_math", "CRUSH-zorro-17: variadic Math.max"),
+    ("builtin_number_conv", "CRUSH-zorro-17: parseInt/Number/String/toFixed"),
+    ("class_basic", "out of scope: classes (CRUSH-251 object model)"),
+    ("class_extends", "out of scope: classes (CRUSH-251 object model)"),
+    ("ctrl_for_in", "CRUSH-zorro-16: for-in (+ join, CRUSH-zorro-15)"),
+    ("ctrl_try_catch", "CRUSH-zorro-19: new Error / e.message"),
+    ("fn_closure_counter", "CRUSH-zorro-20: closure capture (CRUSH-251)"),
+    ("fn_default_param", "CRUSH-zorro-18: default parameters"),
+    ("fn_higher_order", "CRUSH-zorro-20: function values (CRUSH-251)"),
+    ("fn_rest_param", "CRUSH-zorro-18: rest parameters"),
+    ("misc_console_multi", "CRUSH-zorro-12: `undefined` as a value"),
+    ("misc_undefined", "CRUSH-zorro-12: `undefined` as a value"),
+    ("obj_destructure", "CRUSH-zorro-16: destructuring"),
+    ("obj_literal", "CRUSH-zorro-16: Object.keys"),
+    ("obj_spread", "CRUSH-zorro-16: object spread"),
+    ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
+    ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
+    ("ops_int_overflow", "CRUSH-zorro-13: number model"),
+    ("ops_nan", "CRUSH-zorro-12: NaN"),
+    ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` as a value"),
+    ("ops_nullish", "CRUSH-zorro-12: ??"),
+    ("ops_optional_chain", "CRUSH-zorro-12: ?."),
+    ("ops_typeof", "CRUSH-zorro-12: typeof"),
+    ("str_methods", "CRUSH-zorro-14: string methods"),
+    ("str_methods2", "CRUSH-zorro-14: string methods"),
+    ("str_replace", "CRUSH-zorro-14: string methods"),
+];
+
+/// Programs that are silently wrong on the VM today: `(program, fixing ticket, symptom)`.
+const KNOWN_SILENT: &[(&str, &str, &str)] = &[
+    ("arr_print", "CRUSH-zorro-10", "console.log([1, 'a']) prints `[1, a]`, not `[ 1, 'a' ]`"),
+    ("ctrl_finally", "CRUSH-zorro-7", "`finally` skipped on return"),
+    ("ctrl_for_in_array", "CRUSH-zorro-23", "for-in over an array yields elements, not indices"),
+    ("ctrl_labels", "CRUSH-zorro-6", "labels ignored: `continue outer` acts on the inner loop"),
+    ("misc_console_error", "CRUSH-zorro-23", "console.error writes to stdout"),
+    ("obj_computed_key", "CRUSH-zorro-23", "computed key `{[k]: v}` lost: o.a is null"),
+    ("obj_print", "CRUSH-zorro-10", "console.log({a: 1, b: 'two'}) prints `{a: 1, b: two}`"),
+    ("obj_setter", "CRUSH-zorro-23", "setter body emptied"),
+    ("ops_logical_value", "CRUSH-zorro-22", "&&/|| yield booleans, not operand values"),
+    ("ops_loose_eq", "CRUSH-zorro-22", "== lowered as ==="),
+    ("ops_string_concat", "CRUSH-zorro-9", "'x' + 6.0 prints `x6.0`"),
+    ("ops_template_escape", "CRUSH-zorro-9", "template literals use the raw text (`\\n` stays literal)"),
+    ("scope_bare_block", "CRUSH-zorro-5", "bare block `{…}` dropped"),
+    ("scope_bare_block_assign", "CRUSH-zorro-5", "bare block `{…}` dropped: assignment lost"),
+    ("scope_block_shadow", "CRUSH-zorro-5", "bare block `{…}` dropped"),
+];
+
+/// TS twin: programs that must stay loud under the `ts` dialect.
+const TS_KNOWN_LOUD: &[(&str, &str)] = &[
+    ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
+    ("fn_default_param", "CRUSH-zorro-18: default parameters"),
+    ("fn_optional_param", "CRUSH-zorro-18: missing argument is `undefined`"),
+    ("str_methods", "CRUSH-zorro-14: string methods"),
+];
+
+/// TS twin: silently-wrong programs, keyed to their fixing ticket.
+const TS_KNOWN_SILENT: &[(&str, &str, &str)] = &[
+    ("arr_print", "CRUSH-zorro-10", "console.log([1, 2]) prints `[1, 2]`"),
+    ("ctrl_finally", "CRUSH-zorro-7", "`finally` skipped on return"),
+    ("obj_print", "CRUSH-zorro-10", "console.log({a: 1}) prints `{a: 1}`"),
+    ("ops_logical_value", "CRUSH-zorro-22", "|| yields a boolean"),
+    ("ops_string_concat", "CRUSH-zorro-9", "'x' + 6.0 prints `x6.0`"),
+    ("scope_bare_block", "CRUSH-zorro-5", "bare block `{…}` dropped"),
+];
+
+fn corpus(dir: &str, ext: &str) -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("corpus dir")
         .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "js"))
+        .filter(|p| p.extension().is_some_and(|x| x == ext))
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "empty corpus");
+    assert!(!files.is_empty(), "empty corpus in {}", dir.display());
     files
 }
 
-fn run_crush(source: &str) -> anyhow::Result<String> {
-    let cast = crush_lang_js::js_to_cast(source, "js")?;
+fn stem(path: &Path) -> String {
+    path.file_stem().unwrap().to_string_lossy().into_owned()
+}
+
+fn area(name: &str) -> &str {
+    name.split('_').next().unwrap_or(name)
+}
+
+/// One way of turning source into CAST.
+#[derive(Clone, Copy)]
+enum Lowering {
+    /// The swc lowering, called directly so it is what's measured even when
+    /// `boa-backend` makes boa the `.js` default of `js_to_cast`.
+    Swc,
+    /// `js_to_cast(src, "ts")` — the TS dialect (swc).
+    Ts,
+    /// The Boa lowering, called directly (report only, behind `boa-backend`).
+    #[cfg(feature = "boa-backend")]
+    Boa,
+}
+
+fn lower(source: &str, how: Lowering) -> anyhow::Result<crush_cast::Program> {
+    match how {
+        Lowering::Swc => {
+            let module = crush_lang_js::backend::parse(source, "js")?;
+            let ctx = crush_walker_core::LowerCtx::new(source, "input.js", "javascript");
+            crush_lang_js::lower_swc::lower_module(&module, &ctx)
+        }
+        Lowering::Ts => crush_lang_js::js_to_cast(source, "ts"),
+        #[cfg(feature = "boa-backend")]
+        Lowering::Boa => {
+            let ast = crush_lang_js::backend::boa::parse(source)?;
+            let ctx = crush_walker_core::LowerCtx::new(source, "input.js", "javascript");
+            crush_lang_js::lower_boa::lower_boa(ast, &ctx)
+        }
+    }
+}
+
+fn run_crush(source: &str, how: Lowering) -> anyhow::Result<String> {
+    let cast = lower(source, how)?;
     let casm = crush_frontend::compiler::Compiler::new()
         .compile(cast)
         .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))?;
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm)?;
     let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
-    Ok(crush_vm::run_with_caps(&vm, &quotas, None)?.output)
+    let caps = crush_lang_sdk::HostCapsBuilder::new().stdlib(true).build();
+    Ok(crush_vm::run_with_caps(&vm, &quotas, Some(&caps))?.output)
+}
+
+enum Outcome {
+    Match,
+    Loud(String),
+    Silent(String),
+}
+
+fn classify(source: &str, expected: &str, how: Lowering) -> Outcome {
+    match std::panic::catch_unwind(|| run_crush(source, how)) {
+        Ok(Ok(got)) if got == expected => Outcome::Match,
+        Ok(Ok(got)) => Outcome::Silent(got),
+        Ok(Err(e)) => Outcome::Loud(format!("{e:#}").lines().next().unwrap_or("").to_string()),
+        Err(_) => Outcome::Loud("panicked".to_string()),
+    }
+}
+
+/// Per-area `[match, loud, silent]` counts.
+#[derive(Default)]
+struct Tally {
+    by_area: BTreeMap<String, [usize; 3]>,
+}
+
+impl Tally {
+    fn add(&mut self, name: &str, o: &Outcome) {
+        let i = match o {
+            Outcome::Match => 0,
+            Outcome::Loud(_) => 1,
+            Outcome::Silent(_) => 2,
+        };
+        self.by_area.entry(area(name).to_string()).or_default()[i] += 1;
+    }
+
+    fn print(&self, title: &str) {
+        println!("\n{title}");
+        println!("  {:<10} {:>5} {:>5} {:>6}", "area", "match", "loud", "silent");
+        let mut total = [0; 3];
+        for (a, c) in &self.by_area {
+            println!("  {a:<10} {:>5} {:>5} {:>6}", c[0], c[1], c[2]);
+            for (t, n) in total.iter_mut().zip(c) {
+                *t += n;
+            }
+        }
+        println!("  {:<10} {:>5} {:>5} {:>6}", "TOTAL", total[0], total[1], total[2]);
+    }
+}
+
+/// Run a corpus, enforce the lists, print the per-area table, return the problems.
+fn check(
+    title: &str,
+    files: &[PathBuf],
+    how: Lowering,
+    known_loud: &[(&str, &str)],
+    known_silent: &[(&str, &str, &str)],
+) -> (Tally, Vec<String>) {
+    let mut problems = Vec::new();
+    let names: Vec<String> = files.iter().map(|p| stem(p)).collect();
+    for n in known_loud.iter().map(|e| e.0).chain(known_silent.iter().map(|e| e.0)) {
+        if !names.iter().any(|x| x == n) {
+            problems.push(format!("{n}: listed in {title}, but no such corpus program"));
+        }
+    }
+    println!("\n{title}");
+    let mut tally = Tally::default();
+    for path in files {
+        let name = stem(path);
+        let source = std::fs::read_to_string(path).unwrap();
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        let loud_entry = known_loud.iter().find(|e| e.0 == name);
+        let silent_entry = known_silent.iter().find(|e| e.0 == name);
+        let outcome = classify(&source, &expected, how);
+        tally.add(&name, &outcome);
+        match (&outcome, loud_entry, silent_entry) {
+            (Outcome::Match, None, None) => {}
+            (Outcome::Match, Some(_), _) => {
+                problems.push(format!("{name}: now exact — remove it from the known-loud list"))
+            }
+            (Outcome::Match, _, Some((_, t, _))) => {
+                problems.push(format!("{name}: now exact — remove it from the known-silent list ({t})"))
+            }
+            (Outcome::Loud(why), Some(_), _) => println!("  loud as expected  {name}: {why}"),
+            (Outcome::Loud(why), None, Some((_, t, _))) => problems.push(format!(
+                "{name}: was silently wrong ({t}), now loud ({why}) — move it to the known-loud list"
+            )),
+            (Outcome::Loud(why), None, None) => problems.push(format!("{name}: LOUD (not allow-listed): {why}")),
+            (Outcome::Silent(_), _, Some((_, t, what))) => println!("  KNOWN SILENT      {name} [{t}]: {what}"),
+            (Outcome::Silent(got), _, None) => problems.push(format!(
+                "{name}: SILENTLY WRONG\n    node:  {expected:?}\n    crush: {got:?}"
+            )),
+        }
+    }
+    tally.print(title);
+    (tally, problems)
+}
+
+fn assert_clean(title: &str, problems: Vec<String>) {
+    assert!(problems.is_empty(), "{} problem(s) in {title}:\n{}", problems.len(), problems.join("\n"));
 }
 
 #[test]
 fn crush_output_matches_node() {
-    let mut failures = Vec::new();
-    for path in corpus() {
-        let source = std::fs::read_to_string(&path).unwrap();
-        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
-        match run_crush(&source) {
-            Ok(got) if got.trim_end() == expected.trim_end() => {}
-            Ok(got) => failures.push(format!("{}:\n  node:  {expected:?}\n  crush: {got:?}", path.display())),
-            Err(e) => failures.push(format!("{}: {e:#}", path.display())),
+    let files = corpus("tests/node_corpus", "js");
+    assert!(files.len() >= 90, "corpus shrank: {}", files.len());
+    let title = "JS corpus on the VM (swc lowering)";
+    let (_swc, problems) = check(title, &files, Lowering::Swc, KNOWN_LOUD, KNOWN_SILENT);
+    #[cfg(feature = "boa-backend")]
+    {
+        // Report only until CRUSH-250 makes boa the `.js` lowering.
+        let title = "JS corpus on the VM (boa lowering, report only)";
+        let (boa, boa_problems) = check(title, &files, Lowering::Boa, KNOWN_LOUD, KNOWN_SILENT);
+        println!("\nswc vs boa per area [match, loud, silent]:");
+        for (a, s) in &_swc.by_area {
+            let b = boa.by_area.get(a).copied().unwrap_or_default();
+            println!("  {a:<10} swc {s:?}  boa {b:?}");
         }
+        println!("boa: {} list mismatch(es), not enforced:\n{}", boa_problems.len(), boa_problems.join("\n"));
     }
-    assert!(failures.is_empty(), "{} program(s) diverge from node:\n{}", failures.len(), failures.join("\n"));
+    assert_clean("the JS corpus", problems);
 }
 
 #[test]
+fn ts_twin_matches_node() {
+    let files = corpus("tests/ts_corpus", "ts");
+    let title = "TS twin on the VM (ts dialect)";
+    let (_, problems) = check(title, &files, Lowering::Ts, TS_KNOWN_LOUD, TS_KNOWN_SILENT);
+    assert_clean("the TS twin", problems);
+}
+
+fn node_available() -> bool {
+    std::process::Command::new("node").arg("--version").output().is_ok_and(|o| o.status.success())
+}
+
+/// Every `.out` must be what `node` prints today (stdout only). node 26 runs
+/// `.ts` in strip-only mode, so the TS twin holds only erasable syntax: `enum`
+/// and `namespace` have no node oracle (node 26 dropped
+/// `--experimental-transform-types`) and are tested elsewhere (CRUSH-zorro-21).
+#[test]
 fn expected_outputs_match_node() {
-    if std::process::Command::new("node").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+    if !node_available() {
         eprintln!("node not on PATH — skipping .out freshness check");
         return;
     }
-    for path in corpus() {
+    let mut stale = Vec::new();
+    let all = corpus("tests/node_corpus", "js").into_iter().chain(corpus("tests/ts_corpus", "ts"));
+    for path in all {
         let out = std::process::Command::new("node").arg(&path).output().unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{} .out is stale", path.display());
+        if !out.status.success() || String::from_utf8_lossy(&out.stdout) != expected {
+            stale.push(format!("{}: .out is stale (or node failed)", path.display()));
+        }
     }
+    assert!(stale.is_empty(), "{}", stale.join("\n"));
 }
 
+// swc only: the boa lowering accepts the comma expression (CRUSH-250).
+#[cfg(not(feature = "boa-backend"))]
 #[test]
 fn side_effecting_comma_in_value_position_fails_loudly() {
     let err = crush_lang_js::js_to_cast("var i = 0; var x = (i++, 5); console.log(x);", "js").unwrap_err();
