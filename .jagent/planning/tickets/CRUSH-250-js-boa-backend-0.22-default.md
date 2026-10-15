@@ -106,6 +106,16 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
 5. The constructs listed above (one PR each, or as their tickets).
 6. Flip the `.js` default once the gate passes; retire the swc lowering for JS; update
    `language_frontend_matrix.md`.
+   **Gate items besides the harness (boa >= swc in every area, VM and AOT, 0 silent):**
+   - **A top-level function that reads a script variable must run.** It is common JS
+     (`let total = 0; function add(n) { total += n; }`).
+     - Today it is refused at walk time: top-level functions are their own crush functions, AOT read
+       the variable as `null`, and the VM failed.
+     - Intended lowering: script bindings that functions use become captured cells (CRUSH-251 ops),
+       with the functions that use them closures in `main`; or the bindings become globals.
+     - boa must not become the default while this is loud.
+   - `#235`'s argument-order fix lands before `push` (or any method row) accepts more than one
+     argument.
 
 ## Not this ticket
 
