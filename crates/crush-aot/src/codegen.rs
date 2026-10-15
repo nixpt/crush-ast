@@ -968,6 +968,10 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(*x as f64 / *y as f64) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "js.div" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(_),RuntimeValue::Int(0))=>div_zero(), (RuntimeValue::Int(x),RuntimeValue::Int(y)) if x.checked_rem(*y)==Some(0) => RuntimeValue::Int(x.checked_div(*y).unwrap_or_else(|| arith_overflow())), (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Float(*x as f64 / *y as f64), (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "conv.text" => {
                     out.push_str(&format!("{ind}{{ let __st = stack.pop().unwrap_or(RuntimeValue::Null); let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_text(&__v, &__st)); }}\n"));
                     out.push_str(&next_pc_str);

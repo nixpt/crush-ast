@@ -1639,10 +1639,13 @@ fn is_length_read(field: &str, obj: &Expr) -> bool {
     field == "length" && !matches!(unparen(obj), Expr::Object(_))
 }
 
-/// JS `/` is always floating-point division (`7 / 2` is 3.5); crush's `/` on
-/// two ints truncates. Division by zero is a loud error rather than Infinity.
+/// JS `/` is real division (`7 / 2` is 3.5; crush's `/` on two ints
+/// truncates). An exact quotient of two ints stays an int (`4 / 2` is `2`,
+/// usable as an array index and printed `2` even inside string
+/// concatenation) — JS has one number type, so that is safe. Division by
+/// zero is a loud error rather than Infinity.
 fn js_div(left: Expression, right: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::CapabilityCall { name: "math.truediv".to_string(), args: vec![left, right], meta }
+    Expression::CapabilityCall { name: "js.div".to_string(), args: vec![left, right], meta }
 }
 
 fn unparen(e: &Expr) -> &Expr {

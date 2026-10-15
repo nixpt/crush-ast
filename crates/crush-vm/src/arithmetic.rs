@@ -139,6 +139,22 @@ pub fn mod_values(a: &Value, b: &Value) -> Result<Value, VmError> {
     }
 }
 
+/// JavaScript `/`: an exact quotient of two ints stays an Int (JS has one
+/// number type, so `4 / 2` is `2` — usable as an index, printed `2`);
+/// anything else is the float quotient (`7 / 2` is 3.5). Division by zero is
+/// a loud error rather than JS's Infinity.
+pub fn js_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
+    if let (Value::Int(x), Value::Int(y)) = (a, b) {
+        if *y == 0 {
+            return Err(VmError::DivByZero);
+        }
+        if let (Some(q), Some(0)) = (x.checked_div(*y), x.checked_rem(*y)) {
+            return Ok(Value::Int(q));
+        }
+    }
+    true_div_values(a, b)
+}
+
 /// Python-style true division (`/`) — always yields a float.
 ///
 /// Both operands are converted through `f64`, so integer results are only
@@ -305,6 +321,16 @@ mod tests {
     fn true_div_always_float() {
         assert_eq!(true_div_values(&Value::Int(7), &Value::Int(2)).unwrap(), Value::Float(3.5));
         assert_eq!(true_div_values(&Value::Int(4), &Value::Int(2)).unwrap(), Value::Float(2.0));
+    }
+
+    #[test]
+    fn js_div_keeps_exact_int_quotients() {
+        assert_eq!(js_div_values(&Value::Int(4), &Value::Int(2)).unwrap(), Value::Int(2));
+        assert_eq!(js_div_values(&Value::Int(-6), &Value::Int(3)).unwrap(), Value::Int(-2));
+        assert_eq!(js_div_values(&Value::Int(7), &Value::Int(2)).unwrap(), Value::Float(3.5));
+        assert_eq!(js_div_values(&Value::Int(-7), &Value::Int(2)).unwrap(), Value::Float(-3.5));
+        assert_eq!(js_div_values(&Value::Float(5.0), &Value::Int(2)).unwrap(), Value::Float(2.5));
+        assert!(matches!(js_div_values(&Value::Int(1), &Value::Int(0)), Err(VmError::DivByZero)));
     }
 
     #[test]

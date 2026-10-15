@@ -792,6 +792,15 @@ static Value _mod(Value a, Value b) {
     return mk_float(fmod(fa, fb));
 }
 /* Python-style ops (CRUSH-200): true `/`, floor `//`, floormod `%`. */
+/* JavaScript `/`: an exact int quotient stays an int (mirrors crush-vm js_div_values). */
+static Value _true_div(Value a, Value b);
+static Value _js_div(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i == 0) _crush_arith_error("division by zero");
+        if (!(a.i == INT64_MIN && b.i == -1) && a.i % b.i == 0) return mk_int(a.i / b.i);
+    }
+    return _true_div(a, b);
+}
 static Value _true_div(Value a, Value b) {
     double fa = (a.tag == TAG_INT) ? (double)a.i : (a.tag == TAG_FLOAT) ? a.f : 0.0;
     double fb = (b.tag == TAG_INT) ? (double)b.i : (b.tag == TAG_FLOAT) ? b.f : 0.0;
@@ -1810,6 +1819,9 @@ fn emit_c_instr(
                 }
                 "math.truediv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_true_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.truediv\n"));
+                }
+                "js.div" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_js_div(__a, __b)); }} _pc={next_pc}; break; // cap_call js.div\n"));
                 }
                 "conv.text" => {
                     out.push_str(&format!("                {{ Value __st = _pop(); Value __v = _pop(); _push(_conv_text(__v, __st)); }} _pc={next_pc}; break; // cap_call conv.text\n"));
