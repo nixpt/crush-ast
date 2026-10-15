@@ -892,6 +892,9 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 BinaryOp::Exp => "**",
                 BinaryOp::NullishCoalescing => "??",
             };
+            if operator == "/" {
+                return Ok(js_div(left, right, m));
+            }
             Ok(Expression::BinaryOp {
                 operator: operator.to_string(),
                 left: Box::new(left),
@@ -1125,6 +1128,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign => {
                     anyhow::bail!("logical assignment (`&&=`, `||=`, `??=`) is not supported yet")
                 }
+                AssignOp::DivAssign => js_div(current(), right, m.clone()),
                 _ => Expression::BinaryOp {
                     operator: match op {
                         AssignOp::AddAssign => "+", AssignOp::SubAssign => "-",
@@ -1444,12 +1448,18 @@ fn lower_call_expr(
                 // Node separates console.log arguments with a space; io.print
                 // concatenates, so `console.log(a, b)` printed `ab`.
                 "console.log" | "console.info" | "console.warn" | "console.error" => {
+                    // Numbers print the way JS prints them (`6`, not crush's `6.0`;
+                    // `1e+21`): each argument goes through conv.text(_, "js").
                     let mut spaced = Vec::with_capacity(lowered_args.len() * 2);
                     for (i, a) in lowered_args.into_iter().enumerate() {
                         if i > 0 {
                             spaced.push(Expression::StringLiteral { value: " ".to_string(), meta: m.clone() });
                         }
-                        spaced.push(a);
+                        spaced.push(Expression::CapabilityCall {
+                            name: "conv.text".to_string(),
+                            args: vec![a, Expression::StringLiteral { value: "js".to_string(), meta: m.clone() }],
+                            meta: m.clone(),
+                        });
                     }
                     Ok(Expression::CapabilityCall {
                         name: "io.print".to_string(),
@@ -1627,6 +1637,15 @@ fn prop_name_to_string(key: &PropName) -> String {
 /// for ASCII but not for non-ASCII text (JS counts UTF-16 units).
 fn is_length_read(field: &str, obj: &Expr) -> bool {
     field == "length" && !matches!(unparen(obj), Expr::Object(_))
+}
+
+/// JS `/` is real division (`7 / 2` is 3.5; crush's `/` on two ints
+/// truncates). An exact quotient of two ints stays an int (`4 / 2` is `2`,
+/// usable as an array index and printed `2` even inside string
+/// concatenation) — JS has one number type, so that is safe. Division by
+/// zero is a loud error rather than Infinity.
+fn js_div(left: Expression, right: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
+    Expression::CapabilityCall { name: "js.div".to_string(), args: vec![left, right], meta }
 }
 
 fn unparen(e: &Expr) -> &Expr {

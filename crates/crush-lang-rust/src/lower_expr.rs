@@ -469,7 +469,18 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
                 if !lit.is_empty() {
                     pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: ctx.meta_at(0) });
                 }
-                pieces.push(value);
+                // `{}` is Display: floats print like rustc (`6`, never `6.0`,
+                // no exponent). `{:?}` is Debug (`6.0`), which is how crush
+                // already prints floats.
+                pieces.push(if fmt_spec.is_empty() {
+                    Expression::CapabilityCall {
+                        name: "conv.text".to_string(),
+                        args: vec![value, Expression::StringLiteral { value: "rust".to_string(), meta: ctx.meta_at(0) }],
+                        meta: ctx.meta_at(0),
+                    }
+                } else {
+                    value
+                });
             }
             '}' => anyhow::bail!("unmatched `}}` in format string"),
             other => lit.push(other),

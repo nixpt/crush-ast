@@ -54,6 +54,20 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "Python print: space-separated args, True/False/None spelling",
         });
         reg(CapabilitySpec {
+            name: "js.div",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a / b: an exact int quotient stays an int, otherwise float",
+        });
+        reg(CapabilitySpec {
+            name: "conv.text",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "value as text in a language style (\"js\" / \"rust\"): numbers as that language prints them",
+        });
+        reg(CapabilitySpec {
             name: "seq.slice",
             argc: Some(4),
             returns: true,

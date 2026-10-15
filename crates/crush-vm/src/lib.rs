@@ -23,6 +23,7 @@ pub mod ai_args;
 pub mod arithmetic;
 pub mod make_range;
 pub mod seq;
+pub mod num_text;
 pub mod map_ops;
 pub mod caps;
 pub mod cap_inference;
