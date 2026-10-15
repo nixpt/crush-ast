@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/crush-errors",
     "crates/crush-cast",
+    "crates/crush-cosm",
     "crates/casm",
     "crates/tree-sitter-crush",
     "crates/crush-walker-core",
@@ -65,6 +66,7 @@ rust-version  = "1.95.0"
 [workspace.dependencies]
 crush-errors      = { path = "crates/crush-errors",      version = "0.5.0" }
 crush-cast        = { path = "crates/crush-cast",        version = "0.5.0" }
+crush-cosm        = { path = "crates/crush-cosm",        version = "0.5.0" }
 crush-caison      = { path = "crates/crush-caison",      version = "0.5.0" }
 # CAISON (formerly CSON) canonical types/parser/printer — standalone crate,
 # https://github.com/nixpt/caison. NOT YET on crates.io as of CRUSH-CAISON-1;

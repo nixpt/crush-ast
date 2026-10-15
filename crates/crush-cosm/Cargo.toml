@@ -1,0 +1,20 @@
+[package]
+name = "crush-cosm"
+version.workspace = true
+edition = "2024"
+repository.workspace = true
+homepage.workspace = true
+description = "COSM — the Crush Object Semantic Model: declarative, serializable object declarations (Kinds), validation and C3 linearization"
+license.workspace = true
+readme = "README.md"
+keywords = ["crush", "object-model", "compiler", "ir", "mro"]
+categories = ["compilers", "data-structures"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error = "0.1"
+
+# Deliberately no crush-cast (or any other workspace crate): crush-cast pulls
+# crush-vm through crush-caison, and crush-vm / casm will depend on this crate.
+# See src/types.rs.
