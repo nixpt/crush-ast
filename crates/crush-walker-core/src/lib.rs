@@ -686,8 +686,6 @@ pub fn map_to_capability(lang: &str, func_name: &str) -> Option<&'static str> {
 
 // ── LanguageAdapter — universal walker dispatch ─────────────────────────────────
 
-use std::sync::Arc;
-
 /// Universal walker adapter — one interface for every language frontend.
 ///
 /// Tree-sitter walkers (`Walker` trait) and native-parser frontends (`Frontend`
@@ -752,6 +750,54 @@ impl AdapterRegistry {
                     .join(", ")
             ))?;
         adapter.walk(source, filename)
+    }
+
+    /// Walk source selected by a language name or file extension.
+    ///
+    /// Selectors such as `rust`, `rs`, and `.rs` are accepted. Matching is
+    /// case-insensitive. The selected adapter receives a synthetic filename
+    /// with the matching extension, as it would through ordinary file dispatch.
+    pub fn walk_language_or_extension(
+        &self,
+        source: &str,
+        selector: &str,
+    ) -> anyhow::Result<(FeatureReport, Program)> {
+        let selector = selector.trim();
+        let normalized = selector.trim_start_matches('.');
+        let adapter = self.adapters.iter().find(|adapter| {
+            adapter.language_name().eq_ignore_ascii_case(selector)
+                || adapter.file_extensions().iter().any(|extension| {
+                    extension
+                        .trim_start_matches('.')
+                        .eq_ignore_ascii_case(normalized)
+                })
+        });
+        let adapter = adapter.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no walker registered for language or extension `{selector}` (available: {})",
+                self.adapters
+                    .iter()
+                    .flat_map(|adapter| {
+                        std::iter::once(adapter.language_name())
+                            .chain(adapter.file_extensions().iter().copied())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+        let extension = adapter
+            .file_extensions()
+            .iter()
+            .find(|extension| {
+                extension
+                    .trim_start_matches('.')
+                    .eq_ignore_ascii_case(normalized)
+            })
+            .copied()
+            .or_else(|| adapter.file_extensions().first().copied())
+            .unwrap_or("src");
+        let filename = format!("source.{}", extension.trim_start_matches('.'));
+        adapter.walk(source, &filename)
     }
 
     /// Walk source -> CASM in one call. Convenience for CLI tools.

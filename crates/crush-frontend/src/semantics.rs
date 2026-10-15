@@ -284,6 +284,9 @@ impl SemanticAnalyzer {
                 type_hint,
                 ..
             } => {
+                if matches!(value, Expression::Lambda { .. }) {
+                    self.define_var(name, Type::Any);
+                }
                 let expr_type = self.check_expr(value)?;
                 if *type_hint != CastType::Any {
                     let hinted_type = self.parse_cast_type(type_hint)?;
@@ -317,6 +320,14 @@ impl SemanticAnalyzer {
                 let cond_type = self.check_expr(condition)?;
                 check_condition("While", &cond_type)?;
                 self.check_block(body)?;
+            }
+            Statement::For { variable, iterable, body, .. } => {
+                let item_type = self.iterable_item_type(iterable)?;
+                self.enter_scope();
+                self.define_var(variable, item_type);
+                let result = body.iter().try_for_each(|stmt| self.check_stmt(stmt));
+                self.exit_scope();
+                result?;
             }
             Statement::ExprStmt { expr, .. } => {
                 self.check_expr(expr)?;
@@ -462,6 +473,32 @@ impl SemanticAnalyzer {
                 }
             }
             Expression::Call { function, args, .. } => {
+                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
+                    intrinsic.validate(function, args)?;
+                    // Assignment's first argument names a destination. It is
+                    // not a load; Python's named-expression can bind a new name.
+                    if function == "__crush_assign__" {
+                        let ty = self.check_expr(&args[1])?;
+                        if let Expression::Var { name, .. } = &args[0] {
+                            if self.resolve_var(name).is_none() {
+                                self.define_var(name, ty);
+                            }
+                        }
+                        return Ok(Type::Null);
+                    }
+                    let types = args.iter()
+                        .map(|arg| self.check_expr(arg))
+                        .collect::<Result<Vec<_>>>()?;
+                    use crate::walker_intrinsics::ResultType;
+                    return Ok(match intrinsic.result {
+                        ResultType::Null => Type::Null,
+                        ResultType::Bool => Type::Bool,
+                        ResultType::First => types[0].clone(),
+                        ResultType::Branches => self.merge_types(&types[1], &types[2])
+                            .unwrap_or(Type::Any),
+                        ResultType::Any => Type::Any,
+                    });
+                }
                 let func_type = if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {
                     Some((arg_types, ret_type))
                 } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function) {
@@ -518,6 +555,33 @@ impl SemanticAnalyzer {
                     current = self.merge_types(&current, &elem_ty).unwrap_or(Type::Any);
                 }
                 Ok(Type::Array(Box::new(current)))
+            }
+            Expression::Range { start, end, .. } => {
+                self.check_expr(start)?;
+                self.check_expr(end)?;
+                Ok(Type::Array(Box::new(Type::Int)))
+            }
+            Expression::Lambda { params, body, .. } => {
+                self.enter_scope();
+                let result = (|| {
+                    let mut param_types = Vec::new();
+                    for (name, ty) in params {
+                        let ty = self.parse_cast_type(ty)?;
+                        self.define_var(name, ty.clone());
+                        param_types.push(ty);
+                    }
+                    let mut returns = Vec::new();
+                    self.collect_return_types_in_order(body, &mut returns)?;
+                    for stmt in body {
+                        self.check_stmt(stmt)?;
+                    }
+                    let ret = returns.into_iter().reduce(|left, right| {
+                        self.merge_types(&left, &right).unwrap_or(Type::Any)
+                    }).unwrap_or(Type::Null);
+                    Ok(Type::Function(param_types, Box::new(ret)))
+                })();
+                self.exit_scope();
+                result
             }
             Expression::ObjectLiteral { properties, .. } => {
                 // Object literals are used for dynamic JSON construction; allow mixed types.
@@ -585,6 +649,19 @@ impl SemanticAnalyzer {
             }
             _ => Ok(Type::Any), // Default for complex expressions (capabilities, index, etc.)
         }
+    }
+
+    /// Bind loop variables to the element (or map key) type.
+    fn iterable_item_type(&mut self, iterable: &Expression) -> Result<Type> {
+        Ok(match self.check_expr(iterable)? {
+            Type::Array(item) | Type::List(item) | Type::Vector(item) | Type::Set(item) => *item,
+            Type::Map(key, _) => *key,
+            // Structs currently use the VM's map representation, so the
+            // existing loop lowering visits their field names.
+            Type::String | Type::Struct(_) => Type::String,
+            Type::Any | Type::Optional(_) | Type::Tuple(_) => Type::Any,
+            other => bail!("For requires an iterable, found {other}"),
+        })
     }
 
     /// Return the known return type for a built-in capability name
@@ -707,6 +784,9 @@ impl SemanticAnalyzer {
         for stmt in stmts {
             match stmt {
                 Statement::VarDecl { name, value, .. } => {
+                    if matches!(value, Expression::Lambda { .. }) {
+                        self.define_var(name, Type::Any);
+                    }
                     let ty = self.check_expr(value)?;
                     self.define_var(name, ty);
                 }
@@ -756,11 +836,12 @@ impl SemanticAnalyzer {
                     body,
                     ..
                 } => {
-                    self.check_expr(iterable)?;
+                    let item_type = self.iterable_item_type(iterable)?;
                     self.enter_scope();
-                    self.define_var(variable, Type::Any);
-                    self.collect_return_types_in_order(body, out)?;
+                    self.define_var(variable, item_type);
+                    let result = self.collect_return_types_in_order(body, out);
                     self.exit_scope();
+                    result?;
                 }
                 Statement::TryCatch {
                     body,

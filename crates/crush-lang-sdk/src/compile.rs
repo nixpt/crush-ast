@@ -1,5 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(any(
+    feature = "polyglot-python",
+    feature = "polyglot-javascript",
+    feature = "polyglot-rust"
+))]
+use crush_walker_core_no_tree_sitter::AdapterRegistry;
 
 static LABEL_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -28,6 +34,64 @@ fn cap_returns_value(name: &str) -> bool {
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
     casm_to_vm(&compile_crush_to_casm(source)?)
+}
+
+/// Compile Crush source or an enabled walker language into a CVM1 program.
+///
+/// `language_or_extension` accepts a registered language name (`"rust"`) or
+/// extension (`"rs"`, `".rs"`). Rust source support requires the
+/// `polyglot-rust` feature. Walker frontends share `AdapterRegistry` and the
+/// same CAST → CASM → CVM1 pipeline. Crush source keeps its existing polyglot
+/// preparation and declared-capability validation.
+pub fn compile_source(
+    language_or_extension: &str,
+    source: &str,
+) -> anyhow::Result<crush_vm::Program> {
+    let selector = language_or_extension.trim();
+    let normalized = selector.trim_start_matches('.').to_ascii_lowercase();
+    if normalized == "crush" || normalized == "cr" {
+        return compile_crush_source(source);
+    }
+
+    #[cfg(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    ))]
+    {
+        let registry = source_adapter_registry();
+        let (_report, cast) = registry.walk_language_or_extension(source, selector)?;
+        let casm = crush_frontend::compile_cast_owned(cast)?;
+        return casm_to_vm(&casm);
+    }
+    #[cfg(not(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    )))]
+    anyhow::bail!("no walker adapters enabled for source `{selector}`")
+}
+
+/// Rust convenience wrapper over [`compile_source`].
+#[cfg(feature = "polyglot-rust")]
+pub fn compile_rust_source(source: &str) -> anyhow::Result<crush_vm::Program> {
+    compile_source("rust", source)
+}
+
+#[cfg(any(
+    feature = "polyglot-python",
+    feature = "polyglot-javascript",
+    feature = "polyglot-rust"
+))]
+fn source_adapter_registry() -> AdapterRegistry {
+    let mut registry = AdapterRegistry::new();
+    #[cfg(feature = "polyglot-python")]
+    registry.register(Box::new(crush_lang_python::PythonAdapter));
+    #[cfg(feature = "polyglot-javascript")]
+    registry.register(Box::new(crush_lang_js::JsAdapter));
+    #[cfg(feature = "polyglot-rust")]
+    registry.register(Box::new(crush_lang_rust::RustAdapter));
+    registry
 }
 
 /// Crush source → CASM, including [`prepare_polyglot_blocks`]. Use this,
@@ -1143,6 +1207,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "polyglot-python", feature = "polyglot-javascript"))]
     fn test_dedent_strips_common_indent_only() {
         assert_eq!(dedent("    a\n    b\n"), "a\nb");
         assert_eq!(dedent("  a\n    b\n"), "a\n  b");
@@ -1245,5 +1310,29 @@ mod tests {
     fn test_use_lang_emits_no_exec_lang_of_its_own() {
         let prog = compile_crush_source("use @lang python \"math\"\nlet x = 1\n").expect("compile");
         assert!(!prog.manifest.permissions.iter().any(|p| p.starts_with("polyglot.")));
+    }
+}
+
+#[cfg(all(
+    test,
+    not(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    ))
+))]
+mod source_dispatch_without_adapters {
+    #[test]
+    fn rust_is_rejected_and_crush_remains_available() {
+        let error = super::compile_source("rust", "fn main() {}").unwrap_err();
+        assert!(
+            error.to_string().contains("no walker adapters enabled"),
+            "{error}"
+        );
+        let program = super::compile_source("crush", "fn main() { return 42; }").unwrap();
+        assert_eq!(
+            crate::Runtime::new().run(&program).unwrap().return_value,
+            Some(crate::Value::Int(42))
+        );
     }
 }

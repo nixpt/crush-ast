@@ -16,6 +16,7 @@ pub mod semantics;
 pub mod types;
 pub mod mutation_check;
 pub mod wip_check;
+mod walker_intrinsics;
 
 use anyhow::Result;
 

@@ -196,6 +196,13 @@ impl Optimizer {
                 Self::optimize_expr(&mut iterable);
                 let mut for_consts = consts.clone();
                 for_consts.remove(&variable);
+                // A loop-carried assignment cannot use a value known only
+                // before the first iteration (including walker intrinsics).
+                let mut mutated = HashSet::new();
+                Self::collect_mutated_vars(&body, &mut mutated);
+                for name in mutated {
+                    for_consts.remove(&name);
+                }
                 Self::optimize_block_with_consts(&mut body, &mut for_consts);
                 consts.clear();
 
@@ -286,7 +293,14 @@ impl Optimizer {
             Expression::UnaryOp { operand, .. } => {
                 Self::replace_vars_expr(operand, consts);
             }
-            Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } => {
+            Expression::Call { function, args, .. } => {
+                let skip = usize::from(crate::walker_intrinsics::lookup(function)
+                    .is_some_and(|intrinsic| intrinsic.variable_target));
+                for arg in args.iter_mut().skip(skip) {
+                    Self::replace_vars_expr(arg, consts);
+                }
+            }
+            Expression::CapabilityCall { args, .. } => {
                 for arg in args {
                     Self::replace_vars_expr(arg, consts);
                 }
@@ -496,6 +510,13 @@ impl Optimizer {
     }
 
     fn collect_mutated_in_expr(expr: &Expression, out: &mut HashSet<String>) {
+        if let Expression::Call { function, args, .. } = expr
+            && crate::walker_intrinsics::lookup(function)
+                .is_some_and(|intrinsic| intrinsic.writes_binding)
+            && let Some(Expression::Var { name, .. }) = args.first()
+        {
+            out.insert(name.clone());
+        }
         match expr {
             Expression::Match {
                 expression, arms, ..
