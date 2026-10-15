@@ -4,12 +4,20 @@ use crush_walker_core_no_tree_sitter::LowerCtx;
 
 use crush_cast::{CastType, Expression, Statement};
 use quote::ToTokens;
-use syn::Stmt;
+use syn::{Stmt, spanned::Spanned};
 
 use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
 
 pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
-    let meta = ctx.meta_at(0);
+    let start = stmt.span().start();
+    lower_stmt_inner(stmt, ctx).map_err(|error| {
+        anyhow::anyhow!("Rust statement at {}:{}: {error:#}", start.line, start.column + 1)
+    })
+}
+
+fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
+    let start = stmt.span().start();
+    let meta = ctx.meta_lc(start.line, start.column + 1);
     match stmt {
         Stmt::Local(local) => {
             let name = pat_to_ident(&local.pat)?;

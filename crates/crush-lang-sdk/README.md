@@ -56,6 +56,10 @@ library capabilities. Embedding hosts enable those with
 (requires the `stdlib` feature). `Runtime::new()` alone does not register the
 SDK standard library or grant filesystem, process, or network access.
 
+Rust source support is a subset with known semantic gaps. The
+[conformance inventory](../../docs/rust-conformance.md) records VM/AOT parity,
+unsupported constructs, and ticket-linked blockers before `.rs` CLI dispatch.
+
 ## Calling a manually built Rust wrapper
 
 `crush-ffi` provides a stable C ABI for small wrapper functions. Build the

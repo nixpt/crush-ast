@@ -31,6 +31,9 @@
 //! Closures can read implicit scalar captures through shared cells. Rust
 //! ownership/copy behavior and repeated block/loop bindings remain gated by
 //! CRUSH-xps-6/7; parsing closure syntax does not imply full Rust closure traits.
+//! Integer widths/casts/overflow and string Debug formatting have known silent
+//! divergences tracked by CRUSH-xps-8/9. These are not supported semantics; the
+//! SDK's rustc conformance inventory pins the current failures until fixed.
 
 pub mod lower_expr;
 pub mod lower_stmt;
@@ -42,6 +45,7 @@ use std::collections::HashMap;
 use crush_cast::{Function, Program, Statement};
 use crush_walker_core_no_tree_sitter::{FeatureReport, Frontend, LowerCtx};
 use quote::ToTokens;
+use syn::spanned::Spanned;
 
 pub struct RustFrontend;
 
@@ -124,8 +128,8 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
             // statement: that made imported crate calls look as if they had
             // been accepted, then fail later or silently do nothing.
             _ => anyhow::bail!(
-                "unsupported Rust top-level item `{}`; Rust imports and crate APIs need an explicit Crush capability/plugin",
-                item.to_token_stream()
+                "unsupported Rust top-level item `{}` at {}:{}; Rust imports and crate APIs need an explicit Crush capability/plugin; type declarations need COSM walker support",
+                item.to_token_stream(), item.span().start().line, item.span().start().column + 1
             ),
         }
     }

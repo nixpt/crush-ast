@@ -14,6 +14,10 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Add a shared Rust-source conformance audit for the SDK VM and both AOT
+  backends, with rustc freshness checks, byte-exact output, ticket-linked
+  exceptions, and source locations on Rust lowering errors (CRUSH-xps-5).
+
 ### Added
 
 - `crush-lang-sdk::compile::compile_source(language_or_extension, source)`
