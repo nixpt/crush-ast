@@ -271,6 +271,9 @@ impl SemanticAnalyzer {
                 type_hint,
                 ..
             } => {
+                if matches!(value, Expression::Lambda { .. }) {
+                    self.define_var(name, Type::Any);
+                }
                 let expr_type = self.check_expr(value)?;
                 if *type_hint != CastType::Any {
                     let hinted_type = self.parse_cast_type(type_hint)?;
@@ -545,6 +548,28 @@ impl SemanticAnalyzer {
                 self.check_expr(end)?;
                 Ok(Type::Array(Box::new(Type::Int)))
             }
+            Expression::Lambda { params, body, .. } => {
+                self.enter_scope();
+                let result = (|| {
+                    let mut param_types = Vec::new();
+                    for (name, ty) in params {
+                        let ty = self.parse_cast_type(ty)?;
+                        self.define_var(name, ty.clone());
+                        param_types.push(ty);
+                    }
+                    let mut returns = Vec::new();
+                    self.collect_return_types_in_order(body, &mut returns)?;
+                    for stmt in body {
+                        self.check_stmt(stmt)?;
+                    }
+                    let ret = returns.into_iter().reduce(|left, right| {
+                        self.merge_types(&left, &right).unwrap_or(Type::Any)
+                    }).unwrap_or(Type::Null);
+                    Ok(Type::Function(param_types, Box::new(ret)))
+                })();
+                self.exit_scope();
+                result
+            }
             Expression::ObjectLiteral { properties, .. } => {
                 // Object literals are used for dynamic JSON construction; allow mixed types.
                 for (_, value) in properties {
@@ -744,6 +769,9 @@ impl SemanticAnalyzer {
         for stmt in stmts {
             match stmt {
                 Statement::VarDecl { name, value, .. } => {
+                    if matches!(value, Expression::Lambda { .. }) {
+                        self.define_var(name, Type::Any);
+                    }
                     let ty = self.check_expr(value)?;
                     self.define_var(name, ty);
                 }

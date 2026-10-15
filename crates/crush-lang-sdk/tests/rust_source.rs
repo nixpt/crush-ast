@@ -97,26 +97,62 @@ mod tests {
     #[test]
     fn test_array_literal() {
         let src = "fn main() { let arr = [1, 2, 3]; println(arr[0]); }";
-        match run_rust(src) {
-            Ok(out) => assert!(!out.is_empty() || true, "ok"),
-            Err(e) => assert!(
-                e.to_string().contains("unsupported") || e.to_string().contains("CVM"),
-                "expected meaningful error, got: {e}"
-            ),
-        }
+        assert_eq!(run_rust(src).unwrap(), "1");
     }
 
     #[test]
     fn test_closure_basic() {
         let src = "fn main() { let add = |x: i32| x + 1; println(add(41)); }";
-        match run_rust(src) {
-            Ok(out) => assert!(!out.is_empty() || true, "ok"),
-            Err(e) => assert!(
-                e.to_string().contains("unsupported")
-                    || e.to_string().contains("CVM")
-                    || e.to_string().contains("lambda"),
-                "expected meaningful error, got: {e}"
+        assert_eq!(run_rust(src).unwrap(), "42");
+    }
+
+    #[test]
+    fn closure_parameters_shadow_outer_bindings_and_keep_argument_order() {
+        let src = "fn main() { let x = 100; let sub = |x: i32, y: i32| x - y; println(sub(50, 8)); println(x); }";
+        assert_eq!(run_rust(src).unwrap(), "42\n100");
+    }
+
+    #[test]
+    fn closure_reads_a_scalar_capture() {
+        assert_eq!(
+            run_rust(
+                "fn main() { let offset = 40; let add = |x: i32| offset + x; println(add(2)); }"
+            )
+            .unwrap(),
+            "42"
+        );
+    }
+
+    #[test]
+    fn unsupported_closure_forms_fail_before_execution() {
+        for (src, expected) in [
+            (
+                "fn main() { let add = move |x: i32| x + 1; }",
+                "unsupported Rust move closure",
             ),
+            (
+                "fn main() { let add = async |x: i32| x + 1; }",
+                "unsupported Rust async closure",
+            ),
+            (
+                "fn main() { let add = |(x, y)| x + y; }",
+                "unsupported Rust closure parameter",
+            ),
+            (
+                "fn main() { let add = |ref x| x; }",
+                "unsupported Rust closure parameter",
+            ),
+            (
+                "fn main() { let add = |x: i32| x + missing; }",
+                "Undefined variable: missing",
+            ),
+            (
+                "fn main() { let add = |x: i32| x + 1; add(); }",
+                "expects 1 arguments",
+            ),
+        ] {
+            let error = compile_source("rust", src).unwrap_err();
+            assert!(error.to_string().contains(expected), "{src}: {error:#}");
         }
     }
 }

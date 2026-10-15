@@ -7,7 +7,8 @@
 //! Free functions (block tail expressions are the return value), `let` /
 //! `let mut`, `if`/`else` (also as expressions), `while`, `loop`, `for` over
 //! `a..b` / `a..=b` / vectors, `break`/`continue`, `return`, `match` with literal,
-//! binding, `_` and `|` patterns, `vec![..]`, indexing, closures, `+= -= *= /= %=`,
+//! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
+//! with identifier parameters (including typed parameters), `+= -= *= /= %=`,
 //! `println!`/`print!`/`eprintln!`/`format!` with `{}`, `{:?}`, `{0}`, `{name}`,
 //! and the common `str`/`Vec`/numeric methods (`len`, `push`, `pop`, `contains`,
 //! `to_uppercase`, `abs`, `sqrt`, …). The SDK's `rustc_corpus` integration suite
@@ -15,11 +16,16 @@
 //!
 //! Not supported — rejected with an error rather than mistranslated: structs,
 //! enums, traits and `impl` blocks, match guards and range patterns, format
-//! width/precision (`{:.2}`, `{:>5}`), `vec![x; n]`, iterator chains (`.map`,
+//! width/precision (`{:.2}`, `{:>5}`), `vec![x; n]`, move/async closures,
+//! destructured closure parameters, iterator chains (`.map`,
 //! `.sum`, …), `use` declarations and qualified module/crate paths. Rust crate
 //! APIs need an explicit Crush capability/plugin; a Rust `use` is not treated
 //! as a runtime import. Known difference: `print!` ends the line (there is no
 //! newline-free print capability yet).
+//!
+//! Closures can read implicit scalar captures through shared cells. Rust
+//! ownership/copy behavior and repeated block/loop bindings remain gated by
+//! CRUSH-xps-6/7; parsing closure syntax does not imply full Rust closure traits.
 
 pub mod lower_expr;
 pub mod lower_stmt;

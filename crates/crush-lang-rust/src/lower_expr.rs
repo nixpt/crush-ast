@@ -262,34 +262,23 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         Expr::Closure(e) => {
-            // A typed parameter (`|x: i32|`) is `Pat::Type` around the name. It
-            // used to become a placeholder `_param`, so the body's `x` was a
-            // free variable — captured from an enclosing `x` if there was one
-            // (silently wrong: `let x = 5; (|x: i32| x + 1)(41)` gave 6).
-            fn closure_param(p: &syn::Pat, i: usize) -> anyhow::Result<String> {
-                match p {
-                    syn::Pat::Ident(pi) => Ok(pi.ident.to_string()),
-                    syn::Pat::Type(pt) => closure_param(&pt.pat, i),
-                    syn::Pat::Wild(_) => Ok(format!("__closure_unused_{i}")),
-                    _ => anyhow::bail!(
-                        "closure parameter pattern `{}` (destructuring) is not supported yet",
-                        quote::ToTokens::to_token_stream(p)
-                    ),
-                }
+            if e.capture.is_some() {
+                anyhow::bail!("unsupported Rust move closure: value capture requires Rust ownership semantics (CRUSH-xps-7)");
+            }
+            if e.asyncness.is_some() {
+                anyhow::bail!("unsupported Rust async closure: async Rust execution is not implemented");
             }
             let params: Vec<(String, CastType)> = e.inputs.iter()
                 .enumerate()
-                .map(|(i, p)| Ok((closure_param(p, i)?, CastType::Any)))
+                .map(|(i, p)| {
+                    let name = closure_param_name(p, i)
+                        .map_err(|err| anyhow::anyhow!("unsupported Rust closure parameter: {err}"))?;
+                    Ok((name, CastType::Any))
+                })
                 .collect::<anyhow::Result<_>>()?;
-            // A block body is lowered like a function body — statements, then the
-            // tail as the return value, `return` as a return. Lowered as an
-            // expression it kept only the block's first statement, so
-            // `|mut x: i32| { x += 1; x }` returned null.
             let body = match e.body.as_ref() {
                 Expr::Block(b) => crate::lower_stmt::lower_block(
-                    &b.block.stmts,
-                    ctx,
-                    crate::lower_stmt::Tail::Return,
+                    &b.block.stmts, ctx, crate::lower_stmt::Tail::Return,
                 )?,
                 other => vec![Statement::Return { value: Some(lower_expr(other, ctx)?), meta: meta.clone() }],
             };
@@ -346,6 +335,17 @@ pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
         syn::Pat::Ident(pi) => Ok(pi.ident.to_string()),
         syn::Pat::Type(pt) => pat_to_ident(&pt.pat),
         _ => anyhow::bail!("expected identifier pattern"),
+    }
+}
+
+fn closure_param_name(pat: &syn::Pat, index: usize) -> anyhow::Result<String> {
+    match pat {
+        syn::Pat::Type(typed) => closure_param_name(&typed.pat, index),
+        syn::Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
+            Ok(ident.ident.to_string())
+        }
+        syn::Pat::Wild(_) => Ok(format!("__closure_unused_{index}")),
+        _ => anyhow::bail!("destructuring and ref patterns are not supported; expected an identifier or wildcard"),
     }
 }
 
