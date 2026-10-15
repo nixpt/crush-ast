@@ -46,7 +46,7 @@ crush-ptx could compile a CASM program to PTX, but only one assembled by hand in
 
 - f32 scalars, non-f32 buffers (u8/f16/i32), 2-D/3-D grids, and a user-chosen block size.
 - Device-resident buffers across launches (every launch re-uploads).
-- Narrowing crush-ptx's integer math to 32-bit. ZORRO-CRUSH-PTX-2 measured CASM's i64 model costing about 1.8× on the same algorithm.
+- Narrowing crush-ptx's integer math to 32-bit. CASM's i64 integer model was measured to cost about 1.8× against an LLVM-compiled kernel running the same algorithm.
 - Making `examples/gpu/q6k_gemv.crush` compile (it needs u8/f16 loads and warp shuffles as intrinsics).
 - `.casm`/`.cvm1` inputs with `--gpu` (only `.crush` hands the capability its CASM).
 

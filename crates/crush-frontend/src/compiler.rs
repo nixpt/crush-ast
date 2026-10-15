@@ -61,6 +61,14 @@ pub struct Compiler {
     /// Names each enclosing scope binds (function, then lambda bodies,
     /// innermost last) — what a lambda can capture.
     scopes: Vec<HashSet<String>>,
+    /// COSM K1.2 (CRUSH-zorro-41): the module the last compiled program's
+    /// `struct` / `impl` / `trait` declarations lowered to.
+    cosm: Option<crush_cosm::CosmModule>,
+    /// Names of methods (with `self`) defined in the program's `impl`s. A
+    /// `x.m(…)` call naming one is rejected until receiver dispatch lands
+    /// (K1.4/K1.5) — compiled today it would silently call the global
+    /// capability `m`.
+    receiver_methods: std::collections::BTreeSet<String>,
 }
 
 struct LoopInfo {
@@ -93,7 +101,32 @@ impl Compiler {
             function_arity: HashMap::new(),
             boxed: HashSet::new(),
             scopes: Vec::new(),
+            cosm: None,
+            receiver_methods: Default::default(),
         }
+    }
+
+    /// The COSM module of the last compiled program (COSM K1.2): `None` when
+    /// it declares no struct, impl or trait.
+    pub fn cosm_module(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref()
+    }
+
+    /// Compile a CAST program whose `impl` / `trait` declarations
+    /// [`crate::cosm_lower::lower`] has already lowered to `cosm` (methods
+    /// lifted into `program.functions`).
+    pub fn compile_lowered(
+        &mut self,
+        program: Program,
+        cosm: Option<crush_cosm::CosmModule>,
+    ) -> Result<CasmProgram> {
+        if let Some(module) = &cosm {
+            crate::cosm_lower::refuse_unimplemented_strategies(module)?;
+        }
+        self.receiver_methods =
+            cosm.as_ref().map(crate::cosm_lower::receiver_methods).unwrap_or_default();
+        self.cosm = cosm;
+        self.compile_program(program)
     }
 
     /// #78: a lambda body may not read or assign the enclosing function's
@@ -215,7 +248,14 @@ impl Compiler {
         self
     }
 
+    /// Compile a CAST program to CASM. `impl` / `trait` declarations are
+    /// lowered to COSM first (see [`Compiler::cosm_module`]).
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
+        let cosm = crate::cosm_lower::lower(&mut program)?;
+        self.compile_lowered(program, cosm)
+    }
+
+    fn compile_program(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
         self.lambdas.clear();
         self.lambda_aliases.clear();
@@ -403,7 +443,8 @@ impl Compiler {
                     },
                 );
 
-                for (param_name, _) in &func.params {
+                // Last-first, as for a call (see `Expression::Spawn`).
+                for (param_name, _) in func.params.iter().rev() {
                     instrs.push(self.create_instr(
                         "load",
                         serde_json::json!({"name": param_name}),
@@ -701,14 +742,17 @@ impl Compiler {
                         scope.insert(name.clone(), None);
                     }
                 }
-                // A Crush `let` is a fresh binding each time it runs (in a loop
-                // body: one per iteration), so closures made in different
-                // iterations don't share it. The cell is made before the
-                // initializer, so a lambda that refers to its own name
-                // captures this binding. Walker-lowered declarations (meta
-                // `lang`) keep their language's scoping: Python variables are
-                // function-scoped; JS `let` vs `var` is CRUSH-251 step 4b.
-                if self.boxed.contains(name.as_str()) && !meta.contains_key("lang") {
+                // A Crush `let` — or a walker declaration marked as a block
+                // binding (JS `let` / `const`) — is a fresh binding each time
+                // it runs (in a loop body: one per iteration), so closures
+                // made in different iterations don't share it. The cell is
+                // made before the initializer, so a lambda that refers to its
+                // own name captures this binding. Other walker declarations
+                // keep one binding: Python variables and JS `var` are
+                // function-scoped.
+                let block_binding = !meta.contains_key("lang")
+                    || meta.get("binding").and_then(|b| b.as_str()) == Some("block");
+                if self.boxed.contains(name.as_str()) && block_binding {
                     instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                     instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
                     instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
@@ -1101,6 +1145,16 @@ impl Compiler {
                 self.loop_stack.last_mut().unwrap().continue_indices.push(idx);
             }
             Statement::StructDef { .. } => {}
+            // Lowered to COSM + lifted functions before code generation
+            // (`cosm_lower`); reaching here means an `impl`/`trait` outside
+            // the top level of a file.
+            Statement::ImplBlock { meta, .. } | Statement::TraitDef { meta, .. } => {
+                let at = match (meta.get("line").and_then(|v| v.as_u64()), meta.get("col").and_then(|v| v.as_u64())) {
+                    (Some(l), Some(c)) => format!("line {l}, col {c}: "),
+                    _ => String::new(),
+                };
+                bail!("{at}`impl` / `trait` blocks are only allowed at the top level of a file");
+            }
             Statement::Import { import, meta } => {
                 // Compile import statements to capability/module load instructions.
                 // The ImportResolver handles resolution at runtime via capabilities.
@@ -1682,6 +1736,21 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if function == "parallel_map" && !self.local_functions.contains("parallel_map") {
+                    // #175: a VM capability (it starts workers); capabilities
+                    // take their arguments in order.
+                    if args.len() != 2 {
+                        bail!("parallel_map(items, f) expects exactly 2 arguments");
+                    }
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    self.all_permissions.insert("parallel_map".to_string());
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "parallel_map", "argc": 2}),
+                        meta,
+                    ));
                 } else if function == "print" {
                     self.all_permissions.insert("io.print".to_string());
                     for arg in args {
@@ -1825,6 +1894,20 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_rebind__" {
+                    // A fresh binding holding the variable's current value
+                    // (JS `for (let ..)` per-iteration copy, CRUSH-251 step
+                    // 4b): closures made so far keep the old binding. Only a
+                    // boxed (captured) variable has a binding to renew.
+                    let Some(Expression::Var { name, .. }) = args.first() else {
+                        bail!("__crush_rebind__ expects a variable");
+                    };
+                    if self.boxed.contains(name.as_str()) {
+                        instrs.push(self.create_instr("load_cell", serde_json::json!({"name": name}), meta));
+                        instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                    }
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 } else if function == "__crush_assign__" {
                     // Intrinsic: assignment lowered from walker (e.g., `x = 42` in JS)
                     // args[0] = target Var, args[1] = value expression
@@ -2108,6 +2191,21 @@ impl Compiler {
                         let dot_pos = name.find('.').unwrap();
                         let obj_name = &name[..dot_pos];
                         let method = &name[dot_pos + 1..];
+                        if self.receiver_methods.contains(method) {
+                            let at = match (
+                                meta.get("line").and_then(|v| v.as_u64()),
+                                meta.get("col").and_then(|v| v.as_u64()),
+                            ) {
+                                (Some(l), Some(c)) => format!("line {l}, col {c}: "),
+                                _ => String::new(),
+                            };
+                            bail!(
+                                "{at}`{obj_name}.{method}(…)`: calling methods defined in `impl` needs \
+                                 COSM K1.4/K1.5 (CRUSH-zorro-43/44) — compiled today it would call the \
+                                 global capability `{method}`, not the method. Call the lifted function \
+                                 directly instead (`Type::{method}({obj_name}, …)`)"
+                            );
+                        }
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
                         for arg in args.iter().rev() {
@@ -2195,25 +2293,34 @@ impl Compiler {
                 // before the function name. The scheduler will pop argc
                 // args + fn_name, then create a new thread with args
                 // pre-loaded on the stack.
-                // A `let`-bound lambda spawns its lifted function; a variable
-                // holding a function value can't be spawned until SPAWN takes
-                // one (CRUSH-251 step 5).
-                let aliased = self.resolve_lambda_alias(function);
-                if aliased.is_none() && self.declared_vars.contains(function.as_str()) {
-                    bail!(
-                        "spawning `{function}`, a variable holding a function value, isn't \
-                         supported yet (CRUSH-251 step 5); spawn a named function"
-                    );
-                }
-                let function = aliased.as_ref().unwrap_or(function);
-                for arg in args {
+                // Args last-first, as for `call`: the task's first `store` pops
+                // the first argument. (They were pushed first-first, so a
+                // spawned `w(10, 3)` ran as `w(3, 10)`.)
+                for arg in args.iter().rev() {
                     self.compile_expr(arg, instrs)?;
                 }
-                instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": function}),
-                    meta,
-                ));
+                // The task's function is a function value (CRUSH-251 step 5),
+                // so SPAWN checks its arity and passes its captured values as
+                // leading parameters: a variable holds one (a `let`-bound
+                // lambda's variable too); a named function becomes one.
+                if self.declared_vars.contains(function.as_str()) {
+                    self.check_lambda_capture(function)?;
+                    instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
+                } else if let Some(&arity) = self.function_arity.get(function.as_str()) {
+                    instrs.push(self.create_instr(
+                        "make_closure",
+                        serde_json::json!({"function": function, "arity": arity, "ncap": 0}),
+                        meta,
+                    ));
+                } else {
+                    // Unknown here (an async wrapper, a name only the VM has):
+                    // SPAWN resolves it at run time.
+                    instrs.push(self.create_instr(
+                        "push_str",
+                        serde_json::json!({"value": function}),
+                        meta,
+                    ));
+                }
                 instrs.push(self.create_instr(
                     "spawn",
                     serde_json::json!({"argc": args.len()}),
@@ -3034,6 +3141,13 @@ fn scan_level<'a>(v: &'a serde_json::Value, level: &mut Level<'a>) {
                 }
                 Some("Spawn") => {
                     level.refs.extend(field("function").map(str::to_string));
+                }
+                // The parser emits `obj.method(..)` as a CapabilityCall named
+                // "obj.method"; it loads `obj` when `obj` is a variable.
+                Some("CapabilityCall") => {
+                    if let Some((receiver, _)) = field("name").and_then(|n| n.split_once('.')) {
+                        level.refs.insert(receiver.to_string());
+                    }
                 }
                 Some("Call") => {
                     if let Some(f) = field("function") {

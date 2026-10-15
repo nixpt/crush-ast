@@ -262,21 +262,38 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         Expr::Closure(e) => {
+            // A typed parameter (`|x: i32|`) is `Pat::Type` around the name. It
+            // used to become a placeholder `_param`, so the body's `x` was a
+            // free variable — captured from an enclosing `x` if there was one
+            // (silently wrong: `let x = 5; (|x: i32| x + 1)(41)` gave 6).
+            fn closure_param(p: &syn::Pat, i: usize) -> anyhow::Result<String> {
+                match p {
+                    syn::Pat::Ident(pi) => Ok(pi.ident.to_string()),
+                    syn::Pat::Type(pt) => closure_param(&pt.pat, i),
+                    syn::Pat::Wild(_) => Ok(format!("__closure_unused_{i}")),
+                    _ => anyhow::bail!(
+                        "closure parameter pattern `{}` (destructuring) is not supported yet",
+                        quote::ToTokens::to_token_stream(p)
+                    ),
+                }
+            }
             let params: Vec<(String, CastType)> = e.inputs.iter()
-                .map(|p| {
-                    let name = match p {
-                        syn::Pat::Ident(pi) => pi.ident.to_string(),
-                        _ => "_param".to_string(),
-                    };
-                    (name, CastType::Any)
-                })
-                .collect();
-            let body_expr = lower_expr(&e.body, ctx)?;
-            Ok(Expression::Lambda {
-                params,
-                body: vec![Statement::Return { value: Some(body_expr), meta: meta.clone() }],
-                meta,
-            })
+                .enumerate()
+                .map(|(i, p)| Ok((closure_param(p, i)?, CastType::Any)))
+                .collect::<anyhow::Result<_>>()?;
+            // A block body is lowered like a function body — statements, then the
+            // tail as the return value, `return` as a return. Lowered as an
+            // expression it kept only the block's first statement, so
+            // `|mut x: i32| { x += 1; x }` returned null.
+            let body = match e.body.as_ref() {
+                Expr::Block(b) => crate::lower_stmt::lower_block(
+                    &b.block.stmts,
+                    ctx,
+                    crate::lower_stmt::Tail::Return,
+                )?,
+                other => vec![Statement::Return { value: Some(lower_expr(other, ctx)?), meta: meta.clone() }],
+            };
+            Ok(Expression::Lambda { params, body, meta })
         }
         Expr::Reference(e) => {
             lower_expr(&e.expr, ctx)

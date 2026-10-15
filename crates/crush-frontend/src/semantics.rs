@@ -28,11 +28,25 @@ impl SemanticAnalyzer {
     }
 
     pub fn check(&mut self, program: &Program) -> Result<()> {
+        // A program that still has `impl` / `trait` nodes is checked as it
+        // will be compiled: lowered, with the methods as functions (COSM
+        // K1.2). `compile_cast_owned` lowers before checking, so this is only
+        // for callers that check a freshly parsed program directly.
+        if crate::cosm_lower::has_impl_or_trait(program) {
+            let mut lowered = program.clone();
+            crate::cosm_lower::lower(&mut lowered)?;
+            return self.check(&lowered);
+        }
         // Register built-in functions
         self.functions
             .insert("len".to_string(), (vec![Type::Any], Type::Int));
         self.functions
             .insert("print".to_string(), (vec![Type::Any], Type::Null));
+        // `parallel_map(items, f)` (#175): a VM capability.
+        self.functions.insert(
+            "parallel_map".to_string(),
+            (vec![Type::Any, Type::Any], Type::Array(Box::new(Type::Any))),
+        );
 
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;
@@ -835,6 +849,13 @@ fn collect_called_functions<'a>(stmts: &'a [Statement], out: &mut Vec<&'a str>) 
             } => {
                 collect_called_in_expr(target, out);
                 collect_called_in_expr(callback, out);
+            }
+            Statement::ImplBlock { methods, .. } | Statement::TraitDef { methods, .. } => {
+                for m in methods {
+                    if let Some(body) = &m.body {
+                        collect_called_functions(body, out);
+                    }
+                }
             }
             Statement::LangBlock { .. }
             | Statement::Import { .. }

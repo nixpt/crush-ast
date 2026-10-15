@@ -1,0 +1,91 @@
+{
+  "kinds": [
+    {
+      "name": "Animal",
+      "home_lang": "python",
+      "span": {
+        "file": "example",
+        "line": 1,
+        "col": 1
+      },
+      "storage": "open_dict",
+      "semantics": "reference",
+      "parents": [
+        "object"
+      ],
+      "resolution": "c3",
+      "receiver": "bound_self",
+      "construct": {
+        "py_new_init": {
+          "init_fn": "Animal.__init__"
+        }
+      },
+      "members": [
+        {
+          "name": "kind",
+          "span": {
+            "line": 2,
+            "col": 5
+          },
+          "kind": "static",
+          "value": {
+            "const": "animal"
+          }
+        },
+        {
+          "name": "speak",
+          "span": {
+            "line": 4,
+            "col": 5
+          },
+          "kind": "method",
+          "fn": "Animal.speak"
+        }
+      ],
+      "hooks": {
+        "repr": {
+          "fn": "Animal.__repr__"
+        }
+      },
+      "equality": "identity"
+    },
+    {
+      "name": "Dog",
+      "home_lang": "python",
+      "span": {
+        "file": "example",
+        "line": 7,
+        "col": 1
+      },
+      "storage": "open_dict",
+      "semantics": "reference",
+      "parents": [
+        "Animal"
+      ],
+      "resolution": "c3",
+      "receiver": "bound_self",
+      "construct": {
+        "py_new_init": {}
+      },
+      "members": [
+        {
+          "name": "speak",
+          "span": {
+            "line": 8,
+            "col": 5
+          },
+          "kind": "method",
+          "fn": "Dog.speak"
+        }
+      ],
+      "hooks": {
+        "eq": {
+          "fn": "Dog.__eq__"
+        },
+        "hash": "disabled"
+      },
+      "equality": "identity"
+    }
+  ],
+  "interfaces": []
+}

@@ -86,3 +86,40 @@ fn display_names() {
     assert_eq!(name("__lambda_3"), "lambda");
     assert_eq!(name("fib"), "fib");
 }
+
+// #207 review: the captured values were copied for every item (and compared
+// twice), so capturing a big read-only table and mapping over many items was
+// superlinear (1600 items × a 200k array: minutes). They are now moved once
+// and rebuilt once per worker thread.
+#[test]
+fn parallel_map_copies_captured_values_once_per_worker_thread() {
+    use crate::vm::{FuncValue, Value};
+    // get(table, i) = table[i]: `table` is the captured value.
+    let src = ".func main\n    RET\n.func get\n    STORE 0\n    STORE 1\n    LOAD 0\n    LOAD 1\n    ARR_GET\n    RET";
+    let program = assemble(src, Some(&["parallel_map"]), None).expect("assembly");
+    let table = Value::new_array((0..100_000).map(Value::Int).collect());
+    let f = Value::Func(std::rc::Rc::new(FuncValue { name: "get".into(), arity: 1, captured: vec![table] }));
+    let items = Value::new_array((0..1000).map(|i| Value::Int(i * 7)).collect());
+    let (_, results, rebuilds) =
+        crate::scheduler::parallel_map_counted(&program, &Quotas::default(), &[items, f]).expect("runs");
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(1000);
+    assert!(rebuilds <= threads, "captured values rebuilt {rebuilds} times for {threads} threads");
+    let Value::Array(results) = results else { panic!() };
+    assert_eq!(results.borrow()[999], Value::Int(999 * 7));
+}
+
+#[test]
+fn a_write_to_a_shared_captured_value_is_still_caught_per_item() {
+    use crate::vm::{FuncValue, Value};
+    // push_to(seen, x): seen.push(x) — a captured array changed in place.
+    let src = ".func main\n    RET\n.func push_to\n    STORE 0\n    STORE 1\n    LOAD 0\n    LOAD 1\n    ARR_PUSH\n    RET";
+    let program = assemble(src, Some(&["parallel_map"]), None).expect("assembly");
+    let f = Value::Func(std::rc::Rc::new(FuncValue {
+        name: "push_to".into(),
+        arity: 1,
+        captured: vec![Value::new_array(vec![])],
+    }));
+    let items = Value::new_array((0..50).map(Value::Int).collect());
+    let e = crate::scheduler::parallel_map_counted(&program, &Quotas::default(), &[items, f]).unwrap_err();
+    assert!(e.to_string().contains("item 0: parallel_map: the function changed something it captured"), "{e}");
+}

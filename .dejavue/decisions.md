@@ -1024,4 +1024,19 @@ Rejected alternatives:
 
 Outcome:
 docs/design/object-model.md; phases K1-K5; supersedes the JS-specific object-model half of CRUSH-251
+## 2026-10-15T06:36:37-05:00 — [STRATEGIC] crush-cosm has no workspace deps; CosmType mirrors CastType
+
+Reason:
+crush-cast depends on crush-vm through crush-caison. CRUSH-zorro-42 (casm serializes a CosmModule) and CRUSH-zorro-43 (crush-vm instantiates Kinds) must depend on crush-cosm, so a crush-cosm -> crush-cast edge would close a cycle (crush-vm -> crush-cosm -> crush-cast -> crush-caison -> crush-vm). CosmType keeps CastType's exact JSON shape, so front ends convert by serde round-trip or a match.
+
+Artifacts: crates/crush-cosm/src/types.rs
+
+Author type: agent
+
+Rejected alternatives:
+- **depend on crush-cast for CastType**: dependency cycle once crush-vm/casm consume COSM
+- **field types as opaque strings**: loses structure for GET_SLOT typing and AOT layout
+
+Outcome:
+crates/crush-cosm (CRUSH-zorro-40): serde, serde_json, serde_path_to_error only
 

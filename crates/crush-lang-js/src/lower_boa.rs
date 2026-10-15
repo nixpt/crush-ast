@@ -380,11 +380,7 @@ impl<'a> BoaLower<'a> {
             }
             Declaration::ClassDeclaration(c) => {
                 let name = self.sym_str(c.name().sym());
-                vec![CastStmt::StructDef {
-                    name,
-                    fields: vec![],
-                    meta: self.meta0(),
-                }]
+                vec![CastStmt::struct_def(name, vec![], self.meta0())]
             }
             Declaration::Lexical(lex) => {
                 let mut out = Vec::new();
