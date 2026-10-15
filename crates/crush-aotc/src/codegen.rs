@@ -54,6 +54,9 @@ impl AotcCompiler {
 
     /// Compile a CASM program to a C source string.
     pub fn compile(&self, program: &casm::Program) -> anyhow::Result<String> {
+        // COSM K1.3 (CRUSH-zorro-42): no COSM objects here yet — refuse a
+        // program with a kind table before generating anything.
+        program.refuse_cosm("crush-aotc").map_err(anyhow::Error::msg)?;
         let mut out = String::with_capacity(8192);
 
         // Emit header

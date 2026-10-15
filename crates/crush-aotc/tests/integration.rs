@@ -195,3 +195,24 @@ fn truthiness_is_canonical() {
         "{out}"
     );
 }
+
+/// COSM K1.3 (CRUSH-zorro-42): crush-aotc doesn't implement COSM objects
+/// yet, so a program with a kind table is refused before any C is generated.
+#[test]
+fn a_program_with_a_kind_table_is_refused() {
+    let src = r#"
+struct Point { x: int, y: int }
+impl Point { fn norm2(self) { return self.x * self.x + self.y * self.y; } }
+fn main() { let p = Point { x: 3, y: 4 }
+    print(Point::norm2(p)) }
+"#;
+    let program = crush_frontend::compile_crush_source(src).expect("frontend");
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("refused");
+    let err = err.to_string();
+    assert!(err.starts_with("COSM objects aren't supported on crush-aotc yet (CRUSH-zorro-43)"), "{err}");
+    assert!(err.contains("Kinds Point"), "{err}");
+    // The kind table alone is what's refused.
+    let mut plain = program;
+    plain.cosm = None;
+    assert!(AotcCompiler::new(AotcOpts::default()).compile(&plain).is_ok());
+}
