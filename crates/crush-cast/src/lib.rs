@@ -198,6 +198,34 @@ pub enum Statement {
     StructDef {
         name: String,
         fields: Vec<(String, CastType)>,
+        /// `@kind(key: value, …)` written on the struct (COSM K1.2,
+        /// CRUSH-zorro-41): overrides Crush's default KindDecl strategies.
+        /// Kept syntactic here; checked against the COSM catalogue when the
+        /// program is lowered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<KindAnnotation>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    /// `impl P { … }` or `impl T for P { … }` (COSM K1.2, CRUSH-zorro-41).
+    /// Every `impl` of a type in a file merges into that type's one COSM
+    /// `KindDecl`; the methods are lifted to ordinary functions with `self`
+    /// (an ordinary parameter name) first.
+    ImplBlock {
+        /// The type the methods belong to (`P`).
+        type_name: String,
+        /// `T` in `impl T for P`; `None` for an inherent impl.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trait_name: Option<String>,
+        methods: Vec<MethodDef>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    /// `trait T { fn m(self) -> R; fn d(self) { … } }` (COSM K1.2): method
+    /// signatures (no body) and default methods (with a body).
+    TraitDef {
+        name: String,
+        methods: Vec<MethodDef>,
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
@@ -413,6 +441,95 @@ pub enum Expression {
     },
     /// AI-specific expression
     AI(ai::AIExpression),
+}
+
+impl Statement {
+    /// A plain `struct` declaration: no `@kind(…)` annotation. Producers
+    /// (walkers, tests) should build `StructDef` through this rather than a
+    /// field-by-field literal, so optional parts added later (like `kind`,
+    /// COSM K1.2) don't break them.
+    pub fn struct_def(
+        name: impl Into<String>,
+        fields: Vec<(String, CastType)>,
+        meta: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Statement::StructDef { name: name.into(), fields, kind: None, meta }
+    }
+}
+
+/// A method in an `impl` block or a `trait` (COSM K1.2, CRUSH-zorro-41).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct MethodDef {
+    pub name: String,
+    /// All parameters, `self` included when present. A method whose first
+    /// parameter is not `self` is a static member (`fn new(…)`).
+    pub params: Vec<(String, CastType)>,
+    /// The body. `None` only for a trait method signature without a default
+    /// (`fn area(self);`); impl methods always have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<Vec<Statement>>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_async: bool,
+    #[serde(default)]
+    pub meta: HashMap<String, serde_json::Value>,
+}
+
+impl MethodDef {
+    /// Whether the method takes a receiver (`self` as its first parameter).
+    pub fn has_self(&self) -> bool {
+        self.params.first().is_some_and(|(n, _)| n == "self")
+    }
+}
+
+/// `@kind(key: value, …)` on a `struct` (COSM K1.2, CRUSH-zorro-41).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct KindAnnotation {
+    pub args: Vec<KindArg>,
+    #[serde(default)]
+    pub meta: HashMap<String, serde_json::Value>,
+}
+
+/// One `key: value` entry of a `@kind(…)` annotation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct KindArg {
+    pub key: String,
+    pub value: KindValue,
+    #[serde(default)]
+    pub meta: HashMap<String, serde_json::Value>,
+}
+
+/// The value of a `@kind` entry, kept as written: `sealed`, `value(copy)`,
+/// `[Base, Mixin]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(tag = "type")]
+pub enum KindValue {
+    /// A bare name: `sealed`, `c3`, `Base`.
+    Name { name: String },
+    /// A name applied to arguments: `value(copy)`, `ctor(make)`.
+    Apply { name: String, args: Vec<KindValue> },
+    /// A list: `[Base, Mixin]`.
+    List { items: Vec<KindValue> },
+}
+
+impl std::fmt::Display for KindValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let join = |items: &[KindValue]| {
+            items.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+        };
+        match self {
+            KindValue::Name { name } => write!(f, "{name}"),
+            KindValue::Apply { name, args } => write!(f, "{name}({})", join(args)),
+            KindValue::List { items } => write!(f, "[{}]", join(items)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

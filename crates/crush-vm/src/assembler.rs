@@ -640,13 +640,16 @@ fn strip_label(line: &str) -> Option<String> {
     Some(line[pos + 1..].to_string())
 }
 
+/// A function name: an identifier, possibly qualified with `.` or `::`
+/// (`Point::norm2`, `Point::Shape::area` — methods lifted from Crush `impl`
+/// blocks, COSM K1.2 / CRUSH-zorro-41).
 fn is_valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
         _ => return false,
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ':')
 }
 
 fn split_tokens(text: &str) -> Vec<String> {

@@ -476,6 +476,41 @@ impl Parser {
                             pending_decisions.push(self.parse_decision_block());
                             continue;
                         }
+                        "kind" => {
+                            // COSM K1.2: `@kind(key: value, …)` on the next `struct`.
+                            let kind_meta = self.make_meta();
+                            self.advance();
+                            match self.parse_kind_annotation(kind_meta) {
+                                Ok(kind) => {
+                                    self.skip_newlines();
+                                    if !matches!(self.peek(), Token::Struct(_)) {
+                                        let (line, col) = self.get_location(self.peek());
+                                        self.errors.push(ParseError::Expected {
+                                            line,
+                                            col,
+                                            expected: "a `struct` after `@kind(…)`".to_string(),
+                                            found: self.peek().describe(),
+                                        });
+                                        self.synchronize();
+                                        continue;
+                                    }
+                                    match self.parse_struct_def() {
+                                        Ok(Statement::StructDef { name, fields, meta, .. }) => {
+                                            statements.push(Statement::StructDef {
+                                                name,
+                                                fields,
+                                                kind: Some(kind),
+                                                meta,
+                                            })
+                                        }
+                                        Ok(other) => statements.push(other),
+                                        Err(_) => self.synchronize(),
+                                    }
+                                }
+                                Err(_) => self.synchronize(),
+                            }
+                            continue;
+                        }
                         _ => {
                             // CRUSH-27: any other `@`-AtIdent at top
                             // level is an unknown annotation — record
@@ -610,6 +645,17 @@ impl Parser {
                         pending_fn_annotations = None;
                         self.synchronize();
                     }
+                }
+                continue;
+            }
+
+            // COSM K1.2: `impl …` / `trait …` (top level only).
+            if self.at_impl_or_trait() {
+                let is_impl = matches!(self.peek(), Token::Ident(kw, _) if kw == "impl");
+                let parsed = if is_impl { self.parse_impl_block() } else { self.parse_trait_def() };
+                match parsed {
+                    Ok(stmt) => statements.push(stmt),
+                    Err(_) => self.synchronize(),
                 }
                 continue;
             }
@@ -929,6 +975,17 @@ impl Parser {
             return self.parse_semantic_switch_statement();
         }
 
+        if self.at_impl_or_trait() {
+            let (line, col) = self.get_location(self.peek());
+            let kw = if matches!(self.peek(), Token::Ident(kw, _) if kw == "impl") { "impl" } else { "trait" };
+            self.errors.push(ParseError::UnexpectedToken {
+                line,
+                col,
+                msg: format!("`{kw}` blocks are only allowed at the top level of a file"),
+            });
+            return Err(());
+        }
+
         match self.peek() {
             Token::Let(_) => self.parse_let_statement(),
             Token::If(_) => self.parse_if_statement(),
@@ -1182,6 +1239,9 @@ impl Parser {
 
     /// Parse struct definition
     fn parse_struct_def(&mut self) -> Result<Statement, ()> {
+        // Stamp the node at the `struct` keyword (not the closing brace), so
+        // COSM diagnostics about the type point at its declaration.
+        let struct_meta = self.make_meta();
         self.expect(Token::Struct(SourceLocation { line: 0, col: 0 }))?;
 
         let name = match self.peek() {
@@ -1233,11 +1293,264 @@ impl Parser {
 
         self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
 
-        Ok(Statement::StructDef {
-            name,
-            fields,
-            meta: self.make_meta(),
-        })
+        Ok(Statement::struct_def(name, fields, struct_meta))
+    }
+
+    /// `impl P { … }` / `impl T for P { … }` / `trait T { … }` at the current
+    /// position? `impl` and `trait` are contextual keywords (COSM K1.2,
+    /// CRUSH-zorro-41): only these exact shapes start a declaration, so a
+    /// variable named `impl` or `trait` keeps working.
+    fn at_impl_or_trait(&self) -> bool {
+        let Token::Ident(kw, _) = self.peek() else {
+            return false;
+        };
+        let ident = |n: usize| matches!(self.peek_ahead(n), Token::Ident(_, _));
+        let lbrace = |n: usize| matches!(self.peek_ahead(n), Token::LBrace(_));
+        match kw.as_str() {
+            "impl" => {
+                ident(1)
+                    && (lbrace(2)
+                        || (matches!(self.peek_ahead(2), Token::For(_)) && ident(3) && lbrace(4)))
+            }
+            "trait" => ident(1) && lbrace(2),
+            _ => false,
+        }
+    }
+
+    /// `impl P { fn m(self, …) { … } … }` or `impl T for P { … }`.
+    fn parse_impl_block(&mut self) -> Result<Statement, ()> {
+        let meta = self.make_meta();
+        self.advance(); // `impl`
+        let first = self.expect_ident("a type name after `impl`")?;
+        let (type_name, trait_name) = if matches!(self.peek(), Token::For(_)) {
+            self.advance();
+            (self.expect_ident("a type name after `for`")?, Some(first))
+        } else {
+            (first, None)
+        };
+        let what = match &trait_name {
+            Some(t) => format!("impl {t} for {type_name}"),
+            None => format!("impl {type_name}"),
+        };
+        let methods = self.parse_method_list(&what, false)?;
+        Ok(Statement::ImplBlock { type_name, trait_name, methods, meta })
+    }
+
+    /// `trait T { fn m(self) -> R; fn d(self) { … } }`.
+    fn parse_trait_def(&mut self) -> Result<Statement, ()> {
+        let meta = self.make_meta();
+        self.advance(); // `trait`
+        let name = self.expect_ident("a trait name after `trait`")?;
+        let methods = self.parse_method_list(&format!("trait {name}"), true)?;
+        Ok(Statement::TraitDef { name, methods, meta })
+    }
+
+    fn expect_ident(&mut self, expected: &str) -> Result<String, ()> {
+        match self.peek() {
+            Token::Ident(n, _) => {
+                let n = n.clone();
+                self.advance();
+                Ok(n)
+            }
+            _ => {
+                let (line, col) = self.get_location(self.peek());
+                self.errors.push(ParseError::Expected {
+                    line,
+                    col,
+                    expected: expected.to_string(),
+                    found: self.peek().describe(),
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// `{ fn …  fn … }` — the body of an `impl` or `trait`. Only methods are
+    /// allowed inside; `signatures_ok` permits body-less `fn m(self);`.
+    fn parse_method_list(&mut self, what: &str, signatures_ok: bool) -> Result<Vec<MethodDef>, ()> {
+        self.expect(Token::LBrace(SourceLocation { line: 0, col: 0 }))?;
+        let mut methods = Vec::new();
+        loop {
+            self.skip_newlines();
+            while matches!(self.peek(), Token::Semicolon(_)) {
+                self.advance();
+                self.skip_newlines();
+            }
+            match self.peek() {
+                Token::RBrace(_) => {
+                    self.advance();
+                    return Ok(methods);
+                }
+                Token::Fn(_) => methods.push(self.parse_method(what, signatures_ok, false)?),
+                Token::Async(_) if matches!(self.peek_ahead(1), Token::Fn(_)) => {
+                    self.advance();
+                    methods.push(self.parse_method(what, signatures_ok, true)?);
+                }
+                _ => {
+                    let (line, col) = self.get_location(self.peek());
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: format!("`fn` or `}}` in `{what}`"),
+                        found: self.peek().describe(),
+                    });
+                    return Err(());
+                }
+            }
+        }
+    }
+
+    /// `fn name(params) [-> T] { body }`, or — in a trait — the signature
+    /// `fn name(params) [-> T];` (ended by `;` or a newline).
+    fn parse_method(&mut self, what: &str, signatures_ok: bool, is_async: bool) -> Result<MethodDef, ()> {
+        let meta = self.make_meta();
+        self.advance(); // `fn`
+        // `new` is a keyword (`new P()`), but `fn new` is the constructor
+        // convention, so it is accepted as a method name.
+        let name = if matches!(self.peek(), Token::New(_)) {
+            self.advance();
+            "new".to_string()
+        } else {
+            self.expect_ident(&format!("a method name in `{what}`"))?
+        };
+        self.expect(Token::LParen(SourceLocation { line: 0, col: 0 }))?;
+        let params = self.parse_parameters()?;
+        self.expect(Token::RParen(SourceLocation { line: 0, col: 0 }))?;
+        // Optional return type — not kept in the CAST, as for `fn`.
+        if matches!(self.peek(), Token::Arrow(_)) {
+            self.advance();
+            if let Token::Ident(_, _) = self.peek() {
+                self.advance();
+            }
+        }
+        let params: Vec<(String, CastType)> =
+            params.into_iter().map(|p| (p.name, p.type_hint)).collect();
+        if !matches!(self.peek(), Token::LBrace(_)) {
+            if signatures_ok && matches!(self.peek(), Token::Semicolon(_) | Token::Newline(_) | Token::Comment(_, _) | Token::RBrace(_)) {
+                self.maybe_semicolon();
+                return Ok(MethodDef { name, params, body: None, is_async, meta });
+            }
+            let (line, col) = self.get_location(self.peek());
+            self.errors.push(ParseError::Expected {
+                line,
+                col,
+                expected: if signatures_ok {
+                    format!("`{{` (a default body) or `;` after `fn {name}(…)` in `{what}`")
+                } else {
+                    format!("`{{` — a method in `{what}` needs a body")
+                },
+                found: self.peek().describe(),
+            });
+            return Err(());
+        }
+        self.advance(); // `{`
+        self.skip_newlines();
+        let body = self.parse_block()?;
+        self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
+        Ok(MethodDef { name, params, body: Some(body), is_async, meta })
+    }
+
+    /// `@kind(key: value, …)` — the `@kind` token is already consumed. Values
+    /// are kept as written (`sealed`, `value(copy)`, `[Base, Mixin]`); the
+    /// catalogue check happens when the program is lowered to COSM.
+    fn parse_kind_annotation(&mut self, meta: HashMap<String, serde_json::Value>) -> Result<KindAnnotation, ()> {
+        self.expect(Token::LParen(SourceLocation { line: 0, col: 0 }))?;
+        let mut args = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek(), Token::RParen(_)) {
+                self.advance();
+                break;
+            }
+            let arg_meta = self.make_meta();
+            let key = self.parse_kind_word("a `@kind` key (e.g. `semantics`)")?;
+            self.skip_newlines();
+            self.expect(Token::Colon(SourceLocation { line: 0, col: 0 }))?;
+            self.skip_newlines();
+            let value = self.parse_kind_value()?;
+            args.push(KindArg { key, value, meta: arg_meta });
+            self.skip_newlines();
+            match self.peek() {
+                Token::Comma(_) => {
+                    self.advance();
+                }
+                Token::RParen(_) => {}
+                _ => {
+                    let (line, col) = self.get_location(self.peek());
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: "`,` or `)` in `@kind(…)`".to_string(),
+                        found: self.peek().describe(),
+                    });
+                    return Err(());
+                }
+            }
+        }
+        Ok(KindAnnotation { args, meta })
+    }
+
+    /// A bare word in a `@kind` annotation: an identifier, or a keyword
+    /// spelled as a name (`fn` in `ctor(fn)`).
+    fn parse_kind_word(&mut self, expected: &str) -> Result<String, ()> {
+        let word = match self.peek() {
+            Token::Ident(n, _) => n.clone(),
+            Token::Null(_) => "null".to_string(),
+            other => match Self::kw_text(other) {
+                Some(kw) => kw.to_string(),
+                None => {
+                    let (line, col) = self.get_location(self.peek());
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: expected.to_string(),
+                        found: self.peek().describe(),
+                    });
+                    return Err(());
+                }
+            },
+        };
+        self.advance();
+        Ok(word)
+    }
+
+    fn parse_kind_value(&mut self) -> Result<KindValue, ()> {
+        let list = |p: &mut Self, close: fn(&Token) -> bool| -> Result<Vec<KindValue>, ()> {
+            let mut items = Vec::new();
+            loop {
+                p.skip_newlines();
+                if close(p.peek()) {
+                    p.advance();
+                    return Ok(items);
+                }
+                items.push(p.parse_kind_value()?);
+                p.skip_newlines();
+                if matches!(p.peek(), Token::Comma(_)) {
+                    p.advance();
+                } else if !close(p.peek()) {
+                    let (line, col) = p.get_location(p.peek());
+                    p.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: "`,` or a closing bracket in a `@kind` value".to_string(),
+                        found: p.peek().describe(),
+                    });
+                    return Err(());
+                }
+            }
+        };
+        if matches!(self.peek(), Token::LBracket(_)) {
+            self.advance();
+            let items = list(self, |t| matches!(t, Token::RBracket(_)))?;
+            return Ok(KindValue::List { items });
+        }
+        let name = self.parse_kind_word("a `@kind` value (e.g. `sealed`, `value(copy)`, `[Base]`)")?;
+        if matches!(self.peek(), Token::LParen(_)) {
+            self.advance();
+            let args = list(self, |t| matches!(t, Token::RParen(_)))?;
+            return Ok(KindValue::Apply { name, args });
+        }
+        Ok(KindValue::Name { name })
     }
 
     /// Parse export statement
@@ -1717,6 +2030,23 @@ impl Parser {
                 self.advance();
                 if self.structs.contains_key(&n) && matches!(self.peek(), Token::LBrace(_)) {
                     return self.parse_struct_literal(n);
+                }
+                // `Point::new` / `Shape::describe` — a path to a static member
+                // or method lifted from an `impl`/`trait` (COSM K1.2). Kept as
+                // one qualified name, the name of the lifted function.
+                let segment = |t: &Token| matches!(t, Token::Ident(_, _) | Token::New(_));
+                if matches!(self.peek(), Token::DoubleColon(_)) && segment(self.peek_ahead(1)) {
+                    let mut path = n;
+                    while matches!(self.peek(), Token::DoubleColon(_)) && segment(self.peek_ahead(1)) {
+                        self.advance();
+                        path.push_str("::");
+                        match self.peek() {
+                            Token::Ident(seg, _) => path.push_str(seg),
+                            _ => path.push_str("new"),
+                        }
+                        self.advance();
+                    }
+                    return Ok(Expression::Var { name: path, meta: self.make_meta() });
                 }
                 Ok(Expression::Var {
                     name: n,
