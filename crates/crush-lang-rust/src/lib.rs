@@ -6,12 +6,12 @@
 //!
 //! Free functions (block tail expressions are the return value), `let` /
 //! `let mut`, `if`/`else` (also as expressions), `while`, `loop`, `for` over
-//! `a..b` / `a..=b` / vectors, `break`/`continue`, `return`, `match` with literal,
+//! `a..b` / `a..=b` / fresh sequences or direct `.iter()`, `break`/`continue`, `return`, `match` with literal,
 //! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
 //! with identifier parameters (including typed parameters and `_` wildcards),
 //! `+= -= *= /= %=`,
 //! `println!`/`print!`/`eprintln!`/`format!` with `{}`, `{:?}`, `{0}`, `{name}`,
-//! and the common `str`/`Vec`/numeric methods (`len`, `push`, `pop`, `contains`,
+//! and the common `str`/`Vec`/numeric methods (`len`, `push`, `contains`,
 //! `to_uppercase`, `abs`, `sqrt`, …). The SDK's `rustc_corpus` integration suite
 //! compares this subset against real `rustc` output.
 //!
@@ -30,8 +30,12 @@
 //!
 //! Closures can read implicit scalar captures through shared cells. Rust
 //! lexical bindings have distinct storage identities (CRUSH-xps-6). Rust
-//! ownership/copy behavior remains gated by CRUSH-xps-7; parsing closure syntax
-//! does not imply full Rust closure traits. Nested functions are rejected until
+//! flat sequence clones create fresh values (CRUSH-xps-7). Implicit owned binding
+//! transfers, nested/unknown clones, owned captures, escaping borrowed views, and
+//! `pop`/`unwrap` are rejected with source locations. Fresh values and supported
+//! clones can enter known owned parameters; String clones and local `+=` retain
+//! value semantics. This is not a Rust type/borrow checker or full closure-trait
+//! implementation. Nested functions are rejected until
 //! block-local item resolution is implemented.
 //! Integer widths/casts/overflow and string Debug formatting have known silent
 //! divergences tracked by CRUSH-xps-8/9. These are not supported semantics; the
@@ -41,6 +45,7 @@ pub mod lower_expr;
 pub mod lower_stmt;
 pub mod parser;
 mod bindings;
+mod values;
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -112,7 +117,7 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
             syn::Item::Fn(_) => {
                 let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()), &ctx)?;
                 if let Statement::FunctionDef {
-                    name, params, body, ..
+                    name, params, body, meta
                 } = lowered
                 {
                     functions.insert(
@@ -120,7 +125,7 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
                         Function {
                             params,
                             body,
-                            meta: HashMap::new(),
+                            meta,
                             ..Default::default()
                         },
                     );
@@ -158,6 +163,7 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
         ..Default::default()
     };
     bindings::resolve(&mut program, source)?;
+    values::check(&mut program)?;
     Ok(program)
 }
 

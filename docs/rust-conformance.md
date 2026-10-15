@@ -54,8 +54,10 @@ through `io.print`, which appends a newline to stdout.
 |---|---|
 | Local/parameter shadowing in blocks, branches, loops, matches, closures | Exact supported cases; distinct binding identities (CRUSH-xps-6) |
 | Nested functions | Rejected with location until block-local item resolution exists (CRUSH-xps-6) |
-| Vector clone aliasing | Known silent divergence; CRUSH-xps-7 |
-| Mutable strings and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
+| Flat vector/array clones, fresh arguments and reassignment | Exact on VM and both AOT backends (CRUSH-xps-7) |
+| String clone, `to_owned`, and `+=` on local bindings | Exact supported cases (CRUSH-xps-7) |
+| Implicit owned transfers, nested clones, borrowed views, `pop`/`unwrap`, indexed writes, owned captures | Rejected with location (CRUSH-xps-7) |
+| Other mutable string operations and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
 | Narrow integer casts and release overflow | Known silent divergence; CRUSH-xps-8 |
 | String `{:?}` quoting | Known silent divergence; CRUSH-xps-9 |
 | Walker assignments / loops | Exact baseline; CRUSH-xps-10 |
@@ -85,8 +87,44 @@ Declarations and variable references retain `meta.rust_binding` with
 `meta.rust_scope_id`/`meta.rust_params`. Identity is `(function, id)`; these IDs
 describe lexical declarations, not VM slots or dynamic executions. Closure
 capture can therefore distinguish two source bindings named `x` without
-changing the VM storage or cell-lifetime rules. Rust ownership and borrowing
-remain separate work in xps-7.
+changing the VM storage or cell-lifetime rules. Rust ownership checks run after
+binding resolution, so the value pass can distinguish captures and shadowed
+bindings. This bounded check does not replace Rust type/borrow checking.
+
+## Rust value boundary (CRUSH-xps-7)
+
+The frontend preserves a small type hint domain in CAST metadata and checks
+value uses after resolving lexical bindings. This is deliberately conservative:
+valid Rust moves can be rejected. Compile valid Rust with `rustc` first; Crush
+does not establish that a program satisfies Rust's type or borrow rules.
+
+- `.clone()`, `.to_owned()`, and `.to_vec()` create fresh flat sequences through
+  the existing `seq.slice` capability on all engines. Elements must be known
+  scalar values, immutable text, or owned strings. Nested, reference, and unknown
+  element clones are rejected. Empty sequences need an explicit element type
+  before cloning.
+- Runtime strings are immutable values. String clones and `to_owned()` preserve
+  their value; `+=` replaces a local string binding. `s.clone() + "!"` is supported.
+  Other mutable String APIs, such as `push_str`, remain unsupported.
+- Fresh literals, explicit supported clones, and fresh function results can
+  initialize/reassign owned bindings and enter known compatible function
+  parameters. Bare Vec/String/array binding transfers to another binding,
+  argument, return, or owning iterator are rejected pending move/copy analysis.
+  This includes implicit copies of Rust `Copy` arrays. Indexed writes are also
+  rejected. Struct syntax still needs the COSM Rust producer.
+- Direct sequence iteration and immediate view-to-owned copies are supported.
+  Storing, passing, assigning, or returning borrowed views needs borrow analysis
+  and is rejected. Explicit references and reference parameters other than
+  `&str` are rejected. Owned/unknown closure captures are rejected; supported
+  scalar closures retain their existing shared-cell behavior.
+- `Vec.push` is supported as a statement on a known Vec with a fresh flat value.
+  `pop`/`unwrap` need `Option` semantics and are rejected. Unproven `into`,
+  `borrow`, `copied`, and `cloned` adapters are also rejected, rather than erased.
+
+The corpus contains separate exact and loud cases for clones, assignment,
+arguments, owned returns, captures, nested vectors, arrays, and borrowed views.
+The original vector-clone aliasing exception is removed; integer and Debug
+formatting silent divergences remain owned by xps-8/9.
 
 ## Run the gate
 
