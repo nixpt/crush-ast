@@ -892,6 +892,16 @@ mod tests {
         c.grant_polyglot(&["python", "javascript", "bash"]);
         c
     }
+
+    /// The `@python` polyglot tests spawn a real `python3`; skip them when it
+    /// isn't on PATH (same convention as the AOT backends' `gcc`/`cc` gates).
+    fn python3_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
     use super::*;
 
     #[test]
@@ -1193,6 +1203,87 @@ mod tests {
         let result =
             crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "30\n");
+    }
+
+    // issue #225: a Crush variable read only inside a Python comprehension
+    // was never detected as an input, so the comprehension raised NameError.
+    // This is the exact repro from the issue.
+    #[test]
+    fn test_python_polyglot_issue_225_comprehension_reads_injected_variable() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let source = "fn main() {\n    let n = 7\n    @python {\n        import math\n        nums = [math.factorial(i) for i in range(1, n + 1)]\n        result = nums\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
+        assert_eq!(result.output, "[1, 2, 6, 24, 120, 720, 5040]\n");
+    }
+
+    // issue #225: the same free-variable gap bit generator expressions.
+    #[test]
+    fn test_python_polyglot_issue_225_generator_expression_reads_injected_variable() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let source = "fn main() {\n    let n = 5\n    @python {\n        result = sum(i * i for i in range(1, n + 1))\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
+        assert_eq!(result.output, "55\n");
+    }
+
+    // issue #225: lambda bodies close over the enclosing (module) scope, so a
+    // Crush variable read inside one must be injected.
+    #[test]
+    fn test_python_polyglot_issue_225_lambda_reads_injected_variable() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let source = "fn main() {\n    let k = 3\n    @python {\n        f = lambda x: x + k\n        result = f(10)\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
+        assert_eq!(result.output, "13\n");
+    }
+
+    // issue #225: nested `def` bodies are walked for free reads (minus their
+    // parameters and locals).
+    #[test]
+    fn test_python_polyglot_issue_225_nested_def_reads_injected_variable() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let source = "fn main() {\n    let k = 3\n    @python {\n        def add(x):\n            return x + k\n        result = add(10)\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
+        assert_eq!(result.output, "13\n");
+    }
+
+    // issue #225: reads and bindings inside `try`/`except` bodies are now
+    // analyzed (a Crush variable read in the `try` body is injected, and a
+    // name bound there isn't treated as a free read later).
+    #[test]
+    fn test_python_polyglot_issue_225_try_except_reads_injected_variable() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let source = "fn main() {\n    let n = 7\n    @python {\n        try:\n            x = n + 1\n        except Exception:\n            x = -1\n        result = x\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(source).expect("compile python polyglot block");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
+        assert_eq!(result.output, "8\n");
     }
 
     // CRUSH-68: JS gets the same typed marshal protocol as Python.
