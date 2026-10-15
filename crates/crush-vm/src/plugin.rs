@@ -244,6 +244,15 @@ pub fn load_plugin_exports(
     load_plugin_filtered(path, Some(allowlist), host_caps)
 }
 
+fn ensure_export_does_not_conflict(name: &str, host_caps: &HostCaps) -> Result<(), String> {
+    if host_caps.get(name).is_some() || crate::caps::capabilities().contains_key(name) {
+        return Err(format!(
+            "Plugin export `{name}` conflicts with an existing Crush capability"
+        ));
+    }
+    Ok(())
+}
+
 fn load_plugin_filtered(
     path: &str,
     allowlist: Option<&[&str]>,
@@ -285,13 +294,7 @@ fn load_plugin_filtered(
                 .map(|allowed| allowed.contains(&name.as_str()))
                 .unwrap_or(true)
             {
-                if host_caps.get(&name).is_some()
-                    || crate::caps::capabilities().get(name.as_str()).is_some()
-                {
-                    return Err(format!(
-                        "Plugin export `{name}` conflicts with an existing Crush capability"
-                    ));
-                }
+                ensure_export_does_not_conflict(&name, host_caps)?;
                 selected.push((name, export.func));
             }
         }
@@ -313,5 +316,52 @@ fn load_plugin_filtered(
         }
 
         Ok(LoadedPlugin { _library: library })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_export_does_not_conflict;
+    use crate::host::{HostCap, HostCapSpec, HostCaps};
+    use crate::vm::Value;
+
+    struct TestHostCap(&'static str);
+
+    impl HostCap for TestHostCap {
+        fn spec(&self) -> HostCapSpec {
+            HostCapSpec {
+                name: self.0.to_string(),
+                argc: Some(0),
+                returns: false,
+            }
+        }
+
+        fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn plugin_exports_cannot_shadow_builtin_capabilities() {
+        let host_caps = HostCaps::new();
+
+        let error = ensure_export_does_not_conflict("io.print", &host_caps).unwrap_err();
+
+        assert!(error.contains("conflicts with an existing Crush capability"));
+    }
+
+    #[test]
+    fn plugin_exports_cannot_shadow_existing_host_capabilities() {
+        let mut host_caps = HostCaps::new();
+        host_caps.register(Box::new(TestHostCap("host.custom")));
+
+        let error = ensure_export_does_not_conflict("host.custom", &host_caps).unwrap_err();
+
+        assert!(error.contains("conflicts with an existing Crush capability"));
+    }
+
+    #[test]
+    fn plugin_export_without_a_conflict_is_accepted() {
+        ensure_export_does_not_conflict("rust.greet", &HostCaps::new()).unwrap();
     }
 }

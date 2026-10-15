@@ -47,16 +47,7 @@ impl CapsuleRunner for CrushRunner {
         payload_path: &Path,
         _args: &[String],
     ) -> anyhow::Result<ExecutionResult> {
-        let ext = payload_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let program = if ext == "casm" || ext == "sno" {
-            let content = std::fs::read_to_string(payload_path)?;
-            let casm_program: ::casm::Program = serde_json::from_str(&content)?;
-            crush_lang_sdk::compile::casm_to_vm(&casm_program)?
-        } else {
-            let source = std::fs::read_to_string(payload_path)?;
-            crush_lang_sdk::compile::compile_crush_source(&source)?
-        };
-        self.run_program(&program)
+        self.run_payload_with_plugins(payload_path, &[])
     }
 }
 
@@ -78,8 +69,10 @@ impl CrushRunner {
         plugins: &[PluginGrant],
     ) -> anyhow::Result<ExecutionResult> {
         let quotas = crush_vm::Quotas::default();
-        let mut host_caps = self.host_caps.clone();
+        // Drop HostCaps (which contains the plugin function pointers) before
+        // dropping the libraries that own those pointers.
         let mut _loaded_plugins = Vec::with_capacity(plugins.len());
+        let mut host_caps = self.host_caps.clone();
         for grant in plugins {
             let exports: Vec<&str> = grant.exports.iter().map(String::as_str).collect();
             let library = grant.library.to_string_lossy();
@@ -107,7 +100,10 @@ impl CrushRunner {
         payload_path: &Path,
         plugins: &[PluginGrant],
     ) -> anyhow::Result<ExecutionResult> {
-        let ext = payload_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = payload_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         let program = if ext == "casm" || ext == "sno" {
             let content = std::fs::read_to_string(payload_path)?;
             let casm_program: ::casm::Program = serde_json::from_str(&content)?;
@@ -471,5 +467,4 @@ mod tests {
         std::fs::write(&payload, "print('hello')").unwrap();
         let _runner = get_runner_for_payload(&payload, &m);
     }
-
 }

@@ -33,7 +33,9 @@
 
 - `crates/crush-pkg/src/main.rs` — parse host plugin grants for package execution.
 - `crates/crush-pkg/src/runners.rs` — retain loaded libraries and register only the host allowlist.
+- `crates/crush-pkg/tests/rust_plugins.rs` — exercise host grants and errors through both package launch flows.
 - `crates/crush-vm/src/plugin.rs` — refuse plugin exports that shadow built-in or already granted host capabilities.
+- `crates/crush-vm/src/plugin.rs` — unit-test collisions with built-in and host-registered capabilities.
 - `crates/crush-pkg/MANIFEST.md` — document the manual Rust wrapper and host grant flow.
 
 ## Non-goals
