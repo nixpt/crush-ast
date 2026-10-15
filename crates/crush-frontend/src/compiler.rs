@@ -3077,6 +3077,13 @@ fn scan_level<'a>(v: &'a serde_json::Value, level: &mut Level<'a>) {
                 Some("Spawn") => {
                     level.refs.extend(field("function").map(str::to_string));
                 }
+                // The parser emits `obj.method(..)` as a CapabilityCall named
+                // "obj.method"; it loads `obj` when `obj` is a variable.
+                Some("CapabilityCall") => {
+                    if let Some((receiver, _)) = field("name").and_then(|n| n.split_once('.')) {
+                        level.refs.insert(receiver.to_string());
+                    }
+                }
                 Some("Call") => {
                     if let Some(f) = field("function") {
                         if f == "__crush_assign__" {

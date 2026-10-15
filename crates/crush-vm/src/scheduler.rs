@@ -1634,9 +1634,9 @@ pub(crate) fn spawn_target(callee: Value, argc: usize, args: &mut Vec<Value>) ->
 
 /// One parallel_map item in a fresh VM (no host capabilities).
 fn run_item(program: &crate::bytecode::Program, quotas: &Quotas, job: &crate::parallel::Job) -> crate::parallel::ItemResult {
-    let (stack, cells) = crate::parallel::start_stack(job);
+    let (stack, captured) = crate::parallel::start_stack(job);
     let result = run_from(program, quotas, None, None, Some((&job.function, stack)))?;
-    crate::parallel::check_captured(&cells)?;
+    crate::parallel::check_captured(job, &captured)?;
     let value = result.return_value.unwrap_or(Value::Null);
     Ok((result.output, crate::parallel::move_out(&value)?))
 }

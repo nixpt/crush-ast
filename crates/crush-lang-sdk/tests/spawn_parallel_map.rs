@@ -104,7 +104,7 @@ fn the_first_error_in_item_order_wins() {
 #[test]
 fn assigning_a_captured_variable_is_an_error() {
     let e = both("fn main() {\n  let total = 0\n  parallel_map([1, 2], |x| {\n    total = total + x\n    return x\n  })\n  print(total)\n}\n").unwrap_err();
-    assert!(e.contains("assigned a variable it captured"), "{e}");
+    assert!(e.contains("changed something it captured"), "{e}");
 }
 
 #[test]
@@ -119,4 +119,38 @@ fn nested_parallel_map() {
 fn parallel_map_needs_a_function_of_one_argument() {
     let e = both("fn main() {\n  print(parallel_map([1], |a, b| a))\n}\n").unwrap_err();
     assert!(e.contains("takes 2 argument(s), got 1"), "{e}");
+}
+
+// A write through a closure the function captured (transitively) is lost the
+// same way: each worker bumped its own copy of `n` and this printed
+// `[2, 3, 4]` / `0` without an error (sequential semantics: `[2, 4, 6]` / 3).
+#[test]
+fn a_write_through_a_captured_closure_is_an_error() {
+    let e = both("fn main() {\n  let n = 0\n  let bump = || {\n    n = n + 1\n    return n\n  }\n  let f = |x| x + bump()\n  print(parallel_map([1, 2, 3], f))\n  print(n)\n}\n").unwrap_err();
+    assert!(e.contains("changed something it captured"), "{e}");
+}
+
+#[test]
+fn changing_a_captured_array_in_place_is_an_error() {
+    let e = both("fn main() {\n  let seen = []\n  parallel_map([1, 2], |x| {\n    seen.push(x)\n    return x\n  })\n}\n").unwrap_err();
+    assert!(e.contains("changed something it captured"), "{e}");
+}
+
+#[test]
+fn closures_sharing_a_captured_variable_stay_shared_in_a_worker() {
+    // `get` and `set` capture the same `v`; inside one worker they still share
+    // it (each item starts from the caller's value, 1).
+    assert_eq!(
+        ok("fn main() {\n  let v = 1\n  let get = || v\n  let set = |x| {\n    v = x\n  }\n  let pair = [get, set]\n  print(parallel_map([5, 7], |x| {\n    let s = pair[1]\n    let g = pair[0]\n    let before = g()\n    return before\n  }))\n}\n"),
+        "[1, 1]\n"
+    );
+}
+
+#[test]
+fn a_closure_capturing_its_own_variable_moves_into_a_worker() {
+    // `fact` captures `base` and itself (a cell referring back to itself).
+    assert_eq!(
+        ok("fn main() {\n  let base = 1\n  let fact = 0\n  fact = |n| {\n    if n <= 1 {\n      return base\n    }\n    return n * fact(n - 1)\n  }\n  print(parallel_map([3, 5], fact))\n}\n"),
+        "[6, 120]\n"
+    );
 }

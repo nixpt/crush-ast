@@ -9,9 +9,16 @@
 //! capabilities are available, and a nested `parallel_map` runs sequentially.
 //!
 //! A captured variable (a cell) moves in as a copy of its current value, so a
-//! closure can read it. Writing to it would be lost — nothing comes back from
-//! a worker — so an item whose closure assigned a captured variable fails
-//! loudly (`check_captured`), like a rayon closure that isn't `Fn`.
+//! closure can read it. Changing anything captured — a captured variable, one
+//! captured by a closure it captured (transitively), or a captured array/map
+//! in place — would be lost (nothing comes back from a worker), so such an
+//! item fails loudly (`check_captured`), like a rayon closure that isn't `Fn`.
+//! The item itself is the worker's own copy and may be changed freely.
+//!
+//! Budgets: each item runs with the caller's quotas — its own instruction and
+//! output budget, independent of the other items and of the caller's own step
+//! count; the items' output, appended to the caller's, counts against the
+//! caller's output quota.
 //!
 //! The native scheduler runs the items on threads; the portable VM (wasm, no
 //! threads) runs the same jobs one after another. This module is the part both
@@ -20,7 +27,9 @@
 use crate::vm::{FuncValue, Value, VmError};
 
 /// A value that can cross a thread: an owned deep copy of a crush [`Value`].
-#[derive(Debug, Clone)]
+/// Cells carry an id, so cells shared between captured closures (or a closure
+/// that captures its own variable) are rebuilt shared — and cycles end.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Moved {
     Null,
     Bool(bool),
@@ -36,115 +45,150 @@ pub enum Moved {
     Error(String),
     Bytes(Vec<u8>),
     Func { name: String, arity: u8, captured: Vec<Moved> },
-    /// A captured variable's cell: moved as a copy of its current value.
-    Cell(Box<Moved>),
+    /// A captured variable's cell, first time seen: its id and a copy of its value.
+    Cell(usize, Box<Moved>),
+    /// A cell already moved (by id).
+    CellRef(usize),
 }
 
-/// Deep-copy `v` for a worker. A cell is copied as its current value (see the
-/// module docs); task and foreign handles belong to this VM and are refused.
-pub fn move_out(v: &Value) -> Result<Moved, VmError> {
-    let seq = |xs: &[Value]| xs.iter().map(move_out).collect::<Result<Vec<_>, _>>();
-    Ok(match v {
-        Value::Null => Moved::Null,
-        Value::Bool(b) => Moved::Bool(*b),
-        Value::Int(i) => Moved::Int(*i),
-        Value::Float(f) => Moved::Float(*f),
-        Value::Str(s) => Moved::Str(s.clone()),
-        Value::Array(a) => Moved::Array(seq(&a.borrow())?),
-        Value::Tuple(t) => Moved::Tuple(seq(t)?),
-        Value::List(l) => Moved::List(l.borrow().iter().map(move_out).collect::<Result<_, _>>()?),
-        Value::Vector(a) => Moved::Vector(seq(&a.borrow())?),
-        Value::Set(a) => Moved::Set(seq(&a.borrow())?),
-        Value::Map(m) => Moved::Map(
-            m.borrow()
-                .iter()
-                .map(|(k, v)| Ok((k.clone(), move_out(v)?)))
-                .collect::<Result<_, VmError>>()?,
-        ),
-        Value::Error(e) => Moved::Error(e.clone()),
-        Value::Bytes(b) => Moved::Bytes(b.clone()),
-        Value::Func(f) => Moved::Func {
-            name: f.name.clone(),
-            arity: f.arity,
-            captured: seq(&f.captured)?,
-        },
-        Value::Cell(c) => Moved::Cell(Box::new(move_out(&c.borrow())?)),
-        Value::Handle(_) | Value::Foreign(_) => {
-            return Err(VmError::Parallel(format!(
-                "a {} can't be moved into a parallel_map worker",
-                v.type_name()
-            )));
-        }
-    })
+/// Deep nesting beyond this (a cyclic array, say) is refused, not a crash.
+const MAX_DEPTH: usize = 10_000;
+
+/// Moves values out of one VM. One `Mover` per job, so cells shared between
+/// the values it moves stay shared.
+#[derive(Default)]
+pub struct Mover {
+    cells: std::collections::HashMap<*const std::cell::RefCell<Value>, usize>,
 }
 
-/// Rebuild a [`Value`] in the receiving VM.
-pub fn move_in(m: Moved) -> Value {
-    let seq = |xs: Vec<Moved>| xs.into_iter().map(move_in).collect::<Vec<_>>();
-    let shared = |xs: Vec<Moved>| std::rc::Rc::new(std::cell::RefCell::new(seq(xs)));
-    match m {
-        Moved::Null => Value::Null,
-        Moved::Bool(b) => Value::Bool(b),
-        Moved::Int(i) => Value::Int(i),
-        Moved::Float(f) => Value::Float(f),
-        Moved::Str(s) => Value::Str(s),
-        Moved::Array(xs) => Value::Array(shared(xs)),
-        Moved::Tuple(xs) => Value::Tuple(seq(xs)),
-        Moved::List(xs) => Value::List(std::rc::Rc::new(std::cell::RefCell::new(
-            xs.into_iter().map(move_in).collect(),
-        ))),
-        Moved::Vector(xs) => Value::Vector(shared(xs)),
-        Moved::Set(xs) => Value::Set(shared(xs)),
-        Moved::Map(entries) => Value::new_map(entries.into_iter().map(|(k, v)| (k, move_in(v)))),
-        Moved::Error(e) => Value::Error(e),
-        Moved::Bytes(b) => Value::Bytes(b),
-        Moved::Func { name, arity, captured } => Value::Func(std::rc::Rc::new(FuncValue {
-            name,
-            arity,
-            captured: seq(captured),
-        })),
-        Moved::Cell(v) => Value::Cell(std::rc::Rc::new(std::cell::RefCell::new(move_in(*v)))),
+impl Mover {
+    /// Deep-copy `v` for a worker; task and foreign handles belong to this VM
+    /// and are refused.
+    pub fn out(&mut self, v: &Value) -> Result<Moved, VmError> {
+        self.out_at(v, 0)
     }
-}
 
-/// A worker's starting stack, plus the cells of the closure's captured
-/// variables with the values they started with (for [`check_captured`]).
-pub fn start_stack(job: &Job) -> (Vec<Value>, Vec<(Value, Value)>) {
-    let stack: Vec<Value> = job.stack.iter().cloned().map(move_in).collect();
-    let cells = stack
-        .iter()
-        .filter_map(|v| match v {
-            Value::Cell(c) => Some((v.clone(), c.borrow().clone())),
-            _ => None,
-        })
-        .collect();
-    (stack, cells)
-}
-
-/// After an item ran: did its closure assign a captured variable? The write
-/// can't reach the caller (workers share nothing), so it is an error rather
-/// than silently lost.
-pub fn check_captured(cells: &[(Value, Value)]) -> Result<(), VmError> {
-    for (cell, before) in cells {
-        if let Value::Cell(c) = cell
-            && *c.borrow() != *before
-        {
+    fn out_at(&mut self, v: &Value, depth: usize) -> Result<Moved, VmError> {
+        if depth > MAX_DEPTH {
             return Err(VmError::Parallel(
-                "the function assigned a variable it captured; a parallel_map worker shares \
-                 nothing, so the write would be lost — return the value instead"
+                "a value is nested too deeply (or is cyclic) to move into a parallel_map worker"
                     .to_string(),
             ));
         }
+        let d = depth + 1;
+        let mut seq = |m: &mut Self, xs: &[Value]| xs.iter().map(|x| m.out_at(x, d)).collect::<Result<Vec<_>, _>>();
+        Ok(match v {
+            Value::Null => Moved::Null,
+            Value::Bool(b) => Moved::Bool(*b),
+            Value::Int(i) => Moved::Int(*i),
+            Value::Float(f) => Moved::Float(*f),
+            Value::Str(s) => Moved::Str(s.clone()),
+            Value::Array(a) => Moved::Array(seq(self, &a.borrow())?),
+            Value::Tuple(t) => Moved::Tuple(seq(self, t)?),
+            Value::List(l) => Moved::List(l.borrow().iter().map(|x| self.out_at(x, d)).collect::<Result<_, _>>()?),
+            Value::Vector(a) => Moved::Vector(seq(self, &a.borrow())?),
+            Value::Set(a) => Moved::Set(seq(self, &a.borrow())?),
+            Value::Map(m) => Moved::Map(
+                m.borrow()
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), self.out_at(v, d)?)))
+                    .collect::<Result<_, VmError>>()?,
+            ),
+            Value::Error(e) => Moved::Error(e.clone()),
+            Value::Bytes(b) => Moved::Bytes(b.clone()),
+            Value::Func(f) => Moved::Func {
+                name: f.name.clone(),
+                arity: f.arity,
+                captured: seq(self, &f.captured)?,
+            },
+            Value::Cell(c) => {
+                let key = std::rc::Rc::as_ptr(c);
+                if let Some(&id) = self.cells.get(&key) {
+                    return Ok(Moved::CellRef(id));
+                }
+                let id = self.cells.len();
+                self.cells.insert(key, id);
+                Moved::Cell(id, Box::new(self.out_at(&c.borrow(), d)?))
+            }
+            Value::Handle(_) | Value::Foreign(_) => {
+                return Err(VmError::Parallel(format!(
+                    "a {} can't be moved into a parallel_map worker",
+                    v.type_name()
+                )));
+            }
+        })
     }
-    Ok(())
 }
 
-/// One item's work: call `function` with this stack (bottom → top; the top is
-/// the first parameter, as for `CALL`).
+/// Moves values into one VM (the inverse of [`Mover`]).
+#[derive(Default)]
+pub struct Unmover {
+    cells: std::collections::HashMap<usize, std::rc::Rc<std::cell::RefCell<Value>>>,
+}
+
+impl Unmover {
+    pub fn into_value(&mut self, m: Moved) -> Value {
+        let shared = |u: &mut Self, xs: Vec<Moved>| {
+            std::rc::Rc::new(std::cell::RefCell::new(xs.into_iter().map(|x| u.into_value(x)).collect()))
+        };
+        match m {
+            Moved::Null => Value::Null,
+            Moved::Bool(b) => Value::Bool(b),
+            Moved::Int(i) => Value::Int(i),
+            Moved::Float(f) => Value::Float(f),
+            Moved::Str(s) => Value::Str(s),
+            Moved::Array(xs) => Value::Array(shared(self, xs)),
+            Moved::Tuple(xs) => Value::Tuple(xs.into_iter().map(|x| self.into_value(x)).collect()),
+            Moved::List(xs) => Value::List(std::rc::Rc::new(std::cell::RefCell::new(
+                xs.into_iter().map(|x| self.into_value(x)).collect(),
+            ))),
+            Moved::Vector(xs) => Value::Vector(shared(self, xs)),
+            Moved::Set(xs) => Value::Set(shared(self, xs)),
+            Moved::Map(entries) => {
+                let entries: Vec<(String, Value)> = entries.into_iter().map(|(k, v)| (k, self.into_value(v))).collect();
+                Value::new_map(entries)
+            }
+            Moved::Error(e) => Value::Error(e),
+            Moved::Bytes(b) => Value::Bytes(b),
+            Moved::Func { name, arity, captured } => Value::Func(std::rc::Rc::new(FuncValue {
+                name,
+                arity,
+                captured: captured.into_iter().map(|x| self.into_value(x)).collect(),
+            })),
+            Moved::Cell(id, value) => {
+                // Registered before its value is rebuilt, so a reference back to
+                // it (a closure capturing its own variable) finds it.
+                let cell = std::rc::Rc::new(std::cell::RefCell::new(Value::Null));
+                self.cells.insert(id, cell.clone());
+                *cell.borrow_mut() = self.into_value(*value);
+                Value::Cell(cell)
+            }
+            Moved::CellRef(id) => Value::Cell(self.cells.get(&id).cloned().unwrap_or_else(|| {
+                std::rc::Rc::new(std::cell::RefCell::new(Value::Null))
+            })),
+        }
+    }
+}
+
+/// One-off deep copy (a result coming back from a worker).
+pub fn move_out(v: &Value) -> Result<Moved, VmError> {
+    Mover::default().out(v)
+}
+
+/// One-off rebuild.
+pub fn move_in(m: Moved) -> Value {
+    Unmover::default().into_value(m)
+}
+
+/// One item's work: call `function` with the item and the closure's captured
+/// values (moved together, so shared cells stay shared). On the stack the
+/// captured values go on top — they are the leading parameters.
 #[derive(Debug, Clone)]
 pub struct Job {
     pub function: String,
-    pub stack: Vec<Moved>,
+    pub item: Moved,
+    /// In parameter order; also the snapshot `check_captured` compares with.
+    pub captured: Vec<Moved>,
 }
 
 /// What a worker reports for one item.
@@ -161,16 +205,63 @@ pub fn jobs(args: &[Value]) -> Result<Vec<Job>, VmError> {
         other => return Err(VmError::TypeError { expected: "array", got: other.type_name() }),
     };
     let func = crate::vm::callable(f, 1)?;
-    let captured: Vec<Moved> = func.captured.iter().map(move_out).collect::<Result<_, _>>()?;
     items
         .iter()
         .map(|item| {
-            // Captured values are the leading parameters: they go on top.
-            let mut stack = vec![move_out(item)?];
-            stack.extend(captured.iter().rev().cloned());
-            Ok(Job { function: func.name.clone(), stack })
+            let mut mover = Mover::default();
+            let captured = func.captured.iter().map(|c| mover.out(c)).collect::<Result<Vec<_>, _>>()?;
+            Ok(Job { function: func.name.clone(), item: mover.out(item)?, captured })
         })
         .collect()
+}
+
+/// A worker's starting stack (bottom → top: the item, then the captured
+/// values, first one on top), and the captured values it starts with.
+pub fn start_stack(job: &Job) -> (Vec<Value>, Vec<Value>) {
+    let mut unmover = Unmover::default();
+    let captured: Vec<Value> = job.captured.iter().cloned().map(|c| unmover.into_value(c)).collect();
+    let item = unmover.into_value(job.item.clone());
+    let mut stack = vec![item];
+    stack.extend(captured.iter().rev().cloned());
+    (stack, captured)
+}
+
+/// After an item ran: did it change anything it captured — a captured
+/// variable, a variable captured by a closure it captured (transitively), or a
+/// captured array or map in place? Nothing comes back from a worker, so the
+/// change would be lost: that is an error, not a silent difference from a
+/// sequential map.
+pub fn check_captured(job: &Job, captured_after: &[Value]) -> Result<(), VmError> {
+    let mut mover = Mover::default();
+    let after = captured_after.iter().map(|c| mover.out(c)).collect::<Result<Vec<_>, _>>()?;
+    if after != job.captured {
+        return Err(VmError::Parallel(
+            "the function changed something it captured (a variable it or a function it calls \
+             captured, or a captured array/map); a parallel_map worker shares nothing, so the \
+             change would be lost — return the value instead"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// A worker's error, as the caller sees it.
+pub fn worker_error(error: VmError) -> VmError {
+    match error {
+        // Workers get no host capabilities (fs, net, process, …) and no
+        // privileged ones: the main VM may well have them, so say where the
+        // capability is missing rather than "unknown capability".
+        VmError::UnknownCap(cap) => VmError::Parallel(format!(
+            "`{cap}` isn't available inside parallel_map workers (only the VM's built-in, pure \
+             capabilities run there; host capabilities such as fs, net and process run only on \
+             the main VM)"
+        )),
+        VmError::CapNotDeclared(cap) if crate::caps::is_privileged(&cap) => VmError::Parallel(format!(
+            "`{cap}` isn't available inside parallel_map workers (privileged capabilities run \
+             only on the main VM)"
+        )),
+        other => other,
+    }
 }
 
 /// Results in input order: the first error *in item order* wins; otherwise
@@ -185,7 +276,7 @@ pub fn collect(results: Vec<ItemResult>) -> Result<(String, Value), VmError> {
                 values.push(move_in(value));
             }
             Err(error) => {
-                return Err(VmError::Parallel(format!("item {index}: {error}")));
+                return Err(VmError::Parallel(format!("item {index}: {}", worker_error(error))));
             }
         }
     }
@@ -204,4 +295,35 @@ thread_local! {
     /// Set while this thread runs a parallel_map item: a nested parallel_map
     /// runs its items sequentially instead of starting more threads.
     pub static IN_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_privileged_capability_in_a_worker_says_why() {
+        let e = worker_error(VmError::UnknownCap("fs.cat".to_string())).to_string();
+        assert!(e.contains("`fs.cat` isn't available inside parallel_map workers"), "{e}");
+        let e = worker_error(VmError::DivByZero).to_string();
+        assert_eq!(e, "division by zero");
+    }
+
+    #[test]
+    fn shared_and_self_referencing_cells_survive_a_move() {
+        let cell = std::rc::Rc::new(std::cell::RefCell::new(Value::Null));
+        let f = Value::Func(std::rc::Rc::new(FuncValue {
+            name: "f".into(),
+            arity: 0,
+            captured: vec![Value::Cell(cell.clone())],
+        }));
+        *cell.borrow_mut() = f.clone(); // f captures a cell holding f
+        let mut mover = Mover::default();
+        let moved = vec![mover.out(&f).unwrap(), mover.out(&Value::Cell(cell)).unwrap()];
+        let mut unmover = Unmover::default();
+        let back: Vec<Value> = moved.into_iter().map(|m| unmover.into_value(m)).collect();
+        let (Value::Func(f2), Value::Cell(c2)) = (&back[0], &back[1]) else { panic!("{back:?}") };
+        let Value::Cell(inner) = &f2.captured[0] else { panic!() };
+        assert!(std::rc::Rc::ptr_eq(inner, c2), "the shared cell must stay shared");
+    }
 }

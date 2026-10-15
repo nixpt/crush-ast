@@ -1725,10 +1725,10 @@ impl PortableVm {
                 let mut vm = PortableVm::new(worker.clone());
                 vm.quotas = self.quotas.clone();
                 vm.ip = entry;
-                let (stack, cells) = crate::parallel::start_stack(job);
+                let (stack, captured) = crate::parallel::start_stack(job);
                 vm.stack = stack;
                 let result = vm.run()?;
-                crate::parallel::check_captured(&cells)?;
+                crate::parallel::check_captured(job, &captured)?;
                 let value = result.stack.last().cloned().unwrap_or(Value::Null);
                 Ok((result.output, crate::parallel::move_out(&value)?))
             })
