@@ -641,10 +641,12 @@ impl SemanticAnalyzer {
     /// Bind loop variables to the element (or map key) type.
     fn iterable_item_type(&mut self, iterable: &Expression) -> Result<Type> {
         Ok(match self.check_expr(iterable)? {
-            Type::Array(item) => *item,
+            Type::Array(item) | Type::List(item) | Type::Vector(item) | Type::Set(item) => *item,
             Type::Map(key, _) => *key,
-            Type::String => Type::String,
-            Type::Any => Type::Any,
+            // Structs currently use the VM's map representation, so the
+            // existing loop lowering visits their field names.
+            Type::String | Type::Struct(_) => Type::String,
+            Type::Any | Type::Optional(_) | Type::Tuple(_) => Type::Any,
             other => bail!("For requires an iterable, found {other}"),
         })
     }

@@ -164,3 +164,11 @@ fn for_body_and_range_bounds_are_checked() {
     .unwrap_err();
     assert!(error.to_string().contains("Undefined function: missing"));
 }
+
+#[test]
+fn struct_field_iteration_keeps_the_existing_map_contract() {
+    crush_frontend::compile_crush_source(
+        "struct P { x } fn main() { let p = new P(); for name in p { print(name); } }",
+    )
+    .unwrap();
+}
