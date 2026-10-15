@@ -1,6 +1,8 @@
-# `gpu_map` — data-parallel maps on the GPU (design, draft 1)
+# `gpu_map` — data-parallel maps on the GPU (design, draft 2)
 
-Status: **draft for review** (vega → foreman → owner), 2026-10-15. Ticket: CRUSH-zorro-51.
+Status: **draft 2** — draft 1 critiqued by the foreman (per-backend identity, integer overflow, the
+kernel-interpreter fallback, one shared runtime), folded in below; for the owner. 2026-10-15.
+Ticket: CRUSH-zorro-51. Related: CRUSH-zorro-52 (auto-offload of built-ins).
 Builds on CRUSH-zorro-3 (`gpu.launch`, #186) and `parallel_map` (#175 / #207).
 
 ## Why
@@ -19,7 +21,9 @@ On the RTX 5070 Ti in the dev box (measurements 2026-10-15, scripts in
 
 and crush-ptx's Q6_K GEMV kernel — the first time crush-generated PTX ran on real hardware —
 was correct for every row on four shapes up to 11008×4096 (error 2–3e-8 of Σ|terms|, 10× tighter
-than a sequential f32 CPU loop), 0.4 ms vs 129 ms single-threaded C.
+than a sequential f32 CPU loop), 0.4 ms vs 129 ms single-threaded C. (That is evidence the PTX
+*runs correctly*, not of bit-identity: it is a reduction, summed in a different order from the CPU
+loop. v1 has no reductions.)
 
 Two lessons shape the design:
 
@@ -80,18 +84,35 @@ crush floats are f64. Consumer GPUs run f64 at 1/64 of f32 throughput (the 5070 
 WGSL has no f64 at all. Options:
 
 - **(A, recommended) `gpu_map` computes in f32**, explicitly: the input array is converted to f32,
-  every operation in the kernel rounds to f32, the result is an f32 array. The CPU fallback (§4)
-  performs the **same f32 operations**, so GPU and CPU results are bit-identical; results differ
-  from the f64 `parallel_map` by f32 rounding (measured: `0.29289323` vs `0.2928932188` for the
-  map above). Integers are i32 in kernels (i64 math cost ≈1.8× in crush-ptx, ZORRO-CRUSH-PTX-2).
+  every operation in the kernel rounds to f32, the result is an f32 array. Results differ from the
+  f64 `parallel_map` by f32 rounding (measured: `0.29289323` vs `0.2928932188` for the map above) —
+  which is why the name is explicit (`gpu_map`, not a flag on `parallel_map` that would hide the
+  precision change).
 - (B) f64 kernels on CUDA only: exact vs `parallel_map`, ~30–60× slower kernels, no WGSL backend.
 - (C) Per-call choice (`gpu_map(xs, f, f64: true)`), defaulting to A.
 
-Bit-identity of A requires: no contraction of `a*b+c` into FMA unless written as `fma(a,b,c)`
-(crush-ptx emits `mul.rn`, which ptxas won't fuse — verified: no FFMA in the SASS), division and
-`sqrt` correctly rounded (`div.rn`, `sqrt.rn`), and IEEE semantics for f32 division by zero
-(`inf`/`nan`, not crush's DivByZero error — documented). Transcendentals (`sin`, `exp`, …) are
-not bit-identical across GPU/CPU and are excluded from v1.
+**What "same results" means, per backend** (the reference is the kernel interpreter, §4):
+
+| | floats | integers |
+|---|---|---|
+| **PTX** | **bit-identical**: `+ - *` and `div.rn`, `sqrt.rn` correctly rounded; no contraction (`mul.rn` isn't fused — verified, no FFMA in the SASS); **no `.ftz`** (subnormals kept; a subnormal-input test pins it) | identical |
+| **WGSL / Vulkan** | **within N ULP** (N measured and pinned): WGSL's `/` is 2.5 ULP and `sqrt` is not correctly rounded; SPIR-V may contract `a*b+c` unless decorated NoContraction; Vulkan may flush subnormals | identical |
+
+Details both paths must agree on:
+- **Integers are i32 in kernels** (i64 math costs ≈1.8× in crush-ptx). crush ints are i64 and
+  overflow loudly, so a kernel **checks i32 overflow** on `+ - *` and reports it through the error
+  flag buffer (§6) — loud, like crush, never a silent wrap. Captured ints are range-checked to i32
+  at launch; float→int conversion follows crush's rule (truncation toward zero, out-of-range is an
+  error), not PTX's saturating `cvt.rzi`.
+- **NaN in `min`/`max`:** PTX and Rust return the non-NaN operand; WGSL leaves it unspecified —
+  the WGSL backend emits an explicit select, or NaN inputs are outside the WGSL ULP claim.
+- **Constants:** crush literals are f64; each is rounded to f32 **once**, when the kernel is
+  compiled, and both paths use that f32 value.
+- **Division by zero:** f32 IEEE (`inf`/`nan`), documented — not crush's DivByZero error. Integer
+  division by zero: the error flag.
+- **Printing:** an `F32Array` element prints the shortest digits that round-trip **as f32**
+  (`0.29289323`), not its f64 widening (`0.2928932310…`).
+- Transcendentals (`sin`, `exp`, …) aren't correctly rounded on any GPU: excluded from v1.
 
 ### 3. Data: packed f32 arrays
 
@@ -100,23 +121,35 @@ the VM (part of the 0.6 s above). Add a packed numeric array value — `f32s([..
 `f32s(n, fill)` → `Value::F32Array(Rc<RefCell<Vec<f32>>>)`, indexable, `len`, printable, convertible
 back with `list(...)`. `gpu_map` accepts a plain numeric array (converted, documented cost) or an
 `F32Array` (zero conversion; uploaded as-is) and returns an `F32Array`. The same type is what a
-later device-resident API hands around.
+later device-resident API hands around. Design it so JS `Float32Array` (and later Python
+`array('f')`) share the representation — a COSM-adjacent value type (#206); raise it there when
+COSM K2 does protocols. Other typed arrays (i32, f64) later.
 
 ### 4. Execution and fallback
 
-- The compiler lowers the closure to a **kernel function** (the CRUSH-zorro-3 form: a `ptx_*`
-  CASM function with `i = global_id(); if i < n { y[i] = body(x[i]) }`), alongside the ordinary
-  lifted lambda, and the `Func` value carries the kernel's name.
-- `gpu_map` is a capability. With a GPU and the `gpu` grant: compile the kernel (cached per
-  program, like `gpu.launch`), upload `xs` and the captured arrays, launch, download `ys`.
-- **Without a GPU** (no device, no `gpu` feature, not granted, wasm without WebGPU, FastVM/AOT):
-  run the same kernel semantics on the CPU — the `parallel_map` workers executing the lifted
-  lambda with f32 rounding at each operation (a small `f32` mode in the arithmetic caps, or a
-  dedicated kernel interpreter). Same results, slower, no warning needed — like `parallel_map`'s
-  sequential fallback.
+- The compiler lowers the closure to a **kernel function** — the CRUSH-zorro-3 form, a `ptx_*` CASM
+  function `i = global_id(); if i < n { y[i] = body(x[i]) }` — and the `Func` value carries the
+  kernel's name. (The ordinary lifted lambda is not used by `gpu_map`.)
+- **`gpu_map` is a VM built-in that always works.** Its CPU path is an **interpreter over the
+  kernel CASM** — the *same* kernel function the GPU runs, with its types (i32, f32, `cvt`) — not
+  the lifted lambda run with f32 arithmetic, which would be a second lowering of the same source
+  and drift (integer typing, constants, crush-ptx's type inference). The `ptx_*` subset is small
+  and typed: a few hundred lines, deterministic, run in chunks over `parallel_map`'s workers. It
+  doubles as a GPU-free oracle in CI for every kernel crush-ptx emits.
+- **A GPU executor is optional and host-registered** (crush-lang-sdk feature `gpu`): when present,
+  granted and not disabled, the built-in hands the kernel to it. crush-vm stays free of cudarc.
+- Fallback cases — no executor (no device / feature / grant), wasm without WebGPU, FastVM/AOT,
+  `CRUSH_GPU=off` — run the interpreter, with identical results (PTX) and no error. The slowdown can
+  be ~1000×, so: `gpu.backend()` reports what ran (`"cuda"`, `"wgpu"`, `"cpu"`), verbose mode prints
+  a notice, and `--gpu-required` turns the fallback into an error.
 - `CRUSH_GPU=off|cuda|wgpu|auto` selects; `auto` prefers a discrete GPU.
 
 ### 5. Backends: PTX now, WGSL next
+
+**One shared GPU runtime**, refactored out of CRUSH-zorro-3's `crush-lang-sdk/src/gpu.rs`: a
+backend trait (CUDA now, wgpu later), device/context selection, a compiled-module cache, typed
+buffers with upload/download, and launch. `gpu.launch` (explicit kernels) and `gpu_map` are two
+front ends on it — one permission story, one place to test.
 
 - **PTX / CUDA** (exists: crush-ptx + cudarc). NVIDIA only. Fix CRUSH-zorro-50 first.
 - **WGSL / wgpu** (new emitter, `crush-wgsl`, from the same kernel CASM): Vulkan, Metal, DX12, GL
@@ -132,8 +165,9 @@ later device-resident API hands around.
   to a per-launch flag buffer; after the launch the host raises the first failing **item in input
   order** ("gpu_map: item 17: index 99 out of range (len 10)"), matching `parallel_map`.
 - Integer division by zero: the same flag. f32 division by zero: IEEE (§2).
-- A runaway kernel (an endless `while`): a per-launch watchdog / iteration budget in the kernel
-  (`steps` counter checked in loops), surfaced as the instruction-quota error.
+- A runaway kernel (an endless `while`): an iteration budget — one counter per loop-back edge,
+  the budget passed as a **launch parameter** (so tests can trigger it cheaply) — surfaced as the
+  instruction-quota error through the flag buffer.
 - Permission: GPU access is a privileged capability (`gpu`, granted like `--fs`); without the grant
   `gpu_map` runs on the CPU fallback (results identical), and `--gpu-required` makes that an error
   for users who must not silently run slowly.
@@ -148,18 +182,20 @@ workloads pay off (Q6_K weights uploaded once).
 ## Phases
 
 1. **crush-ptx fixes** — CRUSH-zorro-50 (one header per module); README update.
-2. **Packed f32 arrays + the kernel subset checker + CPU fallback** — no GPU needed, fully
-   testable in CI; `gpu_map` already works (on the CPU) and its results are pinned.
-3. **PTX path** — `gpu_map` lowering to a zorro-3 kernel, launch through the existing runtime,
-   parity tests GPU vs fallback (bit-identical), skipped where no GPU.
-4. **WGSL / wgpu** — `crush-wgsl` emitter + wgpu runtime; crush-web WebGPU after.
+2. **Packed f32 arrays + the kernel subset checker + the kernel-CASM interpreter** — no GPU
+   needed, fully testable in CI; `gpu_map` already works (on the CPU) and its results are pinned.
+3. **Shared runtime + PTX path** — refactor `gpu.rs` into the runtime (§5), `gpu_map` kernels
+   launched through it. Parity bar: **bit-identical** to the interpreter (floats incl. subnormals,
+   integers incl. overflow errors), skipped where no GPU.
+4. **WGSL / wgpu** — `crush-wgsl` emitter + wgpu backend. Parity bar: **≤ N ULP** for floats
+   (N measured), identical for integers. crush-web WebGPU after.
 5. Residency, reductions (separate tickets).
 
 ## Open questions for the owner
 
 1. **Precision:** f32 (A), f64 CUDA-only (B), or per call (C)?
-2. **Name / surface:** `gpu_map(xs, f)` (proposed), or a kernel annotation (`@gpu fn`) feeding
-   `parallel_map`, or `parallel_map(xs, f, gpu: true)`?
+2. **Name / surface:** `gpu_map(xs, f)` (proposed — explicit, because the precision changes;
+   foreman agrees), with `@gpu fn` for named kernels later?
 3. **Permission default:** privileged (`--gpu` grant, CPU fallback without) as proposed?
 4. **Backend order:** finish PTX (NVIDIA) first as proposed, or go straight to wgpu for
    portability (and crush-web)?
