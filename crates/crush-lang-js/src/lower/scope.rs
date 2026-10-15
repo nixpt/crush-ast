@@ -79,7 +79,7 @@ impl Scopes {
         f.frames.pop();
     }
 
-    /// Declare a binding of the innermost block under `name`.
+    /// Declare (or rebind) a binding of the innermost frame under `name`.
     pub(super) fn declare_block(&mut self, sym: Sym, name: String) {
         self.current()
             .frames

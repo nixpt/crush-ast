@@ -4,10 +4,16 @@ use boa_ast::declaration::{
     Binding, Declaration, ExportDeclaration, ImportKind, LexicalDeclaration, VarDeclaration,
     Variable,
 };
-use boa_ast::expression::Expression;
+use std::collections::HashSet;
+use std::convert::Infallible;
+use std::ops::ControlFlow;
+
+use boa_ast::expression::{Expression, Identifier};
+use boa_ast::function::FunctionDeclaration;
 use boa_ast::function::{FormalParameterList, FunctionBody};
 use boa_ast::statement::LabelledItem;
 use boa_ast::statement::iteration::{ForLoopInitializer, IterableLoopInitializer};
+use boa_ast::visitor::{VisitWith, Visitor};
 use boa_ast::{ModuleItem, Span, Spanned, Statement, StatementListItem};
 use boa_interner::Sym;
 use crush_cast::{
@@ -106,6 +112,13 @@ impl Lower<'_> {
         for sym in syms {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
+        }
+        for item in &list {
+            if let StatementListItem::Declaration(d) = item
+                && let Declaration::FunctionDeclaration(f) = d.as_ref()
+            {
+                self.toplevel_fns.insert(f.name().sym());
+            }
         }
 
         let mut body = Vec::new();
@@ -287,26 +300,97 @@ impl Lower<'_> {
         Ok((lowered_params, out))
     }
 
-    /// `function f() {}` inside a function or block: a closure bound to `f`,
-    /// created before the other statements run (hoisting).
+    /// `function f() {}` inside a function or block, before the other
+    /// statements of its scope run (hoisting):
+    /// - one that uses no binding of an enclosing function is **lifted** to a
+    ///   crush function of its own under a fresh name (calls are direct, as
+    ///   for a top-level function, so AOT can compile them);
+    /// - one that does is a closure bound to `f`.
     fn hoisted_functions(
         &mut self,
         items: &[StatementListItem],
         block: bool,
     ) -> anyhow::Result<Vec<CastStmt>> {
+        let decls: Vec<&FunctionDeclaration> = items
+            .iter()
+            .filter_map(|item| match item {
+                StatementListItem::Declaration(d) => match d.as_ref() {
+                    Declaration::FunctionDeclaration(f) => Some(f),
+                    _ => None,
+                },
+                StatementListItem::Statement(_) => None,
+            })
+            .collect();
+        if decls.is_empty() {
+            return Ok(vec![]);
+        }
+        // Which ones capture nothing? A use of a sibling that is lifted too
+        // isn't a capture, so iterate to a fixpoint.
+        let idents: Vec<HashSet<Sym>> = decls.iter().map(|f| idents_of(f)).collect();
+        let names: Vec<Sym> = decls.iter().map(|f| f.name().sym()).collect();
+        let mut lift = vec![true; decls.len()];
+        loop {
+            let mut changed = false;
+            for i in 0..decls.len() {
+                if !lift[i] {
+                    continue;
+                }
+                let captures = idents[i].iter().any(|s| {
+                    let sibling = names.iter().zip(&lift).any(|(n, l)| n == s && *l);
+                    !sibling && self.is_enclosing_binding(*s)
+                });
+                if captures {
+                    lift[i] = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Rebind the lifted names before lowering anything that uses them.
+        let mut lifted = Vec::new();
+        for (i, f) in decls.iter().enumerate() {
+            if lift[i] {
+                let global = self.fresh_name(f.name().sym());
+                self.scopes.declare_block(f.name().sym(), global.clone());
+                lifted.push((f.name().sym(), global));
+            }
+        }
         let mut out = Vec::new();
-        for item in items {
-            let StatementListItem::Declaration(d) = item else {
-                continue;
-            };
-            let Declaration::FunctionDeclaration(f) = d.as_ref() else {
-                continue;
-            };
-            let name = self.resolve(f.name().sym());
-            let value = self.lambda(f.parameters(), f.body(), Some(f.name().span()))?;
-            out.push(self.var_decl_stmt(name, value, block, Some(f.name().span())));
+        for (i, f) in decls.iter().enumerate() {
+            let span = Some(f.name().span());
+            if lift[i] {
+                let saved = self.scopes.isolate();
+                self.scopes.enter_fn();
+                for (sym, global) in &lifted {
+                    self.scopes.declare_root(*sym, global.clone());
+                }
+                let lowered = self.function(f.parameters(), f.body(), span);
+                self.scopes.restore(saved);
+                let (params, body) = lowered?;
+                let global = self.resolve(f.name().sym());
+                self.functions.insert(
+                    global,
+                    Function {
+                        params,
+                        body,
+                        ..Default::default()
+                    },
+                );
+            } else {
+                let name = self.resolve(f.name().sym());
+                let value = self.lambda(f.parameters(), f.body(), span)?;
+                out.push(self.var_decl_stmt(name, value, block, span));
+            }
         }
         Ok(out)
+    }
+
+    /// Is `sym` a binding of an enclosing function (a capture), as opposed to
+    /// a global or a top-level function?
+    fn is_enclosing_binding(&self, sym: Sym) -> bool {
+        self.scopes.resolve(sym).is_some() && !self.toplevel_fns.contains(&sym)
     }
 
     // ── Statement lists and blocks ──────────────────────────────────────────
@@ -906,6 +990,23 @@ impl Lower<'_> {
             None => self.name(sym),
         }
     }
+}
+
+/// Every identifier a function's parameters and body mention (bindings and
+/// uses; property names aren't identifiers).
+fn idents_of(f: &FunctionDeclaration) -> HashSet<Sym> {
+    struct Idents(HashSet<Sym>);
+    impl<'ast> Visitor<'ast> for Idents {
+        type BreakTy = Infallible;
+        fn visit_identifier(&mut self, node: &'ast Identifier) -> ControlFlow<Infallible> {
+            self.0.insert(node.sym());
+            ControlFlow::Continue(())
+        }
+    }
+    let mut v = Idents(HashSet::new());
+    let _ = f.parameters().visit_with(&mut v);
+    let _ = f.body().visit_with(&mut v);
+    v.0
 }
 
 /// The parts of a comma expression, in order (`a, b, c`).

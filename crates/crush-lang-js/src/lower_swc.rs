@@ -69,6 +69,11 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
         }
     }
 
+    for f in functions.values() {
+        check_nested_captures(&f.params, &f.body)?;
+    }
+    check_nested_captures(&[], &main_body)?;
+
     if !main_body.is_empty() && !functions.contains_key("main") {
         functions.insert(
             "main".to_string(),
@@ -89,6 +94,98 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
         ai_meta: None,
         ..Default::default()
     })
+}
+
+/// A nested `function` declaration is lowered to a `FunctionDef`, which the
+/// compiler makes a crush function of its own: it can't see the enclosing
+/// function's locals. Reading one was a loud error on the VM but `null` on AOT,
+/// which printed a wrong result (CRUSH-250's `scope_nested_fn_decl`). Refuse a
+/// nested function that uses a binding of an enclosing function; one that uses
+/// only its own names and globals keeps working. (The boa lowering makes a
+/// nested function a closure instead.)
+fn check_nested_captures(params: &[(String, CastType)], body: &[Statement]) -> anyhow::Result<()> {
+    let body = serde_json::to_value(body)?;
+    let mut enclosing: HashSet<String> = params.iter().map(|(n, _)| n.clone()).collect();
+    cast_bound(&body, &mut enclosing);
+    check_nested_in(&body, &enclosing)
+}
+
+fn check_nested_in(v: &serde_json::Value, enclosing: &HashSet<String>) -> anyhow::Result<()> {
+    match v {
+        serde_json::Value::Object(o) if o.get("type").and_then(|t| t.as_str()) == Some("FunctionDef") => {
+            let body = o.get("body").cloned().unwrap_or_default();
+            let mut own: HashSet<String> = o
+                .get("params")
+                .and_then(|p| p.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.get(0).and_then(|n| n.as_str()).map(str::to_string))
+                .collect();
+            cast_bound(&body, &mut own);
+            let mut reads = HashSet::new();
+            cast_reads(&body, &mut reads);
+            let mut captured: Vec<&String> = reads.iter().filter(|n| !own.contains(*n) && enclosing.contains(*n)).collect();
+            captured.sort();
+            if let Some(name) = captured.first() {
+                let f = o.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                return Err(unsupported(&format!(
+                    "a nested `function {f}` that uses its enclosing function's `{name}`"
+                )));
+            }
+            let inner: HashSet<String> = enclosing.union(&own).cloned().collect();
+            check_nested_in(&body, &inner)
+        }
+        serde_json::Value::Object(o) => o.values().try_for_each(|v| check_nested_in(v, enclosing)),
+        serde_json::Value::Array(a) => a.iter().try_for_each(|v| check_nested_in(v, enclosing)),
+        _ => Ok(()),
+    }
+}
+
+/// Names lowered CAST binds (declarations, loop and catch variables, lambda
+/// parameters), not looking into nested `FunctionDef`s.
+fn cast_bound(v: &serde_json::Value, out: &mut HashSet<String>) {
+    match v {
+        serde_json::Value::Object(o) => {
+            let field = |k: &str| o.get(k).and_then(|n| n.as_str()).map(str::to_string);
+            match o.get("type").and_then(|t| t.as_str()) {
+                Some("FunctionDef") => return,
+                Some("VarDecl") => out.extend(field("name")),
+                Some("For") => out.extend(field("variable")),
+                Some("TryCatch") => out.extend(field("error_var")),
+                Some("Lambda") => out.extend(
+                    o.get("params")
+                        .and_then(|p| p.as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|p| p.get(0).and_then(|n| n.as_str()).map(str::to_string)),
+                ),
+                _ => {}
+            }
+            o.values().for_each(|v| cast_bound(v, out));
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|v| cast_bound(v, out)),
+        _ => {}
+    }
+}
+
+/// Names lowered CAST reads: variables, and the receiver or name of a call
+/// (`f(…)`, `o.m(…)`), not looking into nested `FunctionDef`s.
+fn cast_reads(v: &serde_json::Value, out: &mut HashSet<String>) {
+    match v {
+        serde_json::Value::Object(o) => {
+            match o.get("type").and_then(|t| t.as_str()) {
+                Some("FunctionDef") => return,
+                Some("Var") => out.extend(o.get("name").and_then(|n| n.as_str()).map(str::to_string)),
+                Some("Call") => out.extend(
+                    o.get("function").and_then(|n| n.as_str()).and_then(|f| f.split('.').next()).map(str::to_string),
+                ),
+                _ => {}
+            }
+            o.values().for_each(|v| cast_reads(v, out));
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|v| cast_reads(v, out)),
+        _ => {}
+    }
 }
 
 /// The walker's name for an unsupported construct, as one error message.
@@ -414,12 +511,10 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
             }
         }
         Stmt::Decl(decl) => match decl {
-            // Only top-level declarations (handled in `lower_module`) become
-            // crush functions. A nested one became a crush function that can't
-            // see the enclosing locals: a loud error on the VM, but AOT read
-            // them as `null` and printed a wrong result (CRUSH-250's
-            // scope_nested_fn_decl). The boa lowering makes it a closure.
-            Decl::Fn(_) => return Err(unsupported("a `function` declaration inside a function or block")),
+            // A nested declaration becomes a crush function of its own, which
+            // can't see the enclosing locals: `check_nested_captures` refuses
+            // the ones that use them.
+            Decl::Fn(fn_decl) => lower_fn_decl(fn_decl, ctx)?,
             Decl::Var(var_decl) => {
                 let mut stmts = Vec::new();
                 for d in &var_decl.decls {

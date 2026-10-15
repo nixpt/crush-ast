@@ -285,3 +285,24 @@ fn test_boa_block_shadowing_renames_the_inner_binding() {
     assert_ne!(names[1], "x");
     assert!(names[1].starts_with("x__"), "{names:?}");
 }
+
+// A nested function that uses no binding of an enclosing function is lifted to
+// a crush function of its own (direct calls; AOT compiles them); one that does
+// stays a closure.
+#[test]
+fn test_boa_capture_free_nested_functions_are_lifted() {
+    let program = test_lower(
+        "function outer(k) {\n  function sq(x) { return x * x; }\n  function addK(n) { return n + k; }\n  return sq(addK(1));\n}\nconsole.log(outer(2));\n",
+    );
+    let lifted: Vec<&String> = program.functions.keys().filter(|n| n.starts_with("sq__")).collect();
+    assert_eq!(lifted.len(), 1, "{:?}", program.functions.keys().collect::<Vec<_>>());
+    assert!(!program.functions.keys().any(|n| n.starts_with("addK")));
+    let outer = &program.functions["outer"];
+    assert!(
+        outer.body.iter().any(|s| matches!(
+            s,
+            crush_cast::Statement::VarDecl { name, value: crush_cast::Expression::Lambda { .. }, .. } if name == "addK"
+        )),
+        "addK captures `k`, so it stays a closure"
+    );
+}

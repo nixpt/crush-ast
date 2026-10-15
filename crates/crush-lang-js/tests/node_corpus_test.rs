@@ -77,7 +77,7 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
     ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
     ("scope_catch_shadow", "CRUSH-zorro-5: a `catch` parameter that shadows an outer binding"),
-    ("scope_nested_fn_decl", "CRUSH-250: a `function` declaration inside a function or block (fixed on boa)"),
+    ("scope_nested_fn_decl", "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)"),
     ("scope_shadow_closure", "CRUSH-zorro-5: a block `let` that shadows an outer binding"),
     ("scope_shadow_loop", "CRUSH-zorro-5: a loop/block `let` that shadows an outer binding"),
     ("str_methods", "CRUSH-zorro-14: string methods"),

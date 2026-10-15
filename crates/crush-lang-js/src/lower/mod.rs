@@ -66,6 +66,8 @@ pub(crate) struct Lower<'a> {
     functions: HashMap<String, Function>,
     /// Source of unique ids for hidden locals (`__sw_val_N`, ...).
     next_id: u32,
+    /// The script's top-level `function` names: globals, not captures.
+    toplevel_fns: std::collections::HashSet<Sym>,
 }
 
 impl<'a> Lower<'a> {
@@ -75,6 +77,7 @@ impl<'a> Lower<'a> {
             ctx,
             scopes: Scopes::default(),
             functions: HashMap::new(),
+            toplevel_fns: Default::default(),
             next_id: 0,
         }
     }
