@@ -33,6 +33,7 @@ name = "crush_vm"
 crate-type = ["lib"]
 
 [dependencies]
+indexmap.workspace = true
 anyhow.workspace = true
 casm.workspace = true
 hex = "0.4"

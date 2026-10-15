@@ -1,0 +1,7 @@
+# jagent writer namespace — created once by `jagent-ticket new`, never rewritten.
+# Ids minted here are <PREFIX>-zorro-<n>; see workspace-meta plans/2026-10-14-conflict-free-meta-layer-design.md §1.
+namespace = "zorro"
+kind = "box"
+owner = "nixpt"
+host = "cachyos-x8664"
+retired = false

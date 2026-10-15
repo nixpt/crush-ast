@@ -456,6 +456,18 @@ pub fn run_scheduled_streaming(
         let mut any_runnable = false;
         let start_scan = current;
         loop {
+            // A thread awaiting one that has already finished gets its result
+            // now. The wake-up in `StepAction::Done` only reaches threads that
+            // were already waiting, so `spawn; yield; await` (the task finishing
+            // during the yield) used to block forever and end the program early.
+            if let Some(target) = threads[current].waiting_for {
+                let target = target as usize;
+                if target >= threads.len() || threads[target].done {
+                    let rv = threads.get(target).and_then(|t| t.return_value.clone()).unwrap_or(Value::Null);
+                    threads[current].waiting_for = None;
+                    threads[current].stack.push(rv);
+                }
+            }
             let t = &threads[current];
             if !t.done && t.waiting_for.is_none() {
                 any_runnable = true;
@@ -1050,9 +1062,8 @@ fn execute_one(
             let val = pop!();
             match val {
                 Value::Map(m) => {
-                    let mut keys: Vec<String> = m.borrow().keys().cloned().collect();
-                    // Sort keys for deterministic iteration order
-                    keys.sort();
+                    // Insertion order (MapStore is an IndexMap).
+                    let keys: Vec<String> = m.borrow().keys().cloned().collect();
                     let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
                     push!(Value::new_array(key_vals));
                 }
@@ -1554,6 +1565,12 @@ fn dispatch_cap(
             }
             "math.truediv" => {
                 crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
+            }
+            "seq.slice" => {
+                crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
+            }
+            "math.power" => {
+                crate::arithmetic::power_values(&args[0], &args[1]).map(Some)
             }
             "math.floordiv" => {
                 crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)

@@ -128,6 +128,11 @@ impl std::fmt::Display for LangFailurePhase {
 }
 
 /// Stack value — the types the CVM1 supports.
+/// The storage behind `Value::Map`. Insertion-ordered, like Python dicts and
+/// JS objects: iteration and printing follow the order keys were added
+/// (`HashMap` gave arbitrary order, which `map_keys` papered over by sorting).
+pub type MapStore = indexmap::IndexMap<String, Value>;
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Null,
@@ -146,7 +151,7 @@ pub enum Value {
     /// Shared set (using Vec for uniqueness since Value doesn't impl Hash)
     Set(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
     /// Shared string-keyed map (reference semantics via Rc<RefCell<...>>).
-    Map(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>),
+    Map(std::rc::Rc<std::cell::RefCell<MapStore>>),
     /// Error value (carries a message string).
     Error(String),
     /// Binary blob data.
@@ -688,8 +693,9 @@ impl Value {
         Value::Set(std::rc::Rc::new(std::cell::RefCell::new(v)))
     }
 
-    pub fn new_map(m: std::collections::HashMap<String, Value>) -> Self {
-        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(m)))
+    /// A map from any key/value pairs (kept in the order given).
+    pub fn new_map(m: impl IntoIterator<Item = (String, Value)>) -> Self {
+        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(m.into_iter().collect())))
     }
 }
 

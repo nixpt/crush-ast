@@ -152,6 +152,30 @@ pub fn true_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
     Ok(Value::Float(to_f64(a) / bf))
 }
 
+/// `a ** b`. Integer base and non-negative integer exponent stay an exact
+/// integer (overflow is `ArithmeticOverflow`, never a wrap or a float);
+/// anything else is a float. `0 ** -n` is division by zero, as in Python.
+pub fn power_values(a: &Value, b: &Value) -> Result<Value, VmError> {
+    require_numeric(a, b)?;
+    if let (Value::Int(base), Value::Int(exp)) = (a, b) {
+        if *exp >= 0 {
+            return match u32::try_from(*exp) {
+                Ok(e) => base.checked_pow(e).map(Value::Int).ok_or(VmError::ArithmeticOverflow),
+                // Huge exponents only fit for bases 0, 1 and -1.
+                Err(_) => match base {
+                    0 | 1 => Ok(Value::Int(*base)),
+                    -1 => Ok(Value::Int(if exp % 2 == 0 { 1 } else { -1 })),
+                    _ => Err(VmError::ArithmeticOverflow),
+                },
+            };
+        }
+        if *base == 0 {
+            return Err(VmError::DivByZero);
+        }
+    }
+    Ok(Value::Float(to_f64(a).powf(to_f64(b))))
+}
+
 /// Python-style floor division (`//`) — rounds toward −∞.
 ///
 /// Integer operands stay integers; any float operand promotes the result to
@@ -281,6 +305,17 @@ mod tests {
     fn true_div_always_float() {
         assert_eq!(true_div_values(&Value::Int(7), &Value::Int(2)).unwrap(), Value::Float(3.5));
         assert_eq!(true_div_values(&Value::Int(4), &Value::Int(2)).unwrap(), Value::Float(2.0));
+    }
+
+    #[test]
+    fn power_is_exact_for_ints_and_float_otherwise() {
+        assert_eq!(power_values(&Value::Int(2), &Value::Int(10)).unwrap(), Value::Int(1024));
+        assert_eq!(power_values(&Value::Int(-3), &Value::Int(3)).unwrap(), Value::Int(-27));
+        assert_eq!(power_values(&Value::Int(2), &Value::Int(-1)).unwrap(), Value::Float(0.5));
+        assert_eq!(power_values(&Value::Float(2.0), &Value::Int(3)).unwrap(), Value::Float(8.0));
+        assert_eq!(power_values(&Value::Int(1), &Value::Int(1 << 40)).unwrap(), Value::Int(1));
+        assert!(matches!(power_values(&Value::Int(2), &Value::Int(64)), Err(VmError::ArithmeticOverflow)));
+        assert!(matches!(power_values(&Value::Int(0), &Value::Int(-1)), Err(VmError::DivByZero)));
     }
 
     #[test]

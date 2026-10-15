@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-47 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Declined (2026-10-15, owner) — parser-only frontends; see Decision below |
 | **Phase** | M7 |
 
 ## Problem
@@ -55,3 +55,12 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-47.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Decision (2026-10-15, repo owner)
+
+**Declined.** An embedded VM lane is a dead path: exosphere's in-tree crush already had it, and it
+dragged in a set of VMs. crush keeps **parser-only** frontends — `rustpython-parser` for Python,
+`swc` for JS — and runs the lowered program on crush-vm, supporting each language's format and
+semantics there (Python e2e parity work, `crush-lang-python/tests/cpython_corpus`). Hermetic
+`@python` blocks without a host Python are not a goal; host languages run through `EXEC_LANG` +
+buckets (CRUSH-55 D-2).
