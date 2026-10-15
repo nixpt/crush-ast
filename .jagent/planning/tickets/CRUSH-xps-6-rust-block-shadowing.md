@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-xps-6 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In review |
 | **Phase** | M2 / Rust parity |
-| **Assignee** | unassigned |
+| **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5 |
 | **Estimated effort** | M |
 
@@ -19,13 +19,13 @@ CRUSH-251 captured-cell rule.
 
 ## Success criteria
 
-- [ ] For `let x = 1; { let x = 2; println!("{}", x); } println!("{}", x);`,
+- [x] For `let x = 1; { let x = 2; println!("{}", x); } println!("{}", x);`,
       Rust-compatible execution prints `2` then `1`, or compilation rejects
       the shadowing clearly.
-- [ ] No accepted fixture silently prints `2` then `2`.
-- [ ] The parity harness classifies the old behavior under this ticket and
+- [x] No accepted fixture silently prints `2` then `2`.
+- [x] The parity harness classifies the old behavior under this ticket and
       removes the known-silent entry only after the fix is exact.
-- [ ] Rust block-binding metadata remains available for closure capture; it is
+- [x] Rust block-binding metadata remains available for closure capture; it is
       not conflated with the local-slot fix.
 
 ## Technical approach
@@ -38,3 +38,37 @@ CRUSH-251 captured-cell rule.
 
 - Changing Crush's local-storage representation.
 - Implementing full Rust lexical scopes or closure capture.
+
+## Implementation and validation
+
+- A private Rust-only post-lowering pass resolves each local declaration to a
+  fresh CAST name. This includes initializer ordering, callable variables,
+  parameters, branches, loop bindings/bodies, matches, and closure bodies.
+- The prefix is absent from source, so source identifiers and inline format
+  captures cannot collide with generated storage. Names remain valid for
+  lifted closures and every existing engine.
+- Function catalogs and variable/declaration metadata retain source name,
+  function, binding ID, scope ID, and kind. This is independent of VM slots
+  and dynamic captured-cell lifetime.
+- Source calls are distinguished from compiler helpers: a callable variable
+  named `__crush_assign__` does not intercept assignment lowering. Capability
+  names remain resolved globals.
+- Removed `audit_block_shadowing` from the shared known-silent policy after VM
+  and both AOT backends became exact. Expanded the rustc corpus to 37 fixtures,
+  with eight new binding cases; closure cases remain explicitly loud on AOT.
+- Nested function items now fail at their source location until item hoisting
+  and block-local function lookup are implemented. This is documented as a
+  supported-subset boundary, not silently approximated.
+- Fresh affected-package rebuild in the dedicated
+  `/workspace/projects/.codex-target-crush-xps6` target (isolated from parent
+  worktree caches): SDK/Rust unit and integration suite on main `3d512af`,
+  580 passed.
+- VM corpus freshness, both AOT audits, C GC stress, and scoped clippy passed.
+- Independent Rust SDK host matched freshly compiled rustc output for the
+  original block (`2\n1\n`), branches/loops, matches, callable shadowing,
+  captures, and intrinsic-like source names. A .crush program still printed
+  `Crush from Rust` and returned 42.
+
+Review branch: `agent/nixp/CRUSH-xps-6`, based on CRUSH-xps-5 / PR #220.
+Rust value/copy/borrow semantics remain xps-7 work; this ticket does not alter
+Crush's local-storage representation.

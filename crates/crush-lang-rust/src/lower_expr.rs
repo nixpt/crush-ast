@@ -102,6 +102,8 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
             })
         }
         Expr::Call(e) => {
+            let mut meta = meta;
+            meta.insert("rust_source_call".to_string(), serde_json::Value::Bool(true));
             let lowered_args: Vec<Expression> = e
                 .args
                 .iter()

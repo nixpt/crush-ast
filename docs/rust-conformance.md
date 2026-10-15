@@ -52,7 +52,8 @@ through `io.print`, which appends a newline to stdout.
 
 | Family | Inventory / owner |
 |---|---|
-| Block-local shadowing | Known silent divergence; CRUSH-xps-6 |
+| Local/parameter shadowing in blocks, branches, loops, matches, closures | Exact supported cases; distinct binding identities (CRUSH-xps-6) |
+| Nested functions | Rejected with location until block-local item resolution exists (CRUSH-xps-6) |
 | Vector clone aliasing | Known silent divergence; CRUSH-xps-7 |
 | Mutable strings and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
 | Narrow integer casts and release overflow | Known silent divergence; CRUSH-xps-8 |
@@ -69,6 +70,23 @@ Rust `Copy`/move/clone semantics must follow COSM's contracts when Rust type
 lowering arrives. The schema and Crush frontend alone do not enable Rust
 structs, traits, enums, or `impl` blocks. Engine support and receiver dispatch
 are tracked in CRUSH-zorro-42–44; Rust's producer belongs to COSM K3.
+
+## Rust binding identity
+
+After lowering macros and statement blocks, the Rust frontend resolves locals
+to distinct CAST storage names. Initializers see the previous binding; each
+branch, loop body, match arm, and closure restores its enclosing environment on
+exit. Source callable variables are resolved without renaming compiler helpers
+or global capability namespaces.
+
+Declarations and variable references retain `meta.rust_binding` with
+`source_name`, `function`, `id`, `scope_id`, and `kind`. The function's
+`meta.rust_bindings` catalogs all declarations, and closures keep
+`meta.rust_scope_id`/`meta.rust_params`. Identity is `(function, id)`; these IDs
+describe lexical declarations, not VM slots or dynamic executions. Closure
+capture can therefore distinguish two source bindings named `x` without
+changing the VM storage or cell-lifetime rules. Rust ownership and borrowing
+remain separate work in xps-7.
 
 ## Run the gate
 

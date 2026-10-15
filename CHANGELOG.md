@@ -14,6 +14,11 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Resolve Rust lexical locals to distinct storage names, preserving outer
+  bindings across blocks, branches, loops, match arms, and closures. Binding
+  metadata retains source identity; nested functions now fail explicitly until
+  local item resolution is supported (CRUSH-xps-6).
+
 - Add a shared Rust-source conformance audit for the SDK VM and both AOT
   backends, with rustc freshness checks, byte-exact output, ticket-linked
   exceptions, and source locations on Rust lowering errors (CRUSH-xps-5).
