@@ -177,14 +177,15 @@ After surfer drops `boa_engine` (its goal), its JS parser costs 60 crates with b
   parser-independent either way. Decide before wave 2. Under B, wave 2 becomes CRUSH-250 (widened) instead
   of z-11.
 
-- **Still open: number model (CRUSH-zorro-13).** JS numbers are doubles; crush has `Int(i64)` + `Float(f64)` and errors on
+- **DECIDED 2026-10-15 (owner): number model (CRUSH-zorro-13) = option (a)**, JS arithmetic promotes Int to
+  Float on overflow. Details in the ticket. *Original framing, kept for context:* **Number model (CRUSH-zorro-13).** JS numbers are doubles; crush has `Int(i64)` + `Float(f64)` and errors on
   overflow (`2**53 + 1`, `2**64` fail today). Options:
   - (a) JS arithmetic promotes to Float on overflow. **Recommended:** ints stay ints for indexing and loops,
     and output matches node for all safe integers.
   - (b) every JS number is a Float.
   - (c) leave overflow loud.
 
-  Nothing else in this plan needs a decision.
+  With this, nothing in the plan is waiting on a decision.
 
 ## Tickets and dispatch plan
 

@@ -1066,3 +1066,18 @@ Rejected alternatives:
 Outcome:
 casm::kind_unsupported_strategies + cosm_unsupported_reason; Program::refuse_cosm and crush_vm::cosm_gate delegate to it. crush-aotc separately refuses object ops (it has no maps; they used to be dropped silently).
 
+
+## 2026-10-15T13:28:00-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] JS number model (CRUSH-zorro-13): Int promotes to Float on overflow
+
+Reason:
+Owner decision 2026-10-15, option (a). JS numbers are doubles; crush has Int(i64)+Float(f64) and made overflow an error, so 2**53+1, 2**64 and MAX_SAFE_INTEGER+2 failed where node prints a value. Promoting only on overflow keeps Int for indexing/loops/.length (no change for programs that never overflow) and matches node's output for every safe integer; beyond 2^53 the Float follows node's double formatting.
+
+Author type: agent
+
+Rejected alternatives:
+- **every JS number a Float**: changes indexing/loop semantics and the printed form of ordinary integers for no gain
+- **leave overflow loud**: programs that node runs fine would keep failing
+
+Outcome:
+Recorded in CRUSH-zorro-13 and the JS/TS spike doc; implementation pending (js.add/sub/mul/pow; VMs exact, FastVM/JIT/AOT match or refuse at compile time; BigInt stays loud).
+
