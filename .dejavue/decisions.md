@@ -1096,3 +1096,18 @@ Domain owner: vega
 Outcome:
 All engines refuse the three ops; none silent. Frontend + casm_to_vm + FastVM + AOT Rust/C + crush-aotc verified. Tests green: crush-frontend, crush-lang-sdk, crush-vm, crush-aot, crush-aotc; examples_parity green.
 
+
+## 2026-10-15T14:10:14-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] @lang blocks declare outputs explicitly: @python -> names { … } (CRUSH-270, issue #230)
+
+Reason:
+Owner decision 2026-10-15. The implicit rule (a block's last top-level plain assignment is marshaled back) made data flow invisible. Measured on main a1b7fdf: #230's carry-over between blocks; an intended output lost because a later temp was last ('Undefined variable: result'); a block silently overwriting a Crush variable (count 10 -> 0); and the no-inputs fallback exposing Crush vars only via os.environ. Inputs stay automatic; outputs are listed on the header.
+
+Author type: agent
+
+Rejected alternatives:
+- **block as expression (let r = @python { … })**: one output per block, awkward for several
+- **keep implicit + document/warn**: leaves the lost-output and clobber cases
+
+Outcome:
+CRUSH-270 filed. One-release transition: implicit outputs still work with a compile warning (including the clobber case), then no header means no outputs. The env-only fallback is removed (inputs are Python names or absent). Issue #225 analyzer fix first.
+
