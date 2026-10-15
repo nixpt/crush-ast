@@ -982,3 +982,12 @@ Rejected alternatives:
 Outcome:
 All silent swc mis-lowerings are walk-time errors '<construct> is not supported by the JS walker yet'; tests/loud_constructs_test.rs
 
+
+## 2026-10-15T03:04:39-05:00 — [TACTICAL] JS swc lowering: bare blocks flatten everywhere; for-in over a non-literal gets a runtime type_of guard (CRUSH-zorro-23 review)
+
+Reason:
+Reviewer: block rule was inconsistent (loud in function bodies, flattened in arrow bodies). check_lexical_shadowing makes flattening sound, so every bare block flattens. for-in: the CASM type_of op (CVM1 TYPEOF) exists on VM/portable/FastVM/JIT; crush-frontend now compiles CapabilityCall 'type_of' to it, and the walker throws at run time when the value is an array/str/string/list/vector/tuple, iterating keys otherwise. crush-aot Rust/C reject type_of at compile time (exact-or-loud).
+
+Outcome:
+Supersedes the for-in/block part of the earlier CRUSH-zorro-23 decision
+

@@ -11,10 +11,6 @@
 
 /// (ext, source, expected error substring)
 const LOUD: &[(&str, &str, &str)] = &[
-    // Bare blocks that reach the statement lowering were dropped with their contents.
-    ("js", "{ console.log(5); } console.log(6);", "a bare block statement `{ … }` here is not supported by the JS walker yet"),
-    ("js", "function f() { { console.log(1); } console.log(2); } f();", "a bare block statement `{ … }` here"),
-    ("js", "l: { console.log(1); }", "a bare block statement `{ … }` here"),
     // Labeled jumps lost their label and acted on the innermost loop.
     (
         "js",
@@ -33,6 +29,8 @@ const LOUD: &[(&str, &str, &str)] = &[
     // Shadowing: one slot per name, so the inner binding overwrote the outer one.
     ("js", "let x = 1; if (true) { let x = 2; } console.log(x);", "a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
     ("js", "let x = 1; if (true) { { let x = 2; } } console.log(x);", "shadows an outer `x`"),
+    ("js", "let x = 1; { let x = 2; } console.log(x);", "shadows an outer `x`"),
+    ("js", "function f() { let x = 1; { const x = 2; } return x; } console.log(f());", "shadows an outer `x`"),
     ("js", "let x = 9; for (const x of [1, 2]) { } console.log(x);", "shadows an outer `x`"),
     ("js", "let e = 1; try { throw 5; } catch (e) { } console.log(e);", "shadows an outer `e`"),
     ("js", "let x = 1; switch (1) { case 1: { let x = 2; } } console.log(x);", "shadows an outer `x`"),
@@ -60,9 +58,6 @@ const LOUD: &[(&str, &str, &str)] = &[
     ("js", "function f(a, b) { return a + b; } const xs = [1, 2]; console.log(f(...xs));", "a spread argument (`f(...args)`) is not supported by the JS walker yet"),
     ("js", "function f(...xs) { console.log(xs); } f(1);", "a rest parameter (`...args`) is not supported by the JS walker yet"),
     ("js", "function f({a}) { console.log(a); } f({a: 1});", "a destructuring pattern is not supported by the JS walker yet"),
-    // for-in yielded an array's / string's elements instead of its keys.
-    ("js", "const a = [10, 20]; for (const k in a) { console.log(k); }", "`for-in` (over anything but an object literal) is not supported by the JS walker yet"),
-    ("js", "for (const k in 'ab') { console.log(k); }", "`for-in` (over anything but an object literal)"),
     // TS runtime declarations were dropped.
     ("ts", "enum C { R, G } console.log(C.G);", "a TypeScript `enum` is not supported by the JS walker yet"),
     ("ts", "export enum E { A } console.log('x');", "a TypeScript `enum`"),
@@ -91,6 +86,13 @@ const LOUD: &[(&str, &str, &str)] = &[
 /// (ext, source, node's stdout) — neighbours of the loud cases that already
 /// worked and must keep working.
 const STILL_WORKS: &[(&str, &str, &str)] = &[
+    // Bare blocks are flattened everywhere. At the top level, in a `function`
+    // declaration's body, and as a labeled block they used to be dropped.
+    ("js", "{ console.log(5); } console.log(6);", "5\n6\n"),
+    ("js", "function f() { { console.log(1); } console.log(2); } f();", "1\n2\n"),
+    ("js", "l: { console.log(1); }", "1\n"),
+    ("js", "let a = 1; { let b = 2; console.log(a + b); } { let b = 3; console.log(b); }", "3\n3\n"),
+    ("js", "{ var v = 7; } console.log(v);", "7\n"),
     // Nested blocks inside if / loop / arrow bodies are flattened.
     ("js", "if (true) { { console.log(1); } } console.log(2);", "1\n2\n"),
     ("js", "for (let i = 0; i < 2; i++) { { console.log(i); } }", "0\n1\n"),
@@ -110,6 +112,9 @@ const STILL_WORKS: &[(&str, &str, &str)] = &[
     ("js", "const o = {a: 1, b: 'x'}; console.log(o.a); console.log(o.b);", "1\nx\n"),
     ("js", "const xs = [1, 2, 3]; console.log(xs[1]); console.log(xs.length);", "2\n3\n"),
     ("js", "for (const k in {a: 1, b: 2}) { console.log(k); }", "a\nb\n"),
+    // for-in over an object held in a variable passes the runtime type guard.
+    ("js", "const o = {a: 1, b: 2}; for (const k in o) { console.log(k); }", "a\nb\n"),
+    ("js", "function keys(o) { for (const k in o) { console.log(k); } } keys({x: 1});", "x\n"),
     ("js", "const o = { m() { return 4; } }; console.log('ok');", "ok\n"),
     // Static class members, plain `function` declarations and arrows.
     ("js", "class U { static n = 3; } console.log(U.n);", "3\n"),
@@ -120,6 +125,28 @@ const STILL_WORKS: &[(&str, &str, &str)] = &[
     ("ts", "export default interface I { a: number } console.log('x');", "x\n"),
     ("ts", "declare enum D { A } declare namespace M { const y: number; } console.log('x');", "x\n"),
 ];
+
+/// (source, expected runtime error substring): walks and compiles, then fails
+/// when run. `for-in` over an array or string yielded its elements, not its
+/// indices; whether a variable holds one is only known at run time.
+const LOUD_AT_RUNTIME: &[(&str, &str)] = &[
+    ("const a = [10, 20]; for (const k in a) { console.log(k); }", "`for-in` over an array/string is not supported by the JS walker yet"),
+    ("const s = 'ab'; for (const k in s) { console.log(k); }", "`for-in` over an array/string is not supported by the JS walker yet"),
+    ("for (const k in [10, 20]) { console.log(k); }", "`for-in` over an array/string"),
+];
+
+#[test]
+fn for_in_over_a_sequence_fails_at_run_time() {
+    let mut failures = Vec::new();
+    for (src, want) in LOUD_AT_RUNTIME {
+        match run_crush(src, "js") {
+            Ok(out) => failures.push(format!("{src}\n  ran and printed {out:?}; expected: {want}")),
+            Err(e) if format!("{e:#}").contains(want) => {}
+            Err(e) => failures.push(format!("{src}\n  expected: {want}\n  got:      {e:#}")),
+        }
+    }
+    assert!(failures.is_empty(), "{} case(s):\n{}", failures.len(), failures.join("\n"));
+}
 
 fn run_crush(source: &str, ext: &str) -> anyhow::Result<String> {
     let cast = crush_lang_js::js_to_cast(source, ext)?;

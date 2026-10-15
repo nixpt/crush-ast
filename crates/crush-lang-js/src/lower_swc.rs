@@ -550,22 +550,21 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: meta(span, ctx),
             }
         }
-        // `for-in` iterates keys, but the lowering is crush's `for`, which
-        // yields an array's or string's *elements*. Arrays can't be told apart
-        // from objects statically, so only an object literal is accepted.
-        Stmt::ForIn(ForInStmt { right, .. }) if !matches!(unparen(right), Expr::Object(_)) => {
-            return Err(unsupported("`for-in` (over anything but an object literal)"));
-        }
+        // `for-in` iterates keys. It lowers to crush's `for`, which yields an
+        // object's keys but an array's or string's *elements*. An object
+        // literal is known to be an object; anything else gets a runtime
+        // guard on its type (the `type_of` op) that refuses sequences.
         Stmt::ForIn(ForInStmt {
             left, right, body, span, ..
         }) => {
             let variable = for_head_to_var(left)?;
+            let body = block_or_stmt_to_vec(body, ctx)?;
             let iterable = lower_expr(right, ctx)?;
-            Statement::For {
-                variable,
-                iterable: Box::new(iterable),
-                body: block_or_stmt_to_vec(body, ctx)?,
-                meta: meta(span, ctx),
+            let sm = meta(span, ctx);
+            if matches!(unparen(right), Expr::Object(_)) {
+                Statement::For { variable, iterable: Box::new(iterable), body, meta: sm }
+            } else {
+                for_in_guarded(variable, iterable, body, span.lo.0, sm)
             }
         }
         Stmt::ForOf(ForOfStmt {
@@ -717,14 +716,88 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
         Stmt::Labeled(LabeledStmt { body, .. }) => {
             return lower_stmt(body, ctx);
         }
-        // Statement lists inside if/loop/try/switch bodies, arrows and methods
-        // flatten nested blocks (`stmts_to_vec`, kept sound by
-        // `check_lexical_shadowing`). A block that reaches here — at the top
-        // level of the script or of a `function` declaration, or as a labeled
-        // statement — used to be dropped with everything in it.
-        Stmt::Block(_) => return Err(unsupported("a bare block statement `{ … }` here")),
+        // A bare block is flattened into its parent, as statement lists do
+        // (`stmts_to_vec`); `check_lexical_shadowing` refuses the inner
+        // bindings that would make that unsound. Blocks at the top level of
+        // the script or of a `function` declaration, and labeled blocks, used
+        // to be dropped here with everything in them.
+        Stmt::Block(b) => {
+            let stmts = stmts_to_vec(&b.stmts, ctx)?;
+            if stmts.is_empty() {
+                return Ok(None);
+            }
+            Statement::If {
+                condition: Expression::BoolLiteral { value: true, meta: meta(&b.span, ctx) },
+                then_body: stmts,
+                else_body: None,
+                meta: meta(&b.span, ctx),
+            }
+        }
         Stmt::Debugger(_) | Stmt::Empty(_) => return Ok(None),
     }))
+}
+
+/// `for (variable in iterable) body` over a value whose type isn't known
+/// statically:
+///   let __forin_N = iterable;
+///   let __forin_ty_N = type_of(__forin_N);
+///   if (__forin_ty_N == "array" || … "str" | "string" …) throw "…";
+///   for variable in __forin_N { body }
+/// grouped in one `if (true) { … }`. The type names cover every engine
+/// (CVM1 says "str", FastVM/JIT "string"); objects and maps iterate their keys
+/// as before. AOT backends without `type_of` refuse it at compile time.
+fn for_in_guarded(
+    variable: String,
+    iterable: Expression,
+    body: Vec<Statement>,
+    id: u32,
+    sm: HashMap<String, serde_json::Value>,
+) -> Statement {
+    let obj = format!("__forin_{id}");
+    let ty = format!("__forin_ty_{id}");
+    let var = |name: &str| Expression::Var { name: name.to_string(), meta: sm.clone() };
+    let is_sequence = ["array", "str", "string", "list", "vector", "tuple"]
+        .iter()
+        .map(|t| Expression::BinaryOp {
+            operator: "==".to_string(),
+            left: Box::new(var(&ty)),
+            right: Box::new(Expression::StringLiteral { value: t.to_string(), meta: sm.clone() }),
+            meta: sm.clone(),
+        })
+        .reduce(|a, b| Expression::BinaryOp {
+            operator: "||".to_string(),
+            left: Box::new(a),
+            right: Box::new(b),
+            meta: sm.clone(),
+        })
+        .expect("non-empty");
+    Statement::If {
+        condition: Expression::BoolLiteral { value: true, meta: sm.clone() },
+        then_body: vec![
+            Statement::VarDecl { name: obj.clone(), value: iterable, type_hint: CastType::Any, meta: sm.clone() },
+            Statement::VarDecl {
+                name: ty.clone(),
+                value: Expression::CapabilityCall { name: "type_of".to_string(), args: vec![var(&obj)], meta: sm.clone() },
+                type_hint: CastType::Any,
+                meta: sm.clone(),
+            },
+            Statement::If {
+                condition: is_sequence,
+                then_body: vec![Statement::Throw {
+                    value: Expression::StringLiteral {
+                        value: "`for-in` over an array/string is not supported by the JS walker yet".to_string(),
+                        meta: sm.clone(),
+                    },
+                    meta: sm.clone(),
+                }],
+                else_body: None,
+                meta: sm.clone(),
+            },
+            Statement::For { variable, iterable: Box::new(var(&obj)), body, meta: sm.clone() },
+        ],
+        else_body: None,
+        meta: sm,
+    }
 }
 
 /// CRUSH-zorro-23: the walker gives each name one slot per function — nested
