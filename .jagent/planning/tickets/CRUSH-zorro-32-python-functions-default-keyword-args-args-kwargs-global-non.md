@@ -18,6 +18,10 @@ Function features beyond plain positional params (Probe programs: `/workspace/sc
   underflow); keyword arguments `g("al", greet="yo")`.
 - `def f(*args, **kw)` → runtime `load from uninitialised slot 0`.
 - `global count` → `global keyword not yet supported`.
+- **Reading** a module-level variable from a function (`LIMIT = 3` then `def f(): return LIMIT + 1`)
+  — module constants, very common — fails at run time with `load from uninitialised slot 0`
+  (found by the foreman on #203). Until module scope exists this should be a compile error naming
+  it: "module-level variable `LIMIT` read from a function isn't supported yet".
 - generators (`yield`) and generator expressions (`sum(x for x in xs)`) → not supported; also blocks
   `docs/benchmarks/sieve.py`.
 - `lambda`, nested-def closures, `nonlocal` → CRUSH-251 steps 3–4 (in progress).
