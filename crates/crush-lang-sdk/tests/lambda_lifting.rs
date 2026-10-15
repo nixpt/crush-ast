@@ -35,3 +35,54 @@ fn an_outer_lambda_is_callable_from_a_nested_lambda() {
     );
     assert_eq!(out, "18\n");
 }
+
+#[test]
+fn branch_local_lambdas_with_the_same_name() {
+    let out = run_source(
+        "fn pick(c) {\n  if c {\n    let f = |x| x + 1\n    return f(10)\n  } else {\n    let f = |x| x * 100\n    return f(10)\n  }\n}\nfn main() {\n  print(pick(true))\n  print(pick(false))\n}\n",
+    );
+    assert_eq!(out, "11\n1000\n");
+}
+
+#[test]
+fn recursion_through_a_lambda_alias() {
+    let out = run_source(
+        "fn main() {\n  let fact = |n| {\n    if n <= 1 {\n      return 1\n    }\n    return n * fact(n - 1)\n  }\n  print(fact(5))\n}\n",
+    );
+    assert_eq!(out, "120\n");
+}
+
+fn compile_error(source: &str) -> String {
+    format!("{:#}", crush_frontend::compile_crush_source(source).expect_err("must not compile"))
+}
+
+// A `let` lambda binding is a compile-time alias (resolved in source order), so
+// reassigning it would make calls silently use the wrong lambda: in a loop the
+// call written before the reassignment keeps the old one (`110011` instead of
+// `111000`); after a conditional reassignment the new one wins even when the
+// branch didn't run (`1000` instead of `11`). Loud until CRUSH-251 step 2 makes
+// these work (then: `111000`, `11`).
+#[test]
+fn reassigning_a_lambda_binding_in_a_loop_is_loud() {
+    let e = compile_error(
+        "fn main() {\n  let f = |x| x + 1\n  let i = 0\n  let out = 0\n  while i < 2 {\n    out = out * 10000 + f(10)\n    f = |x| x * 100\n    i = i + 1\n  }\n  print(out)\n}\n",
+    );
+    assert!(e.contains("CRUSH-251 step 2"), "{e}");
+}
+
+#[test]
+fn conditionally_reassigning_a_lambda_binding_is_loud() {
+    let e = compile_error(
+        "fn g(c) {\n  let f = |x| x + 1\n  if c {\n    f = |x| x * 100\n  }\n  return f(10)\n}\nfn main() {\n  print(g(false))\n}\n",
+    );
+    assert!(e.contains("CRUSH-251 step 2"), "{e}");
+}
+
+#[test]
+fn rebinding_to_a_non_lambda_drops_the_alias() {
+    // `f` is 5 now; calling it must not silently call the old lambda.
+    let e = compile_error(
+        "fn main() {\n  let f = |x| x + 1\n  let r = f(1)\n  let f = 5\n  print(f(2))\n}\n",
+    );
+    assert!(e.contains("Undefined function: f") || e.contains("variable, not a function"), "{e}");
+}

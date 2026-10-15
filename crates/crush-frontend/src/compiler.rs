@@ -79,6 +79,20 @@ impl Compiler {
 
     /// #78: a lambda body may not read or assign the enclosing function's
     /// variables — lambdas don't capture yet (CRUSH-251).
+    /// CRUSH-251 step 1: a `let`-bound lambda is a compile-time alias, resolved
+    /// in source order — so reassigning it (in a loop, a branch, or even
+    /// straight-line) would make calls silently use the wrong lambda. Until
+    /// function values exist (step 2) that is a loud error.
+    fn reject_lambda_alias_reassignment(&self, name: &str) -> Result<()> {
+        if self.resolve_lambda_alias(name).is_some() {
+            bail!(
+                "reassigning `{name}`, which is bound to a lambda, needs function values \
+                 (CRUSH-251 step 2); bind the new lambda to a different name"
+            );
+        }
+        Ok(())
+    }
+
     /// The lifted name a `let`-bound lambda alias resolves to, innermost scope first.
     fn resolve_lambda_alias(&self, name: &str) -> Option<String> {
         self.lambda_aliases.iter().rev().find_map(|scope| scope.get(name).cloned())
@@ -572,12 +586,20 @@ impl Compiler {
                 name, value, meta, ..
             } => {
                 self.declared_vars.insert(name.clone());
+                // `let f = 5` after `let f = |x| ..`: `f` is no longer the lambda,
+                // so a later `f(..)` must not call it (a new lambda re-adds it).
+                if !matches!(value, Expression::Lambda { .. }) {
+                    if let Some(scope) = self.lambda_aliases.last_mut() {
+                        scope.remove(name.as_str());
+                    }
+                }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
                 instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }
             Statement::Assign {
                 target, value, meta
             } => {
+                self.reject_lambda_alias_reassignment(target)?;
                 self.check_lambda_capture(target)?;
                 self.declared_vars.insert(target.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(target))?;
@@ -1668,6 +1690,9 @@ impl Compiler {
                     // args[0] = target Var, args[1] = value expression
                     if args.len() != 2 {
                         bail!("__crush_assign__ expects exactly 2 arguments");
+                    }
+                    if let Expression::Var { name, .. } = &args[0] {
+                        self.reject_lambda_alias_reassignment(name)?;
                     }
                     self.compile_expr(&args[1], instrs)?;
                     if let Expression::Var { name, meta: _ } = &args[0] {
