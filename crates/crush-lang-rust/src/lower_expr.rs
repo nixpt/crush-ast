@@ -493,10 +493,13 @@ fn lower_method(
     // `len` is a compiler builtin; mapped standard-library methods use the
     // named capability path, just as parsed Crush source does. A dotted Call
     // bypassed that contract and failed semantic analysis as undefined.
-    let call = |name: &str, args: Vec<Expression>, meta| {
+    let call = |name: &str, args: Vec<Expression>, mut meta: HashMap<String, serde_json::Value>| {
         if name == "len" {
             Expression::Call { function: name.to_string(), args, meta }
         } else {
+            // This is an already-resolved capability, even if the Rust source
+            // has a local binding named `str`, `math`, or `array`.
+            meta.insert("resolved_capability".into(), serde_json::json!(true));
             Expression::CapabilityCall { name: name.to_string(), args, meta }
         }
     };

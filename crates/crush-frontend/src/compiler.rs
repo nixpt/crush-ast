@@ -2118,6 +2118,10 @@ impl Compiler {
                 instrs.push(self.create_instr(operator, serde_json::json!({}), meta));
             }
             Expression::CapabilityCall { name, args, meta } => {
+                // Walkers resolve method receivers before emitting named caps.
+                // Only unresolved parser calls need the `obj.method` heuristic.
+                let resolved_capability = meta.get("resolved_capability")
+                    .and_then(|value| value.as_bool()).unwrap_or(false);
                 if name == "len" {
                     if args.len() != 1 {
                         bail!("len() expects exactly 1 argument");
@@ -2136,8 +2140,8 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("type_of", serde_json::json!({}), meta));
                 } else if (name == "array.push" || name == "array.pop")
-                    && !self.declared_vars.contains("array")
-                    && !self.local_functions.contains(name)
+                    && (resolved_capability || (!self.declared_vars.contains("array")
+                        && !self.local_functions.contains(name)))
                 {
                     // The parser emits `array.push(a, x)` / `array.pop(a)` as a
                     // dotted CapabilityCall, not a `Call`, so the `Call`-branch
@@ -2171,7 +2175,7 @@ impl Compiler {
                     && !self.local_functions.contains(name)
                 {
                     self.compile_gpu_intrinsic(name, args, meta, instrs)?;
-                } else if self.local_functions.contains(name) {
+                } else if !resolved_capability && self.local_functions.contains(name) {
                     // Last-to-first, like every other `call`: the callee's
                     // `store <param1>` pops the first argument (CRUSH-138).
                     for arg in args.iter().rev() {
@@ -2187,7 +2191,7 @@ impl Compiler {
                     // Parser emits CapabilityCall { name: "obj.method", args } for this.
                     // Only split when the receiver (obj) is a declared variable —
                     // dotted names like "net.fetch" are namespaced capabilities.
-                    let is_method_call = name.find('.')
+                    let is_method_call = !resolved_capability && name.find('.')
                         .map(|pos| self.declared_vars.contains(&name[..pos]))
                         .unwrap_or(false);
                     if is_method_call {
