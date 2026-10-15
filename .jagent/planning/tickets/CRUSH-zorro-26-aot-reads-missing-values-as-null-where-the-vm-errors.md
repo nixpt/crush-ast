@@ -26,6 +26,12 @@ an out-of-range index or a missing field as `null` (and leave rest/spread unexpa
 | `function s(...xs){return xs.length} console.log(s(1,2,3))` | `3` | loud | `0` |
 | `const a=[1,2]; const b=[...a,3]; console.log(b.length, b[2])` | `3 3` | loud | `2 null` |
 
+**Update 2026-10-15 (after #199):** the bug is now visible in a program that used to be loud.
+`function g(a, b = 10) { return a + b } console.log(g(1))` prints `1` on AOT Rust and C (node: `11`). The
+missing argument is read as `null`, and #199's correct JS `+` treats `null` as 0. Before #199, `1 + null`
+errored. It's tracked in `js_parity.rs`'s silent list under this ticket. As `js.*` semantics land, more of
+these AOT null-reads will surface the same way, which raises the urgency of this ticket.
+
 Also, **the two AOT backends disagree with each other**:
 `console.log('1' == 1, 0 == '', 2 != '2')` gives node `true true false`, VM and AOT Rust `false false true`,
 and AOT C `false false false`.

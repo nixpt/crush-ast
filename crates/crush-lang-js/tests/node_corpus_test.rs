@@ -48,16 +48,21 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("builtin_number_conv", "CRUSH-zorro-17: parseInt/Number/String/toFixed"),
     ("class_basic", "out of scope: classes (CRUSH-251 object model)"),
     ("class_extends", "out of scope: classes (CRUSH-251 object model)"),
+    ("ctrl_finally", "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet"),
     ("ctrl_for_in", "CRUSH-zorro-16: for-in (+ join, CRUSH-zorro-15)"),
+    ("ctrl_for_in_array", "CRUSH-zorro-23: `for-in` over an array/string is not supported by the JS walker yet"),
+    ("ctrl_labels", "CRUSH-zorro-6: a labeled `continue` (`continue label`) is not supported by the JS walker yet"),
     ("ctrl_try_catch", "CRUSH-zorro-19: new Error / e.message"),
     ("fn_closure_counter", "CRUSH-zorro-20: closure capture (CRUSH-251)"),
     ("fn_default_param", "CRUSH-zorro-18: default parameters"),
-    ("fn_higher_order", "CRUSH-zorro-20: function values (CRUSH-251)"),
     ("fn_rest_param", "CRUSH-zorro-18: rest parameters"),
+    ("misc_console_error", "CRUSH-zorro-23: `console.error` / `console.warn` (stderr output) is not supported by the JS walker yet"),
     ("misc_console_multi", "CRUSH-zorro-12: `undefined` as a value"),
     ("misc_undefined", "CRUSH-zorro-12: `undefined` as a value"),
+    ("obj_computed_key", "CRUSH-zorro-23: a computed property key (`[k]: v`) is not supported by the JS walker yet"),
     ("obj_destructure", "CRUSH-zorro-16: destructuring"),
     ("obj_literal", "CRUSH-zorro-16: Object.keys"),
+    ("obj_setter", "CRUSH-zorro-23: an object setter (`set x(v)`) is not supported by the JS walker yet"),
     ("obj_spread", "CRUSH-zorro-16: object spread"),
     ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
     ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
@@ -67,6 +72,7 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("ops_nullish", "CRUSH-zorro-12: ??"),
     ("ops_optional_chain", "CRUSH-zorro-12: ?."),
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
+    ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
     ("str_methods", "CRUSH-zorro-14: string methods"),
     ("str_methods2", "CRUSH-zorro-14: string methods"),
     ("str_replace", "CRUSH-zorro-14: string methods"),
@@ -74,26 +80,12 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
 
 /// Programs that are silently wrong on the VM today: `(program, fixing ticket, symptom)`.
 const KNOWN_SILENT: &[(&str, &str, &str)] = &[
-    ("arr_print", "CRUSH-zorro-10", "console.log([1, 'a']) prints `[1, a]`, not `[ 1, 'a' ]`"),
-    ("ctrl_finally", "CRUSH-zorro-7", "`finally` skipped on return"),
-    ("ctrl_for_in_array", "CRUSH-zorro-23", "for-in over an array yields elements, not indices"),
-    ("ctrl_labels", "CRUSH-zorro-6", "labels ignored: `continue outer` acts on the inner loop"),
-    ("misc_console_error", "CRUSH-zorro-23", "console.error writes to stdout"),
-    ("obj_computed_key", "CRUSH-zorro-23", "computed key `{[k]: v}` lost: o.a is null"),
-    ("obj_print", "CRUSH-zorro-10", "console.log({a: 1, b: 'two'}) prints `{a: 1, b: two}`"),
-    ("obj_setter", "CRUSH-zorro-23", "setter body emptied"),
-    ("ops_logical_value", "CRUSH-zorro-22", "&&/|| yield booleans, not operand values"),
-    ("ops_loose_eq", "CRUSH-zorro-22", "== lowered as ==="),
-    ("ops_string_concat", "CRUSH-zorro-9", "'x' + 6.0 prints `x6.0`"),
-    ("ops_template_escape", "CRUSH-zorro-9", "template literals use the raw text (`\\n` stays literal)"),
-    ("scope_bare_block", "CRUSH-zorro-5", "bare block `{…}` dropped"),
-    ("scope_bare_block_assign", "CRUSH-zorro-5", "bare block `{…}` dropped: assignment lost"),
-    ("scope_block_shadow", "CRUSH-zorro-5", "bare block `{…}` dropped"),
 ];
 
 /// TS twin: programs that must stay loud under the `ts` dialect.
 const TS_KNOWN_LOUD: &[(&str, &str)] = &[
     ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
+    ("ctrl_finally", "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet"),
     ("fn_default_param", "CRUSH-zorro-18: default parameters"),
     ("fn_optional_param", "CRUSH-zorro-18: missing argument is `undefined`"),
     ("str_methods", "CRUSH-zorro-14: string methods"),
@@ -101,12 +93,6 @@ const TS_KNOWN_LOUD: &[(&str, &str)] = &[
 
 /// TS twin: silently-wrong programs, keyed to their fixing ticket.
 const TS_KNOWN_SILENT: &[(&str, &str, &str)] = &[
-    ("arr_print", "CRUSH-zorro-10", "console.log([1, 2]) prints `[1, 2]`"),
-    ("ctrl_finally", "CRUSH-zorro-7", "`finally` skipped on return"),
-    ("obj_print", "CRUSH-zorro-10", "console.log({a: 1}) prints `{a: 1}`"),
-    ("ops_logical_value", "CRUSH-zorro-22", "|| yields a boolean"),
-    ("ops_string_concat", "CRUSH-zorro-9", "'x' + 6.0 prints `x6.0`"),
-    ("scope_bare_block", "CRUSH-zorro-5", "bare block `{…}` dropped"),
 ];
 
 fn corpus(dir: &str, ext: &str) -> Vec<PathBuf> {
