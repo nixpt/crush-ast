@@ -70,10 +70,10 @@ pipeline work, and must not become the public API unchanged.
 - Hosts explicitly register the SDK standard library for mapped methods;
   compilation does not grant host authority.
 
-## v0.6.0 compatibility audit
+## v0.6.0 compatibility audit (before COSM transport integration)
 
 Both review branches include the exact v0.6.0 tag. Internal dependency pins
-remain 0.6.0; the VM, CASM and FFI source is unchanged. The public
+remained 0.6.0; at this audit, VM, CASM and FFI source was unchanged. The public
 `compile_source`/`compile_rust_source` APIs are additions after 0.6.0, not APIs
 already available in the published SDK. Release notes now keep all SDK work
 under Unreleased, preserving the tagged release history byte-for-byte.
@@ -82,3 +82,10 @@ Fresh locked source-API/corpus tests: 29 passed; disabled-adapter library test:
 1 passed. The no-default normal dependency graph excludes Rust/tree-sitter.
 Crates.io still has no crush-lang-rust entry as of this audit; that crate needs
 a first publish before the next default-feature SDK release can publish.
+
+## Current main integration
+
+Merged main `3d512af` (COSM kind-table transport, PR #219) after the v0.6.0
+comparison. This adds the upstream VM/CASM table plumbing to the branch, so the
+older unchanged-core audit above describes its earlier head. The source API
+inherits SDK CASM-to-VM table propagation; it does not enable Rust object syntax.
