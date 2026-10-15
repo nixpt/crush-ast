@@ -1,7 +1,7 @@
-# CRUSH-251 slice 1 — function values and closures (design, draft 2)
+# CRUSH-251 slice 1 — function values and closures (design, draft 3)
 
-Status: **draft 2, reviewed** (vega wrote draft 1; foreman critiqued it; this folds the critique in),
-2026-10-15. Framing owner decisions (#185): closures before #175 `parallel_map`; parser-only
+Status: **agreed by vega + foreman** (draft 1 → foreman critique → draft 2 → one ordering fix → draft 3),
+2026-10-15; for the owner. Framing owner decisions (#185): closures before #175 `parallel_map`; parser-only
 frontends (CRUSH-47 declined); AOT backends **exact or loud**.
 
 ## Why
@@ -30,10 +30,18 @@ Blocks Python `lambda` / nested-`def` closures, JS closures that capture, higher
 
 ### 1. Lifting and naming
 Every lambda lifts to a **unique** `__lambda_N`; the binding name is kept only as metadata for display
-and stack traces (`<fn h>`). A `let`-bound lambda is an ordinary variable holding a `Func`, called via
-`CALL_VALUE`. (Later optimisation: a never-reassigned binding to a capture-free lambda may use a
-direct `CALL`.) This fixes bugs A and B. Nothing may emit a direct `CALL` to a function that takes
-hidden capture params.
+and stack traces (`<fn h>`). This fixes bugs A and B. Nothing may emit a direct `CALL` to a function
+that takes hidden capture params.
+
+- **Step 1 (interim, no `CALL_VALUE` yet): a scoped alias.** Each function scope keeps a
+  binding → lifted-name map, so `let f = |x| …; f(1)` compiles to `CALL __lambda_N` inside the
+  binding's scope. Safe because nothing captures in step 1. Without it, unique lifting alone would turn
+  every such call into "`f` is a variable, not a function" and regress working programs
+  (`crush-lang-sdk/tests/gh_issue_78_lambdas.rs`, `crush_run_test`, `crush_test`,
+  `casm_lowering_completeness`, `ai_native_args`).
+- **From step 2:** a `let`-bound lambda is an ordinary variable holding a `Func`, called via
+  `CALL_VALUE`. The alias stays as an optimisation only for a binding that is never reassigned, never
+  escapes, and whose lambda captures nothing; anything else switches to `CALL_VALUE`.
 
 ### 2. Values
 - `Value::Func(Rc<FuncValue>)`, `FuncValue { name: String, ncap: u16, captured: Vec<Value>, display: String }`.
@@ -113,7 +121,10 @@ When AOT C gains closures, its mark-and-sweep GC **must trace** `TAG_FUNC` captu
   hidden capture params must be roots — add that line to CRUSH-121.
 
 ## Definition of done (slice 1)
-- **Bugs A and B fixed**, both programs in the corpus.
+- **Bugs A and B fixed**, both programs in the corpus asserting the exact output (`11 1000`,
+  `10 1001`) — which lambda wins in bug A varies with lifting/insert order (`11 11` on one run,
+  `1000 1000` on another).
+- Step 1 lands with the **full `crush-lang-sdk` suite passing unchanged**.
 - Corpus programs per frontend with closures (Crush, JS, Python; Rust if trivial): counter (mutating
   capture), adder factory (read-only), transitive capture (`a → b → c`), self-recursive closure,
   mutually recursive nested defs, Python late binding vs JS per-iteration `let`, a named function
@@ -123,7 +134,8 @@ When AOT C gains closures, its mark-and-sweep GC **must trace** `TAG_FUNC` captu
 - Unboxing at every by-name local reader (§7), tested.
 
 ## Order of work
-1. Unique lifting (fixes A, B) — small, independent, can land first.
+1. Unique lifting + scoped aliases (fixes A, B; no behaviour change for working programs) — small,
+   lands first.
 2. `Func` + `MAKE_CLOSURE` (ncap 0) + `CALL_VALUE` (no captures yet): function values work.
 3. Captures: alpha-renaming, dominance rule, transitive capture, `Cell` + ops, unboxing sites.
 4. Frontends: Crush, JS (per-iteration `let`), Python (`lambda`, nested `def`, `nonlocal`).
