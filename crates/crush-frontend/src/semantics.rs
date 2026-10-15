@@ -27,6 +27,19 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// COSM K1.4: a Kind built by a constructor function is called like one
+    /// (`Acc(5)` → `CONSTRUCT`), taking the constructor's parameters (after
+    /// `self`, for an initialiser).
+    pub fn declare_constructors(&mut self, module: &crush_cosm::CosmModule, program: &Program) {
+        for k in &module.kinds {
+            let Some((ctor, usage)) = casm::kind_constructor_in(module, &k.name) else { continue };
+            let Some(f) = program.functions.get(ctor.as_str()) else { continue };
+            let leading = usize::from(usage == casm::ConstructorUse::Initialiser);
+            let params = f.params.len().saturating_sub(leading);
+            self.functions.insert(k.name.clone(), (vec![Type::Any; params], Type::Any));
+        }
+    }
+
     pub fn check(&mut self, program: &Program) -> Result<()> {
         // A program that still has `impl` / `trait` nodes is checked as it
         // will be compiled: lowered, with the methods as functions (COSM

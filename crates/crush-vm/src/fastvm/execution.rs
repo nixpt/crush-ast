@@ -717,7 +717,10 @@ pub fn execute_one(
             let val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let target = stack.pop().ok_or(FastError::StackUnderflow)?;
             if let RuntimeValue::Ref(ptr) = target {
-                if let Ok(Object::Object { fields, .. }) = arena.get_mut(ptr) {
+                if let Ok(Object::Object { fields, class_name, .. }) = arena.get_mut(ptr) {
+                    // COSM K1.4: an instance of a sealed Kind takes only its
+                    // declared fields, as on the VMs.
+                    crate::fastvm::check_sealed_write(class_name, name).map_err(FastError::ExecutionError)?;
                     fields.insert(name.clone(), val);
                 } else {
                     return Err(FastError::TypeMismatch);

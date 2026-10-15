@@ -255,12 +255,24 @@ fn seq_slice(t: RuntimeValue, a: RuntimeValue, b: RuntimeValue, st: RuntimeValue
 /// insertion order; crush-vm's Value::Map is an IndexMap). Emitted programs
 /// are built with plain rustc, so no indexmap crate here.
 #[derive(Debug, Clone, Default)]
-pub struct OrdMap { entries: Vec<(String, RuntimeValue)> }
+pub struct OrdMap {
+    entries: Vec<(String, RuntimeValue)>,
+    /// A struct of a sealed Kind (COSM K1.4): its name and declared fields.
+    sealed: Option<(&'static str, &'static [&'static str])>,
+}
 impl OrdMap {
     pub fn new() -> Self { Self::default() }
-    pub fn with_capacity(n: usize) -> Self { Self { entries: Vec::with_capacity(n) } }
+    pub fn with_capacity(n: usize) -> Self { Self { entries: Vec::with_capacity(n), sealed: None } }
+    pub fn sealed(kind: &'static str, fields: &'static [&'static str]) -> Self { Self { entries: Vec::new(), sealed: Some((kind, fields)) } }
     pub fn get(&self, k: &str) -> Option<&RuntimeValue> { self.entries.iter().find(|(key, _)| key == k).map(|(_, v)| v) }
     pub fn insert(&mut self, k: String, v: RuntimeValue) {
+        if let Some((kind, fields)) = self.sealed {
+            if !fields.contains(&k.as_str()) {
+                let list = if fields.is_empty() { "none".to_string() } else { fields.join(", ") };
+                eprintln!("crush(aot): `{kind}` is sealed: it has no field `{k}` (fields: {list})");
+                std::process::exit(1);
+            }
+        }
         match self.entries.iter_mut().find(|(key, _)| *key == k) { Some(e) => e.1 = v, None => self.entries.push((k, v)) }
     }
     pub fn len(&self) -> usize { self.entries.len() }
@@ -566,7 +578,7 @@ fn emit_function(
     out: &mut String,
     name: &str,
     func: &casm::Function,
-    _program: &casm::Program,
+    program: &casm::Program,
     unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
@@ -602,7 +614,12 @@ fn emit_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            {i} => {{\n"));
-        if let Some(op) = emit_body(out, instr, i, n) {
+        if let Some(sealed) = sealed_new_obj(program, instr) {
+            // COSM K1.4: a struct literal of a sealed Kind — the map
+            // remembers the Kind's fields and refuses any other (as the VMs do).
+            out.push_str(&format!("                stack.push(RuntimeValue::Object(Rc::new(RefCell::new({sealed}))));\n"));
+            out.push_str(&format!("                __pc = {};\n                continue;\n", (i + 1).min(n)));
+        } else if let Some(op) = emit_body(out, instr, i, n) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
@@ -626,6 +643,17 @@ fn sanitize_fn_name(name: &str) -> String {
 
 /// Emits one instruction; returns a description of it if it has no Rust
 /// translation.
+/// `OrdMap::sealed(…)` for a `new_obj` tagged with a sealed Kind.
+fn sealed_new_obj(program: &casm::Program, instr: &casm::Instruction) -> Option<String> {
+    if instr.op != "new_obj" {
+        return None;
+    }
+    let kind = instr.args.get("kind")?.as_str()?;
+    let fields = casm::sealed_fields(program.kind_table()?, kind)?;
+    let list: Vec<String> = fields.iter().map(|f| format!("{f:?}")).collect();
+    Some(format!("OrdMap::sealed({kind:?}, &[{}])", list.join(", ")))
+}
+
 fn emit_body(
     out: &mut String,
     instr: &casm::Instruction,
