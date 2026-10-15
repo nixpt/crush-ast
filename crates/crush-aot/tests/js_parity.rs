@@ -1,0 +1,218 @@
+//! JS e2e parity on the AOT backends: **exact or loud** (CRUSH-zorro-4).
+//!
+//! Every program in `crush-lang-js/tests/node_corpus/` is compiled (walker →
+//! CASM) by the Rust and C backends. A run that succeeds must print exactly
+//! what `node` printed (`<name>.out`); anything else must fail visibly — a
+//! walker/compile error or a non-zero exit — never print something different.
+//! The VM half of the harness (and the meaning of the lists) is in
+//! `crush-lang-js/tests/node_corpus_test.rs`; this file mirrors
+//! `python_parity.rs`.
+//!
+//! Per backend:
+//! - `*_LOUD`: programs that must stay loud. One that starts matching fails
+//!   the test ("now exact — remove it from the list").
+//! - `*_SILENT`: programs that print wrong output today, keyed to the ticket
+//!   that fixes them. Same bar as the VM: an unlisted silently-wrong program
+//!   fails; a listed one that matches or turns loud must be moved/removed.
+//!
+//! Run with `--nocapture` for the per-area match / loud / silent table.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crush_aot::AotCompiler;
+
+/// Rust backend: programs that must stay loud — `(program, why / fixing ticket)`.
+const RUST_LOUD: &[(&str, &str)] = &[
+    ("arr_basic", "CRUSH-zorro-15: no indexOf/includes cap in AOT"),
+    ("arr_hof", "CRUSH-zorro-20: callbacks; no join/reduce cap in AOT"),
+    ("arr_slice_splice", "CRUSH-zorro-15: no join cap in AOT"),
+    ("arr_sort", "CRUSH-zorro-15/20: no sort/join cap in AOT"),
+    ("arr_spread_call", "CRUSH-zorro-23: call-argument spread"),
+    ("async_generator", "out of scope: generators"),
+    ("async_then", "out of scope: async/Promise"),
+    ("builtin_json", "CRUSH-zorro-17: JSON has no AOT runtime"),
+    ("builtin_map_set", "CRUSH-zorro-17: Map/Set"),
+    ("builtin_math", "CRUSH-zorro-17: math.* caps have no AOT lowering"),
+    ("builtin_number_conv", "CRUSH-zorro-17: toString/toFixed"),
+    ("class_basic", "out of scope: classes (CRUSH-251 object model)"),
+    ("class_extends", "out of scope: classes (CRUSH-251 object model)"),
+    ("ctrl_finally", "CRUSH-zorro-7: try/finally has no AOT lowering (silently wrong on the VM)"),
+    ("ctrl_for_in", "CRUSH-zorro-16: for-in; no join cap in AOT"),
+    ("ctrl_try_catch", "CRUSH-zorro-19: try/throw has no AOT lowering"),
+    ("fn_closure_counter", "CRUSH-zorro-20: closure capture (CRUSH-251)"),
+    ("fn_default_param", "CRUSH-zorro-18: default parameters"),
+    ("fn_higher_order", "CRUSH-zorro-20: function values (CRUSH-251)"),
+    ("obj_destructure", "CRUSH-zorro-16: destructuring"),
+    ("obj_literal", "CRUSH-zorro-16: Object.keys; no join cap in AOT"),
+    ("obj_spread", "CRUSH-zorro-16: object spread"),
+    ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
+    ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
+    ("ops_int_overflow", "CRUSH-zorro-13: number model"),
+    ("ops_nullish", "CRUSH-zorro-12: ??"),
+    ("ops_typeof", "CRUSH-zorro-12: typeof"),
+    ("str_methods", "CRUSH-zorro-14: string methods"),
+    ("str_methods2", "CRUSH-zorro-14: string methods"),
+    ("str_replace", "CRUSH-zorro-14: string methods"),
+];
+
+/// Rust backend: silently-wrong programs today — `(program, fixing ticket, symptom)`.
+/// The first block matches the VM's `KNOWN_SILENT`; the second block is loud on
+/// the VM but silently wrong on AOT, mostly because AOT reads an undefined
+/// name / missing slot / out-of-range index as `null` where the VM errors.
+const RUST_SILENT: &[(&str, &str, &str)] = &[
+    ("arr_print", "CRUSH-zorro-10", "console.log([1, 'a']) prints `[1, a]`"),
+    ("ctrl_for_in_array", "CRUSH-zorro-23", "for-in over an array yields elements, not indices"),
+    ("ctrl_labels", "CRUSH-zorro-6", "labels ignored"),
+    ("misc_console_error", "CRUSH-zorro-23", "console.error writes to stdout"),
+    ("obj_computed_key", "CRUSH-zorro-23", "computed key `{[k]: v}` lost"),
+    ("obj_print", "CRUSH-zorro-10", "console.log({a: 1, b: 'two'}) prints `{a: 1, b: two}`"),
+    ("obj_setter", "CRUSH-zorro-23", "setter body emptied"),
+    ("ops_logical_value", "CRUSH-zorro-22", "&&/|| yield booleans"),
+    ("ops_loose_eq", "CRUSH-zorro-22", "== lowered as ==="),
+    ("ops_string_concat", "CRUSH-zorro-9", "'x' + 6.0 prints `x6.0`"),
+    ("ops_template_escape", "CRUSH-zorro-9", "template literals use the raw text"),
+    ("scope_bare_block", "CRUSH-zorro-5", "bare block dropped"),
+    ("scope_bare_block_assign", "CRUSH-zorro-5", "bare block dropped: assignment lost"),
+    ("scope_block_shadow", "CRUSH-zorro-5", "bare block dropped"),
+    // AOT only (loud on the VM):
+    ("arr_spread", "CRUSH-zorro-23", "spread dropped, and b[2] out of range reads as null: `2 null`"),
+    ("fn_rest_param", "CRUSH-zorro-18", "rest parameter: xs.length prints 0"),
+    ("misc_console_multi", "CRUSH-zorro-12", "`undefined` prints `null`"),
+    ("misc_undefined", "CRUSH-zorro-12", "undefined / out-of-range index / missing field print `null`"),
+    ("ops_nan", "CRUSH-zorro-12", "`NaN` reads as null, so NaN === NaN is true"),
+    ("ops_optional_chain", "CRUSH-zorro-12", "o?.x?.y prints `null`, not `undefined`"),
+];
+
+/// C backend: identical to the Rust backend today. Split when they diverge.
+const C_LOUD: &[(&str, &str)] = RUST_LOUD;
+const C_SILENT: &[(&str, &str, &str)] = RUST_SILENT;
+
+fn corpus() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crush-lang-js/tests/node_corpus");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("corpus dir")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "js"))
+        .collect();
+    files.sort();
+    assert!(files.len() >= 90, "corpus shrank: {}", files.len());
+    files
+}
+
+enum Outcome {
+    Exact,
+    Loud(String),
+    Wrong(String),
+}
+
+/// Program stdout without the type-tagged result line the runner prints last.
+fn run(so: &Path, expected: &str) -> Outcome {
+    let out = Command::new(env!("CARGO_BIN_EXE_crush-aot-runner")).arg(so).output().expect("spawn runner");
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Outcome::Loud(format!("exit {:?}: {}", out.status.code(), err.trim().lines().next().unwrap_or("")));
+    }
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let body = text.trim_end_matches('\n');
+    let printed = match body.rfind('\n') {
+        Some(i) => format!("{}\n", &body[..i]),
+        None => String::new(),
+    };
+    if printed == expected { Outcome::Exact } else { Outcome::Wrong(printed) }
+}
+
+fn first_line(e: impl std::fmt::Display) -> String {
+    format!("{e:#}").lines().next().unwrap_or("").to_string()
+}
+
+fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> Outcome {
+    let cast = match crush_lang_js::js_to_cast(source, "js") {
+        Ok(c) => c,
+        Err(e) => return Outcome::Loud(format!("walker: {}", first_line(e))),
+    };
+    let casm = match crush_frontend::compiler::Compiler::new().compile(cast) {
+        Ok(c) => c,
+        Err(e) => return Outcome::Loud(format!("compile: {}", first_line(e))),
+    };
+    let aot = AotCompiler::new();
+    let built = if backend == "rust" {
+        aot.compile_casm(&casm, &format!("jsp_{name}_r"))
+    } else {
+        aot.compile_c(&casm, &format!("jsp_{name}_c"), "gcc")
+    };
+    match built {
+        Ok(so) => run(&so, expected),
+        Err(e) => Outcome::Loud(format!("aot: {}", first_line(e))),
+    }
+}
+
+fn check(backend: &str, known_loud: &[(&str, &str)], known_silent: &[(&str, &str, &str)]) {
+    let files = corpus();
+    let mut problems = Vec::new();
+    for n in known_loud.iter().map(|e| e.0).chain(known_silent.iter().map(|e| e.0)) {
+        if !files.iter().any(|p| p.file_stem().is_some_and(|s| s == n)) {
+            problems.push(format!("{n}: listed for {backend}, but no such corpus program"));
+        }
+    }
+    let mut by_area: BTreeMap<String, [usize; 3]> = BTreeMap::new();
+    println!("\nJS corpus on AOT {backend}");
+    for path in &files {
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        let source = std::fs::read_to_string(path).unwrap();
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        let loud_entry = known_loud.iter().find(|e| e.0 == name);
+        let silent_entry = known_silent.iter().find(|e| e.0 == name);
+        let outcome = compile_and_run(backend, &name, &source, &expected);
+        let slot = match outcome {
+            Outcome::Exact => 0,
+            Outcome::Loud(_) => 1,
+            Outcome::Wrong(_) => 2,
+        };
+        by_area.entry(name.split('_').next().unwrap_or(&name).to_string()).or_default()[slot] += 1;
+        match (&outcome, loud_entry, silent_entry) {
+            (Outcome::Exact, None, None) => {}
+            (Outcome::Exact, Some(_), _) => {
+                problems.push(format!("{name}: now exact on {backend} — remove it from the loud list"))
+            }
+            (Outcome::Exact, _, Some((_, t, _))) => {
+                problems.push(format!("{name}: now exact on {backend} — remove it from the silent list ({t})"))
+            }
+            (Outcome::Loud(why), Some(_), _) => println!("  loud as expected  {name}: {why}"),
+            (Outcome::Loud(why), None, Some((_, t, _))) => problems.push(format!(
+                "{name}: was silently wrong on {backend} ({t}), now loud ({why}) — move it to the loud list"
+            )),
+            (Outcome::Loud(why), None, None) => problems.push(format!("{name}: {backend} failed: {why}")),
+            (Outcome::Wrong(_), _, Some((_, t, what))) => println!("  KNOWN SILENT      {name} [{t}]: {what}"),
+            (Outcome::Wrong(got), _, None) => problems.push(format!(
+                "{name}: {backend} printed WRONG output (SILENTLY WRONG):\n    node:  {expected:?}\n    crush: {got:?}"
+            )),
+        }
+    }
+    println!("\nJS corpus on AOT {backend}");
+    println!("  {:<10} {:>5} {:>5} {:>6}", "area", "match", "loud", "silent");
+    let mut total = [0; 3];
+    for (a, c) in &by_area {
+        println!("  {a:<10} {:>5} {:>5} {:>6}", c[0], c[1], c[2]);
+        for (t, n) in total.iter_mut().zip(c) {
+            *t += n;
+        }
+    }
+    println!("  {:<10} {:>5} {:>5} {:>6}", "TOTAL", total[0], total[1], total[2]);
+    assert!(problems.is_empty(), "{} problem(s) on {backend}:\n{}", problems.len(), problems.join("\n"));
+}
+
+#[test]
+fn rust_backend_is_exact_or_loud() {
+    check("rust", RUST_LOUD, RUST_SILENT);
+}
+
+#[test]
+fn c_backend_is_exact_or_loud() {
+    if Command::new("gcc").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+        eprintln!("gcc not found; skipping the C backend");
+        return;
+    }
+    check("c", C_LOUD, C_SILENT);
+}
