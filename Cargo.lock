@@ -437,6 +437,7 @@ version = "0.6.0"
 dependencies = [
  "bitflags 2.13.0",
  "byteorder",
+ "crush-cosm",
  "crush-errors",
  "hex",
  "rmp-serde",
@@ -1279,6 +1280,7 @@ dependencies = [
  "clap",
  "crush-caison",
  "crush-cast",
+ "crush-cosm",
  "crush-errors",
  "crush-frontend",
  "crush-index",
@@ -1464,6 +1466,7 @@ dependencies = [
  "anyhow",
  "casm",
  "crush-buckets",
+ "crush-cosm",
  "crush-diagnostics",
  "crush-errors",
  "crush-ffi",

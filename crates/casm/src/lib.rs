@@ -588,8 +588,46 @@ pub struct Program {
     /// Optional language hint for the program (e.g., "crush", "python")
     #[serde(default)]
     pub lang: Option<String>,
+    /// COSM K1.3 (CRUSH-zorro-42): the program's kind table — every object
+    /// declaration (`KindDecl` / `InterfaceDecl`) its source lowered to COSM.
+    /// `None` for a program that declares none, and for CASM written before
+    /// the field existed (it is omitted when `None`, so such a program
+    /// serializes exactly as before).
+    ///
+    /// Keep this the **last** field: the binary format encodes a struct as a
+    /// positional array, and an omitted trailing field is what lets old
+    /// binary CASM (four fields) still load. In the binary format the module
+    /// is embedded as its canonical COSM JSON (see [`cosm_serde`]).
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "cosm_serde")]
+    pub cosm: Option<crush_cosm::CosmModule>,
 }
+
 impl Program {
+    /// A program with no functions, the current [`CASM_VERSION`] and every
+    /// other field empty. Prefer this (or [`Default`]) plus field assignment
+    /// to a struct literal, so a new field doesn't break every construction
+    /// site.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The kind table, if the program has a non-empty one (at least one Kind
+    /// or interface). An engine that doesn't implement COSM must refuse such
+    /// a program (see [`Program::refuse_cosm`]).
+    pub fn kind_table(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref().filter(|m| !cosm_is_empty(m))
+    }
+
+    /// `Err(message)` when the program has a non-empty kind table: the
+    /// load/compile-time refusal of an engine that doesn't implement COSM
+    /// objects yet. `engine` names it in the message.
+    pub fn refuse_cosm(&self, engine: &str) -> std::result::Result<(), String> {
+        match self.kind_table() {
+            Some(module) => Err(cosm_unsupported_message(module, engine)),
+            None => Ok(()),
+        }
+    }
+
     /// Serialize program to bytes
     pub fn serialize(&self, format: Format) -> Result<Vec<u8>> {
         match format {
@@ -695,6 +733,61 @@ impl Default for Program {
             functions: HashMap::new(),
             manifest: Manifest::default(),
             lang: None,
+            cosm: None,
+        }
+    }
+}
+
+/// Whether a COSM module declares nothing (no Kind, no interface).
+pub fn cosm_is_empty(module: &crush_cosm::CosmModule) -> bool {
+    module.kinds.is_empty() && module.interfaces.is_empty()
+}
+
+/// The refusal an engine without COSM support gives a program with a kind
+/// table: names the engine, the follow-up ticket and what the program
+/// declares.
+pub fn cosm_unsupported_message(module: &crush_cosm::CosmModule, engine: &str) -> String {
+    let mut declared = Vec::new();
+    if !module.kinds.is_empty() {
+        let names: Vec<&str> = module.kinds.iter().map(|k| k.name.as_str()).collect();
+        declared.push(format!("Kinds {}", names.join(", ")));
+    }
+    if !module.interfaces.is_empty() {
+        let names: Vec<&str> = module.interfaces.iter().map(|i| i.name.as_str()).collect();
+        declared.push(format!("interfaces {}", names.join(", ")));
+    }
+    format!(
+        "COSM objects aren't supported on {engine} yet (CRUSH-zorro-43): the program declares {}",
+        declared.join(" and ")
+    )
+}
+
+/// Serde for [`Program::cosm`]: the module as-is in human-readable formats
+/// (CASM JSON), and as its canonical COSM JSON text in binary ones. The COSM
+/// schema omits empty fields, which a positional binary encoding (MessagePack
+/// structs-as-arrays, as [`Format::Binary`] uses) can't represent.
+pub mod cosm_serde {
+    use crush_cosm::CosmModule;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Option<CosmModule>, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            v.serialize(s)
+        } else {
+            v.as_ref().map(CosmModule::to_json).serialize(s)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<CosmModule>, D::Error> {
+        if d.is_human_readable() {
+            Option::<CosmModule>::deserialize(d)
+        } else {
+            match Option::<String>::deserialize(d)? {
+                Some(json) => CosmModule::from_json(&json)
+                    .map(Some)
+                    .map_err(|e| serde::de::Error::custom(format!("kind table: {e}"))),
+                None => Ok(None),
+            }
         }
     }
 }
