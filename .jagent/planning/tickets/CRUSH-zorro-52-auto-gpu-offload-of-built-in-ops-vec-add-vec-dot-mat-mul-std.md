@@ -7,7 +7,7 @@
 | **Status** | Backlog |
 | **Phase** | VM / M5 (backends) |
 | **Assignee** | unassigned |
-| **Dependencies** | CRUSH-zorro-51 (shared GPU runtime, kernel interpreter), CRUSH-zorro-3 |
+| **Dependencies** | CRUSH-zorro-53 (silent coercion — fix first), CRUSH-zorro-51 (shared GPU runtime), CRUSH-zorro-3 |
 | **Estimated effort** | L |
 | **Filed by** | claude (vega) — 2026-10-15, GPU viability follow-up (owner request) |
 
@@ -28,23 +28,25 @@ thread end to end: copies dominate). So:
 - **`VEC_ADD`, `VEC_DOT`, `sum`** — memory-bound: one-shot offload **loses**; worth it only for data
   already resident on the device (a later residency ticket). Don't offload them per call.
 
-## Prerequisites (fix first — silently wrong today)
+## Prerequisite
 
-- `VEC_ADD` / `VEC_DOT` / `MAT_MUL` turn a non-numeric element into `0.0` and truncate to the
-  shorter array (`len = min(a, b)`) without an error. Offloading would copy that behaviour. Make them
-  loud (type error / length-mismatch error) on both engines first.
+CRUSH-zorro-53: `VEC_ADD` / `VEC_DOT` / `MAT_MUL` silently turn non-numbers into `0.0` and truncate
+mismatched lengths — filed separately (it is wrong today, offload or not) and fixed first.
 
 ## Design constraints
 
-- **Identical results, CPU or GPU.** Built-ins compute in f64 today. f64 on consumer GPUs runs at
-  ~1/64 rate (still a win for `MAT_MUL` at size) — keep f64, do not silently drop to f32 (that is
-  `gpu_map`'s explicit choice, not a built-in's).
+- **Identical results, CPU or GPU.** Built-ins compute in f64 today. Keep f64 — don't silently
+  drop to f32 (that is `gpu_map`'s explicit choice, not a built-in's). But consumer GPUs run f64 at
+  ~1/64 rate (the 5070 Ti included), so the GPU only wins above a size where it beats a blocked f64
+  GEMM on all CPU cores — **measure the crossover per box and device** (a calibration run cached per
+  device), never a fixed constant, or auto-offload makes some programs slower.
 - **Reductions** (`VEC_DOT`, `sum`, `MAT_MUL` inner products): summation order changes the result.
   Define one deterministic order (blocked pairwise tree) and use it on the CPU path too, so both
-  give the same bits — a behaviour change for the CPU path that needs its own corpus pin.
-- **Threshold, not heuristics:** offload only above a per-op size threshold measured on the
-  hardware, only when a GPU executor is registered and the `gpu` grant is given; `CRUSH_GPU=off`
-  forces the CPU. `gpu.backend()` reports which ran (per the zorro-51 review).
+  give the same bits. That changes today's f64 results in the last bits for existing programs: a
+  deliberate behaviour change — changelog entry, corpus pins updated in the same PR.
+- **Never without the grant:** implicit GPU use without the `gpu` grant would be a silent
+  permission escalation. Without it the CPU path runs, with identical results. `CRUSH_GPU=off`
+  forces the CPU; `gpu.backend()` reports which ran.
 - Runs through the shared GPU runtime proposed in CRUSH-zorro-51 (backend trait, module cache,
   typed buffers); built-in kernels ship precompiled (PTX/WGSL text in the crate), not built per call.
 
