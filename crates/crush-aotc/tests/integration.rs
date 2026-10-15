@@ -195,3 +195,51 @@ fn truthiness_is_canonical() {
         "{out}"
     );
 }
+
+/// COSM K1.3 (CRUSH-zorro-42): a kind table whose Kinds all behave as plain
+/// maps (Crush's defaults) compiles and runs like the scheduler VM; a Kind a
+/// map can't represent is refused before any C is generated.
+const COSM_POINT: &str = r#"
+struct Point { x: int, y: int }
+impl Point {
+    fn new(x, y) { return Point { x: x, y: y }; }
+    fn norm2(self) { return self.x * self.x + self.y * self.y; }
+}
+trait Shape { fn area(self); fn sides(self) { return 4; } }
+impl Shape for Point { fn area(self) { return 100; } }
+fn main() {
+    let p = Point::new(3, 4)
+    print(Point::norm2(p) + Point::Shape::area(p) + Shape::sides(p))
+}
+"#;
+
+/// The COSM rule lets a map-compatible kind table through on crush-aotc, as on
+/// every engine. crush-aotc has no objects or maps at all, though: the struct
+/// instances are refused as object ops — loudly, where they used to compile to
+/// C that read every field as the last value set (this program printed 136,
+/// not the VM's 129).
+#[test]
+fn a_map_compatible_kind_table_passes_the_cosm_rule_but_objects_are_refused() {
+    let program = crush_frontend::compile_crush_source(COSM_POINT).expect("frontend");
+    assert!(program.kind_table().is_some());
+    assert_eq!(program.refuse_cosm("crush-aotc"), Ok(()));
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("objects refused");
+    let err = err.to_string();
+    assert!(!err.contains("COSM"), "{err}");
+    assert!(err.contains("(objects and maps, including struct instances) isn't supported"), "{err}");
+    // The same refusal for a plain map, without any kind table.
+    let plain = crush_frontend::compile_crush_source("fn main() { let p = {x: 3, y: 4}\n print(p.x) }\n").unwrap();
+    assert!(AotcCompiler::new(AotcOpts::default()).compile(&plain).is_err());
+}
+
+#[test]
+fn a_kind_maps_cant_represent_is_refused() {
+    let mut program = crush_frontend::compile_crush_source(COSM_POINT).expect("frontend");
+    let mut v = serde_json::to_value(program.cosm.as_ref().unwrap()).unwrap();
+    v["kinds"][0]["equality"] = serde_json::json!("identity");
+    program.cosm = Some(serde_json::from_value(v).unwrap());
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("refused");
+    let err = err.to_string();
+    assert!(err.starts_with("COSM objects aren't supported on crush-aotc yet (CRUSH-zorro-43)"), "{err}");
+    assert!(err.contains("`Point` declares equality: identity"), "{err}");
+}

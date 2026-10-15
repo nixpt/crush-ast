@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-42 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (PR: agent/vega/CRUSH-zorro-42) |
 | **Phase** | COSM K1 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | CRUSH-zorro-40 |
 | **Estimated effort** | M |
 | **Filed by** | vega — 2026-10-15, COSM phase K1 (owner decisions recorded in the design doc and dejavue) |
@@ -19,10 +19,35 @@ them with objects treated as maps.
 
 ## Success criteria
 
-- [ ] `casm::Program` gains `cosm: Option<CosmModule>` (serde, backward compatible: absent = none).
-- [ ] CVM1 bytecode (`crates/crush-vm/src/bytecode.rs`) gains a kind-table section (versioned; old blobs still load). `casm_to_vm` writes it; the disassembler prints it; `Program::from_blob`/`to_blob` round-trip it.
-- [ ] **Loud elsewhere:** FastVM, the JIT, crush-aot (Rust + C) and crush-aotc refuse a program with a non-empty kind table ("COSM objects aren't supported on <engine> yet (CRUSH-zorro-43)"), with a test for each.
-- [ ] Tests: round-trip a program with the Point/Shape fixture from zorro-40 through CASM JSON → CVM1 blob → load; old blobs without the section still load.
+- [x] `casm::Program` gains `cosm: Option<CosmModule>` (serde, backward compatible: absent = none).
+- [x] CVM1 bytecode (`crates/crush-vm/src/bytecode.rs`) gains a kind-table section (versioned; old blobs still load). `casm_to_vm` writes it; the disassembler prints it; `Program::from_blob`/`to_blob` round-trip it.
+- [x] **Loud elsewhere:** FastVM, the JIT, crush-aot (Rust + C) and crush-aotc refuse a program with a non-empty kind table ("COSM objects aren't supported on <engine> yet (CRUSH-zorro-43)"), with a test for each.
+- [x] Tests: round-trip a program with the Point/Shape fixture from zorro-40 through CASM JSON → CVM1 blob → load; old blobs without the section still load.
+
+## Resolution
+
+- `casm::Program.cosm: Option<CosmModule>` — the last field; absent = `None`, omitted when `None` (CASM JSON and
+  binary CASM without a kind table are byte-identical to before). Binary CASM embeds it as COSM JSON text (the COSM
+  schema omits empty fields, which a positional encoding can't represent). `Program::new()`, `kind_table()`,
+  `refuse_cosm(engine)`. The compiler fills it from its COSM module.
+- CVM1: container **version 3** = the v2 layout + a trailing section `kt_format(1) | kt_len(4 BE) | COSM JSON`
+  (`kt_format` 1 = JSON). Written only for a non-empty kind table; every other program is still a byte-identical
+  v2 blob. v1/v2 blobs load with `cosm = None`; a pre-K1.3 runtime rejects a v3 blob as an unsupported version.
+  Unknown section formats, malformed COSM and trailing bytes are `Error::BadKindTable`.
+- The disassembler prints a summary (comments) and a `.cosm <json>` directive; the assembler reads it back.
+- **One rule for every engine** (owner decision on #219): `casm::cosm_unsupported_reason`. A Kind that behaves
+  exactly as today's maps — Crush's defaults (`reference`, `structural`, `literal`) with no hooks, accessors or
+  field defaults — runs; any other is refused at load/compile time, naming the engine, the Kind and the strategy,
+  with `(CRUSH-zorro-43)`. Applied by the scheduler VM and portable VM (`crush_vm::cosm_gate`, before the first
+  instruction), FastVM and the JIT (their shared lowering), crush-aot (Rust and C) and crush-aotc
+  (`casm::Program::refuse_cosm`). Crush programs with `struct` / `impl` / `trait` on the defaults run on every
+  engine and agree with the scheduler VM (`crush-aot/tests/cosm_k1_lifted_methods.rs`), as under K1.2.
+- crush-aotc has no objects or maps at all: `new_obj` / `set_field` / `get_field` were dropped as unhandled ops, so
+  every field read returned the last value set (the Point program printed 136, not 129). They are now refused
+  loudly, for any program; crush-aotc stays loud on struct instances until it gets objects.
+- crush-aotc mangles function names injectively with a `cf_` prefix; qualified names (`Point::norm2`) used to reach
+  the C source verbatim.
+- Decision recorded in dejavue (*CVM1 kind table: a version-3 trailing section…*).
 
 ## Technical approach
 

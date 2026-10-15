@@ -96,5 +96,6 @@ getrandom = { version = "0.2", features = ["js"] }
 [dev-dependencies]
 crush-cast = { workspace = true }
 crush-frontend = { workspace = true }
+crush-cosm = { workspace = true }
 crush-index = { workspace = true }
 tempfile = "3"
