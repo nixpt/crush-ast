@@ -1146,3 +1146,14 @@ Rejected alternatives:
 Outcome:
 CRUSH-270 filed. One-release transition: implicit outputs still work with a compile warning (including the clobber case), then no header means no outputs. The env-only fallback is removed (inputs are Python names or absent). Issue #225 analyzer fix first.
 
+
+## 2026-10-15T14:42:52-05:00 — [TACTICAL] [PROPOSED] Propose xps-8 through xps-13 parity completion using retained Rust facts and shared kernels
+
+Reason:
+Ownership Copy metadata cannot establish numeric width, char/String/unit Debug behavior, or typed power results. Preserve source facts and evaluate operands once; unsupported domains must be refused before execution. Retain xps-10 through xps-12 implementations in their existing review lane. Shared AOT support must preserve Unicode and representation semantics rather than approximate them independently.
+
+Artifacts: .jagent/planning/designs/rust-parity-xps-8-13.md
+
+Outcome:
+Proposed specification and six existing ticket refinements; xps-8 then xps-9 then typed xps-13 work, with existing review closure before CLI release. Private C bridge and rust.debug contracts require design review.
+

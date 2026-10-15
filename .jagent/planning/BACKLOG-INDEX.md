@@ -16,6 +16,25 @@
 > Sources: `ROADMAP.md` (M5–M11 specs), `research/2026-07-14-crush-ast-opportunities.md`
 > (ranked findings), CRUSH-71 audit (in flight, panini), dejavue timeline captures.
 
+## Rust SDK completion lane (CRUSH-xps identity)
+
+Detailed proposal: [xps-8–13 completion spec](designs/rust-parity-xps-8-13.md).
+These existing IDs belong to this box's `CRUSH-xps` lane, separate from the
+`CRUSH-zorro` and historical numeric ranges. No IDs are re-minted by this update.
+
+| ID | Dispatch state | Specification |
+|---|---|---|
+| CRUSH-xps-8 | Backlog; first new implementation | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
+| CRUSH-xps-9 | Backlog; after numeric facts, formatter work can start independently | [Typed Debug and macro evaluation](tickets/CRUSH-xps-9-rust-debug-format.md) |
+| CRUSH-xps-10 | In review in #213; preserve implementation/evidence | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
+| CRUSH-xps-11 | In review in #213; preserve implementation/evidence | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |
+| CRUSH-xps-12 | In review in #213; preserve implementation/evidence | [Complete bodies and safe value-block refusal](tickets/CRUSH-xps-12-rust-expression-block-lowering.md) |
+| CRUSH-xps-13 | Backlog; numeric dispatch after xps-8, strings after xps-5 | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
+
+Snapshot: 2026-10-15; main `30288bc`, SDK stack through #233 (`1be8c51`).
+The specification includes current-main integration requirements; this table
+is not a claim that in-review changes have landed or been released.
+
 ## ID ledger
 
 | Range | Allocation |

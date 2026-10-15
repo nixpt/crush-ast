@@ -69,3 +69,63 @@ with the frontend compiler, while continuing to reject arbitrary unknown calls.
   range bounds, body checking, and existing struct-field iteration.
 - The shared helper check also addresses the `compile_cast` rejection described
   in CRUSH-199; that ticket's other JS lowering gaps remain separate.
+
+## Detailed review specification (2026-10-15)
+
+[Batch spec](../designs/rust-parity-xps-8-13.md#xps-10-12-close-the-existing-review-contracts).
+This ticket's implementation remains **In review in PR #213**. The checked
+acceptance above describes that implementation; these review cases define
+closure evidence and any focused correction still required. Do not reset the
+ticket to Backlog or build a duplicate helper system.
+
+### Shared contract
+
+- `walker_intrinsics::lookup` owns arity, binding-target/write behavior and
+  result class. Semantic analysis, optimization and compilation agree.
+- Assignment evaluates its RHS once, writes the named binding and yields unit
+  (runtime null). A target is an lvalue, not an ordinary read or a foldable
+  constant; RHS self-reference sees the prior runtime value.
+- The loop iterable is checked/evaluated in the enclosing environment, and the
+  iteration binding exists only in the body. Preserve outer bindings with the
+  same spelling. Branch and loop writes invalidate unsafe constant assumptions.
+- Compiler helpers are distinguished from source calls. A source function or
+  local callable named like a helper must retain its source behavior or be
+  rejected at the Rust boundary with an explicit reserved-name diagnostic.
+  Metadata respected only by the walker is not sufficient if later compiler
+  stages reinterpret the same call by name.
+- Unknown helpers/calls, wrong arity, invalid lvalues and bad range operands
+  remain errors. Internal helpers do not grant host capabilities.
+
+### Review matrix
+
+| Case | Required proof |
+|---|---|
+| Rust while/for accumulators | Exact `5` and `45`; no uninitialized slots |
+| `x = x + 1`, compound updates, nested branches/loops | Runtime values retained after optimization; source operand evaluation once |
+| Assignment used as a unit-valued argument | Unit result; assigned collection keeps its xps-7 value class |
+| Loop variable shadows an outer local | Body sees the iteration binding; outer local is unchanged afterwards |
+| Reference to loop-local after the loop | Semantic rejection, not a stale VM slot |
+| Wrong helper arity, nonvariable assignment, unknown helper | Early validation rejection through public compilation |
+| User source helper-like function/local names | Correct source dispatch or source-located refusal |
+| Python/JS assignments using the shared helper contract | Supported compile paths remain correct; malformed operands still fail |
+| Main's COSM records and Boa default walker integration | Shared helper/scope corrections preserve their supported paths |
+
+### Review exit
+
+- [ ] Map each matrix row to an existing regression or add the missing focused
+      case/correction in the implementation review. Identify exact commands and
+      live SDK output; do not infer coverage from an aggregate green test count.
+- [ ] Refresh the implementation against current main, including the shared
+      compiler/COSM changes, then run frontend helper/compiler tests and the
+      affected SDK/walker suites.
+- [ ] Merge PR #213 (and dependent proof where necessary) before marking Done.
+      The new numeric cast helper proposed by xps-8 must extend this shared
+      contract rather than bypass it.
+
+## Dispatch for review closure
+
+Inspect `crush-frontend/src/{walker_intrinsics,semantics,optimizer,compiler}`,
+`tests/walker_intrinsics.rs`, SDK source tests and xps-6/7 binding/value checks.
+Use the existing implementation branch or a focused dependent correction
+worktree. Validate one missing row at a time; preserve all previous proof and
+leave unrelated language changes with their owning tickets.

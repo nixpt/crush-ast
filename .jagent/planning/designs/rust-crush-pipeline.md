@@ -1,6 +1,6 @@
 # Rust ↔ Crush pipeline: phased plan
 
-**Status:** Proposed for review
+**Status:** Phase plan; see the completion addendum for current review state
 **Related work:** CRUSH-197, CRUSH-266, CRUSH-179, CRUSH-xps-1
 **Owner:** Crush language/runtime and SDK maintainers
 
@@ -17,23 +17,36 @@ These are three related paths with different contracts. Rust source translation
 does not make Crush a Cargo runner, and plugin wrappers do not import Rust's
 unstable ABI or sandbox native code.
 
-## Current baseline
+## Current baseline (2026-10-15 snapshot)
 
-- `crush-lang-rust` parses Rust with `syn` and lowers a documented subset to
-  CAST. Its corpus tests exercise CAST → CASM → CVM1 and compare printed output
-  with `rustc` for small fixtures; that corpus is VM-only, with no Rust AOT
-  parity suite yet. Unsupported imports and top-level items now fail loudly
-  (CRUSH-197 / CRUSH-266).
-- `crush-run` compiles Crush source. There is no production SDK or CLI entry
-  point that accepts Rust source as a normal run target.
-- Rust hosts can compile Crush with
-  `crush_lang_sdk::compile::compile_crush_source` and execute it with
-  `Runtime::run`.
-- The manual `cdylib` wrapper path is being added by CRUSH-xps-1 / PR #196:
-  the host selects the library and export allowlist; package code cannot grant
-  either. This is the first Rust-crate access mechanism.
-- CRUSH-179 tracks the standalone `crush-vm` ambient `os.cargo` and FFI gate.
-  It remains a security dependency for any future package-managed native build.
+Main is `30288bc`; the Rust SDK review stack is #213 → #220 → #224 → #233
+(head `1be8c51`). Features in that stack are unreleased until integrated and
+published; the existing SDK 0.6.0 API is not evidence that those additions ship.
+
+- `crush-lang-rust` parses with `syn`. PR #213 adds the public registry-backed
+  source API and conservative closure/block correctness fixes; xps-10–12 remain
+  In review there.
+- PR #220 adds the SDK VM/Rust AOT/C AOT conformance inventory. With the xps-6
+  bindings and xps-7 value changes through #233, it has 58 fixtures and three
+  known silent entries: integer cast/overflow (xps-8), String Debug (xps-9).
+  A green inventory still permits those pinned failures.
+- `crush-run` does not yet provide normal `.rs` source dispatch. xps-4 remains
+  gated on the Rust source contract and coordinates with CRUSH-zorro-27.
+- Rust hosts can compile `.crush` with `compile_crush_source` and execute it
+  with `Runtime::run` and explicit host capabilities. The in-review source API
+  adds language/extension selection through the walker registry.
+- Manual host-approved Rust plugin wrappers remain the crate-access model
+  (CRUSH-xps-1 / #196). Package code cannot choose native-code grants.
+  CRUSH-179 and a separate design gate future Cargo-managed native builds.
+- Main now has COSM K1.4 record runtime support (#222) and the Boa default
+  parser/feature layout (#228). Neither enables Rust struct syntax or closes
+  Rust numeric, formatting or AOT capability gaps. Integrate those shared
+  compiler/SDK changes before continuing runtime implementation.
+
+The detailed [xps-8–13 completion specification](rust-parity-xps-8-13.md)
+defines numeric facts, Debug/format evaluation, existing review closure,
+backend capability contracts and dispatch matrices. It preserves the six
+existing IDs; xps-10–12 are not new Backlog work.
 
 ## Phases
 
@@ -89,9 +102,10 @@ must fail loudly until their fixing ticket lands. CRUSH-xps-4 depends on all
 four fixing tickets as well as this harness, so the default runner cannot expose
 these known-silent cases early.
 
-The first silent cases to capture and fix are:
+The original reproductions below motivated the gate. Shadowing and flat vector
+clone now have fixes in review; the numeric case remains open:
 
-| Area | Rust source | `rustc` result | Current Crush result |
+| Area | Rust source | `rustc` result | Original Crush result |
 |---|---|---|---|
 | Block shadowing (xps-6) | `let x = 1; { let x = 2; println!("{}", x); } println!("{}", x);` | `2` / `1` | `2` / `2` |
 | `Vec::clone` (xps-7) | `let a = vec![1,2,3]; let mut b = a.clone(); b.push(4); println!("{} {}", a.len(), b.len());` | `3 4` | `4 4` |
@@ -155,10 +169,24 @@ the current implementation authorization.
 | CRUSH-xps-5 | Rust exact-or-loud gate | CRUSH-xps-3, CRUSH-197 | Silent mis-lowerings fail loudly; VM/AOT parity harness exists |
 | CRUSH-xps-6 | Rust block shadowing | CRUSH-xps-3, CRUSH-xps-5 | Preserve nested binding semantics or reject unsupported shadowing |
 | CRUSH-xps-7 | Rust collection/string value semantics | CRUSH-xps-3, CRUSH-xps-5 | `clone`, assignment, and argument passing are exact or loud |
-| CRUSH-xps-8 | Rust integer widths and casts | CRUSH-xps-3, CRUSH-xps-5 | Width, cast, wrapping, and overflow behavior is exact or loud |
-| CRUSH-xps-9 | Rust debug formatting | CRUSH-xps-3, CRUSH-xps-5 | `{:?}` is exact or rejected |
-| CRUSH-xps-4 | Shared-registry CLI dispatch | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7, CRUSH-xps-8, CRUSH-xps-9 | `.rs` is enabled only after all parity gates; other walkers reuse dispatch |
+| CRUSH-xps-8 | Rust integer widths and casts | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7 | Width, cast, wrapping, and overflow behavior is exact or loud |
+| CRUSH-xps-9 | Rust Debug and macro evaluation | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7; numeric descriptors after xps-8 | `{:?}` is exact or rejected |
+| CRUSH-xps-10 | Shared walker helper/loop contract | CRUSH-xps-2, CRUSH-197 | In-review implementation; close the helper/scope proof matrix in #213 |
+| CRUSH-xps-11 | Scalar closures exact or loud | CRUSH-xps-2, CRUSH-197; coordinate xps-6/7 | In-review implementation; close the parameter/capture proof matrix in #213 |
+| CRUSH-xps-12 | Complete bodies / safe value-block boundary | CRUSH-xps-3, CRUSH-xps-5, CRUSH-197 | In-review implementation; close the block/effects proof matrix in #213 |
+| CRUSH-xps-13 | Mapped capability parity on AOT | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-7; numeric dispatch after xps-8 | Shared kernels and compatible source method contracts |
+| CRUSH-xps-4 | Shared-registry CLI dispatch | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7, CRUSH-xps-8, CRUSH-xps-9, CRUSH-xps-10, CRUSH-xps-11, CRUSH-xps-12 | `.rs` is enabled only after all parity gates; other walkers reuse dispatch |
 
-CRUSH-xps-1 is the in-flight manual plugin MVP, not a prerequisite for the
+CRUSH-xps-1 is the manual plugin MVP, not a prerequisite for the
 source-language SDK phases. CRUSH-179 gates any later Cargo-managed build
 proposal, not the manual host-selected wrapper model.
+
+## Completion dispatch order
+
+Review/merge existing xps-10–12 evidence with the SDK stack. Implement xps-8,
+then xps-9, then xps-13's numeric portion; its string/kernel portion can proceed
+after the shared conformance infrastructure. xps-8 must reject/correct incompatible
+integer method results even if full AOT capability expansion waits for xps-13.
+Full AOT capability support is not an extra prerequisite for the VM-only xps-4
+CLI: its documented AOT refusals may remain. Source-level output/cast/format
+misbehavior must be exact or refused before that CLI is enabled.

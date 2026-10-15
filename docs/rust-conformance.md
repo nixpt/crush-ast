@@ -126,6 +126,14 @@ arguments, owned returns, captures, nested vectors, arrays, and borrowed views.
 The original vector-clone aliasing exception is removed; integer and Debug
 formatting silent divergences remain owned by xps-8/9.
 
+## Completion specifications
+
+The [xps-8–13 proposal](../.jagent/planning/designs/rust-parity-xps-8-13.md)
+defines the next numeric/Debug/mapped-capability slices and the review closure
+matrices for xps-10–12. It specifies future supported/refused domains; it does
+not expand the current implementation's accepted subset. Numeric method result
+types and effectful format arguments require explicit proof as well as stdout.
+
 ## Run the gate
 
 ```sh
