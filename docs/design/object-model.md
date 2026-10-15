@@ -1,8 +1,13 @@
-# Crush object model: Kinds — one mechanism, many object semantics
+# COSM — the Crush Object Semantic Model
 
-Status: **draft for review** (vega, 2026-10-15). Answers CRUSH-251's "design note: value representation
-of JS objects vs `Value::Map`" and widens it from JS to every walker language. Facts below are from
-`origin/main` at `c864367`.
+*Kinds: one mechanism, many languages' object semantics. Objects are lowered, like code.*
+
+Status: **design; owner decisions taken 2026-10-15** (vega). Answers CRUSH-251's "design note: value
+representation of JS objects vs `Value::Map`" and widens it from JS to every walker language. Facts below are
+from `origin/main` at `c864367`.
+
+**Naming:** **COSM** (Crush Object Semantic Model) is the lowered, declarative object model, the object-side
+sibling of CAST (code) and CASM (instructions). A **Kind** is a COSM declaration instantiated at run time.
 
 ## The problem
 
@@ -57,12 +62,63 @@ the moment it crosses into code from another language.
   library code.** One VM, one value representation, one GC, as `crushvm-rustpython.md` wants, but with
   **parameterised** semantics instead of a single fixed one. **Recommended.**
 
+## COSM: objects are lowered, like code
+
+Every walker already lowers *code* to one shared form, CAST, so the compiler, VMs and AOT backends never see
+JavaScript or Python, only CAST. COSM does the same for *objects*. A walker lowers each language's object
+declarations (JS `class`, Python `class`, Rust `struct`/`impl`/`trait`/`enum`, Go `type … struct`/`interface`,
+C `struct`, Dart class/mixin, Crush `struct`/`impl`/`trait`) to **COSM declarations**: plain, serializable
+data, like CAST nodes.
+
+```
+ source ──walker──►  CAST   (functions, statements, expressions)  ──compiler──►  CASM ──► VM / AOT
+                ╲
+                 ►  COSM   (KindDecl / InterfaceDecl: what each type is and how it behaves) ──► Kinds at load time
+```
+
+**What differs between languages is captured as a small, closed set of named strategies in the
+declaration**, not as per-language code. Each strategy is implemented **once** in the VM (and, where static,
+in AOT) and shared by every language that uses it. Python and Dart both use the C3 linearisation; Rust, Go and
+C share the value-semantics strategies.
+
+```text
+KindDecl {
+  name, home_lang, span                          // for diagnostics, like CAST meta
+  storage:     sealed { fields: [name: type, default?] } | open_dict | open_dict_with_slots
+  semantics:   reference | value(copy | move | clone_explicit)
+  parents:     [KindRef]
+  resolution:  none | single | c3 | prototype_chain | embedding_promotion
+  receiver:    dynamic_this | bound_self | explicit_value | explicit_ref
+  construct:   literal | ctor(fn) | js_new(ctor_fn) | py_new_init(new_fn?, init_fn)
+  members:     { name: method(fn) | field | accessor(get?, set?) | static(value | fn) }
+  hooks:       { missing, set, call, iter, op:<op>, op_reflected:<op>, eq, hash, cmp, str, repr }
+  conforms:    [ InterfaceRef + check: nominal | structural ]
+  equality:    identity | structural          // default when no `eq` hook
+}
+InterfaceDecl { name, home_lang, members: [signature], satisfaction: nominal | structural }
+```
+
+Why lower objects instead of running per-language libraries:
+- **One semantics per strategy, not per walker.** The JS walker doesn't implement prototype lookup; it declares
+  `resolution: prototype_chain`. bozo's frontend, the generic walker and AOT get identical behaviour for free.
+- **Inspectable and checkable, like CAST.** COSM is validated at compile time:
+  - an unlinearisable MRO is a compile error, as Python's `TypeError` is;
+  - a missing trait method or a Go interface that isn't satisfied are reported with source spans;
+  - a struct-pattern match tests the Kind (fixes CRUSH-zorro-37 properly).
+  Tools (LSP, polydex, docs) read COSM directly.
+- **Static where the language is static.** A sealed, value-semantics `KindDecl` (Rust, Go, C, Crush structs) has
+  a fixed layout known at compile time, so the compiler emits `GET_SLOT i` and direct calls and AOT compiles it
+  without any dynamic dispatch.
+- **Dynamic where the language is dynamic, with the same schema.** JS prototype mutation and Python's runtime
+  `type(name, bases, ns)` or class attribute assignment build or patch Kinds *at run time* in this same shape
+  (a Kind is a live COSM declaration with a version number), so static and dynamic paths can't drift apart.
+
 ## The concept: Kinds
 
 A **Kind** is a first-class runtime value that says how a family of values *behaves*. Every object points at
 its Kind. All object operations in CASM are a handful of **generic ops** that ask the object's Kind what to
-do. Each language supplies its object model as a **kind library**: functions that build and wire Kinds the
-way that language does (`py.type(name, bases, ns)`, `js.class(..)`, `rust.impl(..)`, `go.struct(..)`).
+do. Kinds are instantiated from the program's COSM declarations when it loads, and built or patched at run
+time only where the language itself is dynamic (JS prototypes, Python `type()`).
 
 ```
 value ──► Record { kind, slots }          generic ops            Kind
@@ -116,22 +172,26 @@ flat_map …`. Each language's API is a thin wrapper that keeps that language's 
 
 Laziness lives in the wrapper; the core is shared. This also unblocks #175 `parallel_map`.
 
-### 4. Kind libraries, one per language
+### 4. The strategy catalogue: what languages actually differ in
 
-| library | builds | notes |
+| dimension | strategies | used by |
 |---|---|---|
-| `lang/crush` | `struct`, and later `impl`/`trait` | Crush itself is the first consumer: native structs get a real Kind, which fixes `Pattern::Struct` ignoring the struct name |
-| `lang/js` | prototypes, `class`/`extends`/`super`, `new`, getters/setters | Kinds are mutable objects; the resolution order is the prototype chain |
-| `lang/py` | `type(name, bases, ns)` with **C3 MRO**, dunders, bound methods, properties | descriptors/metaclasses: a supported subset, the rest loud |
-| `lang/rust` | `struct` (value), `impl`, `trait` (static dispatch; `dyn` = a vtable Kind), `enum` (tagged Kinds) | value semantics: copy/move/clone decided at compile time |
-| `lang/go` | `struct` (value), methods, embedding (promoted members), `interface` (structural check) | interface satisfaction checked on assignment |
-| `lang/c` | value structs, no methods | layout-only Kind |
-| `lang/dart` (+ Java/Kotlin later) | classes, mixins (linearised like Python) | — |
+| member lookup (`resolution`) | `none` · `single` · `c3` · `prototype_chain` · `embedding_promotion` | Rust/C/Go-methods · Java/Kotlin · Python/Dart · JS · Go embedding |
+| receiver binding | `dynamic_this` · `bound_self` · `explicit_value` · `explicit_ref` | JS · Python · Rust `self`/Go value receivers · Rust `&self`/Go pointer receivers |
+| construction | `literal` · `ctor` · `js_new` · `py_new_init` | Rust/Go/C/Crush · Dart/Java · JS · Python |
+| storage | `sealed` · `open_dict` · `open_dict_with_slots` | Rust/Go/C/Crush/Dart · JS/Python · Python `__slots__` |
+| value semantics | `reference` · `value(copy)` · `value(move)` · `clone_explicit` | JS/Python/Dart · C/Go/Rust `Copy` · Rust · Rust `Clone` |
+| operators | `hooks` (+ `op_reflected`) · none | Python dunders, Rust trait impls, Dart `operator` · JS/Go/C |
+| interfaces | `nominal` · `structural` · duck (no decl) | Rust traits/Java · Go · JS/Python |
+| equality default | `identity` · `structural` | reference languages · Rust `PartialEq` derive/Go/C structs |
 
-Most of each library is **Crush code**, with a few native helpers (C3 linearisation, structural interface
-check). That puts language semantics in one reviewable place per language, out of the VM, the walkers and the
-AOT backends. The walkers then lower syntax to kind-library calls plus generic ops, and **stop encoding
-semantics themselves**.
+A new language is supported by choosing from this catalogue in its walker, not by writing a new runtime.
+Something that fits no strategy (JS `Proxy`, Python metaclasses beyond `type`) is **loud** until a strategy is
+added deliberately. That keeps the catalogue closed and reviewed.
+
+**What's left of "kind libraries"** is small: native helpers for the strategies (the C3 linearisation, the
+structural-interface check, the `js_new`/`py_new_init` sequences), and per-language default hooks (how Python
+`repr`s an instance, JS's default `toString`). They live once, beside the VM, not in each walker.
 
 ### 5. Value semantics
 
@@ -183,29 +243,33 @@ per program; instance cycles leak until CRUSH-121.
 
 | phase | delivers | proves |
 |---|---|---|
-| **K1** | `Record` + `Kind` values; `GET/SET/CALL_MEMBER`, `CONSTRUCT`; receiver policies; **`o.m(x)` stops compiling to a global capability** (methods resolve on the receiver; capability namespaces like `net.fetch` keep their syntax); Crush-native `struct` + methods as the first kind library | one language end to end |
+| **K1** | **`crush-cosm` crate** (the COSM schema: `KindDecl`/`InterfaceDecl`, serde like crush-cast, compile-time validation); `Record` + `Kind` runtime values loaded from COSM; `GET/SET/CALL_MEMBER`, `CONSTRUCT`; receiver strategies; **`o.m(x)` stops compiling to a global capability** (methods resolve on the receiver; capability namespaces like `net.fetch` keep their syntax); **Crush gains `impl` + `trait`** as the first COSM producer; struct patterns test the Kind (closes CRUSH-zorro-37's long-term fix) | one language end to end |
 | **K2** | the protocols (callable/iterable/eq/hash/str); `OP` dispatch; the HOF prelude in Crush; a VM re-entrancy API so host capabilities *can* call `Func`s | HOFs across languages |
-| **K3** | kind libraries: Python classes (C3, dunders, bound methods, `super`), JS classes/prototypes/`new`/`this` (with CRUSH-250), Rust structs/impl/traits/enums with value semantics, Go structs/methods/embedding/interfaces | each against its parity harness (cpython_corpus, node_corpus, rustc_corpus, a Go corpus) |
+| **K3** | walkers lower to COSM: Python classes (C3, dunders, bound methods, `super`), JS classes/prototypes/`new`/`this` (with CRUSH-250), Rust structs/impl/traits/enums with value semantics, Go structs/methods/embedding/interfaces | each against its parity harness (cpython_corpus, node_corpus, rustc_corpus, a Go corpus) |
 | **K4** | static fast paths (`GET_SLOT`, direct calls), inline caches, AOT for static Kinds | performance + AOT exact-or-loud |
 | **K5** | cross-language tests: a Python object used from JS in one program, and the reverse | the catalytic thesis |
 
 Each phase lands on the scheduler VM and portable VM first; FastVM/JIT/AOT are loud until they implement it.
 The bar is the parity spike's: VM exact, AOT exact-or-loud, never silently wrong.
 
-## Decisions for the owner
+## Decisions (owner, 2026-10-15)
 
-1. **Adopt Kinds (option D)** as the object model for Crush and every walker, instead of the JS-specific
-   remainder of CRUSH-251 plus per-language special cases.
-2. **Fidelity per language:** which dynamic corners are supported and which are loud (Python
-   metaclasses/descriptors beyond `property`; JS `Proxy`/`Reflect`/`Object.defineProperty`; Rust generics
-   beyond monomorphic use). Proposal: the subset each parity corpus needs, everything else loud.
-3. **Value semantics:** enforce move (a use after move is a loud error) or copy-on-assign for Rust? Proposal:
-   copy for `Copy` types, move with a loud use-after-move for the rest, as rustc does.
-4. **Crush-native surface:** does Crush itself grow `impl`/`trait` (or a `kind` declaration) on top of the same
-   mechanism, or keep `struct` only for now?
-5. **GC:** accept leaking instance cycles until CRUSH-121, or make CRUSH-121's root-set fix a prerequisite of K3?
+The owner accepted the recommendations:
+1. **Adopt Kinds / COSM** as the object model for Crush and every walker, replacing the JS-specific remainder of
+   CRUSH-251 and per-language special cases. Objects are lowered to COSM declarations, like code is lowered to CAST.
+2. **Fidelity per language:** the subset each language's parity corpus needs; everything else (Python
+   metaclasses/descriptors beyond `property`, JS `Proxy`/`Reflect`/`Object.defineProperty`, Rust generics beyond
+   monomorphic use) is **loud** until a strategy is added deliberately.
+3. **Rust value semantics:** copy for `Copy` types; move for everything else, with a **loud use-after-move**, as
+   rustc does. `.clone()` deep-copies.
+4. **Crush-native surface:** Crush grows **`impl` and `trait`** in K1, as the first COSM producer (dogfooding the
+   mechanism before other languages depend on it).
+5. **GC:** accept leaking instance cycles through K2; **CRUSH-121's root-set fix is a prerequisite of K3**, when
+   JS and Python object graphs (cyclic by nature) arrive.
 
 ## Bugs found during this survey (independent of this design)
+
+Filed as **CRUSH-zorro-37** and **CRUSH-zorro-38** (P0, #208).
 
 **Reproduced on `origin/main` `c864367`, silently wrong:**
 - **Crush `match` on a struct pattern ignores the struct's name** (`compiler.rs` `Pattern::Struct`).
