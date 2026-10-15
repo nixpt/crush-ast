@@ -147,67 +147,19 @@ cannot select a library or grant native code. Plugins are trusted native code
 and execute in the host process, so only load libraries you trust. Cargo is not
 run by `crush-pkg` to build them.
 
-Build a small wrapper crate against `crush-ffi`:
-
-```toml
-# rust-math/Cargo.toml
-[package]
-name = "rust-math"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-crush-ffi = "0.5"
-num-integer = "0.1"
-```
-
-```rust
-// rust-math/src/lib.rs
-use crush_ffi::{CrushPlugin, CrushPluginExport, FfiType, FfiValue};
-use num_integer::Integer;
-
-extern "C" fn gcd(args: *const FfiValue, count: usize, out: *mut FfiValue) -> bool {
-    if count != 2 || args.is_null() || out.is_null() {
-        return false;
-    }
-    let args = unsafe { std::slice::from_raw_parts(args, count) };
-    if args[0].tag != FfiType::Int || args[1].tag != FfiType::Int {
-        return false;
-    }
-    let left = unsafe { args[0].data.integer };
-    let right = unsafe { args[1].data.integer };
-    unsafe { *out = FfiValue::from_int(left.gcd(&right)) };
-    true
-}
-
-static PLUGIN_NAME: &[u8] = b"rust-math\0";
-static EXPORT_NAME: &[u8] = b"rust.gcd\0";
-static EXPORTS: [CrushPluginExport; 1] = [CrushPluginExport {
-    name: EXPORT_NAME.as_ptr().cast(),
-    func: gcd,
-}];
-static PLUGIN: CrushPlugin = CrushPlugin {
-    plugin_name: PLUGIN_NAME.as_ptr().cast(),
-    exports: EXPORTS.as_ptr(),
-    export_count: EXPORTS.len(),
-};
-
-#[unsafe(no_mangle)]
-pub extern "C" fn crush_plugin_init() -> *const CrushPlugin {
-    &PLUGIN
-}
-```
+The workspace example at
+[`crates/crush-plugin-example/src/lib.rs`](../crush-plugin-example/src/lib.rs)
+implements `rust.greet` and `rust.version` using `crush-ffi`. The integration
+test builds this crate and runs it through both `crush-pkg run` and the bare
+build-then-run flow, so this recipe stays tied to a compiled wrapper:
 
 Build the wrapper separately, then run the package with explicit host grants
 (use `.so`, `.dylib`, or `.dll` as appropriate for the host):
 
 ```sh
-cargo build --manifest-path rust-math/Cargo.toml --release
-crush-pkg run --rust-plugin rust-math/target/release/librust_math.so \
-  --plugin-export rust.gcd
+cargo build -p crush-plugin-example --release
+crush-pkg run --rust-plugin target/release/libcrush_plugin_example.so \
+  --plugin-export rust.greet
 ```
 
 Declare the export in the package and call it from its Crush entry file:
@@ -215,18 +167,24 @@ Declare the export in the package and call it from its Crush entry file:
 ```toml
 # capsule.toml
 [capabilities]
-required = ["rust.gcd"]
+required = ["rust.greet"]
 ```
 
 ```crush
 # src/main.crush
 fn main() {
-    io.print(rust.gcd(84, 30))
+    io.print(rust.greet("Crush"))
 }
 ```
 
-The wrapper calls `num-integer`'s `gcd` API, so the package prints `6`. The MVP supports
-null, booleans, integers, floats, and strings across the FFI boundary; arrays
-and objects are rejected until their ownership rules are defined. The plugin
-export still has to be declared in the package's `[capabilities].required`
-list for `crush-pkg check` to report a consistent package contract.
+The package prints `Hello, Crush from Rust Extension!`. The MVP supports null,
+booleans, integers, floats, and strings across the FFI boundary; arrays and
+objects are rejected until their ownership rules are defined.
+
+The manifest declaration describes the package's capability contract; it does
+not grant access to native code. `crush-pkg check` reports a used plugin export
+that is missing from both `required` and `optional`. At run time, the host's
+`--plugin-export` allowlist is the authority: a declared but ungranted export
+fails with `unknown capability`, and a host-granted export may run even if the
+manifest omitted its declaration. This keeps manifest metadata separate from
+host authorization and does not require `run` to perform a separate `check`.

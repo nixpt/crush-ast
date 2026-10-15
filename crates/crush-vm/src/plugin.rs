@@ -269,61 +269,78 @@ fn load_plugin_filtered(
         if plugin_ptr.is_null() {
             return Err("Plugin returned null".to_string());
         }
-
-        let plugin = &*plugin_ptr;
-        if plugin.export_count > 0 && plugin.exports.is_null() {
-            return Err("Plugin export table is null".to_string());
-        }
-        let exports_slice = if plugin.export_count == 0 {
-            &[]
-        } else {
-            std::slice::from_raw_parts(plugin.exports, plugin.export_count)
-        };
-
-        let mut found = HashSet::new();
-        let mut selected = Vec::new();
-        for export in exports_slice {
-            if export.name.is_null() {
-                return Err("Plugin export name is null".to_string());
-            }
-            let name = CStr::from_ptr(export.name).to_string_lossy().into_owned();
-            if !found.insert(name.clone()) {
-                return Err(format!("Plugin has duplicate export name `{name}`"));
-            }
-            if allowlist
-                .map(|allowed| allowed.contains(&name.as_str()))
-                .unwrap_or(true)
-            {
-                ensure_export_does_not_conflict(&name, host_caps)?;
-                selected.push((name, export.func));
-            }
-        }
-        if let Some(allowed) = allowlist {
-            let missing: Vec<_> = allowed
-                .iter()
-                .filter(|name| !found.contains(**name))
-                .copied()
-                .collect();
-            if !missing.is_empty() {
-                return Err(format!(
-                    "Plugin is missing allowed export(s): {}",
-                    missing.join(", ")
-                ));
-            }
-        }
-        for (name, func) in selected {
-            host_caps.register(Box::new(FfiHostCap { name, func }));
-        }
+        register_plugin_exports(plugin_ptr, allowlist, host_caps)?;
 
         Ok(LoadedPlugin { _library: library })
     }
 }
 
+/// Validate and register exports from the plugin table. The native loader
+/// calls this while its library handle is live; a unit fixture can exercise
+/// the same filtered-registration and collision path without a second cdylib.
+unsafe fn register_plugin_exports(
+    plugin_ptr: *const CrushPlugin,
+    allowlist: Option<&[&str]>,
+    host_caps: &mut HostCaps,
+) -> Result<(), String> {
+    if plugin_ptr.is_null() {
+        return Err("Plugin returned null".to_string());
+    }
+    let plugin = unsafe { &*plugin_ptr };
+    if plugin.export_count > 0 && plugin.exports.is_null() {
+        return Err("Plugin export table is null".to_string());
+    }
+    let exports_slice = if plugin.export_count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(plugin.exports, plugin.export_count) }
+    };
+
+    let mut found = HashSet::new();
+    let mut selected = Vec::new();
+    for export in exports_slice {
+        if export.name.is_null() {
+            return Err("Plugin export name is null".to_string());
+        }
+        let name = unsafe { CStr::from_ptr(export.name) }
+            .to_string_lossy()
+            .into_owned();
+        if !found.insert(name.clone()) {
+            return Err(format!("Plugin has duplicate export name `{name}`"));
+        }
+        if allowlist
+            .map(|allowed| allowed.contains(&name.as_str()))
+            .unwrap_or(true)
+        {
+            ensure_export_does_not_conflict(&name, host_caps)?;
+            selected.push((name, export.func));
+        }
+    }
+    if let Some(allowed) = allowlist {
+        let missing: Vec<_> = allowed
+            .iter()
+            .filter(|name| !found.contains(**name))
+            .copied()
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "Plugin is missing allowed export(s): {}",
+                missing.join(", ")
+            ));
+        }
+    }
+    for (name, func) in selected {
+        host_caps.register(Box::new(FfiHostCap { name, func }));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ensure_export_does_not_conflict;
+    use super::{ensure_export_does_not_conflict, register_plugin_exports};
     use crate::host::{HostCap, HostCapSpec, HostCaps};
     use crate::vm::Value;
+    use crush_ffi::{CrushPlugin, CrushPluginExport, FfiValue};
 
     struct TestHostCap(&'static str);
 
@@ -363,5 +380,38 @@ mod tests {
     #[test]
     fn plugin_export_without_a_conflict_is_accepted() {
         ensure_export_does_not_conflict("rust.greet", &HostCaps::new()).unwrap();
+    }
+
+    extern "C" fn unused_export(
+        _args: *const FfiValue,
+        _arg_count: usize,
+        _out_result: *mut FfiValue,
+    ) -> bool {
+        true
+    }
+
+    static COLLIDING_EXPORTS: [CrushPluginExport; 1] = [CrushPluginExport {
+        name: c"io.print".as_ptr(),
+        func: unused_export,
+    }];
+
+    static COLLIDING_PLUGIN: CrushPlugin = CrushPlugin {
+        plugin_name: c"collision-fixture".as_ptr(),
+        exports: COLLIDING_EXPORTS.as_ptr(),
+        export_count: COLLIDING_EXPORTS.len(),
+    };
+
+    #[test]
+    fn filtered_loader_rejects_selected_builtin_collision() {
+        let error = unsafe {
+            register_plugin_exports(
+                &COLLIDING_PLUGIN,
+                Some(&["io.print"]),
+                &mut HostCaps::new(),
+            )
+        }
+        .unwrap_err();
+
+        assert!(error.contains("conflicts with an existing Crush capability"));
     }
 }

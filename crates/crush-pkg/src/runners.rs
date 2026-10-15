@@ -68,6 +68,21 @@ impl CrushRunner {
         program: &crush_vm::Program,
         plugins: &[PluginGrant],
     ) -> anyhow::Result<ExecutionResult> {
+        self.run_program_with_plugins_before(program, plugins, || {})
+    }
+
+    /// Load and validate host-selected plugins before invoking `before_run`
+    /// and entering the VM. The CLI uses this to avoid printing a run banner
+    /// for an invalid library or export grant.
+    pub fn run_program_with_plugins_before<F>(
+        &self,
+        program: &crush_vm::Program,
+        plugins: &[PluginGrant],
+        before_run: F,
+    ) -> anyhow::Result<ExecutionResult>
+    where
+        F: FnOnce(),
+    {
         let quotas = crush_vm::Quotas::default();
         // Drop HostCaps (which contains the plugin function pointers) before
         // dropping the libraries that own those pointers.
@@ -84,6 +99,7 @@ impl CrushRunner {
             .map_err(|e| anyhow::anyhow!("load Rust plugin {}: {e}", grant.library.display()))?;
             _loaded_plugins.push(loaded);
         }
+        before_run();
         let result = crush_vm::run_with_caps(program, &quotas, host_caps.as_ref())?;
 
         if !result.output.is_empty() {
@@ -100,6 +116,20 @@ impl CrushRunner {
         payload_path: &Path,
         plugins: &[PluginGrant],
     ) -> anyhow::Result<ExecutionResult> {
+        self.run_payload_with_plugins_before(payload_path, plugins, || {})
+    }
+
+    /// Compile a payload, load its host-selected plugins, then invoke the
+    /// callback immediately before VM execution.
+    pub fn run_payload_with_plugins_before<F>(
+        &self,
+        payload_path: &Path,
+        plugins: &[PluginGrant],
+        before_run: F,
+    ) -> anyhow::Result<ExecutionResult>
+    where
+        F: FnOnce(),
+    {
         let ext = payload_path
             .extension()
             .and_then(|e| e.to_str())
@@ -112,7 +142,7 @@ impl CrushRunner {
             let source = std::fs::read_to_string(payload_path)?;
             crush_lang_sdk::compile::compile_crush_source(&source)?
         };
-        self.run_program_with_plugins(&program, plugins)
+        self.run_program_with_plugins_before(&program, plugins, before_run)
     }
 }
 
@@ -290,39 +320,42 @@ pub fn get_runner_for_payload_with(
     manifest: &Manifest,
     crush: CrushRunner,
 ) -> Box<dyn CapsuleRunner> {
+    let format = detect_payload_format(payload_path);
+    let capsule_type = capsule_type_for_format(manifest, format);
+    get_runner_with(&capsule_type, crush)
+}
+
+/// Resolve the same payload format for strict validation and runner dispatch.
+pub fn detect_payload_format(payload_path: &Path) -> PayloadFormat {
+    let format = PayloadFormat::from_path(payload_path);
+    if format != PayloadFormat::Unknown {
+        return format;
+    }
+    std::fs::read(payload_path)
+        .map(|bytes| PayloadFormat::from_magic(&bytes))
+        .unwrap_or(PayloadFormat::Unknown)
+}
+
+/// Resolve the capsule type from the manifest language and detected payload
+/// format. The CLI shares this with runner construction when validating plugin
+/// grants, so it does not maintain a second language-to-runner mapping.
+pub fn capsule_type_for_format(manifest: &Manifest, format: PayloadFormat) -> CapsuleType {
     let capsule_type = crate::manifest::language_to_capsule_type(&manifest.capsule.language);
     if capsule_type != CapsuleType::Auto {
-        return get_runner_with(&capsule_type, crush);
+        return capsule_type;
     }
 
-    let format = PayloadFormat::from_path(payload_path);
-
-    let format = if format == PayloadFormat::Unknown {
-        if let Ok(bytes) = std::fs::read(payload_path) {
-            let detected = PayloadFormat::from_magic(&bytes);
-            if detected != PayloadFormat::Unknown {
-                detected
-            } else {
-                format
-            }
-        } else {
-            format
-        }
-    } else {
-        format
-    };
-
     match format {
-        PayloadFormat::Casm => Box::new(crush),
+        PayloadFormat::Casm => CapsuleType::Crush,
         PayloadFormat::JavaScript | PayloadFormat::TypeScript => {
-            Box::new(ScriptRunner::new(ScriptRuntime::Bun))
+            CapsuleType::Script(ScriptRuntime::Bun)
         }
-        PayloadFormat::Python => Box::new(ScriptRunner::new(ScriptRuntime::Python)),
-        PayloadFormat::Sona => Box::new(ScriptRunner::new(ScriptRuntime::Sona)),
+        PayloadFormat::Python => CapsuleType::Script(ScriptRuntime::Python),
+        PayloadFormat::Sona => CapsuleType::Script(ScriptRuntime::Sona),
         PayloadFormat::NativeElf | PayloadFormat::NativeMachO | PayloadFormat::NativePe => {
-            Box::new(NativeRunner)
+            CapsuleType::Native
         }
-        PayloadFormat::Unknown => Box::new(crush),
+        PayloadFormat::Unknown => CapsuleType::Crush,
     }
 }
 

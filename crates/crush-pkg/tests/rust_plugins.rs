@@ -104,6 +104,14 @@ fn invoke(dir: &Path, flow: Flow, library: Option<&Path>, exports: &[&str]) -> O
     command.current_dir(dir).output().expect("spawn crush-pkg")
 }
 
+fn check_package(dir: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_crush-pkg"))
+        .arg("check")
+        .current_dir(dir)
+        .output()
+        .expect("spawn crush-pkg check")
+}
+
 fn output_text(output: &Output) -> String {
     format!(
         "{}{}",
@@ -229,6 +237,11 @@ fn host_plugin_grants_work_through_run_and_bare_flows() {
             flow.name()
         );
         assert!(text.contains("Failed to load plugin"), "{text}");
+        assert!(
+            !text.contains("running "),
+            "{} printed the run banner before plugin validation:\n{text}",
+            flow.name()
+        );
     }
 
     let invalid_args = package(
@@ -257,4 +270,29 @@ fn host_plugin_grants_work_through_run_and_bare_flows() {
     );
     assert!(!output.status.success());
     assert!(output_text(&output).contains("must be non-empty and unique"));
+}
+
+#[test]
+fn explicit_host_grant_authorizes_an_undeclared_export_at_run_time() {
+    let root = tempfile::tempdir().unwrap();
+    let library = plugin_library();
+    let undeclared = package(
+        root.path(),
+        "undeclared-host-grant",
+        "fn main() { io.print(rust.greet(\"xps\")) }\n",
+        &[],
+    );
+
+    let output = invoke(&undeclared, Flow::Run, Some(library), &["rust.greet"]);
+    let text = output_text(&output);
+    assert!(output.status.success(), "host grant was rejected:\n{text}");
+    assert!(text.contains("Hello, xps from Rust Extension!"), "{text}");
+
+    let checked = check_package(&undeclared);
+    let check_text = output_text(&checked);
+    assert!(
+        !checked.status.success(),
+        "check accepted an undeclared used capability:\n{check_text}"
+    );
+    assert!(check_text.contains("rust.greet"), "{check_text}");
 }
