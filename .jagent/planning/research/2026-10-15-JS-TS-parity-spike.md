@@ -78,14 +78,101 @@ loud first; the area tickets then make them correct.
 5. **Error messages.** About a third of the loud failures say "load from uninitialised slot N", which tells
    the user nothing. Each area ticket owns replacing them with "`X` is not supported by the JS walker yet".
 
+## Parser choice: swc vs boa, with bozo in the picture
+
+### What bozo is, and what it plans for JS
+
+**bozo** (`nixpt/bozo`) is the script layer for exosphere's browsers (surfer, voyager). Page scripts are
+walked by crush-ast's walkers into CAST and run on crush (VM/FastVM/AOT); surfer's `bozo_bridge.rs` already
+implements its `DomBridge`. surfer runs page JS on `boa_engine` 0.22 today ("Path C"); moving to bozo
+("Path A", SURF-BOZO-1) is how it drops the interpreter. bozo's M7 plan (all backlog) overlaps this spike
+almost entirely:
+
+| bozo ticket | plans | overlaps here |
+|---|---|---|
+| BOZO-M7-1 `bozo-frontend` | a **second JS frontend**: `boa_parser` 0.22 (no swc, no `boa_engine`), its own scope/semantic pass (bindings, closure capture, `this`, hoisting, TDZ), classes desugared to prototypes, CASM emitted directly; TS via swc behind an optional `ts` feature, never in the browser's default build | z-5..9, z-11, z-16, z-18, z-20, z-21, z-22 |
+| BOZO-M7-2 JS runtime library | ToPrimitive/ToNumber/ToString, `==`, `typeof`, Object/Array/String/Number/Math/JSON/Map/Set/Error builtins | z-10, z-12, z-14, z-15, z-17, z-19, z-22 |
+| BOZO-M7-5 conformance gate | test262 subset + differential vs Boa (oracle) + surfer's page probe | z-4 (node as the oracle) |
+| CRUSH-250 (crush-ast) | `boa_parser` 0.22 as the default for `.js`, swc only for TS, typed `Unsupported` errors | the parser decision itself |
+
+As planned, two JS frontends would do the same semantic work: crush-lang-js's walker (this spike) and
+bozo-frontend. That contradicts bozo's own rule ("fix upstream in crush-ast by default; bozo stays thin").
+
+### Measured (2026-10-15, `cargo tree -e normal`, unique crates)
+
+| what | crates | new crates for surfer (which already has `boa_engine` 0.22) |
+|---|---|---|
+| swc parser (`swc_ecma_parser` 41 + ast/common/atoms, crush-lang-js today) | 88 | **36** |
+| `boa_parser` 0.22 (+ ast/interner) | 60 | **1** |
+| `boa_engine` 0.22 (surfer today) | 130 | — |
+| `swc_fast_ts_strip` 23 (node-style TS stripper; last release 2025-06) | 146 | 81 |
+
+After surfer drops `boa_engine` (its goal), its JS parser costs 60 crates with boa versus 88 with swc.
+
+### Other facts
+
+- **TypeScript:** only swc parses TS; boa has no TS parser. The cheap way to keep a *single* lowering is
+  to use the swc parser (already a dependency) only to find the type-annotation spans and blank them,
+  which preserves positions (node's strip-only approach), then feed the result to the boa lowering. That
+  costs 88 crates, only when the `ts` feature is on. `swc_fast_ts_strip` does the same job but is heavier
+  and stale.
+- **Lowering maturity today:**
+  - `lower_swc.rs` is 1,660 LOC and passes the 29-program node corpus.
+  - `lower_boa.rs` is 955 LOC on boa **0.21**, feature-gated off, has no plain `=` assignment
+    lowering, turns classes into an empty `StructDef` and async into `null`; the node corpus is disabled
+    under it.
+- **Most of this spike's cost is parser-independent:**
+  - the scope/closure pass and the CRUSH-251 primitives;
+  - the JS runtime library (`js.*` capabilities: ToString, `==`, inspect, string/array/Math/JSON builtins);
+  - the harness and its corpus.
+  The swc lowering is name-based (methods lose their receiver, `new X` is a call to `"new X"`), so the object
+  and closure waves are close to a rewrite in either parser.
+
+### Options
+
+- **A. Keep swc for JS and TS (the current plan).** The least work in crush-ast now, and the existing
+  lowering keeps improving. But surfer/bozo pay +36 crates, or 88 instead of 60 after dropping
+  `boa_engine`. SURF-BUILD-1 and CRUSH-250 say swc must not be in the browser build, so bozo would still
+  build its own boa frontend, and the two frontends diverge.
+- **B. One JS frontend in crush-ast, on `boa_parser` 0.22 (recommended).**
+  - The semantic-pass lowering of BOZO-M7-1 lives **upstream in crush-lang-js**, as bozo's rule asks;
+    bozo consumes it.
+  - The runtime library of BOZO-M7-2 is crush-ast `js.*` capabilities, shared by the generic walker,
+    crush-aotc and the browser.
+  - TS uses swc only to blank type spans, behind a `ts` feature, never in the browser default.
+  - One parser version across crush-ast, bozo and surfer.
+  - The harness (z-4, node oracle) is the shared gate. bozo's M7-5 adds test262 and Boa-differential runs
+    on top.
+
+  Cost: CRUSH-250 becomes wave 2 (replacing z-11). The new lowering must reach the swc lowering's corpus
+  results before swc is retired for `.js`, and small fixes landed in `lower_swc.rs` meanwhile are throwaway.
+
+### What changes in this plan under B
+
+- **Unchanged, parser-independent:**
+  - z-4 (harness);
+  - z-13 (number model);
+  - z-23 (make silent constructs loud, cheap and stops wrong output now);
+  - the `js.*` runtime capabilities inside z-9, z-10, z-12, z-14, z-15, z-17, z-19, z-22.
+  These are the durable assets: the corpus programs and the runtime capabilities.
+- **Retargeted to the new boa lowering, which owns them as acceptance tests:** z-5, z-6, z-7, z-16, z-18,
+  z-20 and the lowering half of z-9/z-22. Fix them in `lower_swc.rs` only if swc stays the `.js` path for
+  long.
+- **Replaced:**
+  - z-11 (the split of `lower_swc.rs`) is replaced by CRUSH-250 widened into "boa 0.22 lowering with a
+    scope/semantic pass", absorbing BOZO-M7-1's design.
+  - z-8 shrinks to the TS-preprocessor path.
+- **Coordinate with bozo:** BOZO-M7-1 and M7-2 move upstream into crush-ast, or are closed as superseded
+  here, and bozo keeps the browser-specific parts (DomBridge, sandbox, XIP, the event loop of M7-3).
+
 ## Decisions needed from the owner
 
-- **Parser for `.js`: swc or boa (CRUSH-250).** Today swc is used everywhere (boa is feature-gated and
-  off). CRUSH-250 (P1, backlog) plans boa 0.22 as the default for `.js`, with swc kept for TS. All the
-  lowering work here targets `lower_swc.rs`; if `.js` moves to boa, JS parity has to be redone on
-  the boa lowering. **Recommendation:** keep swc for both JS and TS during this spike (one lowering,
-  and TS needs swc anyway), and revisit CRUSH-250 against the parity harness afterwards. Decide before
-  wave 2 (CRUSH-zorro-11).
+- **Parser for `.js`: option A (keep swc) or option B (one JS frontend on `boa_parser` 0.22 in crush-ast,
+  shared with bozo; swc only for TS).** See *Parser choice* above. **Recommendation: B.** It's what the
+  browser needs (+1 crate for surfer instead of +36, and no swc in the default build), and it avoids two JS
+  frontends (crush-lang-js and bozo-frontend) doing the same semantic work. Most of this spike's work is
+  parser-independent either way. Decide before wave 2. Under B, wave 2 becomes CRUSH-250 (widened) instead
+  of z-11.
 
 - **Number model (CRUSH-zorro-13).** JS numbers are doubles; crush has `Int(i64)` + `Float(f64)` and errors on
   overflow (`2**53 + 1`, `2**64` fail today). Options:
