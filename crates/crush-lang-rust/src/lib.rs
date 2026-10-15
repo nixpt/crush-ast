@@ -29,8 +29,10 @@
 //! expression are supported; other forms are rejected with a source location.
 //!
 //! Closures can read implicit scalar captures through shared cells. Rust
-//! ownership/copy behavior and repeated block/loop bindings remain gated by
-//! CRUSH-xps-6/7; parsing closure syntax does not imply full Rust closure traits.
+//! lexical bindings have distinct storage identities (CRUSH-xps-6). Rust
+//! ownership/copy behavior remains gated by CRUSH-xps-7; parsing closure syntax
+//! does not imply full Rust closure traits. Nested functions are rejected until
+//! block-local item resolution is implemented.
 //! Integer widths/casts/overflow and string Debug formatting have known silent
 //! divergences tracked by CRUSH-xps-8/9. These are not supported semantics; the
 //! SDK's rustc conformance inventory pins the current failures until fixed.
@@ -38,6 +40,7 @@
 pub mod lower_expr;
 pub mod lower_stmt;
 pub mod parser;
+mod bindings;
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -146,14 +149,16 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
         );
     }
 
-    Ok(Program {
+    let mut program = Program {
         cast_version: "0.2".to_string(),
         entry: "main".to_string(),
         lang: Some("rust".to_string()),
         functions,
         ai_meta: None,
         ..Default::default()
-    })
+    };
+    bindings::resolve(&mut program, source)?;
+    Ok(program)
 }
 
 #[cfg(test)]

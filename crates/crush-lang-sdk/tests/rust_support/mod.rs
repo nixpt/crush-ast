@@ -31,10 +31,10 @@ pub enum Expected {
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
     (
-        "audit_block_shadowing",
-        Expected::Silent {
+        "binding_nested_function",
+        Expected::Loud {
             ticket: "CRUSH-xps-6",
-            output: "2\n2\n",
+            diagnostic: "nested function at 2:5",
         },
     ),
     (
@@ -124,6 +124,20 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
 ];
 const AOT_ONLY: &[(&str, Expected)] = &[
     (
+        "binding_intrinsic_names",
+        Expected::Loud {
+            ticket: "CRUSH-251",
+            diagnostic: "make_closure",
+        },
+    ),
+    (
+        "binding_captures",
+        Expected::Loud {
+            ticket: "CRUSH-251",
+            diagnostic: "make_closure",
+        },
+    ),
+    (
         "capability_namespace_bindings",
         Expected::Loud {
             ticket: "CRUSH-xps-13",
@@ -195,7 +209,7 @@ pub fn corpus() -> Vec<PathBuf> {
             "orphan Rust parity exception: {name}"
         );
     }
-    assert!(files.len() >= 29, "Rust corpus shrank: {}", files.len());
+    assert!(files.len() >= 37, "Rust corpus shrank: {}", files.len());
     files
 }
 
