@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-250 |
 | **Priority** | P1 — wave 2 of the JS/TS parity spike; first step of the browser's "drop boa_engine" path |
-| **Status** | Backlog |
+| **Status** | In Progress |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | CRUSH-zorro-4 (parity harness); CRUSH-251 step 2 (function values, #194) for closures; later CRUSH-251 slices for the object model |
 | **Estimated effort** | L (split into the sub-PRs below) |
 
@@ -65,6 +65,13 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
 ## Sub-PRs (suggested)
 
 1. Bump to 0.22 + feature layout (`js-boa`, `ts`); no behaviour change on the swc default.
+   **Done in sub-PR 1:** boa 0.22; features `swc-backend` (the `.js` lowering until step 6), `ts`
+   (implies it), `js-boa`; `.js` stays on swc while `swc-backend` is on, so turning `js-boa` on via
+   unification changes nothing; `freevars` has a boa twin (kept in step with swc by a test) and is what
+   crush-lang-sdk's `polyglot-javascript` now uses (the feature keeps `swc-backend` until step 6, so
+   `.js` walked through the SDK stays on swc; step 6 drops it and swc leaves the SDK's default tree);
+   `polyglot-typescript` carries `ts`. `JsLowering`/`JsFrontend::with_lowering` pick a lowering
+   explicitly.
 2. Scope/semantic pass + statement/expression lowering to parity with `lower_swc.rs` on the harness.
 3. Builtin/method table wired to the `js.*` runtime library.
 4. Closures/function values (CRUSH-251 steps 2–3).

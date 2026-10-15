@@ -23,6 +23,9 @@ pub struct BoaLower<'a> {
     pub functions: HashMap<String, Function>,
     pub interner: Interner,
     pub ctx: &'a LowerCtx<'a>,
+    /// The first construct this lowering can't express; `lower_boa` returns it
+    /// as an error instead of a program.
+    pub unsupported: Option<String>,
 }
 
 impl<'a> BoaLower<'a> {
@@ -31,7 +34,13 @@ impl<'a> BoaLower<'a> {
             functions: HashMap::new(),
             interner,
             ctx,
+            unsupported: None,
         }
+    }
+
+    fn unsupported(&mut self, construct: &str) {
+        self.unsupported
+            .get_or_insert_with(|| format!("unsupported JavaScript: {construct} (boa lowering)"));
     }
 
     fn meta0(&self) -> HashMap<String, serde_json::Value> {
@@ -98,7 +107,8 @@ impl<'a> BoaLower<'a> {
                 }
                 out
             }
-            Statement::Empty => vec![],
+            // No debugger is attached, so `debugger;` does nothing (as in node).
+            Statement::Empty | Statement::Debugger => vec![],
             Statement::Expression(e) => {
                 vec![CastStmt::ExprStmt {
                     expr: self.expr(e),
@@ -137,7 +147,7 @@ impl<'a> BoaLower<'a> {
                     else_body: None,
                     meta: self.meta0(),
                 };
-                let mut body = crate::lower_swc::rewrite_continue(self.stmt_wrap(dw.body()), &[exit_check.clone()]);
+                let mut body = crate::lower_common::rewrite_continue(self.stmt_wrap(dw.body()), &[exit_check.clone()]);
                 body.push(exit_check);
                 vec![CastStmt::While {
                     condition: Box::new(CastExpr::BoolLiteral { value: true, meta: self.meta0() }),
@@ -179,7 +189,7 @@ impl<'a> BoaLower<'a> {
                     .final_expr()
                     .map(|u| vec![CastStmt::ExprStmt { expr: self.expr(u), meta: self.meta0() }])
                     .unwrap_or_default();
-                let mut body = crate::lower_swc::rewrite_continue(self.stmt_wrap(fl.body()), &update);
+                let mut body = crate::lower_common::rewrite_continue(self.stmt_wrap(fl.body()), &update);
                 body.extend(update);
                 let mut while_body = vec![CastStmt::If {
                     condition: CastExpr::UnaryOp {
@@ -390,6 +400,8 @@ impl<'a> BoaLower<'a> {
                             out.extend(self.variable(v));
                         }
                     }
+                    LexicalDeclaration::Using(_) => self.unsupported("a `using` declaration"),
+                    LexicalDeclaration::AwaitUsing(_) => self.unsupported("an `await using` declaration"),
                 }
                 out
             }
@@ -771,9 +783,7 @@ impl<'a> BoaLower<'a> {
             | Expression::AsyncArrowFunction(_)
             | Expression::GeneratorExpression(_)
             | Expression::AsyncFunctionExpression(_)
-            | Expression::AsyncGeneratorExpression(_)
-            | Expression::FormalParameterList(_)
-            | Expression::Debugger => CastExpr::NullLiteral { meta: self.meta0() },
+            | Expression::AsyncGeneratorExpression(_) => CastExpr::NullLiteral { meta: self.meta0() },
         }
     }
 
@@ -931,6 +941,9 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
             (lower, body)
         }
     };
+    if let Some(e) = lower.unsupported.take() {
+        anyhow::bail!(e);
+    }
     lower.functions.insert(
         "main".to_string(),
         Function {

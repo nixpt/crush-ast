@@ -1,6 +1,7 @@
 //! JS SDK — full pipeline from JavaScript/TypeScript source to CVM1 execution.
 //! (Test-only: requires crush-vm/crush-frontend/crush-lang-sdk as dev-deps)
-#![cfg(test)]
+// The swc lowering (`.js` default while `swc-backend` is on) and TypeScript.
+#![cfg(all(test, feature = "ts"))]
 
 /// JS/TS source -> CVM1 execution -> output string.
 pub fn run_js(source: &str, ext: &str) -> anyhow::Result<String> {

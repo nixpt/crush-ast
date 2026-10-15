@@ -24,9 +24,12 @@
 //! The file prefix up to the first `_` is the feature area; run with
 //! `--nocapture` for the per-area match / loud / silent table.
 //!
-//! With `--features boa-backend` the harness also runs the Boa lowering
-//! (report only) and prints its table next to swc's, so CRUSH-250 can see when
-//! boa is at least as good as swc in every area.
+//! With `--features js-boa` the harness also runs the Boa lowering (report
+//! only) and prints its table next to swc's, so CRUSH-250 can see when boa is
+//! at least as good as swc in every area. A swc-less build
+//! (`--no-default-features --features js-boa`) prints the boa table alone.
+
+#![cfg(any(feature = "swc-backend", feature = "js-boa"))]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -82,6 +85,7 @@ const KNOWN_SILENT: &[(&str, &str, &str)] = &[
 ];
 
 /// TS twin: programs that must stay loud under the `ts` dialect.
+#[cfg(feature = "ts")]
 const TS_KNOWN_LOUD: &[(&str, &str)] = &[
     ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
     ("ctrl_finally", "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet"),
@@ -91,6 +95,7 @@ const TS_KNOWN_LOUD: &[(&str, &str)] = &[
 ];
 
 /// TS twin: silently-wrong programs, keyed to their fixing ticket.
+#[cfg(feature = "ts")]
 const TS_KNOWN_SILENT: &[(&str, &str, &str)] = &[
 ];
 
@@ -117,25 +122,29 @@ fn area(name: &str) -> &str {
 /// One way of turning source into CAST.
 #[derive(Clone, Copy)]
 enum Lowering {
-    /// The swc lowering, called directly so it is what's measured even when
-    /// `boa-backend` makes boa the `.js` default of `js_to_cast`.
+    /// The swc lowering, called directly so it is what's measured whatever
+    /// `js_to_cast` defaults to.
+    #[cfg(feature = "swc-backend")]
     Swc,
     /// `js_to_cast(src, "ts")` — the TS dialect (swc).
+    #[cfg(feature = "ts")]
     Ts,
-    /// The Boa lowering, called directly (report only, behind `boa-backend`).
-    #[cfg(feature = "boa-backend")]
+    /// The Boa lowering, called directly (report only, behind `js-boa`).
+    #[cfg(feature = "js-boa")]
     Boa,
 }
 
 fn lower(source: &str, how: Lowering) -> anyhow::Result<crush_cast::Program> {
     match how {
+        #[cfg(feature = "swc-backend")]
         Lowering::Swc => {
             let module = crush_lang_js::backend::parse(source, "js")?;
             let ctx = crush_walker_core::LowerCtx::new(source, "input.js", "javascript");
             crush_lang_js::lower_swc::lower_module(&module, &ctx)
         }
+        #[cfg(feature = "ts")]
         Lowering::Ts => crush_lang_js::js_to_cast(source, "ts"),
-        #[cfg(feature = "boa-backend")]
+        #[cfg(feature = "js-boa")]
         Lowering::Boa => {
             let ast = crush_lang_js::backend::boa::parse(source)?;
             let ctx = crush_walker_core::LowerCtx::new(source, "input.js", "javascript");
@@ -248,6 +257,7 @@ fn check(
     (tally, problems)
 }
 
+#[cfg(feature = "swc-backend")]
 fn assert_clean(title: &str, problems: Vec<String>) {
     assert!(problems.is_empty(), "{} problem(s) in {title}:\n{}", problems.len(), problems.join("\n"));
 }
@@ -256,23 +266,33 @@ fn assert_clean(title: &str, problems: Vec<String>) {
 fn crush_output_matches_node() {
     let files = corpus("tests/node_corpus", "js");
     assert!(files.len() >= 90, "corpus shrank: {}", files.len());
-    let title = "JS corpus on the VM (swc lowering)";
-    let (_swc, problems) = check(title, &files, Lowering::Swc, KNOWN_LOUD, KNOWN_SILENT);
-    #[cfg(feature = "boa-backend")]
+    #[cfg(feature = "swc-backend")]
+    let (swc, problems) = check("JS corpus on the VM (swc lowering)", &files, Lowering::Swc, KNOWN_LOUD, KNOWN_SILENT);
+    #[cfg(feature = "js-boa")]
     {
         // Report only until CRUSH-250 makes boa the `.js` lowering.
         let title = "JS corpus on the VM (boa lowering, report only)";
         let (boa, boa_problems) = check(title, &files, Lowering::Boa, KNOWN_LOUD, KNOWN_SILENT);
-        println!("\nswc vs boa per area [match, loud, silent]:");
-        for (a, s) in &_swc.by_area {
-            let b = boa.by_area.get(a).copied().unwrap_or_default();
-            println!("  {a:<10} swc {s:?}  boa {b:?}");
+        #[cfg(feature = "swc-backend")]
+        {
+            println!("\nswc vs boa per area [match, loud, silent]:");
+            for (a, s) in &swc.by_area {
+                let b = boa.by_area.get(a).copied().unwrap_or_default();
+                println!("  {a:<10} swc {s:?}  boa {b:?}");
+            }
         }
+        #[cfg(not(feature = "swc-backend"))]
+        let _ = boa;
         println!("boa: {} list mismatch(es), not enforced:\n{}", boa_problems.len(), boa_problems.join("\n"));
     }
-    assert_clean("the JS corpus", problems);
+    #[cfg(feature = "swc-backend")]
+    {
+        let _ = swc;
+        assert_clean("the JS corpus", problems);
+    }
 }
 
+#[cfg(feature = "ts")]
 #[test]
 fn ts_twin_matches_node() {
     let files = corpus("tests/ts_corpus", "ts");
@@ -308,7 +328,7 @@ fn expected_outputs_match_node() {
 }
 
 // swc only: the boa lowering accepts the comma expression (CRUSH-250).
-#[cfg(not(feature = "boa-backend"))]
+#[cfg(feature = "swc-backend")]
 #[test]
 fn side_effecting_comma_in_value_position_fails_loudly() {
     let err = crush_lang_js::js_to_cast("var i = 0; var x = (i++, 5); console.log(x);", "js").unwrap_err();
