@@ -111,11 +111,16 @@ fn jit_runs_lifted_methods_like_the_scheduler_vm() {
     }
 }
 
+/// COSM K1.4 (CRUSH-zorro-43): the scheduler VM implements Kinds, so the
+/// `value(move)` Point the map engines refuse runs there (a move behaves as a
+/// copy at run time) and gives the same answer.
 #[test]
-fn the_scheduler_vm_refuses_a_kind_maps_cant_represent() {
+fn the_scheduler_vm_runs_a_kind_maps_cant_represent() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm_value_move()).expect("casm_to_vm");
-    let err = crush_vm::run(&vm, &crush_vm::Quotas::default()).expect_err("refused");
-    assert_refused(&err.to_string(), "this VM");
+    match crush_vm::run(&vm, &crush_vm::Quotas::default()).expect("runs").return_value {
+        Some(crush_vm::vm::Value::Int(n)) => assert_eq!(n, WANT),
+        other => panic!("unexpected scheduler result: {other:?}"),
+    }
 }
 
 #[test]
