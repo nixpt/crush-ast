@@ -5,9 +5,11 @@
 //! (the array half — `len`, `reverse`, ... — was ported earlier and lives in
 //! `stdlib.rs`).
 //!
-//! One deliberate difference: nanovm returned `keys` / `values` / `entries`
-//! in `HashMap` iteration order, i.e. a different order on every run. They
-//! are sorted by key here so programs are deterministic.
+//! `keys` / `values` / `entries` follow the map's insertion order — the same
+//! order as `for k in m`, printing, Python `dict.keys()` and JS
+//! `Object.keys()` (owner decision 2026-10-15). They used to be sorted by
+//! key, because nanovm's `HashMap` order was different on every run; maps
+//! are insertion-ordered now (`crush_vm::vm::MapStore`).
 
 use super::get_str;
 use crush_vm::vm::Value;
@@ -40,11 +42,9 @@ fn array_arg(cap: &str, v: &Value) -> Result<Vec<Value>, String> {
     }
 }
 
-/// Entries sorted by key.
-fn sorted_entries(m: crush_vm::vm::MapStore) -> Vec<(String, Value)> {
-    let mut entries: Vec<_> = m.into_iter().collect();
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    entries
+/// Entries in insertion order.
+fn entries_in_order(m: crush_vm::vm::MapStore) -> Vec<(String, Value)> {
+    m.into_iter().collect()
 }
 
 /// `item[field]` if `item` is a map that has it.
@@ -61,7 +61,7 @@ std_cap!(
     Some(1),
     |args: &[Value]| {
         let m = map_arg("collections.keys", &args[0])?;
-        let keys = sorted_entries(m)
+        let keys = entries_in_order(m)
             .into_iter()
             .map(|(k, _)| Value::Str(k))
             .collect();
@@ -75,7 +75,7 @@ std_cap!(
     Some(1),
     |args: &[Value]| {
         let m = map_arg("collections.values", &args[0])?;
-        let values = sorted_entries(m).into_iter().map(|(_, v)| v).collect();
+        let values = entries_in_order(m).into_iter().map(|(_, v)| v).collect();
         Ok(Some(Value::new_array(values)))
     }
 );
@@ -86,7 +86,7 @@ std_cap!(
     Some(1),
     |args: &[Value]| {
         let m = map_arg("collections.entries", &args[0])?;
-        let entries = sorted_entries(m)
+        let entries = entries_in_order(m)
             .into_iter()
             .map(|(k, v)| Value::new_array(vec![Value::Str(k), v]))
             .collect();
@@ -244,21 +244,21 @@ mod tests {
     }
 
     #[test]
-    fn keys_values_entries_are_key_sorted() {
+    fn keys_values_entries_follow_insertion_order() {
         let m = map(&[("b", Value::Int(2)), ("a", Value::Int(1))]);
         assert_eq!(
             call("collections.keys", vec![m.clone()]),
-            Ok(Some(Value::new_array(vec![s("a"), s("b")])))
+            Ok(Some(Value::new_array(vec![s("b"), s("a")])))
         );
         assert_eq!(
             call("collections.values", vec![m.clone()]),
-            Ok(Some(Value::new_array(vec![Value::Int(1), Value::Int(2)])))
+            Ok(Some(Value::new_array(vec![Value::Int(2), Value::Int(1)])))
         );
         assert_eq!(
             call("collections.entries", vec![m]),
             Ok(Some(Value::new_array(vec![
-                Value::new_array(vec![s("a"), Value::Int(1)]),
                 Value::new_array(vec![s("b"), Value::Int(2)]),
+                Value::new_array(vec![s("a"), Value::Int(1)]),
             ])))
         );
     }

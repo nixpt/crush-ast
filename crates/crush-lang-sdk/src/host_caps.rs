@@ -804,6 +804,10 @@ impl HostCap for EnvAllCap {
         for (k, v) in &self.overrides {
             all.insert(k.clone(), Value::Str(v.clone()));
         }
+        // Environment variables have no inherent order: sort by name so the
+        // (insertion-ordered) map iterates the same way on every run.
+        let mut all: Vec<(String, Value)> = all.into_iter().collect();
+        all.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(Some(Value::new_map(all)))
     }
 }

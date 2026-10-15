@@ -530,6 +530,13 @@ pub fn run_scheduled_streaming(
             streamed = shared_out_parts.len();
         }
         let action = action?;
+        // HALT in a spawned task ends only that task (owner decision
+        // 2026-10-15): it finishes like RET, its top-of-stack is its result
+        // and its waiters wake. Only main's HALT ends the program.
+        let action = match action {
+            StepAction::Finish(result) if current != 0 => StepAction::Done(result.stack.last().cloned()),
+            other => other,
+        };
 
         match action {
             StepAction::Continue => {

@@ -12,7 +12,6 @@
 use crate::host_caps::FsSandbox;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
-use std::collections::HashMap;
 use std::path::Path;
 
 pub(crate) fn register(caps: &mut HostCaps, fs: &FsSandbox) {
@@ -97,7 +96,8 @@ fs_text_cap!(
     |fs: &FsSandbox, args: &[Value]| {
         let path = fs.resolve(&args[0])?;
         let content = read("text.wc", &path)?;
-        let mut m = HashMap::new();
+        // Insertion order is the map's order: lines, words, chars (like `wc`).
+        let mut m = crush_vm::vm::MapStore::new();
         m.insert(
             "lines".to_string(),
             Value::Int(content.lines().count() as i64),
@@ -199,7 +199,7 @@ fs_text_cap!(
             let shown = fs.display(&file);
             for (i, line) in content.lines().enumerate() {
                 if re.is_match(line) {
-                    let mut m = HashMap::new();
+                    let mut m = crush_vm::vm::MapStore::new();
                     m.insert("file".to_string(), Value::Str(shown.clone()));
                     m.insert("line".to_string(), Value::Int(i as i64 + 1));
                     m.insert("content".to_string(), Value::Str(line.to_string()));
