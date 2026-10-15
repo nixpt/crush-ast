@@ -79,7 +79,6 @@ fn main() -> anyhow::Result<()> {
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
-        "__crush_slice__", "__crush_contains__", "__crush_is__", "__crush_ifexpr__",
         "__crush_setindex__",
     ] {
         host_caps.register(Box::new(WalkNop { name: name.to_string() }));

@@ -33,8 +33,6 @@ pub fn run_python(source: &str) -> anyhow::Result<String> {
         "__crush_assign__", "__crush_deref__", "__crush_addr_of__",
         "__crush_not__", "__crush_neg__", "__crush_pos__",
         "__crush_subscript__", "__crush_unary__",
-        "__crush_slice__", "__crush_contains__", "__crush_is__",
-        "__crush_ifexpr__",
     ] {
         host_caps.register(Box::new(NopCap { name: name.to_string() }));
     }
@@ -91,16 +89,19 @@ mod tests {
         );
     }
 
+    // CRUSH-196: slicing and `in` have no implementation yet. They used to
+    // run against stubs that returned None (`print(arr[0:2])` printed
+    // `None`); until they are implemented they must fail loudly instead.
     #[test]
-    fn test_slice_does_not_crash() {
-        let r = run_python("arr = [1,2,3]\nprint(arr[0:2])");
-        assert!(r.is_ok(), "slice should not crash: {:?}", r);
+    fn test_slice_fails_loudly_until_implemented() {
+        let err = run_python("arr = [1,2,3]\nprint(arr[0:2])").unwrap_err();
+        assert!(err.to_string().contains("__crush_slice__"), "{err}");
     }
 
     #[test]
-    fn test_in_operator_does_not_crash() {
-        let r = run_python("arr = [1,2,3]\nprint(2 in arr)");
-        assert!(r.is_ok(), "'in' should not crash: {:?}", r);
+    fn test_in_operator_fails_loudly_until_implemented() {
+        let err = run_python("arr = [1,2,3]\nprint(2 in arr)").unwrap_err();
+        assert!(err.to_string().contains("__crush_contains__"), "{err}");
     }
 
     // ── CRUSHAST-PYLOWER-1: try/except, comprehensions ──────────────────────

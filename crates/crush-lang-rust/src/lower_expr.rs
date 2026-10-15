@@ -142,7 +142,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 },
             };
             Ok(Expression::Call {
-                function: "__crush_ifexpr__".to_string(),
+                function: "__crush_ternary__".to_string(), // lazy; `__crush_ifexpr__` was an unknown helper
                 args: vec![condition, then_body, else_body],
                 meta,
             })

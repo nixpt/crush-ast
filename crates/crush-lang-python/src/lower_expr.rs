@@ -137,7 +137,7 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             let body = lower_expr(body, ctx)?;
             let orelse = lower_expr(orelse, ctx)?;
             Ok(Expression::Call {
-                function: "__crush_ifexpr__".to_string(),
+                function: "__crush_ternary__".to_string(), // lazy; `__crush_ifexpr__` was an unknown helper
                 args: vec![test, body, orelse],
                 meta,
             })

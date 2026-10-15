@@ -591,56 +591,119 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                 meta: meta(span, ctx),
             }
         }
+        // `switch`: pick the first matching case (or `default` if none
+        // matches), then run every case body from there down until a
+        // `break` — JS fall-through. Lowered as
+        //   let __sw_start = <index>; while (true) { if (start <= 0) {..} ...; break; }
+        // so `break` exits the switch. It used to build this chain and then
+        // discard it, so every switch was silently skipped.
         Stmt::Switch(SwitchStmt {
             discriminant,
             cases,
             span,
             ..
         }) => {
-            let cond = lower_expr(discriminant, ctx)?;
-            let mut body = Vec::new();
-            body.push(Statement::VarDecl {
-                name: "__switch_val".to_string(),
-                value: cond,
+            let sm = meta(span, ctx);
+            let id = span.lo.0;
+            let val = format!("__sw_val_{id}");
+            let start = format!("__sw_start_{id}");
+            let mut out = vec![Statement::VarDecl {
+                name: val.clone(),
+                value: lower_expr(discriminant, ctx)?,
                 type_hint: CastType::Any,
-                meta: meta(span, ctx),
-            });
-            for case in cases {
-                let test = match &case.test {
-                    Some(t) => lower_expr(t, ctx)?,
-                    None => Expression::BoolLiteral {
-                        value: true,
-                        meta: meta(&case.span, ctx),
+                meta: sm.clone(),
+            }];
+            let int = |v: i64| Expression::IntLiteral { value: v, meta: sm.clone() };
+            let default_idx = cases.iter().position(|c| c.test.is_none());
+            // start = first matching case index; else default; else past the end.
+            let mut chain: Option<Vec<Statement>> = None;
+            let fallback = vec![Statement::ExprStmt {
+                expr: Expression::Call {
+                    function: "__crush_assign__".to_string(),
+                    args: vec![
+                        Expression::Var { name: start.clone(), meta: sm.clone() },
+                        int(default_idx.unwrap_or(cases.len()) as i64),
+                    ],
+                    meta: sm.clone(),
+                },
+                meta: sm.clone(),
+            }];
+            for (i, case) in cases.iter().enumerate().rev() {
+                let Some(test) = &case.test else { continue };
+                let assign = Statement::ExprStmt {
+                    expr: Expression::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![Expression::Var { name: start.clone(), meta: sm.clone() }, int(i as i64)],
+                        meta: sm.clone(),
                     },
+                    meta: sm.clone(),
                 };
-                body.push(Statement::If {
+                chain = Some(vec![Statement::If {
                     condition: Expression::BinaryOp {
                         operator: "===".to_string(),
-                        left: Box::new(Expression::Var {
-                            name: "__switch_val".to_string(),
-                            meta: meta(&case.span, ctx),
-                        }),
-                        right: Box::new(test),
-                        meta: meta(&case.span, ctx),
+                        left: Box::new(Expression::Var { name: val.clone(), meta: sm.clone() }),
+                        right: Box::new(lower_expr(test, ctx)?),
+                        meta: sm.clone(),
                     },
-                    then_body: stmts_to_vec(&case.cons, ctx)?,
+                    then_body: vec![assign],
+                    else_body: Some(chain.take().unwrap_or_else(|| fallback.clone())),
+                    meta: sm.clone(),
+                }]);
+            }
+            out.push(Statement::VarDecl { name: start.clone(), value: int(cases.len() as i64), type_hint: CastType::Any, meta: sm.clone() });
+            out.extend(chain.unwrap_or(fallback));
+            let mut body = Vec::new();
+            for (i, case) in cases.iter().enumerate() {
+                let stmts = stmts_to_vec(&case.cons, ctx)?;
+                if contains_loop_continue(&stmts) {
+                    anyhow::bail!("`continue` inside a `switch` is not supported yet");
+                }
+                body.push(Statement::If {
+                    condition: Expression::BinaryOp {
+                        operator: "<=".to_string(),
+                        left: Box::new(Expression::Var { name: start.clone(), meta: sm.clone() }),
+                        right: Box::new(int(i as i64)),
+                        meta: sm.clone(),
+                    },
+                    then_body: stmts,
                     else_body: None,
-                    meta: meta(&case.span, ctx),
+                    meta: sm.clone(),
                 });
             }
-            Statement::ExprStmt {
-                expr: Expression::NullLiteral { meta: meta(&swc_common::DUMMY_SP, ctx) },
-                meta: meta(span, ctx),
+            body.push(Statement::Break { meta: sm.clone() });
+            out.push(Statement::While {
+                condition: Box::new(Expression::BoolLiteral { value: true, meta: sm.clone() }),
+                body,
+                meta: sm.clone(),
+            });
+            Statement::If {
+                condition: Expression::BoolLiteral { value: true, meta: sm.clone() },
+                then_body: out,
+                else_body: None,
+                meta: sm,
             }
         }
         Stmt::Break(bs) => Statement::Break { meta: meta(&bs.span, ctx) },
         Stmt::Continue(cs) => Statement::Continue { meta: meta(&cs.span, ctx) },
-        Stmt::With(_ws) => return Ok(None),
+        Stmt::With(_) => anyhow::bail!("`with` statements are not supported"),
         Stmt::Labeled(LabeledStmt { body, .. }) => {
             return lower_stmt(body, ctx);
         }
         Stmt::Block(_) | Stmt::Debugger(_) | Stmt::Empty(_) => return Ok(None),
     }))
+}
+
+/// Does `stmts` contain a `continue` that belongs to the enclosing loop
+/// (i.e. not inside a nested loop or function)?
+fn contains_loop_continue(stmts: &[Statement]) -> bool {
+    stmts.iter().any(|s| match s {
+        Statement::Continue { .. } => true,
+        Statement::If { then_body, else_body, .. } => {
+            contains_loop_continue(then_body) || else_body.as_deref().is_some_and(contains_loop_continue)
+        }
+        Statement::TryCatch { body, handler, .. } => contains_loop_continue(body) || contains_loop_continue(handler),
+        _ => false,
+    })
 }
 
 /// An expression in statement position; `a, b` becomes two statements.
@@ -690,6 +753,11 @@ pub(crate) fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> V
 }
 
 fn lower_var_declarator(decl: &VarDeclarator, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
+    // `const [a, b] = …` / `const {x} = …` used to bind a placeholder named
+    // `_arr` / `_obj`, leaving a and b uninitialised.
+    if !matches!(&decl.name, Pat::Ident(_)) {
+        anyhow::bail!("destructuring declarations are not supported yet");
+    }
     let name = pat_to_name(&decl.name);
     let value = match &decl.init {
         Some(init) => lower_expr(init, ctx)?,
@@ -837,8 +905,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             let test = lower_expr(test, ctx)?;
             let cons = lower_expr(cons, ctx)?;
             let alt = lower_expr(alt, ctx)?;
+            // `__crush_ternary__` is compiled lazily (jumps), so only the
+            // taken branch runs. `__crush_ifexpr__` was an unknown helper:
+            // crush-walk-run stubbed it to null and evaluated both branches,
+            // so `n < 2 ? n : fib(n - 1) + …` recursed forever.
             Ok(Expression::Call {
-                function: "__crush_ifexpr__".to_string(),
+                function: "__crush_ternary__".to_string(),
                 args: vec![test, cons, alt],
                 meta: m,
             })
@@ -1021,45 +1093,65 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             op, left, right, ..
         }) => {
             let right = lower_expr(right, ctx)?;
+            // Where the value goes: a variable, or an object field / array slot.
+            // `o.n = v` used to assign a variable literally named "o.n".
+            enum Target { Var(String), Slot(Expression, Expression) }
+            let target = match left {
+                AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                    let obj = lower_expr(&member.obj, ctx)?;
+                    let key = match &member.prop {
+                        MemberProp::Ident(i) => Expression::StringLiteral { value: i.sym.to_string(), meta: m.clone() },
+                        MemberProp::Computed(c) => lower_expr(&c.expr, ctx)?,
+                        MemberProp::PrivateName(_) => anyhow::bail!("assignment to a private field is not supported yet"),
+                    };
+                    Target::Slot(obj, key)
+                }
+                AssignTarget::Simple(simple) => match simple_assign_target_ident(simple) {
+                    Some(name) => Target::Var(name),
+                    None => anyhow::bail!("this assignment target is not supported yet"),
+                },
+                AssignTarget::Pat(_) => anyhow::bail!("destructuring assignment is not supported yet"),
+            };
+            let current = || match &target {
+                Target::Var(name) => Expression::Var { name: name.clone(), meta: m.clone() },
+                Target::Slot(obj, key) => Expression::Index {
+                    target: Box::new(obj.clone()),
+                    index: Box::new(key.clone()),
+                    meta: m.clone(),
+                },
+            };
             let value = match op {
                 AssignOp::Assign => right,
-                _ => {
-                    let name = assign_target_to_name(left);
-                    Expression::BinaryOp {
-                        operator: match op {
-                            AssignOp::AddAssign => "+", AssignOp::SubAssign => "-",
-                            AssignOp::MulAssign => "*", AssignOp::DivAssign => "/",
-                            AssignOp::ModAssign => "%", AssignOp::LShiftAssign => "<<",
-                            AssignOp::RShiftAssign => ">>", AssignOp::BitOrAssign => "|",
-                            AssignOp::BitXorAssign => "^", AssignOp::BitAndAssign => "&",
-                            AssignOp::ExpAssign => "**", AssignOp::AndAssign => "&&",
-                            AssignOp::OrAssign => "||", AssignOp::NullishAssign => "??",
-                            _ => "=",
-                        }.to_string(),
-                        left: Box::new(Expression::Var { name: name.clone(), meta: m.clone() }),
-                        right: Box::new(right),
-                        meta: m.clone(),
-                    }
+                AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign => {
+                    anyhow::bail!("logical assignment (`&&=`, `||=`, `??=`) is not supported yet")
                 }
+                _ => Expression::BinaryOp {
+                    operator: match op {
+                        AssignOp::AddAssign => "+", AssignOp::SubAssign => "-",
+                        AssignOp::MulAssign => "*", AssignOp::DivAssign => "/",
+                        AssignOp::ModAssign => "%", AssignOp::LShiftAssign => "<<",
+                        AssignOp::RShiftAssign => ">>", AssignOp::BitOrAssign => "|",
+                        AssignOp::BitXorAssign => "^", AssignOp::BitAndAssign => "&",
+                        AssignOp::ExpAssign => "**",
+                        _ => unreachable!(),
+                    }
+                    .to_string(),
+                    left: Box::new(current()),
+                    right: Box::new(right),
+                    meta: m.clone(),
+                },
             };
-            // Subscript assignment: arr[i] = val -> __crush_setindex__(arr, i, val)
-            if let Some((obj_expr, idx_expr)) = assign_target_subscript_parts(left) {
-                let obj = lower_expr(obj_expr, ctx)?;
-                let idx = lower_expr(idx_expr, ctx)?;
-                return Ok(Expression::Call {
-                    function: "__crush_setindex__".to_string(),
-                    args: vec![obj, idx, value],
+            Ok(match target {
+                Target::Var(name) => Expression::Call {
+                    function: "__crush_assign__".to_string(),
+                    args: vec![Expression::Var { name, meta: m.clone() }, value],
                     meta: m,
-                });
-            }
-            let name = assign_target_to_name(left);
-            Ok(Expression::Call {
-                function: "__crush_assign__".to_string(),
-                args: vec![
-                    Expression::Var { name, meta: m.clone() },
-                    value,
-                ],
-                meta: m,
+                },
+                Target::Slot(obj, key) => Expression::Call {
+                    function: "__crush_setindex__".to_string(),
+                    args: vec![obj, key, value],
+                    meta: m,
+                },
             })
         }
         // `(a, b)` in value position: only the last value survives. Statement
@@ -1349,10 +1441,19 @@ fn lower_call_expr(
             };
 
             match func_name.as_str() {
+                // Node separates console.log arguments with a space; io.print
+                // concatenates, so `console.log(a, b)` printed `ab`.
                 "console.log" | "console.info" | "console.warn" | "console.error" => {
+                    let mut spaced = Vec::with_capacity(lowered_args.len() * 2);
+                    for (i, a) in lowered_args.into_iter().enumerate() {
+                        if i > 0 {
+                            spaced.push(Expression::StringLiteral { value: " ".to_string(), meta: m.clone() });
+                        }
+                        spaced.push(a);
+                    }
                     Ok(Expression::CapabilityCall {
                         name: "io.print".to_string(),
-                        args: lowered_args,
+                        args: spaced,
                         meta: m,
                     })
                 }
@@ -1490,92 +1591,20 @@ fn lower_lit(lit: &Lit, ctx: &LowerCtx) -> anyhow::Result<Expression> {
     }
 }
 
-fn assign_target_to_name(target: &AssignTarget) -> String {
-    match target {
-        AssignTarget::Simple(simple) => simple_assign_target_name(simple),
-        AssignTarget::Pat(pat) => match pat {
-            AssignTargetPat::Array(_) => "_arr".to_string(),
-            AssignTargetPat::Object(_) => "_obj".to_string(),
-            AssignTargetPat::Invalid(_) => "_invalid".to_string(),
-        },
-    }
-}
-
-fn simple_assign_target_name(target: &SimpleAssignTarget) -> String {
-    match target {
-        SimpleAssignTarget::Ident(binding) => binding.id.sym.to_string(),
-        SimpleAssignTarget::Member(member) => {
-            let obj = match member.obj.as_ref() {
-                Expr::Ident(i) => i.sym.to_string(),
-                _ => "_expr".to_string(),
-            };
-            let prop = match &member.prop {
-                MemberProp::Ident(i) => i.sym.to_string(),
-                MemberProp::Computed(_) => "[]".to_string(),
-                MemberProp::PrivateName(pn) => format!("#{}", pn.name),
-            };
-            format!("{}.{}", obj, prop)
-        }
-        SimpleAssignTarget::SuperProp(sp) => {
-            let prop_str = match &sp.prop {
-                SuperProp::Ident(i) => i.sym.to_string(),
-                SuperProp::Computed(_) => "[]".to_string(),
-            };
-            format!("super.{}", prop_str)
-        }
-        SimpleAssignTarget::Paren(p) => {
-            if let Expr::Ident(i) = p.expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        SimpleAssignTarget::TsAs(ts_as) => {
-            if let Expr::Ident(i) = ts_as.expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        SimpleAssignTarget::TsNonNull(non_null) => {
-            if let Expr::Ident(i) = non_null.expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        SimpleAssignTarget::TsSatisfies(s) => {
-            if let Expr::Ident(i) = s.expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        SimpleAssignTarget::TsTypeAssertion(ta) => {
-            if let Expr::Ident(i) = ta.expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        SimpleAssignTarget::TsInstantiation(inst) => {
-            if let Expr::Ident(i) = inst.expr.as_ref() {
-                i.sym.to_string()
-            } else {
-                "_expr".to_string()
-            }
-        }
-        SimpleAssignTarget::Invalid(_) => "_invalid".to_string(),
-        SimpleAssignTarget::OptChain(opt) => match opt.base.as_ref() {
-            OptChainBase::Member(m) => {
-                if let Expr::Ident(i) = m.obj.as_ref() {
-                    i.sym.to_string()
-                } else {
-                    "_opt".to_string()
-                }
-            }
-            OptChainBase::Call(_) => "_opt_call".to_string(),
-        },
+/// The variable a simple assignment target names, looking through parens and
+/// TS wrappers; `None` for anything that isn't a plain identifier.
+fn simple_assign_target_ident(target: &SimpleAssignTarget) -> Option<String> {
+    let inner = match target {
+        SimpleAssignTarget::Ident(binding) => return Some(binding.id.sym.to_string()),
+        SimpleAssignTarget::Paren(p) => &p.expr,
+        SimpleAssignTarget::TsAs(t) => &t.expr,
+        SimpleAssignTarget::TsNonNull(t) => &t.expr,
+        SimpleAssignTarget::TsSatisfies(t) => &t.expr,
+        _ => return None,
+    };
+    match unparen(inner) {
+        Expr::Ident(i) => Some(i.sym.to_string()),
+        _ => None,
     }
 }
 
@@ -1586,19 +1615,6 @@ fn prop_name_to_string(key: &PropName) -> String {
         PropName::Num(n) => n.value.to_string(),
         PropName::Computed(_) => "[]".to_string(),
         PropName::BigInt(bi) => bi.value.to_string(),
-    }
-}
-
-/// If the assign target is a subscript (arr[i] = val), returns (obj_expr, idx_expr).
-fn assign_target_subscript_parts(target: &AssignTarget) -> Option<(&Expr, &Expr)> {
-    match target {
-        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
-            match &member.prop {
-                MemberProp::Computed(computed) => Some((&member.obj, &computed.expr)),
-                _ => None,
-            }
-        }
-        _ => None,
     }
 }
 

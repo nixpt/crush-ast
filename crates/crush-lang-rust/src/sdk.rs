@@ -28,7 +28,7 @@ pub fn run_rust(source: &str) -> anyhow::Result<String> {
         }
     }
     for name in &[
-        "__crush_assign__", "__crush_return__", "__crush_ifexpr__",
+        "__crush_assign__", "__crush_return__",
         "__crush_not__", "__crush_neg__",
     ] {
         host_caps.register(Box::new(NopCap { name: name.to_string() }));
