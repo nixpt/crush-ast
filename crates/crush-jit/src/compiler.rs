@@ -1156,7 +1156,8 @@ fn emit_one(
         SetPush    => emit_helper_call(b, ctx, OP_SET_PUSH, 0, _ptr_ty, helper_sig),
         MapKeys    => emit_helper_call(b, ctx, OP_MAP_KEYS, 0, _ptr_ty, helper_sig),
         GetField   => emit_helper_call(b, ctx, OP_GET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
-        SetField   => emit_helper_call(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
+        // Checked: a write to a sealed Kind's undeclared field is an error (COSM K1.4).
+        SetField   => emit_helper_call_checked(b, ctx, OP_SET_FIELD, instr.arg as i64, _ptr_ty, helper_sig),
         NewObj => emit_helper_call(b, ctx, OP_NEW_OBJ, 0, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         NewStruct => emit_helper_call(b, ctx, OP_NEW_STRUCT, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         StrSim     => emit_helper_call(b, ctx, OP_STR_SIM, 0, _ptr_ty, helper_sig),

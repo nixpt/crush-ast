@@ -186,16 +186,28 @@ pub struct PortableVm {
     next_watch_id: u32,
     /// Why the last `DebugBreak` happened.
     last_stop: Option<crate::debug::DebugStop>,
-    /// COSM K1.3: why the program's kind table can't run on this VM yet
-    /// (`cosm_gate`), found at load. `step` reports it before running
-    /// anything.
-    load_error: Option<String>,
+    /// COSM: why the program's kind table can't run on this VM (`cosm_gate`,
+    /// or a malformed table), found at load. `step` reports it before
+    /// running anything.
+    load_error: Option<LoadError>,
+    /// COSM K1.4: the program's Kinds.
+    kinds: crate::cosm_rt::KindTable,
+}
+
+/// A kind table this VM refused at load ([`PortableVm::new`]).
+enum LoadError {
+    Unsupported(String),
+    Cosm(String),
 }
 
 impl PortableVm {
     /// Create a new portable VM with the given program.
     pub fn new(program: Program) -> Self {
-        let load_error = crate::cosm_gate::unsupported_reason(program.cosm.as_ref());
+        let (kinds, load_error) = match crate::cosm_rt::KindTable::load(&program) {
+            Ok(kinds) => (kinds, None),
+            Err(VmError::Unsupported(reason)) => (Default::default(), Some(LoadError::Unsupported(reason))),
+            Err(e) => (Default::default(), Some(LoadError::Cosm(e.to_string()))),
+        };
         // Extract permissions before moving program
         let permissions = program.manifest.permissions.clone();
 
@@ -255,6 +267,7 @@ impl PortableVm {
             next_watch_id: 0,
             last_stop: None,
             load_error,
+            kinds,
         }
     }
 
@@ -544,8 +557,10 @@ impl PortableVm {
         if self.halted {
             return Ok(None);
         }
-        if let Some(reason) = &self.load_error {
-            return Err(VmError::Unsupported(reason.clone()));
+        match &self.load_error {
+            Some(LoadError::Unsupported(reason)) => return Err(VmError::Unsupported(reason.clone())),
+            Some(LoadError::Cosm(reason)) => return Err(VmError::Cosm(reason.clone())),
+            None => {}
         }
 
         // Check breakpoints BEFORE execution. When multiple
@@ -958,7 +973,8 @@ impl PortableVm {
             }
             TYPEOF => {
                 let v = self.pop()?;
-                self.push(Value::Str(value_type_name(&v).to_string()));
+                let name = crate::cosm_rt::type_name(&v).unwrap_or_else(|| value_type_name(&v).to_string());
+                self.push(Value::Str(name));
             }
             CAST => {
                 let idx = u16::from_be_bytes(
@@ -1030,7 +1046,8 @@ impl PortableVm {
                 }
             }
             PRINT => {
-                let s = value_to_text(&self.pop()?);
+                let v = self.pop()?;
+                let s = value_to_text(&self.render_hooked(&v)?.unwrap_or(v));
                 self.out_len += s.len();
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
@@ -1057,6 +1074,20 @@ impl PortableVm {
                     args.push(self.pop()?);
                 }
                 args.reverse();
+                if crate::cosm_rt::is_text_cap(&cap) {
+                    for a in args.iter_mut() {
+                        if let Some(text) = self.render_hooked(a)? {
+                            *a = text;
+                        }
+                    }
+                }
+                if crate::cosm_rt::is_index_cap(&cap, &args) {
+                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
+                    let v = crate::cosm_rt::index_cap(&cap, &args)?;
+                    self.push(v);
+                    return Ok(());
+                }
+                let args = crate::cosm_rt::cap_args(&cap, args)?;
 
                 if cap == "parallel_map" {
                     crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
@@ -1194,6 +1225,7 @@ impl PortableVm {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
                         self.push(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                     }
+                    Value::Record(r) => self.push(crate::cosm_rt::index_get(&r, &idx_v)?),
                     Value::Array(arr_rc) => {
                         let idx = need_array_index(&idx_v)?;
                         let arr = arr_rc.borrow();
@@ -1220,6 +1252,11 @@ impl PortableVm {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
                         map_rc.borrow_mut().insert(key, val);
                         self.push(Value::Map(map_rc));
+                    }
+                    rec @ Value::Record(_) => {
+                        let key = crate::map_ops::map_key_string(&idx_v)?;
+                        crate::cosm_rt::set_member(&rec, &key, val)?;
+                        self.push(rec);
                     }
                     other => {
                         let idx = need_array_index(&idx_v)?;
@@ -1334,6 +1371,7 @@ impl PortableVm {
                         let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
                         self.push(Value::new_array(key_vals));
                     }
+                    Value::Record(r) => self.push(crate::cosm_rt::keys(&r)),
                     other => self.push(other),
                 }
             }
@@ -1355,6 +1393,12 @@ impl PortableVm {
                 let val = self.pop()?;
                 let map_rc = match self.pop()? {
                     Value::Map(m) => m,
+                    // A struct instance (COSM K1.4): SET_MEMBER.
+                    rec @ Value::Record(_) => {
+                        crate::cosm_rt::set_member(&rec, &field, val)?;
+                        self.push(rec);
+                        return Ok(());
+                    }
                     other => {
                         return Err(VmError::TypeError {
                             expected: "map",
@@ -1379,6 +1423,12 @@ impl PortableVm {
                     .clone();
                 let map_rc = match self.pop()? {
                     Value::Map(m) => m,
+                    // A struct instance (COSM K1.4): GET_MEMBER, but a name the
+                    // instance doesn't have reads `null`, as on a map.
+                    target @ (Value::Record(_) | Value::Kind(_)) => {
+                        self.push(crate::cosm_rt::get_member(&target, &field, false)?);
+                        return Ok(());
+                    }
                     other => {
                         return Err(VmError::TypeError {
                             expected: "map",
@@ -1388,6 +1438,94 @@ impl PortableVm {
                 };
                 let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
                 self.push(val);
+            }
+            // ── COSM K1.4 (CRUSH-zorro-43): the generic member ops (`cosm_rt`) ──
+            GET_MEMBER => {
+                let name = self.const_operand()?;
+                let target = self.pop()?;
+                self.push(crate::cosm_rt::get_member(&target, &name, true)?);
+            }
+            SET_MEMBER => {
+                let name = self.const_operand()?;
+                let val = self.pop()?;
+                let target = self.pop()?;
+                crate::cosm_rt::set_member(&target, &name, val)?;
+                self.push(target);
+            }
+            HAS_MEMBER => {
+                let name = self.const_operand()?;
+                let target = self.pop()?;
+                self.push(Value::Bool(crate::cosm_rt::has_member(&target, &name)?));
+            }
+            DEL_MEMBER => {
+                let name = self.const_operand()?;
+                let target = self.pop()?;
+                crate::cosm_rt::del_member(&target, &name)?;
+                self.push(target);
+            }
+            CALL_MEMBER => {
+                let name = self.const_operand()?;
+                let argc = self.program.code[self.ip + 3] as usize;
+                let recv = self.pop()?;
+                match crate::cosm_rt::call_member(&recv, &name, argc)? {
+                    crate::cosm_rt::MemberCall::Call(callee) => self.call_callee(callee, next_ip)?,
+                    crate::cosm_rt::MemberCall::Done(v) => self.push(v),
+                }
+            }
+            CONSTRUCT => {
+                let kind = self.kinds.get(&self.const_operand()?)?.clone();
+                let argc = self.program.code[self.ip + 3] as usize;
+                let base = self.stack.len().checked_sub(argc).ok_or(VmError::StackUnderflow)?;
+                // First argument first (they were pushed last-first).
+                let args: Vec<Value> = self.stack[base..].iter().rev().cloned().collect();
+                match crate::cosm_rt::construct(&kind, &args)? {
+                    crate::cosm_rt::Construction::Done(v) => {
+                        self.stack.truncate(base);
+                        self.push(v);
+                    }
+                    crate::cosm_rt::Construction::Call { instance, callee } => {
+                        // An initialiser's instance stays below the arguments;
+                        // the `POP` after this instruction drops its return
+                        // value.
+                        if let Some(instance) = instance {
+                            self.stack.insert(base, instance);
+                        }
+                        self.call_callee(callee, next_ip)?;
+                    }
+                }
+            }
+            NEW_RECORD => {
+                let record = crate::cosm_rt::new_record(self.kinds.get(&self.const_operand()?)?);
+                self.push(record);
+            }
+            GET_SLOT | SET_SLOT => {
+                let slot = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let val = if opcode == SET_SLOT { Some(self.pop()?) } else { None };
+                let target = self.pop()?;
+                let Value::Record(r) = &target else {
+                    return Err(VmError::TypeError { expected: "record", got: value_type_name(&target) });
+                };
+                match val {
+                    Some(v) => {
+                        r.set_slot(slot, v)?;
+                        self.push(target);
+                    }
+                    None => {
+                        let v = r.slot(slot)?;
+                        self.push(v);
+                    }
+                }
+            }
+            IS_KIND => {
+                let name = self.const_operand()?;
+                let v = self.pop()?;
+                self.push(Value::Bool(crate::cosm_rt::is_kind(&v, &name)));
+            }
+            COPY => {
+                let v = self.pop()?;
+                self.push(crate::cosm_rt::copy_value(&v));
             }
             ENTER_TRY => {
                 let target = u32::from_be_bytes(
@@ -2016,6 +2154,54 @@ impl PortableVm {
         Err(VmError::UnknownCap(cap.to_string()))
     }
 
+    /// The string-constant operand of the current instruction.
+    fn const_operand(&self) -> Result<String, VmError> {
+        let idx = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+        self.program.consts.get(idx).cloned().ok_or(VmError::ConstOutOfRange(idx))
+    }
+
+    /// COSM K1.4: call `callee` as `CALL_VALUE` calls a function value — its
+    /// leading values (the receiver) on top of the arguments already pushed.
+    fn call_callee(&mut self, callee: crate::cosm_rt::Callee, next_ip: usize) -> Result<(), VmError> {
+        let entry = self.get_function_entry(&callee.func)?;
+        if self.call_stack.len() >= self.quotas.max_call_depth {
+            return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+        }
+        for v in callee.leading.into_iter().rev() {
+            self.push(v);
+        }
+        self.call_stack.push(Frame::new(Some(next_ip)));
+        self.jump_to(entry);
+        Ok(())
+    }
+
+    /// COSM K1.4: `v` with every Record whose Kind has a `str`/`repr` hook
+    /// printed through it (`None` when nothing has one). The hook runs to
+    /// completion in a nested VM over this program, like a `parallel_map`
+    /// item; what it prints is kept.
+    fn render_hooked(&mut self, v: &Value) -> Result<Option<Value>, VmError> {
+        if !self.kinds.has_print_hooks() {
+            return Ok(None);
+        }
+        let mut hook = |f: &str, recv: Value| -> Result<Value, VmError> {
+            let entry = self.get_function_entry(f)?;
+            let mut vm = PortableVm::new(self.program.clone());
+            vm.quotas = self.quotas.clone();
+            vm.ip = entry;
+            vm.stack = vec![recv];
+            let result = vm.run()?;
+            if !result.output.is_empty() {
+                self.out_len += result.output.len();
+                if self.out_len > self.quotas.max_output {
+                    return Err(VmError::OutputQuota(self.quotas.max_output));
+                }
+                self.out_parts.push(result.output);
+            }
+            Ok(result.stack.last().cloned().unwrap_or(Value::Null))
+        };
+        crate::cosm_rt::render_hooked(v, &mut hook)
+    }
+
     fn get_function_entry(&self, name: &str) -> Result<usize, VmError> {
         self.func_entry
             .get(name)
@@ -2237,6 +2423,8 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Foreign(_) => "foreign",
         Value::Func(_) => "function",
         Value::Cell(_) => "cell",
+        Value::Record(_) => "record",
+        Value::Kind(_) => "kind",
     }
 }
 
@@ -2288,6 +2476,12 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Foreign(id) => format!("<foreign {}>", id),
         Value::Func(func) => format!("<fn {}>", func.display_name()),
         Value::Cell(_) => "<cell>".to_string(),
+        // Crush's struct print: the map the struct used to be.
+        Value::Record(r) => {
+            let items: Vec<String> = r.fields().iter().map(|(k, v)| format!("{}: {}", k, value_to_text(v))).collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Kind(k) => format!("<kind {}>", k.name()),
     }
 }
 
