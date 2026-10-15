@@ -59,9 +59,3 @@ fn expected_outputs_match_cpython() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{} .out is stale", path.display());
     }
 }
-
-#[test]
-fn lambdas_fail_loudly_until_crush_251() {
-    let err = crush_lang_python::python_to_cast("sq = lambda v: v * v\nprint(sq(7))\n").unwrap_err();
-    assert!(format!("{err:#}").contains("lambda"), "{err:#}");
-}

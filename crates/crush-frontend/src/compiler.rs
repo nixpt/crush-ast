@@ -2389,16 +2389,15 @@ impl Compiler {
                 let pnames: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
                 let body_json = serde_json::to_value(body).unwrap_or_default();
                 let enclosing: HashSet<String> = self.scopes.iter().flatten().cloned().collect();
+                let nonlocals = python_nonlocals(serde_json::to_value(meta).ok().as_ref());
                 let captures: Vec<String> =
-                    lambda_captures(&pnames, &body_json, &enclosing).into_iter().collect();
+                    lambda_captures(&pnames, &body_json, nonlocals.as_ref(), &enclosing)
+                        .into_iter()
+                        .collect();
                 let mut level = Level::default();
                 scan_level(&body_json, &mut level);
-                let locals: HashSet<String> = level
-                    .decls
-                    .iter()
-                    .chain(level.assigns.iter().filter(|a| !enclosing.contains(*a)))
-                    .cloned()
-                    .collect();
+                let locals: HashSet<String> =
+                    lambda_locals(&[], &level, &enclosing, nonlocals.as_ref());
                 // Only a capture-free lambda bound to a name bound exactly once
                 // keeps the direct-call alias (a direct `call` can't pass
                 // captures); otherwise calls go through the value.
@@ -3070,13 +3069,46 @@ fn lambda_params(lambda: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+/// Python scoping (CRUSH-251 step 4): the Python walker marks a lambda it
+/// lowered (a `lambda` or a nested `def`) with meta `scope: "python"` and its
+/// `nonlocal` names. There, assigning a name makes it local unless it is
+/// declared `nonlocal` — unlike Crush / JS, where assigning a name an
+/// enclosing scope has writes that variable.
+fn python_nonlocals(meta: Option<&serde_json::Value>) -> Option<HashSet<String>> {
+    let meta = meta?;
+    if meta.get("scope").and_then(|s| s.as_str()) != Some("python") {
+        return None;
+    }
+    Some(
+        meta.get("nonlocal")
+            .and_then(|n| n.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
 /// The names a lambda's scope binds: parameters, `let`s / loop variables, and
-/// assignment targets no enclosing scope has.
-fn lambda_locals(params: &[String], level: &Level, enclosing: &HashSet<String>) -> HashSet<String> {
+/// assignment targets — those no enclosing scope has, or (Python) those not
+/// declared `nonlocal`.
+fn lambda_locals(
+    params: &[String],
+    level: &Level,
+    enclosing: &HashSet<String>,
+    python_nonlocals: Option<&HashSet<String>>,
+) -> HashSet<String> {
+    let local_assign = |a: &&String| match python_nonlocals {
+        Some(nonlocals) => !nonlocals.contains(*a),
+        None => !enclosing.contains(*a),
+    };
+    // The Python walker lowers every assignment to a `VarDecl`, so a
+    // `nonlocal` name must not become local through one either.
+    let not_nonlocal = |d: &&String| python_nonlocals.is_none_or(|nl| !nl.contains(*d));
     params
         .iter()
-        .chain(level.decls.iter())
-        .chain(level.assigns.iter().filter(|a| !enclosing.contains(*a)))
+        .chain(level.decls.iter().filter(not_nonlocal))
+        .chain(level.assigns.iter().filter(local_assign))
         .cloned()
         .collect()
 }
@@ -3088,16 +3120,18 @@ fn lambda_locals(params: &[String], level: &Level, enclosing: &HashSet<String>) 
 fn lambda_captures(
     params: &[String],
     body: &serde_json::Value,
+    own_nonlocals: Option<&HashSet<String>>,
     enclosing: &HashSet<String>,
 ) -> std::collections::BTreeSet<String> {
     let mut level = Level::default();
     scan_level(body, &mut level);
-    let locals = lambda_locals(params, &level, enclosing);
+    let locals = lambda_locals(params, &level, enclosing, own_nonlocals);
     let inner_enclosing: HashSet<String> = enclosing.union(&locals).cloned().collect();
     let mut used: HashSet<String> = level.refs.union(&level.assigns).cloned().collect();
     for nested in &level.lambdas {
         let body = nested.get("body").unwrap_or(&serde_json::Value::Null);
-        used.extend(lambda_captures(&lambda_params(nested), body, &inner_enclosing));
+        let nonlocals = python_nonlocals(nested.get("meta"));
+        used.extend(lambda_captures(&lambda_params(nested), body, nonlocals.as_ref(), &inner_enclosing));
     }
     used.into_iter()
         .filter(|n| !locals.contains(n) && enclosing.contains(n))
@@ -3116,11 +3150,14 @@ fn boxed_names(params: &[String], body: &serde_json::Value) -> HashSet<String> {
             let ps = lambda_params(lambda);
             all_params.extend(ps.iter().cloned());
             let body = lambda.get("body").unwrap_or(&serde_json::Value::Null);
-            captured.extend(lambda_captures(&ps, body, enclosing));
+            let nonlocals = python_nonlocals(lambda.get("meta"));
+            captured.extend(lambda_captures(&ps, body, nonlocals.as_ref(), enclosing));
             let mut level = Level::default();
             scan_level(body, &mut level);
-            let inner: HashSet<String> =
-                enclosing.union(&lambda_locals(&ps, &level, enclosing)).cloned().collect();
+            let inner: HashSet<String> = enclosing
+                .union(&lambda_locals(&ps, &level, enclosing, nonlocals.as_ref()))
+                .cloned()
+                .collect();
             walk(&level.lambdas, &inner, captured, all_params);
         }
     }

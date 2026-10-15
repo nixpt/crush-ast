@@ -127,8 +127,30 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 meta,
             })
         }
-        py_ast::Expr::Lambda { .. } => {
-            anyhow::bail!("lambda expressions not yet supported")
+        py_ast::Expr::Lambda(py_ast::ExprLambda { args, body, .. }) => {
+            if args.defaults().next().is_some()
+                || args.vararg.is_some()
+                || args.kwarg.is_some()
+                || !args.kwonlyargs.is_empty()
+                || !args.posonlyargs.is_empty()
+            {
+                anyhow::bail!(
+                    "lambda with default, keyword-only, positional-only or */** parameters \
+                     is not supported yet"
+                );
+            }
+            let params: Vec<(String, CastType)> = args
+                .args
+                .iter()
+                .map(|a| (a.def.arg.to_string(), CastType::Any))
+                .collect();
+            let (mut stmts, value) = lower_expr_hoist(body, ctx)?;
+            stmts.push(Statement::Return { value: Some(value), meta: meta.clone() });
+            Ok(Expression::Lambda {
+                params,
+                body: stmts,
+                meta: crate::lower_stmt::python_lambda_meta(&meta, Vec::new()),
+            })
         }
         py_ast::Expr::IfExp(py_ast::ExprIfExp {
             test, body, orelse, ..
@@ -584,6 +606,7 @@ fn lower_list_or_set_comprehension(
         meta: meta.clone(),
     };
     let loop_stmt = build_comprehension_loop(generators, 0, vec![push_stmt], ctx, &meta)?;
+    let loop_stmt = comprehension_scope(loop_stmt, generators)?;
     Ok((
         vec![init, loop_stmt],
         Expression::Var {
@@ -591,6 +614,64 @@ fn lower_list_or_set_comprehension(
             meta,
         },
     ))
+}
+
+/// Python 3 gives a comprehension its own scope: its loop variables don't
+/// overwrite a same-named variable of the enclosing function
+/// (`n = 10; [n for n in range(3)]` leaves `n` at 10). The loop is lowered
+/// inline, so rename every target to a fresh name throughout it — a
+/// consistent rename to an unused name keeps the meaning (closures in the
+/// comprehension still share the renamed variable: late binding holds). The
+/// first `for`'s iterable is evaluated in the enclosing scope, so it keeps
+/// the outer names.
+fn comprehension_scope(
+    loop_stmt: Statement,
+    generators: &[py_ast::Comprehension],
+) -> anyhow::Result<Statement> {
+    use serde_json::Value as J;
+    fn rename(v: &mut J, from: &str, to: &str) {
+        match v {
+            J::Array(items) => items.iter_mut().for_each(|i| rename(i, from, to)),
+            J::Object(o) => {
+                for key in ["name", "variable", "target"] {
+                    if o.get(key).and_then(J::as_str) == Some(from) {
+                        o.insert(key.to_string(), J::from(to));
+                    }
+                }
+                if let Some(f) = o.get("function").and_then(J::as_str) {
+                    let renamed = if f == from {
+                        Some(to.to_string())
+                    } else {
+                        f.strip_prefix(from).filter(|rest| rest.starts_with('.')).map(|rest| format!("{to}{rest}"))
+                    };
+                    if let Some(r) = renamed {
+                        o.insert("function".to_string(), J::from(r));
+                    }
+                }
+                if let Some(J::Array(params)) = o.get_mut("params") {
+                    for p in params.iter_mut() {
+                        if p.get(0).and_then(J::as_str) == Some(from) {
+                            p[0] = J::from(to);
+                        }
+                    }
+                }
+                o.values_mut().for_each(|c| rename(c, from, to));
+            }
+            _ => {}
+        }
+    }
+    let mut json = serde_json::to_value(&loop_stmt)?;
+    let first_iterable = json.get("iterable").cloned();
+    for generator in generators {
+        if let py_ast::Expr::Name(py_ast::ExprName { id, .. }) = &generator.target {
+            let fresh = format!("{}_{}", fresh_comp_temp(), id);
+            rename(&mut json, id.as_str(), &fresh);
+        }
+    }
+    if let (Some(original), Some(obj)) = (first_iterable, json.as_object_mut()) {
+        obj.insert("iterable".to_string(), original);
+    }
+    Ok(serde_json::from_value(json)?)
 }
 
 /// Recursively build the (possibly nested, for multiple `for` clauses)
@@ -681,6 +762,31 @@ pub(crate) fn lower_expr_hoist(
             ..
         }) => {
             let mut hoisted = Vec::new();
+            // Calling a value that isn't a name or a method (`make_adder(3)(4)`,
+            // `fs[0]()`): evaluate the callee first — Python's order — into a
+            // temporary and call that (a call through a variable is
+            // `call_value`, CRUSH-251). Only where statements can be hoisted;
+            // elsewhere it stays an error (CRUSH-zorro-24).
+            let temp_callee;
+            let func = if matches!(func.as_ref(), py_ast::Expr::Name(_) | py_ast::Expr::Attribute(_)) {
+                func.as_ref()
+            } else {
+                let (h, callee) = lower_expr_hoist(func, ctx)?;
+                hoisted.extend(h);
+                let temp = fresh_comp_temp();
+                hoisted.push(Statement::VarDecl {
+                    name: temp.clone(),
+                    value: callee,
+                    type_hint: CastType::Any,
+                    meta: meta.clone(),
+                });
+                temp_callee = py_ast::Expr::Name(py_ast::ExprName {
+                    range: func.range(),
+                    id: temp.as_str().into(),
+                    ctx: py_ast::ExprContext::Load,
+                });
+                &temp_callee
+            };
             let mut lowered_args = Vec::new();
             for a in args {
                 let (h, e) = lower_expr_hoist(a, ctx)?;
@@ -718,7 +824,8 @@ mod comprehension_lowering_tests {
         }
         match &hoisted[1] {
             Statement::For { variable, body, .. } => {
-                assert_eq!(variable, "i");
+                // Renamed to the comprehension's own scope (`__comp_N_i`).
+                assert!(variable.starts_with("__comp_") && variable.ends_with("_i"), "{variable}");
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     Statement::ExprStmt { expr: Expression::Call { function, args, .. }, .. } => {
