@@ -97,10 +97,16 @@ const C_SILENT: &[(&str, &str, &str)] = RUST_SILENT;
 /// these deltas (both backends). Programs swc can't lower that boa runs
 /// exactly:
 const BOA_EXACT: &[&str] = &["scope_block_shadow", "scope_shadow_loop"];
-/// Silently wrong on AOT with swc, refused at walk time with boa:
+/// Silently wrong (or right by accident) on AOT with swc, refused at walk
+/// time with boa:
 const BOA_LOUD: &[(&str, &str)] = &[
     ("fn_default_param", "CRUSH-zorro-18: default parameters (refused at walk time)"),
     ("ops_optional_chain", "CRUSH-zorro-12: `?.` (refused at walk time)"),
+    ("misc_console_multi", "CRUSH-zorro-12: `undefined` as a value (refused at walk time)"),
+    ("ops_nan", "CRUSH-zorro-12: `NaN` as a value (refused at walk time)"),
+    // Matched on AOT with swc only because AOT reads the unbound name
+    // `undefined` as `null`, and `null == undefined` agrees by accident.
+    ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` as a value (refused at walk time)"),
 ];
 
 /// A backend's swc lists, adjusted for the boa lowering.

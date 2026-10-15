@@ -109,6 +109,7 @@ impl Lower<'_> {
                 }
             }
         }
+        self.script_names.extend(syms.iter().copied());
         for sym in syms {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
@@ -975,10 +976,14 @@ impl Lower<'_> {
         let mut out = Vec::new();
         for p in parts {
             let meta = self.meta(Some(p.span()));
-            out.push(CastStmt::ExprStmt {
-                expr: self.expr(p)?,
-                meta,
-            });
+            // A call's value is discarded here (`a.push(x);`).
+            let expr = match unparen(p) {
+                Expression::Call(c) => {
+                    self.call(c.function(), c.args(), true, Some(p.span()), meta.clone())?
+                }
+                _ => self.expr(p)?,
+            };
+            out.push(CastStmt::ExprStmt { expr, meta });
         }
         Ok(out)
     }

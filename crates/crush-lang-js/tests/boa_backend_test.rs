@@ -92,7 +92,7 @@ fn test_boa_for_of_loop() {
 
 #[test]
 fn test_boa_try_catch() {
-    let source = "try { x(); } catch(e) { console.log(e); }";
+    let source = "function x() { throw 1; }\ntry { x(); } catch(e) { console.log(e); }";
     let report = test_analyze(source, "js");
     assert!(report.uses_exceptions);
     let (_report, program) =
@@ -130,7 +130,7 @@ fn test_boa_array_object() {
 
 #[test]
 fn test_boa_template_literal() {
-    let source = "const msg = `hello ${name}`;";
+    let source = "const name = 'x';\nconst msg = `hello ${name}`;";
     let program = test_lower(source);
     assert!(program.functions.contains_key("main"));
 }
@@ -157,7 +157,7 @@ fn test_boa_generator_rejected() {
 
 #[test]
 fn test_boa_property_access() {
-    let source = "const val = obj.prop;\nconst idx = arr[0];\n";
+    let source = "const obj = {prop: 1};\nconst arr = [2];\nconst val = obj.prop;\nconst idx = arr[0];\n";
     let program = test_lower(source);
     assert!(program.functions.contains_key("main"));
 }
@@ -205,14 +205,14 @@ fn test_boa_class() {
 
 #[test]
 fn test_boa_logical_operators() {
-    let source = "const r = a && b || !c;";
+    let source = "let a = 1, b = 0, c = 1;\nconst r = a && b || !c;";
     let program = test_lower(source);
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_conditional_operator() {
-    let source = "const r = x > 0 ? 'pos' : 'neg';";
+    let source = "const x = 1;\nconst r = x > 0 ? 'pos' : 'neg';";
     let program = test_lower(source);
     assert!(program.functions.contains_key("main"));
 }
@@ -305,4 +305,41 @@ fn test_boa_capture_free_nested_functions_are_lifted() {
         )),
         "addK captures `k`, so it stays a closure"
     );
+}
+
+// CRUSH-250 step 3: calls go through the builtin/method table. What isn't a
+// user binding or a row fails at walk time, naming what isn't supported.
+#[test]
+fn test_boa_builtin_table_refusals() {
+    // A planned row names the ticket that adds it.
+    assert!(loud("console.log(parseInt('4'));").contains("`parseInt()` (CRUSH-zorro-17"));
+    assert!(loud("let s = 'a';\nconsole.log(s.toUpperCase());").contains("`.toUpperCase()` (CRUSH-zorro-14"));
+    // Not a row and not defined: refused here, not as an unknown function later.
+    assert!(loud("nope(1);").contains("calling `nope`, which is not defined"));
+    assert!(loud("console.log(Math.cbrt(8));").contains("`Math.cbrt()`"));
+    let o = loud("const o = {f: 1};\no.f();");
+    assert!(o.contains("`.f()`") && o.contains("COSM"), "{o}");
+    // Arity is checked; `push`'s result (the array, not JS's new length) can't be used.
+    assert!(loud("console.log(Math.max(1, 2, 3));").contains("with 3 argument(s)"));
+    assert!(loud("const a = [];\nconsole.log(a.push(1));").contains("using the result of `.push()`"));
+}
+
+// A user binding shadows a builtin name: it's called, not looked up.
+#[test]
+fn test_boa_user_bindings_shadow_builtins() {
+    let program = test_lower("function parseInt(s) { return 7; }\nconst Math = {floor: 1};\nconsole.log(parseInt('1'));\n");
+    assert!(program.functions.contains_key("parseInt"));
+    let msg = loud("const Math = {floor: (x) => x};\nconsole.log(Math.floor(2));");
+    assert!(msg.contains("`.floor()`"), "a user `Math` is a receiver, not the namespace: {msg}");
+}
+
+// A name no scope binds is refused at walk time (never "uninitialised slot"
+// at run time, or `null` on AOT).
+#[test]
+fn test_boa_unbound_names_are_loud() {
+    assert!(loud("console.log(undefined);").contains("`undefined` as a value (CRUSH-zorro-12"));
+    assert!(loud("console.log(Math.PI);").contains("`Math.PI` (CRUSH-zorro-17"));
+    assert!(loud("console.log(nothing);").contains("`nothing`, which is not defined"));
+    let msg = loud("let total = 3;\nfunction f() { return total; }\nconsole.log(f());");
+    assert!(msg.contains("reading the script's top-level `total` from inside a function"), "{msg}");
 }

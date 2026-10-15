@@ -91,10 +91,31 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
      - a nested `function` declaration is refused (it was silently wrong on AOT).
    - Not done yet: TDZ (a read of `let`/`const` before its declaration).
 3. Builtin/method table wired to the `js.*` runtime library.
+   **Done in sub-PR 3:**
+   - `lower/builtins.rs` has three tables:
+     - `GLOBALS`: global and namespace functions;
+     - `METHODS`: receiver methods;
+     - `VALUES`: global names read as values.
+   - Each row has an arity and a lowering: a capability, the `console.log` line, a receiver-dispatched
+     method, or `Planned(ticket)`.
+   - A call or read that is neither a user binding nor a row fails at walk time, naming it (and its
+     ticket). It never reaches "Undefined function", "unknown capability" or "uninitialised slot".
+   - A top-level function reading a script variable is refused (AOT read it as `null`).
+   - Area tickets turn `Planned` rows into lowerings.
 4. Closures/function values (CRUSH-251 steps 2–3).
 5. The constructs listed above (one PR each, or as their tickets).
 6. Flip the `.js` default once the gate passes; retire the swc lowering for JS; update
    `language_frontend_matrix.md`.
+   **Gate items besides the harness (boa >= swc in every area, VM and AOT, 0 silent):**
+   - **A top-level function that reads a script variable must run.** It is common JS
+     (`let total = 0; function add(n) { total += n; }`).
+     - Today it is refused at walk time: top-level functions are their own crush functions, AOT read
+       the variable as `null`, and the VM failed.
+     - Intended lowering: script bindings that functions use become captured cells (CRUSH-251 ops),
+       with the functions that use them closures in `main`; or the bindings become globals.
+     - boa must not become the default while this is loud.
+   - `#235`'s argument-order fix lands before `push` (or any method row) accepts more than one
+     argument.
 
 ## Not this ticket
 
