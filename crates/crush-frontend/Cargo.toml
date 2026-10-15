@@ -12,6 +12,7 @@ categories = ["compilers"]
 
 [dependencies]
 crush-cast.workspace = true
+crush-cosm.workspace = true
 casm.workspace = true
 crush-errors.workspace = true
 crush-index.workspace = true

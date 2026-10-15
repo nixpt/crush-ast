@@ -2,6 +2,8 @@ pub mod ai_runtime;
 pub mod cson_desugar;
 pub mod cast_enrich;
 pub mod compiler;
+mod cosm_kind;
+pub mod cosm_lower;
 pub mod diagnostics;
 pub mod exhaustive_check;
 pub mod import_system;
@@ -72,18 +74,51 @@ pub fn compile_cast(program: &crush_cast::Program) -> Result<casm::Program> {
 ///
 /// Identical to [`compile_cast`] but takes the program by value, avoiding a
 /// deep clone of the whole AST on the hot compile path.
-pub fn compile_cast_owned(mut program: crush_cast::Program) -> Result<casm::Program> {
+pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program> {
+    Ok(compile_cast_with_cosm(program)?.0)
+}
+
+/// Compile a CAST Program and also return its COSM module (COSM K1.2,
+/// CRUSH-zorro-41): the `KindDecl`s / `InterfaceDecl`s its `struct` /
+/// `impl` / `trait` / `@kind(…)` declarations lower to, validated. `None` for
+/// a program that declares none of them.
+///
+/// The CASM program doesn't carry the module yet (CRUSH-zorro-42); its
+/// functions include the lifted methods (`Point::norm2`, …).
+pub fn compile_cast_with_cosm(
+    mut program: crush_cast::Program,
+) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
+    let cosm = cosm_lower::lower(&mut program)?;
     let mut sema = semantics::SemanticAnalyzer::new();
     sema.check(&program)?;
     optimizer::Optimizer::optimize(&mut program);
     let mut comp = compiler::Compiler::new();
-    comp.compile(program)
+    let casm = comp.compile_lowered(program, cosm.clone())?;
+    Ok((casm, cosm))
 }
 
 /// Parse Crush source and compile directly to CASM bytecode.
 pub fn compile_crush_source(source: &str) -> Result<casm::Program> {
     let program = parse_source(source)?;
     compile_cast_owned(program)
+}
+
+/// Parse Crush source and lower its `struct` / `impl` / `trait` / `@kind(…)`
+/// declarations to a validated COSM module, without generating code (COSM
+/// K1.2, CRUSH-zorro-41). Unlike compiling, this accepts every strategy in
+/// the catalogue — including ones the VMs can't run yet. `None` when the
+/// source declares none of them.
+pub fn lower_to_cosm(source: &str) -> Result<Option<crush_cosm::CosmModule>> {
+    let mut program = parse_source(source)?;
+    cosm_lower::lower(&mut program)
+}
+
+/// Parse Crush source and compile it, also returning its COSM module (see
+/// [`compile_cast_with_cosm`]).
+pub fn compile_crush_source_with_cosm(
+    source: &str,
+) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
+    compile_cast_with_cosm(parse_source(source)?)
 }
 
 // ── Surgical symbol extraction ───────────────────────────────────────────────

@@ -28,6 +28,15 @@ impl SemanticAnalyzer {
     }
 
     pub fn check(&mut self, program: &Program) -> Result<()> {
+        // A program that still has `impl` / `trait` nodes is checked as it
+        // will be compiled: lowered, with the methods as functions (COSM
+        // K1.2). `compile_cast_owned` lowers before checking, so this is only
+        // for callers that check a freshly parsed program directly.
+        if crate::cosm_lower::has_impl_or_trait(program) {
+            let mut lowered = program.clone();
+            crate::cosm_lower::lower(&mut lowered)?;
+            return self.check(&lowered);
+        }
         // Register built-in functions
         self.functions
             .insert("len".to_string(), (vec![Type::Any], Type::Int));

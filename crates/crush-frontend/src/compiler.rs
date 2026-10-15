@@ -61,6 +61,14 @@ pub struct Compiler {
     /// Names each enclosing scope binds (function, then lambda bodies,
     /// innermost last) — what a lambda can capture.
     scopes: Vec<HashSet<String>>,
+    /// COSM K1.2 (CRUSH-zorro-41): the module the last compiled program's
+    /// `struct` / `impl` / `trait` declarations lowered to.
+    cosm: Option<crush_cosm::CosmModule>,
+    /// Names of methods (with `self`) defined in the program's `impl`s. A
+    /// `x.m(…)` call naming one is rejected until receiver dispatch lands
+    /// (K1.4/K1.5) — compiled today it would silently call the global
+    /// capability `m`.
+    receiver_methods: std::collections::BTreeSet<String>,
 }
 
 struct LoopInfo {
@@ -93,7 +101,32 @@ impl Compiler {
             function_arity: HashMap::new(),
             boxed: HashSet::new(),
             scopes: Vec::new(),
+            cosm: None,
+            receiver_methods: Default::default(),
         }
+    }
+
+    /// The COSM module of the last compiled program (COSM K1.2): `None` when
+    /// it declares no struct, impl or trait.
+    pub fn cosm_module(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref()
+    }
+
+    /// Compile a CAST program whose `impl` / `trait` declarations
+    /// [`crate::cosm_lower::lower`] has already lowered to `cosm` (methods
+    /// lifted into `program.functions`).
+    pub fn compile_lowered(
+        &mut self,
+        program: Program,
+        cosm: Option<crush_cosm::CosmModule>,
+    ) -> Result<CasmProgram> {
+        if let Some(module) = &cosm {
+            crate::cosm_lower::refuse_unimplemented_strategies(module)?;
+        }
+        self.receiver_methods =
+            cosm.as_ref().map(crate::cosm_lower::receiver_methods).unwrap_or_default();
+        self.cosm = cosm;
+        self.compile_program(program)
     }
 
     /// #78: a lambda body may not read or assign the enclosing function's
@@ -215,7 +248,14 @@ impl Compiler {
         self
     }
 
+    /// Compile a CAST program to CASM. `impl` / `trait` declarations are
+    /// lowered to COSM first (see [`Compiler::cosm_module`]).
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
+        let cosm = crate::cosm_lower::lower(&mut program)?;
+        self.compile_lowered(program, cosm)
+    }
+
+    fn compile_program(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
         self.lambdas.clear();
         self.lambda_aliases.clear();
@@ -2135,6 +2175,21 @@ impl Compiler {
                         let dot_pos = name.find('.').unwrap();
                         let obj_name = &name[..dot_pos];
                         let method = &name[dot_pos + 1..];
+                        if self.receiver_methods.contains(method) {
+                            let at = match (
+                                meta.get("line").and_then(|v| v.as_u64()),
+                                meta.get("col").and_then(|v| v.as_u64()),
+                            ) {
+                                (Some(l), Some(c)) => format!("line {l}, col {c}: "),
+                                _ => String::new(),
+                            };
+                            bail!(
+                                "{at}`{obj_name}.{method}(…)`: calling methods defined in `impl` needs \
+                                 COSM K1.4/K1.5 (CRUSH-zorro-43/44) — compiled today it would call the \
+                                 global capability `{method}`, not the method. Call the lifted function \
+                                 directly instead (`Type::{method}({obj_name}, …)`)"
+                            );
+                        }
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
                         for arg in args.iter().rev() {
