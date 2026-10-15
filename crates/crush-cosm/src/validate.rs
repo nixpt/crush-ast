@@ -2,8 +2,8 @@
 
 use crate::mro::{KindLookup, Linearizer, ModuleSet, MroError};
 use crate::schema::{
-    Conformance, CosmModule, InterfaceDecl, KindDecl, KindRef, Member, MemberDecl, Semantics, Storage,
-    ValueMode,
+    Conformance, CosmModule, InterfaceDecl, KindDecl, KindRef, Member, MemberDecl, Semantics,
+    Storage, ValueMode,
 };
 use crate::span::{Diagnostic, DiagnosticCode, Span};
 use std::collections::HashSet;
@@ -18,7 +18,11 @@ pub fn validate(module: &CosmModule) -> Vec<Diagnostic> {
 /// checked; `deps` are assumed valid. Diagnostics come in declaration order.
 pub fn validate_with(module: &CosmModule, deps: &[&CosmModule]) -> Vec<Diagnostic> {
     let set = ModuleSet::new(module, deps);
-    let mut v = Validator { set, lin: Linearizer::new(&set), out: Vec::new() };
+    let mut v = Validator {
+        set,
+        lin: Linearizer::new(&set),
+        out: Vec::new(),
+    };
     v.duplicate_decls(module);
     for kind in &module.kinds {
         v.kind(kind);
@@ -40,8 +44,19 @@ fn first_span<'s>(spans: &[Option<&'s Span>]) -> Option<&'s Span> {
 }
 
 impl<'a> Validator<'_, 'a> {
-    fn push(&mut self, code: DiagnosticCode, subject: String, message: String, span: Option<&Span>) {
-        self.out.push(Diagnostic { code, subject, message, span: span.cloned() });
+    fn push(
+        &mut self,
+        code: DiagnosticCode,
+        subject: String,
+        message: String,
+        span: Option<&Span>,
+    ) {
+        self.out.push(Diagnostic {
+            code,
+            subject,
+            message,
+            span: span.cloned(),
+        });
     }
 
     fn duplicate_decls(&mut self, module: &CosmModule) {
@@ -50,7 +65,12 @@ impl<'a> Validator<'_, 'a> {
             .kinds
             .iter()
             .map(|k| (k.name.as_str(), "kind", k.span.as_ref()))
-            .chain(module.interfaces.iter().map(|i| (i.name.as_str(), "interface", i.span.as_ref())));
+            .chain(
+                module
+                    .interfaces
+                    .iter()
+                    .map(|i| (i.name.as_str(), "interface", i.span.as_ref())),
+            );
         for (name, what, span) in decls {
             if !seen.insert(name) {
                 self.push(
@@ -105,7 +125,9 @@ impl<'a> Validator<'_, 'a> {
                 self.push(
                     DiagnosticCode::ParentIsInterface,
                     name.clone(),
-                    format!("parent `{parent}` is an interface, not a kind; declare it in `conforms`"),
+                    format!(
+                        "parent `{parent}` is an interface, not a kind; declare it in `conforms`"
+                    ),
                     kspan,
                 );
             } else {
@@ -127,7 +149,11 @@ impl<'a> Validator<'_, 'a> {
                 self.push(
                     DiagnosticCode::FieldShadowedByMember,
                     format!("{name}.{}", m.name),
-                    format!("{} `{}` shadows the sealed field of the same name", member_word(m), m.name),
+                    format!(
+                        "{} `{}` shadows the sealed field of the same name",
+                        member_word(m),
+                        m.name
+                    ),
                     mspan,
                 );
             }
@@ -135,7 +161,10 @@ impl<'a> Validator<'_, 'a> {
                 self.push(
                     DiagnosticCode::UndeclaredField,
                     format!("{name}.{}", m.name),
-                    format!("field member `{}` is not a declared field of sealed kind `{name}`", m.name),
+                    format!(
+                        "field member `{}` is not a declared field of sealed kind `{name}`",
+                        m.name
+                    ),
                     mspan,
                 );
             }
@@ -151,7 +180,10 @@ impl<'a> Validator<'_, 'a> {
                 self.push(
                     DiagnosticCode::DuplicateConformance,
                     format!("{name}: {}", conf.interface),
-                    format!("conformance to `{}` is declared more than once", conf.interface),
+                    format!(
+                        "conformance to `{}` is declared more than once",
+                        conf.interface
+                    ),
                     first_span(&[conf.span.as_ref(), kspan]),
                 );
                 continue;
@@ -174,7 +206,12 @@ impl<'a> Validator<'_, 'a> {
                     "parent `{parent}` uses `embedding_promotion`, which has no linear order to inherit under `{}`",
                     crate::catalogue::Strategy::as_str(kind.resolution)
                 );
-                self.push(DiagnosticCode::IncompatibleParent, kind.name.clone(), msg, kind.span.as_ref());
+                self.push(
+                    DiagnosticCode::IncompatibleParent,
+                    kind.name.clone(),
+                    msg,
+                    kind.span.as_ref(),
+                );
                 return None;
             }
             _ if err.kind() != &me => return None, // reported at its origin
@@ -200,7 +237,11 @@ impl<'a> Validator<'_, 'a> {
                     mspan,
                 );
             }
-            if let Member::Accessor { get: None, set: None } = m.member {
+            if let Member::Accessor {
+                get: None,
+                set: None,
+            } = m.member
+            {
                 self.push(
                     DiagnosticCode::EmptyAccessor,
                     format!("{owner}.{}", m.name),
@@ -220,7 +261,10 @@ impl<'a> Validator<'_, 'a> {
                 self.push(
                     DiagnosticCode::ConformsToKind,
                     subject,
-                    format!("`{}` is a kind, not an interface; inherit from it in `parents`", conf.interface),
+                    format!(
+                        "`{}` is a kind, not an interface; inherit from it in `parents`",
+                        conf.interface
+                    ),
                     cspan,
                 );
             } else {
@@ -274,7 +318,11 @@ impl<'a> Validator<'_, 'a> {
                 format!(
                     "missing member(s) of interface `{}`: {}",
                     iface.name,
-                    missing.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ")
+                    missing
+                        .iter()
+                        .map(|m| format!("`{m}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 cspan,
             );
@@ -284,10 +332,16 @@ impl<'a> Validator<'_, 'a> {
     /// Whether some kind in `lineage` provides `member`: in its conformance
     /// to `iface`, or as a method/accessor/static member of its own.
     fn provides(&self, lineage: &[KindRef], iface: &InterfaceDecl, member: &str) -> bool {
-        lineage.iter().filter_map(|k| self.set.lookup_kind(k.as_str())).any(|k| {
-            k.conformance(&iface.name).is_some_and(|c| c.members.iter().any(|m| m.name == member))
-                || k.members.iter().any(|m| m.name == member && m.is_callable_or_static())
-        })
+        lineage
+            .iter()
+            .filter_map(|k| self.set.lookup_kind(k.as_str()))
+            .any(|k| {
+                k.conformance(&iface.name)
+                    .is_some_and(|c| c.members.iter().any(|m| m.name == member))
+                    || k.members
+                        .iter()
+                        .any(|m| m.name == member && m.is_callable_or_static())
+            })
     }
 
     fn interface(&mut self, iface: &InterfaceDecl) {

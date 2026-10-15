@@ -31,13 +31,18 @@ mod validate;
 pub use catalogue::{CatalogueError, Strategy};
 pub use mro::{KindLookup, Linearizer, ModuleSet, MroError, c3_mro, resolution_order};
 pub use schema::{
-    Conformance, Const, Construct, CosmModule, Equality, FieldDecl, FnRef, HookImpl, Hooks, InterfaceDecl,
-    InterfaceMember, InterfaceRef, KindDecl, KindRef, Member, MemberDecl, Op, Param, Receiver, Resolution,
-    Satisfaction, Semantics, StaticValue, Storage, ValueMode,
+    Conformance, Const, Construct, CosmModule, Equality, FieldDecl, FnRef, HookImpl, Hooks,
+    InterfaceDecl, InterfaceMember, InterfaceRef, KindDecl, KindRef, Member, MemberDecl, Op, Param,
+    Receiver, Resolution, Satisfaction, Semantics, StaticValue, Storage, ValueMode,
 };
-pub use types::CosmType;
 pub use span::{Diagnostic, DiagnosticCode, Span};
+pub use types::CosmType;
 pub use validate::{validate, validate_with};
+
+/// Runs the README's examples as doctests.
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
 
 /// The COSM schema version this crate reads and writes.
 pub const COSM_VERSION: &str = "0.1.0";
@@ -52,7 +57,9 @@ pub enum CosmError {
 impl std::fmt::Display for CosmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CosmError::Json { path, message } => write!(f, "invalid COSM JSON at `{path}`: {message}"),
+            CosmError::Json { path, message } => {
+                write!(f, "invalid COSM JSON at `{path}`: {message}")
+            }
         }
     }
 }

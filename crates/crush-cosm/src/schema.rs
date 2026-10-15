@@ -600,19 +600,40 @@ impl Storage {
 
 impl FieldDecl {
     pub fn new(name: impl Into<String>, ty: CosmType) -> Self {
-        FieldDecl { name: name.into(), ty, default: None, span: None }
+        FieldDecl {
+            name: name.into(),
+            ty,
+            default: None,
+            span: None,
+        }
     }
 }
 
 impl MemberDecl {
     /// A method using the Kind's default receiver.
     pub fn method(name: impl Into<String>, func: impl Into<FnRef>) -> Self {
-        MemberDecl::new(name, Member::Method { func: func.into(), receiver: None })
+        MemberDecl::new(
+            name,
+            Member::Method {
+                func: func.into(),
+                receiver: None,
+            },
+        )
     }
 
     /// A method with a receiver override.
-    pub fn method_with(name: impl Into<String>, func: impl Into<FnRef>, receiver: Receiver) -> Self {
-        MemberDecl::new(name, Member::Method { func: func.into(), receiver: Some(receiver) })
+    pub fn method_with(
+        name: impl Into<String>,
+        func: impl Into<FnRef>,
+        receiver: Receiver,
+    ) -> Self {
+        MemberDecl::new(
+            name,
+            Member::Method {
+                func: func.into(),
+                receiver: Some(receiver),
+            },
+        )
     }
 
     pub fn field(name: impl Into<String>) -> Self {
@@ -625,16 +646,30 @@ impl MemberDecl {
 
     /// A static function (`T::new`, `@staticmethod`).
     pub fn static_fn(name: impl Into<String>, func: impl Into<FnRef>) -> Self {
-        MemberDecl::new(name, Member::Static { value: StaticValue::Fn(func.into()) })
+        MemberDecl::new(
+            name,
+            Member::Static {
+                value: StaticValue::Fn(func.into()),
+            },
+        )
     }
 
     /// A class attribute.
     pub fn static_const(name: impl Into<String>, value: Const) -> Self {
-        MemberDecl::new(name, Member::Static { value: StaticValue::Const(value) })
+        MemberDecl::new(
+            name,
+            Member::Static {
+                value: StaticValue::Const(value),
+            },
+        )
     }
 
     pub fn new(name: impl Into<String>, member: Member) -> Self {
-        MemberDecl { name: name.into(), span: None, member }
+        MemberDecl {
+            name: name.into(),
+            span: None,
+            member,
+        }
     }
 
     pub fn with_span(mut self, span: Span) -> Self {
@@ -650,7 +685,12 @@ impl MemberDecl {
 
 impl Conformance {
     pub fn new(interface: impl Into<InterfaceRef>, check: Satisfaction) -> Self {
-        Conformance { interface: interface.into(), check, members: Vec::new(), span: None }
+        Conformance {
+            interface: interface.into(),
+            check,
+            members: Vec::new(),
+            span: None,
+        }
     }
 }
 

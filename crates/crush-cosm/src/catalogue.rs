@@ -48,11 +48,15 @@ pub trait Strategy: Sized + Copy + PartialEq + 'static {
 
     /// Parse a spelling, or say what's valid.
     fn parse(s: &str) -> Result<Self, CatalogueError> {
-        Self::ALL.iter().copied().find(|v| v.as_str() == s).ok_or_else(|| CatalogueError {
-            dimension: Self::DIMENSION,
-            got: s.to_string(),
-            valid: Self::NAMES,
-        })
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| CatalogueError {
+                dimension: Self::DIMENSION,
+                got: s.to_string(),
+                valid: Self::NAMES,
+            })
     }
 }
 
@@ -145,7 +149,11 @@ impl Storage {
             "sealed" => Ok(Storage::Sealed { fields: Vec::new() }),
             "open_dict" => Ok(Storage::OpenDict),
             "open_dict_with_slots" => Ok(Storage::OpenDictWithSlots { slots: Vec::new() }),
-            _ => Err(CatalogueError { dimension: "storage", got: s.to_string(), valid: STORAGE_NAMES }),
+            _ => Err(CatalogueError {
+                dimension: "storage",
+                got: s.to_string(),
+                valid: STORAGE_NAMES,
+            }),
         }
     }
 }
@@ -188,10 +196,16 @@ mod tests {
     #[test]
     fn spelling_matches_json_for_unit_strategies() {
         for r in Resolution::ALL {
-            assert_eq!(serde_json::to_value(r).unwrap(), serde_json::json!(r.as_str()));
+            assert_eq!(
+                serde_json::to_value(r).unwrap(),
+                serde_json::json!(r.as_str())
+            );
         }
         for r in Receiver::ALL {
-            assert_eq!(serde_json::to_value(r).unwrap(), serde_json::json!(r.as_str()));
+            assert_eq!(
+                serde_json::to_value(r).unwrap(),
+                serde_json::json!(r.as_str())
+            );
         }
         for v in ValueMode::ALL {
             assert_eq!(
