@@ -76,6 +76,16 @@ pub fn add(a: &Value, b: &Value) -> Result<Value, VmError> {
     })
 }
 
+/// `js.truthy(v)`: JS truthiness.
+pub fn truthy(v: &Value) -> Value {
+    Value::Bool(js_core::truthy(&node(v, 0)))
+}
+
+/// `js.loose_eq(a, b)`: JS `==`.
+pub fn loose_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
+    js_core::loose_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
+}
+
 #[cfg(test)]
 mod tests {
     //! Expected strings come from node v26 (`node -e …`), never by hand.
@@ -151,5 +161,43 @@ mod tests {
         let err = add(&s("a"), &arr(vec![])).unwrap_err().to_string();
         assert!(err.contains("not supported") && err.contains("ToPrimitive"), "{err}");
         assert!(add(&obj(vec![]), &Value::Int(1)).is_err());
+    }
+
+    #[test]
+    fn truthiness_matches_js() {
+        // node -e "console.log([0, -0, NaN, '', null, false, 1, 'a', [], {}].map(Boolean).join())"
+        let vals = [
+            Value::Int(0), Value::Float(-0.0), Value::Float(f64::NAN), s(""), Value::Null, Value::Bool(false),
+            Value::Int(1), s("a"), arr(vec![]), obj(vec![]),
+        ];
+        let got: Vec<String> = vals.iter().map(|v| truthy(v).to_string()).collect();
+        assert_eq!(got.join(","), "false,false,false,false,false,false,true,true,true,true");
+    }
+
+    #[test]
+    fn loose_equality_matches_js() {
+        // node -e "console.log(['1'==1, 1=='1.0', ''==0, ' \t\n'==0, '0x1f'==31, '1e3'==1000, true==1, true=='1', false=='', null==0, null==null, NaN==NaN, 'Infinity'==1/0, '1_0'==10, '.5'==0.5, '5.'==5, '+5'==5, '0b101'==5, '-0x1'==-1, 'a'=='a', 2==2.0].join())"
+        let cases = [
+            (s("1"), Value::Int(1)), (Value::Int(1), s("1.0")), (s(""), Value::Int(0)), (s(" \t\n"), Value::Int(0)),
+            (s("0x1f"), Value::Int(31)), (s("1e3"), Value::Int(1000)), (Value::Bool(true), Value::Int(1)),
+            (Value::Bool(true), s("1")), (Value::Bool(false), s("")), (Value::Null, Value::Int(0)), (Value::Null, Value::Null),
+            (Value::Float(f64::NAN), Value::Float(f64::NAN)), (s("Infinity"), Value::Float(f64::INFINITY)),
+            (s("1_0"), Value::Int(10)), (s(".5"), Value::Float(0.5)), (s("5."), Value::Int(5)), (s("+5"), Value::Int(5)),
+            (s("0b101"), Value::Int(5)), (s("-0x1"), Value::Int(-1)), (s("a"), s("a")), (Value::Int(2), Value::Float(2.0)),
+        ];
+        let got: Vec<String> = cases.iter().map(|(a, b)| loose_eq(a, b).unwrap().to_string()).collect();
+        assert_eq!(
+            got.join(","),
+            "true,true,true,true,true,true,true,true,true,false,true,false,true,false,true,true,true,true,false,true,true"
+        );
+    }
+
+    #[test]
+    fn loose_equality_of_objects_is_identity_and_object_vs_primitive_is_loud() {
+        let a = arr(vec![Value::Int(1)]);
+        assert_eq!(loose_eq(&a, &a.clone()).unwrap(), Value::Bool(true));
+        assert_eq!(loose_eq(&a, &arr(vec![Value::Int(1)])).unwrap(), Value::Bool(false));
+        assert_eq!(loose_eq(&a, &Value::Null).unwrap(), Value::Bool(false));
+        assert!(loose_eq(&a, &Value::Int(1)).unwrap_err().to_string().contains("not supported"));
     }
 }

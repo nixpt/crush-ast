@@ -133,4 +133,27 @@ static Value _js_add(Value a, Value b) {
     }
     return mk_float(_js_prim_num(a, "JS `+`") + _js_prim_num(b, "JS `+`"));
 }
+static bool _js_truthy(Value v) {
+    switch (v.tag) {
+        case TAG_NULL: return false;
+        case TAG_BOOL: return v.b;
+        case TAG_INT: return v.i != 0;
+        case TAG_FLOAT: return !(v.f == 0.0 || v.f != v.f);
+        case TAG_STRING: return v.s[0] != '\0';
+        default: return true;
+    }
+}
+static bool _js_is_obj(Value v) { return v.tag == TAG_ARRAY || v.tag == TAG_OBJECT; }
+static bool _js_loose_eq(Value a, Value b) {
+    if (a.tag == TAG_NULL || b.tag == TAG_NULL) return a.tag == b.tag;
+    if (_js_is_obj(a) && _js_is_obj(b))
+        return a.tag == b.tag && (a.tag == TAG_ARRAY ? a.array_idx == b.array_idx : a.obj_idx == b.obj_idx);
+    if (_js_is_obj(a) || _js_is_obj(b)) _js_fail(_js_not_prim("JS `==`"));
+    if (a.tag == TAG_STRING && b.tag == TAG_STRING) return strcmp(a.s, b.s) == 0;
+    if (a.tag == TAG_BOOL && b.tag == TAG_BOOL) return a.b == b.b;
+    if (a.tag == TAG_INT && b.tag == TAG_INT) return a.i == b.i;
+    if (a.tag == TAG_BOOL) return _js_loose_eq(mk_int(a.b), b);
+    if (b.tag == TAG_BOOL) return _js_loose_eq(a, mk_int(b.b));
+    return _js_prim_num(a, "JS `==`") == _js_prim_num(b, "JS `==`");
+}
 

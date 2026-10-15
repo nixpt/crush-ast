@@ -898,6 +898,20 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             match operator {
                 "/" => return Ok(js_div(left, right, m)),
                 "+" if !numeric => return Ok(js_cap("js.add", vec![left, right], m)),
+                "==" => return Ok(js_cap("js.loose_eq", vec![left, right], m)),
+                "!=" => {
+                    return Ok(Expression::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(js_cap("js.loose_eq", vec![left, right], m.clone())),
+                        meta: m,
+                    })
+                }
+                // The deciding operand, not a bool (`0 || 'dflt'` is 'dflt');
+                // the right side runs only when the left doesn't decide.
+                "||" | "&&" => {
+                    let function = if operator == "||" { "__crush_js_or__" } else { "__crush_js_and__" };
+                    return Ok(Expression::Call { function: function.to_string(), args: vec![left, right], meta: m });
+                }
                 _ => {}
             }
             Ok(Expression::BinaryOp {

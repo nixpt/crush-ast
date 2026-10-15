@@ -36,7 +36,7 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
 fn uses_js_core(program: &casm::Program) -> bool {
     program.functions.values().flat_map(|f| &f.body).any(|i| {
         i.op == "cap_call"
-            && i.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| matches!(n, "js.add"))
+            && i.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| matches!(n, "js.add" | "js.truthy" | "js.loose_eq"))
     })
 }
 
@@ -90,6 +90,13 @@ fn js_add(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
         Ok(js_core::JsNode::Float(f)) => RuntimeValue::Float(f),
         Ok(js_core::JsNode::Str(s)) => RuntimeValue::String(s.into_owned()),
         Ok(_) => RuntimeValue::Null,
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_loose_eq(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    match js_core::loose_eq(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(r) => RuntimeValue::Bool(r),
         Err(e) => js_fail(e),
     }
 }
@@ -1043,6 +1050,14 @@ fn emit_body(
                 }
                 "js.add" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_add(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.truthy" => {
+                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(RuntimeValue::Bool(js_core::truthy(&js_node(&__v, 0)))); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.loose_eq" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_loose_eq(&__a,&__b)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "conv.text" => {

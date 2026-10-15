@@ -1752,6 +1752,35 @@ impl Compiler {
                     self.compile_expr(&args[2], instrs)?;
                     let end_label = instrs.len();
                     instrs[jmp_end_idx].args = serde_json::json!({"target": end_label});
+                } else if function == "__crush_js_or__" || function == "__crush_js_and__" {
+                    // JS `a || b` / `a && b`: the deciding operand itself, by JS
+                    // truthiness (`js.truthy`); `b` runs only when `a` doesn't
+                    // decide. Crush's own `||`/`&&` (compile_short_circuit) stay
+                    // boolean.
+                    //   ||:  <a> dup js.truthy jmp_if_not R  jmp E  R: pop <b>  E:
+                    //   &&:  <a> dup js.truthy jmp_if_not E  pop <b>  E:
+                    if args.len() != 2 { bail!("{function} expects exactly 2 arguments"); }
+                    self.compile_expr(&args[0], instrs)?;
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
+                    self.all_permissions.insert("js.truthy".to_string());
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "js.truthy", "argc": 1}), meta));
+                    let test_idx = instrs.len();
+                    instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                    let mut to_end = Vec::new();
+                    if function == "__crush_js_or__" {
+                        to_end.push(instrs.len());
+                        instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+                        let rhs = instrs.len();
+                        instrs[test_idx].args = serde_json::json!({"target": rhs});
+                    } else {
+                        to_end.push(test_idx);
+                    }
+                    instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
+                    self.compile_expr(&args[1], instrs)?;
+                    let end_label = instrs.len();
+                    for idx in to_end {
+                        instrs[idx].args = serde_json::json!({"target": end_label});
+                    }
                 } else if function == "__crush_pre_inc__" || function == "__crush_post_inc__"
                     || function == "__crush_pre_dec__" || function == "__crush_post_dec__"
                 {

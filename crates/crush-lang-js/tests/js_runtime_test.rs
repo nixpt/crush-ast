@@ -29,3 +29,16 @@ fn plus_with_an_object_needs_to_primitive() {
     loud("console.log(`${{a: 1}}`);", "ToPrimitive");
     loud("let s = 'x'; s += {}; console.log(s);", "ToPrimitive");
 }
+
+#[test]
+fn loose_equality_of_object_and_primitive_needs_to_primitive() {
+    loud("console.log([1] == 1);", "ToPrimitive");
+    loud("console.log('a' != {});", "ToPrimitive");
+}
+
+#[test]
+fn the_right_operand_is_not_evaluated_when_the_left_decides() {
+    // `boom()` would print; node prints just the two values.
+    let out = run("function boom() { console.log('boom'); return 1; }\nconsole.log(1 || boom(), 0 && boom());").unwrap();
+    assert_eq!(out.trim_end(), "1 0");
+}

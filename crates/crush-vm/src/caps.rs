@@ -68,6 +68,20 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "JavaScript a + b: string concatenation with JS ToString when either side is a string, else numeric",
         });
         reg(CapabilitySpec {
+            name: "js.truthy",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript truthiness (0, NaN, '', null, false are falsy; arrays and objects truthy)",
+        });
+        reg(CapabilitySpec {
+            name: "js.loose_eq",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a == b for primitives (abstract equality); objects by identity",
+        });
+        reg(CapabilitySpec {
             name: "conv.text",
             argc: Some(2),
             returns: true,

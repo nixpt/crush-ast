@@ -1,9 +1,9 @@
 //! JavaScript value semantics: one implementation for every crush backend.
 //!
 //! The JS walkers lower the JS operators whose meaning differs from crush's
-//! to `js.*` capabilities (`js.add`).
-//! Crush's own `+` is unchanged: other languages share
-//! it.
+//! to `js.*` capabilities (`js.add`, `js.truthy`, `js.loose_eq`).
+//! Crush's own `+`, `&&`, `||` and `==` are unchanged: other languages share
+//! them.
 //!
 //! This file uses `std` only and names nothing outside itself. crush-vm
 //! compiles it as a module, and the AOT Rust runtime embeds its text verbatim
@@ -217,5 +217,43 @@ fn primitive_number(v: &JsNode) -> Result<f64, String> {
         JsNode::Str(s) => string_to_number(s)?,
         JsNode::Array { .. } | JsNode::Object { .. } => return Err(not_primitive("JS number conversion")),
         JsNode::Other(t) => return Err(other_type(t)),
+    })
+}
+
+/// JS truthiness: `0`, `NaN`, `''`, `null` and `false` are falsy; arrays and
+/// objects (even empty ones) are truthy.
+pub fn truthy(v: &JsNode) -> bool {
+    match v {
+        JsNode::Null => false,
+        JsNode::Bool(b) => *b,
+        JsNode::Int(i) => *i != 0,
+        JsNode::Float(f) => !(*f == 0.0 || f.is_nan()),
+        JsNode::Str(s) => !s.is_empty(),
+        JsNode::Array { .. } | JsNode::Object { .. } | JsNode::Other(_) => true,
+    }
+}
+
+/// JS `==` (IsLooselyEqual) for primitives: `'1' == 1`, `true == 1`,
+/// `null == null`; NaN equals nothing; two objects are equal only when they
+/// are the same object. Object against primitive needs ToPrimitive: loud.
+/// (`undefined` has no crush value yet, so `null == undefined` can't arise.)
+pub fn loose_eq(a: &JsNode, b: &JsNode) -> Result<bool, String> {
+    use JsNode::*;
+    Ok(match (a, b) {
+        (Other(t), _) | (_, Other(t)) => return Err(other_type(t)),
+        (Null, Null) => true,
+        (Null, _) | (_, Null) => false,
+        (Array { id: x, .. }, Array { id: y, .. }) | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
+        (Array { .. }, Object { .. }) | (Object { .. }, Array { .. }) => false,
+        (Array { .. } | Object { .. }, _) | (_, Array { .. } | Object { .. }) => {
+            return Err(not_primitive("JS `==`"));
+        }
+        (Str(x), Str(y)) => x == y,
+        (Bool(x), Bool(y)) => x == y,
+        (Int(x), Int(y)) => x == y,
+        (Bool(x), other) => return loose_eq(&Int(*x as i64), other),
+        (other, Bool(y)) => return loose_eq(other, &Int(*y as i64)),
+        (Str(s), n) | (n, Str(s)) => primitive_number(n)? == string_to_number(s)?,
+        (x, y) => primitive_number(x)? == primitive_number(y)?,
     })
 }
