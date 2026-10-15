@@ -115,7 +115,9 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
        with the functions that use them closures in `main`; or the bindings become globals.
      - boa must not become the default while this is loud.
    - `#235`'s argument-order fix lands before `push` (or any method row) accepts more than one
-     argument.
+     argument. (Done: #238 fixed the order. `push` takes any number of values: in statement position
+     they are evaluated into hidden locals and pushed one by one, since the capability appends one value.
+     As a value, `push` is `len` of the returned array; AOT's `push` now returns the array like the VM's.)
 
 ## Not this ticket
 

@@ -35,8 +35,18 @@ pub(super) enum Lowering {
     /// A method the compiler dispatches on the receiver variable
     /// (`recv.m(args)` → `cap_call m [recv, args…]`). The receiver must be a
     /// plain name. `value: false` refuses the call in value position (its
-    /// result differs from JS's).
+    /// result differs from JS's). No row uses it yet: area tickets add string
+    /// and array method rows with it once their capabilities land.
+    #[allow(dead_code)]
     Receiver { cap: &'static str, value: bool },
+    /// `recv.push(…)` (receiver a plain name). The `push` capability appends
+    /// one value and returns the array, so:
+    /// - in statement position, `xs.push(a, b, …)` evaluates every argument
+    ///   first (into hidden locals, as JS does) and then pushes them one by one
+    ///   (`Lower::push_statements`);
+    /// - as a value, `xs.push(a)` is `len(xs.push(a))`, JS's new length, and
+    ///   `xs.push()` is `len(xs)`. Several values as a value are refused.
+    Push,
     /// Not supported yet: the ticket that adds it.
     Planned(&'static str),
 }
@@ -61,7 +71,7 @@ const fn planned(name: &'static str, ticket: &'static str) -> Row {
 }
 
 use Arity::{Any, Exactly};
-use Lowering::{Cap, ConsoleLine, Receiver};
+use Lowering::{Cap, ConsoleLine};
 
 /// Global and namespace functions, by their JS name.
 pub(super) static GLOBALS: &[Row] = &[
@@ -117,15 +127,7 @@ pub(super) static GLOBALS: &[Row] = &[
 /// Receiver methods, by name. One row covers every receiver type that has
 /// the method (JS dispatches at run time; so does the capability).
 pub(super) static METHODS: &[Row] = &[
-    // `push` returns the array here, the new length in JS: statement only.
-    row(
-        "push",
-        Exactly(1),
-        Receiver {
-            cap: "push",
-            value: false,
-        },
-    ),
+    row("push", Any, Lowering::Push),
     // ── strings (CRUSH-zorro-14) ──
     planned("toUpperCase", "CRUSH-zorro-14 (string methods)"),
     planned("toLowerCase", "CRUSH-zorro-14 (string methods)"),

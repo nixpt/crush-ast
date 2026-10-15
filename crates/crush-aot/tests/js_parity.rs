@@ -32,6 +32,8 @@ use crush_lang_js::JsLowering;
 const RUST_LOUD: &[(&str, &str)] = &[
     ("arr_basic", "CRUSH-zorro-15: no indexOf/includes cap in AOT"),
     ("arr_hof", "CRUSH-zorro-20: callbacks; no join/reduce cap in AOT"),
+    ("arr_push_loop_multi", "CRUSH-250: `push` with several arguments (fixed on boa)"),
+    ("arr_push_multi", "CRUSH-250: `push` with several arguments (fixed on boa)"),
     ("arr_slice_splice", "CRUSH-zorro-15: no join cap in AOT"),
     ("arr_sort", "CRUSH-zorro-15/20: no sort/join cap in AOT"),
     ("arr_spread", "CRUSH-zorro-23: array spread (`[...a]`) is not supported by the JS walker yet"),
@@ -96,7 +98,12 @@ const C_SILENT: &[(&str, &str, &str)] = RUST_SILENT;
 /// The boa lowering (CRUSH-250) on AOT: the swc lists above, adjusted by
 /// these deltas (both backends). Programs swc can't lower that boa runs
 /// exactly:
-const BOA_EXACT: &[&str] = &["scope_block_shadow", "scope_shadow_loop"];
+const BOA_EXACT: &[&str] = &[
+    "arr_push_loop_multi",
+    "arr_push_multi",
+    "scope_block_shadow",
+    "scope_shadow_loop",
+];
 /// Silently wrong (or right by accident) on AOT with swc, refused at walk
 /// time with boa:
 const BOA_LOUD: &[(&str, &str)] = &[

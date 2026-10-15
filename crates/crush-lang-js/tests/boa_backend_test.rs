@@ -321,7 +321,8 @@ fn test_boa_builtin_table_refusals() {
     assert!(o.contains("`.f()`") && o.contains("COSM"), "{o}");
     // Arity is checked; `push`'s result (the array, not JS's new length) can't be used.
     assert!(loud("console.log(Math.max(1, 2, 3));").contains("with 3 argument(s)"));
-    assert!(loud("const a = [];\nconsole.log(a.push(1));").contains("using the result of `.push()`"));
+    // Several values are expanded in statement position only.
+    assert!(loud("const a = [];\nconsole.log(a.push(1, 2));").contains("using the result of `.push()` with 2 arguments"));
 }
 
 // A user binding shadows a builtin name: it's called, not looked up.
@@ -342,4 +343,30 @@ fn test_boa_unbound_names_are_loud() {
     assert!(loud("console.log(nothing);").contains("`nothing`, which is not defined"));
     let msg = loud("let total = 3;\nfunction f() { return total; }\nconsole.log(f());");
     assert!(msg.contains("reading the script's top-level `total` from inside a function"), "{msg}");
+}
+
+// `push`: several values in statement position become hidden locals (all
+// evaluated first, as in JS) and one `push` each; as a value, `push` is
+// `len` of the returned array (JS's new length).
+#[test]
+fn test_boa_push_forms() {
+    let program = test_lower("const xs = [];\nxs.push(1, 2, 3);\nconst n = xs.push(4);\n");
+    let main = &program.functions["main"];
+    let pushes = main
+        .body
+        .iter()
+        .filter(|s| matches!(s, crush_cast::Statement::ExprStmt {
+            expr: crush_cast::Expression::Call { function, args, .. }, ..
+        } if function == "xs.push" && args.len() == 1))
+        .count();
+    assert_eq!(pushes, 3, "{:#?}", main.body);
+    let temps = main
+        .body
+        .iter()
+        .filter(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name.starts_with("__push_")))
+        .count();
+    assert_eq!(temps, 3);
+    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl {
+        name, value: crush_cast::Expression::Call { function, .. }, ..
+    } if name == "n" && function == "len")));
 }
