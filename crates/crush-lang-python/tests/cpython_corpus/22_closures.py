@@ -56,3 +56,15 @@ fs = []
 for i in range(3):
     fs.append(lambda: i * 10)
 print(fs[0](), fs[1](), fs[2]())
+
+
+def late_binding():
+    x = 1
+    g = lambda: x
+    x = 2
+    return g()
+
+
+print(late_binding())
+squares = [lambda: n * n for n in range(3)]
+print(squares[0](), squares[2]())
