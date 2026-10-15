@@ -21,8 +21,8 @@ use crush_cast::{
     CastType, Expression as CastExpr, Function, ImportStatement, Statement as CastStmt,
 };
 
-use super::scope::{self, lexical_syms, param_syms, var_syms};
 use super::builtins;
+use super::scope::{self, Sig, lexical_syms, param_syms, sig_of, var_syms};
 use super::{Lower, Meta, group};
 use crate::lower_common::{contains_loop_continue, for_in_guarded, rewrite_continue};
 
@@ -232,14 +232,20 @@ impl Lower<'_> {
     /// A function's parameters and body, in a new crush function scope. The
     /// caller decides whether it sees the enclosing locals (a lambda) or not
     /// (a top-level function: [`super::scope::Scopes::isolate`]).
+    ///
+    /// `declared`: a `function` declaration, whose calls are adapted to its
+    /// parameters ([`super::scope::Param`]), so it may have default and rest
+    /// parameters. A function expression or arrow function may not: it can be
+    /// called from anywhere (CRUSH-zorro-18).
     pub(super) fn function(
         &mut self,
         params: &FormalParameterList,
         body: &FunctionBody,
         span: Option<Span>,
+        declared: bool,
     ) -> anyhow::Result<LoweredFn> {
         self.scopes.enter_fn();
-        let r = self.function_in_scope(params, body, span);
+        let r = self.function_in_scope(params, body, span, declared);
         self.scopes.leave_fn();
         r
     }
@@ -249,23 +255,71 @@ impl Lower<'_> {
         params: &FormalParameterList,
         body: &FunctionBody,
         span: Option<Span>,
+        declared: bool,
     ) -> anyhow::Result<LoweredFn> {
         let mut lowered_params = Vec::new();
+        let mut defaults = Vec::new();
         for p in params.as_ref() {
-            if p.is_rest_param() {
-                return Err(self.unsupported("a rest parameter (`...args`)", span));
+            if !declared && p.is_rest_param() {
+                return Err(self.unsupported(
+                    "a rest parameter (`...args`) outside a `function` declaration",
+                    span,
+                ));
             }
-            if let Some(init) = p.init() {
-                return Err(
-                    self.unsupported("a default parameter value (`x = …`)", Some(init.span()))
-                );
+            if let Some(init) = p.init()
+                && !declared
+            {
+                return Err(self.unsupported(
+                    "a default parameter value (`x = …`) outside a `function` declaration",
+                    Some(init.span()),
+                ));
             }
             let Binding::Identifier(id) = p.variable().binding() else {
                 return Err(self.unsupported("a destructuring parameter", span));
             };
             let name = self.name(id.sym());
             self.scopes.declare_root(id.sym(), name.clone());
-            lowered_params.push((name, CastType::Any));
+            lowered_params.push((name.clone(), CastType::Any));
+            if let Some(init) = p.init() {
+                defaults.push((name, init));
+            }
+        }
+        // Defaults run first, in parameter order, each when its argument
+        // wasn't given (the hidden flag after the parameters). They're
+        // lowered before the body's names are declared, so they see the
+        // parameters and the enclosing scope, as in JS.
+        let mut prologue = Vec::new();
+        for (name, init) in defaults {
+            let flag = self.hidden(&format!("__has_{name}_"));
+            let m = self.meta(Some(init.span()));
+            let value = self.expr(init)?;
+            prologue.push(CastStmt::If {
+                condition: CastExpr::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(CastExpr::Var {
+                        name: flag.clone(),
+                        meta: m.clone(),
+                    }),
+                    meta: m.clone(),
+                },
+                then_body: vec![CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![
+                            CastExpr::Var {
+                                name,
+                                meta: m.clone(),
+                            },
+                            value,
+                        ],
+                        meta: m.clone(),
+                    },
+                    meta: m.clone(),
+                }],
+                else_body: None,
+                meta: m,
+            });
+            lowered_params.push((flag, CastType::Any));
         }
         let items = body.statements();
         let mut syms = Vec::new();
@@ -276,7 +330,8 @@ impl Lower<'_> {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
         }
-        let mut out = self.uninit_vars(items);
+        let mut out = prologue;
+        out.extend(self.uninit_vars(items));
         out.extend(self.hoisted_functions(items, Hoist::Function)?);
         out.extend(self.items(items)?);
         Ok((lowered_params, out))
@@ -334,6 +389,11 @@ impl Lower<'_> {
                 break;
             }
         }
+        // Every declaration's parameters, for adapting its calls.
+        let sigs: Vec<Sig> = decls.iter().map(|f| sig_of(f.parameters())).collect();
+        for (f, sig) in decls.iter().zip(&sigs) {
+            self.scopes.set_sig(f.name().sym(), sig.clone());
+        }
         // Rebind the lifted names before lowering anything that uses them.
         let mut lifted = Vec::new();
         for (i, f) in decls.iter().enumerate() {
@@ -352,7 +412,10 @@ impl Lower<'_> {
                         .unsupported("a top-level function named `main`", Some(f.name().span())));
                 }
                 self.scopes.declare_block(sym, global.clone());
-                lifted.push((sym, global));
+                if at == Hoist::Script {
+                    self.toplevel_sigs.insert(sym, sigs[i].clone());
+                }
+                lifted.push((sym, global, sigs[i].clone()));
             }
         }
         let mut out = Vec::new();
@@ -364,10 +427,11 @@ impl Lower<'_> {
             if lift[i] {
                 let saved = self.scopes.isolate();
                 self.scopes.enter_fn();
-                for (sym, global) in &lifted {
+                for (sym, global, sig) in &lifted {
                     self.scopes.declare_root(*sym, global.clone());
+                    self.scopes.set_sig(*sym, sig.clone());
                 }
-                let lowered = self.function(f.parameters(), f.body(), span);
+                let lowered = self.function(f.parameters(), f.body(), span, true);
                 self.scopes.restore(saved);
                 let (params, body) = lowered?;
                 let global = self.resolve(f.name().sym());
@@ -381,7 +445,12 @@ impl Lower<'_> {
                 );
             } else {
                 let name = self.resolve(f.name().sym());
-                let value = self.lambda(f.parameters(), f.body(), span)?;
+                let (params, body) = self.function(f.parameters(), f.body(), span, true)?;
+                let value = CastExpr::Lambda {
+                    params,
+                    body,
+                    meta: self.meta(span),
+                };
                 out.push(self.var_decl_stmt(name, value, at == Hoist::Block, span));
             }
         }
@@ -1044,8 +1113,12 @@ impl Lower<'_> {
         let Expression::PropertyAccess(PropertyAccess::Simple(s)) = unparen(c.function()) else {
             return None;
         };
-        let PropertyAccessField::Const(prop) = s.field() else { return None };
-        let Expression::Identifier(recv) = unparen(s.target()) else { return None };
+        let PropertyAccessField::Const(prop) = s.field() else {
+            return None;
+        };
+        let Expression::Identifier(recv) = unparen(s.target()) else {
+            return None;
+        };
         if c.args().len() < 2
             || self.name(prop.sym()) != "push"
             || c.args().iter().any(|a| matches!(a, Expression::Spread(_)))
@@ -1053,7 +1126,10 @@ impl Lower<'_> {
             return None;
         }
         let recv = self.user_binding(recv.sym())?;
-        if !matches!(builtins::method("push").map(|r| r.lower), Some(builtins::Lowering::Push)) {
+        if !matches!(
+            builtins::method("push").map(|r| r.lower),
+            Some(builtins::Lowering::Push)
+        ) {
             return None;
         }
         Some((|| {
@@ -1069,10 +1145,16 @@ impl Lower<'_> {
             for t in temps {
                 let expr = CastExpr::Call {
                     function: format!("{recv}.push"),
-                    args: vec![CastExpr::Var { name: t, meta: m.clone() }],
+                    args: vec![CastExpr::Var {
+                        name: t,
+                        meta: m.clone(),
+                    }],
                     meta: m.clone(),
                 };
-                out.push(CastStmt::ExprStmt { expr, meta: m.clone() });
+                out.push(CastStmt::ExprStmt {
+                    expr,
+                    meta: m.clone(),
+                });
             }
             Ok(out)
         })())

@@ -15,6 +15,7 @@ use boa_ast::{Span, Spanned};
 use crush_cast::Expression as CastExpr;
 
 use super::builtins::{self, Lowering};
+use super::scope::{Param, Sig};
 use super::stmt::{comma_parts, unparen};
 use super::{Lower, Meta};
 use crate::lower_common::{js_cap, js_div, length_of};
@@ -28,6 +29,18 @@ impl Lower<'_> {
         let m = self.meta(span);
         match e {
             Expression::Identifier(id) => match self.user_binding(id.sym()) {
+                // A function with default or rest parameters takes hidden
+                // arguments its direct calls supply; called through a value,
+                // it would get the wrong ones.
+                Some(_) if self.binding_sig(id.sym()).is_some_and(|s| s.iter().any(|p| *p != Param::Plain)) => {
+                    Err(self.unsupported(
+                        format!(
+                            "using `{}` as a value: a function with default or rest parameters can only be called directly",
+                            self.name(id.sym())
+                        ),
+                        span,
+                    ))
+                }
                 Some(name) => Ok(CastExpr::Var { name, meta: m }),
                 None => Err(self.unbound(id.sym(), span)),
             },
@@ -271,7 +284,7 @@ impl Lower<'_> {
         body: &FunctionBody,
         span: Option<Span>,
     ) -> anyhow::Result<CastExpr> {
-        let (params, body) = self.function(params, body, span)?;
+        let (params, body) = self.function(params, body, span, false)?;
         Ok(CastExpr::Lambda {
             params,
             body,
@@ -550,7 +563,10 @@ impl Lower<'_> {
         match unparen(callee) {
             Expression::Identifier(id) => {
                 if let Some(name) = self.user_binding(id.sym()) {
-                    let args = self.args(args)?;
+                    let args = match self.binding_sig(id.sym()) {
+                        Some(sig) => self.adapt_args(&sig, args, &self.name(id.sym()), span)?,
+                        None => self.args(args)?,
+                    };
                     return Ok(CastExpr::Call {
                         function: name,
                         args,
@@ -610,6 +626,89 @@ impl Lower<'_> {
             Lowering::Planned(ticket) => self.unsupported(format!("{shown} ({ticket})"), span),
             _ => self.unsupported(shown.to_string(), span),
         }
+    }
+
+    /// The parameters of the `function` declaration `sym` names, if it names one.
+    pub(super) fn binding_sig(&self, sym: boa_interner::Sym) -> Option<Sig> {
+        if self.scopes.resolve(sym).is_some() {
+            self.scopes.resolve_sig(sym)
+        } else {
+            self.toplevel_sigs.get(&sym).cloned()
+        }
+    }
+
+    /// The arguments of a direct call to a `function` declaration, adapted to
+    /// its parameters (CRUSH-zorro-18): a default parameter gets the argument
+    /// or a placeholder plus a hidden "given" flag (appended after the
+    /// parameters); a rest parameter gets the remaining arguments as an array.
+    /// A missing plain argument is `undefined`, which crush doesn't have yet:
+    /// refused. Extra arguments are evaluated and ignored in JS: dropped when
+    /// that can't matter, refused otherwise.
+    fn adapt_args(
+        &mut self,
+        sig: &Sig,
+        args: &[Expression],
+        fname: &str,
+        span: Option<Span>,
+    ) -> anyhow::Result<Vec<CastExpr>> {
+        if let Some(Expression::Spread(s)) =
+            args.iter().find(|a| matches!(a, Expression::Spread(_)))
+        {
+            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(s.span())));
+        }
+        let m = self.meta(span);
+        let mut out = Vec::new();
+        let mut flags = Vec::new();
+        for (i, p) in sig.iter().enumerate() {
+            match p {
+                Param::Plain => match args.get(i) {
+                    Some(a) => out.push(self.expr(a)?),
+                    None => {
+                        return Err(self.unsupported(
+                            format!(
+                                "calling `{fname}` without its argument {} (a missing argument is `undefined`, CRUSH-zorro-12)",
+                                i + 1
+                            ),
+                            span,
+                        ));
+                    }
+                },
+                Param::Default => {
+                    let given = args.get(i).is_some();
+                    out.push(match args.get(i) {
+                        Some(a) => self.expr(a)?,
+                        None => CastExpr::NullLiteral { meta: m.clone() },
+                    });
+                    flags.push(CastExpr::BoolLiteral {
+                        value: given,
+                        meta: m.clone(),
+                    });
+                }
+                Param::Rest => {
+                    let rest = args.get(i..).unwrap_or(&[]);
+                    let elements = rest
+                        .iter()
+                        .map(|a| self.expr(a))
+                        .collect::<anyhow::Result<_>>()?;
+                    out.push(CastExpr::ArrayLiteral {
+                        elements,
+                        meta: m.clone(),
+                    });
+                }
+            }
+        }
+        if !sig.contains(&Param::Rest) {
+            for extra in args.iter().skip(sig.len()) {
+                if has_side_effects(extra) {
+                    return Err(self.unsupported(
+                        format!("calling `{fname}` with an extra argument that has side effects"),
+                        Some(extra.span()),
+                    ));
+                }
+            }
+        }
+        out.extend(flags);
+        Ok(out)
     }
 
     /// The crush name a callee refers to, if it is a user binding.
@@ -682,13 +781,20 @@ impl Lower<'_> {
                     ));
                 };
                 let recv = self.resolve(recv.sym());
-                let target = CastExpr::Var { name: recv.clone(), meta: m.clone() };
+                let target = CastExpr::Var {
+                    name: recv.clone(),
+                    meta: m.clone(),
+                };
                 match args.len() {
                     // Nothing to append: the receiver (statement) or its length.
                     0 if statement => target,
                     0 => length_of(target, m),
                     1 => {
-                        let call = CastExpr::Call { function: format!("{recv}.push"), args, meta: m.clone() };
+                        let call = CastExpr::Call {
+                            function: format!("{recv}.push"),
+                            args,
+                            meta: m.clone(),
+                        };
                         if statement { call } else { length_of(call, m) }
                     }
                     // Statement position is expanded by `push_statements`.

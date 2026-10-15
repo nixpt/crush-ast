@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-18 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In Progress |
 | **Phase** | JS/TS parity spike |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | CRUSH-250 |
 | **Estimated effort** | S |
 | **Filed by** | vega — 2026-10-15 JS/TS parity spike (baseline measured on main `5f223a9`) |
@@ -19,6 +19,23 @@ Baseline, loud: a default parameter `function g(a, b = 10)` called with one argu
 
 - [ ] Default parameters (including ones that reference earlier parameters), rest parameters, calls with fewer arguments than parameters (missing → `undefined`) and with more (extras ignored) match node.
 - [ ] No call ever reports "stack underflow".
+
+## Progress
+
+**2026-10-15 (boa lowering, CRUSH-250):** done for `function` declarations.
+- Its calls are adapted to its parameters at the call site:
+  - a default parameter gets the argument (or a placeholder) plus a hidden "given" flag appended after the parameters, and the callee evaluates the default in a prologue when the flag is false;
+  - a rest parameter gets the remaining arguments as an array;
+  - pure extra arguments are dropped.
+- Corpus: `fn_default_param`, `fn_rest_param`, `fn_default_param_more`, `fn_rest_param_more`, exact on the VM. On AOT the first two and `fn_rest_param_more` are exact; `fn_default_param_more` is refused, because a closure is involved.
+
+Refused at walk time, as follow-ups:
+- a missing argument with no default: it is `undefined` (CRUSH-zorro-12);
+- an extra argument with side effects;
+- default or rest parameters on arrow functions and function expressions, whose call sites aren't known;
+- a function with default or rest parameters used as a value.
+
+The swc lowering is unchanged: still loud on the VM, and still `fn_default_param*` silently wrong on AOT (CRUSH-zorro-26).
 
 ## Technical approach
 

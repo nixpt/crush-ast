@@ -517,6 +517,7 @@ dependencies = [
  "crush-index",
  "crush-lang-js",
  "crush-vm",
+ "crush-walker-core",
  "getrandom 0.2.17",
  "rand",
  "regex",

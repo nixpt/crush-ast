@@ -117,6 +117,9 @@ drop `boa_engine` (≈153k LOC, 67 crates of which 43 nothing else in surfer use
        expression (compiler change);
      - closures on AOT (the backends refuse `make_closure`/cells).
 5. The constructs listed above (one PR each, or as their tickets).
+   - CRUSH-zorro-18 (default/rest parameters): done for `function` declarations by adapting their calls to
+     their parameters (hidden "given" flags, rest arrays). Arrow functions and function expressions with
+     them, and a missing argument without a default (`undefined`, CRUSH-zorro-12), are still refused.
 6. Flip the `.js` default once the gate passes; retire the swc lowering for JS; update
    `language_frontend_matrix.md`.
    **Gate items besides the harness (boa >= swc in every area, VM and AOT, 0 silent):**
