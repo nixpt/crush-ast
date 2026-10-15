@@ -1293,12 +1293,7 @@ impl Parser {
 
         self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
 
-        Ok(Statement::StructDef {
-            name,
-            fields,
-            kind: None,
-            meta: struct_meta,
-        })
+        Ok(Statement::struct_def(name, fields, struct_meta))
     }
 
     /// `impl P { … }` / `impl T for P { … }` / `trait T { … }` at the current

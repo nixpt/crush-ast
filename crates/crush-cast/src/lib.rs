@@ -443,6 +443,20 @@ pub enum Expression {
     AI(ai::AIExpression),
 }
 
+impl Statement {
+    /// A plain `struct` declaration: no `@kind(…)` annotation. Producers
+    /// (walkers, tests) should build `StructDef` through this rather than a
+    /// field-by-field literal, so optional parts added later (like `kind`,
+    /// COSM K1.2) don't break them.
+    pub fn struct_def(
+        name: impl Into<String>,
+        fields: Vec<(String, CastType)>,
+        meta: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Statement::StructDef { name: name.into(), fields, kind: None, meta }
+    }
+}
+
 /// A method in an `impl` block or a `trait` (COSM K1.2, CRUSH-zorro-41).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
