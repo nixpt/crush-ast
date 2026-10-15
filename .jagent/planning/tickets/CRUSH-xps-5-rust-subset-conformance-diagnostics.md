@@ -77,4 +77,4 @@ CRUSH-xps-4 enables Rust in `crush run`.
   failed at 2:13 before VM execution.
 
 See [Rust conformance](../../../docs/rust-conformance.md) for the precise
-supported boundary and reproduction commands. This branch depends on PR #213.
+supported boundary and reproduction commands. Review: [PR #220](https://github.com/nixpt/crush-ast/pull/220), based on PR #213.
