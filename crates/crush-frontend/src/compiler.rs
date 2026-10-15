@@ -42,8 +42,10 @@ pub struct Compiler {
     /// `__lambda_N_f` in the current scope (one map per function / lambda
     /// body, innermost last). Lambdas used to be lifted *as* `f`, so two
     /// functions' `let h = ..` lambdas overwrote each other and a `let f`
-    /// lambda replaced a top-level `fn f` program-wide.
-    lambda_aliases: Vec<HashMap<String, String>>,
+    /// lambda replaced a top-level `fn f` program-wide. `None` is a tombstone:
+    /// `f` is bound to something else in that scope (`let f = 5`, a parameter
+    /// named `f`), so an outer alias must not be found through it.
+    lambda_aliases: Vec<HashMap<String, Option<String>>>,
     /// Program-wide counter for unique lambda names.
     lambda_counter: usize,
 }
@@ -95,7 +97,12 @@ impl Compiler {
 
     /// The lifted name a `let`-bound lambda alias resolves to, innermost scope first.
     fn resolve_lambda_alias(&self, name: &str) -> Option<String> {
-        self.lambda_aliases.iter().rev().find_map(|scope| scope.get(name).cloned())
+        self.lambda_aliases
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .cloned()
+            .flatten()
     }
 
     fn check_lambda_capture(&self, name: &str) -> Result<()> {
@@ -186,7 +193,8 @@ impl Compiler {
                             meta,
                         ));
                     }
-                    self.lambda_aliases.push(HashMap::new());
+                    self.lambda_aliases
+                        .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
                     let nested: Result<()> = body
                         .iter()
                         .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
@@ -590,7 +598,7 @@ impl Compiler {
                 // so a later `f(..)` must not call it (a new lambda re-adds it).
                 if !matches!(value, Expression::Lambda { .. }) {
                     if let Some(scope) = self.lambda_aliases.last_mut() {
-                        scope.remove(name.as_str());
+                        scope.insert(name.clone(), None);
                     }
                 }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
@@ -2195,7 +2203,7 @@ impl Compiler {
                     if self.lambda_aliases.is_empty() {
                         self.lambda_aliases.push(HashMap::new());
                     }
-                    self.lambda_aliases.last_mut().expect("scope").insert(hint.to_string(), lambda_name.clone());
+                    self.lambda_aliases.last_mut().expect("scope").insert(hint.to_string(), Some(lambda_name.clone()));
                 }
 
                 let mut func_instrs = Vec::new();
@@ -2213,7 +2221,8 @@ impl Compiler {
                     params.iter().map(|(n, _)| n.clone()).collect(),
                 );
                 self.lambda_outer_vars.push(outer.clone());
-                self.lambda_aliases.push(HashMap::new());
+                self.lambda_aliases
+                    .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
                 let body_result: Result<()> = body
                     .iter()
                     .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));

@@ -86,3 +86,21 @@ fn rebinding_to_a_non_lambda_drops_the_alias() {
     );
     assert!(e.contains("Undefined function: f") || e.contains("variable, not a function"), "{e}");
 }
+
+// An inner binding of the same name shadows an outer lambda alias: the inner
+// `f(y)` must not call the outer lambda (it printed `2`).
+#[test]
+fn an_inner_let_shadows_an_outer_lambda_alias() {
+    let e = compile_error(
+        "fn run() {\n  let f = |x| x + 1\n  let g = |y| {\n    let f = 5\n    return f(y)\n  }\n  return g(1)\n}\nfn main() {\n  print(run())\n}\n",
+    );
+    assert!(e.contains("Undefined function: f") || e.contains("variable, not a function"), "{e}");
+}
+
+#[test]
+fn a_lambda_parameter_shadows_an_outer_lambda_alias() {
+    let e = compile_error(
+        "fn run() {\n  let f = |x| x + 1\n  let g = |f| f(1)\n  return g(2)\n}\nfn main() {\n  print(run())\n}\n",
+    );
+    assert!(e.contains("variable, not a function") || e.contains("Undefined function: f"), "{e}");
+}
