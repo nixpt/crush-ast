@@ -133,3 +133,14 @@ fn a_let_bound_lambda_that_refers_to_itself_and_captures() {
         "120\n"
     );
 }
+
+// `xs.push(..)` inside a lambda on a captured `xs`: the parser emits a
+// method call as a CapabilityCall, whose receiver wasn't seen as a capture
+// ("unknown capability: xs.push").
+#[test]
+fn a_method_call_on_a_captured_variable() {
+    assert_eq!(
+        ok("fn main() {\n  let xs = []\n  let add = |v| {\n    xs.push(v)\n  }\n  add(1)\n  add(2)\n  print(xs)\n}\n"),
+        "[1, 2]\n"
+    );
+}
