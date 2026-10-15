@@ -1,4 +1,4 @@
-# CRUSH-xps-3 — Add Rust-source compilation to crush-lang-sdk
+# CRUSH-xps-3 — Add a shared walker-backed compile API to crush-lang-sdk
 
 | Field | Value |
 |-------|-------|
@@ -12,18 +12,24 @@
 
 ## Problem
 
-The Rust frontend can lower a subset of Rust to CAST, but a Rust application
-cannot call a production SDK API to compile that source into a VM program. The
+The SDK's production compile API accepts Crush source directly, while other
+source frontends remain disconnected from a common host-facing path. This
+encourages Rust-specific helpers and per-language dispatch duplication. The
 existing `crush-lang-rust/src/sdk.rs` helper is test-only, manually duplicates
 pipeline work, and must not become the public API unchanged.
 
 ## Success criteria
 
-- [ ] `crush-lang-sdk` exposes feature-gated `compile_rust_source(&str)` that
-      returns the same VM program type used by `Runtime::run`.
-- [ ] Rust source compilation uses the existing Rust frontend and common
-      compiler path; execution uses ordinary `Runtime`, quotas, and explicit
-      host capabilities.
+- [ ] `crush-lang-sdk` exposes feature-gated
+      `compile_source(language_or_extension, source)` over the existing
+      `WalkerAdapter` registry and returns the VM program type used by
+      `Runtime::run`.
+- [ ] `compile_rust_source(&str)`, if retained, is a thin convenience wrapper
+      over the registry-backed API.
+- [ ] Per-language adapters are individually feature-gated; disabling a
+      language does not pull in its frontend dependencies.
+- [ ] All selected languages use the common compiler path; execution uses
+      ordinary `Runtime`, quotas, and explicit host capabilities.
 - [ ] The crate dependency graph remains acyclic; the current SDK dev-dependency
       from `crush-lang-rust` is removed or the integration is placed in a bridge
       crate with a documented reason.
@@ -35,8 +41,10 @@ pipeline work, and must not become the public API unchanged.
 
 - Add an optional dependency/feature or a small bridge crate after checking the
   Cargo test dependency graph.
-- Route Rust CAST through the existing `crush-frontend` and SDK conversion
-  helpers; do not invent a second VM/runtime.
+- Reuse `WalkerAdapter` and the extension lookup in `crush-walker-core`; do
+  not add a Rust-only frontend table.
+- Route each adapter's CAST through the existing `crush-frontend` and SDK
+  conversion helpers; do not invent a second VM/runtime.
 - Move end-to-end Rust execution tests to the SDK integration layer and retire
   the test-only helper once equivalent coverage exists.
 
