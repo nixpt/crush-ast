@@ -5,4 +5,6 @@ fn main() {
     let offset = 40;
     let add = |x: i64| offset + x;
     println!("{}", add(2));
+    let first = |__closure_unused_1: i64, _: i64| __closure_unused_1;
+    println!("{}", first(42, 100));
 }

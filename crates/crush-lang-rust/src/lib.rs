@@ -8,7 +8,8 @@
 //! `let mut`, `if`/`else` (also as expressions), `while`, `loop`, `for` over
 //! `a..b` / `a..=b` / vectors, `break`/`continue`, `return`, `match` with literal,
 //! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
-//! with identifier parameters (including typed parameters), `+= -= *= /= %=`,
+//! with identifier parameters (including typed parameters and `_` wildcards),
+//! `+= -= *= /= %=`,
 //! `println!`/`print!`/`eprintln!`/`format!` with `{}`, `{:?}`, `{0}`, `{name}`,
 //! and the common `str`/`Vec`/numeric methods (`len`, `push`, `pop`, `contains`,
 //! `to_uppercase`, `abs`, `sqrt`, …). The SDK's `rustc_corpus` integration suite

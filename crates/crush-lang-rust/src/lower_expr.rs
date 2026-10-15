@@ -232,10 +232,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
                 return Err(unsupported_at(e.span(), "async closure",
                     "async Rust execution is not implemented"));
             }
+            let parameter_names: std::collections::HashSet<_> = e.inputs.iter()
+                .filter_map(|p| pat_to_ident(p).ok()).collect();
             let params: Vec<(String, CastType)> = e.inputs.iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    let name = closure_param_name(p, i)
+                    let name = closure_param_name(p, i, &parameter_names)
                         .map_err(|err| anyhow::anyhow!("unsupported Rust closure parameter: {err}"))?;
                     Ok((name, CastType::Any))
                 })
@@ -287,13 +289,23 @@ pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
     }
 }
 
-fn closure_param_name(pat: &syn::Pat, index: usize) -> anyhow::Result<String> {
+fn closure_param_name(
+    pat: &syn::Pat,
+    index: usize,
+    parameter_names: &std::collections::HashSet<String>,
+) -> anyhow::Result<String> {
     match pat {
-        syn::Pat::Type(typed) => closure_param_name(&typed.pat, index),
+        syn::Pat::Type(typed) => closure_param_name(&typed.pat, index, parameter_names),
         syn::Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
             Ok(ident.ident.to_string())
         }
-        syn::Pat::Wild(_) => Ok(format!("__closure_unused_{index}")),
+        syn::Pat::Wild(_) => {
+            let mut name = format!("__closure_unused_{index}");
+            while parameter_names.contains(&name) {
+                name.push('_');
+            }
+            Ok(name)
+        }
         _ => anyhow::bail!("destructuring and ref patterns are not supported; expected an identifier or wildcard"),
     }
 }
