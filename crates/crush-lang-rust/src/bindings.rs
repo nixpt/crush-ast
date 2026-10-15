@@ -207,7 +207,23 @@ impl Resolver {
                     self.expression(arg)?;
                 }
             }
-            E::CapabilityCall { args, .. } => {
+            E::CapabilityCall { args, meta, .. } => {
+                // Legacy function-form print/println were mapped before local
+                // resolution. A source callable with that name wins; macro
+                // calls have no source-call marker and keep their capability.
+                let local_call = meta
+                    .get("rust_source_name")
+                    .and_then(Value::as_str)
+                    .filter(|name| self.lookup(name).is_some())
+                    .map(str::to_owned);
+                if let Some(function) = local_call {
+                    *expression = E::Call {
+                        function,
+                        args: std::mem::take(args),
+                        meta: std::mem::take(meta),
+                    };
+                    return self.expression(expression);
+                }
                 // Rust lowering has already resolved these global capability
                 // names; every receiver is an explicit argument.
                 for arg in args {

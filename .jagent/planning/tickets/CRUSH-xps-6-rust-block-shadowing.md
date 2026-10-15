@@ -51,7 +51,8 @@ CRUSH-251 captured-cell rule.
   function, binding ID, scope ID, and kind. This is independent of VM slots
   and dynamic captured-cell lifetime.
 - Source calls are distinguished from compiler helpers: a callable variable
-  named `__crush_assign__` does not intercept assignment lowering. Capability
+  named `__crush_assign__` does not intercept assignment lowering; locals named
+  `print`/`println` override legacy function-form print mappings. Capability
   names remain resolved globals.
 - Removed `audit_block_shadowing` from the shared known-silent policy after VM
   and both AOT backends became exact. Expanded the rustc corpus to 37 fixtures,
@@ -69,6 +70,7 @@ CRUSH-251 captured-cell rule.
   captures, and intrinsic-like source names. A .crush program still printed
   `Crush from Rust` and returned 42.
 
-Review branch: `agent/nixp/CRUSH-xps-6`, based on CRUSH-xps-5 / PR #220.
+Review: [PR #224](https://github.com/nixpt/crush-ast/pull/224), based on
+CRUSH-xps-5 / PR #220.
 Rust value/copy/borrow semantics remain xps-7 work; this ticket does not alter
 Crush's local-storage representation.
