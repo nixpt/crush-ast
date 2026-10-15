@@ -565,7 +565,16 @@ fn lower_method(
     mut args: Vec<Expression>,
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
-    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call { function: function.to_string(), args, meta };
+    // `len` is a compiler builtin; mapped standard-library methods use the
+    // named capability path, just as parsed Crush source does. A dotted Call
+    // bypassed that contract and failed semantic analysis as undefined.
+    let call = |name: &str, args: Vec<Expression>, meta| {
+        if name == "len" {
+            Expression::Call { function: name.to_string(), args, meta }
+        } else {
+            Expression::CapabilityCall { name: name.to_string(), args, meta }
+        }
+    };
     Ok(match (method, args.len()) {
         // Borrow / ownership / iterator adapters carry no runtime meaning here.
         ("iter" | "into_iter" | "clone" | "to_owned" | "as_str" | "copied" | "cloned" | "to_vec" | "into"

@@ -46,6 +46,12 @@ The default SDK feature set enables it; `default-features = false` omits the
 source continues to use `compile::compile_crush_source` so polyglot blocks and
 declared-capability checks keep their existing preparation.
 
+Mapped Rust methods such as `.to_lowercase()` and `.pow()` use named standard
+library capabilities. Embedding hosts enable those with
+`Runtime::new().with_host_caps(HostCapsBuilder::new().stdlib(true).build())`
+(requires the `stdlib` feature). `Runtime::new()` alone does not register the
+SDK standard library or grant filesystem, process, or network access.
+
 ## Calling a manually built Rust wrapper
 
 `crush-ffi` provides a stable C ABI for small wrapper functions. Build the

@@ -2,9 +2,9 @@
 //!
 //! Each Rust fixture runs through the SDK's public compile API and its output
 //! is compared with `<name>.out`, produced by `rustc`.
-#![cfg(feature = "polyglot-rust")]
+#![cfg(all(feature = "polyglot-rust", feature = "stdlib"))]
 
-use crush_lang_sdk::{Runtime, compile::compile_rust_source};
+use crush_lang_sdk::{HostCapsBuilder, Runtime, compile::compile_rust_source};
 use std::path::{Path, PathBuf};
 
 fn corpus() -> Vec<PathBuf> {
@@ -21,7 +21,9 @@ fn corpus() -> Vec<PathBuf> {
 
 fn run_crush(source: &str) -> anyhow::Result<String> {
     let vm = compile_rust_source(source)?;
-    let result = Runtime::new().run(&vm)?;
+    let result = Runtime::new()
+        .with_host_caps(HostCapsBuilder::new().stdlib(true).build())
+        .run(&vm)?;
     Ok(result.output)
 }
 
