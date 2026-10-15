@@ -68,10 +68,17 @@ pub enum MroError {
     /// The kind inherits from itself; `path` runs from `kind` back to `kind`.
     Cycle { kind: KindRef, path: Vec<KindRef> },
     /// The parent count doesn't fit the resolution strategy.
-    ParentArity { kind: KindRef, resolution: Resolution, parents: usize },
+    ParentArity {
+        kind: KindRef,
+        resolution: Resolution,
+        parents: usize,
+    },
     /// `embedding_promotion` has no linear order (promotion is by depth,
     /// with ambiguity resolved at each use).
-    NotLinear { kind: KindRef, resolution: Resolution },
+    NotLinear {
+        kind: KindRef,
+        resolution: Resolution,
+    },
 }
 
 impl MroError {
@@ -105,7 +112,11 @@ impl fmt::Display for MroError {
                 let names: Vec<&str> = path.iter().map(KindRef::as_str).collect();
                 write!(f, "inheritance cycle: {}", names.join(" -> "))
             }
-            MroError::ParentArity { kind, resolution, parents } => {
+            MroError::ParentArity {
+                kind,
+                resolution,
+                parents,
+            } => {
                 let allowed = match resolution {
                     Resolution::None => "no parents",
                     _ => "at most one parent",
@@ -143,7 +154,10 @@ pub fn c3_mro(kind: &KindRef, lookup: &impl KindLookup) -> Result<Vec<KindRef>, 
 /// - `single` / `prototype_chain`: `kind` followed by its one parent's order;
 /// - `c3`: [`c3_mro`];
 /// - `embedding_promotion`: [`MroError::NotLinear`].
-pub fn resolution_order(kind: &KindRef, lookup: &impl KindLookup) -> Result<Vec<KindRef>, MroError> {
+pub fn resolution_order(
+    kind: &KindRef,
+    lookup: &impl KindLookup,
+) -> Result<Vec<KindRef>, MroError> {
     Linearizer::new(lookup).resolution_order(kind)
 }
 
@@ -157,7 +171,11 @@ pub struct Linearizer<'l, L: KindLookup> {
 
 impl<'l, L: KindLookup> Linearizer<'l, L> {
     pub fn new(lookup: &'l L) -> Self {
-        Linearizer { lookup, memo: HashMap::new(), stack: Vec::new() }
+        Linearizer {
+            lookup,
+            memo: HashMap::new(),
+            stack: Vec::new(),
+        }
     }
 
     /// See [`resolution_order`].
@@ -168,7 +186,10 @@ impl<'l, L: KindLookup> Linearizer<'l, L> {
         if let Some(pos) = self.stack.iter().position(|k| k == kind) {
             let mut path: Vec<KindRef> = self.stack[pos..].to_vec();
             path.push(kind.clone());
-            return Err(MroError::Cycle { kind: kind.clone(), path });
+            return Err(MroError::Cycle {
+                kind: kind.clone(),
+                path,
+            });
         }
         let decl = self
             .lookup
@@ -213,17 +234,22 @@ impl<'l, L: KindLookup> Linearizer<'l, L> {
                     Err(arity(Resolution::None))
                 }
             }
-            r @ (Resolution::Single | Resolution::PrototypeChain) => match decl.parents.as_slice() {
-                [] => Ok(vec![kind.clone()]),
-                [parent] => {
-                    let mut order = vec![kind.clone()];
-                    order.extend(self.resolution_order(parent)?);
-                    Ok(order)
+            r @ (Resolution::Single | Resolution::PrototypeChain) => {
+                match decl.parents.as_slice() {
+                    [] => Ok(vec![kind.clone()]),
+                    [parent] => {
+                        let mut order = vec![kind.clone()];
+                        order.extend(self.resolution_order(parent)?);
+                        Ok(order)
+                    }
+                    _ => Err(arity(r)),
                 }
-                _ => Err(arity(r)),
-            },
+            }
             Resolution::C3 => self.c3_of(kind, decl),
-            r @ Resolution::EmbeddingPromotion => Err(MroError::NotLinear { kind: kind.clone(), resolution: r }),
+            r @ Resolution::EmbeddingPromotion => Err(MroError::NotLinear {
+                kind: kind.clone(),
+                resolution: r,
+            }),
         }
     }
 
@@ -245,7 +271,10 @@ impl<'l, L: KindLookup> Linearizer<'l, L> {
         // check_duplicates: the first base that appears again.
         for (i, base) in bases.iter().enumerate() {
             if bases[i + 1..].contains(base) {
-                return Err(MroError::DuplicateBase { kind: kind.clone(), base: base.clone() });
+                return Err(MroError::DuplicateBase {
+                    kind: kind.clone(),
+                    base: base.clone(),
+                });
             }
         }
         to_merge.push(bases.clone());
@@ -286,7 +315,10 @@ impl<'l, L: KindLookup> Linearizer<'l, L> {
                     stuck.push(list[r].clone());
                 }
             }
-            return Err(MroError::Inconsistent { kind: kind.clone(), bases: stuck });
+            return Err(MroError::Inconsistent {
+                kind: kind.clone(),
+                bases: stuck,
+            });
         }
     }
 }

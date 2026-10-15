@@ -24,7 +24,13 @@ pub struct Span {
 impl Span {
     /// A point span at `line:col` with no file.
     pub fn new(line: u32, col: u32) -> Self {
-        Span { file: None, line, col, end_line: None, end_col: None }
+        Span {
+            file: None,
+            line,
+            col,
+            end_line: None,
+            end_col: None,
+        }
     }
 
     /// The same span, attributed to `file`.
@@ -156,6 +162,10 @@ impl fmt::Display for Diagnostic {
         if let Some(span) = &self.span {
             write!(f, "{span}: ")?;
         }
-        write!(f, "error[{}]: {}: {}", self.code, self.subject, self.message)
+        write!(
+            f,
+            "error[{}]: {}: {}",
+            self.code, self.subject, self.message
+        )
     }
 }

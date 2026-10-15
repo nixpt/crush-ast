@@ -47,7 +47,12 @@ pub enum CosmType {
 
 impl fmt::Display for CosmType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let list = |ts: &[CosmType]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
+        let list = |ts: &[CosmType]| {
+            ts.iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         match self {
             CosmType::Int => write!(f, "Int"),
             CosmType::Float => write!(f, "Float"),
@@ -84,14 +89,26 @@ mod tests {
         let cases = [
             (CosmType::Int, json!("Int")),
             (CosmType::Any, json!("Any")),
-            (CosmType::Array(Box::new(CosmType::Float)), json!({"Array": "Float"})),
-            (CosmType::Struct("Point".into()), json!({"Struct": "Point"})),
-            (CosmType::Tuple(vec![CosmType::Int, CosmType::Bool]), json!({"Tuple": ["Int", "Bool"]})),
             (
-                CosmType::Lambda { params: vec![CosmType::Int], returns: Box::new(CosmType::Null) },
+                CosmType::Array(Box::new(CosmType::Float)),
+                json!({"Array": "Float"}),
+            ),
+            (CosmType::Struct("Point".into()), json!({"Struct": "Point"})),
+            (
+                CosmType::Tuple(vec![CosmType::Int, CosmType::Bool]),
+                json!({"Tuple": ["Int", "Bool"]}),
+            ),
+            (
+                CosmType::Lambda {
+                    params: vec![CosmType::Int],
+                    returns: Box::new(CosmType::Null),
+                },
                 json!({"Lambda": {"params": ["Int"], "returns": "Null"}}),
             ),
-            (CosmType::TypeRef("Shape".into()), json!({"TypeRef": "Shape"})),
+            (
+                CosmType::TypeRef("Shape".into()),
+                json!({"TypeRef": "Shape"}),
+            ),
         ];
         for (ty, expected) in cases {
             assert_eq!(serde_json::to_value(&ty).unwrap(), expected);

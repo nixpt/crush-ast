@@ -1,0 +1,114 @@
+{
+  "kinds": [
+    {
+      "name": "Point",
+      "home_lang": "rust",
+      "span": {
+        "file": "example",
+        "line": 2,
+        "col": 1
+      },
+      "storage": {
+        "sealed": {
+          "fields": [
+            {
+              "name": "x",
+              "type": "Int"
+            },
+            {
+              "name": "y",
+              "type": "Int"
+            }
+          ]
+        }
+      },
+      "semantics": {
+        "value": "move"
+      },
+      "resolution": "none",
+      "receiver": "explicit_value",
+      "construct": "literal",
+      "members": [
+        {
+          "name": "new",
+          "span": {
+            "line": 5,
+            "col": 5
+          },
+          "kind": "static",
+          "value": {
+            "fn": "Point::new"
+          }
+        },
+        {
+          "name": "norm2",
+          "span": {
+            "line": 6,
+            "col": 5
+          },
+          "kind": "method",
+          "fn": "Point::norm2",
+          "receiver": "explicit_ref"
+        },
+        {
+          "name": "shift",
+          "span": {
+            "line": 7,
+            "col": 5
+          },
+          "kind": "method",
+          "fn": "Point::shift",
+          "receiver": "explicit_ref_mut"
+        }
+      ],
+      "hooks": {
+        "op": {
+          "+": {
+            "fn": "<Point as Add>::add"
+          }
+        },
+        "eq": "derived",
+        "clone": "derived"
+      },
+      "conforms": [
+        {
+          "interface": "Shape",
+          "check": "nominal",
+          "members": [
+            {
+              "name": "area",
+              "kind": "method",
+              "fn": "<Point as Shape>::area",
+              "receiver": "explicit_ref"
+            }
+          ],
+          "span": {
+            "file": "example",
+            "line": 11,
+            "col": 1
+          }
+        }
+      ],
+      "equality": "structural"
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Shape",
+      "home_lang": "rust",
+      "span": {
+        "file": "example",
+        "line": 10,
+        "col": 1
+      },
+      "members": [
+        {
+          "name": "area",
+          "receiver": "explicit_ref",
+          "returns": "Float"
+        }
+      ],
+      "satisfaction": "nominal"
+    }
+  ]
+}
