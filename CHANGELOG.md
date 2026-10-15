@@ -14,6 +14,19 @@ add its entry after yours.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- `crush-vm::VmResult` now includes `return_value`; downstream Rust code that
+  constructs this public struct with a full struct literal must provide the new
+  field (or use `..Default::default()`). This changes the public Rust API and
+  requires a major-version release under SemVer.
+
+### Changed
+
+- Rust walker inputs containing unsupported top-level items such as `use`
+  declarations or structs now fail with diagnostics instead of compiling while
+  silently ignoring those items.
+
 ## [0.5.0] - 2026-10-12
 
 - Merge pull request #169 from nixpt/agent/vega/fix-main-dup-unparen

@@ -10,6 +10,40 @@ ergonomic builder, and provides the host integration surface (capabilities, a
 message bus) for embedding Crush in a Rust application. If you want to run Crush
 programs from Rust, start here rather than wiring crush-frontend + crush-vm by hand.
 
+```rust,no_run
+use crush_lang_sdk::{Runtime, Value, compile::compile_crush_source};
+
+let program = compile_crush_source("fn main() { print(\"hello\"); return 42; }")?;
+let result = Runtime::new().run(&program)?;
+assert_eq!(result.output, "hello\n");
+assert_eq!(result.return_value, Some(Value::Int(42)));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The runnable version is `cargo run -p crush-lang-sdk --example embed_crush`.
+This is the supported Rust-host direction: Rust embeds the Crush VM and owns
+the host capabilities granted to the program. `VmResult::output` captures
+printed text and `VmResult::return_value` carries the entry function's explicit
+`return` value.
+
+## Calling a manually built Rust wrapper
+
+`crush-ffi` provides a stable C ABI for small wrapper functions. Build the
+wrapper on the host, then explicitly load it in the embedding Rust host:
+
+```sh
+cargo build -p crush-plugin-example
+cargo run -p crush-lang-sdk --example plugin_host -- target/debug/libcrush_plugin_example.so
+```
+
+The example plugin exports `rust.greet(String) -> String` and
+`rust.version() -> Int`; the host allowlists only `rust.greet`. Crush cannot
+select a library path or invoke Cargo. The host chooses the `.so` path and
+grants the wrapper's exported capabilities through `HostCaps`. A `cdylib` is native code
+with the host process's authority, so only load wrappers the host trusts. This
+MVP demonstrates scalar string arguments and results; it does not import Rust
+ABI symbols, generics, or arbitrary crate APIs directly.
+
 ## What's here
 
 - **builder** — configure and drive a compile-and-run flow.

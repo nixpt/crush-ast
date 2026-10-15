@@ -83,14 +83,10 @@ fn cmd_run(args: &[String], json_mode: bool) -> ExitCode {
     };
     let quotas = crush_vm::Quotas::default();
     
-    // Register host capabilities
-    #[allow(unused_mut)]
-    let mut host_caps = crush_vm::host::HostCaps::new();
-    #[cfg(feature = "native-plugins")]
-    {
-        host_caps.register(Box::new(crush_vm::cargo_cap::CargoCap));
-        host_caps.register(Box::new(crush_vm::plugin::FfiGatewayCap));
-    }
+    // Native process execution and arbitrary-path dlopen are never ambient
+    // capabilities of the standalone runner. Embedders may construct a
+    // HostCaps registry explicitly; `crush-vm run` has no host grant source.
+    let host_caps = crush_vm::host::HostCaps::new();
     
     match crush_vm::run_with_caps(&program, &quotas, Some(&host_caps)) {
         Ok(result) => {

@@ -416,6 +416,7 @@ pub fn run_scheduled_streaming(
             steps: 0,
             halted: true,
             stack: Vec::new(),
+            return_value: None,
         });
     }
     let declared: std::collections::HashSet<&str> = program
@@ -486,6 +487,7 @@ pub fn run_scheduled_streaming(
                 steps: main.steps,
                 halted: true,
                 stack: main.stack.clone(),
+                return_value: main.return_value.clone(),
             });
         }
 
@@ -570,6 +572,7 @@ pub fn run_scheduled_streaming(
                         steps: threads[0].steps,
                         halted: true,
                         stack: threads[0].stack.clone(),
+                        return_value: threads[0].return_value.clone(),
                     });
                 }
             }
@@ -1427,6 +1430,7 @@ fn execute_one(
                 steps: thread.steps,
                 halted: true,
                 stack: stack.clone(),
+                return_value: None,
             }));
         }
         _ => return Err(VmError::UnknownOpcode(opcode, ip)),

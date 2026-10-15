@@ -1991,6 +1991,7 @@ impl PortableVm {
             steps: self.steps,
             halted: self.halted,
             stack: self.stack.clone(),
+            return_value: None,
         }
     }
 }
