@@ -488,6 +488,14 @@ impl AotcCompiler {
                         instr.op
                     );
                 }
+                // CRUSH-265: these lower to a silent NOP on CVM1; refuse them
+                // loudly here instead of dropping them as unhandled ops.
+                "ai_capability_discovery" | "ai_adaptation_request" | "ai_semantic_switch" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` isn't supported yet (CRUSH-265): it would compile to a no-op",
+                        instr.op
+                    );
+                }
                 _ => {
                     writeln!(out, "    /* unhandled op: {} */", instr.op)?;
                 }

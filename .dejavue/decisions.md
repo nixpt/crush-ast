@@ -1092,4 +1092,32 @@ Rejected alternatives:
 
 Outcome:
 FastVM/JIT: struct maps of sealed Kinds get a class name listing the fields (fastvm::sealed_class / check_sealed_write; JIT error flag 5). AOT Rust OrdMap::sealed, AOT C CrushObject.sealed_kind/sealed_fields. Test crush-aot/tests/cosm_k1_lifted_methods.rs::undeclared_write.
+## 2026-10-15T13:28:00-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] JS number model (CRUSH-zorro-13): Int promotes to Float on overflow
+
+Reason:
+Owner decision 2026-10-15, option (a). JS numbers are doubles; crush has Int(i64)+Float(f64) and made overflow an error, so 2**53+1, 2**64 and MAX_SAFE_INTEGER+2 failed where node prints a value. Promoting only on overflow keeps Int for indexing/loops/.length (no change for programs that never overflow) and matches node's output for every safe integer; beyond 2^53 the Float follows node's double formatting.
+
+Author type: agent
+
+Rejected alternatives:
+- **every JS number a Float**: changes indexing/loop semantics and the printed form of ordinary integers for no gain
+- **leave overflow loud**: programs that node runs fine would keep failing
+
+Outcome:
+Recorded in CRUSH-zorro-13 and the JS/TS spike doc; implementation pending (js.add/sub/mul/pow; VMs exact, FastVM/JIT/AOT match or refuse at compile time; BigInt stays loud).
+## 2026-10-15T13:23:36-05:00 — [STRATEGIC] [ADOPTED] CRUSH-265: decline capability_discovery / adaptation_request / semantic_switch, fail loudly instead of NOP
+
+Reason:
+DECLINE for now (vega, owner's decision). The three AI statements compile to CASM ops that lower to a silent NOP on CVM1. Instead of porting onto ai_native (later ticket), each now fails loudly at compile time naming the statement. Frontend compile_ai_statement (crates/crush-frontend/src/compiler.rs) bails with "<statement> isn't supported yet (CRUSH-265): it would compile to a no-op" for capability_discovery, adaptation_request and semantic_switch. Hand-built CASM is refused by casm_to_vm (Unsupported CVM1 opcode) and FastVM lower_program (UnknownOpcode); AOT Rust/C and crush-aotc also refuse the ops. semantic_switch is NOT implemented via semantic_match — its ai_semantic_switch opcode lowers to NOP so dispatch never selects a case by target. NOP_STUBS updated (three removed, added to UNSUPPORTED with reasons). Tests added per statement plus an every-engine-refusal test. ai_agent_ops.crush marked // expect-error (intentional compile failure).
+
+Artifacts: crates/crush-frontend/src/compiler.rs,crates/crush-lang-sdk/src/compile.rs,crates/crush-lang-sdk/tests/casm_lowering_completeness.rs,crates/crush-aotc/src/codegen.rs,examples/crush/ai_agent_ops.crush
+
+Tensions: silent-wrong-vs-loud-error
+
+Values: nothing-is-silently-wrong
+
+Domain owner: vega
+
+Outcome:
+All engines refuse the three ops; none silent. Frontend + casm_to_vm + FastVM + AOT Rust/C + crush-aotc verified. Tests green: crush-frontend, crush-lang-sdk, crush-vm, crush-aot, crush-aotc; examples_parity green.
 
