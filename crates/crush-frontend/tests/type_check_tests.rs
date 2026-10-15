@@ -106,6 +106,7 @@ fn test_if_condition_type_check() {
 fn test_struct_field_access() {
     let body = vec![
         Statement::StructDef {
+            kind: None,
             name: "User".to_string(),
             fields: vec![("name".to_string(), CastType::String)],
             meta: create_empty_meta(),
@@ -144,6 +145,7 @@ fn test_struct_field_access() {
 fn test_invalid_struct_field_access() {
     let body = vec![
         Statement::StructDef {
+            kind: None,
             name: "User".to_string(),
             fields: vec![("name".to_string(), CastType::String)],
             meta: create_empty_meta(),

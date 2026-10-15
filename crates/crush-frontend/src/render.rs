@@ -116,6 +116,52 @@ impl Renderer {
         self.push_str("}\n");
     }
 
+    /// ` {` + methods + `}` for an `impl` / `trait` (COSM K1.2).
+    fn render_method_list(&mut self, methods: &[MethodDef]) {
+        self.push_str(" {\n");
+        self.indent += 1;
+        for m in methods {
+            self.write_indent();
+            if m.is_async {
+                self.push_str("async ");
+            }
+            self.push_str("fn ");
+            self.push_str(&m.name);
+            self.push_str("(");
+            self.render_params(&m.params);
+            self.push_str(")");
+            match &m.body {
+                None => self.push_str(";\n"),
+                Some(body) => {
+                    self.push_str(" {\n");
+                    self.indent += 1;
+                    for stmt in body {
+                        self.render_statement(stmt);
+                    }
+                    self.indent -= 1;
+                    self.write_indent();
+                    self.push_str("}\n");
+                }
+            }
+        }
+        self.indent -= 1;
+        self.write_indent();
+        self.push_str("}\n");
+    }
+
+    fn render_params(&mut self, params: &[(String, CastType)]) {
+        for (i, (p_name, p_type)) in params.iter().enumerate() {
+            if i > 0 {
+                self.push_str(", ");
+            }
+            self.push_str(p_name);
+            if *p_type != CastType::Any {
+                self.push_str(": ");
+                self.push_str(&p_type.to_string());
+            }
+        }
+    }
+
     fn render_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::VarDecl {
@@ -342,7 +388,31 @@ impl Renderer {
                 self.render_import_inline(import);
                 self.newline();
             }
-            Statement::StructDef { name, fields, .. } => {
+            Statement::ImplBlock { type_name, trait_name, methods, .. } => {
+                self.write_indent();
+                self.push_str("impl ");
+                if let Some(t) = trait_name {
+                    self.push_str(t);
+                    self.push_str(" for ");
+                }
+                self.push_str(type_name);
+                self.render_method_list(methods);
+            }
+            Statement::TraitDef { name, methods, .. } => {
+                self.write_indent();
+                self.push_str("trait ");
+                self.push_str(name);
+                self.render_method_list(methods);
+            }
+            Statement::StructDef { name, fields, kind, .. } => {
+                if let Some(kind) = kind {
+                    self.write_indent();
+                    self.push_str("@kind(");
+                    let args: Vec<String> =
+                        kind.args.iter().map(|a| format!("{}: {}", a.key, a.value)).collect();
+                    self.push_str(&args.join(", "));
+                    self.push_str(")\n");
+                }
                 self.write_indent();
                 self.push_str("struct ");
                 self.push_str(name);

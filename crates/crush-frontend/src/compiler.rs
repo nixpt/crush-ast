@@ -1104,6 +1104,16 @@ impl Compiler {
                 self.loop_stack.last_mut().unwrap().continue_indices.push(idx);
             }
             Statement::StructDef { .. } => {}
+            // Lowered to COSM + lifted functions before code generation
+            // (`cosm_lower`); reaching here means an `impl`/`trait` outside
+            // the top level of a file.
+            Statement::ImplBlock { meta, .. } | Statement::TraitDef { meta, .. } => {
+                let at = match (meta.get("line").and_then(|v| v.as_u64()), meta.get("col").and_then(|v| v.as_u64())) {
+                    (Some(l), Some(c)) => format!("line {l}, col {c}: "),
+                    _ => String::new(),
+                };
+                bail!("{at}`impl` / `trait` blocks are only allowed at the top level of a file");
+            }
             Statement::Import { import, meta } => {
                 // Compile import statements to capability/module load instructions.
                 // The ImportResolver handles resolution at runtime via capabilities.

@@ -595,6 +595,8 @@ impl Lexer {
             "wip", "temporary", "decision",
             // Phase 2b additions — mutation surface
             "invalidates", "must-call-before", "must-call-after",
+            // COSM K1.2 — `@kind(…)` on a struct
+            "kind",
         ];
         if IMPORT_KEYWORDS.contains(&id.as_str()) {
             return Ok(Token::AtIdent(id, at_location));

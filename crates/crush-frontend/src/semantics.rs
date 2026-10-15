@@ -836,6 +836,13 @@ fn collect_called_functions<'a>(stmts: &'a [Statement], out: &mut Vec<&'a str>) 
                 collect_called_in_expr(target, out);
                 collect_called_in_expr(callback, out);
             }
+            Statement::ImplBlock { methods, .. } | Statement::TraitDef { methods, .. } => {
+                for m in methods {
+                    if let Some(body) = &m.body {
+                        collect_called_functions(body, out);
+                    }
+                }
+            }
             Statement::LangBlock { .. }
             | Statement::Import { .. }
             | Statement::StructDef { .. }
