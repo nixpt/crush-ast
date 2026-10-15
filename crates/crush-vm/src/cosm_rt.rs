@@ -290,11 +290,8 @@ impl RecordValue {
             return self.set_slot(i, v);
         }
         if !self.kind.decl().storage.is_open() {
-            return Err(VmError::Cosm(format!(
-                "`{}` is sealed: it has no field `{name}` (fields: {})",
-                self.kind.name(),
-                field_list(&self.kind)
-            )));
+            let fields: Vec<&str> = self.kind.fields().iter().map(|f| f.name.as_str()).collect();
+            return Err(VmError::Cosm(casm::sealed_field_error(self.kind.name(), name, &fields)));
         }
         self.state.borrow_mut().extra.insert(name.to_string(), v);
         Ok(())

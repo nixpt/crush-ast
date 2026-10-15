@@ -928,6 +928,26 @@ pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSup
     why
 }
 
+/// The declared fields of the Kind `kind` in `module` when its storage is
+/// `sealed` (`None` for open storage or an unknown Kind). Every engine
+/// refuses a write of any other field to an instance of such a Kind, with
+/// [`sealed_field_error`]'s message: the VMs on their Records, FastVM, the
+/// JIT and AOT on the struct maps they build (COSM K1.4).
+pub fn sealed_fields<'m>(module: &'m crush_cosm::CosmModule, kind: &str) -> Option<Vec<&'m str>> {
+    let k = module.kind(kind)?;
+    match &k.storage {
+        crush_cosm::Storage::Sealed { fields } => Some(fields.iter().map(|f| f.name.as_str()).collect()),
+        _ => None,
+    }
+}
+
+/// The one error text for a write of `field` to an instance of the sealed
+/// Kind `kind` declaring `fields`.
+pub fn sealed_field_error(kind: &str, field: &str, fields: &[&str]) -> String {
+    let list = if fields.is_empty() { "none".to_string() } else { fields.join(", ") };
+    format!("`{kind}` is sealed: it has no field `{field}` (fields: {list})")
+}
+
 /// How `CONSTRUCT` uses a Kind's constructor function ([`kind_constructor`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConstructorUse {
