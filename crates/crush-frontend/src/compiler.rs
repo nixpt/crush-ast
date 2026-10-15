@@ -38,6 +38,14 @@ pub struct Compiler {
     /// from inside a lambda is a capture we can't honour yet (CRUSH-251) — it is
     /// reported at compile time instead of faulting at run time.
     lambda_outer_vars: Vec<HashSet<String>>,
+    /// CRUSH-251 step 1: `let f = |x| ..` binds `f` to a uniquely lifted
+    /// `__lambda_N_f` in the current scope (one map per function / lambda
+    /// body, innermost last). Lambdas used to be lifted *as* `f`, so two
+    /// functions' `let h = ..` lambdas overwrote each other and a `let f`
+    /// lambda replaced a top-level `fn f` program-wide.
+    lambda_aliases: Vec<HashMap<String, String>>,
+    /// Program-wide counter for unique lambda names.
+    lambda_counter: usize,
 }
 
 struct LoopInfo {
@@ -64,15 +72,23 @@ impl Compiler {
             invariant_runtime: false,
             lambdas: HashMap::new(),
             lambda_outer_vars: Vec::new(),
+            lambda_aliases: Vec::new(),
+            lambda_counter: 0,
         }
     }
 
     /// #78: a lambda body may not read or assign the enclosing function's
     /// variables — lambdas don't capture yet (CRUSH-251).
+    /// The lifted name a `let`-bound lambda alias resolves to, innermost scope first.
+    fn resolve_lambda_alias(&self, name: &str) -> Option<String> {
+        self.lambda_aliases.iter().rev().find_map(|scope| scope.get(name).cloned())
+    }
+
     fn check_lambda_capture(&self, name: &str) -> Result<()> {
         if !self.lambda_outer_vars.is_empty()
             && !self.declared_vars.contains(name)
             && !self.local_functions.contains(name)
+            && self.resolve_lambda_alias(name).is_none()
             && self.lambda_outer_vars.iter().any(|outer| outer.contains(name))
         {
             bail!(
@@ -96,6 +112,8 @@ impl Compiler {
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
         self.lambdas.clear();
+        self.lambda_aliases.clear();
+        self.lambda_counter = 0;
         for name in program.functions.keys() {
             self.local_functions.insert(name.clone());
         }
@@ -135,6 +153,7 @@ impl Compiler {
 
         for (name, func) in program.functions {
             let mut instrs = Vec::new();
+            self.lambda_aliases.push(HashMap::new());
 
             // First pass: Handle nested FunctionDef nodes
             for stmt in &func.body {
@@ -153,9 +172,12 @@ impl Compiler {
                             meta,
                         ));
                     }
-                    for inner_stmt in body {
-                        self.compile_stmt(inner_stmt, &mut func_instrs)?;
-                    }
+                    self.lambda_aliases.push(HashMap::new());
+                    let nested: Result<()> = body
+                        .iter()
+                        .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                    self.lambda_aliases.pop();
+                    nested?;
                     self.ensure_return(&mut func_instrs, Some(meta));
                     self.record_debug_info_for_function(
                         name,
@@ -314,6 +336,7 @@ impl Compiler {
                     },
                 );
             }
+            self.lambda_aliases.pop();
         }
 
         // Merge lambdas
@@ -1478,6 +1501,9 @@ impl Compiler {
                 // named "f". Calling function values needs an indirect call the VMs
                 // don't have yet (CRUSH-251); a lambda bound with `let f = |..| ..`
                 // is lifted to a function named `f` and is callable directly.
+                // A `let`-bound lambda in scope: call its lifted function.
+                let aliased = self.resolve_lambda_alias(function);
+                let function: &String = aliased.as_ref().unwrap_or(function);
                 if !function.contains('.')
                     && self.declared_vars.contains(function.as_str())
                     && !self.local_functions.contains(function.as_str())
@@ -2133,13 +2159,19 @@ impl Compiler {
                 ));
             }
             Expression::Lambda { params, body, meta } => {
-                let lambda_name = if let Some(hint) = name_hint {
-                    hint.to_string()
-                } else {
-                    format!("__lambda_{}", self.temp_counter)
+                // Always a unique lifted name; the binding name is only a readable
+                // suffix and a scoped alias (see `lambda_aliases`).
+                let lambda_name = match name_hint {
+                    Some(hint) => format!("__lambda_{}_{hint}", self.lambda_counter),
+                    None => format!("__lambda_{}", self.lambda_counter),
                 };
-                self.temp_counter += 1;
-                self.local_functions.insert(lambda_name.clone());
+                self.lambda_counter += 1;
+                if let Some(hint) = name_hint {
+                    if self.lambda_aliases.is_empty() {
+                        self.lambda_aliases.push(HashMap::new());
+                    }
+                    self.lambda_aliases.last_mut().expect("scope").insert(hint.to_string(), lambda_name.clone());
+                }
 
                 let mut func_instrs = Vec::new();
                 for (param_name, _) in params {
@@ -2156,9 +2188,11 @@ impl Compiler {
                     params.iter().map(|(n, _)| n.clone()).collect(),
                 );
                 self.lambda_outer_vars.push(outer.clone());
+                self.lambda_aliases.push(HashMap::new());
                 let body_result: Result<()> = body
                     .iter()
                     .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                self.lambda_aliases.pop();
                 self.lambda_outer_vars.pop();
                 self.declared_vars = outer;
                 body_result?;
