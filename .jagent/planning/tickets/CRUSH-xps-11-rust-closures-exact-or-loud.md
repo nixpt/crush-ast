@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-xps-11 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In review |
 | **Phase** | M1 / SDK correctness |
-| **Assignee** | unassigned |
+| **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-2, CRUSH-197 |
 | **Estimated effort** | M |
 
@@ -34,19 +34,33 @@ lowering with a useful diagnostic before entering the VM.
 
 ## Acceptance
 
-- [ ] A capture-free closure fixture executes through RustAdapter → CAST →
+- [x] A capture-free closure fixture executes through RustAdapter → CAST →
       frontend → Runtime and asserts the exact result `42`; after CRUSH-xps-3
       lands, the same fixture also runs through the public SDK API.
-- [ ] Capturing closures either match `rustc` for the documented subset or are
+- [x] Capturing closures either match `rustc` for the documented subset or are
       rejected before VM execution with a useful construct-specific error.
-- [ ] No accepted closure reaches the VM with uninitialized local slots.
-- [ ] Tests do not use vacuous assertions such as `!out.is_empty() || true`;
+- [x] No accepted closure reaches the VM with uninitialized local slots.
+- [x] Tests do not use vacuous assertions such as `!out.is_empty() || true`;
       successful execution must assert output, and unsupported behavior must
       assert the explicit error.
-- [ ] `crush-lang-rust` documents the precise supported closure/capture subset.
+- [x] `crush-lang-rust` documents the precise supported closure/capture subset.
 
 ## Notes
 
 - The current failure is in the xps SDK integration job on [PR #213](https://github.com/nixpt/crush-ast/pull/213).
 - Exosphere's older `crush-lang` compiler rejected lambdas outright, so it is
   not evidence that this source-to-CVM1 closure path works.
+
+## Implementation and validation in PR #213
+
+- PR #217 landed the typed-parameter and initial closure-body fix while this
+  work was in progress. Its wildcard support and corpus are preserved and moved
+  to the SDK integration layer with the other Rust execution fixtures.
+- The shared semantic pass checks lambda scopes, body names, and call arity.
+  Wildcard slots cannot collide with user-named parameters.
+- Capture-free, typed, wildcard, scalar-capture, and mutable scalar-capture
+  fixtures run through the public SDK API and match `rustc` exactly.
+- Move/async closures and unsupported parameter patterns fail before execution.
+  Array and closure tests assert concrete results instead of vacuous success.
+- Rust ownership and repeated block/loop binding parity remain CRUSH-xps-6/7;
+  the full VM/AOT conformance gate remains CRUSH-xps-5.

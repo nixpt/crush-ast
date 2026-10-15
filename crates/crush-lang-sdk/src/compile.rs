@@ -1,5 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(any(
+    feature = "polyglot-python",
+    feature = "polyglot-javascript",
+    feature = "polyglot-rust"
+))]
+use crush_walker_core_no_tree_sitter::AdapterRegistry;
 
 static LABEL_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -28,6 +34,64 @@ fn cap_returns_value(name: &str) -> bool {
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
     casm_to_vm(&compile_crush_to_casm(source)?)
+}
+
+/// Compile Crush source or an enabled walker language into a CVM1 program.
+///
+/// `language_or_extension` accepts a registered language name (`"rust"`) or
+/// extension (`"rs"`, `".rs"`). Rust source support requires the
+/// `polyglot-rust` feature. Walker frontends share `AdapterRegistry` and the
+/// same CAST → CASM → CVM1 pipeline. Crush source keeps its existing polyglot
+/// preparation and declared-capability validation.
+pub fn compile_source(
+    language_or_extension: &str,
+    source: &str,
+) -> anyhow::Result<crush_vm::Program> {
+    let selector = language_or_extension.trim();
+    let normalized = selector.trim_start_matches('.').to_ascii_lowercase();
+    if normalized == "crush" || normalized == "cr" {
+        return compile_crush_source(source);
+    }
+
+    #[cfg(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    ))]
+    {
+        let registry = source_adapter_registry();
+        let (_report, cast) = registry.walk_language_or_extension(source, selector)?;
+        let casm = crush_frontend::compile_cast_owned(cast)?;
+        return casm_to_vm(&casm);
+    }
+    #[cfg(not(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    )))]
+    anyhow::bail!("no walker adapters enabled for source `{selector}`")
+}
+
+/// Rust convenience wrapper over [`compile_source`].
+#[cfg(feature = "polyglot-rust")]
+pub fn compile_rust_source(source: &str) -> anyhow::Result<crush_vm::Program> {
+    compile_source("rust", source)
+}
+
+#[cfg(any(
+    feature = "polyglot-python",
+    feature = "polyglot-javascript",
+    feature = "polyglot-rust"
+))]
+fn source_adapter_registry() -> AdapterRegistry {
+    let mut registry = AdapterRegistry::new();
+    #[cfg(feature = "polyglot-python")]
+    registry.register(Box::new(crush_lang_python::PythonAdapter));
+    #[cfg(feature = "polyglot-javascript")]
+    registry.register(Box::new(crush_lang_js::JsAdapter));
+    #[cfg(feature = "polyglot-rust")]
+    registry.register(Box::new(crush_lang_rust::RustAdapter));
+    registry
 }
 
 /// Crush source → CASM, including [`prepare_polyglot_blocks`]. Use this,
@@ -368,6 +432,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         perms.extend(program.manifest.permissions.clone());
     }
 
+    let is_kind = |name: &str| program.kind_table().is_some_and(|m| m.kind(name).is_some());
     for (fname, func) in &program.functions {
         // A GPU kernel (it uses `ptx_*` device ops, CRUSH-zorro-3) runs on the device via
         // `gpu.launch`, which compiles it from CASM with crush-ptx. It has no CVM1
@@ -626,7 +691,14 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 }
                 "halt" => "HALT".to_string(),
                 "exit_try" => "EXIT_TRY".to_string(),
-                "new_obj" => "NEW_OBJ".to_string(),
+                // COSM K1.4: a struct literal is `new_obj` tagged with its
+                // Kind (FastVM/JIT/AOT ignore the tag and build a map); the
+                // VMs build a Record (no constructor runs: a literal writes
+                // the fields itself).
+                "new_obj" => match instr.args.get("kind").and_then(|v| v.as_str()) {
+                    Some(kind) if is_kind(kind) => format!("NEW_RECORD {kind:?}"),
+                    _ => "NEW_OBJ".to_string(),
+                },
                 "get_field" => {
                     let field = instr
                         .args
@@ -649,8 +721,47 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         })?;
                     format!("SET_FIELD {field:?}")
                 }
+                // `new P()`: an instance of the Kind `P` (COSM K1.4); a name
+                // that isn't a Kind still builds a plain object.
+                "new_struct" => match instr.args.get("name").and_then(|v| v.as_str()) {
+                    Some(kind) if is_kind(kind) => construct_asm(program, kind, 0),
+                    _ => "NEW_OBJ".to_string(),
+                },
+                // COSM K1.4 (CRUSH-zorro-43): the generic member ops.
+                "get_member" | "set_member" | "has_member" | "del_member" => {
+                    let name = instr.args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("{} missing name at {fname}:{i}", instr.op)
+                    })?;
+                    format!("{} {name:?}", instr.op.to_uppercase())
+                }
+                "call_member" => {
+                    let name = instr.args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("call_member missing name at {fname}:{i}")
+                    })?;
+                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+                    format!("CALL_MEMBER {name:?} {argc}")
+                }
+                "construct" => {
+                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("construct missing kind at {fname}:{i}")
+                    })?;
+                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
+                    construct_asm(program, kind, argc)
+                }
+                "get_slot" | "set_slot" => {
+                    let slot = instr.args.get("slot").and_then(|v| v.as_u64()).ok_or_else(|| {
+                        anyhow::anyhow!("{} missing slot at {fname}:{i}", instr.op)
+                    })?;
+                    format!("{} {slot}", instr.op.to_uppercase())
+                }
+                "is_kind" => {
+                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("is_kind missing kind at {fname}:{i}")
+                    })?;
+                    format!("IS_KIND {kind:?}")
+                }
+                "copy" => "COPY".to_string(),
                 // Stubs for unimplemented opcodes — prevent bailing
-                "new_struct" => "NEW_OBJ".to_string(),
                 "dom_mutate" | "dom_event_listener" | "dom_query" => "NOP".to_string(),
                 // CRUSH-156: the ten `ai_native.*` kinds lower to their AI
                 // opcode with the compiled payload as the string operand
@@ -694,8 +805,11 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                         format!("{opcode} {payload:?}")
                     }
                 }
-                "ai_capability_discovery" | "ai_adaptation_request" => "NOP".to_string(),
-                "ai_semantic_switch" => "NOP".to_string(),
+                // CRUSH-265: `ai_capability_discovery`, `ai_adaptation_request` and
+                // `ai_semantic_switch` used to lower to `NOP` here — a silent no-op.
+                // They now fail loudly (see the frontend's `compile_ai_statement` and
+                // the `Unsupported CVM1 opcode` arm below) instead of being silently
+                // dropped; porting onto `ai_native` is a later ticket.
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
             lines.push(format!("    {op}"));
@@ -749,7 +863,26 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     // COSM K1.3 (CRUSH-zorro-42): the kind table goes into the CVM1 program
     // as-is; `to_blob` writes it as the version-3 kind-table section.
     vm_program.cosm = program.cosm.clone();
+    // COSM K1.4: a program with Kinds records each function's arity, which
+    // the VMs need to make function values (bound methods) from members.
+    if vm_program.kind_table().is_some() {
+        for (name, entry) in vm_program.manifest.functions.iter_mut() {
+            entry.arity = program.functions.get(name).and_then(|f| u8::try_from(f.params.len()).ok());
+        }
+    }
     Ok(vm_program)
+}
+
+/// `CONSTRUCT "kind" argc`, followed — for a Kind built by an initialiser
+/// function — by the `POP` of that function's return value the VMs expect
+/// (`crush_vm::cosm_rt::initialises_by_call`).
+fn construct_asm(program: &casm::Program, kind: &str, argc: u64) -> String {
+    let calls = program.kind_table().is_some_and(|module| crush_vm::cosm_rt::initialises_by_call(module, kind));
+    if calls {
+        format!("CONSTRUCT {kind:?} {argc}\n    POP")
+    } else {
+        format!("CONSTRUCT {kind:?} {argc}")
+    }
 }
 
 #[cfg(test)]
@@ -1074,6 +1207,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "polyglot-python", feature = "polyglot-javascript"))]
     fn test_dedent_strips_common_indent_only() {
         assert_eq!(dedent("    a\n    b\n"), "a\nb");
         assert_eq!(dedent("  a\n    b\n"), "a\n  b");
@@ -1176,5 +1310,29 @@ mod tests {
     fn test_use_lang_emits_no_exec_lang_of_its_own() {
         let prog = compile_crush_source("use @lang python \"math\"\nlet x = 1\n").expect("compile");
         assert!(!prog.manifest.permissions.iter().any(|p| p.starts_with("polyglot.")));
+    }
+}
+
+#[cfg(all(
+    test,
+    not(any(
+        feature = "polyglot-python",
+        feature = "polyglot-javascript",
+        feature = "polyglot-rust"
+    ))
+))]
+mod source_dispatch_without_adapters {
+    #[test]
+    fn rust_is_rejected_and_crush_remains_available() {
+        let error = super::compile_source("rust", "fn main() {}").unwrap_err();
+        assert!(
+            error.to_string().contains("no walker adapters enabled"),
+            "{error}"
+        );
+        let program = super::compile_source("crush", "fn main() { return 42; }").unwrap();
+        assert_eq!(
+            crate::Runtime::new().run(&program).unwrap().return_value,
+            Some(crate::Value::Int(42))
+        );
     }
 }

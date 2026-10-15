@@ -16,6 +16,7 @@ pub mod semantics;
 pub mod types;
 pub mod mutation_check;
 pub mod wip_check;
+mod walker_intrinsics;
 
 use anyhow::Result;
 
@@ -91,6 +92,9 @@ pub fn compile_cast_with_cosm(
 ) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
     let cosm = cosm_lower::lower(&mut program)?;
     let mut sema = semantics::SemanticAnalyzer::new();
+    if let Some(module) = &cosm {
+        sema.declare_constructors(module, &program);
+    }
     sema.check(&program)?;
     optimizer::Optimizer::optimize(&mut program);
     let mut comp = compiler::Compiler::new();

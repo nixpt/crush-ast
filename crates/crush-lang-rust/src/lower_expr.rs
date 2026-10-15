@@ -2,14 +2,16 @@
 
 use std::collections::HashMap;
 
-use crush_walker_core::LowerCtx;
+use crush_walker_core_no_tree_sitter::LowerCtx;
 use quote::ToTokens;
 
 use crush_cast::{CastType, Expression, Statement};
 use syn::Expr;
+use syn::spanned::Spanned;
 
 pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
-    let meta = ctx.meta_at(0);
+    let start = expr.span().start();
+    let meta = ctx.meta_lc(start.line, start.column + 1);
     match expr {
         Expr::Lit(e) => lower_lit(&e.lit, meta),
         Expr::Path(e) => {
@@ -154,52 +156,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             })
         }
         Expr::Block(e) => {
-            if e.block.stmts.is_empty() {
-                return Ok(Expression::NullLiteral {
-                    meta: ctx.meta_at(0),
-                });
-            }
-            let first = &e.block.stmts[0];
-            match first {
-                syn::Stmt::Expr(expr, _) => lower_expr(expr, ctx),
-                syn::Stmt::Macro(_) => anyhow::bail!("macro in expression not supported"),
-                syn::Stmt::Local(local) => {
-                    if let Some(init) = &local.init {
-                        let name = pat_to_ident(&local.pat)?;
-                        let value = lower_expr(&init.expr, ctx)?;
-                        Ok(Expression::Call {
-                            function: "__crush_let__".to_string(),
-                            args: vec![
-                                Expression::Var {
-                                    name,
-                                    meta: ctx.meta_at(0),
-                                },
-                                value,
-                            ],
-                            meta: ctx.meta_at(0),
-                        })
-                    } else {
-                        Ok(Expression::NullLiteral {
-                            meta: ctx.meta_at(0),
-                        })
-                    }
-                }
-                syn::Stmt::Item(_) => anyhow::bail!("item in block expression not supported"),
-            }
+            block_to_expr(&e.block, ctx)
         }
         Expr::Paren(e) => lower_expr(&e.expr, ctx),
         Expr::Return(e) => {
-            let value = match &e.expr {
-                Some(expr) => lower_expr(expr, ctx)?,
-                None => Expression::NullLiteral {
-                    meta: ctx.meta_at(0),
-                },
-            };
-            Ok(Expression::Call {
-                function: "__crush_return__".to_string(),
-                args: vec![value],
-                meta,
-            })
+            Err(unsupported_at(e.span(), "return in a value expression",
+                "use return as a function or closure statement"))
         }
         Expr::MethodCall(e) => {
             let receiver = lower_expr(&e.receiver, ctx)?;
@@ -262,38 +224,32 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         Expr::Closure(e) => {
-            // A typed parameter (`|x: i32|`) is `Pat::Type` around the name. It
-            // used to become a placeholder `_param`, so the body's `x` was a
-            // free variable — captured from an enclosing `x` if there was one
-            // (silently wrong: `let x = 5; (|x: i32| x + 1)(41)` gave 6).
-            fn closure_param(p: &syn::Pat, i: usize) -> anyhow::Result<String> {
-                match p {
-                    syn::Pat::Ident(pi) => Ok(pi.ident.to_string()),
-                    syn::Pat::Type(pt) => closure_param(&pt.pat, i),
-                    syn::Pat::Wild(_) => Ok(format!("__closure_unused_{i}")),
-                    _ => anyhow::bail!(
-                        "closure parameter pattern `{}` (destructuring) is not supported yet",
-                        quote::ToTokens::to_token_stream(p)
-                    ),
-                }
+            if e.capture.is_some() {
+                return Err(unsupported_at(e.span(), "move closure",
+                    "value capture requires Rust ownership semantics (CRUSH-xps-7)"));
             }
+            if e.asyncness.is_some() {
+                return Err(unsupported_at(e.span(), "async closure",
+                    "async Rust execution is not implemented"));
+            }
+            let parameter_names: std::collections::HashSet<_> = e.inputs.iter()
+                .filter_map(|p| pat_to_ident(p).ok()).collect();
             let params: Vec<(String, CastType)> = e.inputs.iter()
                 .enumerate()
-                .map(|(i, p)| Ok((closure_param(p, i)?, CastType::Any)))
+                .map(|(i, p)| {
+                    let name = closure_param_name(p, i, &parameter_names)
+                        .map_err(|err| anyhow::anyhow!("unsupported Rust closure parameter: {err}"))?;
+                    Ok((name, CastType::Any))
+                })
                 .collect::<anyhow::Result<_>>()?;
-            // A block body is lowered like a function body — statements, then the
-            // tail as the return value, `return` as a return. Lowered as an
-            // expression it kept only the block's first statement, so
-            // `|mut x: i32| { x += 1; x }` returned null.
-            let body = match e.body.as_ref() {
-                Expr::Block(b) => crate::lower_stmt::lower_block(
-                    &b.block.stmts,
-                    ctx,
-                    crate::lower_stmt::Tail::Return,
-                )?,
-                other => vec![Statement::Return { value: Some(lower_expr(other, ctx)?), meta: meta.clone() }],
-            };
-            Ok(Expression::Lambda { params, body, meta })
+            // A lambda has a statement body in CAST. Reuse function-tail
+            // lowering so all statements and explicit returns are preserved.
+            let body = crate::lower_stmt::lower_tail_return(&e.body, ctx)?;
+            Ok(Expression::Lambda {
+                params,
+                body,
+                meta,
+            })
         }
         Expr::Reference(e) => {
             lower_expr(&e.expr, ctx)
@@ -308,37 +264,21 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression>
 }
 
 fn block_to_expr(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
-    if block.stmts.is_empty() {
-        return Ok(Expression::NullLiteral {
-            meta: ctx.meta_at(0),
-        });
-    }
-    match &block.stmts[0] {
-        syn::Stmt::Expr(expr, _) => lower_expr(expr, ctx),
-        syn::Stmt::Macro(_) => anyhow::bail!("macro in block not supported"),
-        syn::Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                let name = pat_to_ident(&local.pat)?;
-                let value = lower_expr(&init.expr, ctx)?;
-                Ok(Expression::Call {
-                    function: "__crush_let__".to_string(),
-                    args: vec![
-                        Expression::Var {
-                            name,
-                            meta: ctx.meta_at(0),
-                        },
-                        value,
-                    ],
-                    meta: ctx.meta_at(0),
-                })
-            } else {
-                Ok(Expression::NullLiteral {
-                    meta: ctx.meta_at(0),
-                })
-            }
+    match block.stmts.as_slice() {
+        [] => {
+            let start = block.span().start();
+            Ok(Expression::NullLiteral { meta: ctx.meta_lc(start.line, start.column + 1) })
         }
-        syn::Stmt::Item(_) => anyhow::bail!("item in block not supported"),
+        [syn::Stmt::Expr(expr, None)] => lower_expr(expr, ctx),
+        [syn::Stmt::Macro(mac)] if mac.semi_token.is_none() => lower_macro_expr(&mac.mac, ctx),
+        _ => Err(unsupported_at(block.span(), "block expression",
+            "only an empty block or a single tail expression is supported in a value position; multi-statement and semicolon-ending blocks need statement lowering")),
     }
+}
+
+fn unsupported_at(span: proc_macro2::Span, construct: &str, reason: &str) -> anyhow::Error {
+    let start = span.start();
+    anyhow::anyhow!("unsupported Rust {construct} at {}:{}: {reason}", start.line, start.column + 1)
 }
 
 pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
@@ -349,28 +289,25 @@ pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {
     }
 }
 
-fn lower_block_to_stmts(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
-    use crate::lower_stmt::lower_stmt;
-    let mut stmts = Vec::new();
-    for stmt in &block.stmts {
-        match stmt {
-            syn::Stmt::Expr(expr, _) => {
-                let meta = ctx.meta_at(0);
-                let expr = lower_expr(expr, ctx)?;
-                stmts.push(Statement::ExprStmt { expr, meta });
-            }
-            syn::Stmt::Local(local) => {
-                stmts.push(lower_stmt(&syn::Stmt::Local(local.clone()), ctx)?);
-            }
-            syn::Stmt::Item(item) => {
-                stmts.push(lower_stmt(&syn::Stmt::Item(item.clone()), ctx)?);
-            }
-            syn::Stmt::Macro(m) => {
-                stmts.push(lower_stmt(&syn::Stmt::Macro(m.clone()), ctx)?);
-            }
+fn closure_param_name(
+    pat: &syn::Pat,
+    index: usize,
+    parameter_names: &std::collections::HashSet<String>,
+) -> anyhow::Result<String> {
+    match pat {
+        syn::Pat::Type(typed) => closure_param_name(&typed.pat, index, parameter_names),
+        syn::Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
+            Ok(ident.ident.to_string())
         }
+        syn::Pat::Wild(_) => {
+            let mut name = format!("__closure_unused_{index}");
+            while parameter_names.contains(&name) {
+                name.push('_');
+            }
+            Ok(name)
+        }
+        _ => anyhow::bail!("destructuring and ref patterns are not supported; expected an identifier or wildcard"),
     }
-    Ok(stmts)
 }
 
 fn lower_lit(
@@ -565,7 +502,19 @@ fn lower_method(
     mut args: Vec<Expression>,
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
-    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call { function: function.to_string(), args, meta };
+    // `len` is a compiler builtin; mapped standard-library methods use the
+    // named capability path, just as parsed Crush source does. A dotted Call
+    // bypassed that contract and failed semantic analysis as undefined.
+    let call = |name: &str, args: Vec<Expression>, mut meta: HashMap<String, serde_json::Value>| {
+        if name == "len" {
+            Expression::Call { function: name.to_string(), args, meta }
+        } else {
+            // This is an already-resolved capability, even if the Rust source
+            // has a local binding named `str`, `math`, or `array`.
+            meta.insert("resolved_capability".into(), serde_json::json!(true));
+            Expression::CapabilityCall { name: name.to_string(), args, meta }
+        }
+    };
     Ok(match (method, args.len()) {
         // Borrow / ownership / iterator adapters carry no runtime meaning here.
         ("iter" | "into_iter" | "clone" | "to_owned" | "as_str" | "copied" | "cloned" | "to_vec" | "into"

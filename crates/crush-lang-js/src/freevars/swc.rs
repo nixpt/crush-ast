@@ -1,26 +1,14 @@
-//! Free-variable analysis for `@javascript { ... }` polyglot blocks (CRUSH-68).
-//!
-//! Mirrors `crush_lang_python::analyzer::free_variables`: names the block
-//! *reads* but never binds are inputs; top-level plain assignments are
-//! candidate outputs (last one wins).
+//! The swc walk behind [`super::free_variables`].
 
 use std::collections::HashSet;
 
 use swc_ecma_ast::*;
 
+use super::FreeVars;
 use crate::backend;
 
-/// Result of free-variable analysis on a polyglot JS block.
-pub struct FreeVars {
-    /// Names read but never bound in this block (first-occurrence order).
-    pub reads: Vec<String>,
-    /// Names assigned at the block's own top level (occurrence order).
-    /// Marshaling protocol picks the last entry as the single output.
-    pub top_level_bound: Vec<String>,
-}
-
 /// Analyze a JS source block via swc — not a regex.
-pub fn free_variables(source: &str) -> Result<FreeVars, String> {
+pub(super) fn free_variables(source: &str) -> Result<FreeVars, String> {
     let module = backend::parse(source, "js").map_err(|e| e.to_string())?;
 
     let mut bound_anywhere: HashSet<String> = HashSet::new();
@@ -316,34 +304,5 @@ fn collect_reads_expr(expr: &Expr, reads: &mut Vec<String>, dedup: &mut HashSet<
             collect_reads_expr(alt, reads, dedup);
         }
         _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn free_read_and_top_level_assign() {
-        let fv = free_variables("result = base * 2;\n").unwrap();
-        assert_eq!(fv.reads, vec!["base".to_string()]);
-        assert_eq!(fv.top_level_bound, vec!["result".to_string()]);
-    }
-
-    #[test]
-    fn let_binding_is_output_not_free_read() {
-        let fv = free_variables("let result = base + 1;\n").unwrap();
-        assert_eq!(fv.reads, vec!["base".to_string()]);
-        assert_eq!(fv.top_level_bound, vec!["result".to_string()]);
-    }
-
-    #[test]
-    fn local_binding_not_free() {
-        let fv = free_variables("let x = 1;\nlet result = x + 1;\n").unwrap();
-        assert!(fv.reads.is_empty());
-        assert_eq!(
-            fv.top_level_bound,
-            vec!["x".to_string(), "result".to_string()]
-        );
     }
 }

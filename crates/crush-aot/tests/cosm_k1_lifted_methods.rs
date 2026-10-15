@@ -111,11 +111,16 @@ fn jit_runs_lifted_methods_like_the_scheduler_vm() {
     }
 }
 
+/// COSM K1.4 (CRUSH-zorro-43): the scheduler VM implements Kinds, so the
+/// `value(move)` Point the map engines refuse runs there (a move behaves as a
+/// copy at run time) and gives the same answer.
 #[test]
-fn the_scheduler_vm_refuses_a_kind_maps_cant_represent() {
+fn the_scheduler_vm_runs_a_kind_maps_cant_represent() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm_value_move()).expect("casm_to_vm");
-    let err = crush_vm::run(&vm, &crush_vm::Quotas::default()).expect_err("refused");
-    assert_refused(&err.to_string(), "this VM");
+    match crush_vm::run(&vm, &crush_vm::Quotas::default()).expect("runs").return_value {
+        Some(crush_vm::vm::Value::Int(n)) => assert_eq!(n, WANT),
+        other => panic!("unexpected scheduler result: {other:?}"),
+    }
 }
 
 #[test]
@@ -152,4 +157,73 @@ fn jit_refuses_a_kind_maps_cant_represent() {
         panic!("a value(move) Kind must be refused");
     };
     assert_refused(&err.to_string(), "FastVM or the JIT");
+}
+
+/// A write of a field the sealed Kind doesn't declare. On the VMs a struct is
+/// a Record of its Kind, which refuses it; the map engines must not quietly
+/// add the key (they used to print `{x: 2, z: 5}`): every engine reports the
+/// same error, at run time.
+const UNDECLARED_WRITE: &str = r#"
+struct P { x: int }
+fn main() {
+    let a = P { x: 1 }
+    a.x = 2
+    a.z = 5
+    print(a)
+    return 0
+}
+"#;
+
+const SEALED: &str = "`P` is sealed: it has no field `z` (fields: x)";
+
+fn undeclared_write_casm() -> casm::Program {
+    crush_frontend::compile_crush_source(UNDECLARED_WRITE).expect("frontend")
+}
+
+/// Run an AOT module in a separate process (a runtime error exits it).
+fn run_so(so: &std::path::Path) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_crush-aot-runner")).arg(so).output().expect("spawn runner")
+}
+
+fn assert_aot_refuses_at_run_time(out: std::process::Output) {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "must fail; stdout: {stdout}");
+    assert!(stderr.contains(SEALED), "{stderr}");
+    assert!(!stdout.contains("z: 5"), "{stdout}");
+}
+
+#[test]
+fn undeclared_write() {
+    // The scheduler VM and the portable VM.
+    let vm = crush_lang_sdk::compile::casm_to_vm(&undeclared_write_casm()).expect("casm_to_vm");
+    let err = crush_vm::run(&vm, &crush_vm::Quotas::default()).expect_err("refused").to_string();
+    assert!(err.contains(SEALED), "{err}");
+    let err = crush_vm::PortableVm::new(vm).run().expect_err("refused").to_string();
+    assert!(err.contains(SEALED), "{err}");
+
+    // AOT Rust and C: the struct map refuses the write at run time.
+    let so = AotCompiler::new().compile_casm(&undeclared_write_casm(), "cosm_undeclared_rust").expect("rust backend");
+    assert_aot_refuses_at_run_time(run_so(&so));
+    if cc_available() {
+        let so = AotCompiler::new().compile_c(&undeclared_write_casm(), "cosm_undeclared_c", "gcc").expect("c backend");
+        assert_aot_refuses_at_run_time(run_so(&so));
+    }
+
+    // FastVM and the JIT: the same error, at run time.
+    let fast = |r: FastYield| match r {
+        FastYield::Error(e) => e.to_string(),
+        other => panic!("must fail, got {other:?}"),
+    };
+    let e = match crush_vm::run_fastvm(&undeclared_write_casm()) {
+        Ok(r) => fast(r),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains(SEALED), "FastVM: {e}");
+    let lowered = crush_vm::fastvm::lower_program(&undeclared_write_casm()).expect("lower");
+    let e = match crush_jit::JitEngine::new().expect("jit").run(&lowered) {
+        Ok(r) => fast(r),
+        Err(e) => format!("{e:?}"),
+    };
+    assert!(e.contains(SEALED), "JIT: {e}");
 }
