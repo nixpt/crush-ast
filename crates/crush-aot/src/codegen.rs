@@ -52,7 +52,7 @@ pub enum RuntimeValue {
     Null,
     String(String),
     Array(std::rc::Rc<std::cell::RefCell<Vec<RuntimeValue>>>),
-    Object(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, RuntimeValue>>>),
+    Object(std::rc::Rc<std::cell::RefCell<OrdMap>>),
 }
 
 impl std::fmt::Display for RuntimeValue {
@@ -145,6 +145,41 @@ fn seq_slice(t: RuntimeValue, a: RuntimeValue, b: RuntimeValue, st: RuntimeValue
         RuntimeValue::String(s) => { let cs: Vec<char> = s.chars().collect(); RuntimeValue::String(idx(cs.len() as i64).into_iter().map(|i| cs[i as usize]).collect()) }
         RuntimeValue::Array(a) => { let a = a.borrow(); RuntimeValue::Array(std::rc::Rc::new(std::cell::RefCell::new(idx(a.len() as i64).into_iter().map(|i| a[i as usize].clone()).collect()))) }
         _ => { eprintln!("crush(aot): can only slice a string or array"); std::process::exit(1) }
+    }
+}
+
+/// Insertion-ordered string map (Python dicts / JS objects iterate in
+/// insertion order; crush-vm's Value::Map is an IndexMap). Emitted programs
+/// are built with plain rustc, so no indexmap crate here.
+#[derive(Debug, Clone, Default)]
+pub struct OrdMap { entries: Vec<(String, RuntimeValue)> }
+impl OrdMap {
+    pub fn new() -> Self { Self::default() }
+    pub fn with_capacity(n: usize) -> Self { Self { entries: Vec::with_capacity(n) } }
+    pub fn get(&self, k: &str) -> Option<&RuntimeValue> { self.entries.iter().find(|(key, _)| key == k).map(|(_, v)| v) }
+    pub fn insert(&mut self, k: String, v: RuntimeValue) {
+        match self.entries.iter_mut().find(|(key, _)| *key == k) { Some(e) => e.1 = v, None => self.entries.push((k, v)) }
+    }
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn keys(&self) -> impl Iterator<Item = &String> { self.entries.iter().map(|(k, _)| k) }
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &RuntimeValue)> { self.entries.iter().map(|(k, v)| (k, v)) }
+}
+impl PartialEq for OrdMap {
+    // Like a HashMap / IndexMap: equal contents, order-insensitive.
+    fn eq(&self, o: &Self) -> bool { self.len() == o.len() && self.iter().all(|(k, v)| o.get(k) == Some(v)) }
+}
+
+fn map_index(m: &OrdMap, k: &RuntimeValue) -> RuntimeValue {
+    match k {
+        RuntimeValue::String(s) => m.get(s).cloned().unwrap_or_else(|| { eprintln!("crush(aot): key not found in map"); std::process::exit(1) }),
+        _ => { eprintln!("crush(aot): map keys must be strings"); std::process::exit(1) }
+    }
+}
+fn map_index_set(m: &mut OrdMap, k: RuntimeValue, v: RuntimeValue) {
+    match k {
+        RuntimeValue::String(s) => m.insert(s, v),
+        _ => { eprintln!("crush(aot): map keys must be strings"); std::process::exit(1) }
     }
 }
 
@@ -365,6 +400,52 @@ fn io_print_line(parts: &[&str]) -> String {
 
 /// Format a float the same way crush-vm's scheduler does:
 /// integer-valued finite floats get a `.0` suffix so `3.0` prints as `3.0`.
+/// CPython `str()` for print: a top-level string raw, everything else repr.
+/// Mirrors crush-vm `io_print::py_value_to_text`.
+fn py_text(v: &RuntimeValue) -> String {
+    match v { RuntimeValue::String(s) => s.clone(), other => py_repr(other) }
+}
+fn py_repr(v: &RuntimeValue) -> String {
+    match v {
+        RuntimeValue::Bool(true) => "True".to_string(),
+        RuntimeValue::Bool(false) => "False".to_string(),
+        RuntimeValue::Null => "None".to_string(),
+        RuntimeValue::Int(i) => i.to_string(),
+        RuntimeValue::Float(f) => py_float(*f),
+        RuntimeValue::String(s) => py_str_repr(s),
+        RuntimeValue::Array(a) => format!("[{}]", a.borrow().iter().map(py_repr).collect::<Vec<_>>().join(", ")),
+        RuntimeValue::Object(o) => format!("{{{}}}", o.borrow().iter().map(|(k, v)| format!("{}: {}", py_str_repr(k), py_repr(v))).collect::<Vec<_>>().join(", ")),
+    }
+}
+fn py_float(f: f64) -> String {
+    if f.is_nan() { return "nan".to_string(); }
+    if f.is_infinite() { return if f > 0.0 { "inf" } else { "-inf" }.to_string(); }
+    let a = f.abs();
+    if a == 0.0 || (1e-4..1e16).contains(&a) { return if f.fract() == 0.0 { format!("{f:.1}") } else { format!("{f}") }; }
+    let e = format!("{f:e}");
+    let (mant, exp) = e.split_once('e').unwrap();
+    let exp: i32 = exp.parse().unwrap();
+    format!("{mant}e{}{:02}", if exp < 0 { '-' } else { '+' }, exp.abs())
+}
+fn py_str_repr(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == q => { out.push('\\'); out.push(c); }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push(q);
+    out
+}
+
 fn crush_float_to_text(f: f64) -> String {
     if f.is_finite() && f.fract() == 0.0 {
         format!("{:.1}", f)
@@ -593,8 +674,18 @@ fn emit_body(
             out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match v {{ RuntimeValue::String(s)=>RuntimeValue::String(s.trim().to_string()), other=>other }}; stack.push(r); }}\n"));
             out.push_str(&next_pc_str);
         }
-        "str_split" | "str_replace" | "str_join" => {
-            out.push_str(&format!("{ind}stack.pop(); stack.pop(); stack.push(RuntimeValue::Null);\n"));
+        // Same semantics as the VM's str.split / str.replace / str.join caps.
+        // (They used to pop two values and push null — `replace` takes three.)
+        "str_split" => {
+            out.push_str(&format!("{ind}{{ let __sep = stack.pop().unwrap_or(RuntimeValue::Null); let __s = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match (&__s, &__sep) {{ (RuntimeValue::String(s), RuntimeValue::String(sep)) if !sep.is_empty() => RuntimeValue::Array(Rc::new(RefCell::new(s.split(sep.as_str()).map(|p| RuntimeValue::String(p.to_string())).collect()))), _ => {{ eprintln!(\"crush(aot): str.split expects a string and a non-empty separator\"); std::process::exit(1) }} }}; stack.push(__r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_replace" => {
+            out.push_str(&format!("{ind}{{ let __to = stack.pop().unwrap_or(RuntimeValue::Null); let __from = stack.pop().unwrap_or(RuntimeValue::Null); let __s = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match (&__s, &__from, &__to) {{ (RuntimeValue::String(s), RuntimeValue::String(a), RuntimeValue::String(b)) => RuntimeValue::String(s.replace(a.as_str(), b.as_str())), _ => {{ eprintln!(\"crush(aot): str.replace expects strings\"); std::process::exit(1) }} }}; stack.push(__r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_join" => {
+            out.push_str(&format!("{ind}{{ let __sep = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__arr {{ RuntimeValue::Array(a) => RuntimeValue::String(a.borrow().iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&__sep.to_string())), _ => {{ eprintln!(\"crush(aot): str.join expects an array\"); std::process::exit(1) }} }}; stack.push(__r); }}\n"));
             out.push_str(&next_pc_str);
         }
 
@@ -760,19 +851,19 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else if let Some(RuntimeValue::String(ref s)) = __arr {{ /* #148: index by character, like the VM */ let __v = match __idx {{ RuntimeValue::Int(i) => wrap_index(i, s.chars().count()).and_then(|j| s.chars().nth(j)).map(|c| RuntimeValue::String(c.to_string())).unwrap_or(RuntimeValue::Null), _ => RuntimeValue::Null }}; stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else if let Some(RuntimeValue::String(ref s)) = __arr {{ /* #148: index by character, like the VM */ let __v = match __idx {{ RuntimeValue::Int(i) => wrap_index(i, s.chars().count()).and_then(|j| s.chars().nth(j)).map(|c| RuntimeValue::String(c.to_string())).unwrap_or(RuntimeValue::Null), _ => RuntimeValue::Null }}; stack.push(__v); }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ stack.push(map_index(&m.borrow(), &__idx)); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_set" => {{
-            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ map_index_set(&mut m.borrow_mut(), __idx, __val); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_len" | "len" => {{
-            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __l = match &__v {{ RuntimeValue::Array(a) => a.borrow().len() as i64, RuntimeValue::String(s) => s.len() as i64, _ => 0 }}; stack.push(RuntimeValue::Int(__l)); }}\n"));
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __l = match &__v {{ RuntimeValue::Array(a) => a.borrow().len() as i64, RuntimeValue::String(s) => s.len() as i64, RuntimeValue::Object(m) => m.borrow().len() as i64, _ => 0 }}; stack.push(RuntimeValue::Int(__l)); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "map_keys" => {{
-            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Object(m) => {{ let mut __k: Vec<String> = m.borrow().keys().cloned().collect(); __k.sort(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Object(m) => {{ let __k: Vec<String> = m.borrow().keys().cloned().collect(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_push" | "array_push" => {{
@@ -790,7 +881,7 @@ fn emit_body(
 
         // ── Objects ──
         "new_obj" => {{
-            out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::Object(Rc::new(RefCell::new(HashMap::new())))); }}\n"));
+            out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::Object(Rc::new(RefCell::new(OrdMap::new())))); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "get_field" => {{
@@ -814,11 +905,11 @@ fn emit_body(
                     out.push_str(&next_pc_str);
                 }
                 "arr_get" => {
-                    out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ stack.push(map_index(&m.borrow(), &__idx)); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "arr_set" => {
-                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ map_index_set(&mut m.borrow_mut(), __idx, __val); }} }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "make_range" => {
@@ -847,7 +938,7 @@ fn emit_body(
                 }
                 "py.print" => {
                     // Python print: space-separated, True/False/None (CRUSH-200).
-                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(match &__v {{ RuntimeValue::Bool(true) => \"True\".to_string(), RuntimeValue::Bool(false) => \"False\".to_string(), RuntimeValue::Null => \"None\".to_string(), other => other.to_string() }}); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));
+                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(py_text(&__v)); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "math.truediv" => {
@@ -891,7 +982,7 @@ fn emit_ai_stub(out: &mut String) {
     out.push_str(r#"
 #[inline(always)]
 fn make_ai_stub(kind: &str) -> RuntimeValue {
-    let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
+    let mut obj = OrdMap::with_capacity(3);
     obj.insert("ok".to_string(), RuntimeValue::Bool(true));
     obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));
     obj.insert("echo".to_string(), RuntimeValue::Array(Rc::new(RefCell::new(Vec::new()))));
@@ -912,7 +1003,7 @@ fn emit_dom_stub(out: &mut String) {
     out.push_str(r#"
 #[inline(always)]
 fn make_dom_stub(kind: &str) -> RuntimeValue {
-    let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
+    let mut obj = OrdMap::with_capacity(3);
     obj.insert("ok".to_string(), RuntimeValue::Bool(true));
     obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));
     obj.insert("echo".to_string(), RuntimeValue::Array(Rc::new(RefCell::new(Vec::new()))));

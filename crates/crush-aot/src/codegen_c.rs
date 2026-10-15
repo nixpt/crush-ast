@@ -212,6 +212,29 @@ static void _obj_set(CrushObject* obj, const char* key, Value val) {
     obj->field_count++;
 }
 
+/* Python-dict access on an object (index / arr_set with a string key).
+   Mirrors crush-vm map_ops: string keys only; a missing key is an error. */
+static Value _obj_index(Value o, Value k) {
+    if (k.tag != TAG_STRING) _crush_arith_error("type error: map keys must be strings");
+    CrushObject* obj = &_objects[o.obj_idx];
+    for (int i = 0; i < obj->field_count; i++)
+        if (strcmp(obj->fields[i].key, k.s) == 0) return obj->fields[i].val;
+    _crush_arith_error("key not found in map");
+    return mk_null();
+}
+static void _obj_index_set(Value o, Value k, Value v) {
+    if (k.tag != TAG_STRING) _crush_arith_error("type error: map keys must be strings");
+    CrushObject* obj = &_objects[o.obj_idx];
+    for (int i = 0; i < obj->field_count; i++)
+        if (strcmp(obj->fields[i].key, k.s) == 0) { obj->fields[i].val = v; return; }
+    /* a runtime key string may live in the resettable string arena: keep a copy */
+    size_t n = strlen(k.s) + 1;
+    char* key = (char*)malloc(n);   /* ISO C has no strdup */
+    if (!key) _crush_arith_error("out of memory");
+    memcpy(key, k.s, n);
+    _obj_set(obj, key, v);
+}
+
 // ── AI stub helper (CRUSH-32 follow-up) ─────────────────────────────
 // Mirrors the {ok, kind, echo} shape used by `crush_lang_sdk::ai_native` so
 // emitted C programs agree with the 5 VM tiers at differential-cmp time.
@@ -868,11 +891,90 @@ static Value _floor_mod(Value a, Value b) {
     if (fb == 0.0) _crush_arith_error("division by zero");
     return mk_float(fa - fb * floor(fa / fb));
 }
+/* CPython repr / str for print (mirrors crush-vm io_print::py_value_to_text). */
+static void _py_float_tb(_TextBuf* t, double f) {
+    char buf[64];
+    double a = f < 0 ? -f : f;
+    if (f != f) { _tb_put(t, "nan"); return; }
+    if (a == 1.0 / 0.0) { _tb_put(t, f > 0 ? "inf" : "-inf"); return; }
+    if (a == 0.0 || (a >= 1e-4 && a < 1e16)) { _tb_put(t, _float_text(f, buf)); return; }
+    /* shortest digits that round-trip, then CPython's exponent form */
+    for (int p = 0; p < 17; p++) {
+        snprintf(buf, sizeof buf, "%.*e", p, f);
+        if (strtod(buf, NULL) == f) break;
+    }
+    char* e = strchr(buf, 'e');
+    int exp = atoi(e + 1);
+    *e = '\0';
+    char mant[40];
+    snprintf(mant, sizeof mant, "%s", buf);
+    char out[64];
+    snprintf(out, sizeof out, "%se%c%02d", mant, exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+    _tb_put(t, out);
+}
+static void _py_str_repr_tb(_TextBuf* t, const char* s) {
+    char q = (strchr(s, '\'') && !strchr(s, '"')) ? '"' : '\'';
+    char one[8];
+    one[0] = q; one[1] = '\0'; _tb_put(t, one);
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        unsigned char c = *p;
+        if (c == '\\') _tb_put(t, "\\\\");
+        else if (c == '\n') _tb_put(t, "\\n");
+        else if (c == '\r') _tb_put(t, "\\r");
+        else if (c == '\t') _tb_put(t, "\\t");
+        else if (c == (unsigned char)q) { one[0] = '\\'; one[1] = q; one[2] = '\0'; _tb_put(t, one); }
+        else if (c < 0x20 || c == 0x7f) { snprintf(one, sizeof one, "\\x%02x", c); _tb_put(t, one); }
+        else { one[0] = (char)c; one[1] = '\0'; _tb_put(t, one); }
+    }
+    one[0] = q; one[1] = '\0'; _tb_put(t, one);
+}
+static void _py_repr_tb(_TextBuf* t, Value v) {
+    char buf[TEXTBUF_SIZE];
+    switch (v.tag) {
+        case TAG_BOOL:   _tb_put(t, v.b ? "True" : "False"); return;
+        case TAG_NULL:   _tb_put(t, "None"); return;
+        case TAG_INT:    snprintf(buf, sizeof buf, "%ld", (long)v.i); _tb_put(t, buf); return;
+        case TAG_FLOAT:  _py_float_tb(t, v.f); return;
+        case TAG_STRING: _py_str_repr_tb(t, v.s ? v.s : ""); return;
+        case TAG_ARRAY: {
+            _tb_put(t, "[");
+            if (v.array_idx >= 0 && v.array_idx < _array_count) {
+                CrushArray* a = &_arrays[v.array_idx];
+                for (int i = 0; i < a->len; i++) { if (i) _tb_put(t, ", "); _py_repr_tb(t, a->data[i]); }
+            }
+            _tb_put(t, "]");
+            return;
+        }
+        case TAG_OBJECT: {
+            _tb_put(t, "{");
+            if (v.obj_idx >= 0 && v.obj_idx < _object_count) {
+                CrushObject* o = &_objects[v.obj_idx];
+                for (int i = 0; i < o->field_count; i++) {
+                    if (i) _tb_put(t, ", ");
+                    _py_str_repr_tb(t, o->fields[i].key);
+                    _tb_put(t, ": ");
+                    _py_repr_tb(t, o->fields[i].val);
+                }
+            }
+            _tb_put(t, "}");
+            return;
+        }
+        default:
+            _crush_arith_error("printing this value is not supported by the C backend");
+    }
+}
 static inline const char* _py_to_text_buf(Value v, char* buf) {
     switch (v.tag) {
-        case TAG_BOOL:  return v.b ? "True" : "False";
-        case TAG_NULL:  return "None";
-        default:        return _to_text_buf(v, buf);
+        case TAG_STRING: return v.s;
+        case TAG_INT:    return _to_text_buf(v, buf);
+        default: {
+            _TextBuf t = {0};
+            _py_repr_tb(&t, v);
+            char* out = _str_new(t.len);
+            if (t.len) memcpy(out, t.p, t.len);
+            free(t.p);
+            return out;
+        }
     }
 }
 static Value _neg(Value v) {
@@ -1565,18 +1667,18 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ int __ai = _alloc_array(); _push(__ai >= 0 ? mk_array(__ai) : mk_null()); }} _pc={next_pc}; break;\n"));
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else if (__arr_v.tag == TAG_STRING && __idx_v.tag == TAG_INT) {{ _push(_str_char_at(__arr_v.s, __idx_v.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else if (__arr_v.tag == TAG_STRING && __idx_v.tag == TAG_INT) {{ _push(_str_char_at(__arr_v.s, __idx_v.i)); }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _push(_obj_index(__arr_v, __idx_v)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_set" => {{
-            out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _obj_index_set(__arr_v, __idx_v, __val_v); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_len" | "len" => {{
-            out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else if (__v.tag == TAG_OBJECT && __v.obj_idx >= 0 && __v.obj_idx < _object_count) {{ _push(mk_int((int64_t)_objects[__v.obj_idx].field_count)); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
         }}
         "map_keys" => {{
-            // C backend has no map support; pass through unchanged.
-            // Maps were already unsupported here before this op existed.
-            out.push_str(&format!("                {{ Value __v = _pop(); _push(__v); }} _pc={next_pc}; break;\n"));
+            // Objects (Python dicts): their keys, in insertion order (fields are
+            // stored in the order they were added). Arrays/strings pass through.
+            out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_OBJECT && __v.obj_idx >= 0 && __v.obj_idx < _object_count) {{ CrushObject* __o = &_objects[__v.obj_idx]; int __ki = _alloc_array(); CrushArray* __k = &_arrays[__ki]; _array_reserve(__k, __o->field_count); for (int __i = 0; __i < __o->field_count; __i++) __k->data[__k->len++] = mk_string(__o->fields[__i].key); _push(mk_array(__ki)); }} else {{ _push(__v); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_push" | "array_push" => {{
             out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break;\n"));
@@ -1615,7 +1717,7 @@ fn emit_c_instr(
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));
                 }
                 "arr_set" => {
-                    out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} }} _pc={next_pc}; break; // cap_call arr_set\n"));
+                    out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _obj_index_set(__arr_v, __idx_v, __val_v); }} }} _pc={next_pc}; break; // cap_call arr_set\n"));
                 }
                 "make_range" => {
                     // Variadic: 0, 1, or 2 args �� args pushed left-to-right, top of stack = last arg
