@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-111 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | **In review** — implemented on `agent/buffy/CRUSH-111` (2026-10-16); see Resolution |
 | **Phase** | M1 |
-| **Assignee** | unassigned |
+| **Assignee** | buffy |
 | **Dependencies** | none (see CRUSH-65 for the shared-registry recommendation) |
 | **Estimated effort** | M |
 
@@ -62,3 +62,59 @@ crushc /tmp/g.crush -o /tmp/g.cvm1
 
 - Dotted `array.*`/`str.*`/`math.*` forms (those are CRUSH-112).
 - Making `len()` accept strings (CRUSH-114).
+
+## Resolution (buffy, 2026-10-16 — branch `agent/buffy/CRUSH-111`)
+
+`walker_intrinsics` is now the single table: `BUILTINS` (name + arity + result type) for every
+non-intrinsic name `compile_call` lowers inline, consulted by `semantics.rs`; the compiler keeps its
+arms and a new unit test (`compiler_and_table_agree`) parses `compiler.rs` for
+`function == "..."` arms and fails when the two lists diverge. The checker's own
+`len`/`print`/`parallel_map` registrations are gone — the table is the only list now.
+
+`crush_frontend::compile_cast` accepts the programs it used to refuse, with identical VM output to
+the walker door:
+
+| program (Python walker) | before | after |
+|---|---|---|
+| `for i in range(3): print(i)` | `Undefined function: make_range` | `0 1 2` on both doors |
+| `xs = [i for i in range(3)]; print(xs[1])` | `Undefined function: make_range` | `1` on both doors |
+
+### Two further divergences found while making the doors agree
+
+1. **`make_range` arity.** The checker and the capability runtime both require 1–3 arguments
+   (`crush-vm::make_range` errors `CapArity` on an empty call) but `compile_call` accepted 0 with a
+   stale "handles 0..2 args" comment. The arm now checks 1–3 at compile time, so the arity contract
+   is the same on both doors and a runtime `CapArity` becomes a compile error.
+2. **Generated receivers.** Comprehensions desugar to `__comp_N.append(x)`
+   (`crush-lang-python/src/lower_expr.rs:632`), which `compile_call` lowers through its generic
+   `obj.method` split (`load recv` + `cap_call`) — but the checker refused the dotted name with
+   `Undefined function: __comp_0.append`. Calls whose receiver is walker-generated
+   (`__comp_*`, `__crush_*` — `walker_intrinsics::is_generated_receiver`) are now accepted
+   after the receiver is checked to be bound. Calls on *user* receivers keep the old behaviour
+   (refused by the checker), which is CRUSH-112's question, not this ticket's.
+
+### Deliberate behaviour change
+
+The checker no longer registers `len`/`print`/`parallel_map` in its private function map, so a bare
+*reference* to one of those names (passing `print` as a value) no longer resolves to a function type.
+No test in the workspace depends on it; it is called out here because it is the one behaviour the
+single-table change removes.
+
+### Evidence (`agent/buffy/CRUSH-111`)
+
+- `cargo test -p crush-frontend` — 111 + 48 + 24 + 18 + 19 + 13 + 11 + 9 + 6 + 3 + 2 + 1 passed, 0 failed
+  (includes the new `builtin_names_agree_across_both_doors`, `unknown_names_stay_refused_by_the_checker`,
+  `user_functions_still_shadow_builtin_names`, `compiler_and_table_agree`).
+- `cargo test -p crush-lang-python` — 66 + 6 passed incl. the two new door tests; `-p crush-lang-js` and
+  `-p crush-lang-sdk` green (the JS comprehension/`Math` suites exercise the same table).
+- AOT parity harnesses `cargo test -p crush-aot --test python_parity --test differential_aot` —
+  `51 passed` (differential) + `2 passed` (python parity), 0 failed, exit 0. The first attempt at the
+  full `-p crush-aot` suite died with `No space left on device` while linking in `/build` — disk, not a
+  test failure; re-run with `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0` to fit.
+
+### Still open after this ticket
+
+- Dotted capability calls on user receivers (CRUSH-112).
+- The walker door still accepts *unknown plain* names as late-bound `call` opcodes; the checked door
+  refuses them. That asymmetry is by design and is now pinned by
+  `unknown_names_stay_refused_by_the_checker` rather than being implicit.
