@@ -1566,3 +1566,58 @@ fn lone_yield_is_a_noop_and_every_engine_prints_ab() {
     assert_eq!(fastvm_print(source), "a\nb\n", "fastvm");
     assert_eq!(jit_print(source), "a\nb\n", "jit");
 }
+
+// ── issue #251: `await` on a non-handle returns the value ───────────────────
+// JS semantics: `await 5` → `5`; an already-resolved value awaits to itself.
+// `await h` on a real task handle keeps its existing behaviour (joins the task
+// and yields its result) on the two green-task VMs, and is still refused by
+// name elsewhere (covered by `spawn_and_await_run_on_the_vms_and_are_refused_-
+// by_name_elsewhere` above).
+
+/// Run `source` (which only `print`s) on every engine and assert each prints
+/// exactly `expected`. Covers the scheduler VM, the portable VM, AOT Rust, AOT
+/// C, the FastVM and the JIT.
+fn assert_every_engine_prints(source: &str, expected: &str) {
+    // The two green-task VMs print `expected` (reference behaviour).
+    let report = crush_lang_sdk::differential::differential_run(source)
+        .unwrap_or_else(|e| panic!("differential_run failed for {source:?}: {e}"));
+    for (name, outcome) in [("interpreter", &report.interpreter), ("portable", &report.portable)] {
+        assert!(
+            matches!(outcome, StackOutcome::Ok { output, .. } if output == expected),
+            "{name} should print {expected:?}, got {outcome:?}"
+        );
+    }
+
+    // AOT Rust and AOT C print `expected` — `await` lowers to a no-op.
+    let program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let compiler = AotCompiler::new();
+    let so = compiler
+        .compile_casm(&program, "await_non_handle_rust")
+        .expect("rust backend");
+    assert_eq!(aot_program_stdout(&so), expected, "AOT Rust");
+
+    let cc = pick_c_compiler().expect("no C compiler available on PATH");
+    let so = compiler
+        .compile_c(&program, "await_non_handle_c", cc)
+        .expect("c backend");
+    assert_eq!(aot_program_stdout(&so), expected, "AOT C");
+
+    // FastVM and the JIT leave the awaited value in place and print `expected`.
+    assert_eq!(fastvm_print(source), expected, "FastVM");
+    assert_eq!(jit_print(source), expected, "JIT");
+}
+
+#[test]
+fn await_on_a_non_handle_returns_the_value_on_every_engine() {
+    // Scalars print the same on every engine, so `print(await v)` must be `v`.
+    assert_every_engine_prints("fn main() { print(await 5) }\n", "5\n");
+    assert_every_engine_prints("fn main() { print(await \"x\") }\n", "x\n");
+    assert_every_engine_prints("fn main() { print(await null) }\n", "null\n");
+
+    // Arrays: FastVM/JIT render an array as an arena ref (`@N`) rather than
+    // `[1, 2]` — a pre-existing `io.print` divergence, unrelated to #251 — so
+    // the array case is asserted through its length, a scalar every engine
+    // agrees on. `len(await [1, 2])` is `2` only if the array (not null)
+    // survives the `await`.
+    assert_all_backends_agree("fn main() { return len(await [1, 2]) }");
+}

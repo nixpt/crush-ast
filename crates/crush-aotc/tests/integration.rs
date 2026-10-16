@@ -247,7 +247,8 @@ fn a_kind_maps_cant_represent_is_refused() {
 /// issue #161: no green-task scheduler here — `spawn` is refused by name, not
 /// compiled to `unhandled op` C that silently skips the task. `yield`/`await`
 /// without `spawn` are no-ops (a lone `yield` has nothing to yield to, and an
-/// `await` has no handle), so they compile, not refuse.
+/// `await` has no handle — issue #251: `await v` returns `v`), so they
+/// compile, not refuse.
 #[test]
 fn green_tasks_are_refused_by_name() {
     let program = crush_frontend::compile_crush_source("fn worker() {}\nfn main() { spawn worker() }\n")
@@ -264,4 +265,16 @@ fn lone_yield_and_await_compile_not_refuse() {
         let program = crush_frontend::compile_crush_source(source).expect("frontend");
         AotcCompiler::new(AotcOpts::default()).compile(&program).expect("compiles: a lone yield/await is a no-op");
     }
+}
+
+#[test]
+fn await_on_a_non_handle_returns_the_value() {
+    // issue #251: `await v` on a non-handle returns `v` (JS semantics), so
+    // `print(await v)` prints `v`, not `null`.
+    let out = compile_and_run("fn main() { print(await 5) }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["5"], "unexpected output: {out}");
+    let out = compile_and_run("fn main() { print(await \"x\") }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["x"], "unexpected output: {out}");
+    let out = compile_and_run("fn main() { print(await null) }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["null"], "unexpected output: {out}");
 }

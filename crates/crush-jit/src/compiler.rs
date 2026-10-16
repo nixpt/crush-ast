@@ -668,7 +668,7 @@ const HOST_REQ_EXEC_LANG: i64 = 1;
 const HOST_REQ_SPAWN: i64 = 2;
 const HOST_REQ_GC: i64 = 3;
 const HOST_REQ_IMPORT_VAR: i64 = 4;
-#[allow(dead_code)] // reserved: `await` is now a no-op (push null), matching the VMs (issue #161)
+#[allow(dead_code)] // reserved: `await` is now a no-op (returns the value), matching the VMs (issue #161/#251)
 const HOST_REQ_AWAIT: i64 = 5;
 
 /// Emit a host-request yield: save `next_pc` so the trampoline can resume
@@ -1247,13 +1247,10 @@ fn emit_one(
             return Ok(true);
         }
         Await => {
-            // issue #161: `await` on a non-handle (no `spawn` — refused at
-            // lowering) pops the awaited value and pushes null, matching the
-            // scheduler and portable VM, which never error on a non-handle
-            // `await`.
-            pop(b, ctx);
-            let null_val = iconst(b, TAG_NULL);
-            push(b, ctx, null_val);
+            // issue #161/#251: `await` on a non-handle (no `spawn` — refused at
+            // lowering) leaves the awaited value in place: `await v` returns `v`
+            // (JS semantics), matching the scheduler and portable VM, which
+            // never error on a non-handle `await`.
         }
 
         // Remaining unimplemented ops: refuse to compile (no silent null fabrication).

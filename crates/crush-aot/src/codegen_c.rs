@@ -1348,7 +1348,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
             "pop" => { pop(&mut st)?; }
             "dup" => { let t = *st.stack.last()?; st.stack.push(t); }
             "swap" => { let a = pop(&mut st)?; let b = pop(&mut st)?; st.stack.push(a); st.stack.push(b); }
-            "nop" | "yield" => {}
+            "nop" | "yield" | "await" => {}
             "load" => {
                 let name = instr.args.get("name")?.as_str()?;
                 let t = st.locals.get(name).copied().unwrap_or(Ty::Null);
@@ -1380,7 +1380,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
                 if !matches!(instr.op.as_str(), "map_keys") { pop(&mut st)?; }
                 pop(&mut st)?; st.stack.push(Ty::Any);
             }
-            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" | "await" => { pop(&mut st)?; st.stack.push(Ty::Any); }
+            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" => { pop(&mut st)?; st.stack.push(Ty::Any); }
             "arr_len" | "len" => { pop(&mut st)?; st.stack.push(Ty::Int); }
             "new_array" => st.stack.push(Ty::Array),
             "new_obj" => st.stack.push(Ty::Object),
@@ -1741,15 +1741,14 @@ fn emit_c_instr(
         }
         // ── Green tasks without `spawn` (issue #161) ──
         // With no spawned task `yield` is a cooperative-yield no-op and `await`
-        // has no handle (the scheduler and portable VM push null). A program
-        // that does `spawn` is refused up front by `refuse_green_task`, so
-        // these never run a task here.
+        // has no handle (issue #251: `await v` on a non-handle returns `v`, so
+        // the awaited value stays on the stack). A program that does `spawn` is
+        // refused up front by `refuse_green_task`, so these never run a task
+        // here.
         "yield" => {
             out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
         "await" => {
-            out.push_str(&format!("                _pop(); // awaited value\n"));
-            out.push_str(&format!("                _push(mk_null());\n"));
             out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
         // ── AI opcodes ──

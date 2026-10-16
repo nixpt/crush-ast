@@ -1747,8 +1747,9 @@ fn execute_one(
                 // Scheduler will skip this thread until target finishes
                 return Ok(StepAction::Continue);
             }
-            // Non-handle: push null
-            push!(Value::Null);
+            // Not a handle: `await v` returns `v` itself (JS semantics, issue
+            // #251) — pop it and push it straight back, unchanged.
+            push!(handle);
         }
         HALT => {
             return Ok(StepAction::Finish(VmResult {
