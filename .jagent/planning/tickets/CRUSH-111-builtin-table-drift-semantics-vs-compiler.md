@@ -9,6 +9,7 @@
 | **Assignee** | unassigned |
 | **Dependencies** | none (see CRUSH-65 for the shared-registry recommendation) |
 | **Estimated effort** | M |
+| **Updated** | 2026-10-16 — walker vector measured in PR #263 review; registry state refreshed (see bottom) |
 
 ## Problem
 
@@ -62,3 +63,88 @@ crushc /tmp/g.crush -o /tmp/g.cvm1
 
 - Dotted `array.*`/`str.*`/`math.*` forms (those are CRUSH-112).
 - Making `len()` accept strings (CRUSH-114).
+
+---
+
+## Walker vector + registry state (buffy, 2026-10-16, found in PR #263 review)
+
+**Status update since filing** (measured on main `3ae0b4a`): the drift is still live, and its
+loudest vector today is **walker output**, not `.crush` source.
+
+- `semantics.rs:67-76` now registers `len`, `print` **and** `parallel_map` (the filing said
+  "only `len` and `print`"; `parallel_map` arrived with #175).
+- The single-registry direction this ticket asked for **partly landed**:
+  `crates/crush-frontend/src/walker_intrinsics.rs` (`lookup` at `:64`) is consulted by the
+  semantics pass (`semantics.rs:497`), the compiler (`compiler.rs:1750`) and the optimizer
+  (`optimizer.rs:297,514`) — so semantic analysis and codegen *do* agree for the `__crush_*__`
+  family. The registry stops there, though: the `compile_call` names this ticket lists
+  (`make_range`, `range`, `arr_get`, `arr_set`, `array.push`/`.pop`, `str.*`, `math.*`,
+  `ai_synthesize`, `ai_semantic_match`) are still special-cased **inline** in
+  `compiler.rs:1778-2265` and remain invisible to the checker. Extending `walker_intrinsics`
+  (or pointing both at one table) is now the concrete shape of this ticket.
+
+### Measured divergence — same CAST, two frontend entry points (walker → VM)
+
+| Program (Python, via `python_to_cast`) | `Compiler::new().compile` | `crush_frontend::compile_cast` |
+|---|---|---|
+| `for i in range(3): print(i)` | OK → `0 1 2` | **REFUSE `Undefined function: make_range`** |
+| `xs = [i for i in range(3)]` | OK → `[0, 1, 2]` | **REFUSE `Undefined function: make_range`** |
+| subscript / setindex / slice / `not` / `//` / `+=` / str-concat / `len` / user fn calls | OK | OK (agree) |
+| JS `for`, `.length`, `+=`, `!` | OK | OK (agree) |
+
+`make_range` is the only **observable** divergence found: it is the one walker-emitted intrinsic
+name the compiler special-cases by name, and the checker's registry has never heard of it.
+
+### Who uses which door (a fix must keep both green)
+
+- **Checked** — `crush_frontend::compile_cast`: the SDK's public API
+  (`crates/crush-lang-sdk/src/compile.rs`), `crush-lang-python/tests/pipeline_test.rs`,
+  `crush-lang-js/tests/math_builtins_test.rs`, `crush-frontend/tests/{optimizer,type_check}_tests.rs`,
+  `crush-aot/tests/differential_aot.rs:1195`.
+- **Unchecked** — `Compiler::new().compile`: the walker CLI `crush-walk-run`
+  (`crush-aot/src/bin/walk_run.rs:44`), `crush-aot/src/bin/aotc.rs:186`, every per-language SDK
+  (`crush-lang-*/src/sdk.rs`, `crush-lang-sdk/src/bin/crushc.rs`), and the AOT parity harnesses
+  (`crush-aot/tests/python_parity.rs`, `js_parity.rs`).
+
+Consequence: no AOT/parity harness exercises the checked path for `range()`-based Python, so the
+drift is invisible to CI — while the checked path is the one SDKs and embedders call.
+
+### The workaround is already written down in a test
+
+`crates/crush-lang-js/tests/length_test.rs:14-16`: *"The walker pipeline's compile step
+(crush-walk-run / crush-aotc): it understands the walker's lowering helpers (`__crush_assign__`,
+`make_range`) that `compile_cast`'s semantic check rejects."* That comment is this ticket.
+
+### A third hand-maintained copy of the name list
+
+The test-only SDK runners register NopCaps for the same family by hand
+(`crush-lang-python/src/sdk.rs:31-38`, `crush-lang-js/src/sdk.rs:31-38`) and have already drifted
+from each other and from the compiler's table (python's list lacks `__crush_setindex__`, which the
+JS list has; both list `make_range`). One more reason the shared table should be the only list.
+
+### Added success criteria
+
+- [ ] `for i in range(3)` and list comprehensions compile through `compile_cast` — this clears the
+      entry-point caveat currently recorded in VISION.md's walker table (CRUSH-35 / PR #263).
+- [ ] A **parity test** proving the two doors agree: extend `crush-frontend/tests/walker_intrinsics.rs`
+      (which already asserts both entry points behave identically for `__crush_assign__` and that
+      `__crush_unknown__` stays an error on both) to walk a corpus of walker-emitted constructs
+      through both, requiring identical accept/reject **and** identical output.
+- [ ] `crush-lang-{python,js}/src/sdk.rs`'s hand-written cap lists derive from the shared table, or vanish.
+- [ ] **Decide the canonical entry point** and write it down. Recommendation: keep `compile_cast`
+      as *the* checked front door and make walker output pass it — the alternative (declaring the
+      walker pipeline exempt from checking) trades a loud refusal for a silent unchecked fast lane.
+
+### Adjacent finding (NOT this ticket)
+
+`y = +5` (Python unary plus) is refused by **both** doors — `Unsupported op: +` — so it is a walker
+lowering gap, not drift; both entry points agree. Captured here so it isn't lost; mint separately if
+it matters (it is loud, and JS `+x` is unaffected).
+
+---
+
+### Related
+
+- PR #263 review (vega, 2026-10-16) — where the walker vector was measured; the discussion in
+  `VISION.md`'s walker table (`docs/benchmarks/VISION.md:135`) carries the caveat this ticket clears.
+- CRUSH-35 — VISION.md table refresh; its `range()` row records the divergence.

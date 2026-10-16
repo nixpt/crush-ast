@@ -100,8 +100,11 @@ unpacking, typed arrays).
 semantic analyzer's function check (`crush-frontend/src/semantics.rs:570`)
 doesn't know the `make_range` intrinsic the compiler emits. `python_parity.rs`
 uses the first path; `crush-lang-python/tests/pipeline_test.rs` uses the second.
-Loud, not wrong, but the two front doors disagree — worth deciding which is
-canonical before the next walker milestone.
+Loud, not wrong, but the two front doors disagree — **this is CRUSH-111**
+(builtin-table drift between the checker and the compiler; the shared
+`walker_intrinsics` registry covers only the `__crush_*__` family). Evidence +
+proposed parity test appended there on 2026-10-16; the VISION.md caveat clears
+when it lands.
 
 ### Verified sites (post-correction)
 
