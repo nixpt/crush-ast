@@ -18,7 +18,7 @@
   },
   "features": {
     "ghcr.io/devcontainers/features/rust:1": {
-      "version": "none",
+      "version": "latest",
       "profile": "minimal"
     },
     "ghcr.io/devcontainers/features/node:1": {
