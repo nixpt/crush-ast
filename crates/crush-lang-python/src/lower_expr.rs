@@ -23,6 +23,32 @@ fn fresh_comp_temp() -> String {
     format!("__comp_{n}")
 }
 
+thread_local! {
+    /// Set while an inline `@python` block is lowered (CRUSH-272): a tuple
+    /// lowers to an array, which prints as `[1, 2]` and equals the list
+    /// `[1, 2]`, so there it is refused instead of silently changing meaning;
+    /// so is reading a module attribute (`math.pi`).
+    static STRICT_TUPLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with tuples refused (see `STRICT_TUPLES`).
+pub(crate) fn with_strict_tuples<T>(f: impl FnOnce() -> T) -> T {
+    let before = STRICT_TUPLES.with(|s| s.replace(true));
+    let out = f();
+    STRICT_TUPLES.with(|s| s.set(before));
+    out
+}
+
+fn refuse_tuple_if_strict() -> anyhow::Result<()> {
+    if STRICT_TUPLES.with(|s| s.get()) {
+        anyhow::bail!(
+            "tuples are not supported yet: the walker makes them lists, which print as `[...]` \
+             and compare equal to lists"
+        );
+    }
+    Ok(())
+}
+
 /// Lower a Python AST expression to a CAST expression.
 pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
     let offset = u32::from(expr.start()) as usize;
@@ -284,6 +310,15 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         }
         py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => lower_constant(value, meta),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
+            // `math.pi`: only module *calls* lower (to Crush builtins); the
+            // module itself is no value, so reading it would hit an unset
+            // local at run time.
+            if let py_ast::Expr::Name(py_ast::ExprName { id, .. }) = value.as_ref()
+                && MODULES.contains(&id.as_str())
+                && STRICT_TUPLES.with(|s| s.get())
+            {
+                anyhow::bail!("module attribute `{id}.{attr}` is not supported yet (only calls like `{id}.f(...)`)");
+            }
             let target = lower_expr(value, ctx)?;
             Ok(Expression::GetField {
                 target: Box::new(target),
@@ -334,6 +369,7 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         py_ast::Expr::Tuple(py_ast::ExprTuple { elts, .. }) => {
+            refuse_tuple_if_strict()?;
             let elements: Vec<Expression> = elts
                 .iter()
                 .map(|e| lower_expr(e, ctx))
@@ -388,7 +424,7 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
 
 /// Modules whose functions are called as `module.fn(...)` (dotted builtins),
 /// not as a method on a value.
-const MODULES: &[&str] = &["math", "random", "time", "os", "sys", "json", "re", "string", "py", "io"];
+pub(crate) const MODULES: &[&str] = &["math", "random", "time", "os", "sys", "json", "re", "string", "py", "io"];
 
 /// A method call on a value → the crush builtin that implements it.
 fn lower_method(
@@ -473,6 +509,12 @@ fn lower_call(
     };
 
     match func_name.as_str() {
+        // Crush's math.floor / math.ceil return a float; Python's return an
+        // int, so `print(math.floor(2.5))` printed `2.0` (CRUSH-272). Loud
+        // until they lower to an exact int.
+        "math.floor" | "math.ceil" => anyhow::bail!(
+            "`{func_name}()` is not supported yet: it would return a float, where Python returns an int"
+        ),
         "print" => Ok(Expression::CapabilityCall {
             name: "py.print".to_string(),
             args: lowered_args,
@@ -526,6 +568,7 @@ pub(crate) fn lower_constant(
         py_ast::Constant::Complex { .. } => anyhow::bail!("complex numbers not yet supported"),
         py_ast::Constant::Ellipsis => anyhow::bail!("ellipsis literal not yet supported"),
         py_ast::Constant::Tuple(t) => {
+            refuse_tuple_if_strict()?;
             let elements: Vec<Expression> = t
                 .iter()
                 .map(|e| match e {

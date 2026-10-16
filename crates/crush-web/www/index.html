@@ -6,8 +6,10 @@
   (examples/crush/blackjack_interactive.crush, staged by scripts/browser-test.sh)
   through `Session` (type a line, press Enter; empty Enter sends "").
   `?auto`: plays one scripted round through `Session` and the same answers
-  through `execute_with({ stdin })`, then publishes window.__crushResults for
-  scripts/browser_test.py.
+  through `execute_with({ stdin })`, runs an @python block lowered into the
+  program (`execute_with(..., { polyglot: "lower" })`, CRUSH-272: no grant, no
+  executor) and one the walker can't lower, then publishes
+  window.__crushResults for scripts/browser_test.py.
 -->
 <html lang="en">
 <head>
@@ -27,6 +29,30 @@ import init, { Session, execute_with } from "./pkg/crush_web.js";
 
 const ANSWERS = ["10", "h", "s", "0"];
 
+// CRUSH-272: lowered @python blocks (needs the `polyglot-python` feature).
+const LOWERED = `fn main() {
+  let base = 5
+  let xs = [1, 2]
+  @python -> (result, n) {
+      def cube(v):
+          return v * v * v
+      xs.append(3)
+      n = len(xs)
+      result = cube(base)
+  }
+  print(result)
+  print(n)
+  print(len(xs))
+}
+`;
+const REFUSED = `fn main() {
+  @python {
+      class A:
+          pass
+  }
+}
+`;
+
 await init();
 const source = await (await fetch("fixtures/blackjack_interactive.crush")).text();
 const term = document.getElementById("term");
@@ -44,6 +70,8 @@ if (new URLSearchParams(location.search).has("auto")) {
     answers: ANSWERS,
     session: { reports, transcript: session.transcript() },
     executeWith: oneShot,
+    lowered: execute_with(LOWERED, { polyglot: "lower" }),
+    loweredRefused: execute_with(REFUSED, { polyglot: "lower" }),
   };
   term.textContent = session.transcript();
 } else {

@@ -31,6 +31,7 @@ pub mod rust_debug_core;
 pub mod js_core;
 pub mod js_ops;
 pub mod map_ops;
+pub mod marshal;
 pub mod caps;
 pub mod cap_inference;
 pub mod debug;
