@@ -1653,7 +1653,7 @@ impl PortableVm {
                 // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
                 // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
                 // named "javascript" with `-c`. An unknown language is a loud error, never a
-                // silent spawn attempt. (Re-checked inside `run_exec_lang` too, cheaply — kept
+                // silent spawn attempt. (Re-checked inside `run_exec_lang_stdout` too, cheaply — kept
                 // here so an unknown language fails before the capability gate, not after.)
                 crate::scheduler::resolve_lang_binary(lang)
                     .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
@@ -1676,9 +1676,11 @@ impl PortableVm {
                         ))
                     })
                     .collect::<Result<Vec<_>, VmError>>()?;
-                // SHARED with scheduler.rs's EXEC_LANG handler (crate::scheduler::run_exec_lang)
-                // — see that function's doc comment for the CRUSH-20 buckets-sandboxing wiring
-                // and the sentinel-scan bug this consolidation fixed in this backend.
+                // SHARED with scheduler.rs's EXEC_LANG handler: the embedder's
+                // `PolyglotExecutor` from `host_caps` (CRUSH-271), else the built-in
+                // `SubprocessExecutor` (`crate::scheduler::run_exec_lang_stdout` — see its doc
+                // comment for the CRUSH-20 buckets-sandboxing wiring). A `LangExecutor` set with
+                // `set_lang_executor` (#91) takes precedence over both.
                 let outcome = match self.lang_executor.as_mut() {
                     // #91: the host runs the block (e.g. a browser Worker).
                     Some(executor) => match executor(lang, code_str, &env_vars) {
@@ -1689,15 +1691,22 @@ impl PortableVm {
                             return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
                         }
                     },
-                    None => crate::scheduler::run_exec_lang(
-                        lang,
-                        code_str,
-                        &deps,
-                        &env_vars,
-                        crush_line,
-                        &gate,
-                        self.quotas.max_wall_time_ms,
-                    )?,
+                    None => {
+                        let outputs = crate::lang_exec::declared_outputs(&spec);
+                        let request = crate::lang_exec::PolyglotRequest {
+                            lang,
+                            code: code_str,
+                            vars: &env_vars,
+                            outputs: &outputs,
+                            deps: &deps,
+                            gate: &gate,
+                            deadline_ms: self.quotas.max_wall_time_ms,
+                            crush_line,
+                        };
+                        let executor =
+                            self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+                        crate::lang_exec::run_block(executor, &request)?
+                    }
                 };
                 self.out_len += outcome.visible.len();
                 if self.out_len > self.quotas.max_output {

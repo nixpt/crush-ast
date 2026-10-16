@@ -248,13 +248,24 @@ fn check_all_backends(source: &str, compare_jit: bool) {
     let mut report = crush_lang_sdk::differential::differential_run(source)
         .unwrap_or_else(|e| panic!("differential_run failed for {source:?}: {e}"));
 
-    report.aot_rust = Some(aot_rust_outcome(source));
-    report.aot_c = Some(aot_c_outcome(source, cc));
-    // M2 Phase 7: JIT runs in a subprocess to isolate SIGILL from invalid
-    // JIT-generated machine code. The jit-runner helper binary compiles,
-    // executes, and prints the result — if it crashes, we get a non-zero
-    // exit code instead of killing the test suite.
-    report.jit = Some(jit_outcome_via_subprocess(source));
+    // The two AOT builds and the JIT run are independent subprocess work, so
+    // they run at once.
+    let (aot_rust, aot_c, jit) = std::thread::scope(|scope| {
+        let join = |h: std::thread::ScopedJoinHandle<'_, FastOutcome>| {
+            h.join().unwrap_or_else(|payload| panic::resume_unwind(payload))
+        };
+        let aot_rust = scope.spawn(|| aot_rust_outcome(source));
+        let aot_c = scope.spawn(|| aot_c_outcome(source, cc));
+        // M2 Phase 7: JIT runs in a subprocess to isolate SIGILL from invalid
+        // JIT-generated machine code. The jit-runner helper binary compiles,
+        // executes, and prints the result — if it crashes, we get a non-zero
+        // exit code instead of killing the test suite.
+        let jit = jit_outcome_via_subprocess(source);
+        (join(aot_rust), join(aot_c), jit)
+    });
+    report.aot_rust = Some(aot_rust);
+    report.aot_c = Some(aot_c);
+    report.jit = Some(jit);
 
     // All backends must agree on outcome class. AOT backends report errors by
     // subprocess exit; VM backends report via Result/Err.

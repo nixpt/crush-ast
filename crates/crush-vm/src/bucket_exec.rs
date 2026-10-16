@@ -11,7 +11,7 @@
 //!
 //! Gated behind the `sandboxed-polyglot` feature (off by default): when
 //! disabled, `EXEC_LANG` falls back to today's plain `Command::new(binary)`
-//! (see `scheduler::run_exec_lang`'s feature-gated branch).
+//! (see `scheduler::run_exec_lang_stdout`'s feature-gated branch).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

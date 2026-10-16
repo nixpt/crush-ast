@@ -4,6 +4,8 @@
 #[path = "../../crush-lang-sdk/tests/rust_support/mod.rs"]
 mod rust_support;
 
+mod common;
+
 use crush_aot::AotCompiler;
 use rust_support::{Engine, Outcome, check, corpus, run_bounded};
 use std::path::Path;
@@ -59,18 +61,31 @@ fn compile_and_run(engine: Engine, aot: &AotCompiler, name: &str, source: &str) 
 }
 
 fn audit(engine: Engine) {
+    // A private cache unless CI names a shared one (CRUSH_AOT_CACHE_DIR): the cache
+    // key covers the generated source, the opt level and the compiler, so a shared
+    // cache can't hand back a stale build.
     let cache = tempfile::tempdir().unwrap();
-    let aot = AotCompiler::new().with_cache_dir(cache.path().to_path_buf());
+    let aot = if std::env::var_os(crush_aot::compiler::CACHE_DIR_ENV).is_some_and(|d| !d.is_empty()) {
+        AotCompiler::new()
+    } else {
+        AotCompiler::new().with_cache_dir(cache.path().to_path_buf())
+    };
     let mut failures = Vec::new();
-    for path in corpus() {
+    let files = corpus();
+    // Build and run every program on the worker pool; check the outcomes in order.
+    let outcomes = common::par_map(&files, |path| {
         let name = path.file_stem().unwrap().to_str().unwrap();
-        let source = std::fs::read_to_string(&path).unwrap();
+        let source = std::fs::read_to_string(path).unwrap();
+        compile_and_run(engine, &aot, name, &source)
+    });
+    for (path, outcome) in files.iter().zip(outcomes) {
+        let name = path.file_stem().unwrap().to_str().unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         if let Err(error) = check(
             name,
             engine,
             &expected,
-            compile_and_run(engine, &aot, name, &source),
+            outcome,
         ) {
             failures.push(error);
         }

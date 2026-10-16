@@ -69,6 +69,9 @@ pub use crush_vm::run as run_program;
 pub use crush_vm::vm::Value;
 pub use crush_vm::{HostCap, HostCapSpec, HostCaps, run_with_caps};
 pub use crush_vm::{Program, Quotas, VmError, VmResult, assemble, disassemble};
+pub use crush_vm::{
+    PolyglotError, PolyglotExecutor, PolyglotRequest, SubprocessExecutor, polyglot_executor_fn,
+};
 
 pub use builder::{ProgramBuilder, ProgramBuilderError};
 pub use caps::{CapabilityError, concat, len, print};

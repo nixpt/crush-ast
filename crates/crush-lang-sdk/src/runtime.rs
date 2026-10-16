@@ -87,8 +87,27 @@ impl Runtime {
     }
 
     /// Register host capabilities.
-    pub fn with_host_caps(mut self, host_caps: HostCaps) -> Self {
+    ///
+    /// A polyglot executor set earlier with
+    /// [`with_polyglot_executor`](Self::with_polyglot_executor) is kept unless
+    /// `host_caps` brings its own.
+    pub fn with_host_caps(mut self, mut host_caps: HostCaps) -> Self {
+        if host_caps.polyglot_executor().is_none()
+            && let Some(executor) = self.host_caps.as_mut().and_then(HostCaps::take_polyglot_executor)
+        {
+            host_caps.set_polyglot_executor(executor);
+        }
         self.host_caps = Some(host_caps);
+        self
+    }
+
+    /// Run granted `@lang` blocks through `executor` instead of the built-in
+    /// local-interpreter runner (CRUSH-271). The embedder owns how a block
+    /// runs; the VM still owns whether it may: a block needs its
+    /// `polyglot.<lang>` grant in the host caps, and one without it is
+    /// refused before `executor` is called.
+    pub fn with_polyglot_executor(mut self, executor: Arc<dyn crush_vm::PolyglotExecutor>) -> Self {
+        self.host_caps.get_or_insert_with(HostCaps::new).set_polyglot_executor(executor);
         self
     }
 

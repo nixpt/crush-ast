@@ -339,7 +339,13 @@ impl Compiler {
         // COSM K1.3 (CRUSH-zorro-42): the kind table travels with the program.
         casm_program.cosm = self.cosm.clone();
 
-        for (name, func) in program.functions {
+        // Name order, not `HashMap` order: temporaries and lambdas are numbered
+        // by one counter across functions, so the order decides their names, and
+        // the same source must compile to the same CASM every time (the AOT
+        // build cache is keyed on the code generated from it).
+        let mut functions: Vec<_> = program.functions.into_iter().collect();
+        functions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        for (name, func) in functions {
             let mut instrs = Vec::new();
             self.lambda_aliases.push(HashMap::new());
             self.rebound = rebound_names(&func.params, &func.body);

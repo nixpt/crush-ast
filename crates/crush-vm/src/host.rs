@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::lang_exec::PolyglotExecutor;
 use crate::vm::Value;
 
 /// Metadata describing a host-provided capability.
@@ -95,9 +96,13 @@ pub trait HostCap: Send + Sync {
 /// Cloning is cheap and shares the handler instances (CRUSH-157): a clone is
 /// a snapshot of which capabilities are granted, not a copy of their state —
 /// `ai_native.toolchain` dispatches its steps through one.
+///
+/// It also carries the embedder's optional [`PolyglotExecutor`] (CRUSH-271),
+/// which a clone shares too.
 #[derive(Default, Clone)]
 pub struct HostCaps {
     handlers: HashMap<String, Arc<dyn HostCap>>,
+    polyglot_executor: Option<Arc<dyn PolyglotExecutor>>,
 }
 
 impl HostCaps {
@@ -116,6 +121,27 @@ impl HostCaps {
             self.register(polyglot_gate(lang));
         }
         self
+    }
+
+    /// Run granted `@lang` blocks through `executor` instead of the built-in
+    /// [`SubprocessExecutor`](crate::SubprocessExecutor) (CRUSH-271), on both
+    /// VM engines. It only decides *how* a block runs: a block still needs its
+    /// `polyglot.<lang>` grant ([`grant_polyglot`](Self::grant_polyglot)), and
+    /// one without it is refused before the executor is called.
+    pub fn set_polyglot_executor(&mut self, executor: Arc<dyn PolyglotExecutor>) -> &mut Self {
+        self.polyglot_executor = Some(executor);
+        self
+    }
+
+    /// The executor set with [`set_polyglot_executor`](Self::set_polyglot_executor), if any.
+    pub fn polyglot_executor(&self) -> Option<&Arc<dyn PolyglotExecutor>> {
+        self.polyglot_executor.as_ref()
+    }
+
+    /// Remove and return the executor, so `@lang` blocks go back to the
+    /// built-in runner.
+    pub fn take_polyglot_executor(&mut self) -> Option<Arc<dyn PolyglotExecutor>> {
+        self.polyglot_executor.take()
     }
 
     /// Grant a debug client `level` (CRUSH-160): registers the
@@ -159,7 +185,9 @@ impl HostCaps {
     }
 
     /// Take every registered handler out of the registry, e.g. to wrap or
-    /// re-register them into another one.
+    /// re-register them into another one. The polyglot executor is not a
+    /// handler: take it first with
+    /// [`take_polyglot_executor`](Self::take_polyglot_executor) to keep it.
     pub fn into_handlers(self) -> impl Iterator<Item = Arc<dyn HostCap>> {
         self.handlers.into_values()
     }
@@ -169,6 +197,7 @@ impl std::fmt::Debug for HostCaps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostCaps")
             .field("caps", &self.handlers.keys().collect::<Vec<_>>())
+            .field("polyglot_executor", &self.polyglot_executor.is_some())
             .finish()
     }
 }
