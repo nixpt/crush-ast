@@ -13,6 +13,8 @@ use std::process::Command;
 
 use crush_aot::AotCompiler;
 
+mod common;
+
 /// Function values and closures run on the VMs only (CRUSH-251: VM first;
 /// the AOT backends refuse make_closure / call_value).
 const CLOSURES: &str = "function values / closures are VM-only (CRUSH-251)";
@@ -80,12 +82,19 @@ fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> O
 
 fn check(backend: &str, allowed_loud: &[(&str, &str)]) {
     let mut problems = Vec::new();
-    for path in corpus() {
+    let files = corpus();
+    // Build and run every program on the worker pool; check the outcomes in order.
+    let outcomes = common::par_map(&files, |path| {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
-        let source = std::fs::read_to_string(&path).unwrap();
+        let source = std::fs::read_to_string(path).unwrap();
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        compile_and_run(backend, &name, &source, &expected)
+    });
+    for (path, outcome) in files.iter().zip(outcomes) {
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         let may_be_loud = allowed_loud.iter().any(|(n, _)| *n == name);
-        match compile_and_run(backend, &name, &source, &expected) {
+        match outcome {
             Outcome::Exact if may_be_loud => problems.push(format!("{name}: now exact on {backend} — remove it from the loud list")),
             Outcome::Exact => {}
             Outcome::Loud(why) if may_be_loud => eprintln!("{backend} {name}: loud as expected ({why})"),
