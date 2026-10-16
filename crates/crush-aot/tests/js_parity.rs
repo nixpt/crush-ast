@@ -28,6 +28,8 @@ use std::process::Command;
 use crush_aot::AotCompiler;
 use crush_lang_js::JsLowering;
 
+mod common;
+
 /// Rust backend: programs that must stay loud — `(program, why / fixing ticket)`.
 const RUST_LOUD: &[(&str, &str)] = &[
     ("arr_basic", "CRUSH-zorro-15: no indexOf/includes cap in AOT"),
@@ -222,13 +224,18 @@ fn check(backend: &str, lowering: JsLowering, known_loud: &[(&str, &str)], known
     // label it built every "rust" run with the C backend).
     let (engine, backend) = (backend, &format!("{backend} ({lowering:?} lowering)"));
     println!("\nJS corpus on AOT {backend}");
-    for path in &files {
+    // Build and run every program on the worker pool; check the outcomes in order.
+    let outcomes = common::par_map(&files, |path| {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let source = std::fs::read_to_string(path).unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        compile_and_run(engine, lowering, &name, &source, &expected)
+    });
+    for (path, outcome) in files.iter().zip(outcomes) {
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         let loud_entry = known_loud.iter().find(|e| e.0 == name);
         let silent_entry = known_silent.iter().find(|e| e.0 == name);
-        let outcome = compile_and_run(engine, lowering, &name, &source, &expected);
         let slot = match outcome {
             Outcome::Exact => 0,
             Outcome::Loud(_) => 1,

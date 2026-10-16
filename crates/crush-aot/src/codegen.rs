@@ -23,7 +23,9 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
     emit_dom_stub(&mut out);
 
     let mut unsupported = Vec::new();
-    for (name, func) in &program.functions {
+    // Name order, not `HashMap` order: the same program must give the same
+    // source in every process, or the AOT build cache (keyed on it) misses.
+    for (name, func) in sorted_functions(program) {
         emit_function(&mut out, name, func, program, &mut unsupported);
     }
     if !unsupported.is_empty() {
@@ -35,6 +37,13 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
 
     emit_entry_point(&mut out);
     Ok(out)
+}
+
+/// `program`'s functions in name order.
+pub(crate) fn sorted_functions(program: &casm::Program) -> Vec<(&String, &casm::Function)> {
+    let mut functions: Vec<_> = program.functions.iter().collect();
+    functions.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    functions
 }
 
 /// Whether the program calls a `js.*` capability that runs crush-vm's
