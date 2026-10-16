@@ -22,6 +22,9 @@ pub struct FreeVars {
     /// Names assigned at the block's own top level (occurrence order).
     /// Marshaling protocol picks the last entry as the single output.
     pub top_level_bound: Vec<String>,
+    /// Every name bound anywhere in the block's module scope, including
+    /// conditional bindings (mirrors `crush_lang_python::analyzer::FreeVars`).
+    pub bound_anywhere: std::collections::HashSet<String>,
 }
 
 /// Analyze a JS source block with a real parser — not a regex.
@@ -93,6 +96,7 @@ mod twin_tests {
             let s = super::swc::free_variables(src).unwrap();
             assert_eq!(b.reads, s.reads, "reads differ for {src:?}");
             assert_eq!(b.top_level_bound, s.top_level_bound, "outputs differ for {src:?}");
+            assert_eq!(b.bound_anywhere, s.bound_anywhere, "bound_anywhere differ for {src:?}");
         }
     }
 }

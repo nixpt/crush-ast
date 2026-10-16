@@ -1163,3 +1163,21 @@ Proposed specification and six existing ticket refinements; xps-8 then xps-9 the
 Reason:
 The merged specification requires exact conversions or frontend refusal. Constant bounded integer casts can be evaluated in the walker without a new guest ABI or backend kernel; dynamic casts need a later binding/range fact pass and single-evaluation lowering. Retain numeric source syntax separately from ownership Copy metadata, keep overflow policy and the ticket open.
 
+
+## 2026-10-15T19:01:29-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: multi-output @lang wire protocol
+
+Reason:
+The old exec_lang protocol marshaled exactly one output (the sentinel line's JSON scalar). Explicit -> outputs need several. Chose a JSON object keyed by name on the single sentinel line, plus out_count/out_i spec fields mirroring var_count/var_i, extracted by a shared exec_lang_outputs helper so scheduler.rs and portable_vm.rs can't drift. The VM pushes outputs in reverse so the compiler's source-order stores line up.
+
+Outcome:
+meta[polyglot_outputs] (array); exec_lang spec carries out_count + out_0..out_{k-1}; epilogue prints sentinel + JSON object {name: value}; crush_vm::scheduler::exec_lang_outputs extracts by name. FastVM/JIT untouched (keep yielding/refusing as now).
+
+
+## 2026-10-15T19:01:36-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: compiler warning channel
+
+Reason:
+No general compiler warning channel existed (only ai_runtime::Warning). The polyglot pass (crush-lang-sdk) needs to emit the transition warnings (implicit output, clobber) and crush-run must print them to stderr, not program stdout. Chose a plain Vec<String> on crush_vm::Program (non-serialized, like source_map), threaded via compile_crush_to_casm_with_warnings, rather than the structured CompilerDiagnostic (which lives in crush-frontend and only flows through check_source, a path crush-run doesn't take).
+
+Outcome:
+crush_vm::Program.warnings: Vec<String>; prepare_polyglot_blocks returns Result<Vec<String>>; crush-run and crushc print each with a 'warning:' prefix to stderr.
+

@@ -152,6 +152,7 @@ print(json_str)
                             lang: "python".to_string(),
                             code: "print('hello')".to_string(),
                             variables: vec![],
+                            outputs: vec![],
                             imports: vec![],
                             deps: vec![],
                             meta: HashMap::new(),

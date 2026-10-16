@@ -285,6 +285,49 @@ pub(crate) fn parse_exec_lang_stdout(raw: &str) -> ExecLangOutcome {
     ExecLangOutcome { visible, result_value }
 }
 
+/// Extract an EXEC_LANG block's marshaled outputs from its parsed result (the
+/// sentinel JSON object keyed by name), in the spec's `out_0`..`out_{k-1}`
+/// declaration order (CRUSH-270). Shared by the subprocess path
+/// ([`crate::scheduler`]) and [`crate::portable_vm`], so the two engines can
+/// never drift on the multi-output protocol.
+///
+/// Returns `Ok(vec![])` for a block with no declared outputs. A declared name
+/// missing from the object is a loud error naming the variable — never a
+/// silent `null` (the epilogue already fails the guest on an unbound name,
+/// so this is a defensive backstop for a protocol mismatch).
+pub(crate) fn exec_lang_outputs(
+    spec: &HashMap<String, serde_json::Value>,
+    result: &Value,
+    lang: &str,
+) -> Result<Vec<Value>, VmError> {
+    let out_count = spec.get("out_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    if out_count == 0 {
+        return Ok(Vec::new());
+    }
+    let result_map = match result {
+        Value::Map(m) => m.borrow(),
+        _ => {
+            return Err(VmError::UnknownCap(format!(
+                "@{lang} block produced no marshaled outputs (expected {out_count})"
+            )))
+        }
+    };
+    let mut values = Vec::with_capacity(out_count);
+    for i in 0..out_count {
+        let key = format!("out_{i}");
+        let name = spec.get(&key).and_then(|v| v.as_str()).unwrap_or("?");
+        match result_map.get(name) {
+            Some(v) => values.push(v.clone()),
+            None => {
+                return Err(VmError::UnknownCap(format!(
+                    "@{lang} block did not produce its declared output `{name}`"
+                )))
+            }
+        }
+    }
+    Ok(values)
+}
+
 /// Build + run the subprocess for an `EXEC_LANG` polyglot block. SHARED
 /// between scheduler.rs and portable_vm.rs (CRUSH-20) — before this, each
 /// backend inlined its own `Command::new(binary)` plus a copy of the
@@ -1413,7 +1456,13 @@ fn execute_one(
                 return Err(VmError::OutputQuota(quotas.max_output));
             }
             out_parts.push(outcome.visible);
-            push!(outcome.result_value);
+            // Push the declared outputs in reverse so the first `store` the
+            // compiler emits (for `out_0`) sees the first declared value on
+            // top of the stack (CRUSH-270 multi-output protocol).
+            let out_values = exec_lang_outputs(&spec, &outcome.result_value, lang)?;
+            for value in out_values.into_iter().rev() {
+                push!(value);
+            }
         }
         AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
         | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
