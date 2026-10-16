@@ -11,6 +11,18 @@
 
 /// (ext, source, expected error substring)
 const LOUD: &[(&str, &str, &str)] = &[
+    // A default parameter was dropped: a call without the argument underflowed
+    // the VM's stack and read `null` on AOT (CRUSH-zorro-18; boa supports it).
+    (
+        "js",
+        "function g(a, b = 10) { return a + b; } console.log(g(1));",
+        "a default parameter value (`x = …`) is not supported by the JS walker yet",
+    ),
+    (
+        "js",
+        "const f = (a = 1) => a; console.log(f());",
+        "a default parameter value (`x = …`) is not supported by the JS walker yet",
+    ),
     // Labeled jumps lost their label and acted on the innermost loop.
     (
         "js",

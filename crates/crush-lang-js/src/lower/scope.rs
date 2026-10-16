@@ -16,6 +16,7 @@
 //!   function) and keeps its spelling.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use boa_ast::declaration::{Binding, Declaration, LexicalDeclaration, VarDeclaration, Variable};
 use boa_ast::function::FormalParameterList;
@@ -37,6 +38,44 @@ pub(super) struct FnScope {
     /// Per frame: the `let`/`const` bindings whose cell is created on entry
     /// to the frame (see `Lower::predeclare`); their declaration assigns.
     predeclared: Vec<HashSet<Sym>>,
+    /// Per frame: the parameter kinds of the `function` declarations bound
+    /// there, so their calls can be adapted (CRUSH-zorro-18).
+    sigs: Vec<HashMap<Sym, Sig>>,
+}
+
+/// How a `function` declaration's parameter is passed (CRUSH-zorro-18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Param {
+    /// `x`: the argument, which must be given (a missing one is `undefined`).
+    Plain,
+    /// `x = …`: the argument or a placeholder, plus a hidden "given" flag
+    /// appended after the parameters; the callee evaluates the default when
+    /// the flag is false.
+    Default,
+    /// `...xs`: the remaining arguments as one array.
+    Rest,
+}
+
+/// A `function` declaration's parameters.
+pub(super) type Sig = Rc<Vec<Param>>;
+
+/// The parameter kinds of `params`.
+pub(super) fn sig_of(params: &FormalParameterList) -> Sig {
+    Rc::new(
+        params
+            .as_ref()
+            .iter()
+            .map(|p| {
+                if p.is_rest_param() {
+                    Param::Rest
+                } else if p.init().is_some() {
+                    Param::Default
+                } else {
+                    Param::Plain
+                }
+            })
+            .collect(),
+    )
 }
 
 impl Scopes {
@@ -46,6 +85,7 @@ impl Scopes {
         self.fns.push(FnScope {
             frames: vec![HashMap::new()],
             predeclared: vec![HashSet::new()],
+            sigs: vec![HashMap::new()],
         });
     }
 
@@ -77,6 +117,7 @@ impl Scopes {
         let f = self.current();
         f.frames.push(HashMap::new());
         f.predeclared.push(HashSet::new());
+        f.sigs.push(HashMap::new());
     }
 
     pub(super) fn pop_block(&mut self) {
@@ -84,6 +125,7 @@ impl Scopes {
         debug_assert!(f.frames.len() > 1, "pop_block without push_block");
         f.frames.pop();
         f.predeclared.pop();
+        f.sigs.pop();
     }
 
     /// Declare (or rebind) a binding of the innermost frame under `name`.
@@ -110,6 +152,28 @@ impl Scopes {
             .last()
             .and_then(|f| f.predeclared.last())
             .is_some_and(|p| p.contains(&sym))
+    }
+
+    /// Record the parameters of the `function` bound to `sym` in the innermost frame.
+    pub(super) fn set_sig(&mut self, sym: Sym, sig: Sig) {
+        self.current()
+            .sigs
+            .last_mut()
+            .expect("a frame")
+            .insert(sym, sig);
+    }
+
+    /// The parameters of the `function` declaration `sym` refers to, if it
+    /// refers to one (a shadowing binding without a signature hides it).
+    pub(super) fn resolve_sig(&self, sym: Sym) -> Option<Sig> {
+        for f in self.fns.iter().rev() {
+            for (frame, sigs) in f.frames.iter().zip(&f.sigs).rev() {
+                if frame.contains_key(&sym) {
+                    return sigs.get(&sym).cloned();
+                }
+            }
+        }
+        None
     }
 
     /// The crush local `sym` refers to, if any frame declares it.

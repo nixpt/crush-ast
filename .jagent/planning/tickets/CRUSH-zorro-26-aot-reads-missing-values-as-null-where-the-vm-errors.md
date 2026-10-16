@@ -32,6 +32,8 @@ missing argument is read as `null`, and #199's correct JS `+` treats `null` as 0
 errored. It's tracked in `js_parity.rs`'s silent list under this ticket. As `js.*` semantics land, more of
 these AOT null-reads will surface the same way, which raises the urgency of this ticket.
 
+**Update 2026-10-15 (CRUSH-zorro-18):** the swc lowering now refuses default parameters at walk time. The VM already failed on them ("stack underflow"), so this removed the `fn_default_param` / `fn_default_param_more` pins from `RUST_SILENT`. The boa lowering supports defaults by adapting calls, so it passes no missing argument. The backend class remains, and so does its sibling CRUSH-zorro-54 (an unassigned local read as `null`): AOT must error wherever the VM does.
+
 Also, **the two AOT backends disagree with each other**:
 `console.log('1' == 1, 0 == '', 2 != '2')` gives node `true true false`, VM and AOT Rust `false false true`,
 and AOT C `false false false`.

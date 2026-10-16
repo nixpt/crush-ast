@@ -203,6 +203,12 @@ fn lower_params<'a>(pats: impl IntoIterator<Item = &'a Pat>) -> anyhow::Result<V
             if matches!(p, Pat::Rest(_)) {
                 return Err(unsupported("a rest parameter (`...args`)"));
             }
+            // The default was dropped: a call without the argument failed with
+            // "stack underflow" on the VM and read `null` on AOT, which printed
+            // a wrong result. The boa lowering supports defaults (CRUSH-zorro-18).
+            if matches!(p, Pat::Assign(_)) {
+                return Err(unsupported("a default parameter value (`x = …`)"));
+            }
             Ok((pat_to_name(p)?, CastType::Any))
         })
         .collect()
