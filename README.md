@@ -91,7 +91,7 @@ crates/
 
 ### Building from Source
 
-You need a current stable Rust (`rust-toolchain.toml` selects `stable`). `crush-pkg` and `crush-vm` path-depend on
+You need Rust 1.95 or newer (the MSRV that CI checks; `rust-toolchain.toml` selects `stable`). `crush-pkg` and `crush-vm` path-depend on
 [`nixpt/buckets`](https://github.com/nixpt/buckets), so clone it next to this
 repo first (CI does the same):
 
