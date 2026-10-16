@@ -29,7 +29,7 @@ These existing IDs belong to this box's `CRUSH-xps` lane, separate from the
 | CRUSH-xps-10 | In review in #213; preserve implementation/evidence | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
 | CRUSH-xps-11 | In review in #213; preserve implementation/evidence | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |
 | CRUSH-xps-12 | In review in #213; preserve implementation/evidence | [Complete bodies and safe value-block refusal](tickets/CRUSH-xps-12-rust-expression-block-lowering.md) |
-| CRUSH-xps-13 | Backlog; numeric dispatch after xps-8, strings after xps-5 | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
+| CRUSH-xps-13 | In review; all slices folded; shared kernels, typed dispatch, private C bridge; 820 scoped tests passed | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
 
 Implementation base: 2026-10-15 main `ca5c662`; the SDK stack through #233
 and design #237 are merged. The xps-10–12 review entries above retain their

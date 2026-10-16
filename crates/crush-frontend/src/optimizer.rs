@@ -387,7 +387,9 @@ impl Optimizer {
                         _ => None,
                     };
 
-                    if let Some(val) = folded {
+                    // CAST/CASM JSON cannot encode NaN or infinity. Keep the
+                    // operation at runtime, where Value::Float represents them.
+                    if let Some(val) = folded.filter(|v| v.is_finite()) {
                         *expr = Expression::FloatLiteral {
                             value: val,
                             meta: meta.clone(),
@@ -601,6 +603,19 @@ impl Optimizer {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod rust_method_float_tests {
+    use super::*;
+    #[test]
+    fn nonfinite_results_stay_runtime_operations() {
+        for (op, a, b) in [("*",1e308,1e308),("+",1e308,1e308),("-",-1e308,1e308)] {
+            let mut e=Expression::BinaryOp { operator:op.into(),left:Box::new(Expression::FloatLiteral { value:a,meta:Default::default() }),right:Box::new(Expression::FloatLiteral { value:b,meta:Default::default() }),meta:Default::default() };
+            Optimizer::optimize_expr(&mut e);
+            assert!(matches!(e,Expression::BinaryOp { .. }));
         }
     }
 }

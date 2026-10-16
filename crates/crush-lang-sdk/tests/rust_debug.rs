@@ -97,7 +97,7 @@ fn direct_stdlib_calls_validate_descriptors_and_runtime_values() {
 fn source_types_are_not_guessed_from_annotation_or_runtime_string_shape() {
     for source in [
         "fn main() { let v = vec![1, 2]; println!(\"{:?}\", v.iter()); }",
-        "fn main() { let x = 1.1f64.powi(3); println!(\"{:?}\", x); }",
+        "fn main() { let x = 1.1f64 / 3.0; println!(\"{:?}\", x); }",
         "fn main() { let a = 9007199254740992i64; let b = 9007199254740993i64; println!(\"{:?}\", a < b); }",
         "fn pick(a: i64, b: i64) -> char { if a < b { 'x' } else { 'y' } } fn main() { println!(\"{:?}\", pick(9007199254740992, 9007199254740993)); }",
         "fn main() { let chars = ['x','y']; let i: usize = 0; println!(\"{:?}\", chars[i + 1]); }",
@@ -106,7 +106,7 @@ fn source_types_are_not_guessed_from_annotation_or_runtime_string_shape() {
         "fn tick(n: i64) -> i64 { println!(\"{}\", n); n } fn pair(a: i64, b: i64) -> i64 { a } fn main() { println!(\"{:?}\", pair(tick(1), tick(2))); }",
         "fn main() { let x: f32 = 1.0; println!(\"{:?}\", x); }",
         "fn show(c: char) { println!(\"{:?}\", c); } fn main() { show(\"x\"); }",
-        "fn main() { let n = 2i64.pow(3); println!(\"{:?}\", n); }",
+        "fn main() { let n = 2i64 + 3; println!(\"{:?}\", n); }",
         "fn main() { let a = vec![1]; let mut b = a; b.push(2); println!(\"{:?}\", b); }",
         "fn show(n: usize) { println!(\"{:?}\", n); } fn main() { show(70000); }",
     ] {

@@ -4,7 +4,7 @@
 //! a shared library (`.so`/`.dylib`/`.dll`), and returns the path to the artifact.
 
 use anyhow::{Context, Result};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,7 +29,12 @@ fn optimize_from_env() -> bool {
 }
 
 fn optimize_setting(value: Option<&str>) -> bool {
-    !value.is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+    !value.is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    })
 }
 
 /// Version banner of a compiler, for the cache key. A compiler that can't be run
@@ -61,7 +66,11 @@ fn cc_identity(cc: &str) -> String {
     }
     let path = resolve_on_path(cc).map_or_else(|| cc.to_string(), |p| p.display().to_string());
     let id = format!("{path}\n{}", version_banner(cc, &["--version"]));
-    ids.lock().unwrap().entry(cc.to_string()).or_insert(id).clone()
+    ids.lock()
+        .unwrap()
+        .entry(cc.to_string())
+        .or_insert(id)
+        .clone()
 }
 
 /// Where `Command::new(program)` would find `program`: itself when it names a
@@ -82,7 +91,11 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
 /// of the same program would share a cache entry.
 fn cache_key(backend: &str, optimize: bool, compiler_identity: &str, source: &str) -> String {
     let mut hasher = Sha256::new();
-    for field in [backend, if optimize { "opt" } else { "noopt" }, compiler_identity] {
+    for field in [
+        backend,
+        if optimize { "opt" } else { "noopt" },
+        compiler_identity,
+    ] {
         hasher.update((field.len() as u64).to_le_bytes());
         hasher.update(field.as_bytes());
     }
@@ -102,14 +115,18 @@ fn unique_work_dir(prefix: &str) -> PathBuf {
 /// Move a freshly built artifact into the shared cache.
 ///
 /// `rename` is atomic within a filesystem, so a concurrent compile that already
-/// filled the entry is replaced by a bit-identical artifact. A custom cache dir
+/// filled the entry is replaced by a equivalent artifact. A custom cache dir
 /// may live on another filesystem, where `rename` fails with `EXDEV`; copy then.
 fn publish_artifact(built: &Path, cached: &Path) -> Result<()> {
     match std::fs::rename(built, cached) {
         Ok(()) => Ok(()),
         Err(_) => {
-            std::fs::copy(built, cached)
-                .with_context(|| format!("failed to install {} into the AOT cache", built.display()))?;
+            let seq = COMPILE_SEQ.fetch_add(1, Ordering::Relaxed);
+            let staging = cached.with_extension(format!("install-{}-{seq}", std::process::id()));
+            std::fs::copy(built, &staging)
+                .with_context(|| format!("failed to stage {}", cached.display()))?;
+            std::fs::rename(&staging, cached)
+                .with_context(|| format!("failed to install {}", cached.display()))?;
             let _ = std::fs::remove_file(built);
             Ok(())
         }
@@ -127,6 +144,53 @@ fn cache_hit(cached: &Path) -> bool {
         let _ = file.set_modified(std::time::SystemTime::now());
     }
     true
+}
+
+fn identity(binary: &str, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Command::new(binary)
+        .args(args)
+        .output()
+        .with_context(|| format!("cannot identify AOT compiler {binary}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "cannot identify AOT compiler {binary}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut bytes = output.stdout;
+    bytes.extend(output.stderr);
+    Ok(bytes)
+}
+
+fn cc_target_identity(cc: &str) -> Result<Vec<u8>> {
+    static TARGETS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+    let targets = TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(target) = targets.lock().unwrap().get(cc) {
+        return Ok(target.clone());
+    }
+    let target = identity(cc, &["-dumpmachine"])?;
+    targets.lock().unwrap().insert(cc.into(), target.clone());
+    Ok(target)
+}
+
+fn cache_hash(
+    source: &str,
+    options: &str,
+    compiler: &[u8],
+    support: Option<(&str, &[u8])>,
+) -> String {
+    let mut h = Sha256::new();
+    // Length prefixes avoid ambiguities between adjacent identity fields.
+    for bytes in [source.as_bytes(), options.as_bytes(), compiler] {
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(bytes);
+    }
+    if let Some((source, compiler)) = support {
+        h.update((source.len() as u64).to_le_bytes());
+        h.update(source.as_bytes());
+        h.update((compiler.len() as u64).to_le_bytes());
+        h.update(compiler);
+    }
+    hex::encode(h.finalize())
 }
 
 /// Configuration for the AOT compiler.
@@ -152,7 +216,10 @@ impl AotCompiler {
                 PathBuf::from(tmp).join("crush-aot-cache")
             }
         };
-        Self { cache_dir, optimize: optimize_from_env() }
+        Self {
+            cache_dir,
+            optimize: optimize_from_env(),
+        }
     }
 
     /// Enable or disable optimization (default: true, or `CRUSH_AOT_OPTIMIZE`).
@@ -170,11 +237,7 @@ impl AotCompiler {
     /// Compile a `casm::Program` to a shared library.
     ///
     /// Returns the path to the compiled `.so` (Linux), `.dylib` (macOS), or `.dll` (Windows).
-    pub fn compile_casm(
-        &self,
-        program: &casm::Program,
-        module_name: &str,
-    ) -> Result<PathBuf> {
+    pub fn compile_casm(&self, program: &casm::Program, module_name: &str) -> Result<PathBuf> {
         let rust_source = crate::codegen::gen_rust_source(program)?;
 
         let hash = cache_key("rust", self.optimize, rustc_identity(), &rust_source);
@@ -221,7 +284,8 @@ impl AotCompiler {
         // Set working directory so any relative paths work
         cmd.current_dir(&work_dir);
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| format!("Failed to run rustc for {module_name}"))?;
 
         if !output.status.success() {
@@ -269,7 +333,42 @@ impl AotCompiler {
     ) -> Result<PathBuf> {
         let c_source = crate::codegen_c::gen_c_source(program)?;
 
-        let hash = cache_key(&format!("c:{cc}"), self.optimize, &cc_identity(cc), &c_source);
+        let mut compiler_banner = cc_identity(cc).into_bytes();
+        let cc_target = cc_target_identity(cc)?;
+        compiler_banner.extend(&cc_target);
+        let support = if crate::method_support::used(program) {
+            Some(crate::method_support::bridge_source())
+        } else {
+            None
+        };
+        let rust_identity = if support.is_some() {
+            rustc_identity().as_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
+        if support.is_some() {
+            let rust_info = String::from_utf8_lossy(&rust_identity);
+            let host = rust_info
+                .lines()
+                .find_map(|s| s.strip_prefix("host: "))
+                .unwrap_or("");
+            let target = String::from_utf8_lossy(&cc_target);
+            anyhow::ensure!(
+                host.split('-').next() == target.split('-').next()
+                    && target.contains("linux")
+                    && target.contains("musl") == host.contains("musl"),
+                "C/Rust support compiler targets differ: {host} versus {target}"
+            );
+        }
+        let hash = cache_hash(
+            &c_source,
+            &format!(
+                "c:{cc}:c99:pic:shared:private-rust-link-v1:opt={}",
+                self.optimize
+            ),
+            &compiler_banner,
+            support.as_deref().map(|s| (s, rust_identity.as_slice())),
+        );
         let hash_short = &hash[..16];
 
         let so_name = format!("c_{module_name}_{hash_short}");
@@ -296,12 +395,66 @@ impl AotCompiler {
         cmd.arg("-o").arg(&tmp_path);
         cmd.arg(&c_path);
 
-        // Link math library for fmod
+        if let Some(source) = support {
+            let key = cache_hash(
+                &source,
+                &format!(
+                    "staticlib:edition2024:pic:panic-unwind:opt={}",
+                    self.optimize
+                ),
+                &rust_identity,
+                None,
+            );
+            let archive = self.cache_dir.join(format!("support_{key}.a"));
+            if !cache_hit(&archive) {
+                let rust_path = work_dir.join("support.rs");
+                let built_archive = work_dir.join("support.a");
+                std::fs::write(&rust_path, &source)?;
+                let output = Command::new("rustc")
+                    .args([
+                        "--edition=2024",
+                        "--crate-type=staticlib",
+                        "--crate-name=crush_aot_support",
+                        "-C",
+                        "relocation-model=pic",
+                        "-C",
+                        "panic=unwind",
+                        "-C",
+                    ])
+                    .arg(if self.optimize {
+                        "opt-level=3"
+                    } else {
+                        "opt-level=0"
+                    })
+                    .arg(&rust_path)
+                    .arg("-o")
+                    .arg(&built_archive)
+                    .output()
+                    .context("cannot build private Rust method support")?;
+                if !output.status.success() {
+                    let _ = std::fs::remove_dir_all(&work_dir);
+                    anyhow::bail!(
+                        "private Rust method support compilation failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                publish_artifact(&built_archive, &archive)?;
+            }
+            cmd.arg(archive).args([
+                "-Wl,--exclude-libs,ALL",
+                "-ldl",
+                "-lpthread",
+                "-lrt",
+                "-lutil",
+            ]);
+        }
+        // Link math library for fmod and Rust's native float operations.
         cmd.arg("-lm");
 
         cmd.current_dir(&work_dir);
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| format!("Failed to run {cc} for {module_name}"))?;
 
         if !output.status.success() {
@@ -358,12 +511,31 @@ mod tests {
     fn cache_key_separates_backend_mode_and_toolchain() {
         let base = cache_key("rust", true, "rustc 1.0", "fn main() {}");
         assert_eq!(base, cache_key("rust", true, "rustc 1.0", "fn main() {}"));
-        assert_ne!(base, cache_key("rust", false, "rustc 1.0", "fn main() {}"), "opt level");
-        assert_ne!(base, cache_key("rust", true, "rustc 1.1", "fn main() {}"), "toolchain");
-        assert_ne!(base, cache_key("c:gcc", true, "rustc 1.0", "fn main() {}"), "backend");
-        assert_ne!(base, cache_key("rust", true, "rustc 1.0", "fn main() { }"), "source");
+        assert_ne!(
+            base,
+            cache_key("rust", false, "rustc 1.0", "fn main() {}"),
+            "opt level"
+        );
+        assert_ne!(
+            base,
+            cache_key("rust", true, "rustc 1.1", "fn main() {}"),
+            "toolchain"
+        );
+        assert_ne!(
+            base,
+            cache_key("c:gcc", true, "rustc 1.0", "fn main() {}"),
+            "backend"
+        );
+        assert_ne!(
+            base,
+            cache_key("rust", true, "rustc 1.0", "fn main() { }"),
+            "source"
+        );
         // Length-prefixed fields: moving bytes across a field boundary changes the key.
-        assert_ne!(cache_key("ab", true, "c", "x"), cache_key("a", true, "bc", "x"));
+        assert_ne!(
+            cache_key("ab", true, "c", "x"),
+            cache_key("a", true, "bc", "x")
+        );
     }
 
     #[test]

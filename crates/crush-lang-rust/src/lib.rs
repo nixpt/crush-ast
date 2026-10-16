@@ -4,7 +4,7 @@
 //!
 //! # Supported subset
 //!
-//! Free functions (block tail expressions are the return value), `let` /
+//! Synchronous free functions (block tail expressions are the return value), `let` /
 //! `let mut`, `if`/`else` (also as expressions), `while`, `loop`, `for` over
 //! `a..b` / `a..=b` / fresh sequences or direct `.iter()`, `break`/`continue`, `return`, `match` with literal,
 //! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
@@ -12,8 +12,11 @@
 //! `+= -= *= /= %=`,
 //! `println!`/`format!` with Display `{}`, `{0}`, `{name}` and proven typed
 //! Debug `{:?}`/`{name:?}` through the opt-in shared formatter,
-//! and the common `str`/`Vec`/numeric methods (`len`, `push`, `contains`,
-//! `to_uppercase`, `abs`, `sqrt`, …). The SDK's `rustc_corpus` integration suite
+//! and proven `str`/`Vec` methods (`len`, `push`, `to_uppercase`, …).
+//! Proven numeric methods use width-aware integer / f64 shared kernels, and
+//! prefix/suffix predicates use Rust Bool adapters (CRUSH-xps-13). Written,
+//! unknown and closure numeric flows require further source proofs.
+//! The SDK's `rustc_corpus` integration suite
 //! compares this subset against real `rustc` output.
 //!
 //! Not supported — rejected with an error rather than mistranslated: structs,
@@ -57,6 +60,7 @@ mod bindings;
 mod formatting;
 mod diagnostics;
 mod numeric;
+mod methods;
 mod values;
 
 use std::any::Any;

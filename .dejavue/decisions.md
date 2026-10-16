@@ -1218,4 +1218,14 @@ Generic string representation cannot identify Rust char/String/unit or numeric w
 
 Outcome:
 CRUSH-xps-9 shared formatter slice: SDK/VM plus Rust AOT, explicit C refusal, conservative source descriptors. Macro materialization, richer flow/numeric proofs and C bridge remain open.
+## 2026-10-16T02:23:27-05:00 — Refuse Rust mapped methods until source types and capability results agree
+
+Reason:
+SDK prefix/suffix predicates return integer flags; core str.contains shadows its SDK handler and returns Bool. Numeric methods coerce to f64, and string methods permit Display coercions. Slice 1 preserves SDK contracts, source-refuses numeric methods and prefix/suffix predicates, and proves string input kinds before shared kernels or a C bridge are introduced.
+
+
+## 2026-10-16T03:38:20-05:00 — Share Rust method kernels through a private scalar and UTF-8 AOT bridge
+
+Reason:
+VM adapters, generated Rust and C AOT now use one std-only kernel. Rust typed numeric and Bool adapters preserve source contracts without changing generic SDK flags or Float power. The C Value ABI remains NUL-terminated, so string proofs and representation gates precede artifact generation; owned byte results use paired Rust frees and hidden static support symbols. Cache identity includes source, compilers, target and options.
 

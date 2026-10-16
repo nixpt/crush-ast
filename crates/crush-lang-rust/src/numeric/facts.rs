@@ -12,6 +12,7 @@ enum Ty {
     Int(Integer),
     LiteralInt,
     Bool,
+    F64,
     Text(Option<usize>),
     Seq(Box<Fact>, Option<i128>),
     Range(Box<Fact>),
@@ -20,6 +21,13 @@ enum Ty {
 }
 
 impl Ty {
+    fn numeric(&self) -> bool {
+        match self {
+            Ty::Int(_) | Ty::F64 => true,
+            Ty::Seq(item, _) | Ty::Range(item) => item.ty.numeric(),
+            _ => false,
+        }
+    }
     fn bounded(&self) -> bool {
         match self {
             Ty::Int(i) => i.bounded(),
@@ -53,7 +61,8 @@ fn hint(value: Option<&Value>) -> Ty {
                     .unwrap_or_else(|_| match name.as_str() {
                         "bool" => Ty::Bool,
                         "String" | "str" => Ty::Text(None),
-                        "char" | "f64" => Ty::Other,
+                        "f64" => Ty::F64,
+                        "char" => Ty::Other,
                         _ => Ty::Unknown,
                     })
             }
@@ -63,7 +72,8 @@ fn hint(value: Option<&Value>) -> Ty {
     match value.and_then(Value::as_str) {
         Some("bool") => Ty::Bool,
         Some("str" | "& str" | "String") => Ty::Text(None),
-        Some("()" | "char" | "f64") => Ty::Other,
+        Some("()" | "char") => Ty::Other,
+        Some("f64") => Ty::F64,
         Some(name) => Integer::parse(name).map(Ty::Int).unwrap_or_else(|_| {
             syn::parse_str(name)
                 .map(|t| of_type(&t))
@@ -179,7 +189,7 @@ impl Fact {
     fn json(&self) -> Value {
         json!({"type": match &self.ty {
             Ty::Int(i) => i.name, Ty::LiteralInt => "unresolved integer literal",
-            Ty::Bool => "bool", Ty::Other => "noninteger", Ty::Unknown => "unknown",
+            Ty::F64 => "f64", Ty::Bool => "bool", Ty::Other => "noninteger", Ty::Unknown => "unknown",
             Ty::Text(_) => "text", Ty::Seq(..) => "sequence", Ty::Range(_) => "range",
         }, "canonical": self.exact, "range": self.range})
     }
@@ -206,7 +216,7 @@ fn signature(f: &Function) -> Signature {
 // Inspect all lexical writes before proving any use, including writes hidden
 // in a branch, loop or captured closure. Written storage is deliberately not
 // treated as its initializer's constant value. Names are xps-6 binding IDs.
-fn inspect(value: &Value, writes: &mut HashSet<String>, casts: &mut bool) {
+fn inspect(value: &Value, writes: &mut HashSet<String>, casts: &mut bool, methods: &mut bool) {
     fn wide(v: &Value, pointer: bool) -> bool {
         match v {
             Value::String(s) => s
@@ -218,6 +228,9 @@ fn inspect(value: &Value, writes: &mut HashSet<String>, casts: &mut bool) {
     }
     match value {
         Value::Object(o) => {
+            if o.get("name").and_then(Value::as_str) == Some("__crush_rust_numeric_method__") {
+                *methods = true;
+            }
             if o.get("function").and_then(Value::as_str) == Some(CAST) {
                 *casts = true;
             }
@@ -253,12 +266,12 @@ fn inspect(value: &Value, writes: &mut HashSet<String>, casts: &mut bool) {
                 writes.insert(target.into());
             }
             for v in o.values() {
-                inspect(v, writes, casts);
+                inspect(v, writes, casts, methods);
             }
         }
         Value::Array(a) => {
             for v in a {
-                inspect(v, writes, casts);
+                inspect(v, writes, casts, methods);
             }
         }
         _ => {}
@@ -267,16 +280,27 @@ fn inspect(value: &Value, writes: &mut HashSet<String>, casts: &mut bool) {
 
 pub(crate) fn check(program: &mut Program) -> anyhow::Result<()> {
     let mut active = false;
+    let mut methods = false;
     let mut writes = HashMap::new();
     for (name, f) in &program.functions {
         let mut set = HashSet::new();
-        inspect(&serde_json::to_value(&f.body)?, &mut set, &mut active);
-        inspect(&serde_json::to_value(&f.meta)?, &mut set, &mut active);
+        inspect(
+            &serde_json::to_value(&f.body)?,
+            &mut set,
+            &mut active,
+            &mut methods,
+        );
+        inspect(
+            &serde_json::to_value(&f.meta)?,
+            &mut set,
+            &mut active,
+            &mut methods,
+        );
         writes.insert(name.clone(), set);
     }
     // Keep the legacy arithmetic inventory unchanged when no dynamic cast
     // needs this proof domain. Literal casts were already evaluated exactly.
-    if !active {
+    if !active && !methods {
         return Ok(());
     }
     let signatures: HashMap<_, _> = program
@@ -305,7 +329,9 @@ pub(crate) fn check(program: &mut Program) -> anyhow::Result<()> {
         }
     }
     for name in names {
-        let mut check = Check::new(&signatures, &summaries, &writes[&name], true);
+        let mut check = Check::new(&signatures, &summaries, &writes[&name], active);
+        check.final_pass = true;
+        check.method_domain = methods;
         let f = program.functions.get_mut(&name).unwrap();
         let result = check.function(f, &signatures[&name])?;
         f.meta.insert("rust_numeric_result".into(), result.json());
@@ -331,6 +357,8 @@ struct Check<'a> {
     control_exact: bool,
     in_lambda: bool,
     strict: bool,
+    final_pass: bool,
+    method_domain: bool,
 }
 
 impl<'a> Check<'a> {
@@ -350,6 +378,8 @@ impl<'a> Check<'a> {
             control_exact: true,
             in_lambda: false,
             strict,
+            final_pass: false,
+            method_domain: false,
         }
     }
     fn bind(&mut self, name: &str, mut fact: Fact) -> Fact {
@@ -555,12 +585,18 @@ impl<'a> Check<'a> {
                 }
             }
             E::BoolLiteral { .. } => Fact::scalar(Ty::Bool),
+            E::StringLiteral { meta, .. }
+                if meta.get("rust_debug_type").and_then(Value::as_str) == Some("char") =>
+            {
+                Fact::scalar(Ty::Other)
+            }
             E::StringLiteral { value, .. } => Fact {
                 ty: Ty::Text(Some(value.len())),
                 range: None,
                 exact: !value.contains('\0'),
             },
-            E::FloatLiteral { .. } | E::NullLiteral { .. } => Fact::scalar(Ty::Other),
+            E::FloatLiteral { .. } => Fact::scalar(Ty::F64),
+            E::NullLiteral { .. } => Fact::scalar(Ty::Other),
             E::Var { name, .. } => self
                 .locals
                 .get(name)
@@ -573,7 +609,9 @@ impl<'a> Check<'a> {
             } => {
                 let fact = self.expr(operand, expected)?;
                 if operator == "-" {
-                    if let (Ty::Int(i), Some((lo, hi))) = (&fact.ty, fact.range) {
+                    if fact.ty == Ty::F64 {
+                        fact
+                    } else if let (Ty::Int(i), Some((lo, hi))) = (&fact.ty, fact.range) {
                         Fact {
                             ty: fact.ty.clone(),
                             range: Some((-hi, -lo)),
@@ -611,7 +649,46 @@ impl<'a> Check<'a> {
                         exact: l.exact && r.exact,
                     }
                 } else {
-                    let fact = binary(operator, l, r, ty);
+                    let numeric = |f: &Fact| matches!(f.ty, Ty::Int(_) | Ty::LiteralInt | Ty::F64);
+                    if self.method_domain
+                        && self.final_pass
+                        && matches!(operator.as_str(), "<" | "<=" | ">" | ">=")
+                    {
+                        let wide = [&l, &r].iter().any(|f| {
+                            matches!(f.ty, Ty::Int(_) | Ty::LiteralInt)
+                                && !f.range.is_some_and(|(lo, hi)| {
+                                    lo >= -9007199254740992 && hi <= 9007199254740992
+                                })
+                        });
+                        if wide {
+                            return Err(crate::methods::error(
+                                meta,
+                                "ordered integer comparison needs an exact f64-representable range before typed method results can enter generic ordering",
+                            ));
+                        }
+                    }
+                    let numeric_operands = numeric(&l) || numeric(&r);
+                    let float_divisor =
+                        matches!(right.as_ref(), E::FloatLiteral { value,.. } if *value != 0.0);
+                    let fact = if l.ty == Ty::F64
+                        && r.ty == Ty::F64
+                        && matches!(operator.as_str(), "/" | "%")
+                        && float_divisor
+                    {
+                        Fact {
+                            ty: Ty::F64,
+                            range: None,
+                            exact: l.exact && r.exact,
+                        }
+                    } else {
+                        binary(operator, l, r, ty)
+                    };
+                    if self.method_domain && self.final_pass && numeric_operands && !fact.exact {
+                        return Err(crate::methods::error(
+                            meta,
+                            "numeric method program needs canonical typed arithmetic; unproven overflow and division domains are unsupported",
+                        ));
+                    }
                     if self.strict && fact.ty.bounded() && !fact.exact {
                         return Err(error(
                             meta,
@@ -754,6 +831,16 @@ impl<'a> Check<'a> {
                 meta,
             } => {
                 let sig = self.signatures.get(function).cloned();
+                if self.method_domain
+                    && self.final_pass
+                    && meta.get("rust_source_call") == Some(&json!(true))
+                    && sig.is_none()
+                {
+                    return Err(crate::methods::error(
+                        meta,
+                        "indirect calls need numeric argument provenance in a typed method program",
+                    ));
+                }
                 if self.strict
                     && meta.get("rust_source_call") == Some(&json!(true))
                     && sig.is_none()
@@ -777,6 +864,16 @@ impl<'a> Check<'a> {
                     } else {
                         fact
                     };
+                    if self.method_domain
+                        && self.final_pass
+                        && ty.is_some_and(Ty::numeric)
+                        && !fact.exact
+                    {
+                        return Err(crate::methods::error(
+                            meta,
+                            "numeric call argument needs canonical value provenance before a typed method; unproven arithmetic is unsupported",
+                        ));
+                    }
                     if ty.is_some() && !fact.exact && self.strict {
                         return Err(error(
                             meta,
@@ -796,6 +893,139 @@ impl<'a> Check<'a> {
                     .unwrap_or_else(|| Fact::unknown(Ty::Unknown));
                 fact.exact &= exact;
                 fact
+            }
+            E::CapabilityCall { name, args, meta } if name == "__crush_rust_numeric_method__" => {
+                let method = meta
+                    .get("rust_value_method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let receiver =
+                    self.expr(&mut args[0], expected.or(Some(Integer::parse("i32")?)))?;
+                let exp_type = Integer::parse(if method == "powi" { "i32" } else { "u32" })?;
+                let arg = if args.len() == 2 {
+                    Some(self.expr(
+                        &mut args[1],
+                        if method == "powf" {
+                            None
+                        } else {
+                            Some(exp_type)
+                        },
+                    )?)
+                } else {
+                    None
+                };
+                let mut valid = receiver.exact && !self.in_lambda;
+                let mut result = receiver.clone();
+                match &receiver.ty {
+                    Ty::F64 => {
+                        valid &= match method.as_str() {
+                            "abs" | "sqrt" | "floor" | "ceil" | "round" => true,
+                            "powf" => arg.as_ref().is_some_and(|a| a.exact && a.ty == Ty::F64),
+                            "powi" => arg
+                                .as_ref()
+                                .is_some_and(|a| a.exact && a.ty == Ty::Int(exp_type)),
+                            _ => false,
+                        };
+                    }
+                    Ty::Int(i) => {
+                        valid &= method == "pow"
+                            && arg
+                                .as_ref()
+                                .is_some_and(|a| a.exact && a.ty == Ty::Int(exp_type))
+                            || method == "abs" && i.signed;
+                        result.range = Some(i.bounds());
+                        // Refine proven constants without folding away the runtime
+                        // call or duplicating its evaluation/effects.
+                        if let Some((a, b)) = receiver.range.filter(|(a, b)| a == b) {
+                            let _ = b;
+                            let value = if method == "abs" {
+                                a.checked_abs()
+                            } else {
+                                arg.as_ref()
+                                    .and_then(|f| f.range)
+                                    .filter(|(a, b)| a == b)
+                                    .and_then(|(e, _)| u32::try_from(e).ok())
+                                    .and_then(|e| a.checked_pow(e))
+                            };
+                            if let Some(value) = value {
+                                let n = i.convert(value);
+                                result.range = Some((n, n));
+                            }
+                        }
+                        // Bounded unsigned results need an exact evaluation or an
+                        // identity proof before entering the guest signed Int.
+                        if i.bounded() {
+                            let exponent = arg
+                                .as_ref()
+                                .and_then(|a| a.range)
+                                .filter(|(lo, hi)| lo == hi)
+                                .map(|(n, _)| n);
+                            let base = receiver.range.filter(|(lo, hi)| lo == hi).map(|(n, _)| n);
+                            let exact = base
+                                .zip(exponent)
+                                .and_then(|(a, b)| {
+                                    u32::try_from(b).ok().and_then(|e| a.checked_pow(e))
+                                })
+                                .filter(|n| {
+                                    *n >= 0
+                                        && *n <= i64::MAX as i128
+                                        && (i.name != "usize" || *n <= 65535)
+                                });
+                            result.range = exact.map(|n| (n, n)).or_else(|| {
+                                if exponent == Some(1) {
+                                    receiver.range
+                                } else if exponent == Some(0) {
+                                    Some((1, 1))
+                                } else {
+                                    None
+                                }
+                            });
+                            valid &= result.range.is_some_and(|(lo, hi)| {
+                                lo >= 0
+                                    && hi
+                                        <= if i.name == "usize" {
+                                            65535
+                                        } else {
+                                            i64::MAX as i128
+                                        }
+                            });
+                        }
+                    }
+                    _ => valid = false,
+                }
+                result.exact = valid;
+                if self.final_pass {
+                    if !valid {
+                        return Err(crate::methods::error(
+                            meta,
+                            "numeric method needs proven canonical receiver/exponent types and representable result; written/closure/unknown producers are unsupported",
+                        ));
+                    }
+                    let descriptor = match &receiver.ty {
+                        Ty::F64 => "f64",
+                        Ty::Int(i) => i.name,
+                        _ => unreachable!(),
+                    };
+                    let mut lowered = vec![
+                        E::StringLiteral {
+                            value: method,
+                            meta: Meta::new(),
+                        },
+                        E::StringLiteral {
+                            value: descriptor.into(),
+                            meta: Meta::new(),
+                        },
+                    ];
+                    lowered.append(args);
+                    if lowered.len() == 3 {
+                        lowered.push(E::NullLiteral { meta: Meta::new() });
+                    }
+                    *args = lowered;
+                    *name = "rust.num".into();
+                    meta.insert("rust_numeric_fact".into(), result.json());
+                }
+                result
             }
             E::CapabilityCall { name, args, meta } => {
                 let mut exact = true;
@@ -818,7 +1048,21 @@ impl<'a> Check<'a> {
                     }
                     exact &= fact.exact;
                 }
-                if name == "conv.text"
+                if matches!(
+                    name.as_str(),
+                    "str.contains" | "rust.str.starts_with" | "rust.str.ends_with"
+                ) && text.is_some()
+                    && exact
+                {
+                    Fact::scalar(Ty::Bool)
+                } else if matches!(
+                    name.as_str(),
+                    "str.to_lower" | "str.to_upper" | "str.trim" | "str.replace"
+                ) && text.is_some()
+                    && exact
+                {
+                    Fact::scalar(Ty::Text(None))
+                } else if name == "conv.text"
                     && let Some(mut fact) = text
                 {
                     fact.exact &= exact;
@@ -942,6 +1186,18 @@ fn binary(op: &str, left: Fact, right: Fact, ty: Option<Integer>) -> Fact {
             exact: left.exact && right.exact,
         };
     }
+    if left.ty == Ty::F64 && right.ty == Ty::F64 && matches!(op, "+" | "-" | "*") {
+        return Fact {
+            ty: Ty::F64,
+            range: None,
+            exact: left.exact && right.exact,
+        };
+    }
+    let ty = ty.or_else(|| match (&left.ty, &right.ty) {
+        (Ty::Int(i), _) | (_, Ty::Int(i)) => Some(*i),
+        (Ty::LiteralInt, Ty::LiteralInt) => Integer::parse("i32").ok(),
+        _ => None,
+    });
     let Some(i) = ty else {
         return Fact::unknown(Ty::LiteralInt);
     };

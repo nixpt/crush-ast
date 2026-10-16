@@ -7,9 +7,11 @@
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "Rust")?;
     crate::refuse_green_task(program, "Rust")?;
+    crate::method_support::check_rust_result(program)?;
     let mut out = String::new();
 
     emit_header(&mut out);
+    if crate::method_support::used(program) { crate::method_support::emit_rust(&mut out); }
     emit_runtime_value(&mut out);
     emit_helpers(&mut out);
     if uses_js_core(program) {
@@ -1075,6 +1077,14 @@ fn emit_body(
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
+                name if crate::method_support::id(name).is_some() => {
+                    let expected = crush_vm::rust_methods_core::arity(name).unwrap();
+                    if argc != expected { unsupported = Some(format!("cap_call '{name}' needs {expected} arguments (CRUSH-xps-13)")); }
+                    else {
+                        out.push_str(&format!("{ind}{{ let mut __a=Vec::with_capacity({argc}); for _ in 0..{argc} {{ __a.push(stack.pop().unwrap_or(RuntimeValue::Null)); }} __a.reverse(); stack.push(rust_method_call({name:?},__a)); }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                }
                 // Returns the array, as the VM's `push` does: a statement's
                 // `pop` then balances, and `len(xs.push(v))` sees it.
                 // One value per push; anything else would pop the wrong slots.
@@ -1252,8 +1262,16 @@ fn emit_entry_point(out: &mut String) {
 #[unsafe(no_mangle)]
 pub extern "C" fn crush_run() -> *mut std::ffi::c_char {
     let result = crush_fn_main();
-    let json = format!("{}", result);
-    let c_str = std::ffi::CString::new(json).unwrap_or_default();
+    // Preserve String identity using the loader's existing quoted-string
+    // transport, including numeric/Boolean-looking strings and whitespace.
+    let json = match &result {
+        RuntimeValue::String(s) => format!("\"{}\"", s),
+        _ => format!("{}", result),
+    };
+    let c_str = std::ffi::CString::new(json).unwrap_or_else(|_| {
+        eprintln!("NUL host result requires a length-aware result ABI (CRUSH-xps-13)");
+        std::process::exit(1);
+    });
     c_str.into_raw()
 }
 

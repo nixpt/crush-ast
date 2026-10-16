@@ -2000,11 +2000,7 @@ impl PortableVm {
                     let s = value_to_text(&args[0]);
                     Ok(Some(Value::Int(crate::str_len::str_len(&s))))
                 }
-                "str.contains" => {
-                    let haystack = value_to_text(&args[0]);
-                    let needle = value_to_text(&args[1]);
-                    Ok(Some(Value::Bool(haystack.contains(&needle))))
-                }
+                "str.contains" => crate::rust_methods::call(cap, &args).map(Some).map_err(VmError::Io),
                 "str.split" => {
                     let s = value_to_text(&args[0]);
                     let delim = value_to_text(&args[1]);
@@ -2015,12 +2011,7 @@ impl PortableVm {
                     };
                     Ok(Some(Value::new_array(parts)))
                 }
-                "str.replace" => {
-                    let s = value_to_text(&args[0]);
-                    let from = value_to_text(&args[1]);
-                    let to = value_to_text(&args[2]);
-                    Ok(Some(Value::Str(s.replace(&from, &to))))
-                }
+                "str.replace" => crate::rust_methods::call(cap, &args).map(Some).map_err(VmError::Io),
                 "str.join" => {
                     let delim = value_to_text(&args[1]);
                     match &args[0] {

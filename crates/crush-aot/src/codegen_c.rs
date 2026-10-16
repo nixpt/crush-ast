@@ -14,11 +14,13 @@ use std::collections::HashMap;
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "C")?;
     crate::refuse_green_task(program, "C")?;
+    crate::method_support::check_c(program)?;
     let mut out = String::new();
 
     emit_c_header(&mut out);
     emit_c_value(&mut out);
     emit_c_helpers(&mut out);
+    if crate::method_support::used(program) { crate::method_support::emit_c(&mut out); }
     emit_c_ai_stub(&mut out);
     emit_c_dom_stub(&mut out);
 
@@ -1895,6 +1897,14 @@ fn emit_c_instr(
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
+                name if crate::method_support::id(name).is_some() => {
+                    let expected=crush_vm::rust_methods_core::arity(name).unwrap();
+                    if argc != expected { unsupported=Some(format!("cap_call '{name}' needs {expected} arguments (CRUSH-xps-13)")); }
+                    else {
+                        let id=crate::method_support::id(name).unwrap();
+                        out.push_str(&format!("                {{ Value __a[4]; for(int j={argc}-1;j>=0;j--) __a[j]=_pop(); _push(_shared_method({id},__a,{argc})); }} _pc={next_pc}; break;\n"));
+                    }
+                }
                 // Returns the array, as the VM's `push` does.
                 // One value per push; anything else would pop the wrong slots.
                 "append" | "push" | "arr.push" | "array.push" if argc != 2 => {

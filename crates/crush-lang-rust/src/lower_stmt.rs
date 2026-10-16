@@ -34,6 +34,9 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
         }
         Stmt::Item(item) => match item {
             syn::Item::Fn(item_fn) => {
+                if item_fn.sig.asyncness.is_some() {
+                    return Err(crate::lower_expr::unsupported_at(item_fn.sig.span(), "async function", "Future/poll semantics are required before treating its declared output as a ready method value (CRUSH-xps-13)"));
+                }
                 let mut meta = meta;
                 let (numeric_params, numeric_return) = crate::numeric::signature(&item_fn.sig);
                 meta.insert("rust_numeric_params".into(), numeric_params);
