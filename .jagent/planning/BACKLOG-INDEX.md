@@ -61,7 +61,7 @@ new review-exit matrices automatically.
 | 107   | CAST meta → packed Span (audit finding #2 — contract-coordinated; reshapes CRUSH-74's mechanism) |
 | 108   | ~~superseded (CRUSH-169)~~ Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
 | 109   | Disambiguate top-level `stdlib/` (polyglot transpiled modules) from CRUSH-56/57's native HostCap restoration work — includes an already-observed string-function naming overlap |
-| 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
+| 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111 — **reinforced 2026-10-16**: walker vector measured, `compile_cast` refuses walker-emitted `make_range` while `Compiler::new().compile` accepts; `walker_intrinsics` covers only `__crush_*__`), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
 | 115   | `io.read` — interactive stdin input capability | **Done 2026-08-21** — canonical implementation merged in #52 and released in v0.3.5; verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
 | 116   | `math.random`/`math.seed` — real numeric RNG | **Done 2026-08-24** — deterministic SplitMix64 stdlib caps, native source pipeline, and JS `Math.random()` lowering merged in v0.3.6. |
 | 117   | `conv.chr`/`conv.ord` — character ↔ codepoint | **Done 2026-08-24** — implemented across VM, PortableVM, Rust AOT, C AOT, and AOT-C in v0.3.6. |
@@ -86,6 +86,7 @@ new review-exit matrices automatically.
 | 239–242 | 2026-10-09 scripting test drive (claude): stdin EOF vs blank line (239), fs.stat/append (240), stderr + run-summary noise (241), process.exec result type (242) |
 | 244–249 | 2026-10-09 CASM↔WASM test drive (claude): crush-web stdlib (244, done), crush-web grant preflight (245), WASM walker keeps only calls (246), .wasm read as UTF-8 (247), export-name mismatch (248), crush-walk-run exit status (249) |
 | 266   | Rust ↔ Crush interop audit and Rust crate access (user-directed, gates native extensions on CRUSH-179) |
+| 271   | Python/JS walker unary `+` and `~` refused by the compiler: `Unsupported op` on **both** entry points (buffy, 2026-10-16, from PR #263 review; distinct from CRUSH-111 — there the doors disagree, here both refuse; C walker's `__crush_pos__`/`__crush_bit_not__` route already works) |
 | xps  | Box-scoped Rust ↔ Crush pipeline: xps-1 manual host-approved plugins; xps-2 phased design; xps-3 shared SDK walker registry; xps-5 exact-or-loud harness (in review in #220, based on #213); xps-13 AOT mapped-capability parity; xps-6 lexical bindings in review in #224 (based on #220); xps-6..12 Rust parity, semantic-analysis, closure, and expression-lowering fixes; xps-4 gated shared-registry CLI dispatch; xps-3/10..12 in review in #213 |
 | 231 | s476 (kai): CI toolchain pin dead + 24 crates never run tests in CI |
 | 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
@@ -107,10 +108,10 @@ new review-exit matrices automatically.
 
 | ID | What to verify | Note |
 |----|----------------|------|
-| CRUSH-11 | AOT-C string garbling repro (`--emit c` + ctypes) | ring-buffer fixes on HEAD; ticket says "needs re-verification" |
+| ~~CRUSH-11~~ | AOT-C string garbling repro | **DONE** — ticket marked Done 2026-08-07; repro independently re-verified 2026-10-16 (differential_aot ok) |
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
-| CRUSH-30 | whether E-EXH-001 wildcard-warn satisfies the ticket | `missing_arms` is a documented stub pending a type registry — needs a scope ruling, then either close or re-scope |
-| CRUSH-35 | VISION.md walker table refresh | 6/7 gaps verified closed in code; table still shows all red |
+| ~~CRUSH-30~~ | exhaustive-match-sites lint | **DONE** (scope ruling 2026-10-16): opt-in wildcard lint E-EXH-001 satisfies intent; residue (narrowing/missing_arms/workspace tracking) minted as CRUSH-30a |
+| CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row *runtime* evidence — corrected after PR #263 review: 4/7 ✅, 1 partial (comprehensions: RHS/`return`/call-arg only), 2 🔴 (tuple unpacking, Uint8Array); ticket stays open, residual now includes tuple-unpacking lowering + the `compile_cast` vs `Compiler` entry-point divergence |
 
 ## In flight
 
@@ -162,14 +163,14 @@ the spine; most later work is gated on 73/77 existing.
 | ID | Title | Status |
 |----|-------|--------|
 | CRUSH-27 annotation nodes · 28 crush-index v0 · 29 codebase.* caps · 31 dejavue join · 32 AI opcodes · 33 DOM opcodes | | ALL DONE on HEAD (verified s412) |
-| CRUSH-30 | @exhaustive-match-sites lint | partial — see quick wins |
+| CRUSH-30 | @exhaustive-match-sites lint | DONE 2026-10-16 — residue → CRUSH-30a |
 | CRUSH-34 | spawn/await/yield wire-up | in progress — Commits 2 (5-tier wiring) + 3 (differential fixture) remain → ticket `## Dispatch` |
 
 ## M6 — Walker parity
 
 | ID | Title | Status | Gate | Dispatch |
 |----|-------|--------|------|--------|
-| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + VISION.md table refresh (6/7 verified closed) | open | — | ticket `## Dispatch` |
+| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + tuple unpacking + comprehension nested positions + VISION.md table refresh (4/7 ✅, 1 partial, 2 🔴 — runtime-verified) | open | — | ticket `## Dispatch` |
 | CRUSH-36 | LanguageAdapter unification | partial — Sub-Commit 3 + CLI py/pyw fix remain | — | ticket `## Dispatch` |
 | CRUSH-37 | Java walker | partial — skeleton landed, real parsing remains | CRUSH-36 | ticket `## Dispatch` |
 | CRUSH-38 | Kotlin walker | open (no crate yet) | CRUSH-37 | ticket `## Dispatch` |

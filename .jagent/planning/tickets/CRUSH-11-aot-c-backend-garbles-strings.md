@@ -122,3 +122,17 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-11.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Independent re-verification (buffy, 2026-10-16)
+
+Re-ran the exact ticket repro on branch `agent/buffy/CRUSH-quickwins-11-35`
+(HEAD = cdb937e, current main) in an isolated worktree:
+
+```text
+CARGO_TARGET_DIR=/home/bahamut/targets/quickwins cargo test -p crush-aot --test differential_aot aot_turtle_runner_render_agrees
+test result: ok. 1 passed; 0 failed; 0 ignored; 49 filtered out; 4.01s
+```
+
+No source change required; status **Done** stands. Remaining backlog action:
+flip the BACKLOG-INDEX "verify+close" row (this was its last open question:
+"ticket says needs re-verification" — now re-verified on current main).
