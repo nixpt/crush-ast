@@ -162,8 +162,8 @@ emits the working `__crush_pos__` / `__crush_bit_not__` intrinsics.
 - Scope: this ticket file is the canonical spec. The deliverable is the **shared table** — extend
   `crates/crush-frontend/src/walker_intrinsics.rs` or replace it, but do not leave a second
   hand-maintained list behind.
-- Environment: `/build` is 100% full as of dispatch — build with
-  `CARGO_TARGET_DIR=/home/nixp/targets/panini-crush-111 CARGO_BUILD_JOBS=2`.
+- Environment: `/build` cleared to ~31 GB free at dispatch time (2026-10-16) — build with
+  `CARGO_TARGET_DIR=/build/target-panini-crush-111 CARGO_BUILD_JOBS=2`; keep scratch off `/home` (7.7 GB free).
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs`; flag
   `crush_cast::Function`/`Program` shape changes before landing; do not edit the language walkers
   (`crates/crush-lang-*/src/**`) — this ticket fixes the receiving end.
