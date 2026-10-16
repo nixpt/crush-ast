@@ -226,3 +226,124 @@ fn push_method_call_appends_in_order() {
     expect_print_everywhere("let xs = [1]; xs.push(5); print(len(xs));", 2);
     expect_print_everywhere("let xs = [1]; xs.push(5); print(xs[1]);", 5);
 }
+
+// ── #223: `==` / `!=` on maps and arrays must compare contents, not identity ──
+
+/// The full printed output from the VM (scheduler tier). The portable VM shares
+/// `crush_vm::Value::PartialEq` (the equality this test pins), so it agrees by
+/// construction; the bug being fixed here is C-only.
+fn vm_output(source: &str) -> String {
+    let program =
+        crush_lang_sdk::compile::compile_crush_source(source).expect("frontend compiles source");
+    let quotas = Quotas {
+        max_steps: 20_000_000,
+        ..Quotas::default()
+    };
+    let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
+    assert!(result.halted, "program did not halt:\n{}", result.output);
+    result.output
+}
+
+/// Program stdout, without the type-tagged result line the runner prints last.
+fn program_stdout(so: &Path) -> String {
+    let out = run(so);
+    assert!(
+        out.status.success(),
+        "runner failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let body = text.trim_end_matches('\n');
+    match body.rfind('\n') {
+        Some(i) => format!("{}\n", &body[..i]),
+        None => String::new(),
+    }
+}
+
+/// `source` must print exactly `expected` on the VM and on every AOT backend.
+fn expect_print_everywhere_str(source: &str, expected: &str) {
+    assert_eq!(vm_output(source), expected, "VM printed wrong for {source:?}");
+    for (backend, so) in build_both(&compile(source), "eq_223") {
+        assert_eq!(
+            program_stdout(&so),
+            expected,
+            "{backend} printed wrong for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn map_and_array_equality_agrees_across_engines() {
+    // (source, expected printed output) — equal/unequal pairs for maps, arrays,
+    // nested maps/arrays, mixed map/array, strings, and int-vs-float, plus the
+    // two programs from #223.
+    let cases: &[(&str, &str)] = &[
+        // The two programs from the issue.
+        (
+            "struct P { x: int, y: int } fn main() { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; print(a == b); }",
+            "true\n",
+        ),
+        (
+            "struct P { x: int } struct Q { x: int } fn main() { print(P { x: 1 } == Q { x: 1 }); }",
+            "true\n",
+        ),
+        // Maps (struct instances are maps): equal / unequal by value.
+        (
+            "struct P { x: int, y: int } fn main() { print(P { x: 1, y: 2 } == P { x: 1, y: 2 }); print(P { x: 1, y: 2 } == P { x: 1, y: 3 }); }",
+            "true\nfalse\n",
+        ),
+        // Map equality is order-insensitive (IndexMap equality in the VM).
+        (
+            "fn main() { print({\"a\": 1, \"b\": 2} == {\"b\": 2, \"a\": 1}); }",
+            "true\n",
+        ),
+        // A missing key is not the same as a key holding null.
+        (
+            "fn main() { print({\"a\": null} == {\"b\": null}); print({\"a\": null} == {\"a\": 1}); }",
+            "false\nfalse\n",
+        ),
+        // Arrays: length + elementwise.
+        (
+            "fn main() { print([1, 2, 3] == [1, 2, 3]); print([1, 2] == [1, 3]); print([1, 2] == [1, 2, 3]); }",
+            "true\nfalse\nfalse\n",
+        ),
+        // Nested arrays.
+        (
+            "fn main() { print([[1, 2], [3]] == [[1, 2], [3]]); print([[1, 2]] == [[1, 3]]); }",
+            "true\nfalse\n",
+        ),
+        // Mixed map/array nesting.
+        (
+            "fn main() { print({\"a\": [1, 2], \"b\": {\"c\": 3}} == {\"b\": {\"c\": 3}, \"a\": [1, 2]}); print({\"a\": [1, 2]} == {\"a\": [1, 3]}); }",
+            "true\nfalse\n",
+        ),
+        // Arrays nested in maps nested in arrays.
+        (
+            "fn main() { print([1, [2, {\"k\": 3}]] == [1, [2, {\"k\": 3}]]); print([1, [2, {\"k\": 3}]] == [1, [2, {\"k\": 4}]]); }",
+            "true\nfalse\n",
+        ),
+        // Empty collections and null elements.
+        (
+            "fn main() { print([] == []); print({} == {}); print([null] == [null]); }",
+            "true\ntrue\ntrue\n",
+        ),
+        // Strings.
+        (
+            "fn main() { print(\"hi\" == \"hi\"); print(\"hi\" == \"ho\"); }",
+            "true\nfalse\n",
+        ),
+        // int vs float cross-type (and plain ints).
+        (
+            "fn main() { print(1 == 1.0); print(1 == 2); print(1 != 1.0); }",
+            "true\nfalse\nfalse\n",
+        ),
+        // `!=` on maps and arrays.
+        (
+            "struct P { x: int } fn main() { print(P { x: 1 } != P { x: 1 }); print(P { x: 1 } != P { x: 2 }); print([1] != [1]); print([1] != [2]); }",
+            "false\ntrue\nfalse\ntrue\n",
+        ),
+    ];
+    for (source, expected) in cases {
+        expect_print_everywhere_str(source, expected);
+    }
+}
