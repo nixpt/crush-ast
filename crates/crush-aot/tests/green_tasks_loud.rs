@@ -5,9 +5,10 @@
 //! `spawn` compiles through, and never silently skipping the task.
 //!
 //! `yield` and `await` without `spawn` are **not** green-task constructs: with
-//! no spawned task `yield` is a no-op and `await` has no handle (the scheduler
-//! and portable VM push null), so every engine lowers them to a no-op rather
-//! than refusing. See `differential_aot.rs` for the lone-`yield` agreement.
+//! no spawned task `yield` is a no-op and `await` has no handle (`await v` on a
+//! non-handle returns `v`, issue #251), so every engine lowers them to a no-op
+//! rather than refusing. See `differential_aot.rs` for the lone-`yield` and
+//! non-handle-`await` agreement.
 //!
 //! A `make_closure` by itself (a function value used without `spawn`) stays
 //! refused as a function value; see `function_values_loud.rs`.
@@ -48,7 +49,8 @@ fn yield_alone_is_not_loud() {
     crush_vm::fastvm::lower_program(&casm(source)).expect("fastvm: yield alone is a no-op");
 }
 
-/// `await` alone has no handle, so it is a no-op (push null), not a refusal.
+/// `await` alone has no handle, so it is a no-op (returns the value), not a
+/// refusal.
 #[test]
 fn await_alone_is_not_loud() {
     let source = "fn main() {\n  let h = 1\n  await h\n}\n";

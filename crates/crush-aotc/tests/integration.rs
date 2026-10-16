@@ -247,7 +247,8 @@ fn a_kind_maps_cant_represent_is_refused() {
 /// issue #161: no green-task scheduler here — `spawn` is refused by name, not
 /// compiled to `unhandled op` C that silently skips the task. `yield`/`await`
 /// without `spawn` are no-ops (a lone `yield` has nothing to yield to, and an
-/// `await` has no handle), so they compile, not refuse.
+/// `await` has no handle — issue #251: `await v` returns `v`), so they
+/// compile, not refuse.
 #[test]
 fn green_tasks_are_refused_by_name() {
     let program = crush_frontend::compile_crush_source("fn worker() {}\nfn main() { spawn worker() }\n")

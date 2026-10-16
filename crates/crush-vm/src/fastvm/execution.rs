@@ -1242,12 +1242,11 @@ pub fn execute_one(
         }
 
         FastOp::Await => {
-            // issue #161: `await` on a non-handle (there is no `spawn` on
-            // FastVM/JIT — that is refused at lowering) pops the awaited value
-            // and pushes null, exactly like the scheduler and portable VM,
-            // which never error on a non-handle `await`.
-            stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Null);
+            // issue #161/#251: `await` on a non-handle (there is no `spawn` on
+            // FastVM/JIT — that is refused at lowering) leaves the awaited
+            // value in place: `await v` returns `v` (JS semantics), exactly
+            // like the scheduler and portable VM, which never error on a
+            // non-handle `await`.
         }
 
         FastOp::CrossLangCall => {
