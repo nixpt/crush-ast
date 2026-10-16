@@ -4,23 +4,23 @@
 |-------|-------|
 | **ID** | CRUSH-xps-8 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In progress; first cast-boundary slice |
 | **Phase** | M2 / Rust parity |
-| **Assignee** | unassigned |
+| **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7 |
 | **Estimated effort** | L; deliver in 8a/8b/8c slices |
 | **Spec** | [Rust parity completion](../designs/rust-parity-xps-8-13.md#xps-8-numeric-facts-and-the-bounded-integer-profile) |
 
 ## Problem and current evidence
 
-`Expr::Cast` currently lowers only its operand, literal suffixes disappear,
-and xps-7's ownership `Kind::Copy` collapses numeric widths. Generic Crush
+At ticket creation, `Expr::Cast` lowered only its operand and literal suffixes
+disappeared. xps-7's ownership `Kind::Copy` collapses numeric widths. Generic Crush
 integers are checked signed i64 values; that is not Rust's narrow-integer
 or release-overflow contract.
 
 The shared corpus pins two silent failures:
 
-| Fixture | rustc stdout | Current pinned Crush stdout |
+| Fixture | rustc stdout | Original pinned Crush stdout |
 |---|---|---|
 | `audit_integer_cast`: `300i64 as u8` | `44` | `300` |
 | `audit_integer_overflow`: `fn bump(n: u8) -> u8 { n + 10 }; bump(250)` | `4` | `260` |
@@ -85,6 +85,61 @@ assignment as well as binary arithmetic. Preserve assignment's unit result.
 Keep unimplemented `wrapping_*`, shifts, division edge cases and width-sensitive
 methods explicitly loud. A checked-overflow VM error is not proof of matching
 Rust's unchecked release wrapping.
+
+## First implementation slice
+
+Branch: `agent/nixp/CRUSH-xps-8`, based on integrated main `ca5c662` after
+the SDK stack and design #237 merged. This is a bounded first slice of 8a/8b;
+the ticket remains open.
+
+- Lower literal integer casts exactly for i8/i16/i32/i64/u8/u16/u32, including
+  direct negative literals, parentheses and chained casts. Integer cast targets
+  constrain unsuffixed literal operands, as checked against rustc (e.g.
+  `255 as i8` is an overflowing literal, while `255u8 as i8` is a valid cast).
+  Host-side i128 constant evaluation produces
+  only representable guest Int values and adds no runtime capability/opcode.
+- Reject every other cast at its source location, including casts of variables,
+  calls, computed operands, floats/chars and unsupported targets. The original
+  `audit_integer_cast` becomes a pinned frontend refusal, not an erased cast.
+- Parse direct signed minimum literals before parsing their positive magnitude
+  into a guest Int. Validate explicitly suffixed integer literal bounds and
+  refuse unsupported suffixes, including wide/pointer integers and f32.
+- Retain literal suffixes and local/function/closure annotation syntax alongside
+  lexical binding and ownership metadata. These are **source hints**, not a
+  resolved numeric fact pass; unsuffixed literals remain unresolved in metadata.
+
+Still required: binding/type inference (including target-sensitive annotations
+and alias handling), dynamic cast lowering with single evaluation, typed
+operations/wrapping, compatible numeric method results, and removal of the
+remaining overflow silent policy. Do not mark full 8a/8b/8c acceptance complete
+from this slice's tests.
+
+### Slice validation (2026-10-15)
+
+- Rust walker library: 8 passed; SDK default-feature library + Rust integration
+  targets (`rust_source`, `rust_binding_scopes`, `rust_numeric`, `rustc_corpus`):
+  321 passed; AOT library + `rust_parity`: 20 passed. Total: 349 tests.
+- Ten new rustc-produced fixtures expand the corpus to 68. VM: 36 exact,
+  30 pinned refusals, 2 known silent; each native AOT backend: 28 exact,
+  38 pinned refusals, 2 known silent. The remaining silent cases are overflow
+  (xps-8) and string Debug (xps-9). Freshness checks recompile every fixture.
+- The old cast silent policy failed under the new lowering before its policy
+  was changed; no other fixture changed behavior in that first audit.
+- Standalone SDK host versus native rustc: literal conversions/bounds match,
+  including `44 255 -1 -1294967296 -128` and downstream division `0 14`.
+  An effectful cast is refused at `2:28` with empty stdout. A `.crush` program
+  through the same host prints `crush sdk` and returns `Some(Int(42))`.
+- Oracle: `rustc 1.98.1 (48a229cea 2026-09-01)`, edition 2021, `-O`, host
+  `x86_64-unknown-linux-gnu`; C backend: GCC 16.2.1. No manual version bump.
+- Rust walker Clippy library/tests pass. Both changed packages' library/tests
+  pass with `-A clippy::approx_constant -D clippy::never_loop`; the unsuppressed
+  broader run finds six existing `3.14` test errors in unchanged SDK
+  `src/{caps,stdlib}.rs`. Targeted formatting and `git diff --check` pass.
+
+Proof logs: `/tmp/crush-xps8-{walker,sdk-default,aot,live}.log`. Dedicated build
+target: `/build/tmp/crush-xps8-target` with two jobs, debug data and incremental
+compilation disabled. A Rust-only feature trial hit existing unguarded Python/JS
+library tests; enabling the SDK defaults made the complete library target pass.
 
 ## Proposed fixture matrix
 

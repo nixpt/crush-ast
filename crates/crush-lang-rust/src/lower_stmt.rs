@@ -21,6 +21,7 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
     match stmt {
         Stmt::Local(local) => {
             let mut meta = meta;
+            meta.insert("rust_numeric_hint".into(), crate::numeric::hint(&local.pat));
             meta.insert("rust_value_hint".into(), crate::values::hint(&local.pat));
             let name = pat_to_ident(&local.pat)?;
             let value = match &local.init {
@@ -37,6 +38,9 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
         Stmt::Item(item) => match item {
             syn::Item::Fn(item_fn) => {
                 let mut meta = meta;
+                let (numeric_params, numeric_return) = crate::numeric::signature(&item_fn.sig);
+                meta.insert("rust_numeric_params".into(), numeric_params);
+                meta.insert("rust_numeric_return".into(), numeric_return);
                 let (params, ret) = crate::values::signature(&item_fn.sig);
                 meta.insert("rust_value_params".into(), params);
                 meta.insert("rust_value_return".into(), ret);
