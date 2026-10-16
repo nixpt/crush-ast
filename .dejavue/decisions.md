@@ -1163,3 +1163,12 @@ Proposed specification and six existing ticket refinements; xps-8 then xps-9 the
 Reason:
 The merged specification requires exact conversions or frontend refusal. Constant bounded integer casts can be evaluated in the walker without a new guest ABI or backend kernel; dynamic casts need a later binding/range fact pass and single-evaluation lowering. Retain numeric source syntax separately from ownership Copy metadata, keep overflow policy and the ticket open.
 
+
+## 2026-10-15T20:10:57-05:00 — Require canonical numeric provenance before dynamic Rust casts
+
+Reason:
+Rust declarations alone cannot prove values after generic Crush arithmetic. Resolve lexical storage first, validate direct-call arguments and least-fixed-point return summaries, then expand casts once in shared CASM. Keep u64 within guest i64 and new usize conversions within the portable 16-bit ceiling; length provenance can retain native usize bounds. This avoids a runtime ABI or backend-specific numeric implementation while preserving explicit refusals for unproven values.
+
+Outcome:
+CRUSH-xps-8 slice 2 adds dynamic casts, bounded unsigned/length/index cases, left-to-right rooted source calls and innermost diagnostics; general typed wrapping remains open.
+

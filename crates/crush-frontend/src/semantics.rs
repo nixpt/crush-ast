@@ -472,8 +472,15 @@ impl SemanticAnalyzer {
                     _ => bail!("Unknown operator: {}", operator),
                 }
             }
-            Expression::Call { function, args, .. } => {
-                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
+            Expression::Call { function, args, meta } => {
+                if function == "len" && meta.get("rust_value_method").and_then(serde_json::Value::as_str) == Some("len") {
+                    if args.len() != 1 { bail!("Rust len method expects exactly 1 argument"); }
+                    self.check_expr(&args[0])?;
+                    return Ok(Type::Int);
+                }
+                let source_global = meta.get("rust_source_call") == Some(&serde_json::Value::Bool(true))
+                    && self.functions.contains_key(function);
+                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function).filter(|_| !source_global) {
                     intrinsic.validate(function, args)?;
                     // Assignment's first argument names a destination. It is
                     // not a load; Python's named-expression can bind a new name.
@@ -497,6 +504,12 @@ impl SemanticAnalyzer {
                         ResultType::Branches => self.merge_types(&types[1], &types[2])
                             .unwrap_or(Type::Any),
                         ResultType::Any => Type::Any,
+                        ResultType::Int => {
+                            if !matches!(types[0], Type::Int | Type::Any) {
+                                bail!("{function} requires an integer operand");
+                            }
+                            Type::Int
+                        }
                     });
                 }
                 let func_type = if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {

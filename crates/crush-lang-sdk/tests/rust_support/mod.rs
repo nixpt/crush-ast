@@ -31,6 +31,62 @@ pub enum Expected {
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
     (
+        "numeric_unsigned_large",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "not representable in Crush Int",
+        },
+    ),
+    (
+        "numeric_unsigned_overflow",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "bounded unsigned arithmetic needs a proven canonical integer",
+        },
+    ),
+    (
+        "numeric_pointer_unbounded",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "usize cast needs a nonnegative portable bound",
+        },
+    ),
+    (
+        "numeric_length_mutated",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "length source needs proven unmodified sequence",
+        },
+    ),
+    (
+        "numeric_length_nul",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "length source needs proven unmodified sequence",
+        },
+    ),
+    (
+        "numeric_cast_alias_call",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "indirect calls need numeric argument provenance",
+        },
+    ),
+    (
+        "numeric_cast_recursive",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "proven canonical integer",
+        },
+    ),
+    (
+        "numeric_cast_reserved",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "reserved Rust numeric compiler helper",
+        },
+    ),
+    (
         "value_array_assignment",
         Expected::Loud {
             ticket: "CRUSH-xps-7",
@@ -129,24 +185,45 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
         },
     ),
     (
-        "audit_integer_cast",
+        "numeric_cast_mutated",
         Expected::Loud {
             ticket: "CRUSH-xps-8",
-            diagnostic: "nonliteral Rust cast operand",
+            diagnostic: "proven canonical integer",
         },
     ),
     (
-        "numeric_cast_call",
+        "numeric_cast_overflow_producer",
         Expected::Loud {
             ticket: "CRUSH-xps-8",
-            diagnostic: "nonliteral Rust cast operand",
+            diagnostic: "proven canonical integer",
         },
     ),
     (
-        "numeric_cast_computed",
+        "numeric_cast_float_producer",
         Expected::Loud {
             ticket: "CRUSH-xps-8",
-            diagnostic: "nonliteral Rust cast operand",
+            diagnostic: "proven canonical integer",
+        },
+    ),
+    (
+        "numeric_cast_bad_argument",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "integer call argument needs a canonical value proof",
+        },
+    ),
+    (
+        "numeric_cast_capture_write",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "proven canonical integer",
+        },
+    ),
+    (
+        "numeric_cast_closure",
+        Expected::Loud {
+            ticket: "CRUSH-xps-8",
+            diagnostic: "closure casts need numeric capture/call analysis",
         },
     ),
     (
@@ -164,31 +241,10 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
         },
     ),
     (
-        "numeric_cast_pointer",
-        Expected::Loud {
-            ticket: "CRUSH-xps-8",
-            diagnostic: "unsupported Rust integer type `usize`",
-        },
-    ),
-    (
-        "numeric_cast_wide",
-        Expected::Loud {
-            ticket: "CRUSH-xps-8",
-            diagnostic: "unsupported Rust integer type `u64`",
-        },
-    ),
-    (
         "numeric_literal_f32",
         Expected::Loud {
             ticket: "CRUSH-xps-8",
             diagnostic: "unsupported Rust float suffix `f32`",
-        },
-    ),
-    (
-        "numeric_literal_u64",
-        Expected::Loud {
-            ticket: "CRUSH-xps-8",
-            diagnostic: "unsupported Rust integer type `u64`",
         },
     ),
     (

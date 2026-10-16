@@ -1,8 +1,7 @@
-//! The first xps-8 slice: retain source hints and lower literal integer casts.
+//! Rust integer syntax, bounded conversion rules and canonical value proofs.
 //!
-//! These are syntax facts, not inferred types. In particular, an unsuffixed
-//! literal's runtime Int representation does not prove that its Rust type is
-//! i64. Binding inference and typed arithmetic are subsequent xps-8 slices.
+//! Source hints survive lowering; facts::check authorizes dynamic conversions
+//! after lexical binding resolution. General typed arithmetic remains deferred.
 
 use std::collections::HashMap;
 
@@ -12,7 +11,11 @@ use serde_json::{Value, json};
 
 type Meta = HashMap<String, Value>;
 
-#[derive(Clone, Copy)]
+mod facts;
+pub(crate) use facts::check;
+pub(crate) const CAST: &str = "__crush_rust_int_cast__";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Integer {
     name: &'static str,
     bits: u32,
@@ -29,25 +32,37 @@ impl Integer {
             "u8" => ("u8", 8, false),
             "u16" => ("u16", 16, false),
             "u32" => ("u32", 32, false),
+            "u64" => ("u64", 64, false),
+            // This is a portable proof ceiling, not a claim about host width.
+            "usize" => ("usize", 16, false),
             _ => anyhow::bail!(
-                "unsupported Rust integer type `{name}`: supported cast/literal widths are i8/i16/i32/i64 and u8/u16/u32 (CRUSH-xps-8)"
+                "unsupported Rust integer type `{name}`: supported widths are i8/i16/i32/i64/u8/u16/u32, with bounded u64/usize (CRUSH-xps-8)"
             ),
         };
         Ok(Self { name, bits, signed })
     }
 
     fn check(self, value: i128) -> anyhow::Result<i128> {
-        let (min, max) = if self.signed {
-            (-(1i128 << (self.bits - 1)), (1i128 << (self.bits - 1)) - 1)
-        } else {
-            (0, (1i128 << self.bits) - 1)
-        };
+        if self.name == "usize" && !(0..=65535).contains(&value) {
+            anyhow::bail!(
+                "Rust usize value needs a nonnegative portable bound (0..=65535), or a declared source target (CRUSH-xps-8)"
+            );
+        }
+        let (min, max) = self.bounds();
         anyhow::ensure!(
             (min..=max).contains(&value),
             "Rust integer literal {value} is outside `{}` (CRUSH-xps-8)",
             self.name
         );
         Ok(value)
+    }
+
+    fn bounds(self) -> (i128, i128) {
+        if self.signed {
+            (-(1i128 << (self.bits - 1)), (1i128 << (self.bits - 1)) - 1)
+        } else {
+            (0, (1i128 << self.bits) - 1)
+        }
     }
 
     fn convert(self, value: i128) -> i128 {
@@ -60,6 +75,10 @@ impl Integer {
         } else {
             low
         }
+    }
+
+    fn bounded(self) -> bool {
+        matches!(self.name, "u64" | "usize")
     }
 }
 
@@ -156,13 +175,53 @@ fn constant(expr: &syn::Expr, inferred: Integer) -> anyhow::Result<(i128, Intege
     Ok((from.check(magnitude(literal, negative)?)?, from))
 }
 
-pub(crate) fn lower_cast(cast: &syn::ExprCast, mut meta: Meta) -> anyhow::Result<Expression> {
+fn literal_operand(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Lit(_) => true,
+        syn::Expr::Paren(p) => literal_operand(&p.expr),
+        syn::Expr::Group(g) => literal_operand(&g.expr),
+        syn::Expr::Cast(c) => literal_operand(&c.expr),
+        syn::Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            matches!(u.expr.as_ref(), syn::Expr::Lit(_))
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn lower_cast(
+    cast: &syn::ExprCast,
+    ctx: &crush_walker_core_no_tree_sitter::LowerCtx<'_>,
+    mut meta: Meta,
+) -> anyhow::Result<Expression> {
     let to = target(&cast.ty)?;
-    let (value, from) = constant(&cast.expr, to)?;
     meta.insert("rust_numeric_suffix".into(), json!(to.name));
+    if !literal_operand(&cast.expr) {
+        meta.insert("rust_numeric_cast".into(), json!(true));
+        return Ok(Expression::Call {
+            function: CAST.into(),
+            args: vec![
+                crate::lower_expr::lower_expr(&cast.expr, ctx)?,
+                Expression::IntLiteral {
+                    value: if to.bounded() { 64 } else { to.bits.into() },
+                    meta: Meta::new(),
+                },
+                Expression::BoolLiteral {
+                    value: to.bounded() || to.signed,
+                    meta: Meta::new(),
+                },
+            ],
+            meta,
+        });
+    }
+    let (value, from) = constant(&cast.expr, to)?;
+    if to.name == "usize" {
+        to.check(value)?;
+    }
     meta.insert("rust_integer_cast_from".into(), json!(from.name));
     Ok(Expression::IntLiteral {
-        value: i64::try_from(to.convert(value))?,
+        value: i64::try_from(to.convert(value)).map_err(|_| {
+            anyhow::anyhow!("Rust cast result is not representable in Crush Int (CRUSH-xps-8)")
+        })?,
         meta,
     })
 }
@@ -217,7 +276,9 @@ mod tests {
             ("-128 as i8", -128, "i8"),
         ] {
             let expr = syn::parse_str::<syn::ExprCast>(source).unwrap();
-            let Expression::IntLiteral { value, meta } = lower_cast(&expr, Meta::new()).unwrap()
+            let context = crush_walker_core_no_tree_sitter::LowerCtx::new(source, "test", "rust");
+            let Expression::IntLiteral { value, meta } =
+                lower_cast(&expr, &context, Meta::new()).unwrap()
             else {
                 panic!("cast did not lower to a literal: {source}");
             };
@@ -230,8 +291,9 @@ mod tests {
             ("-1 as u8", "unsigned Rust literal"),
         ] {
             let cast = syn::parse_str::<syn::ExprCast>(source).unwrap();
+            let context = crush_walker_core_no_tree_sitter::LowerCtx::new(source, "test", "rust");
             assert!(
-                lower_cast(&cast, Meta::new())
+                lower_cast(&cast, &context, Meta::new())
                     .unwrap_err()
                     .to_string()
                     .contains(diagnostic)
@@ -259,7 +321,15 @@ mod tests {
             assert_eq!(value, expected, "{source}");
         }
         for source in [
-            "128i8", "256u8", "-129i8", "-1u8", "1u64", "1i128", "1u128", "1usize", "1isize",
+            "128i8",
+            "256u8",
+            "-129i8",
+            "-1u8",
+            "18446744073709551615u64",
+            "1i128",
+            "1u128",
+            "65536usize",
+            "1isize",
             "1.5f32",
         ] {
             let source = format!("fn main() {{ let x = {source}; }}");
@@ -275,16 +345,16 @@ mod tests {
     fn unproven_casts_fail_at_the_source_boundary() {
         for (source, diagnostic) in [
             (
-                "fn main() { let n = 300; println!(\"{}\", n as u8); }",
-                "nonliteral Rust cast operand",
+                "fn main() { let mut n = 300i64; n = 400; println!(\"{}\", n as u8); }",
+                "proven canonical integer",
             ),
             (
-                "fn value() -> i64 { 300 } fn main() { println!(\"{}\", value() as u8); }",
-                "nonliteral Rust cast operand",
+                "fn value(n: u8) -> u8 { n + 10 } fn main() { println!(\"{}\", value(250) as u16); }",
+                "proven canonical integer",
             ),
             (
-                "fn main() { let x = (1 + 2) as u8; }",
-                "nonliteral Rust cast operand",
+                "fn value(n: i64) -> i64 { n + 1 } fn main() { let x = value(300) as u8; }",
+                "proven canonical integer",
             ),
             (
                 "fn main() { let x = 1.5 as i32; }",
@@ -299,13 +369,10 @@ mod tests {
                 "unsupported Rust integer type",
             ),
             (
-                "fn main() { let x = 1i64 as u64; }",
-                "unsupported Rust integer type",
+                "fn main() { let x = -1i64 as u64; }",
+                "not representable in Crush Int",
             ),
-            (
-                "fn main() { let x = 1i64 as usize; }",
-                "unsupported Rust integer type",
-            ),
+            ("fn main() { let x = 70000i64 as usize; }", "portable bound"),
             (
                 "fn main() { let x = 1i64 as isize; }",
                 "unsupported Rust integer type",
