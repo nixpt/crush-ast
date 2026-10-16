@@ -1100,12 +1100,65 @@ static void _cmp_type_error(void) {
     exit(1);
 }
 
+/* `_obj_get` but distinguishing "key absent" from "key present with a null
+   value" — equality must not treat the two the same ({"a": null} != {"b": null}). */
+static bool _obj_get_opt(CrushObject* obj, const char* key, Value* out) {
+    for (int i = 0; i < obj->field_count; i++) {
+        if (strcmp(obj->fields[i].key, key) == 0) { *out = obj->fields[i].val; return true; }
+    }
+    return false;
+}
+
+/* Deep structural equality — mirrors crush-vm `Value::eq` (IndexMap/Vec
+   PartialEq). Maps (TAG_OBJECT) compare key set + value, order-insensitive;
+   arrays (TAG_ARRAY) compare length + elementwise, order-sensitive. Cross-type
+   numerics coerce (1 == 1.0); every other mixed-type pair is false. Recursive
+   like the VM: crush-vm's equality is not cycle-safe (it stack-overflows on a
+   self-referential array/map), so this mirror recurses the same way rather
+   than returning a silently-different answer for a cycle the other backends
+   reject loudly. */
+static bool _value_eq(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) return a.i == b.i;
+    if (_is_num(a) && _is_num(b)) {
+        double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
+        double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
+        return fa == fb;
+    }
+    if (a.tag == TAG_STRING && b.tag == TAG_STRING) return strcmp(a.s, b.s) == 0;
+    if (a.tag == TAG_BOOL && b.tag == TAG_BOOL) return a.b == b.b;
+    if (a.tag == TAG_NULL && b.tag == TAG_NULL) return true;
+    if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
+        CrushArray* aa = &_arrays[a.array_idx];
+        CrushArray* ba = &_arrays[b.array_idx];
+        if (aa->len != ba->len) return false;
+        for (int i = 0; i < aa->len; i++)
+            if (!_value_eq(aa->data[i], ba->data[i])) return false;
+        return true;
+    }
+    if (a.tag == TAG_OBJECT && b.tag == TAG_OBJECT) {
+        CrushObject* ao = &_objects[a.obj_idx];
+        CrushObject* bo = &_objects[b.obj_idx];
+        if (ao->field_count != bo->field_count) return false;
+        for (int i = 0; i < ao->field_count; i++) {
+            Value bv;
+            if (!_obj_get_opt(bo, ao->fields[i].key, &bv)) return false;
+            if (!_value_eq(ao->fields[i].val, bv)) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static Value _cmp(Value a, Value b, int op) {
     // op: 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE
+    // EQ/NE are deep structural; ordered comparisons stay numeric/string only
+    // (guarded at each call site in emit_c_instr).
+    if (op == 0) return mk_bool(_value_eq(a, b));
+    if (op == 1) return mk_bool(!_value_eq(a, b));
+
     bool r = false;
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         switch (op) {
-            case 0: r = a.i == b.i; break; case 1: r = a.i != b.i; break;
             case 2: r = a.i <  b.i; break; case 3: r = a.i <= b.i; break;
             case 4: r = a.i >  b.i; break; case 5: r = a.i >= b.i; break;
         }
@@ -1113,7 +1166,6 @@ static Value _cmp(Value a, Value b, int op) {
         double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
         double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
         switch (op) {
-            case 0: r = fa == fb; break; case 1: r = fa != fb; break;
             case 2: r = fa <  fb; break; case 3: r = fa <= fb; break;
             case 4: r = fa >  fb; break; case 5: r = fa >= fb; break;
         }
@@ -1122,14 +1174,9 @@ static Value _cmp(Value a, Value b, int op) {
            order, matching every other backend (CRUSH-136). */
         int c = strcmp(a.s, b.s);
         switch (op) {
-            case 0: r = c == 0; break; case 1: r = c != 0; break;
             case 2: r = c <  0; break; case 3: r = c <= 0; break;
             case 4: r = c >  0; break; case 5: r = c >= 0; break;
         }
-    } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL && (op == 0 || op == 1)) {
-        r = (op == 0) ? (a.b == b.b) : (a.b != b.b);
-    } else if (a.tag == TAG_NULL && b.tag == TAG_NULL && (op == 0 || op == 1)) {
-        r = (op == 0);
     }
     return mk_bool(r);
 }
