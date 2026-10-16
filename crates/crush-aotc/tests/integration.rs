@@ -243,3 +243,25 @@ fn a_kind_maps_cant_represent_is_refused() {
     assert!(err.starts_with("COSM objects aren't supported on crush-aotc yet (CRUSH-zorro-43)"), "{err}");
     assert!(err.contains("`Point` declares equality: identity"), "{err}");
 }
+
+/// issue #161: no green-task scheduler here — `spawn` is refused by name, not
+/// compiled to `unhandled op` C that silently skips the task. `yield`/`await`
+/// without `spawn` are no-ops (a lone `yield` has nothing to yield to, and an
+/// `await` has no handle), so they compile, not refuse.
+#[test]
+fn green_tasks_are_refused_by_name() {
+    let program = crush_frontend::compile_crush_source("fn worker() {}\nfn main() { spawn worker() }\n")
+        .expect("frontend");
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("refused");
+    let err = err.to_string();
+    assert!(err.contains("spawn"), "{err}");
+    assert!(!err.contains("make_closure"), "{err}");
+}
+
+#[test]
+fn lone_yield_and_await_compile_not_refuse() {
+    for source in ["fn main() { yield }\n", "fn main() { let h = 1\n await h }\n"] {
+        let program = crush_frontend::compile_crush_source(source).expect("frontend");
+        AotcCompiler::new(AotcOpts::default()).compile(&program).expect("compiles: a lone yield/await is a no-op");
+    }
+}

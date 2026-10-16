@@ -6,6 +6,7 @@
 /// translation.
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "Rust")?;
+    crate::refuse_green_task(program, "Rust")?;
     let mut out = String::new();
 
     emit_header(&mut out);
@@ -303,6 +304,13 @@ fn arith_overflow() -> ! {
     std::process::exit(1);
 }
 
+// CRUSH-zorro-54: a read of a local that has no value yet fails, as on the VM.
+#[cold]
+fn uninit_load(name: &str) -> ! {
+    eprintln!("crush(aot): load from uninitialised slot `{name}`");
+    std::process::exit(1);
+}
+
 fn conv_chr_value(value: RuntimeValue) -> RuntimeValue {
     let codepoint = match value {
         RuntimeValue::Int(value) => value,
@@ -584,6 +592,8 @@ fn emit_function(
     let fn_name = sanitize_fn_name(name);
     let is_main = name == "main";
     let n = func.body.len();
+    // CRUSH-zorro-54: loads not preceded by a store on every path.
+    let to_check = crate::assigned::loads_to_check(func);
 
     out.push_str(&format!("#[inline(never)]\nfn {fn_name}("));
     if is_main {
@@ -619,7 +629,7 @@ fn emit_function(
             // remembers the Kind's fields and refuses any other (as the VMs do).
             out.push_str(&format!("                stack.push(RuntimeValue::Object(Rc::new(RefCell::new({sealed}))));\n"));
             out.push_str(&format!("                __pc = {};\n                continue;\n", (i + 1).min(n)));
-        } else if let Some(op) = emit_body(out, instr, i, n) {
+        } else if let Some(op) = emit_body(out, instr, i, n, to_check[i]) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
@@ -659,6 +669,7 @@ fn emit_body(
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
+    check_load: bool,
 ) -> Option<String> {
     let mut unsupported = None;
     let args = &instr.args;
@@ -714,9 +725,19 @@ fn emit_body(
         // ── Locals ──
         "load" => {
             let name = args["name"].as_str().unwrap_or("");
-            out.push_str(&format!(
-                "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
-            ));
+            if check_load {
+                // CRUSH-zorro-54: a local is unassigned until its first store
+                // (it isn't in `locals` yet); reading it then fails, as on the VM.
+                let msg = name.escape_default();
+                out.push_str(&format!(
+                    "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{msg}\") }});\n"
+                ));
+            } else {
+                // Every path here stored to it first (`assigned::loads_to_check`).
+                out.push_str(&format!(
+                    "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
+                ));
+            }
             out.push_str(&next_pc_str);
         }
         "store" => {
@@ -875,31 +896,6 @@ fn emit_body(
                 out.push_str(&next_pc_str);
             }
         }
-        // ── Async / AI opcodes ──
-        // AOT backends can't spawn OS threads or yield at the instruction level;
-        // these are stubbed to the minimum safe behavior (no crash, no deadlock).
-        "spawn" => {
-            // Pop function name + argc args (left on stack), push null.
-            // AOT can't spawn green threads, but we must keep the stack balanced.
-            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
-            out.push_str(&format!("{ind}stack.pop(); // fn name\n"));
-            for _ in 0..argc {
-                out.push_str(&format!("{ind}stack.pop(); // arg\n"));
-            }
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
-        "yield" => {
-            // Cooperative yield is a no-op in sequential AOT execution.
-            out.push_str(&next_pc_str);
-        }
-        "await" => {
-            // Pop handle, push null (can't actually await in AOT).
-            out.push_str(&format!("{ind}stack.pop(); // handle\n"));
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
-
         // ── AI opcodes ──
         // CRUSH-32 follow-up: each AI opcode now emits a per-opcode inline stub
         // Object ({ok: true, kind, echo: ([])}) via `make_ai_stub`, so the 5
@@ -1135,6 +1131,18 @@ fn emit_body(
                 }
                 _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
+        }
+
+        // ── Green tasks without `spawn` (issue #161) ──
+        // With no spawned task `yield` is a cooperative-yield no-op and `await`
+        // has no handle (the scheduler and portable VM push null). A program
+        // that does `spawn` is refused up front by `refuse_green_task`, so
+        // these never run a task here.
+        "yield" => out.push_str(&next_pc_str),
+        "await" => {
+            out.push_str(&format!("{ind}stack.pop(); // awaited value\n"));
+            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
+            out.push_str(&next_pc_str);
         }
 
         "nop" => out.push_str(&next_pc_str),

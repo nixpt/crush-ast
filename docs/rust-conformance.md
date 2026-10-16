@@ -58,7 +58,7 @@ routing is available.
 | String clone, `to_owned`, and `+=` on local bindings | Exact supported cases (CRUSH-xps-7) |
 | Implicit owned transfers, nested clones, borrowed views, `pop`/`unwrap`, indexed writes, owned captures | Rejected with location (CRUSH-xps-7) |
 | Other mutable string operations and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
-| Literal integer casts in i8/i16/i32/i64/u8/u16/u32 | Exact; other casts rejected with location (CRUSH-xps-8 slice 1) |
+| Proven integer casts, lengths and bounded unsigned values | Exact within the numeric proof profile; unproven cases refused (CRUSH-xps-8) |
 | Typed arithmetic and release overflow | Known silent divergence; CRUSH-xps-8 remains open |
 | Typed literal `{:?}` quoting | Exact; dynamic Debug refused pending the shared formatter (CRUSH-xps-9) |
 | Walker assignments / loops | Exact baseline; CRUSH-xps-10 |
@@ -95,26 +95,32 @@ this slice. The shared kernel, descriptors, registration and bridge remain open.
 
 ## Rust integer conversion boundary
 
-The first xps-8 slice supports casts whose operand is an integer literal, a
-direct negative integer literal, parentheses around those, or another supported
-cast. Narrowing keeps the low target-width bits and interprets the target sign;
-widening preserves the source value. Integer cast targets constrain unsuffixed
-literal operands; `255 as i8` is rejected as an overflowing literal. Examples:
-`300i64 as u8` is `44`, `255u8 as i8 as i64` is
-`-1`, and `3_000_000_000i64 as i32` is `-1294967296`.
+Integer casts support literals, proven immutable bindings, direct function results,
+and computed operands with canonical integer range proofs. Narrowing keeps the
+low target-width bits and interprets the target sign; widening preserves the
+source value. The shared CASM expansion evaluates each operand once. Integer
+cast targets constrain unsuffixed literals: `255 as i8` is an overflowing
+literal, while `255u8 as i8 as i64` produces `-1`.
 
-Casts of variables, calls and computed operands are refused before compilation
-until numeric binding/range analysis and single-evaluation lowering exist.
-Float/char/pointer casts, wide unsigned/128-bit targets, and aliases are also
-refused. The original cast audit is now a frontend-refusal policy on all three
-engines. Signed minimum literals parse correctly; explicit integer suffixes
-have range checks, and unsupported integer/f32 suffixes are rejected.
+A numeric pass runs after lexical binding resolution and before ownership
+checking. It records parameter, binding and result facts, validates direct-call
+arguments, and invalidates written bindings, including captured writes. Rust
+free-function calls evaluate arguments from left to right and resolve to actual
+source functions even when their names overlap compiler helpers or builtins.
 
-Local/function/closure annotations and literal suffixes survive as **source
-hints** in CAST metadata beside lexical/ownership metadata. They do not yet
-establish inferred types or typed arithmetic, and do not resolve annotation-only
-f32/wide/pointer types. The overflow audit remains a known silent divergence;
-xps-8 and normal `.rs` CLI dispatch remain gated.
+Small `u64` values are supported only in `0..=i64::MAX`. New integer-to-`usize`
+conversions need a proven bound in `0..=65535`, portable across Rust pointer
+widths; this ceiling does not select a host pointer width. Existing canonical
+`usize` provenance from a proven sequence or non-NUL string `len()` can retain
+its guest-representable range. Length conversions to fixed-width integers and
+nonnegative bounded range indices are covered by the cross-engine corpus.
+
+Float/char/pointer casts, 128-bit integers, unknown aliases, unproven producers,
+recursive or indirect calls, and casts inside closures remain refused. Mutable
+collection lengths and NUL-containing text lengths are refused in this numeric
+profile. This is a closed-program proof profile, not a Rust type checker.
+General typed arithmetic/wrapping remains unfinished: the overflow audit stays
+a known silent divergence. CRUSH-xps-8 and normal `.rs` CLI dispatch remain gated.
 
 ## Rust binding identity
 

@@ -226,3 +226,255 @@ fn push_method_call_appends_in_order() {
     expect_print_everywhere("let xs = [1]; xs.push(5); print(len(xs));", 2);
     expect_print_everywhere("let xs = [1]; xs.push(5); print(xs[1]);", 5);
 }
+
+// ── CRUSH-zorro-54: a read of an unassigned local fails on every engine ──
+
+/// How one engine ended: `Ok(returned value)` or `Err(error text)`.
+type EngineOutcome = Result<String, String>;
+
+/// Run `program`'s `main` on every engine here — scheduler VM, portable VM,
+/// FastVM, JIT, AOT Rust and AOT C — and return each one's outcome.
+fn run_on_every_engine(program: &casm::Program, name: &str) -> Vec<(&'static str, EngineOutcome)> {
+    use crush_vm::fastvm::FastYield;
+    let fast = |r: Result<FastYield, String>| match r {
+        Ok(FastYield::Finished(v)) => Ok(format!("{:?}", v.unwrap_or(RuntimeValue::Null))),
+        Ok(FastYield::Value(v)) => Ok(format!("{v:?}")),
+        Ok(FastYield::Error(e)) => Err(format!("{e:?}")),
+        Ok(other) => Err(format!("unexpected yield: {other:?}")),
+        Err(e) => Err(e),
+    };
+    let mut out = Vec::new();
+    let vm_prog = crush_lang_sdk::compile::casm_to_vm(program).expect("casm_to_vm");
+    let stack_top = |r: Result<crush_vm::VmResult, crush_vm::VmError>| match r {
+        Ok(res) => Ok(format!("{:?}", res.return_value.as_ref().or(res.stack.last()))),
+        Err(e) => Err(e.to_string()),
+    };
+    out.push(("scheduler vm", stack_top(crush_vm::run(&vm_prog, &Quotas::default()))));
+    out.push(("portable vm", stack_top(crush_vm::PortableVm::new(vm_prog.clone()).run())));
+    out.push(("fastvm", fast(crush_vm::run_fastvm(program).map_err(|e| format!("{e:?}")))));
+    let jit = crush_vm::fastvm::lower_program(program)
+        .map_err(|e| format!("lower_program: {e}"))
+        .and_then(|lowered| {
+            let engine = crush_jit::JitEngine::new().map_err(|e| format!("JitEngine::new: {e}"))?;
+            engine.run(&lowered).map_err(|e| format!("{e:#}"))
+        });
+    out.push(("jit", fast(jit)));
+    for (backend, so) in build_both(program, name) {
+        let o = run(&so);
+        let r = if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            Err(format!("exit {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))
+        };
+        out.push((if backend == "rust" { "aot rust" } else { "aot c" }, r));
+    }
+    out
+}
+
+/// `program` with the first `store` to `local` in `func` sent to a dead local
+/// instead, so `local` is unassigned on every path that only that store
+/// assigned. (The frontend refuses to compile a read of an unassigned local,
+/// but a walker can emit one — CRUSH-zorro-54.)
+fn unassign_first_store(mut program: casm::Program, func: &str, local: &str) -> casm::Program {
+    let f = program.functions.get_mut(func).expect("function");
+    let store = f
+        .body
+        .iter_mut()
+        .find(|i| i.op == "store" && i.args.get("name").and_then(|n| n.as_str()) == Some(local))
+        .expect("a store to the local");
+    store.args["name"] = serde_json::Value::from("__dead");
+    program
+}
+
+const UNINIT: &str = "load from uninitialised slot";
+
+/// Engines that still read an unassigned local as `null`, keyed to the
+/// ticket that fixes them. One that turns loud fails the test: remove it.
+const STILL_SILENT: &[(&str, &str)] = &[("fastvm", "CRUSH-zorro-55"), ("jit", "CRUSH-zorro-55")];
+
+fn assert_loud_everywhere(program: &casm::Program, name: &str) {
+    let outcomes = run_on_every_engine(program, name);
+    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
+    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    for (engine, o) in &outcomes {
+        let loud = matches!(o, Err(e) if e.contains(UNINIT));
+        match STILL_SILENT.iter().find(|(e, _)| e == engine) {
+            None => assert!(loud, "{name}: {engine} must fail with `{UNINIT}`:\n{}", report.join("\n")),
+            Some((_, ticket)) => assert!(
+                !loud && matches!(o, Ok(v) if v == "Null"),
+                "{name}: {engine} no longer reads null ({ticket}) — remove it from STILL_SILENT:\n{}",
+                report.join("\n")
+            ),
+        }
+    }
+}
+
+fn assert_value_everywhere(program: &casm::Program, name: &str, vm: &str, aot: &str) {
+    let outcomes = run_on_every_engine(program, name);
+    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
+    for (engine, o) in &outcomes {
+        let want = if engine.starts_with("aot") { aot } else { vm };
+        assert!(
+            matches!(o, Ok(v) if v.contains(want)),
+            "{name}: {engine} must return {want}:\n{}",
+            report.join("\n")
+        );
+    }
+}
+
+#[test]
+fn unassigned_local_read_in_main_fails_everywhere() {
+    // `x` is only ever read: the walker forgot to assign it. (`n(5)`, not
+    // `5`, so the frontend can't fold the read away.)
+    let program = unassign_first_store(
+        compile("fn n(v) { return v; } fn main() { let x = n(5); return x; }"),
+        "main",
+        "x",
+    );
+    assert_loud_everywhere(&program, "z54_main");
+}
+
+#[test]
+fn unassigned_local_read_on_the_untaken_path_fails_everywhere() {
+    // `x` is assigned only when `c` is true; `f(false)` reads it unassigned.
+    let src = |arg: &str| format!("fn f(c) {{ let x = 0; if c {{ x = 7; }} return x; }} fn main() {{ return f({arg}); }}");
+    let program = unassign_first_store(compile(&src("false")), "f", "x");
+    assert_loud_everywhere(&program, "z54_cond_untaken");
+    // ... and the same function reads it fine when the assigning path ran.
+    let program = unassign_first_store(compile(&src("true")), "f", "x");
+    assert_value_everywhere(&program, "z54_cond_taken", "7", "int:7");
+}
+
+#[test]
+fn a_loop_that_assigns_before_reading_still_works() {
+    // `y` is first assigned inside the loop body, then read in the same
+    // iteration: never unassigned at a read, though no store dominates the
+    // loop header.
+    let program = unassign_first_store(
+        compile("fn main() { let y = 0; let i = 0; let s = 0; while i < 4 { y = i * 2; s = s + y; i = i + 1; } return s; }"),
+        "main",
+        "y",
+    );
+    assert_value_everywhere(&program, "z54_loop", "12", "int:12");
+}
+
+// ── #223: `==` / `!=` on maps and arrays must compare contents, not identity ──
+
+/// The full printed output from the VM (scheduler tier). The portable VM shares
+/// `crush_vm::Value::PartialEq` (the equality this test pins), so it agrees by
+/// construction; the bug being fixed here is C-only.
+fn vm_output(source: &str) -> String {
+    let program =
+        crush_lang_sdk::compile::compile_crush_source(source).expect("frontend compiles source");
+    let quotas = Quotas {
+        max_steps: 20_000_000,
+        ..Quotas::default()
+    };
+    let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
+    assert!(result.halted, "program did not halt:\n{}", result.output);
+    result.output
+}
+
+/// Program stdout, without the type-tagged result line the runner prints last.
+fn program_stdout(so: &Path) -> String {
+    let out = run(so);
+    assert!(
+        out.status.success(),
+        "runner failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let body = text.trim_end_matches('\n');
+    match body.rfind('\n') {
+        Some(i) => format!("{}\n", &body[..i]),
+        None => String::new(),
+    }
+}
+
+/// `source` must print exactly `expected` on the VM and on every AOT backend.
+fn expect_print_everywhere_str(source: &str, expected: &str) {
+    assert_eq!(vm_output(source), expected, "VM printed wrong for {source:?}");
+    for (backend, so) in build_both(&compile(source), "eq_223") {
+        assert_eq!(
+            program_stdout(&so),
+            expected,
+            "{backend} printed wrong for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn map_and_array_equality_agrees_across_engines() {
+    // (source, expected printed output) — equal/unequal pairs for maps, arrays,
+    // nested maps/arrays, mixed map/array, strings, and int-vs-float, plus the
+    // two programs from #223.
+    let cases: &[(&str, &str)] = &[
+        // The two programs from the issue.
+        (
+            "struct P { x: int, y: int } fn main() { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; print(a == b); }",
+            "true\n",
+        ),
+        (
+            "struct P { x: int } struct Q { x: int } fn main() { print(P { x: 1 } == Q { x: 1 }); }",
+            "true\n",
+        ),
+        // Maps (struct instances are maps): equal / unequal by value.
+        (
+            "struct P { x: int, y: int } fn main() { print(P { x: 1, y: 2 } == P { x: 1, y: 2 }); print(P { x: 1, y: 2 } == P { x: 1, y: 3 }); }",
+            "true\nfalse\n",
+        ),
+        // Map equality is order-insensitive (IndexMap equality in the VM).
+        (
+            "fn main() { print({\"a\": 1, \"b\": 2} == {\"b\": 2, \"a\": 1}); }",
+            "true\n",
+        ),
+        // A missing key is not the same as a key holding null.
+        (
+            "fn main() { print({\"a\": null} == {\"b\": null}); print({\"a\": null} == {\"a\": 1}); }",
+            "false\nfalse\n",
+        ),
+        // Arrays: length + elementwise.
+        (
+            "fn main() { print([1, 2, 3] == [1, 2, 3]); print([1, 2] == [1, 3]); print([1, 2] == [1, 2, 3]); }",
+            "true\nfalse\nfalse\n",
+        ),
+        // Nested arrays.
+        (
+            "fn main() { print([[1, 2], [3]] == [[1, 2], [3]]); print([[1, 2]] == [[1, 3]]); }",
+            "true\nfalse\n",
+        ),
+        // Mixed map/array nesting.
+        (
+            "fn main() { print({\"a\": [1, 2], \"b\": {\"c\": 3}} == {\"b\": {\"c\": 3}, \"a\": [1, 2]}); print({\"a\": [1, 2]} == {\"a\": [1, 3]}); }",
+            "true\nfalse\n",
+        ),
+        // Arrays nested in maps nested in arrays.
+        (
+            "fn main() { print([1, [2, {\"k\": 3}]] == [1, [2, {\"k\": 3}]]); print([1, [2, {\"k\": 3}]] == [1, [2, {\"k\": 4}]]); }",
+            "true\nfalse\n",
+        ),
+        // Empty collections and null elements.
+        (
+            "fn main() { print([] == []); print({} == {}); print([null] == [null]); }",
+            "true\ntrue\ntrue\n",
+        ),
+        // Strings.
+        (
+            "fn main() { print(\"hi\" == \"hi\"); print(\"hi\" == \"ho\"); }",
+            "true\nfalse\n",
+        ),
+        // int vs float cross-type (and plain ints).
+        (
+            "fn main() { print(1 == 1.0); print(1 == 2); print(1 != 1.0); }",
+            "true\nfalse\nfalse\n",
+        ),
+        // `!=` on maps and arrays.
+        (
+            "struct P { x: int } fn main() { print(P { x: 1 } != P { x: 1 }); print(P { x: 1 } != P { x: 2 }); print([1] != [1]); print([1] != [2]); }",
+            "false\ntrue\nfalse\ntrue\n",
+        ),
+    ];
+    for (source, expected) in cases {
+        expect_print_everywhere_str(source, expected);
+    }
+}

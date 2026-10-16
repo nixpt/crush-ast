@@ -60,6 +60,11 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("fn_default_param_more", "CRUSH-zorro-18: a default parameter value (`x = …`) is not supported by the swc walker"),
     ("fn_rest_param", "CRUSH-zorro-18: a rest parameter (`...args`) is not supported by the JS walker yet"),
     ("fn_rest_param_more", "CRUSH-zorro-18: a rest parameter (`...args`) is not supported by the JS walker yet"),
+    // A top-level function can't see the script's variables on swc: it reads
+    // them unassigned, which fails as on the VM (they read as null before).
+    ("fn_script_late", "CRUSH-zorro-54: reads a script variable unassigned (the VM fails too); boa owns script scope (CRUSH-250)"),
+    ("fn_script_vars", "CRUSH-zorro-54: reads a script variable unassigned (the VM fails too); boa owns script scope (CRUSH-250)"),
+    ("misc_console_multi", "CRUSH-zorro-12: `undefined` is an unassigned local on swc, now loud (CRUSH-zorro-54)"),
     ("misc_console_error", "CRUSH-zorro-23: `console.error` / `console.warn` (stderr output) is not supported by the JS walker yet"),
     ("obj_computed_key", "CRUSH-zorro-23: a computed property key (`[k]: v`) is not supported by the JS walker yet"),
     ("obj_destructure", "CRUSH-zorro-16: destructuring"),
@@ -69,6 +74,8 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
     ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
     ("ops_int_overflow", "CRUSH-zorro-13: number model"),
+    ("ops_nan", "CRUSH-zorro-12: `NaN` is an unassigned local on swc, now loud (CRUSH-zorro-54)"),
+    ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` is an unassigned local on swc (matched by accident while it read as null; loud since CRUSH-zorro-54)"),
     ("ops_nullish", "CRUSH-zorro-12: ??"),
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
     ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
@@ -84,16 +91,12 @@ const RUST_LOUD: &[(&str, &str)] = &[
 ];
 
 /// Rust backend: silently-wrong programs today — `(program, fixing ticket, symptom)`.
-/// The first block matches the VM's `KNOWN_SILENT`; the second block is loud on
-/// the VM but silently wrong on AOT, mostly because AOT reads an undefined
-/// name / missing slot / out-of-range index as `null` where the VM errors.
+/// Loud on the VM but silently wrong on AOT, because AOT reads an
+/// out-of-range index / missing field as `null` where the VM errors. (An
+/// unassigned local fails on AOT as on the VM since CRUSH-zorro-54.)
 const RUST_SILENT: &[(&str, &str, &str)] = &[
     // AOT only (loud on the VM):
-    ("fn_script_late", "CRUSH-zorro-54", "a top-level function reads the script's variables as null: `null: null` (node: `count: 2`)"),
-    ("fn_script_vars", "CRUSH-zorro-54", "a top-level function reads the script's variables as null: `0 []` (node: `61 [ 3, 3, 55 ]`)"),
-    ("misc_console_multi", "CRUSH-zorro-12", "`undefined` prints `null`"),
     ("misc_undefined", "CRUSH-zorro-12", "undefined / out-of-range index / missing field print `null`"),
-    ("ops_nan", "CRUSH-zorro-12", "`NaN` reads as null, so NaN === NaN is true"),
     ("ops_optional_chain", "CRUSH-zorro-12", "o?.x?.y prints `null`, not `undefined`"),
 ];
 
@@ -121,13 +124,12 @@ const BOA_LOUD: &[(&str, &str)] = &[
     ("ops_nan", "CRUSH-zorro-12: `NaN` as a value (refused at walk time)"),
     // A top-level function using a script variable is a closure over it on
     // boa (VM exact); AOT can't compile closures yet. On swc these read the
-    // variables as null (CRUSH-zorro-54) or, in ops_ternary_nested, match
-    // only because the function never runs.
+    // variables unassigned and fail (CRUSH-zorro-54) or, in
+    // ops_ternary_nested, match because the function never runs.
     ("fn_script_late", "closures (CRUSH-251) don't compile on AOT yet"),
     ("fn_script_vars", "closures (CRUSH-251) don't compile on AOT yet"),
     ("ops_ternary_nested", "closures (CRUSH-251) don't compile on AOT yet"),
-    // Matched on AOT with swc only because AOT reads the unbound name
-    // `undefined` as `null`, and `null == undefined` agrees by accident.
+    // Loud on AOT with swc too: `undefined` is an unassigned local there.
     ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` as a value (refused at walk time)"),
 ];
 
@@ -137,7 +139,7 @@ fn boa_lists<'a>(
     silent: &[(&'a str, &'a str, &'a str)],
 ) -> (Vec<(&'a str, &'a str)>, Vec<(&'a str, &'a str, &'a str)>) {
     let moved = |n: &str| BOA_LOUD.iter().any(|e| e.0 == n) || BOA_EXACT.contains(&n);
-    let mut l: Vec<_> = loud.iter().copied().filter(|e| !BOA_EXACT.contains(&e.0)).collect();
+    let mut l: Vec<_> = loud.iter().copied().filter(|e| !moved(e.0)).collect();
     l.extend(BOA_LOUD.iter().copied());
     let s = silent.iter().copied().filter(|e| !moved(e.0)).collect();
     (l, s)
@@ -216,7 +218,9 @@ fn check(backend: &str, lowering: JsLowering, known_loud: &[(&str, &str)], known
         }
     }
     let mut by_area: BTreeMap<String, [usize; 3]> = BTreeMap::new();
-    let backend = &format!("{backend} ({lowering:?} lowering)");
+    // The label only: `compile_and_run` needs the bare backend name (with the
+    // label it built every "rust" run with the C backend).
+    let (engine, backend) = (backend, &format!("{backend} ({lowering:?} lowering)"));
     println!("\nJS corpus on AOT {backend}");
     for path in &files {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -224,7 +228,7 @@ fn check(backend: &str, lowering: JsLowering, known_loud: &[(&str, &str)], known
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         let loud_entry = known_loud.iter().find(|e| e.0 == name);
         let silent_entry = known_silent.iter().find(|e| e.0 == name);
-        let outcome = compile_and_run(backend, lowering, &name, &source, &expected);
+        let outcome = compile_and_run(engine, lowering, &name, &source, &expected);
         let slot = match outcome {
             Outcome::Exact => 0,
             Outcome::Loud(_) => 1,

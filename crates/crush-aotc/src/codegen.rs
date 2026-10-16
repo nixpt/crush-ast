@@ -58,6 +58,9 @@ impl AotcCompiler {
         // with a Kind a plain map can't represent (`casm::cosm_unsupported_reason`)
         // before generating anything.
         program.refuse_cosm("crush-aotc").map_err(anyhow::Error::msg)?;
+        // issue #161: no green-task scheduler here — refuse `spawn`/`yield`/
+        // `await` by name rather than silently skipping the task.
+        program.refuse_green_task("crush-aotc").map_err(anyhow::Error::msg)?;
         let mut out = String::with_capacity(8192);
 
         // Emit header
@@ -210,6 +213,19 @@ impl AotcCompiler {
                     if let Some(top) = stack.last().cloned() {
                         stack.push(top);
                     }
+                }
+
+                // ── Green tasks without `spawn` (issue #161) ──
+                // With no spawned task `yield` is a cooperative-yield no-op and
+                // `await` has no handle (the scheduler and portable VM push
+                // null). A program that does `spawn` is refused up front by
+                // `refuse_green_task`, so these never run a task here.
+                "yield" => {}
+                "await" => {
+                    stack.pop();
+                    let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                    writeln!(out, "    CrushValue {} = CV_NULL;", t)?;
+                    stack.push((t, ty));
                 }
 
                 // ── Memory ──────────────────────────────────────────────
