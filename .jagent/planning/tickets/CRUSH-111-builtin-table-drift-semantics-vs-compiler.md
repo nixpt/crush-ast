@@ -149,3 +149,26 @@ emits the working `__crush_pos__` / `__crush_bit_not__` intrinsics.
 - PR #263 review (vega, 2026-10-16) — where the walker vector was measured; the discussion in
   `VISION.md`'s walker table (`docs/benchmarks/VISION.md:135`) carries the caveat this ticket clears.
 - CRUSH-35 — VISION.md table refresh; its `range()` row records the divergence.
+
+## Dispatch (prepared 2026-10-16)
+
+- Branch: `agent/panini/CRUSH-111`
+- Repo: `crush-ast`
+- Turns: `100`
+- Runner: `claude`
+- Identity: `panini` (compiler lane per this index's dispatch rules)
+- Prompt: `workspace-meta/prompts/2026-10-16-CRUSH-111.txt` — linted clean
+  (`dispatch-prompt lint` → 0 error / 0 warn / 0 info)
+- Scope: this ticket file is the canonical spec. The deliverable is the **shared table** — extend
+  `crates/crush-frontend/src/walker_intrinsics.rs` or replace it, but do not leave a second
+  hand-maintained list behind.
+- Environment: `/build` is 100% full as of dispatch — build with
+  `CARGO_TARGET_DIR=/home/nixp/targets/panini-crush-111 CARGO_BUILD_JOBS=2`.
+- Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs`; flag
+  `crush_cast::Function`/`Program` shape changes before landing; do not edit the language walkers
+  (`crates/crush-lang-*/src/**`) — this ticket fixes the receiving end.
+- Discipline: incremental commits, quote the real post-commit `HEAD`.
+- Verification: `range()` + a comprehension through **both** entry points with identical output, the
+  new two-door parity test, and `unknown_helpers_remain_errors` still green.
+- Halt: if the parity test shows the divergence is broader than `make_range` in a way that changes
+  the fix's shape, or if making the doors agree requires a `crush_cast` shape change.
