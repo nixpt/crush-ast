@@ -266,3 +266,15 @@ fn lone_yield_and_await_compile_not_refuse() {
         AotcCompiler::new(AotcOpts::default()).compile(&program).expect("compiles: a lone yield/await is a no-op");
     }
 }
+
+#[test]
+fn await_on_a_non_handle_returns_the_value() {
+    // issue #251: `await v` on a non-handle returns `v` (JS semantics), so
+    // `print(await v)` prints `v`, not `null`.
+    let out = compile_and_run("fn main() { print(await 5) }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["5"], "unexpected output: {out}");
+    let out = compile_and_run("fn main() { print(await \"x\") }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["x"], "unexpected output: {out}");
+    let out = compile_and_run("fn main() { print(await null) }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["null"], "unexpected output: {out}");
+}
