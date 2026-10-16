@@ -227,7 +227,12 @@ impl Check<'_> {
             | E::FloatLiteral { .. }
             | E::BoolLiteral { .. }
             | E::NullLiteral { .. } => Ok(Kind::Copy),
-            E::StringLiteral { meta, .. } => Ok(if meta.get("rust_debug_type") == Some(&Value::String("char".into())) { Kind::Copy } else { Kind::Str }),
+            E::StringLiteral { meta, .. }
+                if meta.get("rust_debug_type").and_then(Value::as_str) == Some("char") =>
+            {
+                Ok(Kind::Copy)
+            }
+            E::StringLiteral { .. } => Ok(Kind::Str),
             E::ArrayLiteral { elements, meta } => {
                 let mut kind = Kind::Unknown;
                 for e in elements {
@@ -498,6 +503,46 @@ impl Check<'_> {
             Use::Borrow
         };
         let receiver = self.expression(&mut args[0], mode)?;
+        if matches!(
+            method,
+            "contains"
+                | "starts_with"
+                | "ends_with"
+                | "to_lowercase"
+                | "to_uppercase"
+                | "trim"
+                | "replace"
+        ) {
+            if !matches!(receiver, Kind::Str | Kind::String | Kind::StrView) {
+                return Err(crate::methods::error(
+                    meta,
+                    "string method needs a proven str/String receiver; char iterators are unsupported",
+                ));
+            }
+            for arg in args.iter_mut().skip(1) {
+                if !matches!(
+                    self.expression(arg, Use::Borrow)?,
+                    Kind::Str | Kind::String | Kind::StrView
+                ) {
+                    return Err(crate::methods::error(
+                        meta,
+                        "string pattern/replacement needs proven str/String; char patterns and other SDK coercions are unsupported",
+                    ));
+                }
+            }
+        }
+        if matches!(
+            method,
+            "contains"
+                | "starts_with"
+                | "ends_with"
+                | "to_lowercase"
+                | "to_uppercase"
+                | "trim"
+                | "replace"
+        ) {
+            meta.insert("rust_string_inputs_proven".into(), json!(true));
+        }
         let kind = match method {
             "clone" | "to_owned" | "to_vec" => {
                 let output = match &receiver {
@@ -561,7 +606,20 @@ impl Check<'_> {
                     "this ownership/iterator adapter has no proven value semantics",
                 ));
             }
-            "to_string" => Kind::String,
+            "to_string"
+                if matches!(
+                    receiver,
+                    Kind::Copy | Kind::Str | Kind::String | Kind::StrView
+                ) =>
+            {
+                Kind::String
+            }
+            "to_string" => {
+                return Err(crate::methods::error(
+                    meta,
+                    "to_string needs a proven supported scalar or string receiver",
+                ));
+            }
             "push" => {
                 if !matches!(receiver, Kind::Vec(_)) || use_ != Use::Discard {
                     return Err(error(
@@ -593,6 +651,12 @@ impl Check<'_> {
             {
                 Kind::Copy
             }
+            "abs" | "sqrt" | "floor" | "ceil" | "round" | "pow" | "powi" | "powf" => {
+                // numeric::check already proved and rewrote these typed calls.
+                // The final generic argument walk below visits the descriptor,
+                // receiver and exponent once after the numeric proof pass.
+                Kind::Copy
+            }
             "contains" | "starts_with" | "ends_with"
                 if matches!(receiver, Kind::Str | Kind::String | Kind::StrView) =>
             {
@@ -605,11 +669,6 @@ impl Check<'_> {
             }
             "trim" if receiver == Kind::Str => Kind::Str,
             "trim" if matches!(receiver, Kind::String | Kind::StrView) => Kind::StrView,
-            "abs" | "sqrt" | "floor" | "ceil" | "round" | "pow" | "powi" | "powf"
-                if matches!(receiver, Kind::Copy | Kind::Unknown) =>
-            {
-                Kind::Copy
-            }
             _ => {
                 return Err(error(
                     meta,
@@ -617,7 +676,17 @@ impl Check<'_> {
                 ));
             }
         };
-        if method != "push" {
+        if !matches!(
+            method,
+            "push"
+                | "contains"
+                | "starts_with"
+                | "ends_with"
+                | "to_lowercase"
+                | "to_uppercase"
+                | "trim"
+                | "replace"
+        ) {
             for arg in args.iter_mut().skip(1) {
                 self.expression(arg, Use::Borrow)?;
             }

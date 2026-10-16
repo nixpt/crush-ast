@@ -220,3 +220,21 @@ cargo test -p crush-aot --test rust_parity
 The second command requires `rustc` and `gcc`. Both test targets run in existing
 CI jobs (`Test (sdk)` and `Test (aot)`). Adding a fixture makes it exact by
 default; adding an exception requires a specific fixing ticket and evidence.
+
+## Mapped methods (CRUSH-xps-13)
+
+See [the method inventory](rust-method-contracts.md) and
+[private C bridge](rust-aot-support.md). Proven string methods and numeric
+methods now use shared kernels on VM, Rust AOT and native Linux C AOT. Rust
+prefix/suffix predicates return Bool without changing generic SDK integer flags.
+Integer pow/abs retain width and optimized-profile wrapping; f64 powi/powf use
+distinct operations. Canonical receiver/exponent and numeric call argument
+proofs are required; written/unknown/closure flows and unrepresentable bounded
+unsigned outputs are source-refused. General typed arithmetic remains xps-8.
+
+The three original xps-13 AOT exceptions and the float power producer exception
+are removed after exact native comparisons. New narrow policies cover source
+proof failures and C NUL input representation. C additionally refuses external
+text/character producers and generic string coercions without proof. The
+existing xps-9 dynamic Debug C refusal remains; this bridge has no sequence
+adapter. SDK stdlib registration and host allowlists remain explicit.

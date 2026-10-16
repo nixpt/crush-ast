@@ -28,6 +28,7 @@
 pub mod codegen;
 pub mod codegen_c;
 pub mod compiler;
+mod method_support;
 pub mod loader;
 pub mod names;
 

@@ -360,8 +360,11 @@ fn lower_lit(
         syn::Lit::Char(c) => {
             let mut meta = meta;
             meta.insert("rust_debug_type".into(), serde_json::json!("char"));
-            Ok(Expression::StringLiteral { value: c.value().to_string(), meta })
-        },
+            Ok(Expression::StringLiteral {
+                value: c.value().to_string(),
+                meta,
+            })
+        }
         syn::Lit::Byte(b) => {
             let mut meta = meta;
             meta.insert("rust_numeric_suffix".into(), serde_json::json!("u8"));
@@ -593,18 +596,14 @@ fn lower_method(
         ("push", 2) => call("array.push", args, meta),
         ("pop", 1) => call("array.pop", args, meta),
         ("contains", 2) => call("str.contains", args, meta),
-        ("starts_with", 2) => call("str.starts_with", args, meta),
-        ("ends_with", 2) => call("str.ends_with", args, meta),
+        ("starts_with", 2) => call("rust.str.starts_with", args, meta),
+        ("ends_with", 2) => call("rust.str.ends_with", args, meta),
+        ("abs" | "sqrt" | "floor" | "ceil" | "round", 1)
+        | ("pow" | "powi" | "powf", 2) => call("__crush_rust_numeric_method__", args, meta),
         ("to_uppercase", 1) => call("str.to_upper", args, meta),
         ("to_lowercase", 1) => call("str.to_lower", args, meta),
         ("trim", 1) => call("str.trim", args, meta),
         ("replace", 3) => call("str.replace", args, meta),
-        ("abs", 1) => call("math.abs", args, meta),
-        ("sqrt", 1) => call("math.sqrt", args, meta),
-        ("floor", 1) => call("math.floor", args, meta),
-        ("ceil", 1) => call("math.ceil", args, meta),
-        ("round", 1) => call("math.round", args, meta),
-        ("pow" | "powi" | "powf", 2) => call("math.pow", args, meta),
         (other, n) => anyhow::bail!("method `.{other}()` with {} argument(s) is not supported", n - 1),
     })
 }

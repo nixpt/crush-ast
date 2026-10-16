@@ -33,14 +33,14 @@ fn unproven_returns_and_call_arguments_cannot_enter_a_cast() {
     for source in [
         "fn bump(n: u8) -> u8 { n + 10 } fn main() { println!(\"{}\", bump(250) as u16); }",
         "fn cast(n: u8) -> i64 { n as i64 } fn bump(n: u8) -> u8 { n + 10 } fn main() { println!(\"{}\", cast(bump(250))); }",
-        "fn bad() -> i64 { 2i64.pow(3) } fn main() { println!(\"{}\", bad() as u8); }",
+        "fn bad(n: i64) -> i64 { n + 1 } fn main() { println!(\"{}\", bad(9223372036854775807) as u8); }",
         "fn __crush_rust_value__(n: u8) -> u8 { n + 10 } fn main() { println!(\"{}\", __crush_rust_value__(250) as u16); }",
         "fn main() { let mut n = 300i64; n = 400; println!(\"{}\", n as u8); }",
     ] {
         let error = format!("{:#}", compile_rust_source(source).unwrap_err());
+        let (boundary, ticket) = ("unsupported Rust numeric operation at", "CRUSH-xps-8");
         assert!(
-            error.contains("unsupported Rust numeric operation at")
-                && error.contains("CRUSH-xps-8"),
+            error.contains(boundary) && error.contains(ticket),
             "{error}"
         );
     }
@@ -62,13 +62,17 @@ fn bounded_unsigned_operations_refuse_unrepresentable_results() {
         "fn high(n: u64) -> u64 { n + 1 } fn main() { println!(\"{}\", high(9223372036854775807)); }",
         "fn low(n: u64) -> u64 { n - 1 } fn main() { println!(\"{}\", low(0)); }",
         "fn main() { let n = 5u64; println!(\"{}\", !n); }",
-        "fn main() { println!(\"{}\", 2u64.pow(3)); }",
+        "fn main() { println!(\"{}\", 2u64.pow(63)); }",
         "fn main() { let n: usize = 70000; println!(\"{}\", n as i64); }",
         "fn main() { let n = 65535usize; println!(\"{}\", n + 1); }",
     ] {
         let error = format!("{:#}", compile_rust_source(source).unwrap_err());
         assert!(
-            error.contains("CRUSH-xps-8") && error.contains(" at 1:"),
+            error.contains(if source.contains(".pow(") {
+                "CRUSH-xps-13"
+            } else {
+                "CRUSH-xps-8"
+            }) && error.contains(" at 1:"),
             "{error}"
         );
     }

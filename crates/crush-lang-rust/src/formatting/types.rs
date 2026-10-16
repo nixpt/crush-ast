@@ -644,7 +644,26 @@ impl<'a> Check<'a> {
                         "builtin/helper named source calls need the integrated xps-8 call contract",
                     ));
                 }
-                if name == "io.print" {
+                if name == "rust.num"
+                    && meta
+                        .get("rust_numeric_fact")
+                        .and_then(|v| v.get("canonical"))
+                        == Some(&json!(true))
+                {
+                    hint(meta.get("rust_numeric_fact").and_then(|v| v.get("type")))
+                } else if matches!(
+                    name.as_str(),
+                    "str.contains" | "rust.str.starts_with" | "rust.str.ends_with"
+                ) && types.len() == 2
+                    && types.iter().all(|t| *t == Ty::Str)
+                {
+                    Ty::Bool
+                } else if name == "str.replace"
+                    && types.len() == 3
+                    && types.iter().all(|t| *t == Ty::Str)
+                {
+                    Ty::Str
+                } else if name == "io.print" {
                     Ty::Unit
                 } else if (name == "rust.debug" && meta.contains_key("rust_debug_descriptor"))
                     || (name == "conv.text" && types.iter().all(Ty::known))

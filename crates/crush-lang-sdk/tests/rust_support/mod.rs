@@ -30,6 +30,10 @@ pub enum Expected {
 }
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
+    ("methods_async", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "Future/poll semantics" }),
+    ("methods_unproven_argument", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "canonical typed arithmetic" }),
+    ("methods_char_pattern", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "string pattern/replacement needs proven" }),
+    ("methods_written", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "numeric method needs proven canonical" }),
     (
         "debug_mutated",
         Expected::Loud {
@@ -248,13 +252,6 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
         },
     ),
     (
-        "numeric_cast_float_producer",
-        Expected::Loud {
-            ticket: "CRUSH-xps-8",
-            diagnostic: "proven canonical integer",
-        },
-    ),
-    (
         "numeric_cast_bad_argument",
         Expected::Loud {
             ticket: "CRUSH-xps-8",
@@ -355,13 +352,6 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
 ];
 const AOT_ONLY: &[(&str, Expected)] = &[
     (
-        "capability_namespace_bindings",
-        Expected::Loud {
-            ticket: "CRUSH-xps-13",
-            diagnostic: "cap_call 'math.pow'",
-        },
-    ),
-    (
         "binding_intrinsic_names",
         Expected::Loud {
             ticket: "CRUSH-251",
@@ -373,20 +363,6 @@ const AOT_ONLY: &[(&str, Expected)] = &[
         Expected::Loud {
             ticket: "CRUSH-251",
             diagnostic: "make_closure",
-        },
-    ),
-    (
-        "int_arith",
-        Expected::Loud {
-            ticket: "CRUSH-xps-13",
-            diagnostic: "cap_call 'math.pow'",
-        },
-    ),
-    (
-        "vecmut",
-        Expected::Loud {
-            ticket: "CRUSH-xps-13",
-            diagnostic: "cap_call 'str.to_lower'",
         },
     ),
     (
@@ -413,6 +389,7 @@ const AOT_ONLY: &[(&str, Expected)] = &[
 ];
 
 const C_ONLY: &[(&str, Expected)] = &[
+    ("methods_nul", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "C method input contains NUL" }),
     (
         "debug_dynamic",
         Expected::Loud {
@@ -592,6 +569,8 @@ pub fn assert_rustc_freshness() {
             "{}.out is stale",
             path.display()
         );
+        // Keep the oracle sweep bounded in disk use on constrained builders.
+        std::fs::remove_file(&binary).unwrap();
     }
 }
 

@@ -14,6 +14,27 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Rust mapped string and proven numeric methods now share pure kernels across
+  VM, Rust AOT and native Linux C AOT. Integer pow/abs retain source widths and
+  optimized-profile wrapping; f64 powi/powf are distinct. Prefix/suffix methods
+  return Rust Bool without changing generic SDK predicate flags or math.pow's
+  Float contract (CRUSH-xps-13).
+- C AOT links a private Rust scalar/string support library with UTF-8 lengths,
+  owned result/free pairs and panic containment. It refuses NUL/unproven input
+  representations and generic string coercions without proof before building.
+  Dynamic Debug's sequence bridge remains xps-9 work. Compiler/target/options
+  and support source now participate in native artifact cache keys.
+- AOT loader results preserve numeric-looking String values and non-finite
+  Float kinds. Potential NUL root text results need a length-aware host ABI and
+  are refused before generation; internal VM/Rust AOT NUL text remains supported.
+- Async Rust functions are refused instead of eagerly running deferred Future
+  bodies. Typed numeric method programs also refuse unproven arithmetic and
+  wide integer ordering until exact source proofs exist.
+- Non-finite constant float operations remain runtime operations, preserving
+  infinity/NaN through the JSON-based compiler pipeline. Numeric method call
+  arguments require canonical value proofs; f32, written/unknown/closure flows
+  and unsupported unsigned result domains remain source-located refusals.
+
 - Add the opt-in pure `rust.debug(value, descriptor)` stdcap with a single
   bounded kernel shared by SDK VM and Rust AOT. Validate descriptors and values,
   detect cyclic sequences, and enforce depth/item/output limits. C refuses
