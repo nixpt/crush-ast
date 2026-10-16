@@ -57,6 +57,17 @@ fn refuse_cosm(program: &casm::Program, backend: &'static str) -> Result<(), Uns
         .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
 }
 
+/// issue #161: AOT doesn't run green tasks. A program that `spawn`s is refused
+/// before any code is generated, naming `spawn` — not the `make_closure` a
+/// `spawn` compiles through, and never silently skipping the task. `yield` and
+/// `await` without `spawn` are no-ops (lowered to nothing / a null push), not
+/// refusals.
+fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+    program
+        .refuse_green_task(&format!("the {backend} AOT backend"))
+        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+}
+
 /// Compile Crush source to native code, load it, and extract an i64 result.
 ///
 /// Convenience function for the common case of calling `main()`.

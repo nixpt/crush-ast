@@ -1242,15 +1242,12 @@ pub fn execute_one(
         }
 
         FastOp::Await => {
-            let event_val = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let event_id = match event_val {
-                RuntimeValue::Ref(p) => match arena.get(p) {
-                    Some(Object::Str(s)) => s.clone(),
-                    _ => return Err(FastError::TypeMismatch),
-                },
-                _ => return Err(FastError::TypeMismatch),
-            };
-            return Ok(Some(FastYield::Request(HostRequest::Await { event_id })));
+            // issue #161: `await` on a non-handle (there is no `spawn` on
+            // FastVM/JIT — that is refused at lowering) pops the awaited value
+            // and pushes null, exactly like the scheduler and portable VM,
+            // which never error on a non-handle `await`.
+            stack.pop().ok_or(FastError::StackUnderflow)?;
+            stack.push(RuntimeValue::Null);
         }
 
         FastOp::CrossLangCall => {
