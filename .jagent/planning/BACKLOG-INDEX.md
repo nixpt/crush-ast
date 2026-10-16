@@ -109,7 +109,7 @@ new review-exit matrices automatically.
 |----|----------------|------|
 | ~~CRUSH-11~~ | AOT-C string garbling repro | **DONE** — ticket marked Done 2026-08-07; repro independently re-verified 2026-10-16 (differential_aot ok) |
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
-| CRUSH-30 | whether E-EXH-001 wildcard-warn satisfies the ticket | `missing_arms` is a documented stub pending a type registry — needs a scope ruling, then either close or re-scope |
+| ~~CRUSH-30~~ | exhaustive-match-sites lint | **DONE** (scope ruling 2026-10-16): opt-in wildcard lint E-EXH-001 satisfies intent; residue (narrowing/missing_arms/workspace tracking) minted as CRUSH-30a |
 | CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row evidence (6/7 ✅); ticket stays open for the Uint8Array residual + corpus fixtures |
 
 ## In flight
@@ -162,7 +162,7 @@ the spine; most later work is gated on 73/77 existing.
 | ID | Title | Status |
 |----|-------|--------|
 | CRUSH-27 annotation nodes · 28 crush-index v0 · 29 codebase.* caps · 31 dejavue join · 32 AI opcodes · 33 DOM opcodes | | ALL DONE on HEAD (verified s412) |
-| CRUSH-30 | @exhaustive-match-sites lint | partial — see quick wins |
+| CRUSH-30 | @exhaustive-match-sites lint | DONE 2026-10-16 — residue → CRUSH-30a |
 | CRUSH-34 | spawn/await/yield wire-up | in progress — Commits 2 (5-tier wiring) + 3 (differential fixture) remain → ticket `## Dispatch` |
 
 ## M6 — Walker parity
