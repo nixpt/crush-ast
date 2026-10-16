@@ -110,7 +110,7 @@ new review-exit matrices automatically.
 | ~~CRUSH-11~~ | AOT-C string garbling repro | **DONE** — ticket marked Done 2026-08-07; repro independently re-verified 2026-10-16 (differential_aot ok) |
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
 | ~~CRUSH-30~~ | exhaustive-match-sites lint | **DONE** (scope ruling 2026-10-16): opt-in wildcard lint E-EXH-001 satisfies intent; residue (narrowing/missing_arms/workspace tracking) minted as CRUSH-30a |
-| CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row evidence (6/7 ✅); ticket stays open for the Uint8Array residual + corpus fixtures |
+| CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row *runtime* evidence — corrected after PR #263 review: 4/7 ✅, 1 partial (comprehensions: RHS/`return`/call-arg only), 2 🔴 (tuple unpacking, Uint8Array); ticket stays open, residual now includes tuple-unpacking lowering + the `compile_cast` vs `Compiler` entry-point divergence |
 
 ## In flight
 
@@ -169,7 +169,7 @@ the spine; most later work is gated on 73/77 existing.
 
 | ID | Title | Status | Gate | Dispatch |
 |----|-------|--------|------|--------|
-| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + VISION.md table refresh (6/7 verified closed) | open | — | ticket `## Dispatch` |
+| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + tuple unpacking + comprehension nested positions + VISION.md table refresh (4/7 ✅, 1 partial, 2 🔴 — runtime-verified) | open | — | ticket `## Dispatch` |
 | CRUSH-36 | LanguageAdapter unification | partial — Sub-Commit 3 + CLI py/pyw fix remain | — | ticket `## Dispatch` |
 | CRUSH-37 | Java walker | partial — skeleton landed, real parsing remains | CRUSH-36 | ticket `## Dispatch` |
 | CRUSH-38 | Kotlin walker | open (no crate yet) | CRUSH-37 | ticket `## Dispatch` |

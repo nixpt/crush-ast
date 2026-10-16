@@ -132,13 +132,13 @@ One binary, one mental model, one command surface. The pieces exist — they nee
 | `!` (logical not) | JavaScript | ✅ Mapped to `not` in compiler |
 | `__crush_assign__` (assignment) | All | ✅ Intrinsic handled in compiler |
 | `print()` / `io.print` cap | Python/JS | ✅ Auto-registered in crush-walk-run |
-| `range()` / iteration | Python/JS | ✅ Lowered (`crush-frontend/src/compiler.rs:1906` range/make_range; clamped/descending cases in walker closure tests) |
-| Tuple unpacking | Python | ✅ Lowered (`crush-lang-python/src/lower_stmt.rs:672` `Expr::Tuple` for-targets) |
-| List comprehensions | Python | ✅ Lowered (`crush-lang-python/src/lower_expr.rs:180` ListComp/SetComp → `lower_list_or_set_comprehension` init+loop) |
-| Slice expressions | Python | ✅ Lowered (`crush-lang-python/src/lower_expr.rs:297,343` `Expr::Slice` lower/upper/step) |
-| `Math.floor()` | JavaScript | ✅ Lowered to `math.floor` cap (`crush-lang-js/src/lower/builtins.rs:86`, CRUSH-65) |
+| `range()` / iteration | Python/JS | ✅ Lowered for Python (`crush-frontend/src/compiler.rs:1906` `range`/`make_range`) — **runtime-verified via walker → `Compiler::new().compile` → VM**: `for i in range(3)` → `0 1 2`, `range(5, 1, -2)` → `5 3`. ⚠️ The other frontend entry point disagrees: `crush_frontend::compile_cast` refuses it with `Undefined function: make_range` (`crush-frontend/src/semantics.rs:570`) — cite which path when quoting this row |
+| Tuple unpacking | Python | 🔴 Not lowered — the walker refuses both forms loudly: `for a, b in …` → `for loop target must be a name` (`crush-lang-python/src/lower_stmt.rs:346`), `a, b = …` → `unsupported assignment target: Tuple(..)` (`:226`). (The earlier `lower_stmt.rs:672` cite was `exception_type_names` — the `except (A, B)` helper — unrelated to destructuring.) |
+| List comprehensions | Python | 🟡 Partial — accepted only directly as an assignment RHS, a `return` value, or a call argument (`crush-lang-python/src/lower_expr.rs:180`); a nested expression position is refused (`lower_expr.rs:190`, e.g. `1 + len([i for i in range(4)])`). Runtime-verified: `n = [i for i in range(3)]` → `2`; `return [i for i in range(3)]` → `2` |
+| Slice expressions | Python | ✅ Lowered (`crush-lang-python/src/lower_expr.rs:297,343` `Expr::Slice` lower/upper/step) — runtime-verified: `[1,2,3,4][1:3][0]` → `2`, `[::2][1]` → `3` through both entry points |
+| `Math.floor()` | JavaScript | ✅ Lowered to `math.floor` cap (`crush-lang-js/src/lower/builtins.rs:86`, CRUSH-65) — runtime-verified by `cargo test -p crush-lang-js --test math_builtins_test` (16 passed, incl. `math_floor_returns_the_floor_not_zero`, `compute_benchmark_prints_465`) |
 | Typed arrays (`Uint8Array`) | JavaScript | 🔴 Residual: zero `Uint8Array` mentions in `crush-lang-js` — no CAST rep / lowering yet (CRUSH-35 main work) |
-| Function calls with args | All | ✅ Fixed — FastVM `FastOp::Call` keeps caller-pushed args in place + pushes `FastFrame` (`crush-vm/src/fastvm/execution.rs:99`); former stack-underflow/reversed-args bug documented as fixed (CRUSH-138) |
+| Function calls with args | All | ✅ Fixed — FastVM `FastOp::Call` keeps caller-pushed args in place + pushes `FastFrame` (`crush-vm/src/fastvm/execution.rs:99`); former stack-underflow/reversed-args bug documented as fixed (CRUSH-138). Runtime-verified: `sub(10, 3)` with `a - b` → `7` (arg order correct) |
 
 ### What Now Works End-to-End
 

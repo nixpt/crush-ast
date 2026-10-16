@@ -19,6 +19,12 @@ typed arrays (Uint8Array)** — zero hits anywhere. Re-verify the 6 closures by
 reading the cited sites before asserting them (they're triage claims, not
 gospel).
 
+> **2026-10-16:** this file's s412 triage list was re-checked, and the
+> instruction above was followed too weakly the first time — reading a cited
+> line is not verification. Two claims are wrong (tuple unpacking is *not*
+> lowered; comprehensions work only in three positions). See
+> `## Quick-win slice … (corrected)` at the end for the runtime evidence.
+
 ## Approach
 
 1. Typed arrays: decide representation (Value::Bytes exists since s298 —
@@ -59,21 +65,59 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-35.txt` on 2026-08-24 
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
 
-## Quick-win slice: VISION.md table refresh (buffy, 2026-10-16)
+## Quick-win slice: VISION.md table refresh (buffy, 2026-10-16 — corrected 2026-10-16)
 
-All 6 previously-cited "closed" sites re-verified in code on a current-main
-worktree (paths moved since s412; new locations recorded):
+### CORRECTION (after PR #263 review by vega)
 
-1. List comprehensions — `crush-lang-python/src/lower_expr.rs:180` (ListComp/SetComp → `lower_list_or_set_comprehension`; filter-as-arg tests in `sdk.rs`).
-2. Slice expressions — `crush-lang-python/src/lower_expr.rs:297,343` (Expr::Slice lower/upper/step).
-3. Tuple unpacking — `crush-lang-python/src/lower_stmt.rs:672` (Expr::Tuple for-targets).
-4. `range()` — `crush-frontend/src/compiler.rs:1906` (`range`/`make_range`).
-5. `Math.floor` — `crush-lang-js/src/lower/builtins.rs:86` (`Math.floor` → `math.floor`, CRUSH-65).
-6. Function calls with args — `crush-vm/src/fastvm/execution.rs:99` (`FastOp::Call`: caller-pushed args kept in place, `FastFrame` pushed; CRUSH-138's reversed-args bug is fixed).
+The first pass of this note claimed **6/7 rows ✅** from *reading* the cited
+sites. That was wrong: a line existing at a path is not evidence that the
+feature lowers, and one cite (`lower_stmt.rs:672`) turned out to be
+`exception_type_names` — the `except (A, B)` helper — not destructuring.
+Vega re-ran every Python row through walker → compile → VM on the PR head and
+compared against CPython; the double-check below reproduces that locally
+(`cargo test -p crush-lang-python --test zz_probe_tmp`, probe deleted after use):
 
-`docs/benchmarks/VISION.md` "Walker Lowering Progress" refreshed with these
-evidence refs; 6/7 rows now ✅, typed arrays (`Uint8Array`) remains the single
-🔴 residual (confirmed: zero `Uint8Array` mentions in `crush-lang-js`).
+| Row | Runtime result | Verdict |
+|-----|----------------|---------|
+| `range()` | `for i in range(3)` → `0 1 2`; `range(5, 1, -2)` → `5 3` (via `Compiler::new().compile`) | ✅ |
+| Tuple unpacking | `for a, b in …` → **walker refuse** `for loop target must be a name` (`lower_stmt.rs:346`); `a, b = 1, 2` → **walker refuse** `unsupported assignment target: Tuple(..)` (`lower_stmt.rs:226`) | 🔴 |
+| List comprehensions | assign RHS ✅, filter ✅, call arg ✅, `return` ✅; `1 + len([i for i in range(4)])` → **walker refuse** `comprehension used in a nested expression position not yet supported` (`lower_expr.rs:190`) | 🟡 partial |
+| Slice expressions | `[1,2,3,4][1:3][0]` → `2`; `[::2][1]` → `3` | ✅ |
+| Function calls with args | `sub(10, 3)` (`a - b`) → `7` | ✅ |
 
-**Ticket remains OPEN** — the DoD items (Uint8Array fixture, corpus fixtures)
-are still unmet. Residual work is the real dispatch, not a quick win.
+JS side re-checked by running the suite, not grepping: `cargo test -p
+crush-lang-js --test math_builtins_test` → **16 passed, 0 failed** (includes
+`math_floor_returns_the_floor_not_zero`, `compute_benchmark_prints_465`).
+
+Corrected counts: **4/7 ✅, 1 partial (comprehensions), 2 🔴** (tuple
+unpacking, typed arrays).
+
+### Entry-point divergence (new finding, may deserve its own ticket)
+
+`range()` (and therefore every comprehension built on it) compiles through
+`crush_frontend::compiler::Compiler::new().compile` but is **refused** by
+`crush_frontend::compile_cast` with `Undefined function: make_range` — the
+semantic analyzer's function check (`crush-frontend/src/semantics.rs:570`)
+doesn't know the `make_range` intrinsic the compiler emits. `python_parity.rs`
+uses the first path; `crush-lang-python/tests/pipeline_test.rs` uses the second.
+Loud, not wrong, but the two front doors disagree — worth deciding which is
+canonical before the next walker milestone.
+
+### Verified sites (post-correction)
+
+1. List comprehensions — `crush-lang-python/src/lower_expr.rs:180` (ListComp/SetComp → `lower_list_or_set_comprehension`); nested-position refusal at `:190`. **Partial.**
+2. Slice expressions — `crush-lang-python/src/lower_expr.rs:297,343` (Expr::Slice lower/upper/step). **Works.**
+3. Tuple unpacking — refusals at `lower_stmt.rs:346` (for-target) and `:226` (assignment target). **Not lowered** — the s412 cite (`:672`) was unrelated.
+4. `range()` — `crush-frontend/src/compiler.rs:1906` (`range`/`make_range`); works on the `Compiler` path only.
+5. `Math.floor` — `crush-lang-js/src/lower/builtins.rs:86` (`Math.floor` → `math.floor`, CRUSH-65); suite-verified.
+6. Function calls with args — `crush-vm/src/fastvm/execution.rs:99` (`FastOp::Call`; CRUSH-138's reversed-args bug is fixed); runtime-verified.
+
+The table's previous "✅ Lowered" for tuple unpacking and comprehensions was
+the kind of rot this ticket exists to stop — the per-row evidence column now
+records *what was run*, not just what was read.
+
+**Ticket remains OPEN** — and the residual is now bigger than typed arrays
+alone: Uint8Array, **tuple-unpacking lowering**, comprehension nested
+positions, and the `compile_cast`/`Compiler` divergence. The DoD items
+(Uint8Array fixture, corpus fixtures) are still unmet; this was a table fix,
+not the dispatch.
