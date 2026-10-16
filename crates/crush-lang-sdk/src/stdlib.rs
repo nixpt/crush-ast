@@ -37,6 +37,7 @@ pub(crate) fn register_pure(caps: &mut HostCaps) {
 }
 
 fn register_pure_with_rng(caps: &mut HostCaps, rng: SharedRng) {
+    caps.register(Box::new(RustDebugCap));
     // String capabilities
     caps.register(Box::new(StrSplitCap));
     caps.register(Box::new(StrJoinCap));
@@ -152,6 +153,19 @@ macro_rules! std_cap {
             }
         }
     };
+}
+
+/// Pure, opt-in typed Rust formatting. No builtin/ambient registry entry.
+pub struct RustDebugCap;
+impl HostCap for RustDebugCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec { name: "rust.debug".into(), argc: Some(2), returns: true }
+    }
+    fn effects(&self) -> Option<&'static [&'static str]> { Some(&[]) }
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        if args.len() != 2 { return Err("rust.debug expects exactly 2 arguments".into()); }
+        crush_vm::rust_debug::format(&args[0], &args[1]).map(Some)
+    }
 }
 
 mod binary;

@@ -1210,3 +1210,12 @@ Rejected alternatives:
 Outcome:
 AOT exact-or-loud on unassigned reads; FastVM/JIT still read null -> CRUSH-zorro-55
 
+
+## 2026-10-16T00:26:07-05:00 — Share the typed Rust Debug kernel verbatim with Rust AOT
+
+Reason:
+Generic string representation cannot identify Rust char/String/unit or numeric width. Use bounded JSON descriptors from conservative lexical type proofs, a std-only View-based formatter that borrows sequences, and one kernel embedded unchanged in Rust AOT. Runtime descriptor/value checks, cycle detection and streaming output limits protect direct stdcap callers too. Register rust.debug only in the explicit pure stdlib family; C refuses compilation until a shared bridge can faithfully represent inputs.
+
+Outcome:
+CRUSH-xps-9 shared formatter slice: SDK/VM plus Rust AOT, explicit C refusal, conservative source descriptors. Macro materialization, richer flow/numeric proofs and C bridge remain open.
+

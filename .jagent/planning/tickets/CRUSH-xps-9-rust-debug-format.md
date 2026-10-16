@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-9 |
 | **Priority** | P1; closes the last formatting silent entry |
-| **Status** | In progress; macro boundary and typed literal Debug slice |
+| **Status** | In progress; shared runtime kernel and conservative descriptor proofs |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7; CRUSH-xps-8 for numeric descriptors |
@@ -114,6 +114,59 @@ Rust oracle: `rustc 1.98.1 (48a229cea 2026-09-01)`, x86_64, Rust 2021 with `-O`.
   warnings. Targeted formatting and `git diff --check` pass.
 - Full workspace tests were not run. A dedicated writable target isolates this
   worktree from other checkouts and uses two build jobs.
+
+## Shared formatter slice
+
+Branch: `agent/nixp/CRUSH-xps-9-shared-debug`, following #247. Vega owns merging
+#246/#247; they were still open while this implementation was developed.
+
+- Implement a std-only typed Debug kernel in crush-vm and embed that exact source
+  in Rust AOT. Both adapt borrowed values through the same View interface.
+- Add explicit pure stdlib registration for `rust.debug(value, descriptor)`;
+  no ambient builtin registration or `conv.text` ABI change.
+- Validate bounded JSON descriptors, supported integer widths, char scalar
+  identity and runtime value agreement. Traverse without recursively cloning
+  graphs; detect cycles/borrow conflicts and enforce depth 16, 1024 visited
+  values, 4096 descriptor bytes and 1 MiB streamed output.
+- Resolve dynamic descriptor proofs after lexical binding identity. Validate
+  compatible direct-call arguments, compute acyclic return summaries, invalidate
+  writes/captures, preserve char Copy and formatter String ownership. Consume
+  canonical numeric metadata when available without treating annotations alone
+  as canonical-value evidence.
+- Refuse unproven predicates/indices, loops/matches, closure Debug, iterators,
+  `.powi()`, and unsafe wide comparisons. Builtin/helper named and effectful
+  multiargument source calls remain conservative until the integrated xps-8
+  call contract is consumed. Richer inference/materialization remains open.
+- C explicitly refuses dynamic `rust.debug` calls before producing artifacts;
+  a separately written C formatter is not introduced. Five C-only policies pin
+  the bridge boundary while VM/Rust AOT run these programs exactly.
+- Add six fresh rustc corpus fixtures; promote dynamic string and float Debug
+  from all-engine refusals to exact VM/Rust AOT behavior.
+
+Validation (Rust 1.98.1, x86_64; oracle edition 2021 with `-O`):
+
+- 774 focused tests pass: 281 VM, 8 Rust walker, 348 SDK, 115 frontend and
+  22 AOT (including direct single-call kernel/embedded-source tests).
+- 82 freshly checked rustc fixtures: VM 44 exact / 37 loud / 1 silent;
+  Rust AOT 36 exact / 45 loud / 1 silent; C AOT 31 exact / 50 loud / 1 silent.
+  Five C-only bridge policies are explicit; integer overflow remains silent
+  under xps-8. No Debug silent exception is reintroduced.
+- C parity also passes `CRUSH_GC_STRESS=1`. Kernel tests cover invalid JSON,
+  type/width mismatches, duplicate/unknown keys, cycles, aliased acyclic graphs,
+  mutable-borrow conflicts, and descriptor/traversal/output limits.
+- Live public SDK and Rust AOT match native rustc for dynamic text (8 bytes),
+  mixed float formatting (70), scalar/char/unit/shadowing (85), sequences (121),
+  and runtime NaN/inf/negative zero (17). C refuses all five before artifacts;
+  three source-proof failures refuse before output. `.crush` still returns
+  Int(42). A temporary standalone Cargo host keeps linked crate versions coherent.
+- Scoped Clippy passes `never_loop`; test targets retain an allowance for
+  existing unrelated `approx_constant` fixtures in VM/SDK tests. Existing
+  warnings remain. Targeted formatting and `git diff --check` pass.
+- Full workspace tests were not run; validation covers the changed VM/SDK/Rust
+  pipeline, shared frontend and both AOT paths. Dedicated target, two jobs.
+
+This slice does not close xps-9: the C bridge, richer numeric/control/call proofs
+and argument materialization remain follow-up work.
 
 ## Proposed fixture matrix
 
