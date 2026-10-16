@@ -444,6 +444,7 @@ fn compiles_polyglot_lang_block_with_variable_mapping() {
             lang: "python".to_string(),
             code: "result = x + 1".to_string(),
             variables: vec!["x".to_string()],
+            outputs: vec![],
             imports: vec![],
             deps: vec![],
             meta: meta(),

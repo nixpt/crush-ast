@@ -88,22 +88,47 @@ ABI symbols, generics, or arbitrary crate APIs directly.
 
 ## Polyglot blocks (`@python { ... }`)
 
-`compile::compile_crush_source` marshals variables across the Crush/Python
-boundary for `@python { ... }` blocks: names the block reads but never
-binds are injected as real Python locals (JSON-decoded, not raw env-var
-strings), and the last name it binds at its own top level is JSON-encoded
-and marshaled back — via real free-variable analysis over the
-`rustpython-parser` AST (`crush_lang_python::analyzer::free_variables`),
-not a regex or a blind "inject everything in scope".
+`compile::compile_crush_source` marshals variables across the Crush/guest
+boundary for `@python { ... }` and `@javascript { ... }` blocks, via real
+free-variable analysis over the guest AST (`crush_lang_python::analyzer::
+free_variables`, `crush_lang_js::freevars::free_variables`) — not a regex or
+a blind "inject everything in scope".
 
-**Only Python has this.** `@javascript { ... }` and other `@<lang> { ... }`
-blocks still execute (via `EXEC_LANG`'s subprocess shell-out), but with no
-input/output marshaling — a block that reads or produces a Crush variable
-under any language other than Python won't see it, silently, because
-there is no parser wired up to run the same free-variable analysis for
-those languages yet. An unregistered language name (no executor at all,
-e.g. `@rust`) does fail loudly instead: `"no executor registered for
-language 'X'"`.
+**Inputs are automatic.** Names the block *reads* but never binds are injected
+as real guest locals (JSON-decoded, not raw env-var strings) from the
+enclosing Crush scope.
+
+**Outputs are explicit** (CRUSH-270). A block header lists the names marshaled
+back into Crush:
+
+```crush
+let count = 10
+@python -> total {
+    tmp = 3
+    total = tmp * 2
+}
+io.print(total)   // 6
+io.print(count)   // 10 — untouched; only `total` crossed
+@python -> (mean, stdev) { ... }   // several outputs
+```
+
+Each listed name becomes (or assigns) a Crush variable at that line, and
+nothing else leaves the block. A listed name the block never binds at its top
+level is a compile error; a name it only binds conditionally (inside
+`try`/`if`) that misses at run time is a loud error naming the variable,
+never `null`.
+
+**Transition, one release.** A block *without* `->` keeps the old implicit
+rule — its last top-level plain assignment is exported — but `crush-run` emits
+a compile warning naming the exported variable and suggesting `-> <name>`
+(the warning also fires when that implicit export overwrites an existing Crush
+variable). In the release after, no header means no outputs.
+
+Other `@<lang> { ... }` blocks still execute (via `EXEC_LANG`'s subprocess
+shell-out), but with no input/output marshaling; `->` on such a language is a
+loud compile error rather than a silent no-op. An unregistered language name
+(no executor at all, e.g. `@rust`) fails loudly too: `"no executor registered
+for language 'X'"`.
 
 ## Binaries
 

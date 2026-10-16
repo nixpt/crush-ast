@@ -294,7 +294,7 @@ impl Parser {
             Token::EOF(loc) => (loc.line, loc.col),
             Token::Comment(_, loc) => (loc.line, loc.col),
             Token::AtIdent(_, loc) => (loc.line, loc.col),
-            Token::LangBody(_, loc, _) => (loc.line, loc.col),
+            Token::LangBody(_, loc, _, _) => (loc.line, loc.col),
         }
     }
 
@@ -425,7 +425,7 @@ impl Parser {
             if let Token::AtIdent(id, _) = self.peek().clone() {
                 // Skip if followed by LangBody — that's a polyglot block, handled below
                 let next_is_lang_body =
-                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _)));
+                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _, _)));
                 if !next_is_lang_body {
                     match id.as_str() {
                         "module" => {
@@ -1029,7 +1029,7 @@ impl Parser {
             Token::Import(_) | Token::Use(_) => self.parse_import_statement(),
             Token::Export(_) => self.parse_export_statement(),
             Token::AtIdent(_, _)
-                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _))) =>
+                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _, _))) =>
             {
                 self.parse_lang_block()
             }
@@ -2717,12 +2717,13 @@ impl Parser {
             }
         };
 
-        let (code, deps) = match self.peek() {
-            Token::LangBody(body, _, deps) => {
+        let (code, deps, outputs) = match self.peek() {
+            Token::LangBody(body, _, deps, outputs) => {
                 let body = body.clone();
                 let deps = deps.clone();
+                let outputs = outputs.clone();
                 self.advance();
-                (body, deps)
+                (body, deps, outputs)
             }
             _ => {
                 let (line, col) = self.get_location(self.peek());
@@ -2747,6 +2748,7 @@ impl Parser {
             lang,
             code,
             variables: Vec::new(),
+            outputs,
             deps,
             imports: Vec::new(),
             meta,

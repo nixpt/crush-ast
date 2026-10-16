@@ -1,19 +1,19 @@
 // Data processing pipeline across polyglot blocks
 //
-// Each block processes data independently; blocks run sequentially.
+// Each block runs in its own fresh interpreter; blocks run sequentially. A
+// value crosses back into Crush only when the block header declares it with
+// `-> name` (CRUSH-270) — otherwise the block's names stay inside the block.
 
 fn main() {
-    // Step 1: generate data with Python
-    @python {
+    // Step 1: generate data with Python, marshaling the list back explicitly.
+    @python -> numbers {
         import random
-        import math
         numbers = [random.randint(1, 100) for _ in range(5)]
         print(f"numbers: {numbers}")
-        print(f"sum: {sum(numbers)}")
-        print(f"mean: {sum(numbers) / len(numbers):.2f}")
     }
+    io.print("Crush sees numbers = ", numbers)
 
-    // Step 2: process with shell
+    // Step 2: process with shell (no output — nothing declared to cross).
     @bash {
         echo "--- system info ---"
         echo "kernel: $(uname -r)"
@@ -21,8 +21,8 @@ fn main() {
         echo "memory: $(free -h | awk '/^Mem:/ {print $3}') used"
     }
 
-    // Step 3: text processing with Python
-    @python {
+    // Step 3: text processing with Python, marshaling the poem back.
+    @python -> poem {
         import textwrap
         poem = """
         The Crush language brings together
@@ -32,4 +32,5 @@ fn main() {
         """
         print(textwrap.dedent(poem).strip())
     }
+    io.print(poem)
 }

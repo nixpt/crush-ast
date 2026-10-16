@@ -1703,7 +1703,13 @@ impl PortableVm {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
                 self.out_parts.push(outcome.visible);
-                self.push(outcome.result_value);
+                // Push declared outputs in reverse so the first `store`
+                // (`out_0`) sees the first declared value on top (CRUSH-270).
+                let out_values =
+                    crate::scheduler::exec_lang_outputs(&spec, &outcome.result_value, lang)?;
+                for value in out_values.into_iter().rev() {
+                    self.push(value);
+                }
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
             | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {

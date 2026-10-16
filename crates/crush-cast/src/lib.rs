@@ -167,6 +167,12 @@ pub enum Statement {
         /// Variables to inject into the sandbox
         #[serde(default)]
         variables: Vec<String>,
+        /// Explicit output declarations from the `-> name` / `-> (a, b)` block
+        /// header (CRUSH-270). Empty means "no `->` written": the pre-CRUSH-270
+        /// implicit rule (last top-level assignment) applies, plus a compile
+        /// warning. Every name here becomes a Crush variable at this line.
+        #[serde(default)]
+        outputs: Vec<String>,
         /// Import statements within the block
         #[serde(default)]
         imports: Vec<ImportStatement>,

@@ -579,8 +579,8 @@ impl Optimizer {
                     out.insert(name.clone());
                 }
                 Statement::LangBlock { meta, .. } => {
-                    if let Some(var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
-                        out.insert(var.to_string());
+                    for var in crate::semantics::polyglot_outputs(meta) {
+                        out.insert(var);
                     }
                 }
                 Statement::If { then_body, else_body, .. } => {

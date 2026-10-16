@@ -3,6 +3,9 @@
 // Each @<lang> block spawns the corresponding interpreter.
 // Languages available on PATH will work: python3, bash, etc.
 //
+// A block that only prints (no value to carry back) needs no `->` header.
+// A block that produces a value Crush should see declares it: `-> name`.
+//
 // To add Node.js support: uncomment the @javascript block below
 // and ensure `node` is on your PATH.
 
@@ -17,15 +20,16 @@ fn main() {
         echo "CPU cores: $(nproc)"
     }
 
-    @python {
+    @python -> pi {
         import math
-        print(f"pi = {math.pi}")
+        pi = math.pi
         print(f"sqrt(144) = {math.sqrt(144)}")
     }
+    io.print("pi = ", pi)
 
-    // @javascript {
+    // @javascript -> x {
     //     console.log(`Hello from Node.js`);
     //     let x = 2 + 2;
-    //     console.log(`2 + 2 = ${x}`);
     // }
+    // io.print("2 + 2 = ", x)
 }

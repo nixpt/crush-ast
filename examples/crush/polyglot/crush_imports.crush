@@ -1,18 +1,26 @@
 // Crush-level polyglot import declaration + usage
 //
-// Each @python block runs in a fresh interpreter, so `use @lang` is written
-// into every later block of its language (CRUSH-224): `use @lang python
-// "math"` becomes `import math` at the top of the block below. The module is
-// bound under its own name, plus the alias if one is given.
+// Each @python block runs in its own fresh `python3 -c` process — no Python
+// state is shared between blocks. The only data that crosses the boundary is
+// what the block header declares: `-> name` marshals the block's `name` back
+// into a Crush variable at that line (and nothing else leaves the block),
+// while names the block reads but never binds are injected from the enclosing
+// Crush scope automatically.
+//
+// `use @lang` is written into every later block of its language (CRUSH-224):
+// `use @lang python "math"` becomes `import math` at the top of the block
+// below. The module is bound under its own name, plus the alias if one is
+// given.
 
 use @lang python "math"
 use @lang python "json" as j
 
 fn main() {
-    @python {
+    @python -> val {
         val = math.factorial(5)
         print(f"factorial(5) = {val}")
         print(f"pi = {math.pi}")
         print(f"JSON: {j.dumps({'a': 1})}")
     }
+    io.print("Crush sees val = ", val)
 }

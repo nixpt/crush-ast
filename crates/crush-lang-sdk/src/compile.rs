@@ -33,7 +33,10 @@ fn cap_returns_value(name: &str) -> bool {
 }
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
-    casm_to_vm(&compile_crush_to_casm(source)?)
+    let (casm, warnings) = compile_crush_to_casm_with_warnings(source)?;
+    let mut program = casm_to_vm(&casm)?;
+    program.warnings = warnings;
+    Ok(program)
 }
 
 /// Compile Crush source or an enabled walker language into a CVM1 program.
@@ -100,14 +103,24 @@ fn source_adapter_registry() -> AdapterRegistry {
 /// the Python analyzer), so the bare frontend entry point leaves `@lang`
 /// blocks unmarshaled (CRUSH-130).
 pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
+    Ok(compile_crush_to_casm_with_warnings(source)?.0)
+}
+
+/// [`compile_crush_to_casm`] plus the compile warnings collected by the
+/// polyglot pass (CRUSH-270's implicit-output and clobber warnings). Callers
+/// that surface warnings to the author (crush-run → stderr) use this and
+/// carry the strings alongside the program.
+pub fn compile_crush_to_casm_with_warnings(
+    source: &str,
+) -> anyhow::Result<(casm::Program, Vec<String>)> {
     let mut program = crush_frontend::parse_source(source)?;
-    prepare_polyglot_blocks(&mut program);
+    let warnings = prepare_polyglot_blocks(&mut program)?;
     let declared = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
     let casm = crush_frontend::compile_cast_owned(program)?;
     if let Some(declared) = declared {
         check_declared_capabilities(&casm, &declared)?;
     }
-    Ok(casm)
+    Ok((casm, warnings))
 }
 
 /// CRUSH-243: a program that declares `@capabilities` may only use the
@@ -153,18 +166,28 @@ fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) -> any
 /// A `use @lang` reaches every later block of its language in the same body
 /// and the bodies nested in it. One at the top level of `main` — where a
 /// script's top-level statements land — also reaches every other function.
-pub fn prepare_polyglot_blocks(program: &mut crush_cast::Program) {
+///
+/// Returns the compile warnings collected while walking the blocks — the
+/// implicit-output and clobber warnings of the CRUSH-270 transition — for
+/// the caller to surface (crush-run prints them to stderr). Errors (a
+/// declared `->` output the block never binds, `->` on a language with no
+/// marshaling) are returned as `Err`.
+pub fn prepare_polyglot_blocks(
+    program: &mut crush_cast::Program,
+) -> anyhow::Result<Vec<String>> {
     let file_level: Vec<crush_cast::ImportStatement> = program
         .functions
         .get("main")
         .map(|main| main.body.iter().filter_map(polyglot_use).cloned().collect())
         .unwrap_or_default();
+    let mut warnings: Vec<String> = Vec::new();
     for (name, func) in program.functions.iter_mut() {
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
         let mut uses = if name == "main" { Vec::new() } else { file_level.clone() };
-        prepare_stmts(&mut func.body, &mut known_locals, &mut uses);
+        prepare_stmts(&mut func.body, &mut known_locals, &mut uses, &mut warnings)?;
     }
+    Ok(warnings)
 }
 
 /// The import of a `use @lang …` statement.
@@ -182,7 +205,8 @@ fn prepare_stmts(
     stmts: &mut [crush_cast::Statement],
     known_locals: &mut HashSet<String>,
     uses: &mut Vec<crush_cast::ImportStatement>,
-) {
+    warnings: &mut Vec<String>,
+) -> anyhow::Result<()> {
     use crush_cast::Statement;
     for stmt in stmts.iter_mut() {
         if let Some(import) = polyglot_use(stmt) {
@@ -211,6 +235,7 @@ fn prepare_stmts(
                 lang,
                 code,
                 variables,
+                outputs,
                 meta,
                 ..
             } if lang == "python"
@@ -233,76 +258,152 @@ fn prepare_stmts(
                     if let Ok(free_vars) =
                         crush_lang_python::analyzer::free_variables(&dedent(code))
                     {
-                        let inputs: Vec<String> = free_vars
-                            .reads
+                        let crush_lang_python::analyzer::FreeVars {
+                            reads,
+                            top_level_bound,
+                            bound_anywhere,
+                        } = free_vars;
+                        let inputs: Vec<String> = reads
                             .into_iter()
                             .filter(|name| known_locals.contains(name))
                             .collect();
-                        let output_var = free_vars.top_level_bound.last().cloned();
-                        if let Some(output_var) = &output_var {
+                        let output_names = resolve_outputs(
+                            lang,
+                            outputs,
+                            &top_level_bound,
+                            &bound_anywhere,
+                            known_locals,
+                            warnings,
+                        )?;
+                        if !output_names.is_empty() {
                             meta.insert(
-                                "polyglot_output".to_string(),
-                                serde_json::json!(output_var),
+                                "polyglot_outputs".to_string(),
+                                serde_json::json!(output_names),
                             );
-                            known_locals.insert(output_var.clone());
+                            for name in &output_names {
+                                known_locals.insert(name.clone());
+                            }
                         }
-                        if !inputs.is_empty() || output_var.is_some() {
-                            *code =
-                                rewrite_python_marshaling(code, &inputs, output_var.as_deref());
+                        if !inputs.is_empty() || !output_names.is_empty() {
+                            *code = rewrite_python_marshaling(code, &inputs, &output_names);
                         }
                         *variables = inputs;
                     }
                     #[cfg(not(feature = "polyglot-python"))]
-                    let _ = (lang, code, variables, meta, &known_locals);
+                    let _ = (lang, code, variables, outputs, meta, &known_locals);
                 } else {
                     // javascript / js / node
                     #[cfg(feature = "polyglot-javascript")]
                     if let Ok(free_vars) = crush_lang_js::freevars::free_variables(&dedent(code)) {
-                        let inputs: Vec<String> = free_vars
-                            .reads
+                        let crush_lang_js::freevars::FreeVars {
+                            reads,
+                            top_level_bound,
+                            bound_anywhere,
+                        } = free_vars;
+                        let inputs: Vec<String> = reads
                             .into_iter()
                             .filter(|name| known_locals.contains(name))
                             .collect();
-                        let output_var = free_vars.top_level_bound.last().cloned();
-                        if let Some(output_var) = &output_var {
+                        let output_names = resolve_outputs(
+                            lang,
+                            outputs,
+                            &top_level_bound,
+                            &bound_anywhere,
+                            known_locals,
+                            warnings,
+                        )?;
+                        if !output_names.is_empty() {
                             meta.insert(
-                                "polyglot_output".to_string(),
-                                serde_json::json!(output_var),
+                                "polyglot_outputs".to_string(),
+                                serde_json::json!(output_names),
                             );
-                            known_locals.insert(output_var.clone());
+                            for name in &output_names {
+                                known_locals.insert(name.clone());
+                            }
                         }
-                        if !inputs.is_empty() || output_var.is_some() {
-                            *code = rewrite_javascript_marshaling(
-                                code,
-                                &inputs,
-                                output_var.as_deref(),
-                            );
+                        if !inputs.is_empty() || !output_names.is_empty() {
+                            *code = rewrite_javascript_marshaling(code, &inputs, &output_names);
                         }
                         *variables = inputs;
                     }
                     #[cfg(not(feature = "polyglot-javascript"))]
-                    let _ = (lang, code, variables, meta, &known_locals);
+                    let _ = (lang, code, variables, outputs, meta, &known_locals);
                 }
+            }
+            // `->` on a language with no value marshaling is a loud error,
+            // never a silent no-op: there is nothing to marshal back.
+            Statement::LangBlock { lang, outputs, .. } if !outputs.is_empty() => {
+                anyhow::bail!(
+                    "`->` output lists are not supported for @{lang}: it has no value marshaling"
+                );
             }
             Statement::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                prepare_stmts(then_body, known_locals, &mut uses.clone());
+                prepare_stmts(then_body, known_locals, &mut uses.clone(), warnings)?;
                 if let Some(else_body) = else_body {
-                    prepare_stmts(else_body, known_locals, &mut uses.clone());
+                    prepare_stmts(else_body, known_locals, &mut uses.clone(), warnings)?;
                 }
             }
-            Statement::While { body, .. } => prepare_stmts(body, known_locals, &mut uses.clone()),
+            Statement::While { body, .. } => {
+                prepare_stmts(body, known_locals, &mut uses.clone(), warnings)?
+            }
             Statement::For {
                 variable, body, ..
             } => {
                 known_locals.insert(variable.clone());
-                prepare_stmts(body, known_locals, &mut uses.clone());
+                prepare_stmts(body, known_locals, &mut uses.clone(), warnings)?;
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+/// Resolve a block's marshaled outputs from its declared `->` list (or, in
+/// the one-release transition, its implicit last-top-level-assignment rule).
+///
+/// CRUSH-270: with `->`, every declared name must be bound somewhere in the
+/// block (a hard compile error otherwise) and each becomes a Crush variable
+/// at this line. Without `->`, the old implicit rule still applies, but the
+/// caller records a warning naming the exported variable (and, when it
+/// overwrites an existing Crush variable, the clobber).
+fn resolve_outputs(
+    lang: &str,
+    declared: &[String],
+    top_level_bound: &[String],
+    bound_anywhere: &HashSet<String>,
+    known_locals: &HashSet<String>,
+    warnings: &mut Vec<String>,
+) -> anyhow::Result<Vec<String>> {
+    if !declared.is_empty() {
+        for name in declared {
+            if !bound_anywhere.contains(name) {
+                anyhow::bail!(
+                    "@{lang} block declares output `{name}` but never binds it; \
+                     add `{name} = …` at the block's top level, or drop it from `->`"
+                );
+            }
+        }
+        return Ok(declared.to_vec());
+    }
+
+    match top_level_bound.last() {
+        Some(name) => {
+            warnings.push(format!(
+                "@{lang} block exports `{name}` implicitly; add `-> {name}` to declare it"
+            ));
+            if known_locals.contains(name) {
+                warnings.push(format!(
+                    "@{lang} block overwrites the existing Crush variable `{name}`; \
+                     declare `-> {name}` to make the overwrite explicit"
+                ));
+            }
+            Ok(vec![name.clone()])
+        }
+        None => Ok(Vec::new()),
     }
 }
 
@@ -315,19 +416,23 @@ fn prepare_stmts(
 ///
 /// - Inputs: JSON-decoded from `os.environ` into real Python locals
 ///   (round-trips int/float/bool/str/list/map, not just strings).
-/// - Output: JSON-encoded and printed on a sentinel-prefixed line, kept
-///   distinct from the block's own ordinary prints (which still flow
-///   through as normal program output — stdout is a shared channel).
+/// - Output: a JSON **object keyed by name** printed on a sentinel-prefixed
+///   line, kept distinct from the block's own ordinary prints (which still
+///   flow through as normal program output — stdout is a shared channel).
+///   Each declared output becomes a key; the VM extracts them by name.
 /// - A value that can't be JSON-encoded (NaN, a set, a custom object)
-///   fails loudly, naming the variable and its type, rather than being
+///   fails loudly, naming the output and its type, rather than being
 ///   silently dropped.
+/// - A declared output the block only binds conditionally (so it is unbound
+///   at run time) fails loudly via `NameError`, naming the variable — never
+///   marshaled as `null`.
 ///
 /// The whole input-decoding prologue is kept on a single physical line so
 /// it shifts every line of the user's own code by exactly one line,
 /// keeping Python traceback line numbers predictable rather than off by
 /// a count that depends on how many variables happen to be marshaled.
 #[cfg(feature = "polyglot-python")]
-fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&str>) -> String {
+fn rewrite_python_marshaling(code: &str, inputs: &[String], outputs: &[String]) -> String {
     let mut prologue_parts: Vec<String> = Vec::new();
     if inputs.is_empty() {
         prologue_parts.push("import json as __crush_json".to_string());
@@ -350,14 +455,34 @@ fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&
     // `crush_vm::scheduler::CRUSH_RESULT_SENTINEL` by hand.
     const PY_SENTINEL_LITERAL: &str = "\"\\x00CRUSH_RESULT\\x00\"";
 
-    let epilogue = match output_var {
-        // `name` is always a plain identifier (came off the AST as a bound
-        // name), never containing a quote — safe to splice directly into
-        // a single-quoted Python string literal without escaping.
-        Some(name) => format!(
-            "\ntry:\n    print({PY_SENTINEL_LITERAL} + __crush_json.dumps({name}))\nexcept TypeError as __crush_marshal_err:\n    import sys as __crush_sys\n    print(\"cannot marshal output variable '{name}' (type \" + type({name}).__name__ + \"): \" + str(__crush_marshal_err), file=__crush_sys.stderr)\n    __crush_sys.exit(1)\n",
-        ),
-        None => String::new(),
+    let epilogue = if outputs.is_empty() {
+        String::new()
+    } else {
+        let mut lines = String::from("\ntry:\n    __crush_out = {}\n");
+        for name in outputs {
+            // `name` is an identifier (from the `->` list or a bound AST
+            // name), never a quote — safe to splice as the value. The dict
+            // key is JSON-quoted so any Unicode identifier round-trips.
+            let key = serde_json::to_string(name).expect("output name serializes");
+            lines.push_str(&format!("    __crush_out[{key}] = {name}\n"));
+        }
+        lines.push_str(&format!(
+            "    print({PY_SENTINEL_LITERAL} + __crush_json.dumps(__crush_out))\n"
+        ));
+        lines.push_str("except NameError as __crush_missing:\n");
+        lines.push_str("    import sys as __crush_sys\n");
+        lines.push_str(
+            "    print(\"output variable '\" + __crush_missing.name + \"' was not bound by the block\", file=__crush_sys.stderr)\n",
+        );
+        lines.push_str("    __crush_sys.exit(1)\n");
+        lines.push_str("except TypeError as __crush_marshal_err:\n");
+        lines.push_str("    import sys as __crush_sys\n");
+        lines.push_str(&format!(
+            "    print(\"cannot marshal output variable(s) {names} (a value was not JSON-serializable): \" + str(__crush_marshal_err), file=__crush_sys.stderr)\n",
+            names = outputs.join(", "),
+        ));
+        lines.push_str("    __crush_sys.exit(1)\n");
+        lines
     };
 
     // The block's own leading indentation (from however it sits inside
@@ -370,14 +495,11 @@ fn rewrite_python_marshaling(code: &str, inputs: &[String], output_var: Option<&
 
 /// Rewrite a `@javascript` block for the Crush/Node value boundary (CRUSH-68).
 ///
-/// Same protocol as Python: JSON in env vars, sentinel-prefixed JSON out.
-/// Node reads `process.env` (always strings) and `JSON.parse`s them.
+/// Same protocol as Python: JSON in env vars, a JSON object keyed by output
+/// name printed on a sentinel-prefixed line out. Node reads `process.env`
+/// (always strings) and `JSON.parse`s them.
 #[cfg(feature = "polyglot-javascript")]
-fn rewrite_javascript_marshaling(
-    code: &str,
-    inputs: &[String],
-    output_var: Option<&str>,
-) -> String {
+fn rewrite_javascript_marshaling(code: &str, inputs: &[String], outputs: &[String]) -> String {
     let mut prologue_parts: Vec<String> = Vec::new();
     for name in inputs {
         // `name` is an AST identifier — safe to splice as a JS binding.
@@ -393,11 +515,24 @@ fn rewrite_javascript_marshaling(
     // (`\x00CRUSH_RESULT\x00`). JS string uses `\0` / `\x00` equivalently.
     const JS_SENTINEL_LITERAL: &str = "\"\\x00CRUSH_RESULT\\x00\"";
 
-    let epilogue = match output_var {
-        Some(name) => format!(
-            "\ntry {{\n  console.log({JS_SENTINEL_LITERAL} + JSON.stringify({name}));\n}} catch (__crush_marshal_err) {{\n  console.error(\"cannot marshal output variable '{name}': \" + __crush_marshal_err);\n  process.exit(1);\n}}\n"
-        ),
-        None => String::new(),
+    let epilogue = if outputs.is_empty() {
+        String::new()
+    } else {
+        let mut lines = String::from("\ntry {\n  var __crush_out = {};\n");
+        for name in outputs {
+            let key = serde_json::to_string(name).expect("output name serializes");
+            lines.push_str(&format!("  __crush_out[{key}] = {name};\n"));
+        }
+        lines.push_str(&format!(
+            "  console.log({JS_SENTINEL_LITERAL} + JSON.stringify(__crush_out));\n"
+        ));
+        lines.push_str("} catch (__crush_marshal_err) {\n");
+        lines.push_str(&format!(
+            "  console.error(\"cannot marshal output variable(s) {names}: \" + __crush_marshal_err);\n",
+            names = outputs.join(", "),
+        ));
+        lines.push_str("  process.exit(1);\n}\n");
+        lines
     };
 
     format!("{prologue}\n{}{epilogue}", dedent(code))
@@ -1365,7 +1500,7 @@ mod tests {
             "use @lang python \"json\"\n@javascript {\nlet z = 1\n}\n",
         )
         .expect("parse");
-        prepare_polyglot_blocks(&mut program);
+        prepare_polyglot_blocks(&mut program).expect("prepare");
         let has_imports = program.functions["main"].body.iter().any(|s| {
             matches!(s, crush_cast::Statement::LangBlock { imports, .. } if !imports.is_empty())
         });
@@ -1401,6 +1536,155 @@ mod tests {
     fn test_use_lang_emits_no_exec_lang_of_its_own() {
         let prog = compile_crush_source("use @lang python \"math\"\nlet x = 1\n").expect("compile");
         assert!(!prog.manifest.permissions.iter().any(|p| p.starts_with("polyglot.")));
+    }
+
+    // ── CRUSH-270: explicit `->` outputs ──────────────────────────────────
+
+    // #230's two blocks, migrated to `->`: only the declared name crosses, so
+    // block 2 reads block 1's `secret` through a real Crush variable.
+    #[test]
+    fn test_crush_270_explicit_output_only_declared_names_cross() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    @python -> secret {\n        secret = 42\n    }\n    @python -> result {\n        result = secret + 1\n    }\n    print(result);\n}\n";
+        assert_eq!(run_both_engines(src), "43\n");
+    }
+
+    // Without `->`, the old implicit rule still runs — and warns, naming the
+    // exported variable and suggesting the `->` form.
+    #[test]
+    fn test_crush_270_implicit_rule_still_works_but_warns() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    @python {\n        result = 5 * 8\n    }\n    print(result);\n}\n";
+        let prog = compile_crush_source(src).expect("compile");
+        let out = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+            .expect("run");
+        assert_eq!(out.output, "40\n");
+        let warn = prog.warnings.join("\n");
+        assert!(
+            warn.contains("`result`") && warn.contains("-> result"),
+            "expected an implicit-output warning naming `result`, got: {warn}"
+        );
+    }
+
+    // `-> result` lets the block export the intended (non-last) assignment —
+    // today's implicit rule would have exported `tmp` and lost `result`.
+    #[test]
+    fn test_crush_270_explicit_output_keeps_intermediate() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    @python -> result {\n        result = 5 * 8\n        tmp = result + 1\n    }\n    print(result);\n}\n";
+        assert_eq!(run_both_engines(src), "40\n");
+    }
+
+    // The clobber case: `-> total` (not `count`) leaves the Crush `count`
+    // untouched, and the block's own `count = 0` stays inside the block.
+    #[test]
+    fn test_crush_270_explicit_output_does_not_clobber() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    let count = 10\n    @python -> total {\n        count = 0\n        total = count * 2\n    }\n    print(count);\n    print(total);\n}\n";
+        assert_eq!(run_both_engines(src), "10\n0\n");
+    }
+
+    // Without `->`, the implicit export of `count` overwrites the Crush
+    // variable, and the compiler warns about the clobber.
+    #[test]
+    fn test_crush_270_implicit_clobber_warns() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    let count = 10\n    @python {\n        count = 0\n    }\n    print(count);\n}\n";
+        let prog = compile_crush_source(src).expect("compile");
+        let out = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+            .expect("run");
+        assert_eq!(out.output, "0\n");
+        let warn = prog.warnings.join("\n");
+        assert!(
+            warn.contains("overwrites") && warn.contains("`count`"),
+            "expected a clobber warning naming `count`, got: {warn}"
+        );
+    }
+
+    // The env-only fallback is gone: a Crush variable the block never reads by
+    // name (only via `dir()`/`globals()`) is no longer injected — not by name
+    // and not via `os.environ` — while one the block *reads* is injected by
+    // name.
+    #[test]
+    fn test_crush_270_env_fallback_removed() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    let n = 5\n    @python -> has_n {\n        import os\n        has_n = (\"n\" in os.environ) or (\"n\" in globals())\n    }\n    print(has_n);\n    @python -> r {\n        r = n * 2\n    }\n    print(r);\n}\n";
+        assert_eq!(run_both_engines(src), "false\n10\n");
+    }
+
+    // Multi-output `-> (a, b)`.
+    #[test]
+    fn test_crush_270_multi_output() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    @python -> (mean, stdev) {\n        mean = 5\n        stdev = 2\n    }\n    print(mean);\n    print(stdev);\n}\n";
+        assert_eq!(run_both_engines(src), "5\n2\n");
+    }
+
+    // A declared-but-unbound output is a compile error naming the variable.
+    #[test]
+    fn test_crush_270_declared_but_unbound_is_compile_error() {
+        let src = "fn main() {\n    @python -> nope {\n        x = 1\n    }\n    print(nope);\n}\n";
+        let err = compile_crush_source(src).expect_err("declared output `nope` is never bound");
+        assert!(err.to_string().contains("`nope`"), "error should name `nope`: {err}");
+    }
+
+    // A conditionally-bound output that misses at run time is a loud error
+    // naming the variable — never marshaled as `null`.
+    #[test]
+    fn test_crush_270_conditional_output_miss_is_loud() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "fn main() {\n    @python -> x {\n        if False:\n            x = 1\n    }\n    print(x);\n}\n";
+        let prog = compile_crush_source(src).expect("conditional binding compiles");
+        let err = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+            .expect_err("a missing conditional output must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'x'") || msg.contains("`x`"),
+            "error should name the missing output `x`, got: {msg}"
+        );
+    }
+
+    // `->` on a language with no value marshaling is a loud compile error.
+    #[test]
+    fn test_crush_270_arrow_on_bash_is_rejected() {
+        let src = "fn main() {\n    @bash -> x {\n        echo hi\n    }\n}\n";
+        let err = compile_crush_source(src).expect_err("bash has no value marshaling");
+        assert!(err.to_string().contains("@bash"), "error should name the language: {err}");
+    }
+
+    // `use @lang` + `->` still splice the import into the block.
+    #[test]
+    fn test_crush_270_use_lang_with_output() {
+        if !python3_available() {
+            eprintln!("python3 not found; skipping polyglot test");
+            return;
+        }
+        let src = "use @lang python \"math\"\nfn main() {\n    @python -> r {\n        r = math.floor(2.7)\n    }\n    print(r);\n}\n";
+        assert_eq!(run_both_engines(src), "2\n");
     }
 }
 

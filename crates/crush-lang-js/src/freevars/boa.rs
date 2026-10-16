@@ -59,7 +59,7 @@ pub(super) fn free_variables(source: &str) -> Result<FreeVars, String> {
         }
     }
 
-    Ok(FreeVars { reads, top_level_bound })
+    Ok(FreeVars { reads, top_level_bound, bound_anywhere })
 }
 
 /// A top-level item of either a module or a script.

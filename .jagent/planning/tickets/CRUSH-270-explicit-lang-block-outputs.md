@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-270 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | opencode |
 | **Dependencies** | issue #225's analyzer fix, first or in the same PR (same binding analysis; see Related) |
 | **Estimated effort** | M |
 | **Filed by** | vega — 2026-10-15, owner decision on issue #230 |
@@ -79,3 +79,48 @@ fn main() {
 
 - A persistent interpreter or state shared between blocks (rejected in CRUSH-224/225; still rejected).
 - Changing how inputs are detected (automatic, by free-variable analysis).
+
+## Resolution (opencode, 2026-10-15)
+
+Implemented on `agent/opencode/CRUSH-270-explicit-outputs`, based on
+`agent/opencode/issue-225-comprehension-reads` (the #241 analyzer fix this
+builds on).
+
+**Wire protocol for multi-output.** `meta["polyglot_output"]` (a single
+string) is replaced by `meta["polyglot_outputs"]` (a JSON array of names). The
+exec_lang spec now carries `out_count` plus `out_0..out_{k-1}`, mirroring the
+existing `var_count`/`var_i` input convention. The Python/JS epilogue prints a
+single sentinel line whose payload is a JSON *object keyed by name*
+(`{"a": 1, "b": 2}`) instead of one scalar. `parse_exec_lang_stdout` is
+unchanged in shape; a new shared helper `crush_vm::scheduler::exec_lang_outputs`
+extracts each declared name from the object and the scheduler + `PortableVm`
+push the values in reverse (so the compiler's first `store` sees the first
+declared value). The compiler emits one `store` per declared output, in
+declaration order. FastVM/JIT are untouched — they keep yielding/refusing
+exactly as before.
+
+**Warning channel.** No general compiler-warning channel existed (only
+`ai_runtime::Warning`). Added `crush_vm::Program::warnings: Vec<String>` (not
+serialized into the `.cvm1` blob, same as `source_map`).
+`prepare_polyglot_blocks` now returns `Result<Vec<String>>`;
+`compile_crush_to_casm_with_warnings` carries them through to the VM program,
+and `crush-run` prints each to stderr with a `warning:` prefix (`crushc` too).
+Two warnings: the implicit export (`… exports \`x\` implicitly; add \`-> x\``)
+and the clobber (`… overwrites the existing Crush variable \`x\` …`).
+
+**`->` support by language.** python, javascript/js/node (the languages with a
+wired free-variable analyzer) marshal declared outputs and accept `->`. bash and
+every other `@lang` has no marshaling, so `->` on them is a loud compile error
+(`\`->\` output lists are not supported for @bash: it has no value marshaling`).
+
+**Declared-but-unbound vs conditionally-bound.** The analyzer now exposes
+`bound_anywhere` (every module-scope binding, including conditional ones inside
+`if`/`try`/…). A declared name not in `bound_anywhere` is a compile error naming
+it. A name bound only conditionally compiles, but a run-time miss raises
+`NameError` in the epilogue, which the block turns into a clear error naming the
+variable — never `null`.
+
+**Env-only fallback removed.** `compiler.rs` no longer passes every earlier
+Crush local as env vars when a block has no detected inputs. Inputs reach the
+block by name (the same prologue as analyzer-detected inputs) or not at all.
+

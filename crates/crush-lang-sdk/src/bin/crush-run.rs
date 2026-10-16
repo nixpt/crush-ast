@@ -581,7 +581,15 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         "cvm1" => std::fs::read(&args.path)
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
-        _ => Some(load_program(&args.path, &args.caps, args.polyglot)?.0),
+        _ => {
+            let (program, _declared) = load_program(&args.path, &args.caps, args.polyglot)?;
+            // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
+            // warnings) go to stderr, never the program's stdout.
+            for warning in &program.warnings {
+                eprintln!("warning: {warning}");
+            }
+            Some(program)
+        }
     };
     if let Some(program) = &preflight {
         let missing = runtime.missing_grants(program)?;

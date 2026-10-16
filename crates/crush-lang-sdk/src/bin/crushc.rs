@@ -193,7 +193,12 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     // Same pass `compile_crush_source` (the `crush-run x.crush` path) runs:
     // without it `@lang` blocks get no variable marshaling (CRUSH-130).
-    crush_lang_sdk::compile::prepare_polyglot_blocks(&mut program);
+    // It also collects the CRUSH-270 polyglot warnings (implicit output,
+    // clobber), surfaced to stderr below.
+    let warnings = crush_lang_sdk::compile::prepare_polyglot_blocks(&mut program)?;
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
 
     if cli.emit == EmitKind::Ast {
         let rendered = crush_frontend::render::render_program(&program);
