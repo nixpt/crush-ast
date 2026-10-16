@@ -37,14 +37,18 @@
 //! value semantics. This is not a Rust type/borrow checker or full closure-trait
 //! implementation. Nested functions are rejected until
 //! block-local item resolution is implemented.
-//! Integer widths/casts/overflow and string Debug formatting have known silent
-//! divergences tracked by CRUSH-xps-8/9. These are not supported semantics; the
-//! SDK's rustc conformance inventory pins the current failures until fixed.
+//! Literal integer casts within i8/i16/i32/i64/u8/u16/u32 are evaluated exactly.
+//! Other casts are rejected until numeric binding/range analysis is available.
+//! Numeric suffixes and annotations are retained as source hints; this does not
+//! implement type inference or typed arithmetic. Runtime integer overflow and
+//! string Debug formatting still have known silent divergences tracked by
+//! CRUSH-xps-8/9; the SDK inventory pins those failures until fixed.
 
 pub mod lower_expr;
 pub mod lower_stmt;
 pub mod parser;
 mod bindings;
+mod numeric;
 mod values;
 
 use std::any::Any;

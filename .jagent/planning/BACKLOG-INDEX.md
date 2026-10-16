@@ -24,16 +24,17 @@ These existing IDs belong to this box's `CRUSH-xps` lane, separate from the
 
 | ID | Dispatch state | Specification |
 |---|---|---|
-| CRUSH-xps-8 | Backlog; first new implementation | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
+| CRUSH-xps-8 | In progress; literal casts and source hints first | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
 | CRUSH-xps-9 | Backlog; after numeric facts, formatter work can start independently | [Typed Debug and macro evaluation](tickets/CRUSH-xps-9-rust-debug-format.md) |
 | CRUSH-xps-10 | In review in #213; preserve implementation/evidence | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
 | CRUSH-xps-11 | In review in #213; preserve implementation/evidence | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |
 | CRUSH-xps-12 | In review in #213; preserve implementation/evidence | [Complete bodies and safe value-block refusal](tickets/CRUSH-xps-12-rust-expression-block-lowering.md) |
 | CRUSH-xps-13 | Backlog; numeric dispatch after xps-8, strings after xps-5 | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
 
-Snapshot: 2026-10-15; main `30288bc`, SDK stack through #233 (`1be8c51`).
-The specification includes current-main integration requirements; this table
-is not a claim that in-review changes have landed or been released.
+Implementation base: 2026-10-15 main `ca5c662`; the SDK stack through #233
+and design #237 are merged. The xps-10–12 review entries above retain their
+ticket closure gates; implementation merged in #213 does not complete their
+new review-exit matrices automatically.
 
 ## ID ledger
 

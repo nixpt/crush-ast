@@ -58,7 +58,8 @@ through `io.print`, which appends a newline to stdout.
 | String clone, `to_owned`, and `+=` on local bindings | Exact supported cases (CRUSH-xps-7) |
 | Implicit owned transfers, nested clones, borrowed views, `pop`/`unwrap`, indexed writes, owned captures | Rejected with location (CRUSH-xps-7) |
 | Other mutable string operations and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
-| Narrow integer casts and release overflow | Known silent divergence; CRUSH-xps-8 |
+| Literal integer casts in i8/i16/i32/i64/u8/u16/u32 | Exact; other casts rejected with location (CRUSH-xps-8 slice 1) |
+| Typed arithmetic and release overflow | Known silent divergence; CRUSH-xps-8 remains open |
 | String `{:?}` quoting | Known silent divergence; CRUSH-xps-9 |
 | Walker assignments / loops | Exact baseline; CRUSH-xps-10 |
 | Supported closures | Exact on VM; AOT rejects closure opcodes (CRUSH-251) |
@@ -72,6 +73,29 @@ Rust `Copy`/move/clone semantics must follow COSM's contracts when Rust type
 lowering arrives. The schema and Crush frontend alone do not enable Rust
 structs, traits, enums, or `impl` blocks. Engine support and receiver dispatch
 are tracked in CRUSH-zorro-42–44; Rust's producer belongs to COSM K3.
+
+## Rust integer conversion boundary
+
+The first xps-8 slice supports casts whose operand is an integer literal, a
+direct negative integer literal, parentheses around those, or another supported
+cast. Narrowing keeps the low target-width bits and interprets the target sign;
+widening preserves the source value. Integer cast targets constrain unsuffixed
+literal operands; `255 as i8` is rejected as an overflowing literal. Examples:
+`300i64 as u8` is `44`, `255u8 as i8 as i64` is
+`-1`, and `3_000_000_000i64 as i32` is `-1294967296`.
+
+Casts of variables, calls and computed operands are refused before compilation
+until numeric binding/range analysis and single-evaluation lowering exist.
+Float/char/pointer casts, wide unsigned/128-bit targets, and aliases are also
+refused. The original cast audit is now a frontend-refusal policy on all three
+engines. Signed minimum literals parse correctly; explicit integer suffixes
+have range checks, and unsupported integer/f32 suffixes are rejected.
+
+Local/function/closure annotations and literal suffixes survive as **source
+hints** in CAST metadata beside lexical/ownership metadata. They do not yet
+establish inferred types or typed arithmetic, and do not resolve annotation-only
+f32/wide/pointer types. The overflow audit remains a known silent divergence;
+xps-8 and normal `.rs` CLI dispatch remain gated.
 
 ## Rust binding identity
 

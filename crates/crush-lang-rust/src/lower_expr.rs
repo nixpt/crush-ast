@@ -90,6 +90,12 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
             })
         }
         Expr::Unary(e) => {
+            if matches!(e.op, syn::UnOp::Neg(_))
+                && let Expr::Lit(literal) = e.expr.as_ref()
+                && let syn::Lit::Int(integer) = &literal.lit
+            {
+                return crate::numeric::lower_literal(integer, true, meta);
+            }
             let operand = lower_expr(&e.expr, ctx)?;
             let operator = match e.op {
                 syn::UnOp::Deref(_) => "*",
@@ -214,9 +220,7 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                 meta,
             })
         }
-        Expr::Cast(e) => {
-            lower_expr(&e.expr, ctx)
-        }
+        Expr::Cast(e) => crate::numeric::lower_cast(e, meta),
         Expr::Field(e) => {
             let target = lower_expr(&e.base, ctx)?;
             let field = match &e.member {
@@ -237,6 +241,14 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
         }
         Expr::Closure(e) => {
             let mut meta = meta;
+            meta.insert("rust_numeric_params".into(),
+                serde_json::Value::Array(e.inputs.iter().map(crate::numeric::hint).collect()));
+            // A closure's omitted return type is inferred, unlike a free
+            // function's omitted return type (unit).
+            meta.insert("rust_numeric_return".into(), match e.output {
+                syn::ReturnType::Default => serde_json::Value::Null,
+                _ => crate::numeric::result(&e.output),
+            });
             meta.insert("rust_value_params".into(),
                 serde_json::Value::Array(e.inputs.iter().map(crate::values::hint).collect()));
             if e.capture.is_some() {
@@ -332,14 +344,14 @@ fn lower_lit(
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
     match lit {
-        syn::Lit::Int(i) => {
-            let val = i.base10_parse::<i64>()?;
-            Ok(Expression::IntLiteral { value: val, meta })
+        syn::Lit::Int(i) => crate::numeric::lower_literal(i, false, meta),
+        syn::Lit::Float(f) => {
+            anyhow::ensure!(f.suffix().is_empty() || f.suffix() == "f64",
+                "unsupported Rust float suffix `{}`: f32 precision is not implemented (CRUSH-xps-8)", f.suffix());
+            let mut meta = meta;
+            meta.insert("rust_numeric_suffix".into(), serde_json::json!(f.suffix()));
+            Ok(Expression::FloatLiteral { value: f.base10_parse()?, meta })
         }
-        syn::Lit::Float(f) => Ok(Expression::FloatLiteral {
-            value: f.base10_parse()?,
-            meta,
-        }),
         syn::Lit::Str(s) => Ok(Expression::StringLiteral {
             value: s.value(),
             meta,
@@ -352,10 +364,11 @@ fn lower_lit(
             value: c.value().to_string(),
             meta,
         }),
-        syn::Lit::Byte(b) => Ok(Expression::IntLiteral {
-            value: b.value() as i64,
-            meta,
-        }),
+        syn::Lit::Byte(b) => {
+            let mut meta = meta;
+            meta.insert("rust_numeric_suffix".into(), serde_json::json!("u8"));
+            Ok(Expression::IntLiteral { value: b.value() as i64, meta })
+        }
         _ => {
             anyhow::bail!("unsupported Rust literal `{}`; this literal has no CAST representation", lit.to_token_stream())
         }

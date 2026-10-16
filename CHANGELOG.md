@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Rust casts of literal integers now preserve truncation and signedness for
+  i8/i16/i32/i64/u8/u16/u32. Other casts fail with source locations pending
+  numeric analysis; casts are no longer discarded. Signed minimum literals
+  parse correctly, explicitly suffixed integer bounds are checked, and wide /
+  pointer integer suffixes and f32 suffixes are rejected (CRUSH-xps-8 slice 1).
+
 - Rust flat Vec/array clones now create independent sequences through the shared
   `seq.slice` operation. Fresh value arguments/reassignment and String clones
   with local `+=` have differential VM/AOT coverage (CRUSH-xps-7).
