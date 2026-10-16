@@ -169,7 +169,7 @@ jobs:
           fi
           cargo test -p crush-aot $tests 2>&1
       - name: Prune AOT cache entries this run didn't use
-        if: always()
+        if: always() && steps.aot-key.outcome == 'success'
         run: find "$CRUSH_AOT_CACHE_DIR" -type f ! -newer "$RUNNER_TEMP/aot-run-start" -delete
 
   # Optimized builds, as the product makes them (CRUSH_AOT_OPTIMIZE unset ==
@@ -239,7 +239,7 @@ jobs:
             --test integration_c \
             2>&1
       - name: Prune AOT cache entries this run didn't use
-        if: always()
+        if: always() && steps.aot-key.outcome == 'success'
         run: find "$CRUSH_AOT_CACHE_DIR" -type f ! -newer "$RUNNER_TEMP/aot-run-start" -delete
 
   # One status for all of the above, under the job name the single AOT job had.
