@@ -126,7 +126,6 @@ jobs:
             tests: REST
     env:
       CRUSH_AOT_OPTIMIZE: "0"
-      CRUSH_AOT_CACHE_DIR: ${{ github.workspace }}/../crush-aot-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -142,11 +141,13 @@ jobs:
         id: aot-key
         run: |
           echo "toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-          mkdir -p "$CRUSH_AOT_CACHE_DIR"
+          # actions/cache refuses a path with `..`, so not beside the checkout.
+          echo "CRUSH_AOT_CACHE_DIR=$HOME/.cache/crush-aot" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/crush-aot"
           touch "$RUNNER_TEMP/aot-run-start"
       - uses: actions/cache@v4
         with:
-          path: ${{ env.CRUSH_AOT_CACHE_DIR }}
+          path: ~/.cache/crush-aot
           # A fresh key per run so the cache follows frontend/corpus changes too;
           # restore from the closest earlier snapshot.
           key: aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-${{ github.run_id }}
@@ -191,7 +192,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      CRUSH_AOT_CACHE_DIR: ${{ github.workspace }}/../crush-aot-cache
       # Spelled out (not unset) so the cache key below names the mode.
       CRUSH_AOT_OPTIMIZE: "1"
       FULL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -210,11 +210,13 @@ jobs:
         id: aot-key
         run: |
           echo "toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-          mkdir -p "$CRUSH_AOT_CACHE_DIR"
+          # actions/cache refuses a path with `..`, so not beside the checkout.
+          echo "CRUSH_AOT_CACHE_DIR=$HOME/.cache/crush-aot" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/crush-aot"
           touch "$RUNNER_TEMP/aot-run-start"
       - uses: actions/cache@v4
         with:
-          path: ${{ env.CRUSH_AOT_CACHE_DIR }}
+          path: ~/.cache/crush-aot
           key: aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-${{ github.run_id }}
           restore-keys: |
             aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-
