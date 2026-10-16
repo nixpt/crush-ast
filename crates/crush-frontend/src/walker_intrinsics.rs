@@ -12,6 +12,7 @@ pub(crate) enum ResultType {
     First,
     Branches,
     Any,
+    Int,
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +30,32 @@ impl Intrinsic {
         }
         if self.variable_target && !matches!(args.first(), Some(Expression::Var { .. })) {
             bail!("{name} target must be a variable");
+        }
+        if name == "__crush_rust_int_cast__" {
+            let width = match &args[1] {
+                Expression::IntLiteral {
+                    value: width @ (8 | 16 | 32 | 64),
+                    ..
+                } => *width,
+                _ => bail!("{name} width must be a literal 8, 16, 32 or 64"),
+            };
+            let signed = match &args[2] {
+                Expression::BoolLiteral { value, .. } => *value,
+                _ => bail!("{name} signedness must be a literal bool"),
+            };
+            if width == 64 && !signed {
+                bail!("{name} cannot represent u64");
+            }
+            if matches!(
+                args[0],
+                Expression::FloatLiteral { .. }
+                    | Expression::StringLiteral { .. }
+                    | Expression::BoolLiteral { .. }
+                    | Expression::NullLiteral { .. }
+                    | Expression::ArrayLiteral { .. }
+            ) {
+                bail!("{name} requires an integer operand");
+            }
         }
         Ok(())
     }
@@ -48,6 +75,7 @@ pub(crate) fn lookup(name: &str) -> Option<Intrinsic> {
         "__crush_setindex__" => (3, false, false, Any),
         "__crush_subscript__" => (2, false, false, Any),
         "__crush_ternary__" => (3, false, false, Branches),
+        "__crush_rust_int_cast__" => (3, false, false, Int),
         "__crush_js_or__" | "__crush_js_and__" => (2, false, false, Any),
         "__crush_deref__" | "__crush_addr_of__" | "__crush_unary__" => (1, false, false, Any),
         _ => return None,

@@ -1,7 +1,7 @@
 //! Rust lexical locals → distinct CAST storage names (CRUSH-xps-6).
 //! Runs after macro/statement lowering, so format-string captures are ordinary
 //! Vars too. Binding metadata is independent of the VM's local-slot layout.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crush_cast::{Expression as E, Pattern, Program, Statement as S};
 use serde_json::{Value, json};
@@ -21,6 +21,7 @@ struct Scope {
 
 #[derive(Default)]
 struct Resolver {
+    globals: HashSet<String>,
     prefix: String,
     function_name: String,
     scopes: Vec<Scope>,
@@ -39,8 +40,10 @@ pub(crate) fn resolve(program: &mut Program, source: &str) -> anyhow::Result<()>
         prefix = format!("__crush_rust_binding_{nonce}_");
         nonce += 1;
     }
+    let globals: HashSet<_> = program.functions.keys().cloned().collect();
     for (name, function) in &mut program.functions {
         let mut resolver = Resolver {
+            globals: globals.clone(),
             prefix: prefix.clone(),
             function_name: name.clone(),
             ..Default::default()
@@ -214,7 +217,7 @@ impl Resolver {
                 let local_call = meta
                     .get("rust_source_name")
                     .and_then(Value::as_str)
-                    .filter(|name| self.lookup(name).is_some())
+                    .filter(|name| self.lookup(name).is_some() || self.globals.contains(*name))
                     .map(str::to_owned);
                 if let Some(function) = local_call {
                     *expression = E::Call {

@@ -9,10 +9,7 @@ use syn::{Stmt, spanned::Spanned};
 use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
 
 pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
-    let start = stmt.span().start();
-    lower_stmt_inner(stmt, ctx).map_err(|error| {
-        anyhow::anyhow!("Rust statement at {}:{}: {error:#}", start.line, start.column + 1)
-    })
+    lower_stmt_inner(stmt, ctx).map_err(|error| crate::diagnostics::at("statement", stmt.span(), error))
 }
 
 fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {

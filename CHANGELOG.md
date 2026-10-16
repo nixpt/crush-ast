@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Rust dynamic integer casts now use lexical numeric proofs and a shared CASM
+  expansion with one operand evaluation. Proven lengths, bounded range indices,
+  small u64 values and portable bounded usize conversions are supported;
+  unproven producers are refused (CRUSH-xps-8 slice 2).
+- Rust free-function calls evaluate arguments left to right and honor source
+  functions that share builtin/helper names. Nested lowering errors retain one
+  innermost source location.
 - Rust casts of literal integers now preserve truncation and signedness for
   i8/i16/i32/i64/u8/u16/u32. Other casts fail with source locations pending
   numeric analysis; casts are no longer discarded. Signed minimum literals
