@@ -96,14 +96,37 @@ jobs:
   # ── AOT backends (Rust + C) ───────────────────────────────────────────────
   # crush-aot's tests build real .so files with rustc and gcc and compare what the
   # programs print with the VM. Test (workspace) only compiles them (`--no-run`),
-  # so before this job none of them ran in CI. The second step reruns the C-runtime
-  # tests with CRUSH_GC_STRESS=1 (a collection before every instruction), which
-  # turns any value the collector fails to find into wrong output or a crash
-  # (CRUSH-227). memory_bounds is left out of it: millions of iterations.
-  test-aot:
-    name: Test (aot)
+  # so before these jobs none of them ran in CI.
+  #
+  # Sharded so no single job is the critical path: one test job ran ~16 min,
+  # double the next-slowest job. Each shard:
+  # - builds unoptimized (CRUSH_AOT_OPTIMIZE=0): the tests compare output, and
+  #   rustc at -O0 is ~14x faster per program than -O3 + thin LTO (gcc ~3x);
+  # - keeps the AOT build cache (CRUSH_AOT_CACHE_DIR) between runs. The cache key
+  #   inside crush-aot covers the generated source, the opt level and the
+  #   compiler's identity, so a restored entry can't be stale; the workflow key
+  #   below only decides which snapshot to start from. Entries a run didn't use
+  #   are pruned before the save (a hit refreshes the entry's mtime).
+  # Optimized builds still run: see Test (aot, optimized + GC stress).
+  test-aot-shard:
+    name: Test (aot, ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: js+python
+            tests: --test js_parity --test python_parity
+          - shard: rust+differential
+            tests: --test rust_parity --test differential_aot
+          # Everything not named by another shard, so a new test file runs here
+          # without a CI change.
+          - shard: rest
+            tests: REST
+    env:
+      CRUSH_AOT_OPTIMIZE: "0"
+      CRUSH_AOT_CACHE_DIR: ${{ github.workspace }}/../crush-aot-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -113,8 +136,97 @@ jobs:
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p crush-aot --lib --tests 2>&1
+        with:
+          shared-key: test-aot
+      - name: AOT cache key
+        id: aot-key
+        run: |
+          echo "toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$CRUSH_AOT_CACHE_DIR"
+          touch "$RUNNER_TEMP/aot-run-start"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CRUSH_AOT_CACHE_DIR }}
+          # A fresh key per run so the cache follows frontend/corpus changes too;
+          # restore from the closest earlier snapshot.
+          key: aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-${{ github.run_id }}
+          restore-keys: |
+            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-
+            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-
+      - name: cargo test
+        run: |
+          tests="${{ matrix.tests }}"
+          if [ "$tests" = REST ]; then
+            tests="--lib --bins"
+            for f in crates/crush-aot/tests/*.rs; do
+              t=$(basename "$f" .rs)
+              case "$t" in
+                js_parity|python_parity|rust_parity|differential_aot) ;;
+                *) tests="$tests --test $t" ;;
+              esac
+            done
+          fi
+          cargo test -p crush-aot $tests 2>&1
+      - name: Prune AOT cache entries this run didn't use
+        if: always()
+        run: find "$CRUSH_AOT_CACHE_DIR" -type f ! -newer "$RUNNER_TEMP/aot-run-start" -delete
+
+  # Optimized builds, as the product makes them (CRUSH_AOT_OPTIMIZE unset ==
+  # "1"). Two jobs in one, because they want the same optimized builds of the
+  # same programs and share them through the AOT cache:
+  #
+  # - The safety net for the unoptimized shards: -O3 + LTO can expose undefined
+  #   behaviour or optimizer-sensitive bugs in the generated C (or Rust) that
+  #   -O0 hides. Every PR runs the cross-backend agreement suites optimized; a
+  #   push to main runs the whole AOT suite optimized, so nothing that only
+  #   fails optimized can sit on main for more than one merge.
+  # - The C-runtime tests again with CRUSH_GC_STRESS=1 (a collection before
+  #   every instruction), which turns any value the collector fails to find
+  #   into wrong output or a crash (CRUSH-227). memory_bounds is left out of
+  #   it: millions of iterations. Optimized on purpose: under stress the run,
+  #   not the build, dominates, and an unoptimized collector made this step
+  #   ~1.6x slower in total (stdout_parity alone 31 s -> 105 s).
+  test-aot-optimized:
+    name: Test (aot, optimized + GC stress)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CRUSH_AOT_CACHE_DIR: ${{ github.workspace }}/../crush-aot-cache
+      # Spelled out (not unset) so the cache key below names the mode.
+      CRUSH_AOT_OPTIMIZE: "1"
+      FULL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-aot
+      - name: AOT cache key
+        id: aot-key
+        run: |
+          echo "toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$CRUSH_AOT_CACHE_DIR"
+          touch "$RUNNER_TEMP/aot-run-start"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CRUSH_AOT_CACHE_DIR }}
+          key: aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-${{ github.run_id }}
+          restore-keys: |
+            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-
+            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-
+      - name: Cross-backend agreement, optimized (every PR)
+        if: env.FULL != 'true'
+        run: cargo test -p crush-aot --test backend_agreement --test examples_parity 2>&1
+      - name: Whole AOT suite, optimized (push to main)
+        if: env.FULL == 'true'
+        run: cargo test -p crush-aot --lib --tests 2>&1
       - name: C runtime under GC stress
+        if: success() || failure()
         env:
           CRUSH_GC_STRESS: "1"
         run: |
@@ -124,6 +236,21 @@ jobs:
             --test examples_parity \
             --test integration_c \
             2>&1
+      - name: Prune AOT cache entries this run didn't use
+        if: always()
+        run: find "$CRUSH_AOT_CACHE_DIR" -type f ! -newer "$RUNNER_TEMP/aot-run-start" -delete
+
+  # One status for all of the above, under the job name the single AOT job had.
+  test-aot:
+    name: Test (aot)
+    if: always()
+    needs: [test-aot-shard, test-aot-optimized]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every AOT job passed
+        run: |
+          [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = false ]
 
   # ── Every other member's tests (CRUSH-231) ────────────────────────────────
   # Before this job, these crates were compiled by Test (workspace)
