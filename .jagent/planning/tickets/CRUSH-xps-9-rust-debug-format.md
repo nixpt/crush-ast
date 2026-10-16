@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-xps-9 |
 | **Priority** | P1; closes the last formatting silent entry |
-| **Status** | Backlog |
+| **Status** | In progress; macro boundary and typed literal Debug slice |
 | **Phase** | M2 / Rust parity |
-| **Assignee** | unassigned |
+| **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7; CRUSH-xps-8 for numeric descriptors |
 | **Coordination** | CRUSH-xps-8 numeric facts; CRUSH-xps-12 value-block boundary; CRUSH-xps-13 shared C bridge |
 | **Estimated effort** | L; formatter and macro-evaluation slices |
@@ -66,6 +66,34 @@ Debug implementations are not a stable cross-version serialization format.
    effectful repetition/reordering. Preserve user scope and capture behavior.
 4. Expand the shared corpus and remove the string Debug silent exception only
    after all engines satisfy their exact-or-loud gates.
+
+## First implementation slice
+
+Branch: `agent/nixp/CRUSH-xps-9`, initially based on `fcb2224` after #244 merged;
+#246 was still open when this work started. This independent first slice
+establishes the macro/refusal boundary before dynamic numeric descriptors land.
+
+- Fold typed literal Debug from the Rust AST: str, char, bool, representable
+  integers and finite f64, unit and bounded literal arrays. Rust char/string
+  identity survives until formatting; escaping uses the Rust formatter of the
+  recorded toolchain, not generic Crush text conversion.
+- Bound compile-time traversal to depth 16 / 256 nodes and each Debug result to
+  1 MiB. Dynamic values, including variables/calls and inline Debug captures,
+  fail at their source location pending the typed runtime formatter.
+- Keep Display on the existing `conv.text(value, "rust")` ABI. If arguments can
+  have effects, require one use each in source order and no inline captures;
+  repeated/reordered cases are refused rather than duplicating/reordering calls.
+  Named argument materialization and unused arguments are explicitly refused.
+- Preserve owned String identity for empty and literal-only `format!`.
+- Refuse `print!`, `eprint!`, and `eprintln!` in both statement and expression
+  positions until newline/channel routing can be faithful.
+- Promote `audit_debug_string` to exact on all three engines. Dynamic float
+  Debug in `float_display` becomes a targeted xps-9 refusal, preserving its
+  existing oracle output for the future runtime formatter.
+
+This does not add `rust.debug` or close xps-9. Remaining slices add the shared
+runtime kernel, literal descriptors from binding/type facts, explicit stdlib
+registration, dynamic aggregate limits and the C bridge/refusal boundary.
 
 ## Proposed fixture matrix
 

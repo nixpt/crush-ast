@@ -391,18 +391,20 @@ fn lower_macro_expr(mac: &syn::Macro, ctx: &LowerCtx<'_>) -> anyhow::Result<Expr
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         "format" => format_args_to_expr(&mac.tokens, ctx),
-        "println" | "print" | "eprintln" | "eprint" => Ok(Expression::CapabilityCall {
+        "println" | "print" | "eprintln" | "eprint" => {
+            crate::formatting::output_macro(mac)?;
+            Ok(Expression::CapabilityCall {
             name: "io.print".to_string(),
             args: vec![format_args_to_expr(&mac.tokens, ctx)?],
             meta,
-        }),
+        }) },
         _ => anyhow::bail!("macro invocation not supported: {name}!"),
     }
 }
 
 /// `"fmt", args..` → a string-concatenation expression (CRUSH-197).
 ///
-/// Supports `{}`, `{:?}` (rendered like `{}`), positional `{0}`, inline names
+/// Supports Display `{}`, typed literal Debug `{:?}`, positional `{0}`, inline names
 /// `{x}` (Rust 2021) and `{{` / `}}`. Width/precision/fill specs (`{:.2}`,
 /// `{:>5}`) are rejected loudly rather than printed wrong.
 pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
@@ -418,6 +420,11 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
         Some(_) => anyhow::bail!("format string must be a string literal"),
     };
     let args: Vec<&Expr> = it.collect();
+    if args.iter().any(|e| matches!(e, Expr::Assign(_))) {
+        return Err(crate::formatting::error(&parts, "named format arguments need explicit argument materialization"));
+    }
+    let mut uses = Vec::new();
+    let mut captures = false;
     let mut next_arg = 0usize;
     let mut pieces: Vec<Expression> = Vec::new();
     let mut lit = String::new();
@@ -442,21 +449,29 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
                 if !(fmt_spec.is_empty() || fmt_spec == "?") {
                     anyhow::bail!("format spec `{{{spec}}}` is not supported yet (only {{}}, {{:?}}, {{name}}, {{0}})");
                 }
-                let value = if target.is_empty() {
-                    let e = args.get(next_arg).ok_or_else(|| anyhow::anyhow!("format string has more `{{}}` than arguments"))?;
+                let argument = if target.is_empty() {
+                    let index = next_arg;
                     next_arg += 1;
-                    lower_expr(e, ctx)?
-                } else if let Ok(i) = target.parse::<usize>() {
-                    lower_expr(args.get(i).ok_or_else(|| anyhow::anyhow!("format argument {i} missing"))?, ctx)?
+                    Some(index)
                 } else {
+                    target.parse::<usize>().ok()
+                };
+                let value = if let Some(i) = argument {
+                    let e = args.get(i).ok_or_else(|| anyhow::anyhow!("format argument {i} missing"))?;
+                    uses.push(i);
+                    if fmt_spec == "?" { crate::formatting::debug(e, ctx)? } else { lower_expr(e, ctx)? }
+                } else {
+                    captures = true;
+                    if fmt_spec == "?" {
+                        return Err(crate::formatting::error(&parts, "Debug requires a proven typed literal; dynamic values need the shared formatter"));
+                    }
                     Expression::Var { name: target, meta: ctx.meta_at(0) }
                 };
                 if !lit.is_empty() {
                     pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: ctx.meta_at(0) });
                 }
-                // `{}` is Display: floats print like rustc (`6`, never `6.0`,
-                // no exponent). `{:?}` is Debug (`6.0`), which is how crush
-                // already prints floats.
+                // Display uses its existing two-argument ABI. Literal Debug
+                // has already produced exact typed text above.
                 pieces.push(if fmt_spec.is_empty() {
                     Expression::CapabilityCall {
                         name: "conv.text".to_string(),
@@ -474,6 +489,14 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
     if !lit.is_empty() {
         pieces.push(Expression::StringLiteral { value: lit, meta: ctx.meta_at(0) });
     }
+    if (0..args.len()).any(|i| !uses.contains(&i)) {
+        return Err(crate::formatting::error(&parts, "unused format arguments are unsupported"));
+    }
+    if args.iter().any(|e| !crate::formatting::inert(e))
+        && (captures || uses != (0..args.len()).collect::<Vec<_>>())
+    {
+        return Err(crate::formatting::error(&parts, "effectful repeated/reordered format arguments need explicit argument materialization"));
+    }
     // Start from "" so `+` is string concatenation even when the first piece is a number.
     let mut acc = Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) };
     for p in pieces {
@@ -481,7 +504,12 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
         meta.insert("rust_format_piece".into(), serde_json::Value::Bool(true));
         acc = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(acc), right: Box::new(p), meta };
     }
-    Ok(acc)
+    // Even literal-only/empty format! produces an owned String. Keeping a
+    // format concatenation node lets the ownership pass retain that fact.
+    let mut meta = ctx.meta_at(0);
+    meta.insert("rust_format_piece".into(), serde_json::json!(true));
+    Ok(Expression::BinaryOp { operator: "+".into(), left: Box::new(acc),
+        right: Box::new(Expression::StringLiteral { value: String::new(), meta: meta.clone() }), meta })
 }
 
 /// `match x { 1 | 2 => a, n => b, _ => c }` → CAST `Match` (CRUSH-197).

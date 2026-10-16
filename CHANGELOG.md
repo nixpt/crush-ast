@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Rust typed literal Debug now quotes/escapes strings and chars exactly, with
+  bounded literal aggregate traversal. Dynamic Debug is refused pending the
+  shared formatter (CRUSH-xps-9 slice 1).
+- Rust formatting refuses potentially effectful repeated/reordered arguments,
+  named argument materialization, and unsupported print/stderr routing. Empty
+  and literal-only `format!` retain their owned String identity. Previously
+  accepted dynamic Debug and newline-free/stderr macros now fail explicitly.
 - Rust casts of literal integers now preserve truncation and signedness for
   i8/i16/i32/i64/u8/u16/u32. Other casts fail with source locations pending
   numeric analysis; casts are no longer discarded. Signed minimum literals
