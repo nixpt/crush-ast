@@ -560,6 +560,7 @@ dependencies = [
 name = "crush-web"
 version = "0.3.0"
 dependencies = [
+ "chrono",
  "console_error_panic_hook",
  "crush-lang-sdk",
  "crush-vm",

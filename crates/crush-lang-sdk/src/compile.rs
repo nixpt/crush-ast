@@ -190,6 +190,26 @@ pub fn prepare_polyglot_blocks(
     Ok(warnings)
 }
 
+/// For a build without the block language's analyzer (its `polyglot-*`
+/// feature, e.g. crush-web without `polyglot-python`): the block's declared
+/// `->` outputs still become Crush variables, so the program compiles and the
+/// capability check refuses an ungranted block exactly as a native run does,
+/// instead of compilation failing on an "undefined" output. The block itself
+/// stays unmarshaled; run anyway, it fails loudly ("produced no marshaled
+/// outputs").
+#[allow(dead_code)]
+fn declare_unanalyzed_outputs(
+    outputs: &[String],
+    meta: &mut HashMap<String, serde_json::Value>,
+    known_locals: &mut HashSet<String>,
+) {
+    if outputs.is_empty() {
+        return;
+    }
+    meta.insert("polyglot_outputs".to_string(), serde_json::json!(outputs));
+    known_locals.extend(outputs.iter().cloned());
+}
+
 /// The import of a `use @lang …` statement.
 fn polyglot_use(stmt: &crush_cast::Statement) -> Option<&crush_cast::ImportStatement> {
     match stmt {
@@ -290,7 +310,9 @@ fn prepare_stmts(
                         *variables = inputs;
                     }
                     #[cfg(not(feature = "polyglot-python"))]
-                    let _ = (lang, code, variables, outputs, meta, &known_locals);
+                    let _ = (lang, code, variables);
+                    #[cfg(not(feature = "polyglot-python"))]
+                    declare_unanalyzed_outputs(outputs, meta, known_locals);
                 } else {
                     // javascript / js / node
                     #[cfg(feature = "polyglot-javascript")]
@@ -327,7 +349,9 @@ fn prepare_stmts(
                         *variables = inputs;
                     }
                     #[cfg(not(feature = "polyglot-javascript"))]
-                    let _ = (lang, code, variables, outputs, meta, &known_locals);
+                    let _ = (lang, code, variables);
+                    #[cfg(not(feature = "polyglot-javascript"))]
+                    declare_unanalyzed_outputs(outputs, meta, known_locals);
                 }
             }
             // `->` on a language with no value marshaling is a loud error,

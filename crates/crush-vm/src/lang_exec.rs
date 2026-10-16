@@ -82,9 +82,10 @@ pub struct PolyglotRequest<'a> {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PolyglotError {
-    /// The executor failed. Becomes a VM error carrying this message:
-    /// `@<lang> block failed (line N): <message>` — the same error a
-    /// [`LangExecutor`](crate::LangExecutor) failure gives on `PortableVm`.
+    /// The executor itself failed (it couldn't run the block at all). Becomes a
+    /// VM error carrying this message: `@<lang> block failed (line N): <message>`.
+    /// (A legacy [`LangExecutor`](crate::LangExecutor) failure on `PortableVm`
+    /// is treated as the guest's error instead, like [`Guest`](Self::Guest).)
     Failed(String),
     /// The guest code itself failed (an exception, a non-zero exit); the
     /// string is what it wrote to stderr. Becomes

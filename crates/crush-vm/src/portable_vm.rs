@@ -1685,9 +1685,10 @@ impl PortableVm {
                     // #91: the host runs the block (e.g. a browser Worker).
                     Some(executor) => match executor(lang, code_str, &env_vars) {
                         Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                        // What the guest reported, as a subprocess's stderr is: the
+                        // same error, and message, as a native run of the block.
                         Err(message) => {
-                            let at = crush_line.map(|l| format!(" (line {l})")).unwrap_or_default();
-                            return Err(VmError::UnknownCap(format!("@{lang} block failed{at}: {message}")));
+                            return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
                         }
                     },
                     None => {
