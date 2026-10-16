@@ -106,7 +106,8 @@ jobs:
   #   inside crush-aot covers the generated source, the opt level and the
   #   compiler's identity, so a restored entry can't be stale; the workflow key
   #   below only decides which snapshot to start from. Entries a run didn't use
-  #   are pruned before the save (a hit refreshes the entry's mtime).
+  #   are pruned before the save (a hit refreshes the entry's mtime). Pushes
+  #   to main save; PRs restore main's newest snapshot.
   # Optimized builds still run: see Test (aot, optimized + GC stress).
   test-aot-shard:
     name: Test (aot, ${{ matrix.shard }})
@@ -126,6 +127,7 @@ jobs:
             tests: REST
     env:
       CRUSH_AOT_OPTIMIZE: "0"
+      AOT_CACHE_NAME: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -139,21 +141,30 @@ jobs:
           shared-key: test-aot
       - name: AOT cache key
         id: aot-key
+        env:
+          SRC_HASH: ${{ hashFiles('crates/crush-aot/src/**') }}
         run: |
-          echo "toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)
+          prefix="aot-so-$RUNNER_OS-opt$CRUSH_AOT_OPTIMIZE-$AOT_CACHE_NAME-$toolchain"
+          # A fresh key per save so the snapshot follows frontend and corpus
+          # changes too; a restore takes the newest one with the same
+          # crates/crush-aot/src hash, else the newest for this toolchain.
+          {
+            echo "key=$prefix-$SRC_HASH-$GITHUB_RUN_ID"
+            echo "restore-keys<<EOF"
+            echo "$prefix-$SRC_HASH-"
+            echo "$prefix-"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           # actions/cache refuses a path with `..`, so not beside the checkout.
           echo "CRUSH_AOT_CACHE_DIR=$HOME/.cache/crush-aot" >> "$GITHUB_ENV"
           mkdir -p "$HOME/.cache/crush-aot"
           touch "$RUNNER_TEMP/aot-run-start"
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/crush-aot
-          # A fresh key per run so the cache follows frontend/corpus changes too;
-          # restore from the closest earlier snapshot.
-          key: aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-${{ github.run_id }}
-          restore-keys: |
-            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-
-            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-${{ matrix.shard }}-${{ steps.aot-key.outputs.toolchain }}-
+          key: ${{ steps.aot-key.outputs.key }}
+          restore-keys: ${{ steps.aot-key.outputs.restore-keys }}
       - name: cargo test
         run: |
           tests="${{ matrix.tests }}"
@@ -171,6 +182,14 @@ jobs:
       - name: Prune AOT cache entries this run didn't use
         if: always() && steps.aot-key.outcome == 'success'
         run: find "$CRUSH_AOT_CACHE_DIR" -type f ! -newer "$RUNNER_TEMP/aot-run-start" -delete
+      # Only main saves (PRs restore main's snapshot): a save per PR run would
+      # churn ~0.5 GB of the repo's 10 GB Actions cache each time.
+      - name: Save AOT cache (push to main)
+        if: always() && steps.aot-key.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/crush-aot
+          key: ${{ steps.aot-key.outputs.key }}
 
   # Optimized builds, as the product makes them (CRUSH_AOT_OPTIMIZE unset ==
   # "1"). Two jobs in one, because they want the same optimized builds of the
@@ -195,6 +214,8 @@ jobs:
       # Spelled out (not unset) so the cache key below names the mode.
       CRUSH_AOT_OPTIMIZE: "1"
       FULL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # One name for both modes: PRs restore what main's full run built (a superset).
+      AOT_CACHE_NAME: optimized
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -208,19 +229,30 @@ jobs:
           shared-key: test-aot
       - name: AOT cache key
         id: aot-key
+        env:
+          SRC_HASH: ${{ hashFiles('crates/crush-aot/src/**') }}
         run: |
-          echo "toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          toolchain=$( { rustc -vV; gcc --version; } | sha256sum | cut -c1-16)
+          prefix="aot-so-$RUNNER_OS-opt$CRUSH_AOT_OPTIMIZE-$AOT_CACHE_NAME-$toolchain"
+          # A fresh key per save so the snapshot follows frontend and corpus
+          # changes too; a restore takes the newest one with the same
+          # crates/crush-aot/src hash, else the newest for this toolchain.
+          {
+            echo "key=$prefix-$SRC_HASH-$GITHUB_RUN_ID"
+            echo "restore-keys<<EOF"
+            echo "$prefix-$SRC_HASH-"
+            echo "$prefix-"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           # actions/cache refuses a path with `..`, so not beside the checkout.
           echo "CRUSH_AOT_CACHE_DIR=$HOME/.cache/crush-aot" >> "$GITHUB_ENV"
           mkdir -p "$HOME/.cache/crush-aot"
           touch "$RUNNER_TEMP/aot-run-start"
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/crush-aot
-          key: aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-${{ github.run_id }}
-          restore-keys: |
-            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-${{ hashFiles('crates/crush-aot/src/**') }}-
-            aot-so-${{ runner.os }}-opt${{ env.CRUSH_AOT_OPTIMIZE }}-full${{ env.FULL }}-${{ steps.aot-key.outputs.toolchain }}-
+          key: ${{ steps.aot-key.outputs.key }}
+          restore-keys: ${{ steps.aot-key.outputs.restore-keys }}
       - name: Cross-backend agreement, optimized (every PR)
         if: env.FULL != 'true'
         run: cargo test -p crush-aot --test backend_agreement --test examples_parity 2>&1
@@ -241,6 +273,14 @@ jobs:
       - name: Prune AOT cache entries this run didn't use
         if: always() && steps.aot-key.outcome == 'success'
         run: find "$CRUSH_AOT_CACHE_DIR" -type f ! -newer "$RUNNER_TEMP/aot-run-start" -delete
+      # Only main saves (PRs restore main's snapshot): a save per PR run would
+      # churn ~0.5 GB of the repo's 10 GB Actions cache each time.
+      - name: Save AOT cache (push to main)
+        if: always() && steps.aot-key.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/crush-aot
+          key: ${{ steps.aot-key.outputs.key }}
 
   # One status for all of the above, under the job name the single AOT job had.
   test-aot:
