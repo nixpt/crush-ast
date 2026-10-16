@@ -419,7 +419,9 @@ jobs:
           workspaces: crates/crush-web
       - name: Native tests
         working-directory: crates/crush-web
-        run: cargo test
+        run: |
+          cargo test
+          cargo test --features polyglot-javascript
       # The CLI must match the wasm-bindgen version in crush-web's Cargo.lock.
       - name: Install the matching wasm-bindgen CLI
         run: |

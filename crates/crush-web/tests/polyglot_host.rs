@@ -80,7 +80,8 @@ fn marshaling_round_trip() {
     set_host_lang_executor(Some(Rc::new(|_, code, env| {
         assert!(code.contains("process.env"), "marshaling prologue present: {code}");
         let base: i64 = env.iter().find(|(k, _)| k == "base").map(|(_, v)| v.parse().unwrap()).expect("base passed in");
-        Ok(format!("\u{0}CRUSH_RESULT\u{0}{}\n", base * 3))
+        // The sentinel carries an object keyed by output name (CRUSH-270).
+        Ok(format!("\u{0}CRUSH_RESULT\u{0}{{\"result\": {}}}\n", base * 3))
     })));
     let r = execute_with_options(
         "fn main() {\n  let base = 5\n  @javascript {\n    var result = base * 3\n  }\n  print(result + 1)\n}\n",
