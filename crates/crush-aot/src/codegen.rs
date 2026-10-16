@@ -1133,6 +1133,18 @@ fn emit_body(
             }
         }
 
+        // ── Green tasks without `spawn` (issue #161) ──
+        // With no spawned task `yield` is a cooperative-yield no-op and `await`
+        // has no handle (the scheduler and portable VM push null). A program
+        // that does `spawn` is refused up front by `refuse_green_task`, so
+        // these never run a task here.
+        "yield" => out.push_str(&next_pc_str),
+        "await" => {
+            out.push_str(&format!("{ind}stack.pop(); // awaited value\n"));
+            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
+            out.push_str(&next_pc_str);
+        }
+
         "nop" => out.push_str(&next_pc_str),
         _ => unsupported = Some(format!("`{}`", instr.op)),
     }

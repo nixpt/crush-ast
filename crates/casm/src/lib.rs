@@ -699,27 +699,30 @@ impl Program {
         }
     }
 
-    /// The green-task construct this program uses — `"spawn"`, `"yield"`, or
-    /// `"await"` — or `None`. `spawn` is reported ahead of `yield`/`await`
-    /// because it is the construct that *starts* a task, so the issue #161
-    /// program (`spawn worker(); yield; …`) is refused as `spawn`.
+    /// `Some("spawn")` when this program spawns a green task, else `None`
+    /// (issue #161). Only `spawn` *starts* a task, so it is the one construct
+    /// refused by name on an engine with no green-task scheduler. A `yield` or
+    /// `await` without a `spawn` is not a green-task construct: with no
+    /// spawned task `yield` is a no-op and `await` has no handle (the scheduler
+    /// and the portable VM both push null), so each backend lowers those to a
+    /// no-op instead of refusing.
     ///
-    /// Backends without a green-task scheduler (FastVM/JIT, AOT Rust/C,
-    /// crush-aotc) refuse these by name rather than failing on the
-    /// `make_closure` a `spawn` compiles through — a `make_closure` by itself
-    /// (a function value used without `spawn`) is a distinct, already-refused
-    /// feature, so it is deliberately not reported here.
+    /// A `make_closure` by itself (a function value used without `spawn`) is a
+    /// distinct, already-refused feature (CRUSH-251), so it is deliberately
+    /// not reported here.
     pub fn green_task_op(&self) -> Option<&'static str> {
-        ["spawn", "yield", "await"]
-            .into_iter()
-            .find(|op| self.functions.values().flat_map(|f| &f.body).any(|i| i.op == *op))
+        self.functions
+            .values()
+            .flat_map(|f| &f.body)
+            .any(|i| i.op == "spawn")
+            .then_some("spawn")
     }
 
-    /// `Err(message)` when this program uses a green-task construct, naming the
-    /// construct and `engine` (issue #161) — the refusal for an engine with no
-    /// green-task scheduler. Mirrors [`Program::refuse_cosm`]: refuse by name
-    /// rather than fail on the `make_closure` a `spawn` compiles through, or
-    /// silently skip the task.
+    /// `Err(message)` when this program `spawn`s a green task, naming `spawn`
+    /// and `engine` (issue #161) — the refusal for an engine with no green-task
+    /// scheduler. Mirrors [`Program::refuse_cosm`]: refuse by name rather than
+    /// fail on the `make_closure` a `spawn` compiles through. A `yield`/`await`
+    /// without `spawn` is not refused here; each backend lowers it to a no-op.
     pub fn refuse_green_task(&self, engine: &str) -> std::result::Result<(), String> {
         match self.green_task_op() {
             Some(op) => Err(format!("`{op}` (green tasks) isn't supported on {engine} yet (#161)")),
@@ -1191,16 +1194,18 @@ mod tests {
         };
         let mut program = Program::new();
 
-        // `spawn` wins over `yield`/`await` (it *starts* the task), even though
-        // `yield` appears first in the body.
+        // `spawn` is the only green-task construct refused by name — it is what
+        // *starts* the task (issue #161), even though `yield` appears first.
         program.functions.insert("main".to_string(), body_of(&["make_closure", "yield", "spawn"]));
         assert_eq!(program.green_task_op(), Some("spawn"));
 
-        // `yield` and `await` on their own are reported too.
+        // `yield` and `await` without `spawn` are no-ops, not green-task
+        // constructs: they are not reported (each backend lowers them to
+        // nothing / a null push).
         program.functions.insert("main".to_string(), body_of(&["yield"]));
-        assert_eq!(program.green_task_op(), Some("yield"));
+        assert_eq!(program.green_task_op(), None);
         program.functions.insert("main".to_string(), body_of(&["await"]));
-        assert_eq!(program.green_task_op(), Some("await"));
+        assert_eq!(program.green_task_op(), None);
 
         // A `make_closure` by itself (a function value used without `spawn`) is
         // NOT a green-task construct.

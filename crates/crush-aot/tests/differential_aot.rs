@@ -1484,3 +1484,85 @@ fn spawn_and_await_run_on_the_vms_and_are_refused_by_name_elsewhere() {
         "w\nm\n",
     );
 }
+
+// ── issue #161 follow-up: lone `yield` is a no-op on every engine ──────────
+// With no `spawn`, `yield` is a cooperative-yield no-op: the scheduler and the
+// portable VM run it as a no-op (there is no other task to hand control to),
+// and the AOT/FastVM/JIT backends must lower it to nothing rather than refuse
+// a correct program. Every engine prints `a\nb`.
+
+/// Program stdout, without the type-tagged result line the runner prints last.
+fn aot_program_stdout(so: &std::path::Path) -> String {
+    let out = Command::new(aot_runner_path())
+        .arg(so)
+        .output()
+        .expect("spawn crush-aot-runner");
+    assert!(
+        out.status.success(),
+        "crush-aot-runner failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let body = text.trim_end_matches('\n');
+    match body.rfind('\n') {
+        Some(i) => format!("{}\n", &body[..i]),
+        None => String::new(),
+    }
+}
+
+/// Run `source` on the FastVM with an `io.print` capability, returning what it prints.
+fn fastvm_print(source: &str) -> String {
+    let casm = crush_frontend::compile_crush_source(source).expect("frontend");
+    let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower_program");
+    let print_cap = Arc::new(crush_vm::io_print::PrintCap::new());
+    let caps: Vec<Arc<dyn crush_vm::fastvm::Capability>> = vec![print_cap.clone()];
+    let mut vm = crush_vm::fastvm::FastVM::new(lowered, caps, Arc::new(TestHal));
+    let r = vm.run(1_000_000);
+    assert!(matches!(r, FastYield::Finished(_)), "FastVM: {r:?}");
+    print_cap.output()
+}
+
+/// Run `source` on the JIT with an `io.print` capability, returning what it prints.
+fn jit_print(source: &str) -> String {
+    let casm = crush_frontend::compile_crush_source(source).expect("frontend");
+    let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower_program");
+    let print_cap = Arc::new(crush_vm::io_print::PrintCap::new());
+    let caps: Vec<Arc<dyn crush_vm::fastvm::Capability>> = vec![print_cap.clone()];
+    let engine = crush_jit::JitEngine::new()
+        .expect("JitEngine::new")
+        .with_capabilities(caps);
+    let r = engine.run(&lowered).expect("JIT run");
+    assert!(matches!(r, FastYield::Finished(_)), "JIT: {r:?}");
+    print_cap.output()
+}
+
+#[test]
+fn lone_yield_is_a_noop_and_every_engine_prints_ab() {
+    let source = "fn main() {\n  print(\"a\")\n  yield\n  print(\"b\")\n}\n";
+
+    // The two green-task VMs print a\nb (reference behavior).
+    let report = crush_lang_sdk::differential::differential_run(source)
+        .unwrap_or_else(|e| panic!("differential_run failed: {e}"));
+    for (name, outcome) in [("interpreter", &report.interpreter), ("portable", &report.portable)] {
+        assert!(
+            matches!(outcome, StackOutcome::Ok { output, .. } if output == "a\nb\n"),
+            "{name}: {outcome:?}"
+        );
+    }
+
+    // AOT Rust and AOT C print a\nb — `yield` lowers to nothing, not a refusal.
+    let program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let compiler = AotCompiler::new();
+    let so = compiler
+        .compile_casm(&program, "lone_yield_rust")
+        .expect("rust backend");
+    assert_eq!(aot_program_stdout(&so), "a\nb\n", "rust backend");
+
+    let cc = pick_c_compiler().expect("no C compiler available on PATH");
+    let so = compiler.compile_c(&program, "lone_yield_c", cc).expect("c backend");
+    assert_eq!(aot_program_stdout(&so), "a\nb\n", "c backend");
+
+    // FastVM and the JIT lower `yield` to a no-op and print a\nb too.
+    assert_eq!(fastvm_print(source), "a\nb\n", "fastvm");
+    assert_eq!(jit_print(source), "a\nb\n", "jit");
+}

@@ -1739,6 +1739,19 @@ fn emit_c_instr(
                 out.push_str(&format!("                _pop(); _pc = {next_pc}; break;\n"));
             }
         }
+        // ── Green tasks without `spawn` (issue #161) ──
+        // With no spawned task `yield` is a cooperative-yield no-op and `await`
+        // has no handle (the scheduler and portable VM push null). A program
+        // that does `spawn` is refused up front by `refuse_green_task`, so
+        // these never run a task here.
+        "yield" => {
+            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
+        }
+        "await" => {
+            out.push_str(&format!("                _pop(); // awaited value\n"));
+            out.push_str(&format!("                _push(mk_null());\n"));
+            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
+        }
         // ── AI opcodes ──
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).

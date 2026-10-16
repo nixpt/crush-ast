@@ -1365,7 +1365,11 @@ fn lower_instruction(
         }
 
         // VM control
-        "yield" => Ok(FastInstr::simple(FastOp::Yield)),
+        // issue #161: `yield` without a `spawn` is a cooperative-yield no-op
+        // (no other task to hand control to), so it lowers to nothing rather
+        // than a refusal — matching the scheduler and portable VM, where a lone
+        // `yield` continues immediately. `spawn` is refused up front.
+        "yield" => Ok(FastInstr::simple(FastOp::Nop)),
         "halt" => Ok(FastInstr::simple(FastOp::Halt)),
         "nop" | "label" => Ok(FastInstr::simple(FastOp::Nop)),
         "gc" => Ok(FastInstr::simple(FastOp::Gc)),

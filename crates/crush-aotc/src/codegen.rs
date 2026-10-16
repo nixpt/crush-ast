@@ -215,6 +215,19 @@ impl AotcCompiler {
                     }
                 }
 
+                // ── Green tasks without `spawn` (issue #161) ──
+                // With no spawned task `yield` is a cooperative-yield no-op and
+                // `await` has no handle (the scheduler and portable VM push
+                // null). A program that does `spawn` is refused up front by
+                // `refuse_green_task`, so these never run a task here.
+                "yield" => {}
+                "await" => {
+                    stack.pop();
+                    let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                    writeln!(out, "    CrushValue {} = CV_NULL;", t)?;
+                    stack.push((t, ty));
+                }
+
                 // ── Memory ──────────────────────────────────────────────
                 "store" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
