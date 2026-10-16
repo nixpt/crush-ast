@@ -93,3 +93,20 @@ fn marshaling_round_trip() {
     assert!(r.ok, "{:?}", r.error);
     assert_eq!(r.output.trim(), "16");
 }
+
+/// A build without `polyglot-python` can't marshal a `@python` block, but the
+/// program still compiles and is refused like a native run without
+/// `--polyglot` (not "Undefined variable: total").
+#[test]
+fn ungranted_python_outputs_are_refused_like_native() {
+    let r = execute_with_options(
+        "print(\"a\")\n@python -> total {\ntotal = 1 + 2\n}\nprint(total)\n",
+        &RunOptions::default(),
+    );
+    assert!(!r.ok);
+    assert_eq!(r.output, "");
+    assert_eq!(
+        r.error.as_deref(),
+        Some("this program needs capabilities this run does not grant; nothing was run:\n  --polyglot: polyglot.python")
+    );
+}
