@@ -1187,6 +1187,13 @@ No general compiler warning channel existed (only ai_runtime::Warning). The poly
 
 Outcome:
 crush_vm::Program.warnings: Vec<String>; prepare_polyglot_blocks returns Result<Vec<String>>; crush-run and crushc print each with a 'warning:' prefix to stderr.
+## 2026-10-15T22:49:37-05:00 — Establish the Rust formatting boundary before adding dynamic Debug
+
+Reason:
+Generic runtime strings cannot distinguish Rust chars from str/String, and placeholder expansion can duplicate or reorder calls. First fold typed literals directly from Rust syntax across all backends, refuse dynamic Debug and unmaterialized effectful repetition/reordering, and preserve format String ownership. Explicitly reject newline/channel forms the current io.print ABI cannot represent. The shared dynamic formatter and type descriptors remain a separate xps-9 slice after numeric provenance integration.
+
+Outcome:
+xps-9 macro/literal slice in progress; no new runtime ABI or formatter capability.
 
 
 ## 2026-10-15T23:03:56-05:00 — [TACTICAL] [ARCHITECTURAL] AOT backends fail a read of an unassigned local, checking only loads not preceded by a store on every path (CRUSH-zorro-54)

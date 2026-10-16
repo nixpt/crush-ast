@@ -46,9 +46,9 @@ conditionals, loops and ranges, literal matches, vector indexing/mutation,
 mapped standard methods, and supported scalar closure captures and block bodies.
 See `crush-lang-rust`'s crate docs for the syntax subset. Syntax acceptance alone
 does not establish Rust semantics.
-The baseline uses `println!`. Newline-free `print!` and separate stderr routing
-are outside the conformance claim: the current lowering routes all print macros
-through `io.print`, which appends a newline to stdout.
+The supported output macro is `println!`. Newline-free `print!` and stderr
+`eprint!`/`eprintln!` are refused at the Rust source boundary until faithful
+routing is available.
 
 | Family | Inventory / owner |
 |---|---|
@@ -60,7 +60,7 @@ through `io.print`, which appends a newline to stdout.
 | Other mutable string operations and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
 | Proven integer casts, lengths and bounded unsigned values | Exact within the numeric proof profile; unproven cases refused (CRUSH-xps-8) |
 | Typed arithmetic and release overflow | Known silent divergence; CRUSH-xps-8 remains open |
-| String `{:?}` quoting | Known silent divergence; CRUSH-xps-9 |
+| Typed literal `{:?}` quoting | Exact; dynamic Debug refused pending the shared formatter (CRUSH-xps-9) |
 | Walker assignments / loops | Exact baseline; CRUSH-xps-10 |
 | Supported closures | Exact on VM; AOT rejects closure opcodes (CRUSH-251) |
 | Resolved `str.to_lower`, `str.contains`, `math.pow` capabilities | Exact on VM; both AOT backends reject them (CRUSH-xps-13) |
@@ -73,6 +73,25 @@ Rust `Copy`/move/clone semantics must follow COSM's contracts when Rust type
 lowering arrives. The schema and Crush frontend alone do not enable Rust
 structs, traits, enums, or `impl` blocks. Engine support and receiver dispatch
 are tracked in CRUSH-zorro-42–44; Rust's producer belongs to COSM K3.
+
+## Rust formatting boundary (xps-9 slice 1)
+
+Typed literal Debug is evaluated from Rust syntax, retaining char versus string,
+unit, numeric width and f64 precision until formatting. Literal arrays are
+bounded to depth 16 / 256 traversal nodes; each result is limited to 1 MiB.
+Dynamic Debug values, including inline-name captures, are refused pending the
+shared typed runtime formatter. `audit_debug_string` is exact on all engines.
+The existing dynamic `float_display` oracle remains pinned to an explicit
+xps-9 refusal; its expected native output is retained for the next slice.
+
+Display keeps `conv.text`'s existing two-argument ABI. Repeated/reordered inert
+literal or variable arguments remain supported. Potentially effectful arguments
+require one use each in source order and no inline captures; otherwise lowering
+refuses them before execution. Named argument materialization is deferred.
+Empty and literal-only `format!` values retain owned String identity.
+
+No new runtime formatter capability or backend-specific formatter is added in
+this slice. The shared kernel, descriptors, registration and bridge remain open.
 
 ## Rust integer conversion boundary
 
@@ -153,8 +172,9 @@ does not establish that a program satisfies Rust's type or borrow rules.
 
 The corpus contains separate exact and loud cases for clones, assignment,
 arguments, owned returns, captures, nested vectors, arrays, and borrowed views.
-The original vector-clone aliasing exception is removed; integer and Debug
-formatting silent divergences remain owned by xps-8/9.
+The original vector-clone aliasing and Debug-string exceptions are removed.
+Integer overflow remains a known silent divergence under xps-8; dynamic Debug
+is refused under xps-9.
 
 ## Completion specifications
 

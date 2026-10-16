@@ -31,6 +31,48 @@ pub enum Expected {
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
     (
+        "debug_dynamic",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "Debug requires a proven typed literal",
+        },
+    ),
+    (
+        "float_display",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "Debug requires a proven typed literal",
+        },
+    ),
+    (
+        "format_repeated_effect",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "effectful repeated/reordered format arguments",
+        },
+    ),
+    (
+        "format_reordered_effect",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "effectful repeated/reordered format arguments",
+        },
+    ),
+    (
+        "format_owned_literal",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
+        "format_owned_empty",
+        Expected::Loud {
+            ticket: "CRUSH-xps-7",
+            diagnostic: "by-value transfer",
+        },
+    ),
+    (
         "numeric_unsigned_large",
         Expected::Loud {
             ticket: "CRUSH-xps-8",
@@ -252,13 +294,6 @@ const ALL_ENGINES: &[(&str, Expected)] = &[
         Expected::Silent {
             ticket: "CRUSH-xps-8",
             output: "260\n",
-        },
-    ),
-    (
-        "audit_debug_string",
-        Expected::Silent {
-            ticket: "CRUSH-xps-9",
-            output: "hello\n",
         },
     ),
     (

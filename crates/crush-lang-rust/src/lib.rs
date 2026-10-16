@@ -10,7 +10,8 @@
 //! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
 //! with identifier parameters (including typed parameters and `_` wildcards),
 //! `+= -= *= /= %=`,
-//! `println!`/`print!`/`eprintln!`/`format!` with `{}`, `{:?}`, `{0}`, `{name}`,
+//! `println!`/`format!` with Display `{}`, `{0}`, `{name}` and typed literal
+//! Debug `{:?}` (dynamic Debug is refused),
 //! and the common `str`/`Vec`/numeric methods (`len`, `push`, `contains`,
 //! `to_uppercase`, `abs`, `sqrt`, …). The SDK's `rustc_corpus` integration suite
 //! compares this subset against real `rustc` output.
@@ -21,8 +22,9 @@
 //! destructured closure parameters, iterator chains (`.map`,
 //! `.sum`, …), `use` declarations and qualified module/crate paths. Rust crate
 //! APIs need an explicit Crush capability/plugin; a Rust `use` is not treated
-//! as a runtime import. Known difference: `print!` ends the line (there is no
-//! newline-free print capability yet).
+//! as a runtime import. `print!`, `eprint!`, and `eprintln!` are refused until
+//! their newline/channel routing is faithful. Potentially effectful format
+//! arguments need one use each, in source order, without inline captures.
 //! Multi-statement blocks are supported as function/closure bodies and
 //! statement blocks. In a value position (e.g. `let x = { ... }` or branches
 //! of an assigned `if` expression), only empty blocks or a single tail
@@ -41,14 +43,15 @@
 //! Small u64 values and portable bounded usize conversions are supported;
 //! unproven producers, mutable lengths and closure casts are refused.
 //! Numeric suffixes and annotations are retained as source hints; this does not
-//! implement type inference or typed arithmetic. Runtime integer overflow and
-//! string Debug formatting still have known silent divergences tracked by
-//! CRUSH-xps-8/9; the SDK inventory pins those failures until fixed.
+//! implement type inference or typed arithmetic. Runtime integer overflow
+//! still has a known silent divergence tracked by CRUSH-xps-8. Typed literal
+//! Debug is exact; dynamic Debug is refused pending the shared formatter.
 
 pub mod lower_expr;
 pub mod lower_stmt;
 pub mod parser;
 mod bindings;
+mod formatting;
 mod diagnostics;
 mod numeric;
 mod values;

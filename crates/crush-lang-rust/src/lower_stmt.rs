@@ -175,18 +175,17 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
                 .map(|i| i.to_string())
                 .unwrap_or_default();
             match mac_name.as_str() {
-                // CRUSH-197: the format string and its `{}` arguments are now
-                // lowered (they used to be dropped — every program printed blank
-                // lines). `print!` still ends the line: there is no newline-free
-                // print capability yet.
-                "println" | "print" | "eprintln" | "eprint" => Ok(Statement::ExprStmt {
-                    expr: Expression::CapabilityCall {
-                        name: "io.print".to_string(),
-                        args: vec![format_args_to_expr(&mac.mac.tokens, ctx)?],
-                        meta,
-                    },
-                    meta: ctx.meta_at(0),
-                }),
+                "println" | "print" | "eprintln" | "eprint" => {
+                    crate::formatting::output_macro(&mac.mac)?;
+                    Ok(Statement::ExprStmt {
+                        expr: Expression::CapabilityCall {
+                            name: "io.print".to_string(),
+                            args: vec![format_args_to_expr(&mac.mac.tokens, ctx)?],
+                            meta,
+                        },
+                        meta: ctx.meta_at(0),
+                    })
+                },
                 _ => anyhow::bail!("macro invocation not supported: {}!", mac_name),
             }
         }
