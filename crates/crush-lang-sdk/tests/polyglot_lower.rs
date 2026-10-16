@@ -263,3 +263,72 @@ fn node_corpus_as_javascript_blocks_is_exact_or_loud() {
 /// the 81 the boa lowering runs exactly, less 5 whose source the Crush lexer
 /// can't capture as a block body (a `'` in a comment, an empty `''`).
 const MIN_EXACT_JS: usize = 76;
+
+/// Run a lowered script on both VMs (stdlib registered, as the JS corpus's
+/// own harness does) and require them to agree.
+fn run_script(lang: &str, source: &str) -> Result<String, String> {
+    let program = crush_lang_sdk::compile::compile_lowered_script(lang, source).map_err(|e| format!("compile: {e:#}"))?;
+    let caps = crush_lang_sdk::HostCapsBuilder::new().stdlib(true).build();
+    let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
+    let native = crush_vm::run_with_caps(&program, &quotas, Some(&caps))
+        .map(|r| r.output)
+        .map_err(|e| format!("runtime: {e}"));
+    let mut vm = crush_vm::portable_vm::PortableVm::new(program);
+    vm.set_quotas(quotas);
+    vm.set_host_caps(caps);
+    let portable = vm.run().map(|r| r.output).map_err(|e| format!("runtime: {e}"));
+    assert_eq!(native, portable, "scheduler and portable VMs disagree on:\n{source}");
+    native
+}
+
+#[test]
+fn cpython_corpus_as_lowered_scripts_matches_cpython() {
+    let mut failures = Vec::new();
+    for path in corpus() {
+        let source = std::fs::read_to_string(&path).unwrap();
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        match run_script("py", &source) {
+            Ok(got) if got == expected => {}
+            Ok(got) => failures.push(format!("{}:\n  cpython: {expected:?}\n  lowered: {got:?}", path.display())),
+            Err(e) => failures.push(format!("{}: {e}", path.display())),
+        }
+    }
+    assert!(failures.is_empty(), "{} script(s) diverge from CPython:\n{}", failures.len(), failures.join("\n"));
+}
+
+#[test]
+fn node_corpus_as_lowered_scripts_is_exact_or_loud() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crush-lang-js/tests/node_corpus");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("corpus dir")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "js"))
+        .collect();
+    files.sort();
+    let (mut exact, mut silent) = (0, Vec::new());
+    for path in &files {
+        let source = std::fs::read_to_string(path).unwrap();
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        match run_script("js", &source) {
+            Ok(out) if out == expected => exact += 1,
+            Ok(out) => silent.push(format!("{}:\n  node:    {expected:?}\n  lowered: {out:?}", path.display())),
+            Err(_) => {}
+        }
+    }
+    assert!(silent.is_empty(), "silently wrong:\n{}", silent.join("\n"));
+    // The boa lowering's own count on this corpus.
+    assert!(exact >= 81, "only {exact} exact");
+}
+
+#[test]
+fn a_lowered_script_refuses_what_the_walker_cannot_lower() {
+    for (lang, source, construct) in [
+        ("py", "x = (1, 2)\nprint(x)\n", "tuples are not supported yet"),
+        ("py", "print(sum([1, 2]))\n", "`sum` is not supported by the walker yet"),
+        ("py", "class A:\n    pass\n", "class definitions"),
+        ("js", "class A {}\n", "a class"),
+    ] {
+        let e = format!("{:#}", crush_lang_sdk::compile::compile_lowered_script(lang, source).unwrap_err());
+        assert!(e.contains(construct) && e.contains("runs as Crush"), "{source:?}: {e}");
+    }
+}

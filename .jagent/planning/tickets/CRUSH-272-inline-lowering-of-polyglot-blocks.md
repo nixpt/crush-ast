@@ -72,6 +72,10 @@ them out of the browser:
   - a builtin with no Crush lowering (`sum`, `int`, `str`, `abs`, `x in xs`, …), which
     used to compile to a bare-name capability that fails only when reached;
   - a block where the pass doesn't reach (inside `try`, a lambda, a `match` arm).
+- **Whole scripts too.** `compile_lowered_script("py" | "js", source)` compiles a
+  standalone Python / JS script through the same machinery (exact or loud, unlike
+  `compile_source`, which compiles whatever the walker produces) — for an embedder that
+  runs page scripts in the browser.
 - **Pipeline.** Walker CAST isn't written for Crush's semantic checker or optimizer (the
   walkers' own pipeline compiles it unchecked). In `Lower` mode the Crush program is
   checked as `Exec` would see it (blocks opaque), then blocks are lowered, the Crush
@@ -90,6 +94,8 @@ them out of the browser:
 - The JS walker's node corpus as `@javascript` blocks: 76 of 119 exact, 43 loud,
   0 silently wrong. The boa lowering runs 81 standalone; the 5 others fail in the
   Crush lexer, which can't capture their source as a block body (CRUSH-274).
+- As whole scripts (`compile_lowered_script`): the CPython corpus 23/23 exact on both VMs;
+  the node corpus 81 exact, 0 silently wrong.
 
 ## Construct coverage when lowered (Python)
 

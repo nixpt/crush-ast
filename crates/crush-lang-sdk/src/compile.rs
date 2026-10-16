@@ -171,8 +171,67 @@ fn compile_lowering_blocks(
     let blocks: Vec<crush_cast::Function> = lowered.iter().map(|(_, f)| f.clone()).collect();
     program.functions.extend(lowered);
     let casm = crush_frontend::compiler::Compiler::new().compile_lowered(program, cosm)?;
-    refuse_unknown_builtins(&casm, &blocks)?;
+    if let Some((name, line, lang)) = unknown_builtin(&casm, &blocks)? {
+        anyhow::bail!(
+            "line {line}: this @{lang} block can't be lowered inline: `{name}` is not supported by the \
+             walker yet (it has no Crush lowering)\n  {}",
+            lowering_help(&lang)
+        );
+    }
     Ok((casm, warnings))
+}
+
+/// Compile a whole Python or JavaScript script the way [`PolyglotMode::Lower`]
+/// compiles a block: through the walker, exact or loud. Stricter than
+/// [`compile_source`], which compiles whatever the walker produces: here
+/// Python tuples and module attributes, builtins with no Crush lowering
+/// (`sum`, `int`, …) and other `import`s are compile errors rather than lists,
+/// unset locals or "unknown capability" failures when reached. JS goes through
+/// the boa lowering. The script runs **as Crush**, not as CPython / Node.
+///
+/// `language_or_extension`: `python` / `py` / `javascript` / `js` (a leading
+/// `.` is fine). Needs the language's `polyglot-*` feature.
+pub fn compile_lowered_script(
+    language_or_extension: &str,
+    source: &str,
+) -> anyhow::Result<crush_vm::Program> {
+    let selector = language_or_extension.trim().trim_start_matches('.').to_ascii_lowercase();
+    let lang = match selector.as_str() {
+        "py" | "pyw" => "python",
+        "mjs" | "cjs" => "javascript",
+        other => match crush_frontend::lang_imports::canonical_lang(other) {
+            Some(lang @ ("python" | "javascript")) => lang,
+            _ => anyhow::bail!("no lowered-script support for `{language_or_extension}` (python or javascript)"),
+        },
+    };
+    let (guest, interpreter) = if lang == "python" { ("Python", "CPython") } else { ("JavaScript", "Node") };
+    let refuse = |why: String| {
+        anyhow::anyhow!(
+            "this {guest} script can't be lowered: {why}\n  it runs as Crush (its {guest} lowered \
+             through the walker), not as {interpreter}; a script that needs this has to run in a \
+             real interpreter"
+        )
+    };
+    let (mut main, helpers) = lower_block_function(lang, source, &[], &[], 1, "__crush_script__")
+        .map_err(|e| refuse(format!("{e:#}")))?;
+    main.meta.insert("polyglot_block_line".to_string(), serde_json::json!(1));
+    main.meta.insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
+    let mut blocks = vec![main.clone()];
+    blocks.extend(helpers.iter().map(|(_, f)| f.clone()));
+    let mut functions: HashMap<String, crush_cast::Function> = helpers.into_iter().collect();
+    functions.insert("main".to_string(), main);
+    let program = crush_cast::Program {
+        cast_version: "0.2".to_string(),
+        entry: "main".to_string(),
+        lang: Some(lang.to_string()),
+        functions,
+        ..Default::default()
+    };
+    let casm = crush_frontend::compiler::Compiler::new().compile(program)?;
+    if let Some((name, _, _)) = unknown_builtin(&casm, &blocks)? {
+        return Err(refuse(format!("`{name}` is not supported by the walker yet (it has no Crush lowering)")));
+    }
+    casm_to_vm(&casm)
 }
 
 /// A Python / JS builtin the walker has no Crush lowering for (`sum`, `int`,
@@ -180,9 +239,14 @@ fn compile_lowering_blocks(
 /// host provides: it would fail when reached ("unknown capability: sum").
 /// Crush source can't produce such a call (its checker refuses an undefined
 /// function), so any is a lowered block's — refuse it now, naming the block.
-fn refuse_unknown_builtins(casm: &casm::Program, blocks: &[crush_cast::Function]) -> anyhow::Result<()> {
+/// The first such builtin, with the line and language of the block using it.
+#[allow(clippy::type_complexity)]
+fn unknown_builtin(
+    casm: &casm::Program,
+    blocks: &[crush_cast::Function],
+) -> anyhow::Result<Option<(String, u64, String)>> {
     if blocks.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let used = crate::effects::used_by(&casm_to_vm(casm)?)?;
     let builtins = crush_vm::capabilities();
@@ -192,7 +256,7 @@ fn refuse_unknown_builtins(casm: &casm::Program, blocks: &[crush_cast::Function]
             && !builtins.contains_key(cap.as_str())
             && !catalog.iter().any(|c| &c.name == *cap)
     }) else {
-        return Ok(());
+        return Ok(None);
     };
     let needle = serde_json::json!(name);
     let mentions = |v: &serde_json::Value| -> bool {
@@ -221,11 +285,7 @@ fn refuse_unknown_builtins(casm: &casm::Program, blocks: &[crush_cast::Function]
             )
         })
         .unwrap_or((0, "python".to_string()));
-    anyhow::bail!(
-        "line {line}: this @{lang} block can't be lowered inline: `{name}` is not supported by the \
-         walker yet (it has no Crush lowering)\n  {}",
-        lowering_help(&lang)
-    )
+    Ok(Some((name.clone(), line, lang)))
 }
 
 /// CRUSH-243: a program that declares `@capabilities` may only use the
