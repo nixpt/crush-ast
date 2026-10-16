@@ -1975,6 +1975,7 @@ impl PortableVm {
                 "conv.text" => {
                     crate::num_text::text_as(&args[0], &args[1]).map(Some)
                 }
+                "lang.marshal" => crate::marshal::marshal_cap(&args),
                 "seq.slice" => {
                     crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
                 }

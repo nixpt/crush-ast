@@ -4,6 +4,7 @@
 //! then lowers it to CAST for compilation through CrushVM.
 
 pub mod analyzer;
+pub mod inline;
 pub mod lower_expr;
 pub mod lower_stmt;
 pub mod parser;

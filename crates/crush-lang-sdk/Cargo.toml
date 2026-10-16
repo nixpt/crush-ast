@@ -51,17 +51,15 @@ gpu = ["dep:crush-ptx", "dep:cudarc"]
 # `crushc`/`crush-diff` keep working exactly as before; crush-web is the
 # only consumer that opts out.
 native-plugins = ["crush-vm/native-plugins"]
-# @python{} free-variable analysis (marshaling prep in compile.rs), via
-# crush-lang-python -> crush-walker-core -> tree-sitter. tree-sitter's C
-# sources need a real target sysroot (stdio.h etc.) to cross-compile, which
-# isn't available for wasm32-unknown-unknown here. Harmless to skip: on
-# wasm32 EXEC_LANG can't spawn a subprocess anyway (see portable_vm.rs),
-# so there's nothing for the marshaling prep to prepare for.
+# @python{} free-variable analysis (marshaling prep in compile.rs) and inline
+# lowering (`PolyglotMode::Lower`, CRUSH-272), via crush-lang-python
+# (rustpython-parser, pure Rust). Builds for wasm32: crush-lang-python takes
+# crush-walker-core without its tree-sitter default.
 polyglot-python = ["dep:crush-lang-python"]
 polyglot-rust = ["dep:crush-lang-rust"]
 # @javascript{} free-variable analysis + guest rewrite (CRUSH-68), via
-# crush-lang-js; the analysis runs on `boa_parser` (CRUSH-250). Same wasm32
-# skip rationale as polyglot-python. `swc-backend` stays until CRUSH-250
+# crush-lang-js; the analysis and inline lowering run on `boa_parser`
+# (CRUSH-250). `swc-backend` stays until CRUSH-250
 # step 6 makes boa the `.js` lowering: without it, anything that walks `.js`
 # through this feature (e.g. `JsAdapter`) would get the boa lowering early.
 polyglot-javascript = ["dep:crush-lang-js", "crush-lang-js/swc-backend", "crush-lang-js/js-boa"]

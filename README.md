@@ -31,7 +31,7 @@
 
 This repository was extracted from the [exosphere](https://github.com/nixpt/exosphere) agent-native OS monorepo on 2026-06-12. The walker crate tree (the polyglot source → CAST translators) was split out so it could compile independently without pulling in the full exosphere kernel runtime. Exosphere retains a subprocess-based `WalkerRegistry` that invokes the walker binaries produced here.
 
-The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's copies are at v0.3.6.
+The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's own crates are released together (the workspace version, `0.6.0` on crates.io as of 2026-10-15).
 
 ## 🏗️ Repository Structure
 
@@ -39,6 +39,7 @@ The repos are **peer projects** — no path dependencies run in either direction
 crates/
 ├── crush-errors/         # Unified error types (leaf crate)
 ├── crush-cast/           # CAST — Crush Abstract Syntax Tree IR
+├── crush-cosm/           # COSM — Crush Object Semantic Model: Kind declarations, C3, validation (structs/impl/trait/@kind)
 ├── crush-caison/         # CAISON (formerly CSON) format + `caison.parse` VM capability
 ├── crush-cson-shim/      # retired `crush-cson` name: re-exports crush-caison
 ├── casm/                 # CASM — Crush Assembly bytecode format
@@ -49,7 +50,7 @@ crates/
 ├── crush-walker-core/    # LanguageAdapter trait + shared walker utilities (renamed from walker-core)
 ├── cli/                  # crush-walker — CLI that auto-detects source language and dispatches a walker
 ├── crush-lang-python/    # Python → CAST (bin: python_walker)
-├── crush-lang-rust/      # Rust → CAST
+├── crush-lang-rust/      # Rust → CAST (syn-based; refuses what it can't prove exact)
 ├── crush-lang-js/        # JavaScript → CAST
 ├── crush-lang-go/        # Go → CAST
 ├── crush-lang-c/         # C → CAST
@@ -68,8 +69,8 @@ crates/
 ├── crush-vm-capi/        # C API shared library for embedding CrushVM in C/C++ programs
 ├── crush-vm-py/          # Python extension module (PyO3) exposing the canonical CVM1 VM
 ├── crush-jit/            # Cranelift-based JIT backend (native execution tier)
-├── crush-aot/            # Ahead-of-time C codegen across all language walkers
-├── crush-aotc/           # AOT compiler: CASM → C source → shared library (.so)
+├── crush-aot/            # AOT: CASM → Rust (rustc) or C (gcc/clang) → native .so (bins: crush-aotc, crush-walk-run)
+├── crush-aotc/           # Typed AOT compiler library: CASM → C source → shared library (.so)
 ├── crush-ptx/            # CASM → PTX (NVIDIA GPU assembly) emission backend
 ├── crush-web/            # Browser WebAssembly runtime (compiles/runs CAST via crush-frontend + crush-vm's portable interpreter)
 ├── crush-ffi/            # C-ABI plugin interface
@@ -90,7 +91,7 @@ crates/
 
 ### Building from Source
 
-Ensure you have Rust 1.85+ installed. `crush-pkg` and `crush-vm` path-depend on
+You need Rust 1.95 or newer (the MSRV that CI checks; `rust-toolchain.toml` selects `stable`). `crush-pkg` and `crush-vm` path-depend on
 [`nixpt/buckets`](https://github.com/nixpt/buckets), so clone it next to this
 repo first (CI does the same):
 
@@ -116,6 +117,31 @@ cargo run --bin crushc -- --help
 cargo run --bin crush-run -- run my-program.crush
 ```
 
+A first program, with what it prints (verified against `3ae0b4a`):
+
+```crush
+fn make_counter() {
+    let c = 0
+    return || {
+        c = c + 1
+        return c
+    }
+}
+let next = make_counter()
+next()
+print(next())
+```
+
+```text
+2
+```
+
+Capabilities are opt-in per run. The standard library (`str.*`, `math.*`,
+`json.*`, …) is on by default; everything that touches the host needs a flag
+(`--fs`, `--net`, `--env`, `--time`, `--process`, `--polyglot`, …), and a program
+that needs an ungranted capability is refused before it runs.
+`crush-run caps FILE` shows what a program needs without running it.
+
 ## ⚙️ Compilation Pipeline
 
 The Crush pipeline seamlessly converts polyglot source code down to execution-ready bytecode through an interconnected set of stages.
@@ -127,7 +153,7 @@ graph TD
     C[CAST<br/>Crush AST — JSON] --> D
     D(Crush Compiler<br/>crates/crush-frontend) --> E
     E[CASM<br/>Crush Assembly — JSON / binary .castb] --> F
-    F((NanoVM / CVM1<br/>Execution))
+    F((CVM1 VM<br/>Execution))
     
     classDef file fill:#2d3436,stroke:#74b9ff,stroke-width:2px,color:#fff
     classDef process fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#fff
@@ -138,7 +164,7 @@ graph TD
 
 ## 🎮 Examples
 
-[`examples/crush/`](examples/crush/) holds 40+ `.crush` programs, from language-feature smoke
+[`examples/crush/`](examples/crush/) holds 50+ `.crush` programs, from language-feature smoke
 tests (`arithmetic.crush`, `control_flow.crush`, `exception_test.crush`, ...) to full self-playing
 programs written by several different LLMs given the same "learn this language" prompt — two
 hosted-language interpreters (`forth.crush`, `brainfuck.crush`), self-playing games
@@ -149,7 +175,7 @@ which model wrote what, and the real language constraints/bugs each one hit — 
 
 ## 📚 Documentation
 
-- [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) — Language reference, examples, CAST/CASM specifications.
+- [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) ([docs.crushlang.org](https://docs.crushlang.org)) — language reference, examples, CAST/CASM specifications. Every example in it is run against a pinned crush-ast commit, and its `examples/verified/` corpus keeps one small program per language behaviour with its exact output.
 - Comprehensive crate-level documentation is available in the respective `crates/*/README.md` files.
 
 ## ⚖️ License

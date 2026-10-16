@@ -252,3 +252,116 @@ fn struct_field_iteration_keeps_the_existing_map_contract() {
     )
     .unwrap();
 }
+
+/// CRUSH-111: the checker used to keep its own builtin list, so the names
+/// `compile_call` lowers inline (`make_range`, which the Python walker emits
+/// for `range()`) were compiled by one front door and refused by the other.
+/// Both doors now read one table: same accept/reject, same lowering.
+#[test]
+fn builtin_names_agree_across_both_doors() {
+    let cases: Vec<(&str, Vec<Statement>, bool)> = vec![
+        (
+            "for over make_range (what the Python walker emits)",
+            vec![for_loop(
+                call("make_range", vec![int(3)]),
+                vec![stmt(call("print", vec![var("item")]))],
+            )],
+            true,
+        ),
+        (
+            "for over range",
+            vec![for_loop(
+                call("range", vec![int(1), int(3)]),
+                vec![stmt(call("print", vec![var("item")]))],
+            )],
+            true,
+        ),
+        (
+            "arr_get on a range",
+            vec![
+                decl("xs", call("make_range", vec![int(3)])),
+                stmt(call(
+                    "print",
+                    vec![call("arr_get", vec![var("xs"), int(1)])],
+                )),
+            ],
+            true,
+        ),
+        (
+            "a math builtin",
+            vec![stmt(call("print", vec![call("math.abs", vec![int(-2)])]))],
+            true,
+        ),
+        ("make_range arity", vec![stmt(call("make_range", vec![]))], false),
+        (
+            "make_range over-arity",
+            vec![stmt(call("make_range", vec![int(1), int(2), int(3), int(4)]))],
+            false,
+        ),
+        ("arr_get arity", vec![stmt(call("arr_get", vec![int(1)]))], false),
+    ];
+
+    for (label, body, expect_ok) in cases {
+        let checked = compile_cast_owned(program(body.clone()));
+        let walker = Compiler::new().compile(program(body));
+        assert_eq!(checked.is_ok(), expect_ok, "{label}: compile_cast {checked:?}");
+        assert_eq!(walker.is_ok(), expect_ok, "{label}: Compiler::compile {walker:?}");
+        if let (Ok(c), Ok(w)) = (checked, walker) {
+            let ops = |p: &casm::Program| {
+                p.functions["main"]
+                    .body
+                    .iter()
+                    .map(|i| i.op.clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ops(&c), ops(&w), "{label}: the doors lowered differently");
+        }
+    }
+}
+
+/// A name the compiler does *not* own stays refused by the checker. (The
+/// walker door deliberately emits a late-bound `call` for unknown names — that
+/// is its design, not drift, and is why this is asserted on the checked door
+/// only.)
+#[test]
+fn unknown_names_stay_refused_by_the_checker() {
+    let unknown = program(vec![stmt(call("make_rang", vec![int(3)]))]);
+    let error = compile_cast_owned(unknown).unwrap_err().to_string();
+    assert!(
+        error.contains("Undefined function: make_rang"),
+        "unexpected error: {error}"
+    );
+}
+
+/// The table stays shadowable: a user function owning one of these names is
+/// still resolved first, on both doors.
+#[test]
+fn user_functions_still_shadow_builtin_names() {
+    let mut functions = std::collections::HashMap::new();
+    functions.insert(
+        "main".to_string(),
+        Function {
+            params: vec![],
+            body: vec![decl("v", call("len", vec![int(1)]))],
+            ..Default::default()
+        },
+    );
+    functions.insert(
+        "len".to_string(),
+        Function {
+            params: vec![("x".to_string(), CastType::Any)],
+            body: vec![Statement::Return {
+                value: None,
+                meta: Default::default(),
+            }],
+            ..Default::default()
+        },
+    );
+    let p = Program {
+        entry: "main".into(),
+        functions,
+        ..Default::default()
+    };
+    assert!(compile_cast_owned(p.clone()).is_ok(), "quiet door refused a shadowing fn");
+    assert!(Compiler::new().compile(p).is_ok(), "walker door refused a shadowing fn");
+}

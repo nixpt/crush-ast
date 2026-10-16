@@ -234,6 +234,28 @@ impl AotCompiler {
         self
     }
 
+    /// Where [`compile_casm`](Self::compile_casm) would put `program`'s
+    /// library, if it is already in the cache: `Ok(None)` for a cold cache.
+    /// The key is the same one `compile_casm` uses (backend, optimization
+    /// setting, `rustc` identity, generated source), so an embedder choosing
+    /// between the AOT and the interpreter tier can ask instead of
+    /// re-deriving it. Fails like `compile_casm` for a program the Rust
+    /// backend can't lower.
+    pub fn cached_casm_path(
+        &self,
+        program: &casm::Program,
+        module_name: &str,
+    ) -> Result<Option<PathBuf>> {
+        let rust_source = crate::codegen::gen_rust_source(program)?;
+        let so_path = self.rust_artifact_path(&rust_source, module_name);
+        Ok(so_path.exists().then_some(so_path))
+    }
+
+    fn rust_artifact_path(&self, rust_source: &str, module_name: &str) -> PathBuf {
+        let hash = cache_key("rust", self.optimize, rustc_identity(), rust_source);
+        self.cache_dir.join(format!("{module_name}_{}", &hash[..16])).with_extension(so_ext())
+    }
+
     /// Compile a `casm::Program` to a shared library.
     ///
     /// Returns the path to the compiled `.so` (Linux), `.dylib` (macOS), or `.dll` (Windows).
@@ -245,7 +267,7 @@ impl AotCompiler {
 
         // Check cache
         let so_name = format!("{module_name}_{hash_short}");
-        let so_path = self.cache_dir.join(&so_name).with_extension(so_ext());
+        let so_path = self.rust_artifact_path(&rust_source, module_name);
         if cache_hit(&so_path) {
             return Ok(so_path);
         }

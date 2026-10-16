@@ -1229,3 +1229,19 @@ SDK prefix/suffix predicates return integer flags; core str.contains shadows its
 Reason:
 VM adapters, generated Rust and C AOT now use one std-only kernel. Rust typed numeric and Bool adapters preserve source contracts without changing generic SDK flags or Float power. The C Value ABI remains NUL-terminated, so string proofs and representation gates precede artifact generation; owned byte results use paired Rust frees and hidden static support symbols. Cache identity includes source, compilers, target and options.
 
+
+## 2026-10-16T03:03:12-05:00 — [TACTICAL] [ARCHITECTURAL] FastVM, the JIT and crush-aotc fail a read of an unassigned local; one definite-assignment pass in casm (CRUSH-zorro-55)
+
+Reason:
+FastVM and the JIT read an unassigned local as null, and the JIT's reused frames returned a previous call's value (g(true)+g(false)=14). casm::assigned::loads_to_check (moved from crush-aot, now aware of FastVM's aliases/labels/break/continue/enter_try) is shared by AOT Rust/C, crush-aotc and fastvm::lower_program; only unproven loads become LoadLocalChecked. FastVM pads with a Ref(usize::MAX) sentinel; the JIT stores TAG_UNASSIGNED into checked slots on every function entry; crush-aotc boxes such locals with CV_UNSET.
+
+Artifacts: crates/casm/src/assigned.rs
+
+Rejected alternatives:
+- **parallel assigned-bitset in FastVM**: state through execute_one/frames/GC and a second write per store
+- **new RuntimeValue variant**: a non-value in every match across crates
+- **re-initialise all 8 JIT frame slots on every call**: cost on every call though 0 of 2054 example loads are checked
+
+Outcome:
+Every engine is loud on unassigned reads; STILL_SILENT empty; 0/2054 example loads checked
+

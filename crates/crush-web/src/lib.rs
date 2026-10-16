@@ -41,6 +41,12 @@
 //! it never runs with the page's own authority. Without both, the VM refuses
 //! with the same capability error as native with no `--polyglot` grant.
 //! `execute`/`run_blob` take no options and so never run polyglot blocks.
+//!
+//! Or the page can have `@python` / `@javascript` blocks **lowered** instead
+//! (option `polyglot: "lower"`, CRUSH-272): each block's body is compiled into
+//! the program through its language's walker and runs as Crush, with no grant
+//! and no executor. A construct the walker can't lower is a compile error
+//! naming it and the block's line; nothing falls back to the executor.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -239,6 +245,27 @@ pub struct RunOptions {
     /// `polyglot.python` (a granted block runs through [`set_lang_executor`]),
     /// `time`, `env`. See `GRANTABLE`.
     pub grants: Option<Vec<String>>,
+    /// What `@python` / `@javascript` blocks become (CRUSH-272): `"exec"`
+    /// (the default) runs each through the executor, behind its grant;
+    /// `"lower"` compiles each block's body into the program through its
+    /// language's walker, so it runs **as Crush** — Python / JavaScript as the
+    /// walker lowers them, not CPython / Node — needs no grant and no
+    /// executor, and a construct the walker can't lower is a compile error
+    /// naming it. Lowering needs this build's `polyglot-python` /
+    /// `polyglot-javascript` feature.
+    pub polyglot: Option<String>,
+}
+
+/// Compile `source` for a run with `options` (its `polyglot` mode).
+fn compile(source: &str, options: &RunOptions) -> Result<crush_vm::Program, String> {
+    use crush_lang_sdk::compile::{CompileOptions, PolyglotMode};
+    let polyglot = match options.polyglot.as_deref() {
+        None | Some("exec") => PolyglotMode::Exec,
+        Some("lower") => PolyglotMode::Lower,
+        Some(other) => return Err(format!("invalid options: polyglot must be \"exec\" or \"lower\", not {other:?}")),
+    };
+    crush_lang_sdk::compile::compile_crush_source_with(source, &CompileOptions { polyglot })
+        .map_err(|e| format!("compile error: {e}"))
 }
 
 fn parse_options(options: JsValue) -> Result<RunOptions, JsValue> {
@@ -340,13 +367,13 @@ pub struct ExecuteWithResult {
 
 /// Pure-Rust core of [`execute_with`].
 pub fn execute_with_options(source: &str, options: &RunOptions) -> ExecuteWithResult {
-    let program = match crush_lang_sdk::compile::compile_crush_source(source) {
+    let program = match compile(source, options) {
         Ok(program) => program,
         Err(e) => {
             return ExecuteWithResult {
                 ok: false,
                 output: String::new(),
-                error: Some(format!("compile error: {e}")),
+                error: Some(e),
                 exit_code: None,
                 steps: 0,
             };
@@ -449,8 +476,7 @@ fn to_js(report: &Report) -> Result<JsValue, JsValue> {
 /// Pure-Rust surface of [`Session`], usable from native tests.
 impl Session {
     pub fn with_options(source: &str, options: &RunOptions) -> Self {
-        let vm = crush_lang_sdk::compile::compile_crush_source(source)
-            .map_err(|e| format!("compile error: {e}"))
+        let vm = compile(source, options)
             .and_then(|program| new_vm(program, options, InputSource::interactive()));
         match vm {
             Ok(vm) => Session {

@@ -61,6 +61,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "Python print with sep= / end=: (sep, end, *values); null = default (CRUSH-zorro-38)",
         });
         reg(CapabilitySpec {
+            name: "lang.marshal",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "lang.marshal(value, name): copy a value across an inline-lowered polyglot block's boundary as JSON would; loud for a value JSON can't carry (CRUSH-272)",
+        });
+        reg(CapabilitySpec {
             name: "parallel_map",
             argc: Some(2),
             returns: true,

@@ -271,3 +271,20 @@ fn test_c_cache_hit() {
 
     assert_eq!(path1, path2, "C cache should return same .so path");
 }
+
+// ── Cache probe ────────────────────────────────────────────────────────────
+
+#[test]
+fn cached_casm_path_reports_exactly_what_compile_casm_caches() {
+    let dir = std::env::temp_dir().join(format!("crush-aot-probe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let compiler = AotCompiler::new().with_optimize(false).with_cache_dir(dir.clone());
+    let program = crush_frontend::compile_crush_source("fn main() { return 6 * 7; }").unwrap();
+    assert_eq!(compiler.cached_casm_path(&program, "probe").unwrap(), None, "cold cache");
+    let so = compiler.compile_casm(&program, "probe").unwrap();
+    assert_eq!(compiler.cached_casm_path(&program, "probe").unwrap(), Some(so));
+    // The optimization setting is part of the key.
+    let optimized = AotCompiler::new().with_optimize(true).with_cache_dir(dir.clone());
+    assert_eq!(optimized.cached_casm_path(&program, "probe").unwrap(), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

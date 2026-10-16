@@ -55,6 +55,7 @@ pub use crush_errors::convert::casm::CasmError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod assigned;
 pub mod debug_info;
 
 pub use debug_info::{DebugInfo, SourceLocation};
