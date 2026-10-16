@@ -23,6 +23,13 @@ pub struct FreeVars {
     /// output — when the current marshaling protocol needs to pick one —
     /// is conventionally the last entry.
     pub top_level_bound: Vec<String>,
+    /// Every name bound anywhere in the block's module scope — including
+    /// *conditional* bindings inside `if`/`for`/`while`/`with`/`try`/
+    /// `match` bodies, but NOT inside nested `def`/`class`/lambda scopes.
+    /// This is the set that distinguishes a declared output the block never
+    /// binds at all (a compile-time error) from one it only binds
+    /// conditionally (which may miss at run time and must fail loudly).
+    pub bound_anywhere: HashSet<String>,
 }
 
 /// Analyze a Python source block for free variables, via the real
@@ -71,6 +78,7 @@ pub fn free_variables(source: &str) -> Result<FreeVars, String> {
     Ok(FreeVars {
         reads,
         top_level_bound,
+        bound_anywhere: module.bound,
     })
 }
 
@@ -1452,5 +1460,32 @@ mod free_var_tests {
     fn fstring_reads_embedded_names() {
         let fv = free_variables("result = f\"{n} and {m}\"\n").expect("parse");
         assert_eq!(fv.reads, vec!["n".to_string(), "m".to_string()]);
+    }
+
+    // ── CRUSH-270: `bound_anywhere` distinguishes "never bound" from
+    //    "only conditionally bound" for the explicit-output check. ──────────
+
+    #[test]
+    fn bound_anywhere_includes_conditional_bindings() {
+        // `x` is bound only inside the `if`, so it is NOT a top-level output
+        // candidate, but it IS bound somewhere — the explicit-output check uses
+        // this to compile it (and let a run-time miss fail loudly) instead of
+        // rejecting it as never-bound.
+        let src = "if flag:\n    x = 1\n";
+        let fv = free_variables(src).expect("parse");
+        assert!(fv.top_level_bound.is_empty());
+        assert!(fv.bound_anywhere.contains("x"));
+        assert!(fv.bound_anywhere.contains("flag") == false, "flag is only read");
+    }
+
+    #[test]
+    fn bound_anywhere_excludes_nested_function_locals() {
+        // `local` lives inside `helper`'s own scope, so it is not bound in the
+        // block's module scope.
+        let src = "def helper():\n    local = 1\nresult = helper()\n";
+        let fv = free_variables(src).expect("parse");
+        assert!(fv.bound_anywhere.contains("helper"));
+        assert!(fv.bound_anywhere.contains("result"));
+        assert!(!fv.bound_anywhere.contains("local"));
     }
 }

@@ -380,9 +380,10 @@ fn constants_are_not_folded_across_a_lang_block() {
             lang: "python".to_string(),
             code: "x = 2".to_string(),
             variables: vec!["x".to_string()],
+            outputs: vec![],
             imports: vec![],
             deps: vec![],
-            meta: HashMap::from([("polyglot_output".to_string(), serde_json::json!("x"))]),
+            meta: HashMap::from([("polyglot_outputs".to_string(), serde_json::json!(["x"]))]),
         },
         Statement::Return {
             value: Some(Expression::Var {

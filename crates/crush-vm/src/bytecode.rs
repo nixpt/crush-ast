@@ -404,6 +404,11 @@ pub struct Program {
     /// Not serialized in the binary blob — only populated by
     /// `assemble()`.
     pub source_map: Vec<(usize, usize)>,
+    /// Compile-time warnings collected while building this program
+    /// (CRUSH-270's polyglot implicit-output/clobber warnings). Not
+    /// serialized in the binary blob; the embedder (crush-run) surfaces them
+    /// to stderr.
+    pub warnings: Vec<String>,
     /// The kind table (COSM K1.3, CRUSH-zorro-42): the program's object
     /// declarations, or `None`. Serialized as the version-3 kind-table
     /// section when non-empty (see the module docs).
@@ -417,6 +422,7 @@ impl Program {
             consts,
             manifest,
             source_map: Vec::new(),
+            warnings: Vec::new(),
             cosm: None,
         }
     }
@@ -432,6 +438,7 @@ impl Program {
             consts,
             manifest,
             source_map,
+            warnings: Vec::new(),
             cosm: None,
         }
     }
@@ -547,6 +554,7 @@ impl Program {
             consts,
             manifest,
             source_map: Vec::new(),
+            warnings: Vec::new(),
             cosm,
         })
     }

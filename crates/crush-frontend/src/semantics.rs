@@ -3,6 +3,20 @@ use anyhow::{Result, bail};
 use crush_cast::*;
 use std::collections::HashMap;
 
+/// The marshaled output names a `@lang` block records in
+/// `meta["polyglot_outputs"]` (CRUSH-270) — an array of strings, empty when
+/// the block has no outputs.
+pub(crate) fn polyglot_outputs(meta: &HashMap<String, serde_json::Value>) -> Vec<String> {
+    meta.get("polyglot_outputs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub struct SemanticAnalyzer {
     structs: HashMap<String, HashMap<String, Type>>,
     functions: HashMap<String, (Vec<Type>, Type)>,
@@ -342,14 +356,14 @@ impl SemanticAnalyzer {
                 // A polyglot block's own body is opaque to Crush's checker
                 // (it's a different language's source text), but if a
                 // free-variable analysis pass (crush-lang-sdk::compile, for
-                // @python blocks) determined an output variable and
-                // recorded it in meta["polyglot_output"], that name is
+                // @python blocks) determined output variables and
+                // recorded them in meta["polyglot_outputs"], those names are
                 // real and must be declared here — otherwise every read of
-                // it later in the same scope reports as undefined, even
-                // though the compiler emits a `store` into exactly that
-                // name right after `exec_lang`.
-                if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
-                    self.define_var(output_var, Type::Any);
+                // them later in the same scope reports as undefined, even
+                // though the compiler emits a `store` into exactly those
+                // names right after `exec_lang`.
+                for output_var in polyglot_outputs(meta) {
+                    self.define_var(&output_var, Type::Any);
                 }
             }
             _ => {
@@ -872,13 +886,12 @@ impl SemanticAnalyzer {
                 }
                 Statement::LangBlock { meta, .. } => {
                     // See the matching arm in `check_stmt` for why this is
-                    // needed: a polyglot block's marshaled output variable
-                    // (meta["polyglot_output"]) is real and must be
-                    // declared, or any read of it later in this same
+                    // needed: a polyglot block's marshaled output variables
+                    // (meta["polyglot_outputs"]) are real and must be
+                    // declared, or any read of them later in this same
                     // return-type-inference walk reports as undefined.
-                    if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str())
-                    {
-                        self.define_var(output_var, Type::Any);
+                    for output_var in polyglot_outputs(meta) {
+                        self.define_var(&output_var, Type::Any);
                     }
                 }
                 _ => {}

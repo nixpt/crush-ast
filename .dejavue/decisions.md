@@ -1171,4 +1171,35 @@ Rust declarations alone cannot prove values after generic Crush arithmetic. Reso
 
 Outcome:
 CRUSH-xps-8 slice 2 adds dynamic casts, bounded unsigned/length/index cases, left-to-right rooted source calls and innermost diagnostics; general typed wrapping remains open.
+## 2026-10-15T19:01:29-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: multi-output @lang wire protocol
+
+Reason:
+The old exec_lang protocol marshaled exactly one output (the sentinel line's JSON scalar). Explicit -> outputs need several. Chose a JSON object keyed by name on the single sentinel line, plus out_count/out_i spec fields mirroring var_count/var_i, extracted by a shared exec_lang_outputs helper so scheduler.rs and portable_vm.rs can't drift. The VM pushes outputs in reverse so the compiler's source-order stores line up.
+
+Outcome:
+meta[polyglot_outputs] (array); exec_lang spec carries out_count + out_0..out_{k-1}; epilogue prints sentinel + JSON object {name: value}; crush_vm::scheduler::exec_lang_outputs extracts by name. FastVM/JIT untouched (keep yielding/refusing as now).
+
+
+## 2026-10-15T19:01:36-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: compiler warning channel
+
+Reason:
+No general compiler warning channel existed (only ai_runtime::Warning). The polyglot pass (crush-lang-sdk) needs to emit the transition warnings (implicit output, clobber) and crush-run must print them to stderr, not program stdout. Chose a plain Vec<String> on crush_vm::Program (non-serialized, like source_map), threaded via compile_crush_to_casm_with_warnings, rather than the structured CompilerDiagnostic (which lives in crush-frontend and only flows through check_source, a path crush-run doesn't take).
+
+Outcome:
+crush_vm::Program.warnings: Vec<String>; prepare_polyglot_blocks returns Result<Vec<String>>; crush-run and crushc print each with a 'warning:' prefix to stderr.
+
+
+## 2026-10-15T23:03:56-05:00 — [TACTICAL] [ARCHITECTURAL] AOT backends fail a read of an unassigned local, checking only loads not preceded by a store on every path (CRUSH-zorro-54)
+
+Reason:
+The VMs fail 'load from uninitialised slot'; AOT read null and printed wrong output. A forward must-assigned dataflow pass (crush-aot/src/assigned.rs) over the emitted control flow leaves dominated loads unchecked. Rust: absence from the locals HashMap is the sentinel. C: frames start TAG_UNSET; typed (CRUSH-257) locals with a possibly-unassigned load stay boxed.
+
+Artifacts: crates/crush-aot/src/assigned.rs
+
+Rejected alternatives:
+- **walk-time refusal on swc (would turn ops_ternary_nested loud though its function never runs)**
+- **check every load (C cost on hot loops)**
+
+Outcome:
+AOT exact-or-loud on unassigned reads; FastVM/JIT still read null -> CRUSH-zorro-55
 

@@ -313,24 +313,18 @@ impl Compiler {
         }
         // Pre-pass: track VarDecls and populate LangBlock variables
         for func in program.functions.values_mut() {
-            let mut declared: Vec<String> = Vec::new();
             self.declared_vars.clear();
             for stmt in &mut func.body {
                 match stmt {
                     Statement::VarDecl { name, .. } => {
-                        declared.push(name.clone());
                         self.declared_vars.insert(name.clone());
                     }
                     Statement::Assign { target, .. } => {
-                        declared.push(target.clone());
                         self.declared_vars.insert(target.clone());
                     }
                     Statement::FunctionDef { name, params, .. } => {
                         self.local_functions.insert(name.clone());
                         self.function_arity.insert(name.clone(), params.len());
-                    }
-                    Statement::LangBlock { variables, .. } if variables.is_empty() => {
-                        *variables = declared.clone();
                     }
                     _ => {}
                 }
@@ -1122,6 +1116,7 @@ impl Compiler {
                 imports,
                 deps,
                 meta,
+                ..
             } => {
                 // CRUSH-224: each block runs in a fresh interpreter, so the `use @lang`
                 // imports that reach it are written into its own source.
@@ -1140,17 +1135,39 @@ impl Compiler {
                     ));
                 }
 
+                // The declared outputs (CRUSH-270): `meta["polyglot_outputs"]`
+                // is an array of names set by the polyglot pass. Each becomes a
+                // `store` after `exec_lang`, in declaration order; the VM
+                // pushes the values in reverse so the first store sees the
+                // first name's value.
+                let output_names: Vec<String> = meta
+                    .get("polyglot_outputs")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 // Build variable name mapping for the exec_lang instruction
                 let mut var_args = serde_json::json!({
                     "lang": lang,
                     "code": code,
-                    "var_count": variables.len()
+                    "var_count": variables.len(),
+                    "out_count": output_names.len()
                 });
 
                 // Add variable names as var_0, var_1, etc.
                 if let serde_json::Value::Object(ref mut map) = var_args {
                     for (i, var_name) in variables.iter().enumerate() {
                         map.insert(format!("var_{}", i), serde_json::json!(var_name));
+                    }
+                    // Outputs as out_0, out_1, etc. — the VM reads these and
+                    // pushes each declared value, in reverse order so the
+                    // `store`s below line up with declaration order.
+                    for (i, out_name) in output_names.iter().enumerate() {
+                        map.insert(format!("out_{}", i), serde_json::json!(out_name));
                     }
                     // CRUSH-18: carry the `.crush`-source line of this
                     // `@lang { ... }` block into the compiled spec so a
@@ -1172,23 +1189,16 @@ impl Compiler {
 
                 instrs.push(self.create_instr("exec_lang", var_args, meta));
 
-                // exec_lang always pushes a return value; it must always be
-                // consumed — either stored into the block's designated
-                // output variable (`meta["polyglot_output"]`, set by a
-                // language-specific free-variable analysis pass before
-                // compilation — see crush-lang-sdk::compile for Python) or
-                // explicitly popped, never left to leak on the stack.
-                match meta.get("polyglot_output").and_then(|v| v.as_str()) {
-                    Some(output_var) => {
-                        instrs.push(self.create_instr(
-                            "store",
-                            serde_json::json!({"name": output_var}),
-                            meta,
-                        ));
-                    }
-                    None => {
-                        instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
-                    }
+                // Store each declared output. With zero outputs the VM pushes
+                // nothing and there is nothing to consume; with one or more,
+                // the VM pushes exactly `out_count` values (reverse order) and
+                // every one is stored to its name.
+                for name in &output_names {
+                    instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": name}),
+                        meta,
+                    ));
                 }
             }
             Statement::Break { meta } => {
