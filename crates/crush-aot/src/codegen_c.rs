@@ -13,6 +13,7 @@ use std::collections::HashMap;
 /// translation.
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "C")?;
+    crate::refuse_green_task(program, "C")?;
     let mut out = String::new();
 
     emit_c_header(&mut out);
@@ -1738,31 +1739,6 @@ fn emit_c_instr(
                 out.push_str(&format!("                _pop(); _pc = {next_pc}; break;\n"));
             }
         }
-        // ── Async / AI opcodes ──
-        // AOT backends can't spawn OS threads or yield at the instruction level;
-        // these are stubbed to the minimum safe behavior.
-        "spawn" => {
-            // Pop function name + argc args (left on stack), push null.
-            // AOT can't spawn green threads, but we must keep the stack balanced.
-            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
-            out.push_str(&format!("                _pop(); // fn name\n"));
-            for _ in 0..argc {
-                out.push_str(&format!("                _pop(); // arg\n"));
-            }
-            out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
-        }
-        "yield" => {
-            // Cooperative yield is a no-op in sequential AOT execution.
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
-        }
-        "await" => {
-            // Pop handle, push null
-            out.push_str(&format!("                _pop(); // handle\n"));
-            out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
-        }
-
         // ── AI opcodes ──
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).

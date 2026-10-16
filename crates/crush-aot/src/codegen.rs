@@ -6,6 +6,7 @@
 /// translation.
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "Rust")?;
+    crate::refuse_green_task(program, "Rust")?;
     let mut out = String::new();
 
     emit_header(&mut out);
@@ -895,31 +896,6 @@ fn emit_body(
                 out.push_str(&next_pc_str);
             }
         }
-        // ── Async / AI opcodes ──
-        // AOT backends can't spawn OS threads or yield at the instruction level;
-        // these are stubbed to the minimum safe behavior (no crash, no deadlock).
-        "spawn" => {
-            // Pop function name + argc args (left on stack), push null.
-            // AOT can't spawn green threads, but we must keep the stack balanced.
-            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
-            out.push_str(&format!("{ind}stack.pop(); // fn name\n"));
-            for _ in 0..argc {
-                out.push_str(&format!("{ind}stack.pop(); // arg\n"));
-            }
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
-        "yield" => {
-            // Cooperative yield is a no-op in sequential AOT execution.
-            out.push_str(&next_pc_str);
-        }
-        "await" => {
-            // Pop handle, push null (can't actually await in AOT).
-            out.push_str(&format!("{ind}stack.pop(); // handle\n"));
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
-
         // ── AI opcodes ──
         // CRUSH-32 follow-up: each AI opcode now emits a per-opcode inline stub
         // Object ({ok: true, kind, echo: ([])}) via `make_ai_stub`, so the 5

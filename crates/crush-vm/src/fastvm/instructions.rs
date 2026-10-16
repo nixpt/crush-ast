@@ -342,6 +342,11 @@ pub enum LowerError {
     /// (COSM K1.3, `casm::cosm_unsupported_reason`): FastVM and the JIT,
     /// which both run this lowering's output, don't implement Kinds yet.
     CosmUnsupported(String),
+    /// The program uses a green-task construct (`spawn`/`yield`/`await`, issue
+    /// #161) that FastVM and the JIT — which both run this lowering's output —
+    /// can't service: the `Spawn`/`Await` requests these lower to have no host
+    /// loop, so a task would be silently skipped.
+    GreenTasksUnsupported(String),
 }
 
 /// The engines that run a [`LoweredProgram`], as a COSM refusal names them.
@@ -355,6 +360,7 @@ impl std::fmt::Display for LowerError {
             LowerError::InvalidJumpTarget(t) => write!(f, "Invalid jump target: {}", t),
             LowerError::FunctionNotFound(name) => write!(f, "Function not found: {}", name),
             LowerError::CosmUnsupported(msg) => write!(f, "{}", msg),
+            LowerError::GreenTasksUnsupported(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -411,6 +417,7 @@ fn sealed_new(module: Option<&crush_cosm::CosmModule>, kind: Option<&str>, symbo
 /// Lower a CASM program to FastInstr representation
 pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
     program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
+    program.refuse_green_task(FASTVM_ENGINES).map_err(LowerError::GreenTasksUnsupported)?;
     if program.kind_table().is_some()
         && program.functions.values().flat_map(|f| &f.body).any(|i| i.op == "type_of")
     {

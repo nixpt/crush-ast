@@ -243,3 +243,21 @@ fn a_kind_maps_cant_represent_is_refused() {
     assert!(err.starts_with("COSM objects aren't supported on crush-aotc yet (CRUSH-zorro-43)"), "{err}");
     assert!(err.contains("`Point` declares equality: identity"), "{err}");
 }
+
+/// issue #161: no green-task scheduler here — `spawn`/`yield`/`await` are
+/// refused by name, not compiled to `unhandled op` C that silently skips the
+/// task.
+#[test]
+fn green_tasks_are_refused_by_name() {
+    for (construct, source) in [
+        ("spawn", "fn worker() {}\nfn main() { spawn worker() }\n"),
+        ("yield", "fn main() { yield }\n"),
+        ("await", "fn main() { let h = 1\n await h }\n"),
+    ] {
+        let program = crush_frontend::compile_crush_source(source).expect("frontend");
+        let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("refused");
+        let err = err.to_string();
+        assert!(err.contains(construct), "{construct}: {err}");
+        assert!(!err.contains("make_closure"), "{construct}: {err}");
+    }
+}

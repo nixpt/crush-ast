@@ -58,6 +58,9 @@ impl AotcCompiler {
         // with a Kind a plain map can't represent (`casm::cosm_unsupported_reason`)
         // before generating anything.
         program.refuse_cosm("crush-aotc").map_err(anyhow::Error::msg)?;
+        // issue #161: no green-task scheduler here — refuse `spawn`/`yield`/
+        // `await` by name rather than silently skipping the task.
+        program.refuse_green_task("crush-aotc").map_err(anyhow::Error::msg)?;
         let mut out = String::with_capacity(8192);
 
         // Emit header
