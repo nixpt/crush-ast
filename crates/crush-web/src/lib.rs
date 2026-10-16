@@ -24,8 +24,10 @@
 //! Every entry point registers the same capabilities `crush-run` gives a
 //! program with no grant flags (see [`browser_caps`]): the pure standard
 //! library (`math.*`, `str.*`, `system.*`, …), `sys.args`/`sys.exit` and
-//! `caison.parse`. Nothing that reaches outside the VM (`fs`, `time`, `env`,
-//! `process`, `net`) is registered.
+//! `caison.parse`. `execute_with`/`Session` add what the page grants: `time`
+//! (the clock, see `clock`), `env` (the environment, which in a browser is
+//! empty) and polyglot languages (below). `fs`, `process` and `net` are never
+//! registered.
 //!
 //! Like `crush-run`, every entry point refuses a program that can reach a
 //! capability the run does not grant before running any of it (`nothing was
@@ -46,6 +48,8 @@ use std::rc::Rc;
 use crush_vm::{HostCaps, InputSource, PortableVm, VmError, VmYield};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+
+mod clock;
 
 /// A host runner for `@lang` blocks: `(lang, code, env)` → the block's stdout
 /// (including the result-sentinel line) or an error message.
@@ -92,9 +96,13 @@ pub fn set_lang_executor(executor: JsValue) -> Result<(), JsValue> {
     Ok(())
 }
 
-/// Grants a page may give a program in the browser (#91). `polyglot.bash` is
-/// never grantable here; nothing else reaches outside the VM.
-const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python"];
+/// Grants a page may give a program in the browser, each the counterpart of a
+/// `crush-run` flag: `polyglot.<lang>` (#91, `--polyglot`; a granted block runs
+/// through [`set_lang_executor`]), `time` (`--time`, the browser's clock) and
+/// `env` (`--env`; a browser has no environment, so `env.get` returns null and
+/// `env.all` is empty). `polyglot.bash`, `fs`, `process` and `net` are never
+/// grantable here.
+const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python", "time", "env"];
 
 /// [`browser_caps`] plus `grants`, or an error naming a grant a browser can't give.
 fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String> {
@@ -104,10 +112,14 @@ fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String
             GRANTABLE.join(", ")
         ));
     }
-    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args);
+    let granted = |name: &str| grants.iter().any(|g| g == name);
+    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args).env(granted("env"));
     #[cfg(feature = "stdlib")]
     let builder = builder.stdlib(true);
     let mut caps = builder.build();
+    if granted("time") {
+        clock::register(&mut caps);
+    }
     for lang in grants.iter().filter_map(|g| g.strip_prefix("polyglot.")) {
         caps.register(crush_vm::host::polyglot_gate(lang));
     }
@@ -223,8 +235,9 @@ pub struct RunOptions {
     pub max_steps: Option<usize>,
     /// What `sys.args()` returns. Absent means none.
     pub args: Option<Vec<String>>,
-    /// Capabilities the page grants this run (#91): `polyglot.javascript`,
-    /// `polyglot.python`. A granted block runs through [`set_lang_executor`].
+    /// Capabilities the page grants this run: `polyglot.javascript` /
+    /// `polyglot.python` (a granted block runs through [`set_lang_executor`]),
+    /// `time`, `env`. See `GRANTABLE`.
     pub grants: Option<Vec<String>>,
 }
 
