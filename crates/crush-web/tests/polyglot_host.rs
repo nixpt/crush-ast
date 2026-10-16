@@ -60,7 +60,8 @@ fn executor_failure_keeps_earlier_output() {
     assert!(!r.ok);
     assert_eq!(r.output, "before\n");
     let err = r.error.unwrap_or_default();
-    assert!(err.contains("@javascript block failed") && err.contains("ReferenceError: nope"), "{err}");
+    // The same error a native run reports when node exits non-zero.
+    assert_eq!(err, "runtime error: @javascript block raised a runtime error: (at .crush line 4) ReferenceError: nope");
 }
 
 #[test]
