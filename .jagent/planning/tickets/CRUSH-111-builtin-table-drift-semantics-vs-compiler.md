@@ -135,11 +135,12 @@ JS list has; both list `make_range`). One more reason the shared table should be
       as *the* checked front door and make walker output pass it — the alternative (declaring the
       walker pipeline exempt from checking) trades a loud refusal for a silent unchecked fast lane.
 
-### Adjacent finding (NOT this ticket)
+### Adjacent finding (NOT this ticket — now minted)
 
-`y = +5` (Python unary plus) is refused by **both** doors — `Unsupported op: +` — so it is a walker
-lowering gap, not drift; both entry points agree. Captured here so it isn't lost; mint separately if
-it matters (it is loud, and JS `+x` is unaffected).
+`y = +5` / `~5` is refused by **both** doors — `Unsupported op: +` / `Unsupported op: ~` — so it is a
+walker lowering gap, not drift; both entry points agree. Minted as **CRUSH-271** (2026-10-16,
+same session, same measurements): Python *and* JS walkers emit the `UnaryOp` node while the C walker
+emits the working `__crush_pos__` / `__crush_bit_not__` intrinsics.
 
 ---
 
