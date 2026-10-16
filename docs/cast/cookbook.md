@@ -1,41 +1,41 @@
 # CAST Cookbook
 
-Proof-carrying example corpus for authoring CAST JSON directly (the
-CRUSH-AI-NATIVE authoring surface). Every `*.cast.json` under
-`examples/cast/` is walked by the harness test
-`crush-lang/tests/cast_examples.rs` (`every_cast_example_validates_and_compiles`):
-each file must pass `crush_cast::validate_json`, and must compile via
-`crush_lang::compile_cast` unless it is on the in-test documented
-compile-exempt list.
+Example corpus for authoring CAST JSON directly (the AI-native authoring
+surface: an agent emits CAST instead of Crush source). There is no CLI for CAST
+JSON; the Rust API is the way in:
 
-```bash
-cargo test -p crush-lang --test cast_examples
+```rust
+crush_cast::validate_json(&json)?;                       // schema check, errors carry a JSON path
+let program: crush_cast::Program = serde_json::from_str(&json)?;
+let casm = crush_frontend::compile_cast_owned(program)?;  // CAST -> CASM
+let vm = crush_lang_sdk::compile::casm_to_vm(&casm)?;    // CASM -> CVM1
+crush_lang_sdk::Runtime::new().run(&vm)?;
 ```
+
+The "Status" column below was checked against `3ae0b4a` (2026-10-16) with exactly
+those calls (validate, compile, lower). No test in this repository walks
+`examples/cast/` today.
 
 ## Language feature examples (`examples/cast/*.cast.json`)
 
-| Concept | File | Validate / compile |
+| Concept | File | Status |
 |---------|------|--------------------|
-| Hello world: VarDecl, CapabilityCall print, Export | [print-hello.cast.json](../../examples/cast/print-hello.cast.json) | `ant crush cast validate examples/cast/print-hello.cast.json` |
-| If/else, While, For, Break, Continue | [control-flow.cast.json](../../examples/cast/control-flow.cast.json) | `ant crush cast validate examples/cast/control-flow.cast.json` |
-| Top-level functions, typed params, cross-function Call | [functions.cast.json](../../examples/cast/functions.cast.json) | `ant crush cast validate examples/cast/functions.cast.json` |
-| FunctionDef (body-level function definition) | [function-def.cast.json](../../examples/cast/function-def.cast.json) | validate only — compile-exempt¹ |
-| Lambda expression + `Lambda` type hint | [lambda.cast.json](../../examples/cast/lambda.cast.json) | validate only — compile-exempt¹ |
-| StructDef, NewStruct, SetField, GetField | [structs.cast.json](../../examples/cast/structs.cast.json) | `ant crush cast validate examples/cast/structs.cast.json` |
-| ArrayLiteral, ObjectLiteral, Index, Range | [collections.cast.json](../../examples/cast/collections.cast.json) | `ant crush cast validate examples/cast/collections.cast.json` |
-| TryCatch, Throw | [error-handling.cast.json](../../examples/cast/error-handling.cast.json) | `ant crush cast validate examples/cast/error-handling.cast.json` |
-| Match with all four Pattern kinds | [match.cast.json](../../examples/cast/match.cast.json) | validate only — compile-exempt¹ |
-| Pipeline (result threads into next segment) | [pipeline.cast.json](../../examples/cast/pipeline.cast.json) | `ant crush cast validate examples/cast/pipeline.cast.json` |
-| Spawn, Await, Yield | [concurrency.cast.json](../../examples/cast/concurrency.cast.json) | `ant crush cast validate examples/cast/concurrency.cast.json` |
-| Imports: CrushModule, PolyglotModule, External | [imports.cast.json](../../examples/cast/imports.cast.json) | `ant crush cast validate examples/cast/imports.cast.json` |
-| LangBlock (embedded Python, variable injection) | [lang-block.cast.json](../../examples/cast/lang-block.cast.json) | `ant crush cast validate examples/cast/lang-block.cast.json` |
-| AI Query | [ai-query.cast.json](../../examples/cast/ai-query.cast.json) | `ant crush cast validate examples/cast/ai-query.cast.json` |
-| AI ToolChain (strategy + error handling) | [toolchain.cast.json](../../examples/cast/toolchain.cast.json) | `ant crush cast validate examples/cast/toolchain.cast.json` |
-| AI orchestration: AgentDelegation (Consensus), LearningLoop, ContextAware, CapabilityDiscovery, KnowledgeSharing, AdaptationRequest, ai_meta | [ai-orchestration.cast.json](../../examples/cast/ai-orchestration.cast.json) | `ant crush cast validate examples/cast/ai-orchestration.cast.json` |
-
-¹ Compile-exempt: valid CAST that `compile_cast` cannot handle yet. The
-authoritative, can't-go-stale list (with reasons) lives in
-`crates/core/crush-lang/tests/cast_examples.rs` (`COMPILE_EXEMPT`).
+| Hello world: VarDecl, CapabilityCall print, Export | [print-hello.cast.json](../../examples/cast/print-hello.cast.json) | validates, compiles, lowers |
+| If/else, While, For, Break, Continue | [control-flow.cast.json](../../examples/cast/control-flow.cast.json) | validates, compiles, lowers |
+| Top-level functions, typed params, cross-function Call | [functions.cast.json](../../examples/cast/functions.cast.json) | validates, compiles, lowers |
+| FunctionDef (body-level function definition) | [function-def.cast.json](../../examples/cast/function-def.cast.json) | validates; compile fails (`Undefined function: double`) |
+| Lambda expression + `Lambda` type hint | [lambda.cast.json](../../examples/cast/lambda.cast.json) | validates, compiles, lowers |
+| StructDef, NewStruct, SetField, GetField | [structs.cast.json](../../examples/cast/structs.cast.json) | validates, compiles, lowers |
+| ArrayLiteral, ObjectLiteral, Index, Range | [collections.cast.json](../../examples/cast/collections.cast.json) | validates, compiles, lowers |
+| TryCatch, Throw | [error-handling.cast.json](../../examples/cast/error-handling.cast.json) | validates, compiles, lowers |
+| Match with all four Pattern kinds | [match.cast.json](../../examples/cast/match.cast.json) | validates, compiles, lowers |
+| Pipeline (result threads into next segment) | [pipeline.cast.json](../../examples/cast/pipeline.cast.json) | validates, compiles, lowers |
+| Spawn, Await, Yield | [concurrency.cast.json](../../examples/cast/concurrency.cast.json) | validates, compiles, lowers |
+| Imports: CrushModule, PolyglotModule, External | [imports.cast.json](../../examples/cast/imports.cast.json) | validates, compiles, lowers (imports then fail at run time: CRUSH-110) |
+| LangBlock (embedded Python, variable injection) | [lang-block.cast.json](../../examples/cast/lang-block.cast.json) | validates, compiles, lowers |
+| AI Query | [ai-query.cast.json](../../examples/cast/ai-query.cast.json) | validates, compiles, lowers |
+| AI ToolChain (strategy + error handling) | [toolchain.cast.json](../../examples/cast/toolchain.cast.json) | validates, compiles, lowers |
+| AI orchestration: AgentDelegation (Consensus), LearningLoop, ContextAware, CapabilityDiscovery, KnowledgeSharing, AdaptationRequest, ai_meta | [ai-orchestration.cast.json](../../examples/cast/ai-orchestration.cast.json) | validates; compile refuses `CapabilityDiscovery` (CRUSH-265) |
 
 ## Cookbook capsules (`examples/cast/cookbook/<name>/`)
 
@@ -50,19 +50,16 @@ where the manifest is part of the lesson.
 | [secure-env-reader](../../examples/cast/cookbook/secure-env-reader/) | Read encrypted secrets (selective + bulk/alias/db_path) | SecureEnv import, LangBlock |
 | [mcp-web-tools](../../examples/cast/cookbook/mcp-web-tools/) | Connect to an MCP server and bind tools | MCPImport |
 
-## Running a Cookbook Capsule
+## Status of the capsules
 
-```bash
-# Validate
-ant crush cast validate <path>/main.cast.json
-
-# Compile
-ant crush compile --from-cast <path>/main.cast.json -o output.casmb
-
-# Install and run
-ant pkg install <path>
-ant pkg run <capsule-name>
-```
+Status against `3ae0b4a`: every capsule's `main.cast.json` validates, compiles and
+lowers except `research-summarizer` (refuses `CapabilityDiscovery`, CRUSH-265).
+Run with `Runtime::new()`, they stop at host capabilities nothing registers
+(`capability-log-reader`: `unknown capability: cap.acquire`; `mcp-web-tools`:
+`mcp.connect`; `secure-env-reader`: `secrets.read`), and `code-review-helper` runs
+but every AI call yields `null` without an `ai_native` host (#261). They are
+schema and compile examples today. (The old `ant crush cast validate` / `ant pkg run` commands were
+exosphere's CLI and don't exist here.)
 
 ## Authoring rules of thumb
 
