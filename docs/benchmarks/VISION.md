@@ -132,13 +132,13 @@ One binary, one mental model, one command surface. The pieces exist — they nee
 | `!` (logical not) | JavaScript | ✅ Mapped to `not` in compiler |
 | `__crush_assign__` (assignment) | All | ✅ Intrinsic handled in compiler |
 | `print()` / `io.print` cap | Python/JS | ✅ Auto-registered in crush-walk-run |
-| `range()` / iteration | Python/JS | 🔴 Needs array support first |
-| Tuple unpacking | Python | 🔴 Not lowered |
-| List comprehensions | Python | 🔴 Not lowered |
-| Slice expressions | Python | 🔴 Not lowered |
-| `Math.floor()` | JavaScript | 🔴 Not lowered |
-| Typed arrays (`Uint8Array`) | JavaScript | ��� No CAST representation |
-| Function calls with args | All | 🔴 Compiles but stack underflow in FastVM |
+| `range()` / iteration | Python/JS | ✅ Lowered (`crush-frontend/src/compiler.rs:1906` range/make_range; clamped/descending cases in walker closure tests) |
+| Tuple unpacking | Python | ✅ Lowered (`crush-lang-python/src/lower_stmt.rs:672` `Expr::Tuple` for-targets) |
+| List comprehensions | Python | ✅ Lowered (`crush-lang-python/src/lower_expr.rs:180` ListComp/SetComp → `lower_list_or_set_comprehension` init+loop) |
+| Slice expressions | Python | ✅ Lowered (`crush-lang-python/src/lower_expr.rs:297,343` `Expr::Slice` lower/upper/step) |
+| `Math.floor()` | JavaScript | ✅ Lowered to `math.floor` cap (`crush-lang-js/src/lower/builtins.rs:86`, CRUSH-65) |
+| Typed arrays (`Uint8Array`) | JavaScript | 🔴 Residual: zero `Uint8Array` mentions in `crush-lang-js` — no CAST rep / lowering yet (CRUSH-35 main work) |
+| Function calls with args | All | ✅ Fixed — FastVM `FastOp::Call` keeps caller-pushed args in place + pushes `FastFrame` (`crush-vm/src/fastvm/execution.rs:99`); former stack-underflow/reversed-args bug documented as fixed (CRUSH-138) |
 
 ### What Now Works End-to-End
 

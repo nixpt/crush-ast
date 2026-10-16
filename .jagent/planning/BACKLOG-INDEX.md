@@ -107,10 +107,10 @@ new review-exit matrices automatically.
 
 | ID | What to verify | Note |
 |----|----------------|------|
-| CRUSH-11 | AOT-C string garbling repro (`--emit c` + ctypes) | ring-buffer fixes on HEAD; ticket says "needs re-verification" |
+| ~~CRUSH-11~~ | AOT-C string garbling repro | **DONE** — ticket marked Done 2026-08-07; repro independently re-verified 2026-10-16 (differential_aot ok) |
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
 | CRUSH-30 | whether E-EXH-001 wildcard-warn satisfies the ticket | `missing_arms` is a documented stub pending a type registry — needs a scope ruling, then either close or re-scope |
-| CRUSH-35 | VISION.md walker table refresh | 6/7 gaps verified closed in code; table still shows all red |
+| CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row evidence (6/7 ✅); ticket stays open for the Uint8Array residual + corpus fixtures |
 
 ## In flight
 

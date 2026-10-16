@@ -58,3 +58,22 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-35.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Quick-win slice: VISION.md table refresh (buffy, 2026-10-16)
+
+All 6 previously-cited "closed" sites re-verified in code on a current-main
+worktree (paths moved since s412; new locations recorded):
+
+1. List comprehensions — `crush-lang-python/src/lower_expr.rs:180` (ListComp/SetComp → `lower_list_or_set_comprehension`; filter-as-arg tests in `sdk.rs`).
+2. Slice expressions — `crush-lang-python/src/lower_expr.rs:297,343` (Expr::Slice lower/upper/step).
+3. Tuple unpacking — `crush-lang-python/src/lower_stmt.rs:672` (Expr::Tuple for-targets).
+4. `range()` — `crush-frontend/src/compiler.rs:1906` (`range`/`make_range`).
+5. `Math.floor` — `crush-lang-js/src/lower/builtins.rs:86` (`Math.floor` → `math.floor`, CRUSH-65).
+6. Function calls with args — `crush-vm/src/fastvm/execution.rs:99` (`FastOp::Call`: caller-pushed args kept in place, `FastFrame` pushed; CRUSH-138's reversed-args bug is fixed).
+
+`docs/benchmarks/VISION.md` "Walker Lowering Progress" refreshed with these
+evidence refs; 6/7 rows now ✅, typed arrays (`Uint8Array`) remains the single
+🔴 residual (confirmed: zero `Uint8Array` mentions in `crush-lang-js`).
+
+**Ticket remains OPEN** — the DoD items (Uint8Array fixture, corpus fixtures)
+are still unmet. Residual work is the real dispatch, not a quick win.
