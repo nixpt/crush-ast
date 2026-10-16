@@ -90,6 +90,10 @@ fn literal_only_and_empty_format_values_are_owned_strings() {
 #[test]
 fn literal_debug_traversal_and_output_are_bounded() {
     let nested = format!("{}0{}", "[".repeat(18), "]".repeat(18));
+    let casts = format!("0i64{}", " as i64".repeat(18));
+    let cast_source = format!("fn main() {{ println!(\"{{:?}}\", {casts}); }}");
+    let cast_error = format!("{:#}", compile_rust_source(&cast_source).unwrap_err());
+    assert!(cast_error.contains("depth/item bound"), "{cast_error}");
     let source = format!("fn main() {{ println!(\"{{:?}}\", {nested}); }}");
     let error = format!("{:#}", compile_rust_source(&source).unwrap_err());
     assert!(error.contains("depth/item bound"), "{error}");

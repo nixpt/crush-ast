@@ -95,6 +95,26 @@ This does not add `rust.debug` or close xps-9. Remaining slices add the shared
 runtime kernel, literal descriptors from binding/type facts, explicit stdlib
 registration, dynamic aggregate limits and the C bridge/refusal boundary.
 
+### Slice validation
+
+Rebased onto integrated main `23d7550` (explicit @lang outputs, #245).
+Rust oracle: `rustc 1.98.1 (48a229cea 2026-09-01)`, x86_64, Rust 2021 with `-O`.
+
+- 486 focused tests: 8 walker, 115 shared frontend, 343 SDK, 20 AOT.
+- 76-fixture oracle inventory: VM 39 exact / 36 loud / 1 silent; each AOT
+  31 exact / 44 loud / 1 silent. All eight added expected-output artifacts are
+  generated from native rustc; the freshness test recompiles every fixture.
+- C parity also passes `CRUSH_GC_STRESS=1`. The remaining silent case is integer
+  overflow (xps-8); the Debug-string exception is removed rather than relaxed.
+- Standalone SDK host matches fresh native rustc for literal Debug, Display-only
+  floats, ordered effectful arguments and the original Debug-string audit.
+  Dynamic Debug/repeated/reordered arguments and unsupported output macros
+  refuse before output. A `.crush` smoke still prints and returns Int(42).
+- Scoped Rust walker Clippy passes the CI `never_loop` gate with existing
+  warnings. Targeted formatting and `git diff --check` pass.
+- Full workspace tests were not run. A dedicated writable target isolates this
+  worktree from other checkouts and uses two build jobs.
+
 ## Proposed fixture matrix
 
 | Case | Required behavior |

@@ -9,11 +9,10 @@ const MAX_ITEMS: usize = 256;
 const MAX_OUTPUT: usize = 1024 * 1024;
 
 pub(crate) fn error(expr: &impl Spanned, reason: &str) -> anyhow::Error {
-    let p = expr.span().start();
-    anyhow::anyhow!(
-        "unsupported Rust formatting at {}:{}: {reason} (CRUSH-xps-9)",
-        p.line,
-        p.column + 1
+    crate::lower_expr::unsupported_at(
+        expr.span(),
+        "formatting",
+        &format!("{reason} (CRUSH-xps-9)"),
     )
 }
 

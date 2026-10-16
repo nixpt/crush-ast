@@ -305,7 +305,7 @@ fn block_to_expr(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Expre
     }
 }
 
-fn unsupported_at(span: proc_macro2::Span, construct: &str, reason: &str) -> anyhow::Error {
+pub(crate) fn unsupported_at(span: proc_macro2::Span, construct: &str, reason: &str) -> anyhow::Error {
     let start = span.start();
     anyhow::anyhow!("unsupported Rust {construct} at {}:{}: {reason}", start.line, start.column + 1)
 }
@@ -499,17 +499,17 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
     }
     // Start from "" so `+` is string concatenation even when the first piece is a number.
     let mut acc = Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) };
+    // Empty format! still produces an owned String. Nonempty formats already
+    // acquire that class from their existing concatenation nodes.
+    if pieces.is_empty() {
+        pieces.push(Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) });
+    }
     for p in pieces {
         let mut meta = ctx.meta_at(0);
         meta.insert("rust_format_piece".into(), serde_json::Value::Bool(true));
         acc = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(acc), right: Box::new(p), meta };
     }
-    // Even literal-only/empty format! produces an owned String. Keeping a
-    // format concatenation node lets the ownership pass retain that fact.
-    let mut meta = ctx.meta_at(0);
-    meta.insert("rust_format_piece".into(), serde_json::json!(true));
-    Ok(Expression::BinaryOp { operator: "+".into(), left: Box::new(acc),
-        right: Box::new(Expression::StringLiteral { value: String::new(), meta: meta.clone() }), meta })
+    Ok(acc)
 }
 
 /// `match x { 1 | 2 => a, n => b, _ => c }` → CAST `Match` (CRUSH-197).
