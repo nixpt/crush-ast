@@ -158,6 +158,12 @@ pub enum FastOp {
     MathRound,
     MathFloor,
     MathCeil,
+
+    // A `LoadLocal` that may run before its local is assigned (arg = local
+    // slot index): it fails with "load from uninitialised slot N" instead of
+    // reading null (CRUSH-zorro-55). Lowering emits it only for the loads
+    // `casm::assigned::loads_to_check` can't prove are preceded by a store.
+    LoadLocalChecked,
 }
 
 /// Compact instruction - 16 bytes total
@@ -470,7 +476,11 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
             symbols.get_or_create_local(param);
         }
 
-        for instr in &func.body {
+        // CRUSH-zorro-55: a load that may run before its local is assigned
+        // is checked; the rest keep the unchecked fast path.
+        let to_check = casm::assigned::loads_to_check(func);
+
+        for (at, instr) in func.body.iter().enumerate() {
             // COSM K1.4: a struct literal of a sealed Kind (`new_obj` tagged
             // with it) remembers its declared fields, so a write of any
             // other field is refused as on the VMs.
@@ -486,6 +496,10 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
                     &mut pending_jumps,
                     pc,
                 )?,
+            };
+            let fast = match fast.op {
+                FastOp::LoadLocal if to_check[at] => FastInstr { op: FastOp::LoadLocalChecked, ..fast },
+                _ => fast,
             };
             instructions.push(fast);
             pc += 1;
@@ -672,7 +686,9 @@ pub fn lower_bytecode_program(
                     code[pc+1..pc+3].try_into().map_err(|_|
                         LowerError::MissingArgument("LOAD slot".into()))?,
                 ) as u64;
-                FastInstr::new(FastOp::LoadLocal, slot, 0)
+                // No definite-assignment pass over CVM1 bytecode: every load
+                // is checked (CRUSH-zorro-55).
+                FastInstr::new(FastOp::LoadLocalChecked, slot, 0)
             }
             STORE => {
                 let slot = u16::from_be_bytes(

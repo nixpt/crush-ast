@@ -16,6 +16,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
+use crate::runtime::OP_UNINIT_LOAD;
 
 use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_MAP_KEYS, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
 
@@ -38,6 +39,11 @@ const TAG_FALSE: i64 = 0x7FFC_0000_0000_0002i64;
 const TAG_INT: i64 = 0x7FFD_0000_0000_0000i64;
 const TAG_REF: i64 = 0x7FFE_0000_0000_0000i64;
 const MASK_U64: u64 = 0xFFFF_0000_0000_0000;
+/// What a local slot holds until its first store, when a checked load may
+/// read it (CRUSH-zorro-55). A reserved tag in the null/bool namespace: no
+/// value has it, and it never leaves its slot — `LoadLocalChecked` fails on
+/// it instead of pushing it.
+const TAG_UNASSIGNED: i64 = 0x7FFC_0000_0000_0003i64;
 
 /// Error type for JIT compilation failures.
 #[derive(Debug, Clone)]
@@ -220,6 +226,12 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
 
     // Initial path: jump to entry_point.
     bld.switch_to_block(init_bb);
+    // `main`'s frame starts unassigned (CRUSH-zorro-55). With no function
+    // table entry for it, its code runs to the end of the program.
+    let main_end = program.symbols.functions.values()
+        .find(|&&(start, _, _)| start == program.entry_point)
+        .map_or(program.instructions.len(), |&(_, end, _)| end);
+    unassign_frame(bld, ctx, program, program.entry_point, main_end);
     let entry_pc = iconst(bld, program.entry_point as i64);
     bld.ins().jump(merge_bb, &[BlockArg::Value(entry_pc)]);
 
@@ -486,6 +498,26 @@ fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
     store(b, addr, val);
 }
 
+/// Mark unassigned, in the current frame, every slot that a checked load in
+/// the function at `start..end` reads (CRUSH-zorro-55). Done on every entry
+/// to the function, because frames are fixed memory reused by the next call
+/// at the same depth: without it a checked load could read the value a
+/// previous call (or a deeper recursion) left there. Slots only proven loads
+/// read need nothing — a proven load always follows this activation's store.
+fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProgram, start: usize, end: usize) {
+    let mut slots: Vec<usize> = program.instructions[start.min(end)..end.min(program.instructions.len())]
+        .iter()
+        .filter(|i| i.op == FastOp::LoadLocalChecked)
+        .map(|i| i.arg as usize)
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    for slot in slots {
+        let sentinel = iconst(b, TAG_UNASSIGNED);
+        lstore(b, ctx, slot, sentinel);
+    }
+}
+
 fn is_int(b: &mut FunctionBuilder, val: ir::Value) -> ir::Value {
     let mask = iconst(b, MASK_U64 as i64);
     let int_pat = iconst(b, TAG_INT);
@@ -668,7 +700,7 @@ const HOST_REQ_EXEC_LANG: i64 = 1;
 const HOST_REQ_SPAWN: i64 = 2;
 const HOST_REQ_GC: i64 = 3;
 const HOST_REQ_IMPORT_VAR: i64 = 4;
-#[allow(dead_code)] // reserved: `await` is now a no-op (push null), matching the VMs (issue #161)
+#[allow(dead_code)] // reserved: `await` is now a no-op (returns the value), matching the VMs (issue #161/#251)
 const HOST_REQ_AWAIT: i64 = 5;
 
 /// Emit a host-request yield: save `next_pc` so the trampoline can resume
@@ -986,7 +1018,7 @@ fn emit_one(
 
         Call => {
             let func_name = &program.symbols.strings[instr.arg as usize];
-            if let Some(&(target_pc, _, _arity)) = program.symbols.functions.get(func_name) {
+            if let Some(&(target_pc, _end_pc, _arity)) = program.symbols.functions.get(func_name) {
                 // Arguments stay as the caller pushed them: last-to-first, so
                 // the first one is on top for the callee's `store <param1>`.
                 // This used to reverse them, mirroring FastVM's Call — both
@@ -1020,6 +1052,8 @@ fn emit_one(
                 b.seal_block(ok_bb);
                 let ret_idx = call_idx_to_ret.get(&global_idx).copied().unwrap_or(0);
                 push_frame(b, ctx, ret_idx as i64);
+                // The callee's frame starts unassigned (CRUSH-zorro-55).
+                unassign_frame(b, ctx, program, target_pc, _end_pc);
 
                 dec_budget(b, ctx);
                 if let Some(&target_block) = clif.get(&target_pc) {
@@ -1067,6 +1101,32 @@ fn emit_one(
 
         LoadLocal => { let v = lload(b, ctx, instr.arg as usize); push(b, ctx, v); }
         StoreLocal => { let v = pop(b, ctx); lstore(b, ctx, instr.arg as usize, v); }
+        LoadLocalChecked => {
+            // A slot past this frame's share of the locals array would alias
+            // the next frame's, so its sentinel can't be trusted: leave the
+            // function to FastVM (CRUSH-zorro-55).
+            if instr.arg >= FRAME_LOCALS as u64 {
+                return Err(CompileError::Unsupported(vec![LoadLocalChecked]));
+            }
+            let v = lload(b, ctx, instr.arg as usize);
+            let sentinel = iconst(b, TAG_UNASSIGNED);
+            let unassigned = icmp_eq(b, v, sentinel);
+            let ok_bb = b.create_block();
+            let err_bb = b.create_block();
+            b.ins().brif(unassigned, err_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+
+            // Unassigned: fail with the VMs' message, null result, halt.
+            b.switch_to_block(err_bb);
+            emit_helper_call(b, ctx, OP_UNINIT_LOAD, instr.arg as i64, _ptr_ty, helper_sig);
+            let null_val = iconst(b, TAG_NULL);
+            sres(b, ctx, null_val);
+            b.ins().return_(&[] as &[ir::Value]);
+            b.seal_block(err_bb);
+
+            b.switch_to_block(ok_bb);
+            b.seal_block(ok_bb);
+            push(b, ctx, v);
+        }
 
         // ── Stack manipulation ─────────────────────────────────────────────
         Rot => {
@@ -1247,13 +1307,10 @@ fn emit_one(
             return Ok(true);
         }
         Await => {
-            // issue #161: `await` on a non-handle (no `spawn` — refused at
-            // lowering) pops the awaited value and pushes null, matching the
-            // scheduler and portable VM, which never error on a non-handle
-            // `await`.
-            pop(b, ctx);
-            let null_val = iconst(b, TAG_NULL);
-            push(b, ctx, null_val);
+            // issue #161/#251: `await` on a non-handle (no `spawn` — refused at
+            // lowering) leaves the awaited value in place: `await v` returns `v`
+            // (JS semantics), matching the scheduler and portable VM, which
+            // never error on a non-handle `await`.
         }
 
         // Remaining unimplemented ops: refuse to compile (no silent null fabrication).

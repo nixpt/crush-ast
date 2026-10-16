@@ -256,7 +256,13 @@ fn run_on_every_engine(program: &casm::Program, name: &str) -> Vec<(&'static str
         .map_err(|e| format!("lower_program: {e}"))
         .and_then(|lowered| {
             let engine = crush_jit::JitEngine::new().map_err(|e| format!("JitEngine::new: {e}"))?;
-            engine.run(&lowered).map_err(|e| format!("{e:#}"))
+            let r = engine.run(&lowered).map_err(|e| format!("{e:#}"))?;
+            // `run` falls back to FastVM when it can't compile: that wouldn't
+            // be measuring the JIT.
+            if engine.compilation_count() == 0 {
+                return Err("JIT fell back to FastVM".to_string());
+            }
+            Ok(r)
         });
     out.push(("jit", fast(jit)));
     for (backend, so) in build_both(program, name) {
@@ -290,7 +296,7 @@ const UNINIT: &str = "load from uninitialised slot";
 
 /// Engines that still read an unassigned local as `null`, keyed to the
 /// ticket that fixes them. One that turns loud fails the test: remove it.
-const STILL_SILENT: &[(&str, &str)] = &[("fastvm", "CRUSH-zorro-55"), ("jit", "CRUSH-zorro-55")];
+const STILL_SILENT: &[(&str, &str)] = &[];
 
 fn assert_loud_everywhere(program: &casm::Program, name: &str) {
     let outcomes = run_on_every_engine(program, name);
@@ -356,6 +362,49 @@ fn a_loop_that_assigns_before_reading_still_works() {
         "y",
     );
     assert_value_everywhere(&program, "z54_loop", "12", "int:12");
+}
+
+// ── CRUSH-zorro-55: the same cases on FastVM and the JIT, plus frame reuse ──
+
+#[test]
+fn a_function_local_read_before_its_let_fails_everywhere() {
+    // `x` is read before the only store left to it, in a callee. (`n(0)`,
+    // not `0`, so the frontend can't fold the read away.)
+    let program = unassign_first_store(
+        compile("fn n(v) { return v; } fn f(v) { let x = n(0); let r = x + v; x = 5; return r + x; } fn main() { return f(1); }"),
+        "f",
+        "x",
+    );
+    assert_loud_everywhere(&program, "z55_before_let");
+}
+
+#[test]
+fn a_reused_frame_does_not_leak_the_previous_calls_local() {
+    // The first `g(true)` assigns `x` in the callee's frame; the second call
+    // reuses that frame (same depth) and must not read the old 7.
+    let program = unassign_first_store(
+        compile("fn g(c) { let x = 0; if c { x = 7; } return x; } fn main() { let a = g(true); let b = g(false); return a + b; }"),
+        "g",
+        "x",
+    );
+    assert_loud_everywhere(&program, "z55_reused_frame");
+}
+
+#[test]
+fn recursion_does_not_leak_a_deeper_frames_local() {
+    // `r(3, true)` assigns `x` at every depth; `r(3, false)` then reuses
+    // those frames and reads `x` unassigned at the deepest one.
+    let src = |second: &str| {
+        format!(
+            "fn r(n, c) {{ let x = 0; if c {{ x = n + 10; }} if n > 0 {{ let s = r(n - 1, c); return x + s; }} return x; }} \
+             fn main() {{ let a = r(3, true); let b = r(3, {second}); return a + b; }}"
+        )
+    };
+    let program = unassign_first_store(compile(&src("false")), "r", "x");
+    assert_loud_everywhere(&program, "z55_recursion");
+    // ... and every engine agrees when each depth assigns it: 2 * (13+12+11+10).
+    let program = unassign_first_store(compile(&src("true")), "r", "x");
+    assert_value_everywhere(&program, "z55_recursion_ok", "92", "int:92");
 }
 
 // ── #223: `==` / `!=` on maps and arrays must compare contents, not identity ──

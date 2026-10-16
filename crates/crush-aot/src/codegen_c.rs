@@ -23,7 +23,10 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
     emit_c_dom_stub(&mut out);
 
     // Forward declarations (needed because CASM functions may call each other)
-    for (name, _func) in &program.functions {
+    // Name order, not `HashMap` order: the same program must give the same
+    // source in every process, or the AOT build cache (keyed on it) misses.
+    let functions = crate::codegen::sorted_functions(program);
+    for (name, _func) in &functions {
         let fn_name = sanitize_fn_name(name);
         out.push_str(&format!("static Value fn_{fn_name}(void);\n"));
     }
@@ -45,7 +48,7 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
     }
 
     let mut unsupported = Vec::new();
-    for (name, func) in &program.functions {
+    for (name, func) in functions {
         emit_c_function(&mut out, name, func, program, &mut unsupported);
     }
     if !unsupported.is_empty() {
@@ -1221,7 +1224,7 @@ fn emit_c_function(
     // Discover locals by scanning store/load instructions (func.locals may be empty)
     let arity: HashMap<String, usize> = program.functions.iter().map(|(k, f)| (k.clone(), f.params.len())).collect();
     // CRUSH-zorro-54: loads not preceded by a store on every path.
-    let to_check = crate::assigned::loads_to_check(func);
+    let to_check = casm::assigned::loads_to_check(func);
     let local_index = discover_locals(func, &arity, &to_check);
 
     out.push_str(&format!("static Value fn_{fn_name}(void) {{\n"));
@@ -1229,7 +1232,9 @@ fn emit_c_function(
     // Locals: `Value` locals are a frame on the collector-visible `_locals`
     // stack (see `discover_locals`); typed ones would stay C variables.
     out.push_str(&format!("    int __lb = _frame_enter({});\n", local_index.len()));
-    for meta in local_index.values() {
+    let mut typed_locals: Vec<&LocalMeta> = local_index.values().collect();
+    typed_locals.sort_unstable_by(|a, b| a.c_name.cmp(&b.c_name));
+    for meta in typed_locals {
         match meta.ty {
             LocalType::F64 => out.push_str(&format!("    double {} = 0.0;\n", meta.c_name)),
             LocalType::I64 => out.push_str(&format!("    int64_t {} = 0;\n", meta.c_name)),
@@ -1348,7 +1353,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
             "pop" => { pop(&mut st)?; }
             "dup" => { let t = *st.stack.last()?; st.stack.push(t); }
             "swap" => { let a = pop(&mut st)?; let b = pop(&mut st)?; st.stack.push(a); st.stack.push(b); }
-            "nop" | "yield" => {}
+            "nop" | "yield" | "await" => {}
             "load" => {
                 let name = instr.args.get("name")?.as_str()?;
                 let t = st.locals.get(name).copied().unwrap_or(Ty::Null);
@@ -1380,7 +1385,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
                 if !matches!(instr.op.as_str(), "map_keys") { pop(&mut st)?; }
                 pop(&mut st)?; st.stack.push(Ty::Any);
             }
-            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" | "await" => { pop(&mut st)?; st.stack.push(Ty::Any); }
+            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" => { pop(&mut st)?; st.stack.push(Ty::Any); }
             "arr_len" | "len" => { pop(&mut st)?; st.stack.push(Ty::Int); }
             "new_array" => st.stack.push(Ty::Array),
             "new_obj" => st.stack.push(Ty::Object),
@@ -1422,7 +1427,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
 
 /// Pre-scan instructions to discover local variable names from store/load ops.
 /// `to_check[pc]`: the load at `pc` may see the local unassigned
-/// (`assigned::loads_to_check`); such a local stays a `Value`, whose
+/// (`casm::assigned::loads_to_check`); such a local stays a `Value`, whose
 /// `TAG_UNSET` records that (CRUSH-zorro-54).
 fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>, to_check: &[bool]) -> HashMap<String, LocalMeta> {
     let (body, params) = (&func.body, &func.params);
@@ -1741,15 +1746,14 @@ fn emit_c_instr(
         }
         // ── Green tasks without `spawn` (issue #161) ──
         // With no spawned task `yield` is a cooperative-yield no-op and `await`
-        // has no handle (the scheduler and portable VM push null). A program
-        // that does `spawn` is refused up front by `refuse_green_task`, so
-        // these never run a task here.
+        // has no handle (issue #251: `await v` on a non-handle returns `v`, so
+        // the awaited value stays on the stack). A program that does `spawn` is
+        // refused up front by `refuse_green_task`, so these never run a task
+        // here.
         "yield" => {
             out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
         "await" => {
-            out.push_str(&format!("                _pop(); // awaited value\n"));
-            out.push_str(&format!("                _push(mk_null());\n"));
             out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
         // ── AI opcodes ──

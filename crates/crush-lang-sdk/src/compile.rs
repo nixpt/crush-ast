@@ -33,7 +33,17 @@ fn cap_returns_value(name: &str) -> bool {
 }
 
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
-    let (casm, warnings) = compile_crush_to_casm_with_warnings(source)?;
+    compile_crush_source_with(source, &CompileOptions::default())
+}
+
+/// [`compile_crush_source`] with [`CompileOptions`] — e.g.
+/// `PolyglotMode::Lower` to lower `@python` / `@javascript` blocks into the
+/// program instead of running them in an interpreter.
+pub fn compile_crush_source_with(
+    source: &str,
+    options: &CompileOptions,
+) -> anyhow::Result<crush_vm::Program> {
+    let (casm, warnings) = compile_crush_to_casm_with_options(source, options)?;
     let mut program = casm_to_vm(&casm)?;
     program.warnings = warnings;
     Ok(program)
@@ -113,14 +123,169 @@ pub fn compile_crush_to_casm(source: &str) -> anyhow::Result<casm::Program> {
 pub fn compile_crush_to_casm_with_warnings(
     source: &str,
 ) -> anyhow::Result<(casm::Program, Vec<String>)> {
+    compile_crush_to_casm_with_options(source, &CompileOptions::default())
+}
+
+/// [`compile_crush_to_casm_with_warnings`] with [`CompileOptions`].
+pub fn compile_crush_to_casm_with_options(
+    source: &str,
+    options: &CompileOptions,
+) -> anyhow::Result<(casm::Program, Vec<String>)> {
     let mut program = crush_frontend::parse_source(source)?;
-    let warnings = prepare_polyglot_blocks(&mut program)?;
     let declared = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
-    let casm = crush_frontend::compile_cast_owned(program)?;
+    let (casm, warnings) = match options.polyglot {
+        PolyglotMode::Exec => {
+            let warnings = prepare_polyglot_blocks(&mut program)?;
+            (crush_frontend::compile_cast_owned(program)?, warnings)
+        }
+        PolyglotMode::Lower => compile_lowering_blocks(program)?,
+    };
     if let Some(declared) = declared {
         check_declared_capabilities(&casm, &declared)?;
     }
     Ok((casm, warnings))
+}
+
+/// [`PolyglotMode::Lower`]'s pipeline. `compile_cast_owned` checks the whole
+/// program with Crush's semantic checker and optimizes it; walker CAST is
+/// neither written for that checker (the walkers' own pipeline compiles
+/// unchecked) nor for the optimizer. So the Crush program is checked as
+/// `Exec` would see it — each block opaque, its outputs untyped — then its
+/// blocks are lowered, the Crush functions optimized, and the lowered block
+/// functions added, as the walkers' pipeline compiles them.
+fn compile_lowering_blocks(
+    mut program: crush_cast::Program,
+) -> anyhow::Result<(casm::Program, Vec<String>)> {
+    let cosm = crush_frontend::cosm_lower::lower(&mut program)?;
+    {
+        let mut opaque = program.clone();
+        prepare_polyglot_blocks(&mut opaque)?;
+        let mut sema = crush_frontend::semantics::SemanticAnalyzer::new();
+        if let Some(module) = &cosm {
+            sema.declare_constructors(module, &opaque);
+        }
+        sema.check(&opaque)?;
+    }
+    let (warnings, lowered) = prepare_blocks(&mut program, PolyglotMode::Lower)?;
+    crush_frontend::optimizer::Optimizer::optimize(&mut program);
+    let blocks: Vec<crush_cast::Function> = lowered.iter().map(|(_, f)| f.clone()).collect();
+    program.functions.extend(lowered);
+    let casm = crush_frontend::compiler::Compiler::new().compile_lowered(program, cosm)?;
+    if let Some((name, line, lang)) = unknown_builtin(&casm, &blocks)? {
+        anyhow::bail!(
+            "line {line}: this @{lang} block can't be lowered inline: `{name}` is not supported by the \
+             walker yet (it has no Crush lowering)\n  {}",
+            lowering_help(&lang)
+        );
+    }
+    Ok((casm, warnings))
+}
+
+/// Compile a whole Python or JavaScript script the way [`PolyglotMode::Lower`]
+/// compiles a block: through the walker, exact or loud. Stricter than
+/// [`compile_source`], which compiles whatever the walker produces: here
+/// Python tuples and module attributes, builtins with no Crush lowering
+/// (`sum`, `int`, …) and other `import`s are compile errors rather than lists,
+/// unset locals or "unknown capability" failures when reached. JS goes through
+/// the boa lowering. The script runs **as Crush**, not as CPython / Node.
+///
+/// `language_or_extension`: `python` / `py` / `javascript` / `js` (a leading
+/// `.` is fine). Needs the language's `polyglot-*` feature.
+pub fn compile_lowered_script(
+    language_or_extension: &str,
+    source: &str,
+) -> anyhow::Result<crush_vm::Program> {
+    let selector = language_or_extension.trim().trim_start_matches('.').to_ascii_lowercase();
+    let lang = match selector.as_str() {
+        "py" | "pyw" => "python",
+        "mjs" | "cjs" => "javascript",
+        other => match crush_frontend::lang_imports::canonical_lang(other) {
+            Some(lang @ ("python" | "javascript")) => lang,
+            _ => anyhow::bail!("no lowered-script support for `{language_or_extension}` (python or javascript)"),
+        },
+    };
+    let (guest, interpreter) = if lang == "python" { ("Python", "CPython") } else { ("JavaScript", "Node") };
+    let refuse = |why: String| {
+        anyhow::anyhow!(
+            "this {guest} script can't be lowered: {why}\n  it runs as Crush (its {guest} lowered \
+             through the walker), not as {interpreter}; a script that needs this has to run in a \
+             real interpreter"
+        )
+    };
+    let (mut main, helpers) = lower_block_function(lang, source, &[], &[], 1, "__crush_script__")
+        .map_err(|e| refuse(format!("{e:#}")))?;
+    main.meta.insert("polyglot_block_line".to_string(), serde_json::json!(1));
+    main.meta.insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
+    let mut blocks = vec![main.clone()];
+    blocks.extend(helpers.iter().map(|(_, f)| f.clone()));
+    let mut functions: HashMap<String, crush_cast::Function> = helpers.into_iter().collect();
+    functions.insert("main".to_string(), main);
+    let program = crush_cast::Program {
+        cast_version: "0.2".to_string(),
+        entry: "main".to_string(),
+        lang: Some(lang.to_string()),
+        functions,
+        ..Default::default()
+    };
+    let casm = crush_frontend::compiler::Compiler::new().compile(program)?;
+    if let Some((name, _, _)) = unknown_builtin(&casm, &blocks)? {
+        return Err(refuse(format!("`{name}` is not supported by the walker yet (it has no Crush lowering)")));
+    }
+    casm_to_vm(&casm)
+}
+
+/// A Python / JS builtin the walker has no Crush lowering for (`sum`, `int`,
+/// `abs`, …) compiles to a call of a capability of that bare name, which no
+/// host provides: it would fail when reached ("unknown capability: sum").
+/// Crush source can't produce such a call (its checker refuses an undefined
+/// function), so any is a lowered block's — refuse it now, naming the block.
+/// The first such builtin, with the line and language of the block using it.
+#[allow(clippy::type_complexity)]
+fn unknown_builtin(
+    casm: &casm::Program,
+    blocks: &[crush_cast::Function],
+) -> anyhow::Result<Option<(String, u64, String)>> {
+    if blocks.is_empty() {
+        return Ok(None);
+    }
+    let used = crate::effects::used_by(&casm_to_vm(casm)?)?;
+    let builtins = crush_vm::capabilities();
+    let catalog = crate::effects::catalog();
+    let Some(name) = used.iter().find(|cap| {
+        !cap.contains('.')
+            && !builtins.contains_key(cap.as_str())
+            && !catalog.iter().any(|c| &c.name == *cap)
+    }) else {
+        return Ok(None);
+    };
+    let needle = serde_json::json!(name);
+    let mentions = |v: &serde_json::Value| -> bool {
+        // `math.trunc(x)` compiles to a capability named `trunc`.
+        fn names(x: &serde_json::Value, needle: &serde_json::Value) -> bool {
+            x == needle
+                || matches!((x.as_str(), needle.as_str()), (Some(x), Some(n)) if x.ends_with(&format!(".{n}")))
+        }
+        fn walk(v: &serde_json::Value, needle: &serde_json::Value) -> bool {
+            match v {
+                serde_json::Value::Object(m) => m
+                    .iter()
+                    .any(|(k, x)| ((k == "function" || k == "name") && names(x, needle)) || walk(x, needle)),
+                serde_json::Value::Array(xs) => xs.iter().any(|x| walk(x, needle)),
+                _ => false,
+            }
+        }
+        walk(v, &needle)
+    };
+    let block = blocks.iter().find(|f| serde_json::to_value(&f.body).is_ok_and(|b| mentions(&b)));
+    let (line, lang) = block
+        .map(|f| {
+            (
+                f.meta.get("polyglot_block_line").and_then(|l| l.as_u64()).unwrap_or(0),
+                f.meta.get("polyglot_block_lang").and_then(|l| l.as_str()).unwrap_or("python").to_string(),
+            )
+        })
+        .unwrap_or((0, "python".to_string()));
+    Ok(Some((name.clone(), line, lang)))
 }
 
 /// CRUSH-243: a program that declares `@capabilities` may only use the
@@ -175,19 +340,114 @@ fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) -> any
 pub fn prepare_polyglot_blocks(
     program: &mut crush_cast::Program,
 ) -> anyhow::Result<Vec<String>> {
+    prepare_polyglot_blocks_with(program, PolyglotMode::Exec)
+}
+
+/// [`prepare_polyglot_blocks`] with a choice of what a `@python` /
+/// `@javascript` block becomes; see [`PolyglotMode`].
+pub fn prepare_polyglot_blocks_with(
+    program: &mut crush_cast::Program,
+    mode: PolyglotMode,
+) -> anyhow::Result<Vec<String>> {
+    let (warnings, lowered) = prepare_blocks(program, mode)?;
+    program.functions.extend(lowered);
+    Ok(warnings)
+}
+
+/// The pass itself; the functions made from lowered blocks are returned, not
+/// yet added to the program.
+#[allow(clippy::type_complexity)]
+fn prepare_blocks(
+    program: &mut crush_cast::Program,
+    mode: PolyglotMode,
+) -> anyhow::Result<(Vec<String>, Vec<(String, crush_cast::Function)>)> {
     let file_level: Vec<crush_cast::ImportStatement> = program
         .functions
         .get("main")
         .map(|main| main.body.iter().filter_map(polyglot_use).cloned().collect())
         .unwrap_or_default();
     let mut warnings: Vec<String> = Vec::new();
+    let mut pass = Pass {
+        mode,
+        warnings: &mut warnings,
+        crush_functions: program.functions.keys().cloned().collect(),
+        lowered: Vec::new(),
+    };
     for (name, func) in program.functions.iter_mut() {
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
         let mut uses = if name == "main" { Vec::new() } else { file_level.clone() };
-        prepare_stmts(&mut func.body, &mut known_locals, &mut uses, &mut warnings)?;
+        prepare_stmts(&mut func.body, &mut known_locals, &mut uses, &mut pass)?;
     }
-    Ok(warnings)
+    let lowered = std::mem::take(&mut pass.lowered);
+    if mode == PolyglotMode::Lower {
+        refuse_unlowered_blocks(program)?;
+    }
+    Ok((warnings, lowered))
+}
+
+/// What [`prepare_polyglot_blocks_with`] makes of a `@python` / `@javascript`
+/// block.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PolyglotMode {
+    /// `EXEC_LANG`: the block runs in a real interpreter (`python3`, `node`,
+    /// or an embedder's executor), behind the `polyglot.<lang>` grant. Inputs
+    /// and outputs cross as JSON. The default, and what `crush-run` does.
+    #[default]
+    Exec,
+    /// Inline lowering (CRUSH-272): the block's body is lowered through the
+    /// language's walker into the enclosing program's CAST, as one function
+    /// called where the block stands. Its inputs (the Crush variables it reads)
+    /// are copied in and its outputs copied back, as JSON would (the
+    /// `lang.marshal` capability), so it can't change a Crush variable it
+    /// doesn't declare. It spawns nothing, so it needs no `polyglot.<lang>`
+    /// grant.
+    ///
+    /// The block then runs **as Crush**: Python / JavaScript lowered by the
+    /// walker, not CPython / Node. Exact or loud: a construct the walker can't
+    /// lower fails compilation, naming the construct and the block's line,
+    /// never falling back to `EXEC_LANG` or changing meaning. Needs the
+    /// language's `polyglot-python` / `polyglot-javascript` feature. Blocks in
+    /// other languages (`@bash`, …) are unaffected.
+    Lower,
+}
+
+/// Compile options for Crush source.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompileOptions {
+    /// What `@python` / `@javascript` blocks become.
+    pub polyglot: PolyglotMode,
+}
+
+/// State shared across one [`prepare_polyglot_blocks_with`] run.
+struct Pass<'a> {
+    mode: PolyglotMode,
+    warnings: &'a mut Vec<String>,
+    /// The program's own functions: a lowered block must not call them by
+    /// accident (a real interpreter can't see them).
+    crush_functions: HashSet<String>,
+    /// Functions made from lowered blocks, added to the program at the end.
+    lowered: Vec<(String, crush_cast::Function)>,
+}
+
+/// For a build without the block language's analyzer (its `polyglot-*`
+/// feature, e.g. crush-web without `polyglot-python`): the block's declared
+/// `->` outputs still become Crush variables, so the program compiles and the
+/// capability check refuses an ungranted block exactly as a native run does,
+/// instead of compilation failing on an "undefined" output. The block itself
+/// stays unmarshaled; run anyway, it fails loudly ("produced no marshaled
+/// outputs").
+#[allow(dead_code)]
+fn declare_unanalyzed_outputs(
+    outputs: &[String],
+    meta: &mut HashMap<String, serde_json::Value>,
+    known_locals: &mut HashSet<String>,
+) {
+    if outputs.is_empty() {
+        return;
+    }
+    meta.insert("polyglot_outputs".to_string(), serde_json::json!(outputs));
+    known_locals.extend(outputs.iter().cloned());
 }
 
 /// The import of a `use @lang …` statement.
@@ -202,13 +462,16 @@ fn polyglot_use(stmt: &crush_cast::Statement) -> Option<&crush_cast::ImportState
 }
 
 fn prepare_stmts(
-    stmts: &mut [crush_cast::Statement],
+    stmts: &mut Vec<crush_cast::Statement>,
     known_locals: &mut HashSet<String>,
     uses: &mut Vec<crush_cast::ImportStatement>,
-    warnings: &mut Vec<String>,
+    pass: &mut Pass<'_>,
 ) -> anyhow::Result<()> {
     use crush_cast::Statement;
-    for stmt in stmts.iter_mut() {
+    let mut i = 0;
+    while i < stmts.len() {
+        let stmt = &mut stmts[i];
+        i += 1;
         if let Some(import) = polyglot_use(stmt) {
             uses.push(import.clone());
             continue;
@@ -225,6 +488,18 @@ fn prepare_stmts(
                 .cloned()
                 .collect();
         }
+        if pass.mode == PolyglotMode::Lower
+            && let Statement::LangBlock { lang, .. } = stmt
+            && is_lowerable_lang(lang)
+        {
+            let replacement = lower_block(stmt, known_locals, pass)?;
+            let n = replacement.len();
+            stmts.splice(i - 1..i, replacement);
+            i += n - 1;
+            continue;
+        }
+        #[allow(unused_variables)] // used only with a polyglot-* analyzer
+        let warnings = &mut *pass.warnings;
         match stmt {
             Statement::VarDecl { name, .. }
             | Statement::Assign { target: name, .. }
@@ -290,7 +565,9 @@ fn prepare_stmts(
                         *variables = inputs;
                     }
                     #[cfg(not(feature = "polyglot-python"))]
-                    let _ = (lang, code, variables, outputs, meta, &known_locals);
+                    let _ = (lang, code, variables);
+                    #[cfg(not(feature = "polyglot-python"))]
+                    declare_unanalyzed_outputs(outputs, meta, known_locals);
                 } else {
                     // javascript / js / node
                     #[cfg(feature = "polyglot-javascript")]
@@ -327,7 +604,9 @@ fn prepare_stmts(
                         *variables = inputs;
                     }
                     #[cfg(not(feature = "polyglot-javascript"))]
-                    let _ = (lang, code, variables, outputs, meta, &known_locals);
+                    let _ = (lang, code, variables);
+                    #[cfg(not(feature = "polyglot-javascript"))]
+                    declare_unanalyzed_outputs(outputs, meta, known_locals);
                 }
             }
             // `->` on a language with no value marshaling is a loud error,
@@ -342,19 +621,19 @@ fn prepare_stmts(
                 else_body,
                 ..
             } => {
-                prepare_stmts(then_body, known_locals, &mut uses.clone(), warnings)?;
+                prepare_stmts(then_body, known_locals, &mut uses.clone(), pass)?;
                 if let Some(else_body) = else_body {
-                    prepare_stmts(else_body, known_locals, &mut uses.clone(), warnings)?;
+                    prepare_stmts(else_body, known_locals, &mut uses.clone(), pass)?;
                 }
             }
             Statement::While { body, .. } => {
-                prepare_stmts(body, known_locals, &mut uses.clone(), warnings)?
+                prepare_stmts(body, known_locals, &mut uses.clone(), pass)?
             }
             Statement::For {
                 variable, body, ..
             } => {
                 known_locals.insert(variable.clone());
-                prepare_stmts(body, known_locals, &mut uses.clone(), warnings)?;
+                prepare_stmts(body, known_locals, &mut uses.clone(), pass)?;
             }
             _ => {}
         }
@@ -405,6 +684,248 @@ fn resolve_outputs(
         }
         None => Ok(Vec::new()),
     }
+}
+
+/// Languages [`PolyglotMode::Lower`] lowers (it leaves the others to
+/// `EXEC_LANG`).
+fn is_lowerable_lang(lang: &str) -> bool {
+    matches!(
+        crush_frontend::lang_imports::canonical_lang(lang),
+        Some("python") | Some("javascript")
+    )
+}
+
+/// The help every inline-lowering refusal carries.
+fn lowering_help(lang: &str) -> String {
+    let (guest, interpreter) = match lang {
+        "python" => ("Python", "CPython"),
+        _ => ("JavaScript", "Node"),
+    };
+    format!(
+        "inline lowering runs a block as Crush (its {guest} lowered through the walker), \
+         not as {interpreter}; a block that needs this has to run in a real interpreter: \
+         compile without inline lowering and grant polyglot.{lang} (crush-run --polyglot)"
+    )
+}
+
+/// [`PolyglotMode::Lower`] for one `@python` / `@javascript` block: lower its
+/// body into a new function (recorded in `pass.lowered`) and return the
+/// statements that replace the block: the call, with each input copied in,
+/// and each declared output copied back out into its Crush variable.
+fn lower_block(
+    stmt: &crush_cast::Statement,
+    known_locals: &mut HashSet<String>,
+    pass: &mut Pass<'_>,
+) -> anyhow::Result<Vec<crush_cast::Statement>> {
+    use crush_cast::{CastType, Expression, Statement};
+    let Statement::LangBlock { lang, code, outputs, imports, deps, meta, .. } = stmt else {
+        unreachable!("lower_block takes a LangBlock");
+    };
+    let lang = crush_frontend::lang_imports::canonical_lang(lang).unwrap_or("python");
+    let line = meta.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+    let refuse = |why: String| -> anyhow::Error {
+        anyhow::anyhow!(
+            "line {line}: this @{lang} block can't be lowered inline: {why}\n  {}",
+            lowering_help(lang)
+        )
+    };
+    if !deps.is_empty() {
+        return Err(refuse(format!("it asks for packages ({})", deps.join(", "))));
+    }
+    // `use @lang` imports reach the block as they would its subprocess.
+    let code = match crush_frontend::lang_imports::import_header(lang, imports)
+        .map_err(|e| anyhow::anyhow!(e))?
+    {
+        Some(header) => crush_frontend::lang_imports::splice_header(lang, code, &header),
+        None => code.clone(),
+    };
+
+    let (reads, top_level_bound, bound_anywhere) = block_free_variables(lang, &code)
+        .map_err(|e| refuse(e.to_string()))?;
+    let inputs: Vec<String> = reads.iter().filter(|n| known_locals.contains(*n)).cloned().collect();
+    // A name the block reads that is a Crush function and no variable: a real
+    // interpreter can't see it (a `NameError`), so it must not quietly become
+    // a call into Crush here.
+    if let Some(name) = reads
+        .iter()
+        .find(|n| !known_locals.contains(*n) && pass.crush_functions.contains(*n))
+    {
+        return Err(refuse(format!(
+            "it uses `{name}`, which is a Crush function; a polyglot block can't see Crush functions"
+        )));
+    }
+    let output_names =
+        resolve_outputs(lang, outputs, &top_level_bound, &bound_anywhere, known_locals, pass.warnings)?;
+
+    let n = pass.lowered.len();
+    let mut fname = format!("__crush_{lang}_block_{n}");
+    while pass.crush_functions.iter().any(|f| f.starts_with(&fname)) {
+        fname.push('_');
+    }
+    let (mut function, helpers) =
+        lower_block_function(lang, &code, &inputs, &output_names, line, &format!("{fname}__"))
+            .map_err(|e| refuse(format!("{e:#}")))?;
+    let mark = |f: &mut crush_cast::Function| {
+        f.meta.insert("polyglot_block_line".to_string(), serde_json::json!(line));
+        f.meta.insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
+    };
+    mark(&mut function);
+    pass.crush_functions.insert(fname.clone());
+    pass.lowered.push((fname.clone(), function));
+    for (name, mut helper) in helpers {
+        mark(&mut helper);
+        pass.crush_functions.insert(name.clone());
+        pass.lowered.push((name, helper));
+    }
+
+    let str_lit = |s: &str| Expression::StringLiteral { value: s.to_string(), meta: meta.clone() };
+    let marshal = |value: Expression, name: &str| Expression::CapabilityCall {
+        name: "lang.marshal".to_string(),
+        args: vec![value, str_lit(name)],
+        meta: meta.clone(),
+    };
+    let call = Expression::Call {
+        function: fname,
+        args: inputs
+            .iter()
+            .map(|name| marshal(Expression::Var { name: name.clone(), meta: meta.clone() }, name))
+            .collect(),
+        meta: meta.clone(),
+    };
+    if output_names.is_empty() {
+        return Ok(vec![Statement::ExprStmt { expr: call, meta: meta.clone() }]);
+    }
+    let result = format!("__crush_{lang}_block_{n}_out");
+    let mut out = vec![Statement::VarDecl {
+        name: result.clone(),
+        value: call,
+        type_hint: CastType::Any,
+        meta: meta.clone(),
+    }];
+    for (k, name) in output_names.iter().enumerate() {
+        let value = marshal(
+            Expression::Index {
+                target: Box::new(Expression::Var { name: result.clone(), meta: meta.clone() }),
+                index: Box::new(Expression::IntLiteral { value: k as i64, meta: meta.clone() }),
+                meta: meta.clone(),
+            },
+            name,
+        );
+        out.push(if known_locals.contains(name) {
+            Statement::Assign { target: name.clone(), value, meta: meta.clone() }
+        } else {
+            Statement::VarDecl {
+                name: name.clone(),
+                value,
+                type_hint: CastType::Any,
+                meta: meta.clone(),
+            }
+        });
+        known_locals.insert(name.clone());
+    }
+    Ok(out)
+}
+
+/// `(reads, top_level_bound, bound_anywhere)` of a block, from its language's
+/// analyzer — or an error saying the feature isn't built.
+#[allow(clippy::type_complexity)]
+fn block_free_variables(
+    lang: &str,
+    code: &str,
+) -> anyhow::Result<(Vec<String>, Vec<String>, HashSet<String>)> {
+    match lang {
+        #[cfg(feature = "polyglot-python")]
+        "python" => {
+            let fv = crush_lang_python::analyzer::free_variables(&dedent(code))
+                .map_err(|e| anyhow::anyhow!("Python syntax error: {e}"))?;
+            Ok((fv.reads, fv.top_level_bound, fv.bound_anywhere))
+        }
+        #[cfg(feature = "polyglot-javascript")]
+        "javascript" => {
+            let fv = crush_lang_js::freevars::free_variables(&dedent(code))
+                .map_err(|e| anyhow::anyhow!("JavaScript syntax error: {e}"))?;
+            Ok((fv.reads, fv.top_level_bound, fv.bound_anywhere))
+        }
+        _ => {
+            let _ = code;
+            anyhow::bail!("this build has no {lang} walker (crush-lang-sdk's `polyglot-{lang}` feature)")
+        }
+    }
+}
+
+/// The block's body as a function of `inputs` returning `[outputs...]`, and
+/// the helper functions it needs (named `{prefix}…`).
+#[allow(clippy::type_complexity)]
+fn lower_block_function(
+    lang: &str,
+    code: &str,
+    inputs: &[String],
+    outputs: &[String],
+    line: u64,
+    prefix: &str,
+) -> anyhow::Result<(crush_cast::Function, Vec<(String, crush_cast::Function)>)> {
+    let _ = (code, inputs, outputs, line, prefix);
+    match lang {
+        #[cfg(feature = "polyglot-python")]
+        "python" => crush_lang_python::inline::lower_block_function(&dedent(code), inputs, outputs)
+            .map(|f| (f, Vec::new())),
+        #[cfg(feature = "polyglot-javascript")]
+        "javascript" => crush_lang_js::inline::lower_block_function(code, inputs, outputs, prefix)
+            .map(|b| (b.function, b.helpers))
+            .map_err(|e| {
+            // The walker's line is relative to the block's body; name the
+            // `.crush` line instead.
+            match e.downcast::<crush_lang_js::lower::Unsupported>() {
+                Ok(u) => match u.at {
+                    Some((l, _)) => anyhow::anyhow!(
+                        "{} is not supported by the JS walker yet (at line {})",
+                        u.construct,
+                        line + u64::from(l) - 1
+                    ),
+                    None => u.into(),
+                },
+                Err(e) => e,
+            }
+        }),
+        _ => anyhow::bail!("this build has no {lang} walker (crush-lang-sdk's `polyglot-{lang}` feature)"),
+    }
+}
+
+/// After [`PolyglotMode::Lower`], no `@python` / `@javascript` block may be
+/// left to `EXEC_LANG`: one the pass didn't reach (inside a `try`, a lambda,
+/// a `match` arm, …) is refused rather than quietly spawning an interpreter.
+fn refuse_unlowered_blocks(program: &crush_cast::Program) -> anyhow::Result<()> {
+    fn find(v: &serde_json::Value) -> Option<(String, u64)> {
+        match v {
+            serde_json::Value::Object(map) => {
+                if map.get("type").and_then(|t| t.as_str()) == Some("LangBlock")
+                    && let Some(lang) = map.get("lang").and_then(|l| l.as_str())
+                    && is_lowerable_lang(lang)
+                {
+                    let line = map
+                        .get("meta")
+                        .and_then(|m| m.get("line"))
+                        .and_then(|l| l.as_u64())
+                        .unwrap_or(0);
+                    return Some((lang.to_string(), line));
+                }
+                map.values().find_map(find)
+            }
+            serde_json::Value::Array(items) => items.iter().find_map(find),
+            _ => None,
+        }
+    }
+    let json = serde_json::to_value(program)?;
+    if let Some((lang, line)) = find(&json) {
+        let lang = crush_frontend::lang_imports::canonical_lang(&lang).unwrap_or("python");
+        anyhow::bail!(
+            "line {line}: this @{lang} block can't be lowered inline: inline lowering doesn't \
+             reach a block in this position yet (only function bodies and `if` / `while` / \
+             `for` bodies)\n  {}",
+            lowering_help(lang)
+        );
+    }
+    Ok(())
 }
 
 /// Rewrite a `@python` block's source to bridge the Crush/Python value
@@ -541,7 +1062,7 @@ fn rewrite_javascript_marshaling(code: &str, inputs: &[String], outputs: &[Strin
 /// Strip the common leading whitespace shared by every non-blank line, so
 /// a block's original relative indentation is preserved but its absolute
 /// column no longer depends on how it happened to sit inside `{ ... }`.
-#[cfg(any(feature = "polyglot-python", feature = "polyglot-javascript"))]
+#[cfg_attr(not(any(feature = "polyglot-python", feature = "polyglot-javascript")), allow(dead_code))]
 fn dedent(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let common_indent = lines

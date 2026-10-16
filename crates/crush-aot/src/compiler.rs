@@ -5,9 +5,90 @@
 
 use anyhow::{Context, Result};
 use sha2::{Sha256, Digest};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+/// Environment variable that overrides the default optimization setting of
+/// [`AotCompiler::new`]. `0`, `false`, `no` or `off` build unoptimized (`-O0`);
+/// anything else, or unset, keeps the optimized default. Meant for test suites,
+/// which compare program output and don't need optimized code; an explicit
+/// [`AotCompiler::with_optimize`] still wins.
+pub const OPTIMIZE_ENV: &str = "CRUSH_AOT_OPTIMIZE";
+
+/// Environment variable that sets the cache directory used by
+/// [`AotCompiler::new`] (default `$TMPDIR/crush-aot-cache`). CI points it at a
+/// directory it persists between runs; [`AotCompiler::with_cache_dir`] still wins.
+pub const CACHE_DIR_ENV: &str = "CRUSH_AOT_CACHE_DIR";
+
+/// `CRUSH_AOT_OPTIMIZE` as a bool: `false` only for an explicit off value.
+fn optimize_from_env() -> bool {
+    optimize_setting(std::env::var(OPTIMIZE_ENV).ok().as_deref())
+}
+
+fn optimize_setting(value: Option<&str>) -> bool {
+    !value.is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+}
+
+/// Version banner of a compiler, for the cache key. A compiler that can't be run
+/// still gets a stable identity; the build itself then reports the real error.
+fn version_banner(program: &str, args: &[&str]) -> String {
+    match Command::new(program).args(args).output() {
+        Ok(out) => format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+        Err(e) => format!("unavailable: {e}"),
+    }
+}
+
+/// `rustc -vV` (version, commit hash, host, LLVM), computed once per process.
+fn rustc_identity() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| version_banner("rustc", &["-vV"]))
+}
+
+/// The resolved path and `--version` banner of C compiler `cc`, computed once per
+/// process for each `cc`.
+fn cc_identity(cc: &str) -> String {
+    static IDS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let ids = IDS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(id) = ids.lock().unwrap().get(cc) {
+        return id.clone();
+    }
+    let path = resolve_on_path(cc).map_or_else(|| cc.to_string(), |p| p.display().to_string());
+    let id = format!("{path}\n{}", version_banner(cc, &["--version"]));
+    ids.lock().unwrap().entry(cc.to_string()).or_insert(id).clone()
+}
+
+/// Where `Command::new(program)` would find `program`: itself when it names a
+/// path, else the first match on `PATH`.
+fn resolve_on_path(program: &str) -> Option<PathBuf> {
+    if program.contains(std::path::MAIN_SEPARATOR) {
+        return std::fs::canonicalize(program).ok();
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+}
+
+/// Cache key for one build: everything that changes the artifact — the backend,
+/// the optimization setting, the compiler's identity and the generated source.
+/// Without the first three, an `-O0` and an `-O3` build (or two toolchains)
+/// of the same program would share a cache entry.
+fn cache_key(backend: &str, optimize: bool, compiler_identity: &str, source: &str) -> String {
+    let mut hasher = Sha256::new();
+    for field in [backend, if optimize { "opt" } else { "noopt" }, compiler_identity] {
+        hasher.update((field.len() as u64).to_le_bytes());
+        hasher.update(field.as_bytes());
+    }
+    hasher.update(source.as_bytes());
+    hex::encode(hasher.finalize())
+}
 
 /// Distinguishes concurrent compiles of the *same* source within one process:
 /// the pid alone is not enough when several threads race on one cache entry.
@@ -35,26 +116,46 @@ fn publish_artifact(built: &Path, cached: &Path) -> Result<()> {
     }
 }
 
+/// True when `cached` is already built. A hit refreshes the entry's mtime, so a
+/// persisted cache can be pruned to what a run used (CI deletes every entry
+/// older than the start of the run before saving it).
+fn cache_hit(cached: &Path) -> bool {
+    if !cached.exists() {
+        return false;
+    }
+    if let Ok(file) = std::fs::File::options().append(true).open(cached) {
+        let _ = file.set_modified(std::time::SystemTime::now());
+    }
+    true
+}
+
 /// Configuration for the AOT compiler.
 pub struct AotCompiler {
     /// Where to store compiled .so files (cached by content hash).
     cache_dir: PathBuf,
-    /// Whether to pass `-C opt-level=3` to rustc.
+    /// Whether to build optimized (`-C opt-level=3 -C lto=thin` / `-O3 -flto`).
     optimize: bool,
 }
 
 impl AotCompiler {
     /// Create a new compiler with default settings.
     ///
-    /// The cache directory defaults to `$TMPDIR/crush-aot-cache` or `/tmp/crush-aot-cache`.
+    /// Builds are optimized unless `CRUSH_AOT_OPTIMIZE` turns that off
+    /// ([`OPTIMIZE_ENV`]). The cache directory is `CRUSH_AOT_CACHE_DIR`
+    /// ([`CACHE_DIR_ENV`]) when set, else `$TMPDIR/crush-aot-cache` or
+    /// `/tmp/crush-aot-cache`.
     pub fn new() -> Self {
-        let cache_dir = std::env::var("TMPDIR")
-            .unwrap_or_else(|_| "/tmp".to_string());
-        let cache_dir = PathBuf::from(cache_dir).join("crush-aot-cache");
-        Self { cache_dir, optimize: true }
+        let cache_dir = match std::env::var_os(CACHE_DIR_ENV) {
+            Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+            _ => {
+                let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+                PathBuf::from(tmp).join("crush-aot-cache")
+            }
+        };
+        Self { cache_dir, optimize: optimize_from_env() }
     }
 
-    /// Enable or disable optimization (default: true).
+    /// Enable or disable optimization (default: true, or `CRUSH_AOT_OPTIMIZE`).
     pub fn with_optimize(mut self, opt: bool) -> Self {
         self.optimize = opt;
         self
@@ -64,6 +165,28 @@ impl AotCompiler {
     pub fn with_cache_dir(mut self, dir: PathBuf) -> Self {
         self.cache_dir = dir;
         self
+    }
+
+    /// Where [`compile_casm`](Self::compile_casm) would put `program`'s
+    /// library, if it is already in the cache: `Ok(None)` for a cold cache.
+    /// The key is the same one `compile_casm` uses (backend, optimization
+    /// setting, `rustc` identity, generated source), so an embedder choosing
+    /// between the AOT and the interpreter tier can ask instead of
+    /// re-deriving it. Fails like `compile_casm` for a program the Rust
+    /// backend can't lower.
+    pub fn cached_casm_path(
+        &self,
+        program: &casm::Program,
+        module_name: &str,
+    ) -> Result<Option<PathBuf>> {
+        let rust_source = crate::codegen::gen_rust_source(program)?;
+        let so_path = self.rust_artifact_path(&rust_source, module_name);
+        Ok(so_path.exists().then_some(so_path))
+    }
+
+    fn rust_artifact_path(&self, rust_source: &str, module_name: &str) -> PathBuf {
+        let hash = cache_key("rust", self.optimize, rustc_identity(), rust_source);
+        self.cache_dir.join(format!("{module_name}_{}", &hash[..16])).with_extension(so_ext())
     }
 
     /// Compile a `casm::Program` to a shared library.
@@ -76,16 +199,13 @@ impl AotCompiler {
     ) -> Result<PathBuf> {
         let rust_source = crate::codegen::gen_rust_source(program)?;
 
-        // Content-hash for cache key
-        let mut hasher = Sha256::new();
-        hasher.update(rust_source.as_bytes());
-        let hash = hex::encode(hasher.finalize());
+        let hash = cache_key("rust", self.optimize, rustc_identity(), &rust_source);
         let hash_short = &hash[..16];
 
         // Check cache
         let so_name = format!("{module_name}_{hash_short}");
-        let so_path = self.cache_dir.join(&so_name).with_extension(so_ext());
-        if so_path.exists() {
+        let so_path = self.rust_artifact_path(&rust_source, module_name);
+        if cache_hit(&so_path) {
             return Ok(so_path);
         }
 
@@ -171,15 +291,12 @@ impl AotCompiler {
     ) -> Result<PathBuf> {
         let c_source = crate::codegen_c::gen_c_source(program)?;
 
-        let mut hasher = Sha256::new();
-        hasher.update(format!("c:{cc}:").as_bytes());
-        hasher.update(c_source.as_bytes());
-        let hash = hex::encode(hasher.finalize());
+        let hash = cache_key(&format!("c:{cc}"), self.optimize, &cc_identity(cc), &c_source);
         let hash_short = &hash[..16];
 
         let so_name = format!("c_{module_name}_{hash_short}");
         let so_path = self.cache_dir.join(&so_name).with_extension(so_ext());
-        if so_path.exists() {
+        if cache_hit(&so_path) {
             return Ok(so_path);
         }
 
@@ -242,5 +359,40 @@ fn so_ext() -> &'static str {
         "dll"
     } else {
         "so"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optimize_env_turns_off_only_for_an_explicit_off_value() {
+        for off in ["0", "false", "FALSE", "no", "off", " 0 "] {
+            assert!(!optimize_setting(Some(off)), "{off:?}");
+        }
+        for on in [None, Some(""), Some("1"), Some("true"), Some("3")] {
+            assert!(optimize_setting(on), "{on:?}");
+        }
+    }
+
+    #[test]
+    fn cache_key_separates_backend_mode_and_toolchain() {
+        let base = cache_key("rust", true, "rustc 1.0", "fn main() {}");
+        assert_eq!(base, cache_key("rust", true, "rustc 1.0", "fn main() {}"));
+        assert_ne!(base, cache_key("rust", false, "rustc 1.0", "fn main() {}"), "opt level");
+        assert_ne!(base, cache_key("rust", true, "rustc 1.1", "fn main() {}"), "toolchain");
+        assert_ne!(base, cache_key("c:gcc", true, "rustc 1.0", "fn main() {}"), "backend");
+        assert_ne!(base, cache_key("rust", true, "rustc 1.0", "fn main() { }"), "source");
+        // Length-prefixed fields: moving bytes across a field boundary changes the key.
+        assert_ne!(cache_key("ab", true, "c", "x"), cache_key("a", true, "bc", "x"));
+    }
+
+    #[test]
+    fn compiler_identities_are_stable_within_a_process() {
+        assert_eq!(rustc_identity(), rustc_identity());
+        assert!(rustc_identity().contains("rustc"), "{}", rustc_identity());
+        assert_eq!(cc_identity("no-such-cc-xyz"), cc_identity("no-such-cc-xyz"));
+        assert!(cc_identity("no-such-cc-xyz").contains("unavailable"));
     }
 }

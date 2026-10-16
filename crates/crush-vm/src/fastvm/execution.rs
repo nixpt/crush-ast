@@ -5,7 +5,7 @@ use super::instructions::{FastInstr, FastOp};
 use super::operations::{compare_op, current_locals_base, is_truthy};
 use super::arithmetic::{add_rtv, concat_arrays, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
-use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
+use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC, UNASSIGNED_LOCAL};
 use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
 use super::Capability;
@@ -70,11 +70,25 @@ pub fn execute_one(
             let base = current_locals_base(call_stack);
             let idx = base + instr.arg as usize;
 
-            // Extend locals if needed
+            // Extend locals if needed. The gap is unassigned, not null
+            // (CRUSH-zorro-55).
             while locals.len() <= idx {
-                locals.push(RuntimeValue::Null);
+                locals.push(UNASSIGNED_LOCAL);
             }
             locals[idx] = val;
+        }
+
+        FastOp::LoadLocalChecked => {
+            let idx = current_locals_base(call_stack) + instr.arg as usize;
+            match locals.get(idx) {
+                Some(val) if *val != UNASSIGNED_LOCAL => stack.push(val.clone()),
+                _ => {
+                    return Err(FastError::ExecutionError(format!(
+                        "load from uninitialised slot {}",
+                        instr.arg
+                    )));
+                }
+            }
         }
 
         // ===== Control flow =====
@@ -1242,12 +1256,11 @@ pub fn execute_one(
         }
 
         FastOp::Await => {
-            // issue #161: `await` on a non-handle (there is no `spawn` on
-            // FastVM/JIT — that is refused at lowering) pops the awaited value
-            // and pushes null, exactly like the scheduler and portable VM,
-            // which never error on a non-handle `await`.
-            stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Null);
+            // issue #161/#251: `await` on a non-handle (there is no `spawn` on
+            // FastVM/JIT — that is refused at lowering) leaves the awaited
+            // value in place: `await v` returns `v` (JS semantics), exactly
+            // like the scheduler and portable VM, which never error on a
+            // non-handle `await`.
         }
 
         FastOp::CrossLangCall => {

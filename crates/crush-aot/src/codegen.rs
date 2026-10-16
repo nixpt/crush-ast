@@ -23,7 +23,9 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
     emit_dom_stub(&mut out);
 
     let mut unsupported = Vec::new();
-    for (name, func) in &program.functions {
+    // Name order, not `HashMap` order: the same program must give the same
+    // source in every process, or the AOT build cache (keyed on it) misses.
+    for (name, func) in sorted_functions(program) {
         emit_function(&mut out, name, func, program, &mut unsupported);
     }
     if !unsupported.is_empty() {
@@ -35,6 +37,13 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
 
     emit_entry_point(&mut out);
     Ok(out)
+}
+
+/// `program`'s functions in name order.
+pub(crate) fn sorted_functions(program: &casm::Program) -> Vec<(&String, &casm::Function)> {
+    let mut functions: Vec<_> = program.functions.iter().collect();
+    functions.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    functions
 }
 
 /// Whether the program calls a `js.*` capability that runs crush-vm's
@@ -632,7 +641,7 @@ fn emit_function(
     let is_main = name == "main";
     let n = func.body.len();
     // CRUSH-zorro-54: loads not preceded by a store on every path.
-    let to_check = crate::assigned::loads_to_check(func);
+    let to_check = casm::assigned::loads_to_check(func);
 
     out.push_str(&format!("#[inline(never)]\nfn {fn_name}("));
     if is_main {
@@ -772,7 +781,7 @@ fn emit_body(
                     "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{msg}\") }});\n"
                 ));
             } else {
-                // Every path here stored to it first (`assigned::loads_to_check`).
+                // Every path here stored to it first (`casm::assigned::loads_to_check`).
                 out.push_str(&format!(
                     "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
                 ));
@@ -1182,15 +1191,12 @@ fn emit_body(
 
         // ── Green tasks without `spawn` (issue #161) ──
         // With no spawned task `yield` is a cooperative-yield no-op and `await`
-        // has no handle (the scheduler and portable VM push null). A program
-        // that does `spawn` is refused up front by `refuse_green_task`, so
-        // these never run a task here.
+        // has no handle (issue #251: `await v` on a non-handle returns `v`, so
+        // the awaited value stays on the stack). A program that does `spawn` is
+        // refused up front by `refuse_green_task`, so these never run a task
+        // here.
         "yield" => out.push_str(&next_pc_str),
-        "await" => {
-            out.push_str(&format!("{ind}stack.pop(); // awaited value\n"));
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
+        "await" => out.push_str(&next_pc_str),
 
         "nop" => out.push_str(&next_pc_str),
         _ => unsupported = Some(format!("`{}`", instr.op)),

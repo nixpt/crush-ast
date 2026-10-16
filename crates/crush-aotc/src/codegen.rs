@@ -110,7 +110,19 @@ impl AotcCompiler {
         out: &mut String,
     ) -> anyhow::Result<()> {
         let c_name = mangle(name);
-        let tm = TypeMap::infer(&func.body);
+        let mut tm = TypeMap::infer(&func.body);
+        // CRUSH-zorro-55: a load that may run before its local is assigned
+        // is checked. Such a local is a boxed `CrushValue` that starts as
+        // `CV_UNSET` — an unboxed `int64_t`/`double` has no bit pattern to
+        // spare for "unassigned" — as AOT C does (CRUSH-zorro-54).
+        let to_check = casm::assigned::loads_to_check(func);
+        let mut unset_locals: Vec<&str> = Vec::new();
+        for (instr, _) in func.body.iter().zip(&to_check).filter(|(_, c)| **c) {
+            if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
+                tm.locals.insert(name.to_string(), InferredType::Dynamic);
+                unset_locals.push(name);
+            }
+        }
 
         let params = if func.params.is_empty() {
             "void".to_string()
@@ -143,7 +155,8 @@ impl AotcCompiler {
                 InferredType::Float => "double",
                 InferredType::Dynamic => "CrushValue",
             };
-            writeln!(out, "    {} {} = 0;", cty, mangle_local(local))?;
+            let init = if unset_locals.contains(&local.as_str()) { "CV_UNSET" } else { "0" };
+            writeln!(out, "    {} {} = {};", cty, mangle_local(local), init)?;
         }
 
         // Virtual stack of temporary names
@@ -217,16 +230,12 @@ impl AotcCompiler {
 
                 // ── Green tasks without `spawn` (issue #161) ──
                 // With no spawned task `yield` is a cooperative-yield no-op and
-                // `await` has no handle (the scheduler and portable VM push
-                // null). A program that does `spawn` is refused up front by
+                // `await` has no handle (issue #251: `await v` on a non-handle
+                // returns `v`, so the awaited value stays on the stack). A
+                // program that does `spawn` is refused up front by
                 // `refuse_green_task`, so these never run a task here.
                 "yield" => {}
-                "await" => {
-                    stack.pop();
-                    let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
-                    writeln!(out, "    CrushValue {} = CV_NULL;", t)?;
-                    stack.push((t, ty));
-                }
+                "await" => {}
 
                 // ── Memory ──────────────────────────────────────────────
                 "store" => {
@@ -271,6 +280,9 @@ impl AotcCompiler {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
                     let lname = mangle_local(name);
                     let inferred = tm.locals.get(name).cloned().unwrap_or(InferredType::Dynamic);
+                    if to_check[i] {
+                        writeln!(out, "    if ({} == CV_UNSET) crush_uninit_load(\"{}\");", lname, c_escape(name))?;
+                    }
                     stack.push((lname, inferred));
                 }
 

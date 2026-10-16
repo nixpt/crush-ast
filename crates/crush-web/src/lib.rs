@@ -24,8 +24,14 @@
 //! Every entry point registers the same capabilities `crush-run` gives a
 //! program with no grant flags (see [`browser_caps`]): the pure standard
 //! library (`math.*`, `str.*`, `system.*`, …), `sys.args`/`sys.exit` and
-//! `caison.parse`. Nothing that reaches outside the VM (`fs`, `time`, `env`,
-//! `process`, `net`) is registered.
+//! `caison.parse`. `execute_with`/`Session` add what the page grants: `time`
+//! (the clock, see `clock`), `env` (the environment, which in a browser is
+//! empty) and polyglot languages (below). `fs`, `process` and `net` are never
+//! registered.
+//!
+//! Like `crush-run`, every entry point refuses a program that can reach a
+//! capability the run does not grant before running any of it (`nothing was
+//! run`), rather than failing when the call is reached.
 //!
 //! `@lang{}` polyglot blocks (#91): a browser can't spawn a subprocess, so a
 //! block runs only when the page (1) grants it — `execute_with`/`Session`
@@ -35,6 +41,12 @@
 //! it never runs with the page's own authority. Without both, the VM refuses
 //! with the same capability error as native with no `--polyglot` grant.
 //! `execute`/`run_blob` take no options and so never run polyglot blocks.
+//!
+//! Or the page can have `@python` / `@javascript` blocks **lowered** instead
+//! (option `polyglot: "lower"`, CRUSH-272): each block's body is compiled into
+//! the program through its language's walker and runs as Crush, with no grant
+//! and no executor. A construct the walker can't lower is a compile error
+//! naming it and the block's line; nothing falls back to the executor.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -42,6 +54,8 @@ use std::rc::Rc;
 use crush_vm::{HostCaps, InputSource, PortableVm, VmError, VmYield};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+
+mod clock;
 
 /// A host runner for `@lang` blocks: `(lang, code, env)` → the block's stdout
 /// (including the result-sentinel line) or an error message.
@@ -88,23 +102,48 @@ pub fn set_lang_executor(executor: JsValue) -> Result<(), JsValue> {
     Ok(())
 }
 
-/// Grants a page may give a program in the browser (#91). `polyglot.bash` is
-/// never grantable here; nothing else reaches outside the VM.
-const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python"];
+/// Grants a page may give a program in the browser, each the counterpart of a
+/// `crush-run` flag: `polyglot.<lang>` (#91, `--polyglot`; a granted block runs
+/// through [`set_lang_executor`]), `time` (`--time`, the browser's clock) and
+/// `env` (`--env`; a browser has no environment, so `env.get` returns null and
+/// `env.all` is empty). `polyglot.bash`, `fs`, `process` and `net` are never
+/// grantable here.
+const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python", "time", "env"];
 
-fn apply_grants(caps: &mut HostCaps, grants: &[String]) -> Result<(), String> {
-    for grant in grants {
-        if GRANTABLE.contains(&grant.as_str()) {
-            let lang = &grant["polyglot.".len()..];
-            caps.register(crush_vm::host::polyglot_gate(lang));
-        } else {
-            return Err(format!(
-                "`{grant}` can't be granted in a browser (grantable: {})",
-                GRANTABLE.join(", ")
-            ));
-        }
+/// [`browser_caps`] plus `grants`, or an error naming a grant a browser can't give.
+fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String> {
+    if let Some(bad) = grants.iter().find(|g| !GRANTABLE.contains(&g.as_str())) {
+        return Err(format!(
+            "`{bad}` can't be granted in a browser (grantable: {})",
+            GRANTABLE.join(", ")
+        ));
     }
-    Ok(())
+    let granted = |name: &str| grants.iter().any(|g| g == name);
+    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args).env(granted("env"));
+    #[cfg(feature = "stdlib")]
+    let builder = builder.stdlib(true);
+    let mut caps = builder.build();
+    if granted("time") {
+        clock::register(&mut caps);
+    }
+    for lang in grants.iter().filter_map(|g| g.strip_prefix("polyglot.")) {
+        caps.register(crush_vm::host::polyglot_gate(lang));
+    }
+    Ok(caps)
+}
+
+/// `crush-run`'s preflight: refuse a program that can reach a capability
+/// `caps` does not register, before any of it runs, with the same message
+/// (one line per missing grant, named by the `crush-run` flag that grants it).
+fn refuse_ungranted(program: &crush_vm::Program, caps: &HostCaps) -> Result<(), String> {
+    let missing = crush_lang_sdk::effects::missing_grants(program, Some(caps)).map_err(|e| e.to_string())?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "this program needs capabilities this run does not grant; nothing was run:\n{}",
+        crush_lang_sdk::effects::describe_missing(&missing)
+    ))
 }
 
 /// The capabilities every browser run gets: what `crush-run` registers when
@@ -114,10 +153,7 @@ fn apply_grants(caps: &mut HostCaps, grants: &[String]) -> Result<(), String> {
 /// outside the VM, so a page needs no grant to offer them; `fs`, `time`,
 /// `env`, `process` and `net` stay absent.
 pub fn browser_caps(args: Vec<String>) -> HostCaps {
-    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args);
-    #[cfg(feature = "stdlib")]
-    let builder = builder.stdlib(true);
-    builder.build()
+    granted_caps(args, &[]).expect("no grants")
 }
 
 #[derive(Serialize)]
@@ -133,6 +169,7 @@ struct ExecutionResult {
 fn run_program(program: &crush_vm::Program) -> Result<JsValue, JsValue> {
     let quotas = crush_vm::Quotas::default();
     let caps = browser_caps(Vec::new());
+    refuse_ungranted(program, &caps).map_err(|e| JsValue::from_str(&e))?;
     // Collected through the streaming sink so that output printed before a
     // `sys.exit` survives it (the exit arrives as an `Err`).
     let mut output = String::new();
@@ -204,9 +241,31 @@ pub struct RunOptions {
     pub max_steps: Option<usize>,
     /// What `sys.args()` returns. Absent means none.
     pub args: Option<Vec<String>>,
-    /// Capabilities the page grants this run (#91): `polyglot.javascript`,
-    /// `polyglot.python`. A granted block runs through [`set_lang_executor`].
+    /// Capabilities the page grants this run: `polyglot.javascript` /
+    /// `polyglot.python` (a granted block runs through [`set_lang_executor`]),
+    /// `time`, `env`. See `GRANTABLE`.
     pub grants: Option<Vec<String>>,
+    /// What `@python` / `@javascript` blocks become (CRUSH-272): `"exec"`
+    /// (the default) runs each through the executor, behind its grant;
+    /// `"lower"` compiles each block's body into the program through its
+    /// language's walker, so it runs **as Crush** — Python / JavaScript as the
+    /// walker lowers them, not CPython / Node — needs no grant and no
+    /// executor, and a construct the walker can't lower is a compile error
+    /// naming it. Lowering needs this build's `polyglot-python` /
+    /// `polyglot-javascript` feature.
+    pub polyglot: Option<String>,
+}
+
+/// Compile `source` for a run with `options` (its `polyglot` mode).
+fn compile(source: &str, options: &RunOptions) -> Result<crush_vm::Program, String> {
+    use crush_lang_sdk::compile::{CompileOptions, PolyglotMode};
+    let polyglot = match options.polyglot.as_deref() {
+        None | Some("exec") => PolyglotMode::Exec,
+        Some("lower") => PolyglotMode::Lower,
+        Some(other) => return Err(format!("invalid options: polyglot must be \"exec\" or \"lower\", not {other:?}")),
+    };
+    crush_lang_sdk::compile::compile_crush_source_with(source, &CompileOptions { polyglot })
+        .map_err(|e| format!("compile error: {e}"))
 }
 
 fn parse_options(options: JsValue) -> Result<RunOptions, JsValue> {
@@ -249,8 +308,8 @@ fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) 
     if let Some(max_steps) = options.max_steps {
         quotas.max_steps = max_steps;
     }
-    let mut caps = browser_caps(options.args.clone().unwrap_or_default());
-    apply_grants(&mut caps, options.grants.as_deref().unwrap_or_default())?;
+    let caps = granted_caps(options.args.clone().unwrap_or_default(), options.grants.as_deref().unwrap_or_default())?;
+    refuse_ungranted(&program, &caps)?;
     let mut vm = PortableVm::new(program);
     vm.set_quotas(quotas);
     vm.set_input(input);
@@ -308,13 +367,13 @@ pub struct ExecuteWithResult {
 
 /// Pure-Rust core of [`execute_with`].
 pub fn execute_with_options(source: &str, options: &RunOptions) -> ExecuteWithResult {
-    let program = match crush_lang_sdk::compile::compile_crush_source(source) {
+    let program = match compile(source, options) {
         Ok(program) => program,
         Err(e) => {
             return ExecuteWithResult {
                 ok: false,
                 output: String::new(),
-                error: Some(format!("compile error: {e}")),
+                error: Some(e),
                 exit_code: None,
                 steps: 0,
             };
@@ -417,8 +476,7 @@ fn to_js(report: &Report) -> Result<JsValue, JsValue> {
 /// Pure-Rust surface of [`Session`], usable from native tests.
 impl Session {
     pub fn with_options(source: &str, options: &RunOptions) -> Self {
-        let vm = crush_lang_sdk::compile::compile_crush_source(source)
-            .map_err(|e| format!("compile error: {e}"))
+        let vm = compile(source, options)
             .and_then(|program| new_vm(program, options, InputSource::interactive()));
         match vm {
             Ok(vm) => Session {
