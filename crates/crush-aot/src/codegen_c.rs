@@ -23,7 +23,10 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
     emit_c_dom_stub(&mut out);
 
     // Forward declarations (needed because CASM functions may call each other)
-    for (name, _func) in &program.functions {
+    // Name order, not `HashMap` order: the same program must give the same
+    // source in every process, or the AOT build cache (keyed on it) misses.
+    let functions = crate::codegen::sorted_functions(program);
+    for (name, _func) in &functions {
         let fn_name = sanitize_fn_name(name);
         out.push_str(&format!("static Value fn_{fn_name}(void);\n"));
     }
@@ -45,7 +48,7 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
     }
 
     let mut unsupported = Vec::new();
-    for (name, func) in &program.functions {
+    for (name, func) in functions {
         emit_c_function(&mut out, name, func, program, &mut unsupported);
     }
     if !unsupported.is_empty() {
@@ -1229,7 +1232,9 @@ fn emit_c_function(
     // Locals: `Value` locals are a frame on the collector-visible `_locals`
     // stack (see `discover_locals`); typed ones would stay C variables.
     out.push_str(&format!("    int __lb = _frame_enter({});\n", local_index.len()));
-    for meta in local_index.values() {
+    let mut typed_locals: Vec<&LocalMeta> = local_index.values().collect();
+    typed_locals.sort_unstable_by(|a, b| a.c_name.cmp(&b.c_name));
+    for meta in typed_locals {
         match meta.ty {
             LocalType::F64 => out.push_str(&format!("    double {} = 0.0;\n", meta.c_name)),
             LocalType::I64 => out.push_str(&format!("    int64_t {} = 0;\n", meta.c_name)),
