@@ -24,7 +24,9 @@
     "ghcr.io/devcontainers/features/node:1": {
       "version": "24"
     },
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // `gh codespace ssh` needs an SSH server in the container (agents drive codespaces over SSH)
+    "ghcr.io/devcontainers/features/sshd:1": {}
   },
   "containerEnv": {
     "CARGO_TERM_COLOR": "always"
