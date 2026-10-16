@@ -1,0 +1,51 @@
+// Dev container for crush-ast: GitHub Codespaces and VS Code Dev Containers.
+//
+// Gives a ready-to-build environment for the whole workspace:
+// - Rust from rust-toolchain.toml (stable + rustfmt + clippy), plus the
+//   wasm32-unknown-unknown target that crush-web builds for;
+// - Python 3.12 with a shared libpython (crush-python links it through pyo3);
+// - Node, the oracle the JS/TS parity tests compare against;
+// - gcc/clang for the C AOT backend;
+// - the sibling `buckets` checkout the workspace path-depends on (`../buckets`),
+//   cloned by post-create.sh, exactly as CI does it.
+{
+  "name": "crush-ast",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "minimal"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // `gh codespace ssh` needs an SSH server in the container (agents drive codespaces over SSH)
+    "ghcr.io/devcontainers/features/sshd:1": {}
+  },
+  "containerEnv": {
+    "CARGO_TERM_COLOR": "always"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "rust-analyzer.cargo.targetDir": true
+      }
+    },
+    "codespaces": {
+      "openFiles": [
+        "README.md"
+      ]
+    }
+  }
+}
