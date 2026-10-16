@@ -32,8 +32,9 @@ fn ungranted_block_is_refused_and_executor_not_called() {
     let r = execute_with_options(PRINT_AROUND, &RunOptions::default());
     set_host_lang_executor(None);
     assert!(!r.ok);
-    assert!(r.error.as_deref().unwrap_or("").contains("polyglot.javascript"), "{:?}", r.error);
-    assert_eq!(r.output, "before\n", "output before the refusal is kept");
+    let err = r.error.unwrap_or_default();
+    assert!(err.contains("nothing was run") && err.contains("--polyglot: polyglot.javascript"), "{err}");
+    assert_eq!(r.output, "", "refused before running, as crush-run does");
     assert_eq!(calls.get(), 0);
 }
 

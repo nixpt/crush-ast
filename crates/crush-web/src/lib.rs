@@ -27,6 +27,10 @@
 //! `caison.parse`. Nothing that reaches outside the VM (`fs`, `time`, `env`,
 //! `process`, `net`) is registered.
 //!
+//! Like `crush-run`, every entry point refuses a program that can reach a
+//! capability the run does not grant before running any of it (`nothing was
+//! run`), rather than failing when the call is reached.
+//!
 //! `@lang{}` polyglot blocks (#91): a browser can't spawn a subprocess, so a
 //! block runs only when the page (1) grants it — `execute_with`/`Session`
 //! option `grants: ["polyglot.javascript"]` (or `polyglot.python`; bash is never
@@ -92,19 +96,36 @@ pub fn set_lang_executor(executor: JsValue) -> Result<(), JsValue> {
 /// never grantable here; nothing else reaches outside the VM.
 const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python"];
 
-fn apply_grants(caps: &mut HostCaps, grants: &[String]) -> Result<(), String> {
-    for grant in grants {
-        if GRANTABLE.contains(&grant.as_str()) {
-            let lang = &grant["polyglot.".len()..];
-            caps.register(crush_vm::host::polyglot_gate(lang));
-        } else {
-            return Err(format!(
-                "`{grant}` can't be granted in a browser (grantable: {})",
-                GRANTABLE.join(", ")
-            ));
-        }
+/// [`browser_caps`] plus `grants`, or an error naming a grant a browser can't give.
+fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String> {
+    if let Some(bad) = grants.iter().find(|g| !GRANTABLE.contains(&g.as_str())) {
+        return Err(format!(
+            "`{bad}` can't be granted in a browser (grantable: {})",
+            GRANTABLE.join(", ")
+        ));
     }
-    Ok(())
+    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args);
+    #[cfg(feature = "stdlib")]
+    let builder = builder.stdlib(true);
+    let mut caps = builder.build();
+    for lang in grants.iter().filter_map(|g| g.strip_prefix("polyglot.")) {
+        caps.register(crush_vm::host::polyglot_gate(lang));
+    }
+    Ok(caps)
+}
+
+/// `crush-run`'s preflight: refuse a program that can reach a capability
+/// `caps` does not register, before any of it runs, with the same message
+/// (one line per missing grant, named by the `crush-run` flag that grants it).
+fn refuse_ungranted(program: &crush_vm::Program, caps: &HostCaps) -> Result<(), String> {
+    let missing = crush_lang_sdk::effects::missing_grants(program, Some(caps)).map_err(|e| e.to_string())?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "this program needs capabilities this run does not grant; nothing was run:\n{}",
+        crush_lang_sdk::effects::describe_missing(&missing)
+    ))
 }
 
 /// The capabilities every browser run gets: what `crush-run` registers when
@@ -114,10 +135,7 @@ fn apply_grants(caps: &mut HostCaps, grants: &[String]) -> Result<(), String> {
 /// outside the VM, so a page needs no grant to offer them; `fs`, `time`,
 /// `env`, `process` and `net` stay absent.
 pub fn browser_caps(args: Vec<String>) -> HostCaps {
-    let builder = crush_lang_sdk::HostCapsBuilder::new().args(args);
-    #[cfg(feature = "stdlib")]
-    let builder = builder.stdlib(true);
-    builder.build()
+    granted_caps(args, &[]).expect("no grants")
 }
 
 #[derive(Serialize)]
@@ -133,6 +151,7 @@ struct ExecutionResult {
 fn run_program(program: &crush_vm::Program) -> Result<JsValue, JsValue> {
     let quotas = crush_vm::Quotas::default();
     let caps = browser_caps(Vec::new());
+    refuse_ungranted(program, &caps).map_err(|e| JsValue::from_str(&e))?;
     // Collected through the streaming sink so that output printed before a
     // `sys.exit` survives it (the exit arrives as an `Err`).
     let mut output = String::new();
@@ -249,8 +268,8 @@ fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) 
     if let Some(max_steps) = options.max_steps {
         quotas.max_steps = max_steps;
     }
-    let mut caps = browser_caps(options.args.clone().unwrap_or_default());
-    apply_grants(&mut caps, options.grants.as_deref().unwrap_or_default())?;
+    let caps = granted_caps(options.args.clone().unwrap_or_default(), options.grants.as_deref().unwrap_or_default())?;
+    refuse_ungranted(&program, &caps)?;
     let mut vm = PortableVm::new(program);
     vm.set_quotas(quotas);
     vm.set_input(input);
