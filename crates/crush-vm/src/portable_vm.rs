@@ -1809,23 +1809,29 @@ impl PortableVm {
             }
             AWAIT => {
                 let handle = self.pop()?;
-                let target = match handle {
-                    Value::Handle(id) => Some(id as usize),
-                    _ => None,
-                };
-                match target.and_then(|id| self.tasks.get(id).map(|t| (id, t.done))) {
-                    // Already finished: its result right away.
-                    Some((id, true)) => {
-                        let v = self.tasks[id].result.clone().unwrap_or(Value::Null);
-                        self.push(v);
+                match handle {
+                    Value::Handle(id) => {
+                        let id = id as usize;
+                        match self.tasks.get(id).map(|t| (id, t.done)) {
+                            // Already finished: its result right away.
+                            Some((id, true)) => {
+                                let v = self.tasks[id].result.clone().unwrap_or(Value::Null);
+                                self.push(v);
+                            }
+                            // Still running: block until it finishes; `finish_task`
+                            // pushes the result onto this task's stack.
+                            Some((id, false)) if id != self.current_task => {
+                                self.tasks[self.current_task].waiting_for = Some(id);
+                                self.switch_requested = true;
+                            }
+                            // Awaiting self, or a handle with no live task: nothing
+                            // to join — keep the previous behaviour (push null).
+                            _ => self.push(Value::Null),
+                        }
                     }
-                    // Still running: block until it finishes; `finish_task`
-                    // pushes the result onto this task's stack.
-                    Some((id, false)) if id != self.current_task => {
-                        self.tasks[self.current_task].waiting_for = Some(id);
-                        self.switch_requested = true;
-                    }
-                    _ => self.push(Value::Null),
+                    // Not a handle: `await v` returns `v` itself (JS semantics,
+                    // issue #251) — push the awaited value straight back.
+                    other => self.push(other),
                 }
             }
             // HALT in a spawned task ends only that task (owner decision
