@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-54 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — PR `agent/vega/CRUSH-zorro-54-aot-unassigned` |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | none. **Must land before CRUSH-250 step 6** (a gate item there) |
 | **Estimated effort** | M |
 
@@ -26,8 +26,8 @@ Both are listed in `RUST_SILENT` in `crates/crush-aot/tests/js_parity.rs`, keyed
 
 ## Success criteria
 
-- [ ] AOT Rust and C fail at run time on a read of a local that has no value yet, with the VM's message ("load from uninitialised slot"). A read that is provably unreachable from any store may fail at compile time instead.
-- [ ] `fn_script_vars` / `fn_script_late` leave `RUST_SILENT` (loud on AOT with swc), and `ops_ternary_nested` keeps matching (its function never runs).
+- [x] AOT Rust and C fail at run time on a read of a local that has no value yet, with the VM's message ("load from uninitialised slot"). A read that is provably unreachable from any store may fail at compile time instead.
+- [x] `fn_script_vars` / `fn_script_late` leave `RUST_SILENT` (loud on AOT with swc), and `ops_ternary_nested` keeps matching (its function never runs).
 - [ ] Lands before CRUSH-250 step 6.
 
 ## Technical approach
@@ -38,3 +38,42 @@ Both are listed in `RUST_SILENT` in `crates/crush-aot/tests/js_parity.rs`, keyed
 ## Non-goals
 
 - JS semantics for script variables on swc; the boa lowering owns that (CRUSH-250).
+
+## Resolution
+
+**Measured first** (a CASM read of a local that only an untaken branch assigns,
+`crates/crush-aot/tests/backend_agreement.rs`): the scheduler VM and portable VM
+failed with `load from uninitialised slot N`; **FastVM, the JIT, AOT Rust and
+AOT C all returned `null`.** FastVM and the JIT are filed as CRUSH-zorro-55.
+
+**Fix (AOT Rust and C).** `crates/crush-aot/src/assigned.rs` is a forward
+"must be assigned" data-flow pass over the control flow the backends emit
+(`jmp` / `jmp_if` / `jmp_if_not` branch, `ret` / `halt` end, everything else
+falls through). A `load` that a `store` to the same name precedes on every
+path from the entry is emitted as before; only the others are checked. Loads
+in code the pass finds unreachable are checked too (conservative).
+
+- **Rust:** locals are a `HashMap`, so a local not stored yet is simply absent
+  — that is the sentinel. A checked load is `match locals.get(..) { Some(v) =>
+  v.clone(), None => uninit_load(..) }`, the same lookup as before.
+- **C:** locals frames start as a new `TAG_UNSET` value (was `mk_null()`); a
+  checked load tests the tag. `TAG_UNSET` never reaches the operand stack, and
+  the collector ignores it. A typed (`int64_t`/`double`, CRUSH-257) local is
+  never read unassigned: inference already sees such a read as `Null` and keeps
+  the local boxed, and `discover_locals` now also forces any local with a
+  checked load to stay a `Value`.
+
+Both exit 1 with `crush(aot[c]): load from uninitialised slot `<name>``.
+
+**Harness.** `js_parity.rs` (swc): `fn_script_late`, `fn_script_vars`,
+`misc_console_multi`, `ops_nan` moved from `RUST_SILENT` to `RUST_LOUD`
+(the last two read the unbound names `undefined` / `NaN` as unassigned locals),
+and `ops_null_eq_undefined`, which matched only because `undefined` read as
+`null`, joined `RUST_LOUD`. `ops_ternary_nested` still matches. Per backend on
+swc: match/loud/silent 62/51/6 → 61/56/2; boa unchanged at 67/51/1.
+`python_parity.rs` and `node_corpus_test.rs` lists didn't change.
+
+The same PR fixes a harness bug: `js_parity.rs`'s `check` shadowed the backend
+name with its display label before calling `compile_and_run`, so the "rust"
+runs built with the C backend. The Rust backend now really runs; its lists
+were already right.

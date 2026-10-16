@@ -303,6 +303,13 @@ fn arith_overflow() -> ! {
     std::process::exit(1);
 }
 
+// CRUSH-zorro-54: a read of a local that has no value yet fails, as on the VM.
+#[cold]
+fn uninit_load(name: &str) -> ! {
+    eprintln!("crush(aot): load from uninitialised slot `{name}`");
+    std::process::exit(1);
+}
+
 fn conv_chr_value(value: RuntimeValue) -> RuntimeValue {
     let codepoint = match value {
         RuntimeValue::Int(value) => value,
@@ -584,6 +591,8 @@ fn emit_function(
     let fn_name = sanitize_fn_name(name);
     let is_main = name == "main";
     let n = func.body.len();
+    // CRUSH-zorro-54: loads not preceded by a store on every path.
+    let to_check = crate::assigned::loads_to_check(func);
 
     out.push_str(&format!("#[inline(never)]\nfn {fn_name}("));
     if is_main {
@@ -619,7 +628,7 @@ fn emit_function(
             // remembers the Kind's fields and refuses any other (as the VMs do).
             out.push_str(&format!("                stack.push(RuntimeValue::Object(Rc::new(RefCell::new({sealed}))));\n"));
             out.push_str(&format!("                __pc = {};\n                continue;\n", (i + 1).min(n)));
-        } else if let Some(op) = emit_body(out, instr, i, n) {
+        } else if let Some(op) = emit_body(out, instr, i, n, to_check[i]) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
@@ -659,6 +668,7 @@ fn emit_body(
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
+    check_load: bool,
 ) -> Option<String> {
     let mut unsupported = None;
     let args = &instr.args;
@@ -714,9 +724,19 @@ fn emit_body(
         // ── Locals ──
         "load" => {
             let name = args["name"].as_str().unwrap_or("");
-            out.push_str(&format!(
-                "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
-            ));
+            if check_load {
+                // CRUSH-zorro-54: a local is unassigned until its first store
+                // (it isn't in `locals` yet); reading it then fails, as on the VM.
+                let msg = name.escape_default();
+                out.push_str(&format!(
+                    "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{msg}\") }});\n"
+                ));
+            } else {
+                // Every path here stored to it first (`assigned::loads_to_check`).
+                out.push_str(&format!(
+                    "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
+                ));
+            }
             out.push_str(&next_pc_str);
         }
         "store" => {

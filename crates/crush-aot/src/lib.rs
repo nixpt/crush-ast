@@ -25,6 +25,7 @@
 //! 3. `rustc --crate-type cdylib` → native `.so`
 //! 4. `Module::load()` → `libloading` wrapper, calls `crush_run()` C ABI entry point
 
+mod assigned;
 pub mod codegen;
 pub mod codegen_c;
 pub mod compiler;
