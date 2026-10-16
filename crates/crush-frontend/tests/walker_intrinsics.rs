@@ -103,6 +103,86 @@ fn unknown_helpers_remain_errors() {
     );
 }
 
+#[test]
+fn integer_cast_contract_is_validated_before_codegen() {
+    let boolean = |value| Expression::BoolLiteral {
+        value,
+        meta: Default::default(),
+    };
+    for (args, message) in [
+        (vec![int(1)], "expects exactly 3 arguments"),
+        (
+            vec![int(1), int(7), boolean(true)],
+            "width must be a literal",
+        ),
+        (
+            vec![int(1), var("width"), boolean(true)],
+            "width must be a literal",
+        ),
+        (
+            vec![int(1), int(8), int(1)],
+            "signedness must be a literal bool",
+        ),
+        (
+            vec![int(1), int(64), boolean(false)],
+            "cannot represent u64",
+        ),
+        (
+            vec![boolean(true), int(8), boolean(false)],
+            "requires an integer operand",
+        ),
+    ] {
+        let p = program(vec![
+            decl("width", int(8)),
+            stmt(call("__crush_rust_int_cast__", args)),
+        ]);
+        for result in [compile_cast_owned(p.clone()), Compiler::new().compile(p)] {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(error.contains(message), "{error}");
+        }
+    }
+}
+
+#[test]
+fn integer_cast_compiles_one_operand_evaluation() {
+    let mut p = program(vec![stmt(call(
+        "__crush_rust_int_cast__",
+        vec![
+            call("tick", vec![]),
+            int(8),
+            Expression::BoolLiteral {
+                value: true,
+                meta: Default::default(),
+            },
+        ],
+    ))]);
+    p.functions.insert(
+        "tick".into(),
+        Function {
+            body: vec![Statement::Return {
+                value: Some(int(300)),
+                meta: Default::default(),
+            }],
+            ..Default::default()
+        },
+    );
+    let casm = compile_cast_owned(p).unwrap();
+    let ops = &casm.functions["main"].body;
+    assert_eq!(
+        ops.iter()
+            .filter(|op| op.op == "call" && op.args["function"] == "tick")
+            .count(),
+        1
+    );
+    assert!(ops.iter().any(|op| op.op == "mod"));
+    assert!(ops.iter().any(|op| op.op == "dup"));
+    assert!(
+        !ops.iter()
+            .any(|op| op.args["name"] == "__crush_rust_int_cast__"
+                || op.args["function"] == "__crush_rust_int_cast__")
+    );
+}
+
 fn for_loop(iterable: Expression, body: Vec<Statement>) -> Statement {
     Statement::For {
         variable: "item".into(),

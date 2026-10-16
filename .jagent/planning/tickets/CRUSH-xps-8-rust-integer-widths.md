@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-8 |
 | **Priority** | P1 |
-| **Status** | In progress; first cast-boundary slice |
+| **Status** | In progress; proven dynamic casts and bounded unsigned slice |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7 |
@@ -85,6 +85,51 @@ assignment as well as binary arithmetic. Preserve assignment's unit result.
 Keep unimplemented `wrapping_*`, shifts, division edge cases and width-sensitive
 methods explicitly loud. A checked-overflow VM error is not proof of matching
 Rust's unchecked release wrapping.
+
+## Second implementation slice
+
+Branch: `agent/nixp/CRUSH-xps-8-dynamic-casts`, stacked on the first slice
+(PR #244, still open when main was refreshed to `2c4c354`).
+
+- Run numeric provenance after lexical binding resolution and before ownership
+  checking; retain canonical range proofs for bindings, direct parameters and
+  acyclic function returns. Validate direct-call arguments and invalidate written
+  storage, including writes inside captured closures.
+- Expand dynamic casts in shared CASM with one operand evaluation, preserving
+  truncation/sign interpretation across SDK VM and both AOT backends.
+- Address #244 review priorities: proven `len()` conversions, bounded range-index
+  casts, and small `u64`/`usize` arithmetic. `u64` stays in `0..=i64::MAX`.
+  New integer-to-`usize` conversions stay in `0..=65535`; existing canonical
+  `usize` provenance can retain guest-representable length bounds. No host
+  pointer width is inferred. Mutable collection and NUL-text lengths are refused.
+- Route Rust source free functions ahead of compiler helpers/builtins, evaluate
+  their arguments left to right, and root owned arguments in compiler temporaries.
+  Native `len()` methods keep their own arity even if a free `len` exists.
+- Keep only the innermost source coordinate on nested lowering failures.
+- Add 21 rustc-oracle fixtures; promote six former refusals to exact parity.
+  The 89-fixture inventory expects VM 49 exact / 38 loud / 2 silent, and each
+  AOT backend 41 exact / 46 loud / 2 silent. Overflow and Debug remain silent
+  ticketed exceptions; this slice does not close xps-8.
+
+Remaining work: general typed/wrapping arithmetic, mutable flow inference,
+recursive/higher-order/capture proofs, explicit source-target width configuration,
+and the existing overflow audit. The supported profile is a conservative
+closed-program proof, not a Rust type checker.
+
+Validation (Rust 1.98.1, Rust oracle edition 2021 with `-O`, x86_64 host):
+
+- 11 Rust walker, 114 frontend, 323 SDK and 20 AOT tests pass (468 total).
+- The 89-program inventory runs on SDK VM, Rust AOT and C AOT; expected outputs
+  are freshly regenerated against rustc by the oracle freshness gate.
+- C parity also passes with `CRUSH_GC_STRESS=1`, including two allocating array
+  arguments rooted across left-to-right argument evaluation.
+- Scoped Clippy passes the CI `never_loop` gate. SDK test targets retain the
+  existing `approx_constant` allowance for unrelated fixture literals; warnings
+  in existing workspace code remain.
+- A standalone public SDK host matches native rustc for six accepted programs,
+  refuses four unproven cases before output, and runs `.crush` with return Int(42).
+- Targeted formatting and `git diff --check` pass. Full workspace tests were not
+  run; verification covers the changed Rust pipeline and shared frontend.
 
 ## First implementation slice
 

@@ -1164,6 +1164,13 @@ Reason:
 The merged specification requires exact conversions or frontend refusal. Constant bounded integer casts can be evaluated in the walker without a new guest ABI or backend kernel; dynamic casts need a later binding/range fact pass and single-evaluation lowering. Retain numeric source syntax separately from ownership Copy metadata, keep overflow policy and the ticket open.
 
 
+## 2026-10-15T20:10:57-05:00 — Require canonical numeric provenance before dynamic Rust casts
+
+Reason:
+Rust declarations alone cannot prove values after generic Crush arithmetic. Resolve lexical storage first, validate direct-call arguments and least-fixed-point return summaries, then expand casts once in shared CASM. Keep u64 within guest i64 and new usize conversions within the portable 16-bit ceiling; length provenance can retain native usize bounds. This avoids a runtime ABI or backend-specific numeric implementation while preserving explicit refusals for unproven values.
+
+Outcome:
+CRUSH-xps-8 slice 2 adds dynamic casts, bounded unsigned/length/index cases, left-to-right rooted source calls and innermost diagnostics; general typed wrapping remains open.
 ## 2026-10-15T19:01:29-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: multi-output @lang wire protocol
 
 Reason:
@@ -1187,6 +1194,21 @@ Generic runtime strings cannot distinguish Rust chars from str/String, and place
 
 Outcome:
 xps-9 macro/literal slice in progress; no new runtime ABI or formatter capability.
+
+
+## 2026-10-15T23:03:56-05:00 — [TACTICAL] [ARCHITECTURAL] AOT backends fail a read of an unassigned local, checking only loads not preceded by a store on every path (CRUSH-zorro-54)
+
+Reason:
+The VMs fail 'load from uninitialised slot'; AOT read null and printed wrong output. A forward must-assigned dataflow pass (crush-aot/src/assigned.rs) over the emitted control flow leaves dominated loads unchecked. Rust: absence from the locals HashMap is the sentinel. C: frames start TAG_UNSET; typed (CRUSH-257) locals with a possibly-unassigned load stay boxed.
+
+Artifacts: crates/crush-aot/src/assigned.rs
+
+Rejected alternatives:
+- **walk-time refusal on swc (would turn ops_ternary_nested loud though its function never runs)**
+- **check every load (C cost on hot loops)**
+
+Outcome:
+AOT exact-or-loud on unassigned reads; FastVM/JIT still read null -> CRUSH-zorro-55
 
 
 ## 2026-10-16T00:26:07-05:00 — Share the typed Rust Debug kernel verbatim with Rust AOT

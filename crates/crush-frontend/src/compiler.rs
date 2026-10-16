@@ -1727,6 +1727,26 @@ impl Compiler {
                 args,
                 meta,
             } => {
+                if meta.get("rust_source_call") == Some(&serde_json::Value::Bool(true))
+                    && self.local_functions.contains(function)
+                {
+                    // Numeric summaries describe the Rust function, including
+                    // when its name shadows a compiler builtin. Evaluate Rust
+                    // arguments left-to-right, then restore the stack ABI order.
+                    let mut temporaries = Vec::new();
+                    for arg in args {
+                        let name = format!("__crush_rust_call_arg_{}", self.temp_counter);
+                        self.temp_counter += 1;
+                        self.compile_arg(arg, instrs)?;
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                        temporaries.push(name);
+                    }
+                    for name in temporaries.iter().rev() {
+                        instrs.push(self.create_instr("load", serde_json::json!({"name": name}), meta));
+                    }
+                    instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), meta));
+                    return Ok(());
+                }
                 if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
                     intrinsic.validate(function, args)?;
                 }
@@ -1957,6 +1977,37 @@ impl Compiler {
                         ));
                     } else {
                         bail!("__crush_assign__ target must be a variable");
+                    }
+                } else if function == "__crush_rust_int_cast__" {
+                    // Shared CASM expansion: one source evaluation, no new
+                    // runtime opcode, host capability, temporary binding or ABI.
+                    self.compile_expr(&args[0], instrs)?;
+                    let Expression::IntLiteral { value: width, .. } = args[1] else { unreachable!() };
+                    let Expression::BoolLiteral { value: signed, .. } = args[2] else { unreachable!() };
+                    if width != 64 {
+                        let modulus = 1i64 << width;
+                        instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Mod, meta)?);
+                        // Rust/Crush remainder has the dividend's sign. Make
+                        // the low bits nonnegative before interpreting sign.
+                        instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::PushInt(0), meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Lt, meta)?);
+                        let skip = instrs.len();
+                        instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                        instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Add, meta)?);
+                        instrs[skip].args = serde_json::json!({"target": instrs.len()});
+                        if signed {
+                            instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
+                            instrs.push(self.create_typed_instr(OpCode::PushInt(modulus / 2), meta)?);
+                            instrs.push(self.create_typed_instr(OpCode::Ge, meta)?);
+                            let skip = instrs.len();
+                            instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                            instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
+                            instrs.push(self.create_typed_instr(OpCode::Sub, meta)?);
+                            instrs[skip].args = serde_json::json!({"target": instrs.len()});
+                        }
                     }
                 } else if function == "__crush_not__" {
                     if args.len() != 1 { bail!("__crush_not__ expects exactly 1 argument"); }

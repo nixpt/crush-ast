@@ -24,7 +24,7 @@ These existing IDs belong to this box's `CRUSH-xps` lane, separate from the
 
 | ID | Dispatch state | Specification |
 |---|---|---|
-| CRUSH-xps-8 | In progress; literal casts and source hints first | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
+| CRUSH-xps-8 | In progress; proven dynamic casts, lengths and bounded unsigned values | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
 | CRUSH-xps-9 | In progress; shared Debug kernel and conservative descriptors | [Typed Debug and macro evaluation](tickets/CRUSH-xps-9-rust-debug-format.md) |
 | CRUSH-xps-10 | In review in #213; preserve implementation/evidence | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
 | CRUSH-xps-11 | In review in #213; preserve implementation/evidence | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |

@@ -10,10 +10,7 @@ use syn::Expr;
 use syn::spanned::Spanned;
 
 pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
-    let start = expr.span().start();
-    lower_expr_inner(expr, ctx).map_err(|error| {
-        anyhow::anyhow!("Rust expression at {}:{}: {error:#}", start.line, start.column + 1)
-    })
+    lower_expr_inner(expr, ctx).map_err(|error| crate::diagnostics::at("expression", expr.span(), error))
 }
 
 fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
@@ -221,7 +218,7 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                 meta,
             })
         }
-        Expr::Cast(e) => crate::numeric::lower_cast(e, meta),
+        Expr::Cast(e) => crate::numeric::lower_cast(e, ctx, meta),
         Expr::Field(e) => {
             let target = lower_expr(&e.base, ctx)?;
             let field = match &e.member {
@@ -307,8 +304,7 @@ fn block_to_expr(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Expre
 }
 
 pub(crate) fn unsupported_at(span: proc_macro2::Span, construct: &str, reason: &str) -> anyhow::Error {
-    let start = span.start();
-    anyhow::anyhow!("unsupported Rust {construct} at {}:{}: {reason}", start.line, start.column + 1)
+    crate::diagnostics::unsupported(span, construct, reason)
 }
 
 pub fn pat_to_ident(pat: &syn::Pat) -> anyhow::Result<String> {

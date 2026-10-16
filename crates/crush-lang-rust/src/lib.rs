@@ -39,8 +39,9 @@
 //! value semantics. This is not a Rust type/borrow checker or full closure-trait
 //! implementation. Nested functions are rejected until
 //! block-local item resolution is implemented.
-//! Literal integer casts within i8/i16/i32/i64/u8/u16/u32 are evaluated exactly.
-//! Other casts are rejected until numeric binding/range analysis is available.
+//! Integer casts use canonical binding/range proofs and one shared CASM expansion.
+//! Small u64 values and portable bounded usize conversions are supported;
+//! unproven producers, mutable lengths and closure casts are refused.
 //! Numeric suffixes and annotations are retained as source hints; this does not
 //! implement type inference or typed arithmetic. Runtime integer overflow
 //! still has a known silent divergence tracked by CRUSH-xps-8. Typed literal
@@ -54,6 +55,7 @@ pub mod lower_stmt;
 pub mod parser;
 mod bindings;
 mod formatting;
+mod diagnostics;
 mod numeric;
 mod values;
 
@@ -125,6 +127,11 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
     for item in &file.items {
         match item {
             syn::Item::Fn(_) => {
+                if let syn::Item::Fn(f) = item {
+                    anyhow::ensure!(f.sig.ident != numeric::CAST,
+                        "unsupported Rust function at {}:{}: reserved Rust numeric compiler helper (CRUSH-xps-8)",
+                        f.sig.ident.span().start().line, f.sig.ident.span().start().column + 1);
+                }
                 let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()), &ctx)?;
                 if let Statement::FunctionDef {
                     name, params, body, meta
@@ -173,6 +180,7 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
         ..Default::default()
     };
     bindings::resolve(&mut program, source)?;
+    numeric::check(&mut program)?;
     formatting::resolve(&mut program)?;
     values::check(&mut program)?;
     Ok(program)

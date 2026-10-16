@@ -25,6 +25,7 @@
 //! 3. `rustc --crate-type cdylib` → native `.so`
 //! 4. `Module::load()` → `libloading` wrapper, calls `crush_run()` C ABI entry point
 
+mod assigned;
 pub mod codegen;
 pub mod codegen_c;
 pub mod compiler;
@@ -53,6 +54,17 @@ pub use loader::Module;
 fn refuse_cosm(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
     program
         .refuse_cosm(&format!("the {backend} AOT backend"))
+        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+}
+
+/// issue #161: AOT doesn't run green tasks. A program that `spawn`s is refused
+/// before any code is generated, naming `spawn` — not the `make_closure` a
+/// `spawn` compiles through, and never silently skipping the task. `yield` and
+/// `await` without `spawn` are no-ops (lowered to nothing / a null push), not
+/// refusals.
+fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+    program
+        .refuse_green_task(&format!("the {backend} AOT backend"))
         .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
 }
 

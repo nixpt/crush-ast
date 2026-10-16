@@ -13,6 +13,7 @@ use std::collections::HashMap;
 /// translation.
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "C")?;
+    crate::refuse_green_task(program, "C")?;
     let mut out = String::new();
 
     emit_c_header(&mut out);
@@ -85,6 +86,7 @@ fn emit_c_value(out: &mut String) {
     TAG_STRING,
     TAG_ARRAY,
     TAG_OBJECT,
+    TAG_UNSET,  // a local before its first store (CRUSH-zorro-54); never on the stack
 } ValueTag;
 
 typedef struct {
@@ -460,9 +462,16 @@ static int _frame_enter(int n) {
         _locals = locals;
         _locals_cap = cap;
     }
-    for (int i = 0; i < n; i++) _locals[base + i] = mk_null();
+    // Unassigned until the first store: a load that may run before it checks
+    // for this and fails, as on the VM (CRUSH-zorro-54).
+    for (int i = 0; i < n; i++) _locals[base + i] = (Value){TAG_UNSET};
     _lsp = base + n;
     return base;
+}
+
+static void _uninit_load(const char* name) {
+    fprintf(stderr, "crush(aotc): load from uninitialised slot `%s`\n", name);
+    exit(1);
 }
 
 // ── Garbage collection ──────────────────────────────────────────────
@@ -1092,12 +1101,65 @@ static void _cmp_type_error(void) {
     exit(1);
 }
 
+/* `_obj_get` but distinguishing "key absent" from "key present with a null
+   value" — equality must not treat the two the same ({"a": null} != {"b": null}). */
+static bool _obj_get_opt(CrushObject* obj, const char* key, Value* out) {
+    for (int i = 0; i < obj->field_count; i++) {
+        if (strcmp(obj->fields[i].key, key) == 0) { *out = obj->fields[i].val; return true; }
+    }
+    return false;
+}
+
+/* Deep structural equality — mirrors crush-vm `Value::eq` (IndexMap/Vec
+   PartialEq). Maps (TAG_OBJECT) compare key set + value, order-insensitive;
+   arrays (TAG_ARRAY) compare length + elementwise, order-sensitive. Cross-type
+   numerics coerce (1 == 1.0); every other mixed-type pair is false. Recursive
+   like the VM: crush-vm's equality is not cycle-safe (it stack-overflows on a
+   self-referential array/map), so this mirror recurses the same way rather
+   than returning a silently-different answer for a cycle the other backends
+   reject loudly. */
+static bool _value_eq(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) return a.i == b.i;
+    if (_is_num(a) && _is_num(b)) {
+        double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
+        double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
+        return fa == fb;
+    }
+    if (a.tag == TAG_STRING && b.tag == TAG_STRING) return strcmp(a.s, b.s) == 0;
+    if (a.tag == TAG_BOOL && b.tag == TAG_BOOL) return a.b == b.b;
+    if (a.tag == TAG_NULL && b.tag == TAG_NULL) return true;
+    if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
+        CrushArray* aa = &_arrays[a.array_idx];
+        CrushArray* ba = &_arrays[b.array_idx];
+        if (aa->len != ba->len) return false;
+        for (int i = 0; i < aa->len; i++)
+            if (!_value_eq(aa->data[i], ba->data[i])) return false;
+        return true;
+    }
+    if (a.tag == TAG_OBJECT && b.tag == TAG_OBJECT) {
+        CrushObject* ao = &_objects[a.obj_idx];
+        CrushObject* bo = &_objects[b.obj_idx];
+        if (ao->field_count != bo->field_count) return false;
+        for (int i = 0; i < ao->field_count; i++) {
+            Value bv;
+            if (!_obj_get_opt(bo, ao->fields[i].key, &bv)) return false;
+            if (!_value_eq(ao->fields[i].val, bv)) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static Value _cmp(Value a, Value b, int op) {
     // op: 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE
+    // EQ/NE are deep structural; ordered comparisons stay numeric/string only
+    // (guarded at each call site in emit_c_instr).
+    if (op == 0) return mk_bool(_value_eq(a, b));
+    if (op == 1) return mk_bool(!_value_eq(a, b));
+
     bool r = false;
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         switch (op) {
-            case 0: r = a.i == b.i; break; case 1: r = a.i != b.i; break;
             case 2: r = a.i <  b.i; break; case 3: r = a.i <= b.i; break;
             case 4: r = a.i >  b.i; break; case 5: r = a.i >= b.i; break;
         }
@@ -1105,7 +1167,6 @@ static Value _cmp(Value a, Value b, int op) {
         double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
         double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
         switch (op) {
-            case 0: r = fa == fb; break; case 1: r = fa != fb; break;
             case 2: r = fa <  fb; break; case 3: r = fa <= fb; break;
             case 4: r = fa >  fb; break; case 5: r = fa >= fb; break;
         }
@@ -1114,14 +1175,9 @@ static Value _cmp(Value a, Value b, int op) {
            order, matching every other backend (CRUSH-136). */
         int c = strcmp(a.s, b.s);
         switch (op) {
-            case 0: r = c == 0; break; case 1: r = c != 0; break;
             case 2: r = c <  0; break; case 3: r = c <= 0; break;
             case 4: r = c >  0; break; case 5: r = c >= 0; break;
         }
-    } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL && (op == 0 || op == 1)) {
-        r = (op == 0) ? (a.b == b.b) : (a.b != b.b);
-    } else if (a.tag == TAG_NULL && b.tag == TAG_NULL && (op == 0 || op == 1)) {
-        r = (op == 0);
     }
     return mk_bool(r);
 }
@@ -1164,7 +1220,9 @@ fn emit_c_function(
 
     // Discover locals by scanning store/load instructions (func.locals may be empty)
     let arity: HashMap<String, usize> = program.functions.iter().map(|(k, f)| (k.clone(), f.params.len())).collect();
-    let local_index = discover_locals(func, &arity);
+    // CRUSH-zorro-54: loads not preceded by a store on every path.
+    let to_check = crate::assigned::loads_to_check(func);
+    let local_index = discover_locals(func, &arity, &to_check);
 
     out.push_str(&format!("static Value fn_{fn_name}(void) {{\n"));
 
@@ -1194,7 +1252,7 @@ fn emit_c_function(
                 "                {{ int __oi = _alloc_object(); if (__oi >= 0) {{ _objects[__oi].sealed_kind = \"{}\"; _objects[__oi].sealed_fields = _cosm_sealed_{idx}; }} _push(__oi >= 0 ? mk_object(__oi) : mk_null()); }} _pc={next_pc}; break;\n",
                 kind.escape_default()
             ));
-        } else if let Some(op) = emit_c_instr(out, instr, i, n, &local_index) {
+        } else if let Some(op) = emit_c_instr(out, instr, i, n, &local_index, to_check[i]) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
@@ -1363,11 +1421,20 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
 }
 
 /// Pre-scan instructions to discover local variable names from store/load ops.
-fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>) -> HashMap<String, LocalMeta> {
+/// `to_check[pc]`: the load at `pc` may see the local unassigned
+/// (`assigned::loads_to_check`); such a local stays a `Value`, whose
+/// `TAG_UNSET` records that (CRUSH-zorro-54).
+fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>, to_check: &[bool]) -> HashMap<String, LocalMeta> {
     let (body, params) = (&func.body, &func.params);
     let mut map = HashMap::new();
     let mut next = 0usize;
-    let inferred = infer_local_types(func, arity).unwrap_or_default();
+    let mut inferred = infer_local_types(func, arity).unwrap_or_default();
+    // Inference already sees such a read as Null, so this only guards it.
+    for (instr, _) in body.iter().zip(to_check).filter(|(_, c)| **c) {
+        if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
+            inferred.insert(name.to_string(), Ty::Any);
+        }
+    }
 
     let add_local = |name: &str, map: &mut HashMap<String, LocalMeta>, next: &mut usize| {
         if !map.contains_key(name) {
@@ -1416,6 +1483,7 @@ fn emit_c_instr(
     this_pc: usize,
     total_instrs: usize,
     locals: &HashMap<String, LocalMeta>,
+    check_load: bool,
 ) -> Option<String> {
     let mut unsupported = None;
     let args = &instr.args;
@@ -1457,6 +1525,12 @@ fn emit_c_instr(
                 match meta.ty {
                     LocalType::F64 => out.push_str(&format!("                _push(mk_float({})); _pc={next_pc}; break;\n", meta.c_name)),
                     LocalType::I64 => out.push_str(&format!("                _push(mk_int({})); _pc={next_pc}; break;\n", meta.c_name)),
+                    // CRUSH-zorro-54: fail on a local not stored to yet.
+                    LocalType::Value if check_load => out.push_str(&format!(
+                        "                {{ Value _v = {}; if (_v.tag == TAG_UNSET) _uninit_load(\"{}\"); _push(_v); }} _pc={next_pc}; break;\n",
+                        meta.c_name,
+                        c_message(name)
+                    )),
                     LocalType::Value => out.push_str(&format!("                _push({}); _pc={next_pc}; break;\n", meta.c_name)),
                 }
             } else {
@@ -1665,31 +1739,19 @@ fn emit_c_instr(
                 out.push_str(&format!("                _pop(); _pc = {next_pc}; break;\n"));
             }
         }
-        // ── Async / AI opcodes ──
-        // AOT backends can't spawn OS threads or yield at the instruction level;
-        // these are stubbed to the minimum safe behavior.
-        "spawn" => {
-            // Pop function name + argc args (left on stack), push null.
-            // AOT can't spawn green threads, but we must keep the stack balanced.
-            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
-            out.push_str(&format!("                _pop(); // fn name\n"));
-            for _ in 0..argc {
-                out.push_str(&format!("                _pop(); // arg\n"));
-            }
-            out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
-        }
+        // ── Green tasks without `spawn` (issue #161) ──
+        // With no spawned task `yield` is a cooperative-yield no-op and `await`
+        // has no handle (the scheduler and portable VM push null). A program
+        // that does `spawn` is refused up front by `refuse_green_task`, so
+        // these never run a task here.
         "yield" => {
-            // Cooperative yield is a no-op in sequential AOT execution.
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
         "await" => {
-            // Pop handle, push null
-            out.push_str(&format!("                _pop(); // handle\n"));
+            out.push_str(&format!("                _pop(); // awaited value\n"));
             out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
-
         // ── AI opcodes ──
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).
@@ -1966,6 +2028,18 @@ fn emit_c_instr(
 /// A C `double` literal that reads back as exactly `v`. Rust's `{v}` Display writes
 /// `1e20` as `100000000000000000000`, an integer literal too large for C (CRUSH-216);
 /// `{v:?}` is the shortest round-trip form and uses an exponent when that's shorter.
+/// `s` for the inside of a C string literal: printable ASCII as is, every
+/// other byte as an octal escape.
+fn c_message(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'"' | b'\\' => format!("\\{}", b as char),
+            0x20..=0x7e => (b as char).to_string(),
+            _ => format!("\\{b:03o}"),
+        })
+        .collect()
+}
+
 fn c_double_literal(v: f64) -> String {
     if v.is_nan() {
         "NAN".to_string()

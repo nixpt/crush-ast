@@ -315,6 +315,10 @@ impl Check<'_> {
                 }
                 Ok(item)
             }
+            E::Call { function, args, .. } if function == crate::numeric::CAST => {
+                self.expression(&mut args[0], Use::Borrow)?;
+                Ok(Kind::Copy)
+            }
             E::Call {
                 function,
                 args,
