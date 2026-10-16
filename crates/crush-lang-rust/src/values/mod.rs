@@ -227,7 +227,7 @@ impl Check<'_> {
             | E::FloatLiteral { .. }
             | E::BoolLiteral { .. }
             | E::NullLiteral { .. } => Ok(Kind::Copy),
-            E::StringLiteral { .. } => Ok(Kind::Str),
+            E::StringLiteral { meta, .. } => Ok(if meta.get("rust_debug_type") == Some(&Value::String("char".into())) { Kind::Copy } else { Kind::Str }),
             E::ArrayLiteral { elements, meta } => {
                 let mut kind = Kind::Unknown;
                 for e in elements {
@@ -429,7 +429,7 @@ impl Check<'_> {
                 for arg in args {
                     self.expression(arg, Use::Borrow)?;
                 }
-                Ok(if name == "conv.text" {
+                Ok(if name == "conv.text" || name == "rust.debug" {
                     Kind::String
                 } else {
                     Kind::Copy

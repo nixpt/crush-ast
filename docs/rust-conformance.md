@@ -60,7 +60,7 @@ routing is available.
 | Other mutable string operations and struct value semantics | Rejected; CRUSH-xps-7 and COSM K3 |
 | Literal integer casts in i8/i16/i32/i64/u8/u16/u32 | Exact; other casts rejected with location (CRUSH-xps-8 slice 1) |
 | Typed arithmetic and release overflow | Known silent divergence; CRUSH-xps-8 remains open |
-| Typed literal `{:?}` quoting | Exact; dynamic Debug refused pending the shared formatter (CRUSH-xps-9) |
+| Proven typed `{:?}` / `{name:?}` | Shared kernel on SDK VM/Rust AOT; C refuses dynamic calls pending its bridge (CRUSH-xps-9) |
 | Walker assignments / loops | Exact baseline; CRUSH-xps-10 |
 | Supported closures | Exact on VM; AOT rejects closure opcodes (CRUSH-251) |
 | Resolved `str.to_lower`, `str.contains`, `math.pow` capabilities | Exact on VM; both AOT backends reject them (CRUSH-xps-13) |
@@ -74,24 +74,50 @@ lowering arrives. The schema and Crush frontend alone do not enable Rust
 structs, traits, enums, or `impl` blocks. Engine support and receiver dispatch
 are tracked in CRUSH-zorro-42–44; Rust's producer belongs to COSM K3.
 
-## Rust formatting boundary (xps-9 slice 1)
+## Rust formatting boundary (xps-9)
 
-Typed literal Debug is evaluated from Rust syntax, retaining char versus string,
-unit, numeric width and f64 precision until formatting. Literal arrays are
-bounded to depth 16 / 256 traversal nodes; each result is limited to 1 MiB.
-Dynamic Debug values, including inline-name captures, are refused pending the
-shared typed runtime formatter. `audit_debug_string` is exact on all engines.
-The existing dynamic `float_display` oracle remains pinned to an explicit
-xps-9 refusal; its expected native output is retained for the next slice.
+The pure stdcap `rust.debug(value, descriptor) -> String` validates bounded JSON
+type trees, checks runtime type/value agreement, and formats with Rust's Debug
+implementations. It has no generic text fallback. For example,
+`{"kind":"char"}` distinguishes a Rust char from a one-character string;
+`{"kind":"seq","item":{"kind":"str"}}` describes a homogeneous sequence.
+Only `kind` and `item` keys are accepted (either order), with canonical unescaped
+ASCII kind names and JSON whitespace. Unknown/duplicate keys, unsupported
+widths and malformed/trailing data are errors.
 
-Display keeps `conv.text`'s existing two-argument ABI. Repeated/reordered inert
-literal or variable arguments remain supported. Potentially effectful arguments
-require one use each in source order and no inline captures; otherwise lowering
-refuses them before execution. Named argument materialization is deferred.
-Empty and literal-only `format!` values retain owned String identity.
+| Execution | Dynamic Debug |
+|---|---|
+| SDK / CVM1 | `HostCapsBuilder::stdlib(true)` explicitly registers the pure stdcap |
+| Rust AOT | Embeds the VM's std-only kernel verbatim; only value access differs |
+| C AOT | Refuses compilation before artifact generation until a shared bridge exists |
 
-No new runtime formatter capability or backend-specific formatter is added in
-this slice. The shared kernel, descriptors, registration and bridge remain open.
+Source descriptors are inferred after lexical binding resolution and before
+ownership checking. Supported proofs include immutable bindings, compatible
+direct-call arguments and acyclic return summaries, char versus str/String,
+unit, booleans, representable integers, proven f64 producers and homogeneous
+sequences. Character values retain their scalar Copy identity. Unknown aliases,
+f32, unproven numeric producers, written bindings, mutable collection flows,
+closures, iterators and unresolved control flow are refused before execution.
+Loops/matches and wide integer comparisons need richer flow/numeric proofs;
+`.powi()` is deferred to exact numeric method dispatch. Builtin/helper named
+source calls and effectful multiargument source calls are conservatively refused
+until the integrated xps-8 call contract is consumed by this profile.
+
+The kernel borrows sequence contents, checks cycles before descending and limits
+runtime traversal to depth 16 / 1024 visited values. Descriptors are at most
+4096 bytes; output is streamed into a 1 MiB bounded buffer. Direct stdcap callers
+receive explicit descriptor/type/quota errors; permission or registration
+failures remain distinct. Compile-time literal Debug folding retains its depth
+16 / 256 node and 1 MiB bounds. Debug text is tied to the recorded rustc profile,
+not promised as a stable cross-version serialization format.
+
+Display retains the existing `conv.text(value, "rust")` ABI. Repeated/reordered
+inert arguments remain supported; potentially effectful macro arguments need
+one use each in source order and no inline captures. Other uses are refused
+pending explicit materialization. Empty and literal-only `format!` results and
+runtime formatter results retain their owned String identity. The Debug-string
+silent exception is removed; the C-only dynamic policies explicitly pin its
+bridge boundary. Integer overflow remains the sole silent exception.
 
 ## Rust integer conversion boundary
 
@@ -167,8 +193,8 @@ does not establish that a program satisfies Rust's type or borrow rules.
 The corpus contains separate exact and loud cases for clones, assignment,
 arguments, owned returns, captures, nested vectors, arrays, and borrowed views.
 The original vector-clone aliasing and Debug-string exceptions are removed.
-Integer overflow remains a known silent divergence under xps-8; dynamic Debug
-is refused under xps-9.
+Integer overflow remains a known silent divergence under xps-8. Dynamic Debug
+uses xps-9's proven descriptor profile; C still needs its shared bridge.
 
 ## Completion specifications
 

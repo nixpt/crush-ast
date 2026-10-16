@@ -10,8 +10,8 @@
 //! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
 //! with identifier parameters (including typed parameters and `_` wildcards),
 //! `+= -= *= /= %=`,
-//! `println!`/`format!` with Display `{}`, `{0}`, `{name}` and typed literal
-//! Debug `{:?}` (dynamic Debug is refused),
+//! `println!`/`format!` with Display `{}`, `{0}`, `{name}` and proven typed
+//! Debug `{:?}`/`{name:?}` through the opt-in shared formatter,
 //! and the common `str`/`Vec`/numeric methods (`len`, `push`, `contains`,
 //! `to_uppercase`, `abs`, `sqrt`, …). The SDK's `rustc_corpus` integration suite
 //! compares this subset against real `rustc` output.
@@ -44,7 +44,10 @@
 //! Numeric suffixes and annotations are retained as source hints; this does not
 //! implement type inference or typed arithmetic. Runtime integer overflow
 //! still has a known silent divergence tracked by CRUSH-xps-8. Typed literal
-//! Debug is exact; dynamic Debug is refused pending the shared formatter.
+//! Debug and proven immutable dynamic values use exact typed formatting.
+//! Unknown producers, closures, loops and unsupported call/control contracts
+//! are refused. Dynamic Debug requires the host's explicit stdlib registration;
+//! Rust AOT embeds the same kernel and C refuses until its bridge is available.
 
 pub mod lower_expr;
 pub mod lower_stmt;
@@ -170,6 +173,7 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
         ..Default::default()
     };
     bindings::resolve(&mut program, source)?;
+    formatting::resolve(&mut program)?;
     values::check(&mut program)?;
     Ok(program)
 }

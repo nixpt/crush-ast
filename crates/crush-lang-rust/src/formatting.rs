@@ -1,8 +1,39 @@
-//! xps-9's compile-time Debug boundary. Dynamic values need the later typed
-//! formatter; runtime string representation is never used to guess Rust types.
+//! Rust Debug lowering: typed literal folding and pending runtime calls.
+//! Lexical descriptor proofs resolve dynamic values before ownership checking;
+//! runtime string representation is never used to guess Rust types.
 use crush_cast::Expression as E;
 use crush_walker_core_no_tree_sitter::LowerCtx;
 use syn::{Expr, spanned::Spanned};
+
+mod types;
+pub(crate) use types::resolve;
+
+pub(crate) fn pending(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<E> {
+    let p = expr.span().start();
+    let mut meta = ctx.meta_lc(p.line, p.column + 1);
+    meta.insert("rust_debug_pending".into(), serde_json::json!(true));
+    Ok(E::CapabilityCall {
+        name: "rust.debug".into(),
+        args: vec![
+            crate::lower_expr::lower_expr(expr, ctx)?,
+            E::NullLiteral { meta: meta.clone() },
+        ],
+        meta,
+    })
+}
+
+fn literal_tree(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) => true,
+        Expr::Paren(e) => literal_tree(&e.expr),
+        Expr::Group(e) => literal_tree(&e.expr),
+        Expr::Unary(e) => literal_tree(&e.expr),
+        Expr::Cast(e) => literal_tree(&e.expr),
+        Expr::Array(a) => a.elems.iter().all(literal_tree),
+        Expr::Tuple(t) if t.elems.is_empty() => true,
+        _ => false,
+    }
+}
 
 const MAX_DEPTH: usize = 16;
 const MAX_ITEMS: usize = 256;
@@ -36,6 +67,9 @@ pub(crate) fn inert(expr: &Expr) -> bool {
 }
 
 pub(crate) fn debug(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<E> {
+    if !literal_tree(expr) {
+        return pending(expr, ctx);
+    }
     fn render(
         expr: &Expr,
         ctx: &LowerCtx<'_>,

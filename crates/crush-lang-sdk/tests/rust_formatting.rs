@@ -19,7 +19,9 @@ fn literal_debug_retains_rust_types_and_owned_format_result() {
 #[test]
 fn unproven_debug_and_effectful_placeholder_reuse_fail_before_execution() {
     for source in [
-        include_str!("rustc_corpus/debug_dynamic.rs"),
+        include_str!("rustc_corpus/debug_mutated.rs"),
+        include_str!("rustc_corpus/debug_unproven_integer.rs"),
+        include_str!("rustc_corpus/debug_closure.rs"),
         include_str!("rustc_corpus/format_repeated_effect.rs"),
         include_str!("rustc_corpus/format_reordered_effect.rs"),
         "fn tick() -> i64 { 7 } fn main() { let n = 2; println!(\"{n} {}\", tick()); }",

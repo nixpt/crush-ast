@@ -31,17 +31,24 @@ pub enum Expected {
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
     (
-        "debug_dynamic",
+        "debug_mutated",
         Expected::Loud {
             ticket: "CRUSH-xps-9",
-            diagnostic: "Debug requires a proven typed literal",
+            diagnostic: "operand needs a proven Rust type",
         },
     ),
     (
-        "float_display",
+        "debug_unproven_integer",
         Expected::Loud {
             ticket: "CRUSH-xps-9",
-            diagnostic: "Debug requires a proven typed literal",
+            diagnostic: "operand needs a proven Rust type",
+        },
+    ),
+    (
+        "debug_closure",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "closure Debug needs typed capture/call analysis",
         },
     ),
     (
@@ -349,15 +356,59 @@ const AOT_ONLY: &[(&str, Expected)] = &[
     ),
 ];
 
+const C_ONLY: &[(&str, Expected)] = &[
+    (
+        "debug_dynamic",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "shared Rust formatter bridge is required",
+        },
+    ),
+    (
+        "float_display",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "shared Rust formatter bridge is required",
+        },
+    ),
+    (
+        "debug_runtime_scalars",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "shared Rust formatter bridge is required",
+        },
+    ),
+    (
+        "debug_runtime_sequences",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "shared Rust formatter bridge is required",
+        },
+    ),
+    (
+        "debug_runtime_float",
+        Expected::Loud {
+            ticket: "CRUSH-xps-9",
+            diagnostic: "shared Rust formatter bridge is required",
+        },
+    ),
+];
+
 pub fn expectation(name: &str, engine: Engine) -> Expected {
     let aot = if matches!(engine, Engine::Vm) {
         &[][..]
     } else {
         AOT_ONLY
     };
+    let c = if matches!(engine, Engine::C) {
+        C_ONLY
+    } else {
+        &[][..]
+    };
     ALL_ENGINES
         .iter()
         .chain(aot)
+        .chain(c)
         .find(|(n, _)| *n == name)
         .map_or(Expected::Exact, |(_, policy)| *policy)
 }
@@ -371,7 +422,7 @@ pub fn corpus() -> Vec<PathBuf> {
         .filter(|p| p.extension().is_some_and(|e| e == "rs"))
         .collect();
     files.sort();
-    for (name, _) in ALL_ENGINES.iter().chain(AOT_ONLY) {
+    for (name, _) in ALL_ENGINES.iter().chain(AOT_ONLY).chain(C_ONLY) {
         assert!(
             files.iter().any(|p| p.file_stem().unwrap() == *name),
             "orphan Rust parity exception: {name}"

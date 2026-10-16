@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Add the opt-in pure `rust.debug(value, descriptor)` stdcap with a single
+  bounded kernel shared by SDK VM and Rust AOT. Validate descriptors and values,
+  detect cyclic sequences, and enforce depth/item/output limits. C refuses
+  dynamic Debug compilation until a shared bridge is available (CRUSH-xps-9).
+- Rust Debug now supports proven immutable dynamic scalars and homogeneous
+  sequences, retaining char/String/unit distinctions and owned formatter results.
+  Unknown producers, mutable flows, unsupported control/call contracts and
+  iterators remain explicit source refusals.
 - Rust typed literal Debug now quotes/escapes strings and chars exactly, with
   bounded literal aggregate traversal. Dynamic Debug is refused pending the
   shared formatter (CRUSH-xps-9 slice 1).

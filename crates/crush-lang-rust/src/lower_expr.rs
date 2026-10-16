@@ -21,6 +21,7 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
     let meta = ctx.meta_lc(start.line, start.column + 1);
     match expr {
         Expr::Lit(e) => lower_lit(&e.lit, meta),
+        Expr::Tuple(e) if e.elems.is_empty() => Ok(Expression::NullLiteral { meta }),
         Expr::Path(e) => {
             let name = e
                 .path
@@ -360,10 +361,11 @@ fn lower_lit(
             value: b.value,
             meta,
         }),
-        syn::Lit::Char(c) => Ok(Expression::StringLiteral {
-            value: c.value().to_string(),
-            meta,
-        }),
+        syn::Lit::Char(c) => {
+            let mut meta = meta;
+            meta.insert("rust_debug_type".into(), serde_json::json!("char"));
+            Ok(Expression::StringLiteral { value: c.value().to_string(), meta })
+        },
         syn::Lit::Byte(b) => {
             let mut meta = meta;
             meta.insert("rust_numeric_suffix".into(), serde_json::json!("u8"));
@@ -463,9 +465,16 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
                 } else {
                     captures = true;
                     if fmt_spec == "?" {
-                        return Err(crate::formatting::error(&parts, "Debug requires a proven typed literal; dynamic values need the shared formatter"));
+                        syn::parse_str::<syn::Ident>(&target).map_err(|_| crate::formatting::error(&parts, "invalid inline format capture"))?;
+                        let p = parts.span().start();
+                        let mut meta = ctx.meta_lc(p.line, p.column + 1);
+                        let value = Expression::Var { name: target, meta: meta.clone() };
+                        let placeholder = Expression::NullLiteral { meta: meta.clone() };
+                        meta.insert("rust_debug_pending".into(), serde_json::json!(true));
+                        Expression::CapabilityCall { name: "rust.debug".into(), args: vec![value, placeholder], meta }
+                    } else {
+                        Expression::Var { name: target, meta: ctx.meta_at(0) }
                     }
-                    Expression::Var { name: target, meta: ctx.meta_at(0) }
                 };
                 if !lit.is_empty() {
                     pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: ctx.meta_at(0) });

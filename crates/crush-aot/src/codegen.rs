@@ -14,6 +14,10 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
     if uses_js_core(program) {
         emit_js_core(&mut out);
     }
+    if program.functions.values().flat_map(|f| &f.body).any(|i|
+        i.op == "cap_call" && i.args.get("name").and_then(|v| v.as_str()) == Some("rust.debug")) {
+        emit_rust_debug(&mut out);
+    }
     emit_ai_stub(&mut out);
     emit_dom_stub(&mut out);
 
@@ -110,6 +114,41 @@ fn js_format(args: &[RuntimeValue]) -> RuntimeValue {
     }
 }
 
+"#);
+}
+
+/// Embed the same std-only kernel used by the VM. Only value access differs.
+fn emit_rust_debug(out: &mut String) {
+    out.push_str("#[allow(dead_code)]\nmod rust_debug_core {\n");
+    out.push_str(crush_vm::rust_debug::CORE_SOURCE);
+    out.push_str(r#"}
+impl rust_debug_core::View for RuntimeValue {
+    fn atom(&self) -> rust_debug_core::Atom<'_> {
+        use rust_debug_core::Atom;
+        match self {
+            Self::Null => Atom::Unit, Self::Bool(v) => Atom::Bool(*v),
+            Self::Int(v) => Atom::Int(*v), Self::Float(v) => Atom::Float(*v),
+            Self::String(v) => Atom::Text(v), Self::Array(v) => Atom::Seq(Rc::as_ptr(v) as usize),
+            _ => Atom::Other,
+        }
+    }
+    fn with_items<R>(&self, visit: impl FnOnce(&[Self]) -> Result<R, rust_debug_core::Error>) -> Result<R, rust_debug_core::Error> {
+        match self {
+            Self::Array(v) => visit(&v.try_borrow().map_err(|_| rust_debug_core::Error::Borrow)?),
+            _ => Err(rust_debug_core::Error::Mismatch),
+        }
+    }
+}
+fn rust_debug(value: &RuntimeValue, descriptor: &RuntimeValue) -> RuntimeValue {
+    let result = match descriptor {
+        RuntimeValue::String(d) => rust_debug_core::descriptor(d).and_then(|ty| rust_debug_core::format(value, &ty)),
+        _ => Err(rust_debug_core::Error::Descriptor),
+    };
+    match result {
+        Ok(s) => RuntimeValue::String(s),
+        Err(e) => { eprintln!("crush(aot): {e}"); std::process::exit(1); }
+    }
+}
 "#);
 }
 
@@ -1112,6 +1151,14 @@ fn emit_body(
                 "js.format" => {
                     out.push_str(&format!("{ind}{{ let __at = stack.len().saturating_sub({argc}); let __args: Vec<RuntimeValue> = stack.split_off(__at); stack.push(js_format(&__args)); }}\n"));
                     out.push_str(&next_pc_str);
+                }
+                "rust.debug" => {
+                    if argc != 2 {
+                        unsupported = Some("cap_call 'rust.debug' needs 2 arguments (CRUSH-xps-9)".into());
+                    } else {
+                        out.push_str(&format!("{ind}{{ let __d = stack.pop().unwrap_or(RuntimeValue::Null); let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(rust_debug(&__v, &__d)); }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
                 }
                 "conv.text" => {
                     out.push_str(&format!("{ind}{{ let __st = stack.pop().unwrap_or(RuntimeValue::Null); let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_text(&__v, &__st)); }}\n"));
