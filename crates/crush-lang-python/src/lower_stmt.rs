@@ -107,6 +107,17 @@ pub(crate) fn python_lambda_meta(
     meta
 }
 
+/// Lower the body of a `def`: one `def` level deeper, so a `def` in it is a
+/// closure over the body's locals (CRUSH-251), not a program-wide function.
+/// Also how an inline-lowered `@python` block's body is lowered (CRUSH-272).
+pub fn lower_def_body(body: &[py_ast::Stmt], ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+    let depth = DEF_DEPTH.with(|d| d.get());
+    DEF_DEPTH.with(|d| d.set(depth + 1));
+    let lowered: anyhow::Result<Vec<Statement>> = body.iter().map(|s| lower_stmt(s, ctx)).collect();
+    DEF_DEPTH.with(|d| d.set(depth));
+    lowered
+}
+
 /// Lower a Python AST statement to a CAST statement.
 pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
     let offset = u32::from(stmt.start()) as usize;
@@ -146,11 +157,7 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
                 .map(|a| (a.def.arg.to_string(), CastType::Any))
                 .collect();
             let depth = DEF_DEPTH.with(|d| d.get());
-            DEF_DEPTH.with(|d| d.set(depth + 1));
-            let lowered: anyhow::Result<Vec<Statement>> =
-                body.iter().map(|s| lower_stmt(s, ctx)).collect();
-            DEF_DEPTH.with(|d| d.set(depth));
-            let lowered_body = lowered?;
+            let lowered_body = lower_def_body(body, ctx)?;
             if depth == 0 {
                 return Ok(Statement::FunctionDef {
                     name: name.to_string(),

@@ -11,6 +11,8 @@ pub mod sdk;
 pub mod analyzer_boa;
 #[cfg(feature = "js-boa")]
 pub mod lower;
+#[cfg(feature = "js-boa")]
+pub mod inline;
 
 use std::any::Any;
 
