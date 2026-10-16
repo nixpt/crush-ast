@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build crush-web for wasm32, generate the JS glue, stage a site with the
-# harness and examples/crush/blackjack_interactive.crush, and play it in headless Chromium.
+# harness and examples/crush/blackjack_interactive.crush, and play it in headless Chromium
+# (plus a lowered @python block).
 #
 #   WASM_BINDGEN=/path/to/wasm-bindgen scripts/browser-test.sh [site-dir]
 #
@@ -16,7 +17,8 @@ if [[ "${have}" != "${want}" ]]; then
   echo "wasm-bindgen CLI is ${have}, Cargo.lock has ${want}: install the matching CLI" >&2
   exit 1
 fi
-cargo build --release --target wasm32-unknown-unknown --manifest-path "${here}/Cargo.toml"
+# `polyglot-python`: the page also runs a lowered @python block (CRUSH-272).
+cargo build --release --target wasm32-unknown-unknown --features polyglot-python --manifest-path "${here}/Cargo.toml"
 target="$(cargo metadata --format-version 1 --no-deps --manifest-path "${here}/Cargo.toml" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
 site="${1:-${target}/crush-web-site}"
 rm -rf "${site}" && mkdir -p "${site}/fixtures"

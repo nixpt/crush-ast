@@ -53,6 +53,10 @@ stdlib = ["crush-lang-sdk/stdlib"]
 # out. Without it a granted block still runs, but sees no Crush variables and
 # its result is its printed text. Adds ~1.2 MB to the raw release .wasm.
 polyglot-javascript = ["crush-lang-sdk/polyglot-javascript"]
+# @python{} marshaling (free-variable analysis + guest rewrite, via
+# rustpython-parser — pure Rust, so it builds for wasm32) and inline lowering
+# of @python blocks (`polyglot: "lower"`, CRUSH-272).
+polyglot-python = ["crush-lang-sdk/polyglot-python"]
 
 [package.metadata.wasm-pack.profile.release]
 opt-level = "z"

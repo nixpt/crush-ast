@@ -103,12 +103,37 @@ execute_with(source, { grants: ["polyglot.javascript"] });
   (free-variable analysis + guest rewrite via swc; ~1.2 MB more raw `.wasm`).
   Without it a granted block still runs, but sees no Crush variables and its
   result is its printed text.
-- Python works through the same hook (e.g. Pyodide in a Worker); its typed
-  marshaling would need `polyglot-python`, which doesn't build for wasm32 yet
-  (tree-sitter's C sources). Until then a variable *assigned* inside `@python`
-  and used after it (`@python { result = base ** 3 }` then `print(result)`) is a
-  compile error here (`Undefined variable: result`), while native — which has
-  the marshaling — prints `125`.
+- Python works through the same hook (e.g. Pyodide in a Worker). Its typed
+  marshaling needs the `polyglot-python` cargo feature (rustpython's parser,
+  pure Rust). Without it a variable *assigned* inside `@python` and used after
+  it with no `->` declaring it (`@python { result = base ** 3 }` then
+  `print(result)`) is a compile error here (`Undefined variable: result`),
+  while native — which has the marshaling — prints `125`.
+
+### Lowered polyglot blocks (no interpreter)
+
+```js
+execute_with(source, { polyglot: "lower" });
+```
+
+With `polyglot: "lower"` (and the `polyglot-python` / `polyglot-javascript`
+feature for the block's language), an `@python` / `@javascript` block isn't
+run by an executor at all: its body is lowered through the language's walker
+into the program, and runs as Crush. It spawns nothing, so it needs no grant
+and no `set_lang_executor`.
+
+- **It is not CPython or Node.** The block runs as the walker lowers it. That
+  is exact for what the walker supports, and a compile error for everything
+  else (`line 3: this @python block can't be lowered inline: class definitions
+  not yet supported …`) — never a fallback to the executor, never a silently
+  different result. A block that needs the real language (classes, most of the
+  standard library, packages) has to run through the executor instead.
+- **Inputs and outputs** work as with an interpreter: the Crush variables a
+  block reads come in, the `->` outputs go back, each copied as JSON would
+  copy it (a block can't change a Crush array it only reads; a function can't
+  be an output).
+- **The default is `"exec"`.** Native `crush-run` always runs blocks in an
+  interpreter.
 
 ## What this is not (yet)
 
