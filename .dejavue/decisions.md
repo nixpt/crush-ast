@@ -1181,3 +1181,18 @@ No general compiler warning channel existed (only ai_runtime::Warning). The poly
 Outcome:
 crush_vm::Program.warnings: Vec<String>; prepare_polyglot_blocks returns Result<Vec<String>>; crush-run and crushc print each with a 'warning:' prefix to stderr.
 
+
+## 2026-10-15T23:03:56-05:00 — [TACTICAL] [ARCHITECTURAL] AOT backends fail a read of an unassigned local, checking only loads not preceded by a store on every path (CRUSH-zorro-54)
+
+Reason:
+The VMs fail 'load from uninitialised slot'; AOT read null and printed wrong output. A forward must-assigned dataflow pass (crush-aot/src/assigned.rs) over the emitted control flow leaves dominated loads unchecked. Rust: absence from the locals HashMap is the sentinel. C: frames start TAG_UNSET; typed (CRUSH-257) locals with a possibly-unassigned load stay boxed.
+
+Artifacts: crates/crush-aot/src/assigned.rs
+
+Rejected alternatives:
+- **walk-time refusal on swc (would turn ops_ternary_nested loud though its function never runs)**
+- **check every load (C cost on hot loops)**
+
+Outcome:
+AOT exact-or-loud on unassigned reads; FastVM/JIT still read null -> CRUSH-zorro-55
+
