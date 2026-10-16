@@ -13,7 +13,13 @@ path = "src/bin/walker.rs"
 
 [dependencies]
 crush-cast.workspace = true
-crush-walker-core.workspace = true
+# Direct path dep, not `.workspace = true`: a workspace-inherited dep
+# cannot turn off default features, and walker-core's default
+# `tree-sitter` feature pulls C sources that do not build for wasm32.
+# The Python walker uses only the `Frontend` trait / `LowerCtx` /
+# `FeatureReport` surface, which is always available (same as
+# crush-lang-js). CI checks `--target wasm32-unknown-unknown`.
+crush-walker-core = { path = "../crush-walker-core", version = "0.6.0", default-features = false }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

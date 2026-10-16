@@ -367,7 +367,15 @@ jobs:
           path: buckets
       - run: mv buckets ..
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      # The Python and JS walkers must keep building for the browser
+      # (CRUSH-272): crush-web lowers @python / @javascript blocks through them.
+      # A check, not a build — no wasm linking. Nothing else here checks them
+      # without walker-core's default `tree-sitter` feature, which pulls C.
+      - name: Walkers build for wasm32
+        run: cargo check --target wasm32-unknown-unknown -p crush-lang-python -p crush-lang-js 2>&1
       - run: |
           cargo test \
             -p crush-lang-python \
@@ -591,6 +599,7 @@ jobs:
         run: |
           cargo test
           cargo test --features polyglot-javascript
+          cargo test --features polyglot-python
       # The CLI must match the wasm-bindgen version in crush-web's Cargo.lock.
       - name: Install the matching wasm-bindgen CLI
         run: |
