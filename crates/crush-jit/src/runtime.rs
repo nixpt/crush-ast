@@ -105,7 +105,7 @@ fn set_error_message(msg: String) {
     ERROR_MESSAGE.with(|m| *m.borrow_mut() = Some(msg));
 }
 
-/// The message of the last [`ERR_COSM`] error on this thread.
+/// The message of the last [`ERR_COSM`] or [`ERR_UNINIT`] error on this thread.
 pub(crate) fn take_error_message() -> Option<String> {
     ERROR_MESSAGE.with(|m| m.borrow_mut().take())
 }
@@ -120,6 +120,13 @@ pub(crate) const OP_CMP_ORDERED: i64 = 39;
 /// Pop a value, push its canonical truthiness as a bool (CRUSH-134).
 pub(crate) const OP_TRUTHY: i64 = 40;
 pub(crate) const OP_MAP_KEYS: i64 = 41;
+/// A checked local load found its slot unassigned (arg = slot index): set
+/// [`ERR_UNINIT`] with the VMs' message (CRUSH-zorro-55).
+pub(crate) const OP_UNINIT_LOAD: i64 = 42;
+
+/// `ctx.error` for a load of an unassigned local; the message is in
+/// [`take_error_message`] (CRUSH-zorro-55).
+pub(crate) const ERR_UNINIT: i32 = 6;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -1301,6 +1308,14 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             } else {
                 ctx.push(val);
             }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_UNINIT_LOAD (42): a checked load read an unassigned slot
+        // ════════════════════════════════════════════════════════════════════
+        OP_UNINIT_LOAD => {
+            set_error_message(format!("load from uninitialised slot {arg}"));
+            ctx.error = ERR_UNINIT;
         }
 
         // ════════════════════════════════════════════════════════════════════
