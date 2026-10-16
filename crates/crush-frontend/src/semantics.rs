@@ -64,16 +64,9 @@ impl SemanticAnalyzer {
             crate::cosm_lower::lower(&mut lowered)?;
             return self.check(&lowered);
         }
-        // Register built-in functions
-        self.functions
-            .insert("len".to_string(), (vec![Type::Any], Type::Int));
-        self.functions
-            .insert("print".to_string(), (vec![Type::Any], Type::Null));
-        // `parallel_map(items, f)` (#175): a VM capability.
-        self.functions.insert(
-            "parallel_map".to_string(),
-            (vec![Type::Any, Type::Any], Type::Array(Box::new(Type::Any))),
-        );
+        // Built-in function names are not registered here any more: the checker
+        // consults `walker_intrinsics::BUILTINS`, the same table `compile_call`
+        // lowers from, so the two lists cannot drift apart (CRUSH-111).
 
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;
@@ -566,6 +559,42 @@ impl SemanticAnalyzer {
                         self.check_expr(arg)?;
                     }
                     Ok(Type::Any)
+                } else if let Some(builtin) = crate::walker_intrinsics::builtin(function) {
+                    // A name `Compiler::compile_call` lowers inline (CRUSH-111).
+                    // Declared functions and variables were tried first, so they
+                    // still shadow it; the argument types themselves are the
+                    // compiler's business, not the checker's.
+                    builtin.check_arity(args.len())?;
+                    for arg in args {
+                        self.check_expr(arg)?;
+                    }
+                    use crate::walker_intrinsics::BuiltinRet;
+                    Ok(match builtin.ret {
+                        BuiltinRet::Null => Type::Null,
+                        BuiltinRet::Bool => Type::Bool,
+                        BuiltinRet::Int => Type::Int,
+                        BuiltinRet::Str => Type::String,
+                        BuiltinRet::Any => Type::Any,
+                        BuiltinRet::ArrayAny => Type::Array(Box::new(Type::Any)),
+                        BuiltinRet::ArrayInt => Type::Array(Box::new(Type::Int)),
+                        BuiltinRet::ArrayStr => Type::Array(Box::new(Type::String)),
+                    })
+                } else if let Some((receiver, _method)) = function.split_once('.') {
+                    // `obj.method(args)` — the compiler lowers this shape as
+                    // `load obj` + `cap_call method` (CRUSH-111). For a receiver
+                    // the walker generated itself, the name cannot be a source
+                    // typo, so accept it and let the runtime resolve the method.
+                    if crate::walker_intrinsics::is_generated_receiver(receiver) {
+                        if self.resolve_var(receiver).is_none() {
+                            bail!("Undefined variable: {}", receiver);
+                        }
+                        for arg in args {
+                            self.check_expr(arg)?;
+                        }
+                        Ok(Type::Any)
+                    } else {
+                        bail!("Undefined function: {}", function)
+                    }
                 } else {
                     bail!("Undefined function: {}", function)
                 }

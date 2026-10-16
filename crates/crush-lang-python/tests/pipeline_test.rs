@@ -1,5 +1,41 @@
 use crush_lang_python::python_to_cast;
 
+/// CRUSH-111: `range()` lowers to `make_range`, a compiler-owned builtin. The
+/// checked front door (`crush_frontend::compile_cast`) used to refuse it with
+/// `Undefined function: make_range` while the walker door
+/// (`Compiler::new().compile`) ran it. Both doors must accept the program and
+/// produce the same output.
+fn run_both_doors(source: &str) -> (String, String) {
+    let cast = python_to_cast(source).expect("python to cast");
+    let run = |casm| {
+        let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
+        crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), None)
+            .expect("vm run")
+            .output
+            .trim()
+            .to_string()
+    };
+    let checked = crush_frontend::compile_cast(&cast).expect("compile_cast (checked door)");
+    let walker = crush_frontend::compiler::Compiler::new()
+        .compile(cast)
+        .expect("Compiler::compile (walker door)");
+    (run(checked), run(walker))
+}
+
+#[test]
+fn python_range_for_loop_agrees_across_both_doors() {
+    let (checked, walker) = run_both_doors("for i in range(3):\n    print(i)\n");
+    assert_eq!(checked, walker);
+    assert_eq!(checked.split_whitespace().collect::<Vec<_>>(), ["0", "1", "2"]);
+}
+
+#[test]
+fn python_range_comprehension_agrees_across_both_doors() {
+    let (checked, walker) = run_both_doors("xs = [i for i in range(3)]\nprint(xs[1])\n");
+    assert_eq!(checked, walker);
+    assert_eq!(checked, "1");
+}
+
 #[test]
 fn python_simple_arithmetic() {
     let source = "x = 42\nprint(x + 1)\n";

@@ -1882,8 +1882,18 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("str_join", serde_json::json!({}), meta));
-                } else if function == "make_range" {
-                    // make_range handles 0..2 args at capability runtime
+                } else if function == "make_range" || function == "range" {
+                    // 1–3 args: the capability runtime takes `stop`, `start, stop`
+                    // or `start, stop, step` and rejects an empty call
+                    // (crush-vm::make_range). Checked here too so the compile
+                    // time contract matches the runtime and the checker's
+                    // table (CRUSH-111).
+                    if args.is_empty() || args.len() > 3 {
+                        bail!(
+                            "make_range() expects 1 to 3 arguments, found {}",
+                            args.len()
+                        );
+                    }
                     let argc = args.len();
                     for arg in args { self.compile_expr(arg, instrs)?; }
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
@@ -1909,10 +1919,7 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("array_push", serde_json::json!({}), meta));
-                } else if function == "range" || function == "make_range" {
-                    let argc = args.len();
-                    for arg in args { self.compile_expr(arg, instrs)?; }
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
+
                 } else if function == "array.pop" {
                     if args.len() != 1 {
                         bail!("array.pop() expects exactly 1 argument");
