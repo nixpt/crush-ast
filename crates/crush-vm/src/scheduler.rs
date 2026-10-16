@@ -349,7 +349,11 @@ pub(crate) fn exec_lang_outputs(
 /// (the default), behavior is byte-for-byte unchanged from before this
 /// ticket: a plain `Command::new(binary)` with the host's full authority,
 /// `deps` silently unused.
-pub(crate) fn run_exec_lang(
+///
+/// Returns the block's raw stdout (sentinel line included). Since CRUSH-271
+/// this is the body of [`crate::lang_exec::SubprocessExecutor`], the default
+/// executor both engines fall back to when the embedder sets none.
+pub(crate) fn run_exec_lang_stdout(
     lang: &str,
     code_str: &str,
     deps: &[String],
@@ -357,7 +361,7 @@ pub(crate) fn run_exec_lang(
     crush_line: Option<u32>,
     gate: &str,
     max_wall_time_ms: u64,
-) -> Result<ExecLangOutcome, VmError> {
+) -> Result<String, VmError> {
     let (binary, exec_flag) = resolve_lang_binary(lang).ok_or_else(|| {
         VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
     })?;
@@ -406,7 +410,7 @@ pub(crate) fn run_exec_lang(
         };
 
         if output.status.success() {
-            Ok(parse_exec_lang_stdout(&String::from_utf8_lossy(&output.stdout)))
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else {
             Err(lang_runtime_error(lang, &output.stderr, crush_line))
         }
@@ -1419,7 +1423,7 @@ fn execute_one(
             // Validate the language is registered BEFORE the capability gate below — an unknown
             // language should fail with "no executor registered", not a confusing "missing
             // capability for a language that doesn't exist" (preserves pre-CRUSH-20 error
-            // ordering; `run_exec_lang` re-checks this internally too, cheaply).
+            // ordering; `run_exec_lang_stdout` re-checks this internally too, cheaply).
             resolve_lang_binary(lang).ok_or_else(|| {
                 VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
             })?;
@@ -1442,15 +1446,23 @@ fn execute_one(
                 .zip(var_values.iter())
                 .map(|(name, val)| Ok((name.clone(), value_to_polyglot_env(lang, val)?)))
                 .collect::<Result<Vec<_>, VmError>>()?;
-            let outcome = run_exec_lang(
+            // CRUSH-271: the embedder's executor runs the block when it set
+            // one (the grant check above has already passed); otherwise the
+            // built-in `SubprocessExecutor`. Every green task shares this
+            // `host_caps`, so spawned tasks use the same executor.
+            let outputs = crate::lang_exec::declared_outputs(&spec);
+            let request = crate::lang_exec::PolyglotRequest {
                 lang,
-                code_str,
-                &deps,
-                &env_vars,
+                code: code_str,
+                vars: &env_vars,
+                outputs: &outputs,
+                deps: &deps,
+                gate: &gate,
+                deadline_ms: quotas.max_wall_time_ms,
                 crush_line,
-                &gate,
-                quotas.max_wall_time_ms,
-            )?;
+            };
+            let executor = host_caps.and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+            let outcome = crate::lang_exec::run_block(executor, &request)?;
             *out_len += outcome.visible.len();
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));

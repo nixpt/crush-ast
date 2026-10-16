@@ -50,6 +50,8 @@ pub struct HostCapsBuilder {
     /// CRUSH-158: host backends behind `ai_native.query` / `.agent_delegation`.
     query_provider: Option<Arc<dyn crate::ai_native::providers::QueryProvider>>,
     delegation_backend: Option<Arc<dyn crate::ai_native::providers::DelegationBackend>>,
+    /// CRUSH-271: the embedder's runner for granted `@lang` blocks.
+    polyglot_executor: Option<Arc<dyn crush_vm::PolyglotExecutor>>,
 }
 
 impl HostCapsBuilder {
@@ -71,6 +73,15 @@ impl HostCapsBuilder {
     /// refuse to spawn — polyglot is NOT ambient.
     pub fn polyglot(mut self, langs: &[&'static str]) -> Self {
         self.polyglot = langs.to_vec();
+        self
+    }
+
+    /// Run granted `@lang` blocks through `executor` instead of the built-in
+    /// local-interpreter runner (CRUSH-271). It does not grant anything: the
+    /// languages still need [`polyglot`](Self::polyglot), and a block without
+    /// its grant is refused before the executor is called.
+    pub fn polyglot_executor(mut self, executor: Arc<dyn crush_vm::PolyglotExecutor>) -> Self {
+        self.polyglot_executor = Some(executor);
         self
     }
 
@@ -248,6 +259,9 @@ impl HostCapsBuilder {
         caps.register(Box::new(SysArgsCap { args: self.script_args.clone() }));
         caps.register(Box::new(SysExitCap));
         caps.grant_polyglot(&self.polyglot);
+        if let Some(executor) = self.polyglot_executor.clone() {
+            caps.set_polyglot_executor(executor);
+        }
         if self.fs {
             // One sandbox, so `fs.cd` moves the working directory every
             // file cap in this registry resolves against.

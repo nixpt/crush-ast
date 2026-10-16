@@ -130,6 +130,32 @@ loud compile error rather than a silent no-op. An unregistered language name
 (no executor at all, e.g. `@rust`) fails loudly too: `"no executor registered
 for language 'X'"`.
 
+### Running polyglot blocks somewhere else
+
+By default a granted block runs in the local interpreter (`python3 -c`,
+`node -e`, `bash -c`). An embedder such as a browser or an OS can run it its
+own way by supplying a `PolyglotExecutor` (CRUSH-271); both VM engines use it.
+The VM still does the grant check first, so a block without its
+`polyglot.<lang>` grant never reaches the executor.
+
+```rust,ignore
+use crush_lang_sdk::{HostCapsBuilder, PolyglotRequest, Runtime, polyglot_executor_fn};
+
+let caps = HostCapsBuilder::new().polyglot(&["python"]).build();
+let runtime = Runtime::new()
+    .with_host_caps(caps)
+    .with_polyglot_executor(polyglot_executor_fn(|req: &PolyglotRequest<'_>| {
+        // Run `req.code` with `req.vars` in its environment, inside
+        // `req.deadline_ms`; return its stdout (the result line included).
+        my_sandbox::run(req.lang, req.code, req.vars).map_err(|e| e.to_string().into())
+    }));
+```
+
+The request also carries the block's declared outputs and pinned deps
+(`@python[pypi:six]`). Return `PolyglotError::Failed`, `Guest` (the guest code
+failed; its stderr) or `Timeout`, and the VM raises the matching error. With
+no executor set, the built-in `SubprocessExecutor` runs the block.
+
 ## Binaries
 
 - `crush-run` — compile and execute a Crush program.
