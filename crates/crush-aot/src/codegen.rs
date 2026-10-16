@@ -641,7 +641,7 @@ fn emit_function(
     let is_main = name == "main";
     let n = func.body.len();
     // CRUSH-zorro-54: loads not preceded by a store on every path.
-    let to_check = crate::assigned::loads_to_check(func);
+    let to_check = casm::assigned::loads_to_check(func);
 
     out.push_str(&format!("#[inline(never)]\nfn {fn_name}("));
     if is_main {
@@ -781,7 +781,7 @@ fn emit_body(
                     "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{msg}\") }});\n"
                 ));
             } else {
-                // Every path here stored to it first (`assigned::loads_to_check`).
+                // Every path here stored to it first (`casm::assigned::loads_to_check`).
                 out.push_str(&format!(
                     "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
                 ));

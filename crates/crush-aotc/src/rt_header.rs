@@ -18,6 +18,8 @@ typedef int64_t CrushValue;
 #define CV_NULL  ((CrushValue)0x7FFC000000000000LL)
 #define CV_TRUE  ((CrushValue)0x7FFC000000000001LL)
 #define CV_FALSE ((CrushValue)0x7FFC000000000002LL)
+/* A local no store has assigned yet (CRUSH-zorro-55); never a value. */
+#define CV_UNSET ((CrushValue)0x7FFC000000000003LL)
 #define TAG_INT  ((int64_t)0x7FFD000000000000LL)
 #define TAG_REF  ((int64_t)0x7FFE000000000000LL)
 #define MASK_TAG ((uint64_t)0xFFFF000000000000ULL)
@@ -82,6 +84,10 @@ static inline void crush_arith_error(const char *msg) {
 }
 static inline void crush_div_zero(void) {
     crush_arith_error("division by zero");
+}
+static inline void crush_uninit_load(const char *name) {
+    fprintf(stderr, "crush(aotc): load from uninitialised slot `%s`\n", name);
+    exit(1);
 }
 
 /* ── Comparison helpers ─────────────────────────────────────────────────── */

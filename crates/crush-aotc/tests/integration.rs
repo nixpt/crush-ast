@@ -32,6 +32,46 @@ fn compile_and_run(source: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// `source` with the first `store` to `local` in `func` sent to a dead local,
+/// compiled and run: `(exit ok, stdout, stderr)`. (The frontend refuses a
+/// read of an unassigned local; a walker can emit one — CRUSH-zorro-55.)
+fn run_unassigned(source: &str, func: &str, local: &str) -> (bool, String, String) {
+    let mut program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let f = program.functions.get_mut(func).expect("function");
+    let store = f
+        .body
+        .iter_mut()
+        .find(|i| i.op == "store" && i.args.get("name").and_then(|n| n.as_str()) == Some(local))
+        .expect("a store to the local");
+    store.args["name"] = serde_json::Value::from("__dead");
+    let c_source = AotcCompiler::new(AotcOpts::default()).compile(&program).expect("aotc");
+    let dir = tempfile::tempdir().unwrap();
+    let (c_path, exe_path) = (dir.path().join("t.c"), dir.path().join("t"));
+    std::fs::write(&c_path, &c_source).unwrap();
+    let status = Command::new("cc")
+        .args([&c_path.to_string_lossy(), "-o", &exe_path.to_string_lossy(), "-lm"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cc failed:\n{c_source}");
+    let o = Command::new(&exe_path).output().unwrap();
+    (o.status.success(), String::from_utf8_lossy(&o.stdout).into(), String::from_utf8_lossy(&o.stderr).into())
+}
+
+/// CRUSH-zorro-55: a read of an unassigned local fails, as on the VMs,
+/// instead of reading the `= 0` it used to be declared with.
+#[test]
+fn unassigned_local_read_fails() {
+    let (ok, _, err) = run_unassigned("fn n(v) { return v; }\nfn main() { let x = n(5)\n print(x) }\n", "main", "x");
+    assert!(!ok && err.contains("load from uninitialised slot `x`"), "{err}");
+
+    let src = |arg: &str| format!("fn f(c) {{ let x = 0\n if c {{ x = 7 }}\n return x }}\nfn main() {{ print(f({arg})) }}\n");
+    let (ok, _, err) = run_unassigned(&src("false"), "f", "x");
+    assert!(!ok && err.contains("load from uninitialised slot `x`"), "{err}");
+    // ... and the path that assigns it still reads the value.
+    let (ok, out, err) = run_unassigned(&src("true"), "f", "x");
+    assert!(ok && out.trim() == "7", "{out} {err}");
+}
+
 #[test]
 fn string_equality_true() {
     let source = r#"

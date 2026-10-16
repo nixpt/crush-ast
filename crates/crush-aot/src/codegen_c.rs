@@ -1224,7 +1224,7 @@ fn emit_c_function(
     // Discover locals by scanning store/load instructions (func.locals may be empty)
     let arity: HashMap<String, usize> = program.functions.iter().map(|(k, f)| (k.clone(), f.params.len())).collect();
     // CRUSH-zorro-54: loads not preceded by a store on every path.
-    let to_check = crate::assigned::loads_to_check(func);
+    let to_check = casm::assigned::loads_to_check(func);
     let local_index = discover_locals(func, &arity, &to_check);
 
     out.push_str(&format!("static Value fn_{fn_name}(void) {{\n"));
@@ -1427,7 +1427,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
 
 /// Pre-scan instructions to discover local variable names from store/load ops.
 /// `to_check[pc]`: the load at `pc` may see the local unassigned
-/// (`assigned::loads_to_check`); such a local stays a `Value`, whose
+/// (`casm::assigned::loads_to_check`); such a local stays a `Value`, whose
 /// `TAG_UNSET` records that (CRUSH-zorro-54).
 fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>, to_check: &[bool]) -> HashMap<String, LocalMeta> {
     let (body, params) = (&func.body, &func.params);

@@ -14,6 +14,25 @@ use std::collections::HashMap;
 /// consistent with the JIT backend.
 pub const ROOT_FRAME_PC: usize = usize::MAX;
 
+/// What a local slot holds until its first store (CRUSH-zorro-55).
+///
+/// Locals are one flat `Vec<RuntimeValue>`: a frame's slots start at its
+/// `locals_base`, a store past the end pads the gap, and a return truncates
+/// the frame away. A slot past the end is unassigned by construction; a
+/// padded one holds this sentinel rather than `Null`, so `LoadLocalChecked`
+/// can tell it from a stored `null`. No real arena index can be `usize::MAX`
+/// (an arena that large can't be allocated), so the value can't collide; and
+/// it never leaves its slot, because only a checked load reads a slot that
+/// may hold it, and that load fails instead. (The collector's
+/// `Arena::trace` ignores the out-of-range root.)
+///
+/// A sentinel in the value vector, rather than a parallel "assigned" bitset
+/// or a new `RuntimeValue` variant: it costs nothing on the store path (the
+/// padding write already happens), adds no state to thread through
+/// `execute_one`, frames or the collector, and keeps a non-value out of
+/// `RuntimeValue`'s matches everywhere else.
+pub const UNASSIGNED_LOCAL: RuntimeValue = RuntimeValue::Ref(usize::MAX);
+
 /// Execution result from FastVM
 #[derive(Debug, Clone, PartialEq)]
 pub enum FastYield {
