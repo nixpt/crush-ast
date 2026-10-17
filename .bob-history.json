@@ -1,0 +1,12 @@
+{
+  "workspace": "/home/nixp/WORKSPACE/projects/crush-ast/Cargo.toml",
+  "crates": {
+    "crush-aot": {
+      "avg_elapsed_ms": 729510.1792000001,
+      "avg_actual_bytes": 4653161024.889601,
+      "builds": 5,
+      "kind": "bin"
+    }
+  },
+  "build_count": 5
+}
