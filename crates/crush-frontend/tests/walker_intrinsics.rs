@@ -252,3 +252,76 @@ fn struct_field_iteration_keeps_the_existing_map_contract() {
     )
     .unwrap();
 }
+
+/// CRUSH-111: the checked door (`compile_cast`) and the walker door
+/// (`Compiler::new().compile`) share one builtin table, so a construct a
+/// walker emits is accepted or refused by both, and lowers identically.
+#[test]
+fn builtin_calls_agree_across_both_doors() {
+    let range = |args| call("make_range", args);
+    let cases: Vec<(&str, Vec<Statement>, bool)> = vec![
+        (
+            "for over make_range",
+            vec![for_loop(
+                range(vec![int(3)]),
+                vec![stmt(call("print", vec![var("item")]))],
+            )],
+            true,
+        ),
+        (
+            "for over range",
+            vec![for_loop(
+                call("range", vec![int(1), int(3)]),
+                vec![stmt(call("print", vec![var("item")]))],
+            )],
+            true,
+        ),
+        (
+            "comprehension-shaped arr_get on a range",
+            vec![
+                decl("xs", range(vec![int(3)])),
+                stmt(call("print", vec![call("arr_get", vec![var("xs"), int(1)])])),
+            ],
+            true,
+        ),
+        (
+            "str and math builtins",
+            vec![stmt(call(
+                "print",
+                vec![call("math.abs", vec![int(-2)])],
+            ))],
+            true,
+        ),
+        ("make_range arity", vec![stmt(range(vec![]))], false),
+        (
+            "arr_get arity",
+            vec![stmt(call("arr_get", vec![int(1)]))],
+            false,
+        ),
+        (
+            "unknown name",
+            vec![stmt(call("make_rang", vec![int(3)]))],
+            false,
+        ),
+    ];
+    for (label, body, ok) in cases {
+        let checked = compile_cast_owned(program(body.clone()));
+        let walker = Compiler::new().compile(program(body));
+        assert_eq!(checked.is_ok(), ok, "{label}: compile_cast: {checked:?}");
+        assert_eq!(
+            walker.is_ok() || !ok,
+            true,
+            "{label}: Compiler::compile refused what compile_cast accepted: {walker:?}"
+        );
+        if let (Ok(c), Ok(w)) = (checked, walker) {
+            let ops = |p: &casm::Program| {
+                p.functions["main"]
+                    .body
+                    .iter()
+                    .map(|i| i.op.clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ops(&c), ops(&w), "{label}: doors lowered differently");
+        }
+    }
+}

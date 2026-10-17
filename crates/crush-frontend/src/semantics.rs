@@ -566,6 +566,25 @@ impl SemanticAnalyzer {
                         self.check_expr(arg)?;
                     }
                     Ok(Type::Any)
+                } else if let Some(builtin) = crate::walker_intrinsics::builtin(function) {
+                    // A name `Compiler::compile_call` lowers inline (CRUSH-111).
+                    // User functions and variables were tried first, so they
+                    // still shadow it; argument types are not constrained.
+                    builtin.check_arity(args.len())?;
+                    for arg in args {
+                        self.check_expr(arg)?;
+                    }
+                    use crate::walker_intrinsics::BuiltinRet;
+                    Ok(match builtin.ret {
+                        BuiltinRet::Null => Type::Null,
+                        BuiltinRet::Bool => Type::Bool,
+                        BuiltinRet::Int => Type::Int,
+                        BuiltinRet::Str => Type::String,
+                        BuiltinRet::Any => Type::Any,
+                        BuiltinRet::ArrayAny => Type::Array(Box::new(Type::Any)),
+                        BuiltinRet::ArrayInt => Type::Array(Box::new(Type::Int)),
+                        BuiltinRet::ArrayStr => Type::Array(Box::new(Type::String)),
+                    })
                 } else {
                     bail!("Undefined function: {}", function)
                 }
