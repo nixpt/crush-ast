@@ -22,7 +22,7 @@
 </p>
 
 ---
-
+[![CI](https://github.com/nixpt/crush-ast/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nixpt/crush-ast/actions/workflows/ci.yml)
 **Crush** is a capability-based, polyglot programming language and virtual runtime. This repository hosts the **standalone Crush implementation**: providing the CAST intermediate representation, tree-sitter grammar, polyglot walkers, compiler frontend, VM runtime, package manager, and installer.
 
 👉 **[crushlang.org](https://crushlang.org)** for the landing page and a live example, or **[docs.crushlang.org](https://docs.crushlang.org)** for the full language guide (syntax, capability system, polyglot programming, stdlib, CAST/CASM, worked examples).
