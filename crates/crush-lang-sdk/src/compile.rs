@@ -616,6 +616,21 @@ fn prepare_stmts(
                     "`->` output lists are not supported for @{lang}: it has no value marshaling"
                 );
             }
+            // #255: @bash blocks lost their only input path when #245 removed
+            // the env-only fallback (bash has no free-variable analyzer like
+            // python/js). Scan the block for `$name` / `${name}` references
+            // and inject the matching Crush locals as env vars, restoring the
+            // documented pre-#245 behavior. Anything not referenced stays out.
+            Statement::LangBlock {
+                lang, code, variables, ..
+            } if lang == "bash" || lang == "sh" => {
+                let refs = bash_var_refs(code);
+                let inputs: Vec<String> = refs
+                    .into_iter()
+                    .filter(|name| known_locals.contains(name))
+                    .collect();
+                *variables = inputs;
+            }
             Statement::If {
                 then_body,
                 else_body,
@@ -1078,6 +1093,88 @@ fn dedent(code: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+/// Collect the variable names a `@bash` block references via `$name` or
+/// `${name}` (#255). This is deliberately a dumb scanner, not a shell
+/// parser: it skips single-quoted regions (no expansion there) and `$$`
+/// (PID), and takes the longest valid identifier after `$`. False positives
+/// (e.g. `$name` inside a double-quoted string that bash would expand
+/// anyway) are harmless — an extra env var costs nothing. False negatives
+/// would silently drop a variable, so when in doubt we include.
+fn bash_var_refs(code: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let bytes = code.as_bytes();
+    let mut i = 0;
+    let mut in_single_quote = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single_quote {
+            if b == b'\'' {
+                in_single_quote = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' => {
+                in_single_quote = true;
+                i += 1;
+            }
+            b'$' => {
+                let next = bytes.get(i + 1).copied();
+                match next {
+                    Some(b'{') => {
+                        // ${name} — also ${name:-default} etc.; take up to
+                        // the first non-identifier char.
+                        let mut j = i + 2;
+                        while j < bytes.len()
+                            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                        {
+                            j += 1;
+                        }
+                        if j > i + 2 {
+                            let name = &code[i + 2..j];
+                            // Skip positional/special params like $1, $#, $@
+                            if name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_alphabetic() || c == '_')
+                                .unwrap_or(false)
+                                && seen.insert(name.to_string())
+                            {
+                                refs.push(name.to_string());
+                            }
+                        }
+                        i = j;
+                    }
+                    Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
+                        // $name — longest identifier run
+                        let mut j = i + 1;
+                        while j < bytes.len()
+                            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                        {
+                            j += 1;
+                        }
+                        let name = &code[i + 1..j];
+                        if seen.insert(name.to_string()) {
+                            refs.push(name.to_string());
+                        }
+                        i = j;
+                    }
+                    // $$ (PID), $1 (positional), $# etc.: not Crush vars
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    refs
 }
 
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
@@ -2195,6 +2292,46 @@ mod tests {
         let src = "fn main() {\n    @bash -> x {\n        echo hi\n    }\n}\n";
         let err = compile_crush_source(src).expect_err("bash has no value marshaling");
         assert!(err.to_string().contains("@bash"), "error should name the language: {err}");
+    }
+
+    // #255: @bash blocks see the Crush variables they reference via
+    // $name / ${name} as env vars (restores the pre-#245 behavior).
+    #[test]
+    fn test_bash_var_refs_scanner() {
+        // Basic $name and ${name} forms
+        assert_eq!(
+            bash_var_refs("echo $name"),
+            vec!["name".to_string()]
+        );
+        assert_eq!(
+            bash_var_refs("echo ${name}"),
+            vec!["name".to_string()]
+        );
+        // Dedupes, preserves first-seen order
+        assert_eq!(
+            bash_var_refs("echo $a $b ${a}"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        // Skips single-quoted (no expansion), $$ (PID), $1 (positional)
+        assert_eq!(bash_var_refs("echo '$name' $$ $1"), Vec::<String>::new());
+        // ${name:-default} counts as a reference to name
+        assert_eq!(
+            bash_var_refs("echo ${name:-fallback}"),
+            vec!["name".to_string()]
+        );
+    }
+
+    // #255 end-to-end: a referenced Crush var reaches the bash block's
+    // exec_lang spec in the compiled CASM.
+    #[test]
+    fn test_bash_block_sees_referenced_crush_var() {
+        let src = "fn main() {\n    let name = \"crush\"\n    @bash {\n        echo \"hello [$name]\"\n    }\n}\n";
+        let casm = compile_crush_to_casm(src).expect("compile bash block");
+        let json = serde_json::to_string(&casm).expect("casm to json");
+        assert!(
+            json.contains("\"var_0\":\"name\"") || json.contains("\"var_0\": \"name\""),
+            "bash block's exec_lang spec should list `name` as var_0: {json}"
+        );
     }
 
     // `use @lang` + `->` still splice the import into the block.
