@@ -526,15 +526,12 @@ fn test_boa_static_method_is_a_static_member() {
 }
 
 #[test]
-fn test_boa_class_program_is_refused_until_the_vm_slice() {
-    // S1 only emits: compiling a class program must fail loudly, naming
-    // the strategy no engine runs yet (CRUSH-277 S2 lifts this).
+fn test_boa_class_program_compiles() {
+    // CRUSH-277 S2: prototype chains run on the COSM VMs, so a class
+    // program compiles end to end. Running it does nothing yet — the
+    // class name becomes a value, and `new` constructs, with S3.
     let program = test_lower("class Counter { inc() { return 1; } }");
-    let err = match crush_frontend::compile_cast(&program) {
-        Ok(_) => panic!("a prototype_chain program compiled before CRUSH-277 S2"),
-        Err(e) => format!("{e:#}"),
-    };
-    assert!(err.contains("prototype_chain"), "refusal names the strategy: {err}");
+    crush_frontend::compile_cast(&program).unwrap();
 }
 
 #[test]

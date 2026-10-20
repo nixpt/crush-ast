@@ -914,11 +914,12 @@ pub fn kind_unsupported_strategies(k: &crush_cosm::KindDecl) -> Vec<String> {
 /// - [`CosmSupport::Kinds`] (the scheduler VM and the portable VM, K1.4) run
 ///   every storage, `reference` and `value(…)` semantics (`move` behaves as
 ///   `copy` at run time: use-after-move is a compile-time check, and the VMs
-///   don't need it to be exact), resolution `none`, `single` and `c3`, every
+///   don't need it to be exact), resolution `none`, `single`, `c3` and
+///   `prototype_chain` (the JS walker's slice, CRUSH-277 S2), every
 ///   receiver strategy, every construction except a Python `__new__`, field
 ///   defaults, both equalities, and the `str`, `repr` and `clone` hooks.
 ///   Still refused, until the phase that brings them: resolution
-///   `prototype_chain` and `embedding_promotion` (their walkers, K3), a
+///   `embedding_promotion` (the Go walker, K3), a
 ///   `py_new_init` with a `new_fn`, accessor members, and every other hook
 ///   (operators and the eq/hash/cmp/iter/call/missing/set protocols, K2).
 pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSupport) -> Vec<String> {
@@ -927,7 +928,7 @@ pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSup
         return kind_unsupported_strategies(k);
     }
     let mut why = Vec::new();
-    if matches!(k.resolution, Resolution::PrototypeChain | Resolution::EmbeddingPromotion) {
+    if matches!(k.resolution, Resolution::EmbeddingPromotion) {
         why.push(format!("resolution: {}", k.resolution.as_str()));
     }
     if let Construct::PyNewInit { new_fn: Some(f), .. } = &k.construct {
@@ -1075,7 +1076,7 @@ pub fn cosm_unsupported_reason_on(
         ),
         CosmSupport::Kinds => format!(
             "COSM strategies not supported on {engine} yet: {}; operator and protocol hooks \
-             arrive with COSM K2, prototype chains and embedding with the JS and Go walkers (K3)",
+             arrive with COSM K2, embedding with the Go walker (K3)",
             problems.join("; ")
         ),
     })
@@ -1132,6 +1133,27 @@ pub fn format_runtime_error_with_location(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prototype_chain_runs_at_kinds_level_embedding_does_not() {
+        // CRUSH-277 S2: the JS slice's resolution strategy leaves the
+        // refusal list; Go's embedding stays on it.
+        let mut k = crush_cosm::KindDecl::crush("C");
+        k.resolution = crush_cosm::Resolution::PrototypeChain;
+        assert_eq!(kind_unsupported_strategies_on(&k, CosmSupport::Kinds), Vec::<String>::new());
+        k.resolution = crush_cosm::Resolution::EmbeddingPromotion;
+        assert_eq!(
+            kind_unsupported_strategies_on(&k, CosmSupport::Kinds),
+            vec!["resolution: embedding_promotion".to_string()]
+        );
+        // A maps-level engine still can't honour a JS construction.
+        k.resolution = crush_cosm::Resolution::PrototypeChain;
+        k.construct = crush_cosm::Construct::JsNew { ctor_fn: crush_cosm::FnRef::new("C::constructor") };
+        assert_eq!(
+            kind_unsupported_strategies_on(&k, CosmSupport::Maps),
+            vec!["construct: js_new".to_string()]
+        );
+    }
 
     #[test]
     fn runtime_error_location_formats_with_source_location() {

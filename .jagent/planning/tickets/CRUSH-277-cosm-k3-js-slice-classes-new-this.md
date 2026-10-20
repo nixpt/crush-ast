@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-277 |
 | **Priority** | P1 |
-| **Status** | In progress — S1 done (branch `agent/muse/CRUSH-277`), S2 next |
+| **Status** | In progress — S1 done (`agent/muse/CRUSH-277`), S2 done (`agent/muse/CRUSH-277-s2`), S3 next |
 | **Phase** | COSM K3 — JS walker slice |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-266 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
@@ -241,6 +241,27 @@ Census of the JS class surface maya actually uses:
   it needs the hidden-flag ABI or a dispatch rule, so it belongs with
   S3/zorro-44, not S1. Also `Protocol.js` shows derived classes without
   constructors are common — S3's default-`super` forwarding matters.
+
+- **S2 — done** (branch `agent/muse/CRUSH-277-s2`, stacked on S1).
+  `prototype_chain` removed from `casm::kind_unsupported_strategies_on`
+  at `CosmSupport::Kinds` (embedding_promotion stays refused); the
+  refusal-message/docs updated in casm and `crush-vm/src/cosm_gate.rs`.
+  No VM code changes were needed: `resolution_order` already linearised
+  prototype chains, `find_on_kind` walks the order, `DynamicThis`
+  binding and `js_new` construction were already wired — the gate was
+  the whole blocker. New runtime evidence:
+  `crush-vm/src/tests/prototype_chain.rs` (7 tests × both VMs) —
+  js_new construction with `this` state, method inheritance + override,
+  `instanceof` along the chain, instance fields shadowing prototype
+  members, detached methods as plain functions (and the loud null-`this`
+  failure when one reads `this`), prototype cycles refused at load.
+  Existing refusal tests retargeted at still-refused strategies
+  (frontend `cosm_lowering`, vm `kind_table`, sdk `cosm_kind_table`);
+  the S1 gate tests now assert compilation. A follow-up fix on the S1
+  branch retargeted two `crush-lang-sdk` polyglot refusal tests that
+  S1's class lowering had un-louded. Suites: casm + crush-vm +
+  crush-frontend + crush-lang-js + crush-lang-sdk = 1,418 tests green;
+  workspace `--all-targets` and CI-style clippy clean.
 
 ## Success criteria
 

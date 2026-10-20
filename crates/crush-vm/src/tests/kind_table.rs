@@ -184,9 +184,11 @@ fn the_scheduler_vm_runs_kinds_and_refuses_only_what_it_cant() {
     assert!(matches!(e, VmError::Unsupported(_)), "{e:?}");
     let e = e.to_string();
     assert!(e.contains("COSM strategies not supported on this VM yet: `Point` declares"), "{e}");
-    for want in ["resolution: prototype_chain", "accessor `len`", "hooks eq"] {
+    for want in ["accessor `len`", "hooks eq"] {
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
+    // `prototype_chain` runs since CRUSH-277 S2: it isn't named either.
+    assert!(!e.contains("prototype_chain"), "{e}");
     // `str` is implemented: it isn't named.
     assert!(!e.contains("eq, str"), "{e}");
 }

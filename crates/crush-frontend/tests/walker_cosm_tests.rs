@@ -73,19 +73,33 @@ fn walker_module_reaches_casm_kind_table() {
 }
 
 #[test]
-fn prototype_chain_stays_loud_until_the_vm_slice() {
-    // CRUSH-277 S2 lifts this refusal; until then a JS kind must fail
-    // compilation naming its strategy, never silently run as a map.
+fn prototype_chain_compiles_and_reaches_casm() {
+    // CRUSH-277 S2: the scheduler/portable VM gate runs prototype chains,
+    // so a JS kind compiles through the frontend like any other.
     let program = program_with_cosm(Some(module(vec![kind(
         "Counter",
         Resolution::PrototypeChain,
     )])));
+    let (casm, cosm) = crush_frontend::compile_cast_with_cosm(program).unwrap();
+    assert_eq!(cosm.expect("module survives").kinds[0].name, "Counter");
+    assert_eq!(casm.cosm.expect("kind table carried").kinds.len(), 1);
+}
+
+#[test]
+fn embedding_promotion_still_stays_loud() {
+    // The refusal mechanism itself is unchanged: a strategy no engine
+    // runs (Go's, K3) must fail compilation naming it, never silently
+    // run as a map.
+    let program = program_with_cosm(Some(module(vec![kind(
+        "Counter",
+        Resolution::EmbeddingPromotion,
+    )])));
     let err = match crush_frontend::compile_cast_with_cosm(program) {
-        Ok(_) => panic!("prototype_chain compiled before CRUSH-277 S2"),
+        Ok(_) => panic!("embedding_promotion compiled before the Go walker"),
         Err(e) => format!("{e:#}"),
     };
     assert!(
-        err.contains("prototype_chain"),
+        err.contains("embedding_promotion"),
         "refusal names the strategy: {err}"
     );
 }
