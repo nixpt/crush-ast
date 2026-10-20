@@ -31,7 +31,7 @@ js-boa = ["dep:boa_ast", "dep:boa_parser", "dep:boa_interner"]
 
 [dependencies]
 crush-cast.workspace = true
-crush-walker-core = { path = "../crush-walker-core", version = "0.7.0", default-features = false }
+crush-walker-core = { path = "../crush-walker-core", version = "0.7.1", default-features = false }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

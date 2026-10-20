@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-20
+
+- Merge pull request #282 from nixpt/agent/vega/fix-bump-aliased-deps
+- fix(release): bump renamed workspace deps; refuse to tag on a stale member requirement
+
+
+
 ## [0.7.0] - 2026-10-20
 
 - Merge pull request #280 from nixpt/agent/vega/ci-release-artifacts
