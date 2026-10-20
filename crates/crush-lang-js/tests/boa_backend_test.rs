@@ -404,6 +404,160 @@ fn test_boa_parameter_adaptation_refusals() {
     assert!(loud("const f = (...xs) => xs;\nconsole.log(f());").contains("outside a `function` declaration"));
 }
 
+// ── CRUSH-277 S1: classes lower to COSM ────────────────────────────────────
+
+fn only_kind(source: &str) -> (crush_cast::Program, crush_cosm::KindDecl) {
+    let program = test_lower(source);
+    let cosm = program.cosm.as_ref().expect("a class emits COSM");
+    assert_eq!(cosm.kinds.len(), 1, "one class, one kind: {cosm:?}");
+    (program.clone(), cosm.kinds[0].clone())
+}
+
+#[test]
+fn test_boa_class_emits_a_js_kind() {
+    let (program, kind) = only_kind(
+        "class Counter { constructor(x) { this.x = x; } inc() { return this.x; } }",
+    );
+    assert_eq!(kind.name, "Counter");
+    assert_eq!(kind.home_lang, "javascript");
+    assert!(matches!(kind.storage, crush_cosm::Storage::OpenDict));
+    assert!(matches!(kind.semantics, crush_cosm::Semantics::Reference));
+    assert!(matches!(kind.resolution, crush_cosm::Resolution::PrototypeChain));
+    assert!(matches!(kind.receiver, crush_cosm::Receiver::DynamicThis));
+    assert!(matches!(kind.equality, crush_cosm::Equality::Identity));
+    assert!(
+        matches!(&kind.construct, crush_cosm::Construct::JsNew { ctor_fn } if ctor_fn.as_str() == "Counter::constructor"),
+        "construct: {:?}",
+        kind.construct
+    );
+    let inc = kind.members.iter().find(|m| m.name == "inc").expect("method member");
+    assert!(
+        matches!(&inc.member, crush_cosm::Member::Method { func, receiver: None } if func.as_str() == "Counter::inc"),
+        "member: {:?}",
+        inc.member
+    );
+    // The lifted functions take the receiver as a first parameter `this`.
+    let ctor = &program.functions["Counter::constructor"];
+    let names: Vec<&str> = ctor.params.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["this", "x"]);
+    assert_eq!(program.functions["Counter::inc"].params[0].0, "this");
+}
+
+#[test]
+fn test_boa_class_without_constructor_gets_an_empty_one() {
+    let (program, kind) = only_kind("class Empty { m() { return 1; } }");
+    assert!(
+        matches!(&kind.construct, crush_cosm::Construct::JsNew { ctor_fn } if ctor_fn.as_str() == "Empty::constructor")
+    );
+    let ctor = &program.functions["Empty::constructor"];
+    assert_eq!(ctor.params.len(), 1);
+    assert!(ctor.body.is_empty());
+}
+
+#[test]
+fn test_boa_extends_records_the_parent_kind() {
+    let program = test_lower(
+        "class Base { m() { return 1; } } class Child extends Base { constructor(x) { this.x = x; } }",
+    );
+    let cosm = program.cosm.expect("classes emit COSM");
+    assert_eq!(cosm.kinds.len(), 2);
+    let child = cosm.kinds.iter().find(|k| k.name == "Child").unwrap();
+    assert_eq!(child.parents.len(), 1);
+    assert_eq!(child.parents[0].as_str(), "Base");
+}
+
+#[test]
+fn test_boa_exported_class_emits_kind_and_export() {
+    let program = test_lower("export class Foo { m() { return 1; } }");
+    let cosm = program.cosm.expect("exported class emits COSM");
+    assert_eq!(cosm.kinds[0].name, "Foo");
+    let main = &program.functions["main"];
+    assert!(
+        main.body.iter().any(|s| matches!(s, crush_cast::Statement::Export { name, .. } if name == "Foo")),
+        "export statement missing: {:?}",
+        main.body
+    );
+}
+
+#[test]
+fn test_boa_named_class_expression_emits_a_kind() {
+    let (program, kind) = only_kind("const K = class K { m() { return 1; } };");
+    assert_eq!(kind.name, "K");
+    let main = &program.functions["main"];
+    assert!(
+        main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "K")),
+        "binding missing: {:?}",
+        main.body
+    );
+}
+
+#[test]
+fn test_boa_binding_named_class_expression_uses_the_binding_name() {
+    // `const K = class { … }`: boa infers the binding as the class's name.
+    let (_, kind) = only_kind("const K = class { m() { return 1; } };");
+    assert_eq!(kind.name, "K");
+}
+
+#[test]
+fn test_boa_accessor_pair_merges_into_one_member() {
+    let (_, kind) = only_kind(
+        "class Box { get v() { return 1; } set v(x) { this.x = x; } }",
+    );
+    let accessors: Vec<_> = kind.members.iter().filter(|m| m.name == "v").collect();
+    assert_eq!(accessors.len(), 1, "get/set merge: {:?}", kind.members);
+    match &accessors[0].member {
+        crush_cosm::Member::Accessor { get, set } => {
+            assert_eq!(get.as_ref().unwrap().as_str(), "Box::get::v");
+            assert_eq!(set.as_ref().unwrap().as_str(), "Box::set::v");
+        }
+        other => panic!("expected an accessor, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_boa_static_method_is_a_static_member() {
+    let (_, kind) = only_kind("class Util { static twice(x) { return x; } }");
+    let m = kind.members.iter().find(|m| m.name == "twice").expect("static member");
+    assert!(
+        matches!(&m.member, crush_cosm::Member::Static { value: crush_cosm::StaticValue::Fn(f) } if f.as_str() == "Util::static::twice"),
+        "member: {:?}",
+        m.member
+    );
+}
+
+#[test]
+fn test_boa_class_program_is_refused_until_the_vm_slice() {
+    // S1 only emits: compiling a class program must fail loudly, naming
+    // the strategy no engine runs yet (CRUSH-277 S2 lifts this).
+    let program = test_lower("class Counter { inc() { return 1; } }");
+    let err = match crush_frontend::compile_cast(&program) {
+        Ok(_) => panic!("a prototype_chain program compiled before CRUSH-277 S2"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(err.contains("prototype_chain"), "refusal names the strategy: {err}");
+}
+
+#[test]
+fn test_boa_class_loud_edges() {
+    assert!(loud("console.log(class { m() { return 1; } });").contains("anonymous class expression"), "anonymous class expression");
+    assert!(loud("class A { x = 1; }").contains("class field"), "class field");
+    assert!(loud("class A { #m() { return 1; } }").contains("private class method"), "private method");
+    assert!(loud("class A { static { } }").contains("static {"), "static block");
+    assert!(loud("class B { } class A extends B { }").contains("derived class without a constructor"), "derived without ctor");
+    assert!(loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"), "expression superclass");
+    assert!(loud("class A { async m() { return 1; } }").contains("async method"), "async method");
+    assert!(loud("class A { [k]() { return 1; } }").contains("computed member name"), "computed name");
+    // `this` is bound only directly inside a method.
+    assert!(loud("class A { m() { function g() { return this; } return g(); } }").contains("`this` outside a class method"), "nested fn this");
+    assert!(loud("class A { m() { const g = () => this; return g(); } }").contains("`this` outside a class method"), "arrow this");
+}
+
+#[test]
+fn test_boa_classless_program_has_no_cosm() {
+    let program = test_lower("const x = 1;\nconsole.log(x);");
+    assert_eq!(program.cosm, None);
+}
+
 // The ABI: defaults take a hidden "given" flag after the parameters; a rest
 // parameter takes an array.
 #[test]

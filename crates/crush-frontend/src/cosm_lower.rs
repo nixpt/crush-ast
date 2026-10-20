@@ -126,6 +126,70 @@ pub fn lower(program: &mut Program) -> Result<Option<crush_cosm::CosmModule>> {
     Ok(Some(module))
 }
 
+/// Merge a walker-supplied COSM module (CAST `Program::cosm`, CRUSH-277 S1)
+/// with the module lowered from the program's own Crush surface declarations.
+///
+/// A walker (the JS lowering first) lowers its language's object declarations
+/// straight to COSM and rides them in the CAST; this is where they join the
+/// program's one kind table. A kind or interface name declared by both sides
+/// is an error — silently keeping either would give one name two behaviours.
+/// An empty walker module counts as absent. The merged module is validated
+/// like a lowered one, so a walker's broken declaration fails compilation
+/// here, with its spans, instead of at VM load.
+pub fn merge_walker_module(
+    walker: Option<crush_cosm::CosmModule>,
+    derived: Option<crush_cosm::CosmModule>,
+) -> Result<Option<crush_cosm::CosmModule>> {
+    let Some(walker) = walker.filter(|m| !m.kinds.is_empty() || !m.interfaces.is_empty()) else {
+        return Ok(derived);
+    };
+    let Some(mut module) = derived else {
+        validate_module(&walker)?;
+        return Ok(Some(walker));
+    };
+    let mut errors: Vec<String> = Vec::new();
+    for k in &walker.kinds {
+        if module.kind(&k.name).is_some() {
+            errors.push(format!(
+                "kind `{}` is declared both by the walker (CAST `cosm`) and by the program's own declarations",
+                k.name
+            ));
+        }
+    }
+    for i in &walker.interfaces {
+        if module.interface(&i.name).is_some() {
+            errors.push(format!(
+                "interface `{}` is declared both by the walker (CAST `cosm`) and by the program's own declarations",
+                i.name
+            ));
+        }
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("\n"));
+    }
+    module.kinds.extend(walker.kinds);
+    module.interfaces.extend(walker.interfaces);
+    validate_module(&module)?;
+    Ok(Some(module))
+}
+
+/// [`crush_cosm::validate`] as compile errors, formatted like
+/// [`crate::cosm_kind`]'s.
+fn validate_module(module: &crush_cosm::CosmModule) -> Result<()> {
+    let errors: Vec<String> = crush_cosm::validate(module)
+        .iter()
+        .map(|d| {
+            let at = d
+                .span
+                .as_ref()
+                .map(|s| format!("line {}, col {}: ", s.line, s.col))
+                .unwrap_or_default();
+            format!("{at}{}: {} ({})", d.subject, d.message, d.code)
+        })
+        .collect();
+    if errors.is_empty() { Ok(()) } else { bail!("{}", errors.join("\n")) }
+}
+
 /// Whether `program` still has `impl` / `trait` nodes to lower.
 pub fn has_impl_or_trait(program: &Program) -> bool {
     program.functions.values().any(|f| {

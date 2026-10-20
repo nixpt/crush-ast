@@ -988,6 +988,7 @@ version = "0.7.1"
 dependencies = [
  "cbor4ii",
  "crush-caison",
+ "crush-cosm",
  "crush-errors",
  "indexmap",
  "serde",
@@ -1212,6 +1213,7 @@ dependencies = [
  "boa_interner",
  "boa_parser",
  "crush-cast",
+ "crush-cosm",
  "crush-frontend",
  "crush-lang-python",
  "crush-lang-sdk",

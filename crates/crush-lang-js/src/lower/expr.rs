@@ -191,14 +191,28 @@ impl Lower<'_> {
                 }))
             }
             Expression::Spread(_) => Err(self.unsupported("a spread (`...x`) here", span)),
+            // CRUSH-277 D2: inside a class method, `this` is the receiver
+            // parameter; anywhere else it stays loud (a nested function's
+            // `this`, an arrow's lexical `this`, top-level `this`).
             Expression::This(_) => {
-                Err(self.unsupported("`this` (waits for the COSM object model)", span))
+                if self.this_bound {
+                    Ok(CastExpr::Var {
+                        name: "this".to_string(),
+                        meta: m,
+                    })
+                } else {
+                    Err(self.unsupported("`this` outside a class method", span))
+                }
             }
             Expression::New(_) => {
                 Err(self.unsupported("`new` (waits for the COSM object model)", span))
             }
-            Expression::ClassExpression(_) => {
-                Err(self.unsupported("a class (waits for the COSM object model)", span))
+            Expression::ClassExpression(c) => {
+                let kind = self.class_expr(c)?;
+                Ok(CastExpr::Var {
+                    name: kind,
+                    meta: m,
+                })
             }
             Expression::Optional(_) => Err(self.unsupported("optional chaining (`?.`)", span)),
             Expression::TaggedTemplate(_) => {

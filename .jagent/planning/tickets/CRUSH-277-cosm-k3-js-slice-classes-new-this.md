@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-277 |
 | **Priority** | P1 |
-| **Status** | Backlog (scoped, not started) |
+| **Status** | In progress — S1 done (branch `agent/muse/CRUSH-277`), S2 next |
 | **Phase** | COSM K3 — JS walker slice |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-266 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
@@ -209,6 +209,38 @@ Census of the JS class surface maya actually uses:
   CRUSH-276 (classes should stop being the first blocker; the walk then
   hits CRUSH-276's next items, which is the expected outcome, not a
   regression).
+
+## Progress
+
+- **S1 — done** (branch `agent/muse/CRUSH-277`). `crush_cast::Program::cosm`
+  added (serde-default/`None`-omitted, so old CAST is byte-identical;
+  `crush-cast → crush-cosm` dependency, acyclic as the crate's layering
+  comment requires); `compile_cast_with_cosm` merges the walker module
+  with `cosm_lower`'s output via `cosm_lower::merge_walker_module`
+  (collision = error, merged module validated). Boa lowering
+  (`lower/class.rs`): class declarations, exported classes and named
+  class expressions emit KindDecls with the D2 `this`-parameter
+  convention; accessors merge into one member; statics are
+  `Member::Static`; derived-without-constructor, expression superclasses,
+  class fields (S5), private members, static blocks, computed names,
+  async/generator methods and `this` outside a direct method body all
+  stay loud. Tests: `crush-cast/tests/cosm_field_tests.rs` (3),
+  `crush-frontend/tests/walker_cosm_tests.rs` (5, incl. the
+  prototype-chain refusal), 11 class tests in `boa_backend_test.rs`;
+  workspace `--all-targets` check and CI-style clippy clean.
+  Maya sweep (boa, after S1): no file is blocked by class syntax itself;
+  `engine/core/Time.js` walks with kind `Time` emitted. First blockers
+  are now the rest of CRUSH-276's queue — `export function` (PR #283),
+  `new` (S3), optional chaining, `.reduce()` (zorro-20), `Object.*`
+  (zorro-16), re-exports — plus one discovery below.
+- **Discovered during S1**: method/constructor *default parameters*
+  (`constructor(x = 1)`) are refused, because methods lower with the
+  function-expression restrictions (`declared: false`) — maya hits this
+  in `GameObject`, `Scene`, `Physics`, `Engine`, … This is zorro-18's
+  territory extended to methods; `CALL_MEMBER`'s exact-arity check means
+  it needs the hidden-flag ABI or a dispatch rule, so it belongs with
+  S3/zorro-44, not S1. Also `Protocol.js` shows derived classes without
+  constructors are common — S3's default-`super` forwarding matters.
 
 ## Success criteria
 

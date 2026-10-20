@@ -213,6 +213,12 @@ impl Lower<'_> {
                 let value = self.lambda(f.parameters(), f.body(), Some(f.name().span()))?;
                 Ok(vec![export(self, "default".to_string(), value)])
             }
+            ExportDeclaration::Declaration(Declaration::ClassDeclaration(c)) => {
+                let mut out = self.class_decl(c)?;
+                let name = self.resolve(c.name().sym());
+                out.push(export(self, name.clone(), var(self, name)));
+                Ok(out)
+            }
             ExportDeclaration::ReExport { .. } => {
                 Err(self.unsupported("a re-export (`export … from …`)", None))
             }
@@ -245,9 +251,35 @@ impl Lower<'_> {
         declared: bool,
     ) -> anyhow::Result<LoweredFn> {
         self.scopes.enter_fn();
+        // A nested function's `this` is its own (an arrow's would be the
+        // enclosing method's — not lowered yet), never the method's
+        // receiver (CRUSH-277 D2).
+        let saved = std::mem::replace(&mut self.this_bound, false);
         let r = self.function_in_scope(params, body, span, declared);
+        self.this_bound = saved;
         self.scopes.leave_fn();
         r
+    }
+
+    /// A class method, constructor or accessor body (CRUSH-277 D2): like a
+    /// function expression, but `this` is bound — the receiver the VM
+    /// passes as a method's leading argument — so it becomes the first
+    /// CAST parameter, and `this` expressions read it. Methods keep the
+    /// function-expression restrictions (no default/rest parameters yet).
+    pub(super) fn method_function(
+        &mut self,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+        span: Option<Span>,
+    ) -> anyhow::Result<LoweredFn> {
+        self.scopes.enter_fn();
+        let saved = std::mem::replace(&mut self.this_bound, true);
+        let r = self.function_in_scope(params, body, span, false);
+        self.this_bound = saved;
+        self.scopes.leave_fn();
+        let (mut lowered_params, body) = r?;
+        lowered_params.insert(0, ("this".to_string(), CastType::Any));
+        Ok((lowered_params, body))
     }
 
     fn function_in_scope(
@@ -559,9 +591,11 @@ impl Lower<'_> {
             Declaration::AsyncGeneratorDeclaration(f) => {
                 Err(self.unsupported("an async generator", Some(f.name().span())))
             }
-            Declaration::ClassDeclaration(_) => {
-                Err(self.unsupported("a class (waits for the COSM object model)", None))
-            }
+            // The class itself rides in `Program::cosm` and its methods in
+            // `Program::functions` (CRUSH-277 S1); materialising the class
+            // name as a value is S3, and nothing runs until the VM slice
+            // (S2) lifts the prototype-chain gate.
+            Declaration::ClassDeclaration(c) => self.class_decl(c),
         }
     }
 
