@@ -10,19 +10,62 @@ cd crates/crush-vm-py
 maturin build --release        # features/no-default-features come from pyproject.toml
 ```
 
+## Testing the wheel
+
+The crate has no Rust tests (it is a `cdylib` and is not part of the Rust
+workspace, so `cargo test` never reaches it). There is a Python smoke test
+that runs against an installed wheel:
+
+```bash
+maturin build --release
+pip install target/wheels/crush_vm-*.whl
+python crates/crush-vm-py/tests/test_wheel.py
+```
+
+It needs no pytest — the file is a plain script with `test_*` functions and a
+`__main__` runner, so it also works under pytest if the repo adopts it. The
+fixtures in `tests/fixtures/` are real CVM1 blobs assembled by crush-ast's
+own assembler (`crush_vm::assemble(...).to_blob()`), not mocks.
+
+**CI does not run this yet** — no workflow job builds the wheel. Tracked as
+[CRUSH-275](../.jagent/planning/tickets/CRUSH-275-wheel-ci-smoke-test.md).
+Until then, run it by hand after any change to `src/lib.rs` or to the
+`crush-vm` API it binds.
+
 This crate is **not a member of the crush-ast workspace** — it is an
 independent resolution root (`exclude` in the root `Cargo.toml`, plus its own
 empty `[workspace]` table), the same treatment `crush-web` gets. So
 `cargo test --workspace` at the repo root does not build it, and needs no
 libpython. Build it from this directory.
 
-> **Pre-existing limitation:** pyo3 0.23 supports Python ≤ 3.13. On a box whose
-> default interpreter is newer, the build fails in pyo3's own build script
-> (`configured Python interpreter version (3.14) is newer than PyO3's maximum
-> supported version (3.13)`). This is inherited unchanged from when the
-> bindings lived in `crush-vm` behind the `python` feature — see
-> `.jagent/planning/TASKS.md`. Adopting `abi3` (as `crush-python` does) would
-> fix it, but changes the wheel's ABI contract and is the bridge owner's call.
+> **Stable ABI (abi3).** The wheel is built against the stable ABI
+> (`abi3` + `abi3-py311`, the same pair `crush-python` uses), so one wheel
+> serves every interpreter from 3.11 up. This also lifts pyo3 0.23's
+> interpreter ceiling: without abi3, pyo3 refuses to build on a Python 3.14
+> interpreter (`configured Python interpreter version (3.14) is newer than
+> PyO3's maximum supported version (3.13)`). That limitation was inherited
+> from when the bindings lived in `crush-vm` behind the `python` feature — see
+> `.jagent/planning/archive/TASKS-2026-10-14.md`. The wheel's *behaviour* is
+> unchanged by the ABI switch; only the set of interpreters it loads on is.
+
+## What `run_blob` returns
+
+A dict with:
+
+| key | meaning |
+|---|---|
+| `output` | everything the program printed |
+| `result` | the top of the final value stack (`None` if the stack is empty) |
+| `return_value` | the entry function's explicit `return` value, or `None` |
+| `stack` | the final value stack |
+| `steps` | steps executed |
+| `halted` | whether the program halted |
+
+`result` and `return_value` are **not** the same thing. A program that
+returns a value leaves an *empty* stack and puts the value in
+`return_value`, so reading only `result` reports `None` for exactly the
+programs whose value matters. This matches the Rust `VmResult` and the
+`crush-lang-sdk` `VmResult`.
 
 ## Why this is a separate crate
 
