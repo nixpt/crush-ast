@@ -203,7 +203,7 @@ fn javascript_blocks_lower_with_closures_and_outputs() {
 
 #[test]
 fn a_javascript_construct_the_walker_cannot_lower_names_the_crush_line() {
-    let src = block("javascript", "", "    let z = 1\n", "let a = 1;\nclass A {}", "");
+    let src = block("javascript", "", "    let z = 1\n", "let a = 1;\nclass A { x = 1; }", "");
     let e = compile_err(&src);
     assert!(e.contains("@javascript") && e.contains("line 3") && e.contains("a class"), "{e}");
     assert!(e.contains("not as Node"), "{e}");
@@ -326,7 +326,7 @@ fn a_lowered_script_refuses_what_the_walker_cannot_lower() {
         ("py", "x = (1, 2)\nprint(x)\n", "tuples are not supported yet"),
         ("py", "print(sum([1, 2]))\n", "`sum` is not supported by the walker yet"),
         ("py", "class A:\n    pass\n", "class definitions"),
-        ("js", "class A {}\n", "a class"),
+        ("js", "class A { x = 1; }\n", "a class"),
     ] {
         let e = format!("{:#}", crush_lang_sdk::compile::compile_lowered_script(lang, source).unwrap_err());
         assert!(e.contains(construct) && e.contains("runs as Crush"), "{source:?}: {e}");
