@@ -87,7 +87,7 @@ tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.7.0" }
 crush-walker-core       = { path = "crates/crush-walker-core",       version = "0.7.0" }
 # Native-parser frontends and the SDK registry need the common adapter traits,
 # but not the optional tree-sitter C parser support.
-crush-walker-core-no-tree-sitter = { package = "crush-walker-core", path = "crates/crush-walker-core", version = "0.6.0", default-features = false }
+crush-walker-core-no-tree-sitter = { package = "crush-walker-core", path = "crates/crush-walker-core", version = "0.7.0", default-features = false }
 serde       = { version = "1.0", features = ["derive"] }
 serde_json  = "1.0"
 anyhow      = "1.0"
