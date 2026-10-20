@@ -472,6 +472,7 @@ pub fn disassemble(program: &Program) -> String {
         (IS_KIND, "IS_KIND"),
         (COPY, "COPY"),
         (NEW_RECORD, "NEW_RECORD"),
+        (LOAD_KIND, "LOAD_KIND"),
         (HALT, "HALT"),
     ]
     .iter()
@@ -663,6 +664,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "IS_KIND" => Some(IS_KIND),
         "COPY" => Some(COPY),
         "NEW_RECORD" => Some(NEW_RECORD),
+        "LOAD_KIND" => Some(LOAD_KIND),
         "HALT" => Some(HALT),
         _ => None,
     }

@@ -334,7 +334,10 @@ impl Compiler {
         let mut debug_info = DebugInfo::new();
         let mut source_files: HashMap<String, usize> = HashMap::new();
         let mut casm_program = CasmProgram::new();
-        casm_program.version = program.cast_version;
+        // The CASM `version` is the CASM schema version, not the CAST one:
+        // a walker's CAST carries `cast_version` "0.2", which the CASM
+        // load gate (VER-02) would refuse on any round trip (CRUSH-278).
+        casm_program.version = casm::CASM_VERSION.to_string();
         casm_program.lang = program.lang;
         // COSM K1.3 (CRUSH-zorro-42): the kind table travels with the program.
         casm_program.cosm = self.cosm.clone();
@@ -1656,12 +1659,24 @@ impl Compiler {
             }
             Expression::Var { name, meta } => {
                 let outer = self.lambda_outer_vars.iter().any(|o| o.contains(name.as_str()));
+                let declared = self.declared_vars.contains(name.as_str());
                 match self.function_arity.get(name.as_str()) {
                     // A function's name used as a value (`apply(fib, 3)`).
-                    Some(&arity) if !self.declared_vars.contains(name.as_str()) && !outer => {
+                    Some(&arity) if !declared && !outer => {
                         instrs.push(self.create_instr(
                             "make_closure",
                             serde_json::json!({"function": name, "arity": arity, "ncap": 0}),
+                            meta,
+                        ));
+                    }
+                    // A class name used as a value (CRUSH-277 D8): JS
+                    // `const K = Counter`, a class passed to a function,
+                    // `Counter` exported. A local of the same name (a
+                    // declared var, a capture) shadows it, as in JS.
+                    _ if !declared && !outer && self.kind(name).is_some() => {
+                        instrs.push(self.create_instr(
+                            "load_kind",
+                            serde_json::json!({"kind": name}),
                             meta,
                         ));
                     }
@@ -1727,6 +1742,25 @@ impl Compiler {
                     _ => bail!("Unsupported op: {}", operator),
                 };
                 instrs.push(self.create_typed_instr(opcode, meta)?);
+            }
+            Expression::Construct { kind, args, meta } => {
+                // CRUSH-277 D3: `new C(…)` from a walker. The Kind must be
+                // one the program's COSM declares — a walker naming a kind
+                // it didn't declare is a compile error, not a runtime one.
+                if self.kind(kind).is_none() {
+                    bail!(
+                        "line {}: `new {kind}(…)` constructs a kind the program doesn't declare",
+                        meta.get("line").and_then(|v| v.as_u64()).unwrap_or(0)
+                    );
+                }
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                instrs.push(self.create_instr(
+                    "construct",
+                    serde_json::json!({"kind": kind, "argc": args.len()}),
+                    meta,
+                ));
             }
             Expression::Call {
                 function,

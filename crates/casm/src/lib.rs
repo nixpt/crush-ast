@@ -277,6 +277,10 @@ pub enum OpCode {
     /// semantics on assignment, argument passing and return); any other value
     /// unchanged.
     Copy,
+    /// `-> kind`: the Kind itself as a value (CRUSH-277 D8) — what a class
+    /// name evaluates to in JS (`const K = Counter`), the receiver of a
+    /// static member access. Runs where member ops run.
+    LoadKind(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -607,6 +611,9 @@ impl Instruction {
                 self.require_field("kind", |v| v.as_str().map(String::from))?,
             )),
             "copy" => Ok(OpCode::Copy),
+            "load_kind" => Ok(OpCode::LoadKind(
+                self.require_field("kind", |v| v.as_str().map(String::from))?,
+            )),
             _ => Err(CasmError::UnknownOpcode(self.op.clone()).into()),
         }
     }

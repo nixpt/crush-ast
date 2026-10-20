@@ -176,7 +176,7 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
         Expression::UnaryOp { operand, .. } => {
             collect_sites_in_expr(fn_name, operand, out);
         }
-        Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } => {
+        Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } | Expression::Construct { args, .. } => {
             for a in args {
                 collect_sites_in_expr(fn_name, a, out);
             }

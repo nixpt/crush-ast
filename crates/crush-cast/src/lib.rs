@@ -389,6 +389,17 @@ pub enum Expression {
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
+    /// Construct an instance of the COSM Kind `kind` with `args`
+    /// (CRUSH-277 D3): JS `new C(…)` — distinct from `Call`, which a
+    /// class must refuse (a class called without `new` is an error, so
+    /// the two are never interchangeable). The compiler emits the CASM
+    /// `construct` op; the Kind's `construct` strategy decides what runs.
+    Construct {
+        kind: String,
+        args: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     GetField {
         target: Box<Expression>,
         field: String,

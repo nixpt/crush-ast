@@ -2,7 +2,7 @@
 //! merged into the program's kind table and reaches CASM — while strategies
 //! no engine runs yet stay loud at compile time.
 
-use crush_cast::{Function, Program};
+use crush_cast::{Expression, Function, Program, Statement};
 use crush_cosm::{
     Construct, CosmModule, Equality, FnRef, Hooks, KindDecl, Receiver, Resolution, Semantics,
     Storage,
@@ -136,4 +136,80 @@ fn walker_module_with_an_unresolvable_parent_fails_validation() {
         err.contains("Missing"),
         "validation names the parent: {err}"
     );
+}
+
+/// CRUSH-277 S3: a CAST `Construct` compiles to the `construct` op, a
+/// reference to a kind name compiles to `load_kind`, and constructing a
+/// kind the program doesn't declare is a compile error.
+#[test]
+fn construct_and_kind_reference_compile() {
+    let mut program = program_with_cosm(Some(module(vec![kind(
+        "Counter",
+        Resolution::PrototypeChain,
+    )])));
+    // What a walker emits: the class's constructor as a lifted function.
+    program.functions.insert(
+        "Counter::constructor".to_string(),
+        Function {
+            params: vec![("this".to_string(), crush_cast::CastType::Any)],
+            body: vec![],
+            meta: std::collections::HashMap::new(),
+            is_async: false,
+            annotations: None,
+        },
+    );
+    program.functions.get_mut("main").unwrap().body = vec![
+        Statement::ExprStmt {
+            expr: Expression::Construct {
+                kind: "Counter".to_string(),
+                args: vec![Expression::IntLiteral {
+                    value: 41,
+                    meta: Default::default(),
+                }],
+                meta: Default::default(),
+            },
+            meta: Default::default(),
+        },
+        Statement::ExprStmt {
+            expr: Expression::Var {
+                name: "Counter".to_string(),
+                meta: Default::default(),
+            },
+            meta: Default::default(),
+        },
+    ];
+    let (casm, _) = crush_frontend::compile_cast_with_cosm(program).unwrap();
+    let main = casm
+        .functions
+        .iter()
+        .find(|(name, _)| *name == "main")
+        .map(|(_, f)| f)
+        .expect("main");
+    let ops: Vec<&str> = main.body.iter().map(|i| i.op.as_str()).collect();
+    assert!(ops.contains(&"construct"), "construct op present: {ops:?}");
+    assert!(ops.contains(&"load_kind"), "load_kind op present: {ops:?}");
+    let construct = main.body.iter().find(|i| i.op == "construct").unwrap();
+    assert_eq!(construct.args["kind"], "Counter");
+    assert_eq!(construct.args["argc"], 1);
+    let load_kind = main.body.iter().find(|i| i.op == "load_kind").unwrap();
+    assert_eq!(load_kind.args["kind"], "Counter");
+}
+
+#[test]
+fn construct_of_an_undeclared_kind_is_a_compile_error() {
+    let mut program = program_with_cosm(None);
+    program.functions.get_mut("main").unwrap().body = vec![Statement::ExprStmt {
+        expr: Expression::Construct {
+            kind: "Ghost".to_string(),
+            args: vec![],
+            meta: Default::default(),
+        },
+        meta: Default::default(),
+    }];
+    let err = match crush_frontend::compile_cast_with_cosm(program) {
+        Ok(_) => panic!("an undeclared kind compiled"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(err.contains("Ghost"), "error names the kind: {err}");
+    assert!(err.contains("doesn't declare"), "error explains itself: {err}");
 }

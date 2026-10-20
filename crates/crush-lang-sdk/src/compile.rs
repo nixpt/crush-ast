@@ -1416,6 +1416,12 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     })?;
                     format!("IS_KIND {kind:?}")
                 }
+                "load_kind" => {
+                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("load_kind missing kind at {fname}:{i}")
+                    })?;
+                    format!("LOAD_KIND {kind:?}")
+                }
                 "copy" => "COPY".to_string(),
                 // Stubs for unimplemented opcodes — prevent bailing
                 "dom_mutate" | "dom_event_listener" | "dom_query" => "NOP".to_string(),

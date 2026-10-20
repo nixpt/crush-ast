@@ -75,6 +75,16 @@ pub(crate) struct Lower<'a> {
     /// function clears it — a nested function's `this` is its own, and an
     /// arrow function's lexical `this` isn't lowered yet.
     this_bound: bool,
+    /// The parent constructor function (`Parent::constructor`) of the
+    /// class whose constructor is being lowered, for `super(...)`
+    /// (CRUSH-277 S3). Set only around a constructor body.
+    super_ctor: Option<String>,
+    /// Bindings this module itself bound with `new C()` (C a declared
+    /// class), so their method calls lower to member calls (CRUSH-277
+    /// D4). Cleared at every function boundary: an instance flowing in
+    /// as a parameter or a capture isn't tracked (CRUSH-zorro-44's
+    /// general problem).
+    instance_vars: std::collections::HashSet<String>,
     /// Source of unique ids for hidden locals (`__sw_val_N`, ...).
     next_id: u32,
     /// The script's top-level `function` names: globals, not captures.
@@ -92,6 +102,8 @@ impl<'a> Lower<'a> {
             functions: HashMap::new(),
             kinds: Vec::new(),
             this_bound: false,
+            super_ctor: None,
+            instance_vars: Default::default(),
             toplevel_fns: Default::default(),
             toplevel_sigs: HashMap::new(),
             next_id: 0,

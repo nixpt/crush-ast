@@ -846,7 +846,7 @@ pub fn lower_bytecode_program(
                 sealed_new(program.kind_table(), kind, &mut symbols).unwrap_or(FastInstr::simple(FastOp::NewObj))
             }
             GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT | GET_SLOT
-            | SET_SLOT | IS_KIND | COPY => {
+            | SET_SLOT | IS_KIND | COPY | LOAD_KIND => {
                 return Err(LowerError::UnknownOpcode(format!(
                     "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
                      which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"

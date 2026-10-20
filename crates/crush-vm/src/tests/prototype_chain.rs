@@ -314,3 +314,54 @@ fn a_prototype_cycle_is_refused_at_load() {
         "inheritance cycle: A -> B -> A",
     );
 }
+
+#[test]
+fn load_kind_then_a_static_method_call_on_the_kind() {
+    // CRUSH-277 D8: `load_kind` pushes the Kind as a value; calling a
+    // static member on it binds the Kind itself as the receiver
+    // (arguments last-first, receiver on top).
+    let m = module(vec![js_kind("Util", |k| {
+        k.members.push(MemberDecl::new(
+            "twice",
+            crush_cosm::Member::Static {
+                value: crush_cosm::StaticValue::Fn("Util::static::twice".into()),
+            },
+        ));
+    })]);
+    run_both(
+        r#"
+.func main
+    PUSH 21
+    LOAD_KIND "Util"
+    CALL_MEMBER "twice" 1
+    CAP_CALL "io.print" 1
+    HALT
+.func Util::constructor 1
+    STORE 0
+    PUSH_NULL
+    RET
+.func Util::static::twice 1
+    STORE 0
+    LOAD 0
+    PUSH 2
+    MUL
+    RET
+"#,
+        m,
+        "42\n",
+    );
+}
+
+#[test]
+fn load_kind_of_an_undeclared_kind_is_a_load_error() {
+    fails_on_both(
+        r#"
+.func main
+    LOAD_KIND "Nope"
+    CAP_CALL "io.print" 1
+    HALT
+"#,
+        module(vec![]),
+        "Nope",
+    );
+}

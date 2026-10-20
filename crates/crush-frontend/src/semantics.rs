@@ -1041,7 +1041,9 @@ fn collect_called_in_expr<'a>(expr: &'a Expression, out: &mut Vec<&'a str>) {
             collect_called_in_expr(right, out);
         }
         Expression::UnaryOp { operand, .. } => collect_called_in_expr(operand, out),
-        Expression::CapabilityCall { args, .. } | Expression::VectorMath { args, .. } => {
+        Expression::CapabilityCall { args, .. }
+        | Expression::VectorMath { args, .. }
+        | Expression::Construct { args, .. } => {
             for arg in args {
                 collect_called_in_expr(arg, out);
             }

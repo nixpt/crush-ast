@@ -699,6 +699,18 @@ impl Renderer {
                 }
                 self.push_str(")");
             }
+            Expression::Construct { kind, args, .. } => {
+                self.push_str("new ");
+                self.push_str(kind);
+                self.push_str("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
+                    self.render_expression(arg, 0);
+                }
+                self.push_str(")");
+            }
             Expression::CapabilityCall { name, args, .. } => {
                 self.push_str("@");
                 self.push_str(name);
@@ -1381,6 +1393,7 @@ fn expr_precedence(expr: &Expression) -> u8 {
         | Expression::Index { .. }
         | Expression::Call { .. }
         | Expression::CapabilityCall { .. }
+        | Expression::Construct { .. }
         | Expression::DomQuery { .. } => 90,
 
         Expression::UnaryOp { .. } | Expression::Await { .. } | Expression::Spawn { .. } => 80,

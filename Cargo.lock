@@ -1212,6 +1212,7 @@ dependencies = [
  "boa_ast",
  "boa_interner",
  "boa_parser",
+ "casm",
  "crush-cast",
  "crush-cosm",
  "crush-frontend",

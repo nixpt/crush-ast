@@ -739,7 +739,9 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(a, module, caller_fn, out);
             }
         }
-        Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } => {
+        Expression::CapabilityCall { args, .. }
+        | Expression::Spawn { args, .. }
+        | Expression::Construct { args, .. } => {
             for a in args {
                 collect_calls_in_expr(a, module, caller_fn, out);
             }

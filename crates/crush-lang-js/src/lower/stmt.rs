@@ -253,10 +253,15 @@ impl Lower<'_> {
         self.scopes.enter_fn();
         // A nested function's `this` is its own (an arrow's would be the
         // enclosing method's — not lowered yet), never the method's
-        // receiver (CRUSH-277 D2).
+        // receiver (CRUSH-277 D2). `super(...)` and the instance
+        // bindings of the enclosing function don't cross either (S3).
         let saved = std::mem::replace(&mut self.this_bound, false);
+        let saved_super = self.super_ctor.take();
+        let saved_instances = std::mem::take(&mut self.instance_vars);
         let r = self.function_in_scope(params, body, span, declared);
         self.this_bound = saved;
+        self.super_ctor = saved_super;
+        self.instance_vars = saved_instances;
         self.scopes.leave_fn();
         r
     }
@@ -274,12 +279,44 @@ impl Lower<'_> {
     ) -> anyhow::Result<LoweredFn> {
         self.scopes.enter_fn();
         let saved = std::mem::replace(&mut self.this_bound, true);
+        let saved_instances = std::mem::take(&mut self.instance_vars);
         let r = self.function_in_scope(params, body, span, false);
         self.this_bound = saved;
+        self.instance_vars = saved_instances;
         self.scopes.leave_fn();
         let (mut lowered_params, body) = r?;
         lowered_params.insert(0, ("this".to_string(), CastType::Any));
         Ok((lowered_params, body))
+    }
+
+    /// A static method body (CRUSH-277 D8): the VM calls a static with no
+    /// receiver, so its parameters are the plain CAST parameters;
+    /// `this` in JS is the class itself, bound here as a local to the
+    /// class's kind value. (An inherited static's `this` is therefore the
+    /// defining class, not the subclass it was called through.)
+    pub(super) fn static_function(
+        &mut self,
+        kind: &str,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+        span: Option<Span>,
+    ) -> anyhow::Result<LoweredFn> {
+        self.scopes.enter_fn();
+        let saved = std::mem::replace(&mut self.this_bound, true);
+        let saved_super = self.super_ctor.take();
+        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let r = self.function_in_scope(params, body, span, false);
+        self.this_bound = saved;
+        self.super_ctor = saved_super;
+        self.instance_vars = saved_instances;
+        self.scopes.leave_fn();
+        let (lowered_params, mut lowered_body) = r?;
+        let this_value = CastExpr::Var {
+            name: kind.to_string(),
+            meta: self.meta(span),
+        };
+        lowered_body.insert(0, self.var_decl_stmt("this".to_string(), this_value, false, span));
+        Ok((lowered_params, lowered_body))
     }
 
     fn function_in_scope(
@@ -635,8 +672,13 @@ impl Lower<'_> {
             );
         };
         let name = self.resolve(id.sym());
+        // `const c = new Counter()`: the binding holds an instance, so
+        // `c.m()` lowers to a member call (CRUSH-277 D4).
+        if v.init().is_some_and(|init| self.is_new_of_kind(init)) {
+            self.instance_vars.insert(name.clone());
+        }
         let span = v.init().map(Spanned::span);
-        let value = match v.init() {
+        let mut value = match v.init() {
             Some(init) => self.expr(init)?,
             // `var x;` is hoisted (see `uninit_vars`): running it again, in a
             // loop or after an assignment, must not reset `x`.
@@ -645,6 +687,22 @@ impl Lower<'_> {
                 meta: self.meta(span),
             },
         };
+        // `const C = class { … }`: the initializer is the class itself,
+        // which the compiler reads by kind name (CRUSH-277 D8) — but it
+        // counts the binding declared while compiling the initializer, so
+        // a direct read would load the uninitialised binding. Go through
+        // a hidden temporary the binding can't shadow.
+        let mut prefix = Vec::new();
+        if v.init().is_some_and(|init| matches!(unparen(init), Expression::ClassExpression(_)))
+            && matches!(&value, CastExpr::Var { name: n, .. } if n == &name)
+        {
+            let temp = self.hidden(&format!("{name}__class"));
+            prefix.push(self.var_decl_stmt(temp.clone(), value, block, span));
+            value = CastExpr::Var {
+                name: temp,
+                meta: self.meta(span),
+            };
+        }
         if block && self.scopes.is_predeclared(id.sym()) {
             // Created on entry to the scope (`predeclare`): assign it.
             let m = self.meta(span);
@@ -657,9 +715,11 @@ impl Lower<'_> {
                 args: vec![target, value],
                 meta: m.clone(),
             };
-            return Ok(vec![CastStmt::ExprStmt { expr, meta: m }]);
+            prefix.push(CastStmt::ExprStmt { expr, meta: m });
+            return Ok(prefix);
         }
-        Ok(vec![self.var_decl_stmt(name, value, block, span)])
+        prefix.push(self.var_decl_stmt(name, value, block, span));
+        Ok(prefix)
     }
 
     /// `x = null` at the start of a function for each `var x;` without an

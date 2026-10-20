@@ -204,8 +204,27 @@ impl Lower<'_> {
                     Err(self.unsupported("`this` outside a class method", span))
                 }
             }
-            Expression::New(_) => {
-                Err(self.unsupported("`new` (waits for the COSM object model)", span))
+            Expression::New(n) => self.new_expr(n, span, m),
+            Expression::SuperCall(sup) => {
+                // `super(args)`: the parent's constructor on this
+                // instance (CRUSH-277 S3). `super.m(...)` never arrives
+                // here (a property access) and stays loud for S5.
+                let Some(ctor) = self.super_ctor.clone() else {
+                    return Err(self.unsupported(
+                        "a `super(…)` call outside a derived class constructor",
+                        span,
+                    ));
+                };
+                Ok(CastExpr::Call {
+                    function: ctor,
+                    args: std::iter::once(CastExpr::Var {
+                        name: "this".to_string(),
+                        meta: m.clone(),
+                    })
+                    .chain(self.args(sup.arguments())?)
+                    .collect(),
+                    meta: m,
+                })
             }
             Expression::ClassExpression(c) => {
                 let kind = self.class_expr(c)?;
@@ -232,7 +251,6 @@ impl Lower<'_> {
             }
             Expression::Await(_) => Err(self.unsupported("`await`", span)),
             Expression::Yield(_) => Err(self.unsupported("`yield`", span)),
-            Expression::SuperCall(_) => Err(self.unsupported("`super(…)`", span)),
             Expression::ImportCall(_) => Err(self.unsupported("dynamic `import(…)`", span)),
             Expression::NewTarget(_) | Expression::ImportMeta(_) => {
                 Err(self.unsupported("`import.meta` / `new.target`", span))
@@ -494,6 +512,13 @@ impl Lower<'_> {
                 return Err(self.unsupported("destructuring assignment", span));
             }
         };
+        // `c = new Counter()`: reassignment also makes the target a
+        // known instance (CRUSH-277 D4).
+        if let Target::Var(name) = &target
+            && self.is_new_of_kind(a.rhs())
+        {
+            self.instance_vars.insert(name.clone());
+        }
         let right = self.expr(a.rhs())?;
         let current = |t: &Target| match t {
             Target::Var(name) => CastExpr::Var {
@@ -551,7 +576,7 @@ impl Lower<'_> {
     }
 
     /// Call arguments. A spread argument would lose its `...`.
-    fn args(&mut self, args: &[Expression]) -> anyhow::Result<Vec<CastExpr>> {
+    pub(super) fn args(&mut self, args: &[Expression]) -> anyhow::Result<Vec<CastExpr>> {
         args.iter()
             .map(|a| match a {
                 Expression::Spread(s) => {
@@ -576,6 +601,17 @@ impl Lower<'_> {
     ) -> anyhow::Result<CastExpr> {
         match unparen(callee) {
             Expression::Identifier(id) => {
+                // `C(...)` without `new` is not a call of the constructor
+                // (CRUSH-277 D3): never silently construct.
+                if self.is_kind(&self.resolve(id.sym())) {
+                    return Err(self.unsupported(
+                        format!(
+                            "calling the class `{}` without `new`",
+                            self.name(id.sym())
+                        ),
+                        span,
+                    ));
+                }
                 if let Some(name) = self.user_binding(id.sym()) {
                     let args = match self.binding_sig(id.sym()) {
                         Some(sig) => self.adapt_args(&sig, args, &self.name(id.sym()), span)?,
@@ -611,10 +647,57 @@ impl Lower<'_> {
                         None => Err(self.unsupported(format!("`{name}()`"), span)),
                     };
                 }
+                // `C.f(...)` with `C` a class this module declares: a
+                // static's target is known exactly (D3).
+                if let Expression::Identifier(obj) = unparen(s.target())
+                    && self.is_kind(&self.resolve(obj.sym()))
+                {
+                    let kind = self.resolve(obj.sym());
+                    return match self.kind_static_fn(&kind, &method) {
+                        // A static is called with its plain arguments; the
+                        // VM's static member calls take no receiver either.
+                        Some(function) => Ok(CastExpr::Call {
+                            function,
+                            args: self.args(args)?,
+                            meta: m,
+                        }),
+                        None => Err(self.unsupported(
+                            format!(
+                                "`{}.{method}(...)`: `{}` has no static method of that name (an instance method needs an instance and `new`)",
+                                self.name(obj.sym()),
+                                self.name(obj.sym()),
+                            ),
+                            span,
+                        )),
+                    };
+                }
+                // `this.m(...)` in a method, or a variable this module
+                // bound with `new C()` (D4): the dotted-`CapabilityCall`
+                // shape the frontend compiles to a member call (the
+                // leading dotted segment becomes the receiver, later
+                // segments are read off the result). Any other receiver
+                // falls through to the builtin table — conservative by
+                // design, so builtin methods never flip to member calls.
+                let dotted_recv = match unparen(s.target()) {
+                    Expression::This(_) if self.this_bound => Some("this".to_string()),
+                    Expression::Identifier(obj)
+                        if self.instance_vars.contains(&self.resolve(obj.sym())) =>
+                    {
+                        Some(self.name(obj.sym()))
+                    }
+                    _ => None,
+                };
+                if let Some(recv) = dotted_recv {
+                    return Ok(CastExpr::CapabilityCall {
+                        name: format!("{recv}.{method}"),
+                        args: self.args(args)?,
+                        meta: m,
+                    });
+                }
                 match builtins::method(&method) {
                     Some(row) => self.builtin(row, Some(s.target()), args, statement, span, m),
                     None => Err(self.unsupported(
-                        format!("the method `.{method}()` (a user object's method waits for the COSM object model)"),
+                        format!("the method `.{method}()` (a method call on this value waits for CRUSH-277/zorro-44)"),
                         span,
                     )),
                 }

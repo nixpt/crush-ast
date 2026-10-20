@@ -1494,6 +1494,11 @@ impl PortableVm {
                     }
                 }
             }
+            // CRUSH-277 D8: a class name as a value.
+            LOAD_KIND => {
+                let kind = self.kinds.get(&self.const_operand()?)?.clone();
+                self.push(Value::Kind(kind));
+            }
             NEW_RECORD => {
                 let record = crate::cosm_rt::new_record(self.kinds.get(&self.const_operand()?)?);
                 self.push(record);

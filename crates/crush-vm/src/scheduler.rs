@@ -1686,6 +1686,11 @@ fn execute_one(
                 crate::cosm_rt::MemberCall::Done(v) => push!(v),
             }
         }
+        // CRUSH-277 D8: a class name as a value.
+        LOAD_KIND => {
+            let kind = kinds.get(&const_str!())?.clone();
+            push!(Value::Kind(kind));
+        }
         CONSTRUCT => {
             let kind = kinds.get(&const_str!())?.clone();
             let argc = code[ip + 3] as usize;

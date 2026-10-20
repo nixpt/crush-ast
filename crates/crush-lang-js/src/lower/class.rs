@@ -10,17 +10,18 @@
 //! `Counter::constructor`, `Counter::get::count`, …), each taking the
 //! receiver as a first parameter named `this` ([`Lower::method_function`]).
 //!
-//! This slice only *emits*: construction, method calls and loading the
-//! class as a value arrive with S3, and nothing runs until the VM slice
-//! (S2) lifts the prototype-chain gate — until then the frontend refuses
-//! these programs loudly, naming the strategy. Everything outside the
-//! slice stays a typed refusal here: class fields and static fields (S5),
-//! `super` (S3/S5), private members, static blocks, computed member names,
+//! With S2 (the VM runs prototype chains) and S3, this is also where
+//! `new C(…)` becomes a CAST `Construct`, `super(...)` becomes a call of
+//! the parent's constructor on the same instance, and bindings this
+//! module bound with `new C()` become known instances whose method
+//! calls lower to member calls. Everything outside the slice stays a
+//! typed refusal here: class fields and static fields (S5), `super.m()`
+//! (S5), private members, static blocks, computed member names,
 //! async/generator methods, anonymous class expressions, expression
-//! superclasses, and a derived class with no constructor (its JS default
-//! forwards to `super`, S3).
+//! superclasses, and a derived class whose parent's constructor the
+//! walker hasn't lowered (imported classes — CRUSH-110).
 
-use boa_ast::expression::Expression;
+use boa_ast::expression::{Expression, New};
 use boa_ast::function::{
     ClassDeclaration, ClassElement, ClassElementName, ClassExpression, ClassMethodDefinition,
     FunctionExpression,
@@ -28,13 +29,14 @@ use boa_ast::function::{
 use boa_ast::property::{MethodDefinitionKind, PropertyName};
 use boa_ast::{Span, Spanned};
 use boa_interner::Sym;
-use crush_cast::{Function, Statement as CastStmt};
+use crush_cast::{CastType, Expression as CastExpr, Function, Statement as CastStmt};
 use crush_cosm::{
     Construct, Equality, FnRef, Hooks, KindDecl, KindRef, Member, MemberDecl, Receiver, Resolution,
     Semantics, Storage,
 };
 
-use super::Lower;
+use super::stmt::unparen;
+use super::{Lower, Meta};
 
 impl Lower<'_> {
     /// A class declaration: record its KindDecl; the methods are already
@@ -73,6 +75,71 @@ impl Lower<'_> {
         )
     }
 
+    /// Is `resolved` (a binding's crush name) a class this module has
+    /// declared as a COSM kind?
+    pub(super) fn is_kind(&self, resolved: &str) -> bool {
+        self.kinds.iter().any(|k| k.name == resolved)
+    }
+
+    /// Is `e` a `new C()` of a class this module declares?
+    pub(super) fn is_new_of_kind(&self, e: &Expression) -> bool {
+        match unparen(e) {
+            Expression::New(n) => match unparen(n.constructor()) {
+                Expression::Identifier(id) => self.is_kind(&self.resolve(id.sym())),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// `new C(args)` (CRUSH-277 D3): a CAST `Construct` of the Kind. A
+    /// member or computed callee (`new a.B()`) and a name that isn't a
+    /// class declared in this module (`new Set()`, `new THREE.X()`) stay
+    /// loud — those construct host objects, not COSM kinds.
+    pub(super) fn new_expr(
+        &mut self,
+        n: &New,
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        let Expression::Identifier(id) = unparen(n.constructor()) else {
+            return Err(self.unsupported(
+                "`new` of anything but a class name (`new a.B()`, `new f()()`)",
+                span,
+            ));
+        };
+        let kind = self.resolve(id.sym());
+        if !self.is_kind(&kind) {
+            return Err(self.unsupported(
+                format!(
+                    "`new {}`: only a class declared in this module constructs yet",
+                    self.name(id.sym())
+                ),
+                span,
+            ));
+        }
+        Ok(CastExpr::Construct {
+            kind,
+            args: self.args(n.arguments())?,
+            meta: m,
+        })
+    }
+
+    /// The lifted function of `kind`'s static method `method`, when the
+    /// class declares one (a static call's target is known exactly).
+    pub(super) fn kind_static_fn(&self, kind: &str, method: &str) -> Option<String> {
+        let k = self.kinds.iter().find(|k| k.name == kind)?;
+        k.members
+            .iter()
+            .find(|m| m.name == method)
+            .and_then(|m| match &m.member {
+                Member::Static {
+                    value: crush_cosm::StaticValue::Fn(f),
+                } => Some(f.to_string()),
+                _ => None,
+            })
+    }
+
     /// Emit one class as a KindDecl plus its lifted functions; returns the
     /// Kind's name (the binding's resolved crush name, so block-scoped
     /// classes get their fresh names).
@@ -99,7 +166,15 @@ impl Lower<'_> {
         let ctor_fn = format!("{kind}::constructor");
         match ctor {
             Some(f) => {
-                let (params, body) = self.method_function(f.parameters(), f.body(), span)?;
+                // `super(...)` in this body calls the parent's constructor
+                // on the same instance (CRUSH-277 S3).
+                let saved = self.super_ctor.take();
+                if let Some(parent) = parents.first() {
+                    self.super_ctor = Some(format!("{}::constructor", parent.as_str()));
+                }
+                let lowered = self.method_function(f.parameters(), f.body(), span);
+                self.super_ctor = saved;
+                let (params, body) = lowered?;
                 self.functions.insert(
                     ctor_fn.clone(),
                     Function {
@@ -109,24 +184,65 @@ impl Lower<'_> {
                     },
                 );
             }
-            // JS gives a base class an empty default constructor. A derived
-            // class's default forwards its arguments to `super(...)` —
-            // S3; refusing here keeps the emitted shape honest until then.
+            // JS gives a base class an empty default constructor.
             None if parents.is_empty() => {
                 self.functions.insert(
                     ctor_fn.clone(),
                     Function {
-                        params: vec![("this".to_string(), crush_cast::CastType::Any)],
+                        params: vec![("this".to_string(), CastType::Any)],
                         body: Vec::new(),
                         ..Default::default()
                     },
                 );
             }
+            // A derived class's default constructor forwards its arguments
+            // to `super(...)`: synthesise it from the parent's constructor
+            // signature, which the walker must have already lowered.
             None => {
-                return Err(self.unsupported(
-                    "a derived class without a constructor (the default `super` forwarding arrives with CRUSH-277 S3)",
-                    span,
-                ));
+                let parent = parents[0].as_str().to_string();
+                let parent_ctor = format!("{parent}::constructor");
+                let Some(parent_params) = self
+                    .functions
+                    .get(&parent_ctor)
+                    .map(|f| f.params.clone())
+                else {
+                    return Err(self.unsupported(
+                        format!(
+                            "a derived class without a constructor whose parent `{parent}` isn't declared in this module (the default `super` forwarding needs its constructor)"
+                        ),
+                        span,
+                    ));
+                };
+                let m = self.meta(span);
+                let this_var = |meta: &Meta| CastExpr::Var {
+                    name: "this".to_string(),
+                    meta: meta.clone(),
+                };
+                let mut params = vec![("this".to_string(), CastType::Any)];
+                let mut call_args = vec![this_var(&m)];
+                for (name, ty) in parent_params.iter().skip(1) {
+                    params.push((name.clone(), ty.clone()));
+                    call_args.push(CastExpr::Var {
+                        name: name.clone(),
+                        meta: m.clone(),
+                    });
+                }
+                let body = vec![CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: parent_ctor,
+                        args: call_args,
+                        meta: m.clone(),
+                    },
+                    meta: m,
+                }];
+                self.functions.insert(
+                    ctor_fn.clone(),
+                    Function {
+                        params,
+                        body,
+                        ..Default::default()
+                    },
+                );
             }
         }
 
@@ -193,7 +309,7 @@ impl Lower<'_> {
         match m.kind() {
             MethodDefinitionKind::Ordinary if m.is_static() => {
                 let func = format!("{kind}::static::{name}");
-                self.lift_method(&func, m)?;
+                self.lift_static(kind, &func, m)?;
                 replace(
                     members,
                     MemberDecl::new(
@@ -233,6 +349,26 @@ impl Lower<'_> {
     /// `this` as its first parameter.
     fn lift_method(&mut self, func: &str, m: &ClassMethodDefinition) -> anyhow::Result<()> {
         let (params, body) = self.method_function(m.parameters(), m.body(), None)?;
+        self.functions.insert(
+            func.to_string(),
+            Function {
+                params,
+                body,
+                ..Default::default()
+            },
+        );
+        Ok(())
+    }
+
+    /// Lower a static method body: plain parameters (the VM calls a
+    /// static with no receiver), `this` bound to the class locally.
+    fn lift_static(
+        &mut self,
+        kind: &str,
+        func: &str,
+        m: &ClassMethodDefinition,
+    ) -> anyhow::Result<()> {
+        let (params, body) = self.static_function(kind, m.parameters(), m.body(), None)?;
         self.functions.insert(
             func.to_string(),
             Function {

@@ -194,7 +194,8 @@ fn test_boa_switch() {
 fn test_boa_throw() {
     let program = test_lower("throw 'bad';");
     assert!(program.functions.contains_key("main"));
-    assert!(loud("throw new Error('bad');").contains("`new`"));
+    // `Error` isn't a class this module declares: `new` stays loud.
+    assert!(loud("throw new Error('bad');").contains("`new Error`"));
 }
 
 #[test]
@@ -318,7 +319,7 @@ fn test_boa_builtin_table_refusals() {
     assert!(loud("nope(1);").contains("calling `nope`, which is not defined"));
     assert!(loud("console.log(Math.cbrt(8));").contains("`Math.cbrt()`"));
     let o = loud("const o = {f: 1};\no.f();");
-    assert!(o.contains("`.f()`") && o.contains("COSM"), "{o}");
+    assert!(o.contains("`.f()`") && o.contains("CRUSH-277"), "{o}");
     // Arity is checked; `push`'s result (the array, not JS's new length) can't be used.
     assert!(loud("console.log(Math.max(1, 2, 3));").contains("with 3 argument(s)"));
     // Several values are expanded in statement position only.
@@ -540,13 +541,117 @@ fn test_boa_class_loud_edges() {
     assert!(loud("class A { x = 1; }").contains("class field"), "class field");
     assert!(loud("class A { #m() { return 1; } }").contains("private class method"), "private method");
     assert!(loud("class A { static { } }").contains("static {"), "static block");
-    assert!(loud("class B { } class A extends B { }").contains("derived class without a constructor"), "derived without ctor");
+    assert!(loud("class A extends B { }").contains("isn't declared in this module"), "derived without ctor, parent undeclared");
+    // `super.m()` is S5: loud, never miscompiled.
+    assert!(loud("class B { m() { return 1; } } class A extends B { m() { return super.m(); } }").contains("calling an expression"), "super.m()");
+    // `new` of a name that isn't a class declared in this module.
+    assert!(loud("const s = new Set();").contains("`new Set`"), "host constructor");
+    assert!(loud("class A { } A();").contains("without `new`"), "class called bare");
     assert!(loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"), "expression superclass");
     assert!(loud("class A { async m() { return 1; } }").contains("async method"), "async method");
     assert!(loud("class A { [k]() { return 1; } }").contains("computed member name"), "computed name");
     // `this` is bound only directly inside a method.
     assert!(loud("class A { m() { function g() { return this; } return g(); } }").contains("`this` outside a class method"), "nested fn this");
     assert!(loud("class A { m() { const g = () => this; return g(); } }").contains("`this` outside a class method"), "arrow this");
+}
+
+/// Compile a lowered JS program all the way to a loaded CVM1 program —
+/// CASM JSON, `casm_to_vm`, the CVM1 blob — and run it on the scheduler VM.
+fn run_js(source: &str) -> String {
+    let program = test_lower(source);
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+    let json = casm.serialize(casm::Format::Json).unwrap();
+    let casm = casm::Program::deserialize(&json, casm::Format::Json).unwrap();
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let loaded = crush_vm::Program::from_blob(&vm.to_blob()).unwrap();
+    crush_vm::run(&loaded, &crush_vm::Quotas::default())
+        .unwrap()
+        .output
+}
+
+// CRUSH-277 S3: `new`, `this` and method calls, end to end.
+#[test]
+fn test_boa_new_this_and_method_calls_run() {
+    let source = r#"
+class Counter {
+  constructor(start) { this.x = start; }
+  inc() { this.x = this.x + 1; }
+  bump(by) { this.x = this.x + by; }
+  get() { return this.x; }
+}
+const c = new Counter(41);
+c.inc();
+c.bump(0);
+console.log(c.get());
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
+#[test]
+fn test_boa_super_and_inherited_method_run() {
+    let source = r#"
+class Box {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+class BigBox extends Box {
+  constructor(x) { super(x); }
+}
+const b = new BigBox(7);
+console.log(b.get());
+"#;
+    assert_eq!(run_js(source), "7\n");
+}
+
+// A derived class without a constructor forwards its arguments to `super`.
+#[test]
+fn test_boa_derived_default_ctor_forwards_run() {
+    let source = r#"
+class Box {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+class BigBox extends Box { }
+const b = new BigBox(9);
+console.log(b.get());
+"#;
+    assert_eq!(run_js(source), "9\n");
+}
+
+#[test]
+fn test_boa_static_method_runs() {
+    let source = r#"
+class Util { static twice(x) { return x * 2; } }
+console.log(Util.twice(21));
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The lifted static takes its plain parameters only (the VM calls a
+    // static with no receiver) — no implicit `this` parameter.
+    let program = test_lower("class Util { static twice(x) { return x * 2; } }");
+    let params = &program.functions["Util::static::twice"].params;
+    assert_eq!(params.len(), 1, "{params:?}");
+    assert_eq!(params[0].0, "x");
+}
+
+// A class name used as a value loads its kind (D8).
+#[test]
+fn test_boa_class_as_value_loads_kind() {
+    let program = test_lower("class Counter { inc() { return 1; } }\nconst K = Counter;");
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+    let main = casm
+        .functions
+        .iter()
+        .find(|(name, _)| *name == "main")
+        .map(|(_, f)| f)
+        .expect("main");
+    assert!(
+        main.body.iter().any(|i| i.op == "load_kind" && i.args["kind"] == "Counter"),
+        "load_kind Counter in main: {:?}",
+        main.body
+    );
+    // The class-expression binding is the kind name itself: `new C()` works.
+    let source = "const C = class { get() { return 3; } };\nconst i = new C();\nconsole.log(i.get());";
+    assert_eq!(run_js(source), "3\n");
 }
 
 #[test]

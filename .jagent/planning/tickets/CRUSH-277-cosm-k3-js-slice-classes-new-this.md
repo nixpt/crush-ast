@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-277 |
 | **Priority** | P1 |
-| **Status** | In progress — S1 done (`agent/muse/CRUSH-277`), S2 done (`agent/muse/CRUSH-277-s2`), S3 next |
+| **Status** | In progress — S1 done (`agent/muse/CRUSH-277`), S2 done (`agent/muse/CRUSH-277-s2`), S3 done (`agent/muse/CRUSH-277-s3`); S4 next |
 | **Phase** | COSM K3 — JS walker slice |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-266 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
@@ -262,6 +262,41 @@ Census of the JS class surface maya actually uses:
   S1's class lowering had un-louded. Suites: casm + crush-vm +
   crush-frontend + crush-lang-js + crush-lang-sdk = 1,418 tests green;
   workspace `--all-targets` and CI-style clippy clean.
+
+- **S3 — done** (branch `agent/muse/CRUSH-277-s3`, stacked on S2).
+  CAST gained `Expression::Construct { kind, args }` (compiler emits
+  `construct`, erroring on an undeclared kind); casm gained `load_kind`
+  (CVM1 `0xCB`), implemented on the scheduler and portable VMs and
+  refused on FastVM (whose default arm silently NOPs unknown bytes);
+  a class name as a value compiles to it (D8). Boa: `new C()` over
+  declared classes only (host constructors and member callees stay
+  loud), bare `C()` refused, `super(...)` calls the parent's
+  constructor on the same instance, derived-without-constructor
+  synthesises forwarding constructors, `Util.m()` statics and
+  `this.m()`/`c.m()` (bindings bound with `new C()`) lower to member
+  calls (D4 conservative). Two bugs found by the end-to-end tests and
+  fixed here: statics took the implicit `this` parameter although the
+  VM calls statics with no receiver (now plain parameters, `this`
+  bound to the class locally); and `const C = class {}` loaded its own
+  uninitialised binding (the compiler counts the binding declared
+  during the initialiser — the walker now goes through a hidden temp;
+  the compiler's declared-wins ordering is unchanged). The casm
+  version-stamp bug the round trip exposed is CRUSH-278. Evidence:
+  boa e2e runs through CASM JSON → blob → scheduler VM print
+  `42`/`7`/`9` (construction + `this` state, `super()` + inherited
+  method, forwarding ctor, statics, class-expression `new`), frontend
+  `Construct`/`load_kind` compile tests, VM `load_kind` + static call
+  tests on both VMs. Suites: workspace `--all-targets` green except
+  the pre-existing `crush-frontend` `cast_compile` bench failure
+  (identical on the S2 base; meta-serialisation drift, unrelated) —
+  CI-style clippy clean.
+  Maya sweep (boa, after S3): `engine/FixturePlayer.js` and
+  `engine/core/Time.js` walk; S3's own features are the first blocker
+  nowhere. Remaining first-blockers are the known queue: `export
+  function` (PR #283), host `new` (`Map`, three.js — CRUSH-110/host),
+  method default parameters (now the top walker item, 8 files —
+  zorro-18-for-methods, as flagged in S1), `?.`, `.reduce()`,
+  `Object.assign`, zorro-44 member calls on parameters.
 
 ## Success criteria
 

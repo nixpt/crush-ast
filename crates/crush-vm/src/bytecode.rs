@@ -221,6 +221,9 @@ pub const COPY: u8 = 0xC9;
 /// running any constructor: what a struct literal builds before it writes
 /// its fields (`SET_FIELD`s follow).
 pub const NEW_RECORD: u8 = 0xCA;
+/// Push the Kind itself as a value (CRUSH-277 D8): what a class name
+/// evaluates to, the receiver of a static member access.
+pub const LOAD_KIND: u8 = 0xCB;
 
 pub const HALT: u8 = 0xFF;
 
@@ -352,7 +355,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         MAKE_CLOSURE => Some(OperandKind::Closure),
         CALL_VALUE => Some(OperandKind::Count),
         CELL_NEW | CELL_GET | CELL_SET => Some(OperandKind::None),
-        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD => Some(OperandKind::Str),
+        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD | LOAD_KIND => Some(OperandKind::Str),
         CALL_MEMBER | CONSTRUCT => Some(OperandKind::Member),
         GET_SLOT | SET_SLOT => Some(OperandKind::Count),
         COPY => Some(OperandKind::None),
