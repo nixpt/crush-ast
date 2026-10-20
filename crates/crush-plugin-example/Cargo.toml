@@ -10,7 +10,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-crush-ffi = { path = "../crush-ffi", version = "0.6.0" }
+crush-ffi = { path = "../crush-ffi", version = "0.7.0" }
 
 [lib]
 crate-type = ["cdylib"]

@@ -14,6 +14,83 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-20
+
+- Merge pull request #280 from nixpt/agent/vega/ci-release-artifacts
+- ci: upload release binaries as an artifact (14 days)
+- Merge pull request #276 from nixpt/nixpt-patch-1
+- Update README.md
+- Merge pull request #263 from nixpt/agent/buffy/CRUSH-quickwins-11-35
+- Merge pull request #272 from nixpt/agent/nixp/CRUSH-xps-13-method-contracts
+- Merge main into agent/buffy/CRUSH-quickwins-11-35
+- Merge pull request #274 from nixpt/agent/claude/CRUSH-272
+- Merge commit 'refs/trial/main-now' into kai-s481-272
+- Merge pull request #259 from nixpt/agent/vega/CRUSH-zorro-55-fastvm-jit-unassigned
+- Merge pull request #275 from nixpt/agent/buffy/CRUSH-111
+- docs(CRUSH-111): record the resolution, the two extra divergences, and the evidence
+- feat(frontend): one builtin table shared by the checker and the compiler
+- feat(aot): AotCompiler::cached_casm_path — ask whether a program is already compiled
+- docs(tickets): point CRUSH-111's dispatch build dir at /build after clearing it
+- docs(tickets): CRUSH-111 dispatch metadata + linted prompt pointer
+- docs(tickets): mint CRUSH-271 for refused unary `+`/`~` from the Python/JS walkers
+- feat(sdk): compile_lowered_script — a whole Python / JS script, exact or loud (CRUSH-272)
+- docs(planning): fold the make_range entry-point drift into CRUSH-111
+- docs(planning): CRUSH-272 inline lowering; file CRUSH-273 and CRUSH-274
+- feat(crush-web): `polyglot: "lower"` run option and a `polyglot-python` feature (CRUSH-272)
+- feat(sdk): lower @python / @javascript blocks into the program (PolyglotMode::Lower, CRUSH-272)
+- build(crush-lang-python): build for wasm32 by taking crush-walker-core without tree-sitter
+- docs(planning): correct CRUSH-35 table to runtime-verified rows (PR #263 review)
+- docs(planning): close CRUSH-255 as superseded (crush-vm 0.6.0 is published) (#271)
+- docs: correct README, examples/README and the CAST cookbook against 3ae0b4a (#264)
+- build: dev container for GitHub Codespaces / Dev Containers (#262)
+- feat(rust): share mapped method semantics across VM and AOT (CRUSH-xps-13)
+- fix(crush-web): browser runs match crush-run: refuse before running, time/env grants, native guest errors (#270)
+- feat(vm): embedder-supplied polyglot executor on the scheduler VM (CRUSH-271) (#269)
+- perf(aot): Test (aot) 16 min to under 4.5 min: -O0 test builds, parallel harnesses, sharded CI, deterministic cached builds (#268)
+- fix(vm): await on a non-handle returns the value, not null (#265)
+- docs(tickets): close CRUSH-30 by scope ruling, mint CRUSH-30a residue ticket
+- docs(quick-wins): CRUSH-11 repro re-verified, CRUSH-35 VISION.md table refreshed
+- docs: CRUSH-zorro-55 resolution and decision record
+- fix(aotc): crush-aotc fails a read of an unassigned local instead of reading 0 (CRUSH-zorro-55)
+- fix(jit): JIT fails a read of an unassigned local, and a reused frame can't leak the last call's (CRUSH-zorro-55)
+- fix(vm): FastVM fails a read of an unassigned local instead of reading null (CRUSH-zorro-55)
+- refactor(casm): move the definite-assignment pass from crush-aot to casm
+- feat(rust): shared typed Debug formatter for VM and Rust AOT (CRUSH-xps-9) (#252)
+- fix(rust): typed literal Debug and macro formatting boundaries (CRUSH-xps-9) (#247)
+- feat(rust): proven dynamic casts and bounded unsigned values (CRUSH-xps-8) (#246)
+- fix(aot): refuse green tasks (spawn/yield/await) by name (#161) (#250)
+- fix(aot): C backend compares maps and arrays by value, not identity (#249)
+- fix(aot): fail a read of an unassigned local instead of reading null (CRUSH-zorro-54) (#248)
+- feat(polyglot): explicit @lang block outputs (CRUSH-270) (#245)
+- fix(rust): preserve literal integer casts and reject unproven conversions (#244)
+- fix(js): refuse default parameters at walk time on the swc lowering (CRUSH-zorro-18) (#243)
+- feat(js): default and rest parameters on function declarations (CRUSH-zorro-18) (#242)
+- fix(python): detect free-variable reads inside comprehensions and nested scopes (#241)
+- feat(js): `push` takes several values and returns the new length (CRUSH-250) (#240)
+- docs(rust): spec and refine CRUSH-xps-8 through CRUSH-xps-13 (#237)
+- feat(js): script variables captured by top-level functions; hoisted closures see later lets (CRUSH-250 step 4) (#236)
+- feat(js): the builtin/method table; unbound calls and names fail at walk time (CRUSH-250 step 3) (#234)
+- test(examples): fail loudly when an example stops compiling (#229)
+- fix(frontend): pass method-call arguments to capabilities in order (CRUSH-235) (#238)
+- fix(vm): member and Kind names are not capabilities (COSM K1.4 follow-up to #222) (#239)
+- fix(rust): make flat value copies exact and reject unproven ownership (CRUSH-xps-7) (#233)
+- fix(rust): preserve lexical binding identity (CRUSH-xps-6) (#224)
+- test(rust): add SDK and AOT conformance gate (CRUSH-xps-5) (#220)
+- feat(sdk): add walker-backed source compilation (#213)
+- feat(js): the boa lowering with a scope pass, at parity on the harness (CRUSH-250 step 2) (#231)
+- feat(js): boa_parser 0.22 and the js-boa / ts feature layout (CRUSH-250 step 1) (#228)
+- feat: COSM K1.4 — Records, Kinds, member ops, CONSTRUCT and receivers on the VMs (CRUSH-zorro-43, closes CRUSH-zorro-37) (#222)
+- planning: @lang blocks declare outputs explicitly, @python -> names (CRUSH-270, #230) (#232)
+- planning: JS number model decided, option (a), Int promotes to Float on overflow (CRUSH-zorro-13) (#227)
+- fix: fail loudly on declined AI statements instead of silent NOP (CRUSH-265) (#226)
+- planning: close M1 correctness — CRUSH-1/7/13 done; file CRUSH-267/268 slicing follow-ups (#221)
+- feat: COSM K1.3 — CASM and CVM1 carry the kind table; FastVM/JIT/AOT refuse it (CRUSH-zorro-42) (#219)
+- docs(design): COSM — the Crush Object Semantic Model: objects lowered like code (Kinds; CRUSH-251) (#206)
+- planning: Python .py gap tickets (CRUSH-zorro-28..36) (#201)
+- planning: crush-ptx header bug (CRUSH-zorro-50) + gpu_map design (CRUSH-zorro-51) (#212)
+
+
+
 - Rust mapped string and proven numeric methods now share pure kernels across
   VM, Rust AOT and native Linux C AOT. Integer pow/abs retain source widths and
   optimized-profile wrapping; f64 powi/powf are distinct. Prefix/suffix methods
