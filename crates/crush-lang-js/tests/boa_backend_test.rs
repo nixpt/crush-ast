@@ -449,3 +449,23 @@ fn test_boa_exported_class_and_async_stay_loud() {
     assert!(loud("export class Foo {}").contains("exporting a class, generator or async declaration"));
     assert!(loud("export async function f() {}").contains("exporting a class, generator or async declaration"));
 }
+
+// CRUSH-266 (boa path, end-to-end): the exported function is callable from
+// the module body and computes the right value through CASM -> CVM1.
+#[test]
+fn test_boa_exported_function_runs_end_to_end() {
+    let frontend = crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa);
+    let (_report, cast) = crush_walker_core::frontend_pipeline(
+        &frontend,
+        "export function double(x) { return x * 2; }\nconsole.log(double(21));",
+    )
+    .unwrap();
+    let casm = crush_frontend::compiler::Compiler::new().compile(cast).expect("CAST->CASM");
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("CASM->CVM1");
+    let quotas = crush_vm::Quotas {
+        max_steps: 10_000_000,
+        ..Default::default()
+    };
+    let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
+    assert_eq!(out.trim(), "42");
+}
