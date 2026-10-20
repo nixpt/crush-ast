@@ -84,7 +84,7 @@ path uses it too), exported vars emit `lower_var_declarator` before their
 `Export`, exported classes emit `lower_class_body` before theirs, `export using`
 keeps its initialiser, and named/anonymous `export default` fn/class retain
 their definitions. New `crates/crush-lang-js/tests/export_defs_test.rs` (8 tests)
-covers CAST shape + end-to-end runs; it needs CRUSH-267 (same branch) for the
+covers CAST shape + end-to-end runs; it needs CRUSH-275 (same branch) for the
 `Export { Var(fn) }` load to execute.
 
 Verified: `cargo test -p crush-lang-js -p crush-frontend` (301 passed),
@@ -106,7 +106,20 @@ loudly (CRUSH-zorro-23) and made `pat_to_name`/`lower_var_declarator`
 fallible/kind-aware; the fix was ported onto that structure rather than
 merged textually: upstream's `using` refusal and type-only-export handling
 were kept, `export default class` reuses upstream's `lower_class`, and the
-exported-var path passes the declaration kind through. CRUSH-267 turned out
+exported-var path passes the declaration kind through. CRUSH-275 turned out
 to be already fixed upstream by CRUSH-250's `make_closure` function values
 (see that ticket). `cargo test -p crush-lang-js --test export_defs_test
 --test export_multi_test`: 10 passed on the rebased branch.
+
+## Boa follow-up (2026-10-20)
+
+The boa lowering (`crates/crush-lang-js/src/lower/stmt.rs`) had the same bug
+in loud form: `export function` was refused outright (24 of 37 maya-engine
+files failed there first). Fixed on this branch: exported function
+declarations are fed into the script hoisting pass and `export()` emits only
+the `Export` statement, mirroring the swc fix. Exported class/async/generator
+stay loud (classes wait for COSM). Two tests in
+`crates/crush-lang-js/tests/boa_backend_test.rs`. maya-engine boa sweep after
+the fix: 1/37 walks end-to-end (Collision.js) — every other file now stops at
+its *next* boa blocker (callbacks, `Object.*`, `new`/COSM, re-exports), which
+is the expected queue, not this bug.

@@ -5,7 +5,7 @@
 //! dropped, so the CAST compiled to code that loaded an uninitialised slot.
 //! `export_multi_test.rs` only asserts exported *names* reach CAST; these
 //! tests assert the bodies/initialisers do too, and that an exported
-//! function is callable end-to-end (which also exercises CRUSH-267: loading
+//! function is callable end-to-end (which also exercises CRUSH-275: loading
 //! a program-level function name in the `Export` statement).
 
 // The swc path only: the Boa lowering stubs module items (CRUSH-250).

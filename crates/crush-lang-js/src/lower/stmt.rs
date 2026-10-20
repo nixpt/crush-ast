@@ -131,7 +131,19 @@ impl Lower<'_> {
         for item in &list {
             body.extend(self.uninit_vars(std::slice::from_ref(*item)));
         }
-        let owned: Vec<StatementListItem> = list.iter().map(|i| (*i).clone()).collect();
+        let mut owned: Vec<StatementListItem> = list.iter().map(|i| (*i).clone()).collect();
+        // An exported `function` declaration hoists exactly like a bare one
+        // (CRUSH-266): without this it never reached the hoisting pass, and
+        // `export()` refused it, so no ES module's functions lowered at all.
+        for item in items {
+            if let TopItem::Module(ModuleItem::ExportDeclaration(e)) = item
+                && let ExportDeclaration::Declaration(Declaration::FunctionDeclaration(f)) = &**e
+            {
+                owned.push(StatementListItem::Declaration(Box::new(
+                    Declaration::FunctionDeclaration(f.clone()),
+                )));
+            }
+        }
         body.extend(self.hoisted_functions(&owned, Hoist::Script)?);
         for item in items {
             match item {
@@ -216,12 +228,18 @@ impl Lower<'_> {
             ExportDeclaration::ReExport { .. } => {
                 Err(self.unsupported("a re-export (`export … from …`)", None))
             }
+            // Hoisted by `top_level` like a bare declaration (CRUSH-266);
+            // only the export itself is emitted here.
+            ExportDeclaration::Declaration(Declaration::FunctionDeclaration(f)) => {
+                let name = self.resolve(f.name().sym());
+                Ok(vec![export(self, name.clone(), var(self, name))])
+            }
             ExportDeclaration::Declaration(_)
             | ExportDeclaration::DefaultGeneratorDeclaration(_)
             | ExportDeclaration::DefaultAsyncFunctionDeclaration(_)
             | ExportDeclaration::DefaultAsyncGeneratorDeclaration(_)
             | ExportDeclaration::DefaultClassDeclaration(_) => Err(self.unsupported(
-                "exporting a function, class, generator or async declaration",
+                "exporting a class, generator or async declaration",
                 None,
             )),
         }
