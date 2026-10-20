@@ -489,7 +489,7 @@ jobs:
             --exclude crush-lang-custom \
             -- -D clippy::never_loop
 
-  # ── Release build compiles (no LTO, just verify release profile works) ────
+  # ── Release build compiles + uploads the binaries as an artifact ─────────
   # `cache-targets: false` (CRUSH-CI-CACHE-1) — this job must NOT restore a
   # `target/` directory. It was passing for the wrong reason.
   #
@@ -543,7 +543,35 @@ jobs:
             -p crush-lang-go \
             -p crush-lang-zig \
             -p crush-lang-dart \
+            -p crush-pkg \
             2>&1
+      # Hand the binaries back (the job builds them cold anyway): a laptop can
+      # download a release build instead of spending 20+ minutes compiling one.
+      # Public repo → no Actions storage charge; 14 days keeps the list short.
+      - name: Package release binaries
+        run: |
+          set -euo pipefail
+          dist="crush-linux-x86_64"
+          mkdir -p "$dist"
+          bins=(crush crushc crush-run crush-repl crush-compile crush-diff crush-pkg
+                crush-vm crush-aotc crush-aot-runner crush-walk-run jit-runner
+                python_walker js_walker rust_walker c_walker bash_walker go_walker zig_walker)
+          for b in "${bins[@]}"; do cp "target/release/$b" "$dist/"; done
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "ref: $GITHUB_REF"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ) on $RUNNER_OS $(uname -m)"
+            echo "rustc: $(rustc -V)"
+          } > "$dist/BUILD-INFO"
+          (cd "$dist" && sha256sum -- * > SHA256SUMS)
+          tar -czf "$dist.tar.gz" "$dist"
+          ls -la "$dist" "$dist.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crush-linux-x86_64-${{ github.sha }}
+          path: crush-linux-x86_64.tar.gz
+          retention-days: 14
+          if-no-files-found: error
 
   # ── Feature-gate smoke tests (blocking) ───────────────────────────────────
   # Previously muted with continue-on-error + `|| true`. Keep the same excludes
