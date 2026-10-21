@@ -1,8 +1,11 @@
-# CRUSH-280 — `cast_compile` bench fails: its CAST fixtures predate source positions in `meta`
+# CRUSH-282 — `cast_compile` bench fails: its CAST fixtures predate source positions in `meta`
+
+> Numbered CRUSH-282: it was first filed as CRUSH-280 in commit 81e4b1b, which PR #286 (boa method default/rest
+> parameters) had already claimed.
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-280 |
+| **ID** | CRUSH-282 |
 | **Priority** | P3 |
 | **Status** | Done (this PR) |
 | **Phase** | test hygiene |
