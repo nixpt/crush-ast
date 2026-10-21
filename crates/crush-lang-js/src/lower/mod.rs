@@ -86,6 +86,11 @@ pub(crate) struct Lower<'a> {
     /// function boundary: an instance flowing in as a parameter or a
     /// capture isn't tracked (CRUSH-zorro-44's general problem).
     instance_kinds: HashMap<String, String>,
+    /// Depth of control statements (branches, loops, `try`) currently
+    /// being lowered, and the bindings assigned inside them: both serve
+    /// the forgetting rule of [`Lower::stmt`] (CRUSH-286 review #3).
+    branch_depth: usize,
+    flow_assigned: std::collections::HashSet<String>,
     /// The visible parameters of every lifted class member function
     /// (constructors, methods, accessors, statics), keyed by lifted
     /// function name, so call sites can adapt their arguments to
@@ -146,6 +151,8 @@ impl<'a> Lower<'a> {
             this_bound: false,
             super_ctor: None,
             instance_kinds: Default::default(),
+            branch_depth: 0,
+            flow_assigned: Default::default(),
             fn_sigs: HashMap::new(),
             member_calls: Vec::new(),
             home_class: None,

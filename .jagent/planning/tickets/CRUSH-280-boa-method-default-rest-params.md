@@ -48,12 +48,19 @@ knows adapt their arguments with the existing `adapt_args`:
 - `new C(...).m(...)` — same, off the construction's kind.
 
 Unknown-receiver calls (CAST `MethodCall`, detached method values)
-keep passing raw arguments: calling a member that has default/rest
-parameters that way still fails the VM's exact-arity check — loudly,
-never silently wrong. A subclass overriding with a different
-parameter count than the statically known one likewise errors loudly
-at the arity check instead of running with adapted-to-the-wrong-shape
-arguments.
+keep passing raw arguments. Two wrong shapes survived review
+(CRUSH-286 review): positional flags mean a *count-matching* raw or
+home-adapted call could run silently wrong (an override with a
+different signature; a defaulted member reached through an unknown
+receiver). The walker now records every member call it emits and,
+once the whole module is lowered, refuses (a) an adapted call whose
+receiver kind has a subclass override of the method with a different
+signature, and (b) a raw call while any member of that name has
+default/rest parameters. The tracked-kind map also forgets a binding
+assigned anything but its `new`, and after any branch/loop assigning
+it. What remains genuinely unknown (detached method values, receivers
+from outside the module) still fails the VM's exact-arity check —
+loudly, never silently wrong.
 
 Accessors are unaffected: a getter/setter whose parameter list grows
 a hidden flag fails `check_accessor_arity` at load (loud), as before.

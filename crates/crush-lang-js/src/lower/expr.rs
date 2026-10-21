@@ -522,11 +522,22 @@ impl Lower<'_> {
             }
         };
         // `c = new Counter()`: reassignment also makes the target a
-        // known instance of a known kind (CRUSH-277 D4).
-        if let Target::Var(name) = &target
-            && let Some(kind) = self.new_kind(a.rhs())
-        {
-            self.instance_kinds.insert(name.clone(), kind);
+        // known instance of a known kind (CRUSH-277 D4). Anything else
+        // forgets it (CRUSH-286 review #3): the tracker must never
+        // adapt a call for a class the binding no longer provably
+        // holds.
+        if let Target::Var(name) = &target {
+            if self.branch_depth > 0 {
+                self.flow_assigned.insert(name.clone());
+            }
+            match self.new_kind(a.rhs()) {
+                Some(kind) => {
+                    self.instance_kinds.insert(name.clone(), kind);
+                }
+                None => {
+                    self.instance_kinds.remove(name);
+                }
+            }
         }
         let right = self.expr(a.rhs())?;
         let current = |t: &Target| match t {

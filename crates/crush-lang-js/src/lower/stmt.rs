@@ -703,6 +703,9 @@ impl Lower<'_> {
         let name = self.resolve(id.sym());
         // `const c = new Counter()`: the binding holds an instance of a
         // known kind, so `c.m()` lowers to a member call (CRUSH-277 D4).
+        if self.branch_depth > 0 {
+            self.flow_assigned.insert(name.clone());
+        }
         if let Some(kind) = v.init().and_then(|init| self.new_kind(init)) {
             self.instance_kinds.insert(name.clone(), kind);
         }
@@ -799,6 +802,50 @@ impl Lower<'_> {
     pub(super) fn stmt(&mut self, s: &Statement) -> anyhow::Result<Vec<CastStmt>> {
         let span = stmt_span(s);
         let m = self.meta(span);
+        // What a branch or loop body assigns must not change what code
+        // after it believes about a binding's kind (CRUSH-286 review
+        // #3): around a control statement the tracked kinds are
+        // restored, and every binding assigned inside it is forgotten
+        // — the branch may not have run, so only straight-line `new`
+        // assignments teach the tracker, exactly the ones whose value
+        // provably holds afterwards.
+        let control = matches!(
+            s,
+            Statement::If(_)
+                | Statement::WhileLoop(_)
+                | Statement::DoWhileLoop(_)
+                | Statement::ForLoop(_)
+                | Statement::ForInLoop(_)
+                | Statement::ForOfLoop(_)
+                | Statement::Switch(_)
+                | Statement::Try(_)
+        );
+        let saved_kinds = control.then(|| self.instance_kinds.clone());
+        if control {
+            self.branch_depth += 1;
+        }
+        let r = self.stmt_dispatch(s, span, m);
+        if control {
+            self.branch_depth -= 1;
+            self.instance_kinds = saved_kinds.expect("control statements save the kinds");
+            let assigned = std::mem::take(&mut self.flow_assigned);
+            for name in &assigned {
+                self.instance_kinds.remove(name);
+            }
+            if self.branch_depth > 0 {
+                // An enclosing control statement forgets them too.
+                self.flow_assigned = assigned;
+            }
+        }
+        r
+    }
+
+    fn stmt_dispatch(
+        &mut self,
+        s: &Statement,
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<Vec<CastStmt>> {
         Ok(match s {
             Statement::Block(b) => self.block(b.statement_list().statements())?,
             Statement::Var(v) => self.var_decl(v)?,

@@ -1053,6 +1053,39 @@ console.log(U.b());
     assert_eq!(run_js(source), "42\n42\n42\n");
 }
 
+// CRUSH-286 review #3: a binding's tracked kind is forgotten when it
+// is assigned anything but its `new`, and after any branch or loop
+// that assigns it — the tracker must never adapt a call for a class
+// the binding no longer provably holds. Straight-line tracking is
+// unaffected.
+#[test]
+fn test_boa_instance_kind_forgetting() {
+    let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
+    for tail in [
+        "let c = new A(); if (true) { c = new B(); } console.log(c.m(5));",
+        "let c = new A(); for (let i = 0; i < 1; i++) { c = new B(); } console.log(c.m(5));",
+        "let c = new A(); c = new B(); console.log(c.m(5));",
+        "let c = new A(); c = 5; console.log(c.m(5));",
+    ] {
+        let src = format!("{classes}{tail}");
+        assert!(
+            loud(&src).contains("CRUSH"),
+            "{tail} must refuse, not adapt: {}",
+            loud(&src)
+        );
+    }
+    let source = r#"
+class A {
+  constructor(x = 1) { this.x = x; }
+  m(a = 2) { return this.x + a; }
+}
+let c = new A();
+c = new A(40);
+console.log(c.m());
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {
