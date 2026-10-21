@@ -31,21 +31,8 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                let name = fn_decl.ident.sym.to_string();
-                let is_async = fn_decl.function.is_async;
-                let lowered = lower_fn_decl(fn_decl, ctx)?;
-                if let Statement::FunctionDef { params, body, .. } = lowered {
-                    functions.insert(
-                        name,
-                        Function {
-                            params,
-                            body,
-                            meta: HashMap::new(),
-                            is_async,
-                            ..Default::default()
-                        },
-                    );
-                }
+                let (name, func) = fn_decl_to_function(fn_decl, ctx)?;
+                functions.insert(name, func);
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))) => {
                 main_body.push(lower_class_decl(class_decl, ctx)?);
@@ -64,7 +51,11 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
                 // Vec, not Option: `export let a, b` / `export { a, b }` must emit
                 // one Export per name. The old Option path returned after the first
                 // declarator (clippy::never_loop), silently dropping the rest.
-                main_body.extend(lower_module_decl(module_decl, ctx)?);
+                // Exported `function` declarations additionally return a hoisted
+                // `Function` (CRUSH-266), exactly like bare `function` decls.
+                let (stmts, fns) = lower_module_decl(module_decl, ctx)?;
+                main_body.extend(stmts);
+                functions.extend(fns);
             }
         }
     }
@@ -248,6 +239,28 @@ fn lower_fn_decl(fn_decl: &FnDecl, ctx: &LowerCtx) -> anyhow::Result<Statement> 
     })
 }
 
+/// Hoist a `function` declaration into a CAST `Function` (the
+/// `Program.functions` entry), as `lower_module` does for bare declarations.
+/// Shared by the bare and `export`ed paths so both keep the body (CRUSH-266).
+fn fn_decl_to_function(fn_decl: &FnDecl, ctx: &LowerCtx) -> anyhow::Result<(String, Function)> {
+    let name = fn_decl.ident.sym.to_string();
+    let is_async = fn_decl.function.is_async;
+    let lowered = lower_fn_decl(fn_decl, ctx)?;
+    match lowered {
+        Statement::FunctionDef { params, body, .. } => Ok((
+            name,
+            Function {
+                params,
+                body,
+                meta: HashMap::new(),
+                is_async,
+                ..Default::default()
+            },
+        )),
+        _ => unreachable!("lower_fn_decl always returns FunctionDef"),
+    }
+}
+
 fn lower_class_decl(class: &ClassDecl, ctx: &LowerCtx) -> anyhow::Result<Statement> {
     Ok(Statement::VarDecl {
         name: class.ident.sym.to_string(),
@@ -314,7 +327,24 @@ fn lower_class(class: &Class, ctx: &LowerCtx) -> anyhow::Result<Expression> {
     })
 }
 
-fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<Statement>> {
+/// Lower a module declaration to `(statements, hoisted_functions)`.
+///
+/// The statements go into `main`'s body; hoisted functions (exported
+/// `function` declarations) go into `Program.functions`, exactly like bare
+/// `function` declarations in `lower_module`. Before CRUSH-266 the `export`
+/// arms emitted only `Statement::Export { value: Var(name) }` and dropped
+/// the declaration itself, so every exported function/class/variable was an
+/// uninitialised slot at runtime.
+fn lower_module_decl(
+    decl: &ModuleDecl,
+    ctx: &LowerCtx,
+) -> anyhow::Result<(Vec<Statement>, Vec<(String, Function)>)> {
+    // Most arms hoist nothing; wrap their statement list.
+    macro_rules! stmts {
+        ($e:expr) => {
+            Ok(($e, Vec::new()))
+        };
+    }
     match decl {
         ModuleDecl::Import(import) => {
             let mut selective = Vec::new();
@@ -332,7 +362,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                 }
             }
             let src = wtf8_str(&import.src.value).to_string();
-            Ok(vec![Statement::Import {
+            stmts!(vec![Statement::Import {
                 import: ImportStatement::CrushModule {
                     module_path: src,
                     alias: None,
@@ -342,18 +372,29 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
             }])
         }
         ModuleDecl::ExportDecl(export) => match &export.decl {
+            // CRUSH-266: emit the declaration itself, then the Export.
+            // Previously only the Export was emitted and the body/initialiser
+            // was silently dropped.
             Decl::Fn(fn_decl) => {
-                let name = fn_decl.ident.sym.to_string();
-                Ok(vec![Statement::Export {
-                    name: name.clone(),
-                    value: Expression::Var { name, meta: meta(&fn_decl.function.span, ctx) },
-                    meta: meta(&export.span, ctx),
-                }])
+                let (name, func) = fn_decl_to_function(fn_decl, ctx)?;
+                Ok((
+                    vec![Statement::Export {
+                        name: name.clone(),
+                        value: Expression::Var {
+                            name: name.clone(),
+                            meta: meta(&fn_decl.function.span, ctx),
+                        },
+                        meta: meta(&export.span, ctx),
+                    }],
+                    vec![(name, func)],
+                ))
             }
             Decl::Var(var_decl) => {
-                // One Export per declarator — `export let a, b` must export both.
-                let mut out = Vec::with_capacity(var_decl.decls.len());
+                // One VarDecl + one Export per declarator — `export let a, b`
+                // must define and export both.
+                let mut out = Vec::with_capacity(var_decl.decls.len() * 2);
                 for d in &var_decl.decls {
+                    out.extend(lower_var_declarator(d, var_decl.kind, ctx)?);
                     let name = pat_to_name(&d.name)?;
                     out.push(Statement::Export {
                         name: name.clone(),
@@ -361,26 +402,28 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                         meta: meta(&export.span, ctx),
                     });
                 }
-                Ok(out)
+                stmts!(out)
             }
             Decl::Class(class) => {
                 let name = class.ident.sym.to_string();
-                Ok(vec![Statement::Export {
+                let mut out = vec![lower_class_decl(class, ctx)?];
+                out.push(Statement::Export {
                     name: name.clone(),
                     value: Expression::Var { name, meta: meta(&class.class.span, ctx) },
                     meta: meta(&export.span, ctx),
-                }])
+                });
+                stmts!(out)
             }
             Decl::Using(_) => Err(unsupported("a `using` declaration")),
             // Type-only exports have no runtime effect. They used to become a
             // `// export — not lowered` polyglot block, which then failed for
             // want of the `polyglot.javascript` capability.
-            Decl::TsInterface(_) | Decl::TsTypeAlias(_) => Ok(vec![]),
+            Decl::TsInterface(_) | Decl::TsTypeAlias(_) => stmts!(vec![]),
             // `export enum` / `export namespace`: refused (or dropped when
             // `declare`d) exactly as the un-exported forms are.
             Decl::TsEnum(_) | Decl::TsModule(_) => {
                 lower_stmt(&Stmt::Decl(export.decl.clone()), ctx)?;
-                Ok(vec![])
+                stmts!(vec![])
             }
         },
         ModuleDecl::ExportDefaultDecl(export_default) => match &export_default.decl {
@@ -391,34 +434,73 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                     Some(b) => stmts_to_vec(&b.stmts, ctx)?,
                     None => vec![],
                 };
-                Ok(vec![Statement::Export {
-                    name: "default".to_string(),
-                    value: Expression::Lambda {
-                        params,
-                        body,
-                        meta: meta(&fn_expr.function.span, ctx),
-                    },
-                    meta: meta(&export_default.span, ctx),
-                }])
+                // A named default function also binds its name locally in JS;
+                // hoist it like a bare declaration so it stays callable.
+                match &fn_expr.ident {
+                    Some(ident) => {
+                        let name = ident.sym.to_string();
+                        Ok((
+                            vec![Statement::Export {
+                                name: "default".to_string(),
+                                value: Expression::Var {
+                                    name: name.clone(),
+                                    meta: meta(&fn_expr.function.span, ctx),
+                                },
+                                meta: meta(&export_default.span, ctx),
+                            }],
+                            vec![(
+                                name,
+                                Function {
+                                    params,
+                                    body,
+                                    meta: HashMap::new(),
+                                    is_async: fn_expr.function.is_async,
+                                    ..Default::default()
+                                },
+                            )],
+                        ))
+                    }
+                    None => stmts!(vec![Statement::Export {
+                        name: "default".to_string(),
+                        value: Expression::Lambda {
+                            params,
+                            body,
+                            meta: meta(&fn_expr.function.span, ctx),
+                        },
+                        meta: meta(&export_default.span, ctx),
+                    }]),
+                }
             }
             DefaultDecl::Class(class) => {
+                // CRUSH-266: emit the class itself before exporting it. An
+                // anonymous default class is bound as `default`.
                 let name = class
                     .ident
                     .as_ref()
                     .map(|id| id.sym.to_string())
-                    .unwrap_or_default();
-                Ok(vec![Statement::Export {
+                    .unwrap_or_else(|| "default".to_string());
+                let mut out = vec![Statement::VarDecl {
+                    name: name.clone(),
+                    value: lower_class(&class.class, ctx)?,
+                    type_hint: CastType::Any,
+                    meta: meta(&class.class.span, ctx),
+                }];
+                out.push(Statement::Export {
                     name: "default".to_string(),
-                    value: Expression::Var { name, meta: meta(&class.class.span, ctx) },
+                    value: Expression::Var {
+                        name,
+                        meta: meta(&class.class.span, ctx),
+                    },
                     meta: meta(&export_default.span, ctx),
-                }])
+                });
+                stmts!(out)
             }
             // `export default interface I {}` is type-only.
-            DefaultDecl::TsInterfaceDecl(_) => Ok(vec![]),
+            DefaultDecl::TsInterfaceDecl(_) => stmts!(vec![]),
         },
         ModuleDecl::ExportDefaultExpr(expr) => {
             let val = lower_expr(&expr.expr, ctx)?;
-            Ok(vec![Statement::Export {
+            stmts!(vec![Statement::Export {
                 name: "default".to_string(),
                 value: val,
                 meta: meta(&expr.span, ctx),
@@ -440,7 +522,7 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                         }
                     }
                 }
-                Ok(vec![Statement::Import {
+                stmts!(vec![Statement::Import {
                     import: ImportStatement::CrushModule {
                         module_path: module.clone(),
                         alias: None,
@@ -470,12 +552,12 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
                         meta: meta(&named.span, ctx),
                     });
                 }
-                Ok(out)
+                stmts!(out)
             }
         }
         ModuleDecl::ExportAll(all) => {
             let src = wtf8_str(&all.src.value).to_string();
-            Ok(vec![Statement::Import {
+            stmts!(vec![Statement::Import {
                 import: ImportStatement::CrushModule {
                     module_path: src,
                     alias: None,
@@ -486,18 +568,18 @@ fn lower_module_decl(decl: &ModuleDecl, ctx: &LowerCtx) -> anyhow::Result<Vec<St
         }
         // `import type X = …` is type-only; a value `import x = require(…)` /
         // `import x = N.y` used to become a comment-only polyglot block.
-        ModuleDecl::TsImportEquals(ts) if ts.is_type_only => Ok(vec![]),
+        ModuleDecl::TsImportEquals(ts) if ts.is_type_only => stmts!(vec![]),
         ModuleDecl::TsImportEquals(_) => Err(unsupported("TypeScript `import x = …`")),
         ModuleDecl::TsExportAssignment(ts) => {
             let val = lower_expr(&ts.expr, ctx)?;
-            Ok(vec![Statement::Export {
+            stmts!(vec![Statement::Export {
                 name: "default".to_string(),
                 value: val,
                 meta: meta(&ts.span, ctx),
             }])
         }
         // `export as namespace X` (UMD) only declares a global type name.
-        ModuleDecl::TsNamespaceExport(_) => Ok(vec![]),
+        ModuleDecl::TsNamespaceExport(_) => stmts!(vec![]),
     }
 }
 
