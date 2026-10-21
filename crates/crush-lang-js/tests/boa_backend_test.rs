@@ -703,6 +703,25 @@ console.log(new C().t);
     );
 }
 
+// CRUSH-285 review #5: a write inside `new` arguments is a mutation
+// the optimizer must see (it folded `n` to its pre-construction value).
+#[test]
+fn test_boa_construct_args_mutation_seen_by_optimizer() {
+    let source = r#"
+class C { constructor(x) { this.x = x; } }
+class D {
+  make() {
+    let n = 0;
+    const a = new C(n++);
+    console.log(n);
+    return a;
+  }
+}
+new D().make();
+"#;
+    assert_eq!(run_js(source), "1\n");
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {

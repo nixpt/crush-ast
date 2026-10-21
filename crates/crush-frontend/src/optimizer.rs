@@ -565,6 +565,7 @@ impl Optimizer {
             }
             Expression::Call { args: es, .. }
             | Expression::CapabilityCall { args: es, .. }
+            | Expression::Construct { args: es, .. }
             | Expression::VectorMath { args: es, .. }
             | Expression::Spawn { args: es, .. }
             | Expression::Pipeline { segments: es, .. }
