@@ -2373,6 +2373,17 @@ impl Compiler {
                             ));
                             return Ok(());
                         }
+                        if meta.get("member_call").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            // A walker resolved this receiver as an
+                            // object whose members it knows (CRUSH-285
+                            // review #4): a name that isn't a member is
+                            // a missing method (or a field holding a
+                            // function, CRUSH-zorro-44) — never a host
+                            // capability to grant after the method.
+                            bail!(
+                                "`{obj_name}.{method}(...)`: no method `{method}` on the receiver's class"
+                            );
+                        }
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
                         // Push args in order: the receiver is already on the stack, then each

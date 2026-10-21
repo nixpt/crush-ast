@@ -643,6 +643,28 @@ for (let i = 0; i < 2; i++) {
     assert_eq!(run_js(source), "0\n1\n");
 }
 
+// CRUSH-285 review #4: calling a method the class doesn't have is a
+// compile-time refusal, never an automatically granted host capability
+// named after the method (the pre-review fallback emitted exactly
+// that, permissions included).
+#[test]
+fn test_boa_missing_method_is_compile_error() {
+    let program =
+        test_lower("class C { m() { return 1; } } const c = new C(); console.log(c.nope());");
+    let err = crush_frontend::compile_cast(&program)
+        .err()
+        .expect("a missing method must not compile");
+    assert!(err.to_string().contains("no method `nope`"), "{err}");
+    // A field holding a value, called through `this.`, is the same refusal.
+    let program = test_lower(
+        "class C { constructor() { this.f = 1; } m() { return this.f(2); } } console.log(new C().m());",
+    );
+    let err = crush_frontend::compile_cast(&program)
+        .err()
+        .expect("calling a field must not compile");
+    assert!(err.to_string().contains("no method `f`"), "{err}");
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {

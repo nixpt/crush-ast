@@ -703,6 +703,13 @@ impl Lower<'_> {
                     _ => None,
                 };
                 if let Some(recv) = dotted_recv {
+                    // Marked as a walker-resolved member call: if the
+                    // method turns out not to be a member, the compiler
+                    // refuses — it must never fall back to granting a
+                    // host capability named after the method
+                    // (CRUSH-285 review #4).
+                    let mut m = m;
+                    m.insert("member_call".to_string(), serde_json::json!(true));
                     return Ok(CastExpr::CapabilityCall {
                         name: format!("{recv}.{method}"),
                         args: self.args(args)?,
