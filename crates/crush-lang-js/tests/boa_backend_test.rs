@@ -665,6 +665,44 @@ fn test_boa_missing_method_is_compile_error() {
     assert!(err.to_string().contains("no method `f`"), "{err}");
 }
 
+// CRUSH-285 review #3: statics written at run time are read through
+// the inheritance chain until a nearer class writes its own, a getter
+// sees the write (accessors run in the same run, CRUSH-285 #1), and
+// statics are not members of instances.
+#[test]
+fn test_boa_statics_runtime_writes_and_inheritance() {
+    let source = r#"
+class A { static n = 0; }
+class B extends A { }
+A.n = 5;
+console.log(B.n);
+B.n = 7;
+console.log(A.n);
+console.log(B.n);
+class C {
+  static n = 0;
+  get t() { return C.n; }
+}
+C.n = 42;
+console.log(new C().t);
+"#;
+    assert_eq!(run_js(source), "5\n5\n7\n42\n");
+    // Calling a static through an instance is refused at run time when
+    // the call compiles as a member call (another class has an instance
+    // method of the name), and at compile time otherwise (CRUSH-285 #4).
+    let err = run_js_err(
+        "class C { static s() { return 1; } } class D { s() { return 2; } } const c = new C(); console.log(c.s());",
+    );
+    assert!(err.contains("static method"), "static via instance: {err}");
+    // A static's value is not readable on an instance either: it reads
+    // as a missing member (crush's null, JS's undefined) — never as the
+    // static's value.
+    assert_eq!(
+        run_js("class C { static n = 3; } const c = new C(); console.log(c.n);"),
+        "null\n"
+    );
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {

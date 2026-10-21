@@ -76,6 +76,11 @@ pub struct Kind {
     /// declared static constant is only the initial value, and the map
     /// is per loaded program.
     statics: RefCell<std::collections::HashMap<String, Value>>,
+    /// This Kind and its ancestors as loaded Kinds, in resolution
+    /// order (filled in by `KindTable::load`): a class-level value is
+    /// read through the chain until a nearer Kind writes its own
+    /// (CRUSH-285 review #3).
+    chain: RefCell<Vec<Rc<Kind>>>,
 }
 
 impl Kind {
@@ -101,6 +106,16 @@ impl Kind {
     /// A class-level value written at run time, if any.
     fn static_value(&self, name: &str) -> Option<Value> {
         self.statics.borrow().get(name).cloned()
+    }
+
+    /// A class-level value along the resolution order: this Kind's own
+    /// write wins, then the nearest ancestor's (JS: `B.n` reads `A.n`
+    /// until `B` writes its own).
+    fn static_in_chain(&self, name: &str) -> Option<Value> {
+        self.chain
+            .borrow()
+            .iter()
+            .find_map(|k| k.static_value(name))
     }
 
     /// Write a class-level value (`C.x = v`).
@@ -191,8 +206,17 @@ impl KindTable {
                     interfaces: interfaces.clone(),
                     arity: arity.clone(),
                     statics: RefCell::new(std::collections::HashMap::new()),
+                    chain: RefCell::new(Vec::new()),
                 }),
             );
+        }
+        // The resolution order as loaded Kinds, for class-level values.
+        for k in kinds.values() {
+            let chain: Vec<Rc<Kind>> = k
+                .resolution_order()
+                .filter_map(|n| kinds.get(n).cloned())
+                .collect();
+            *k.chain.borrow_mut() = chain;
         }
         let print_hooks = kinds.values().any(|k| k.print_hook().is_some());
         Ok(Self { kinds, print_hooks })
@@ -653,13 +677,30 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
         Value::Kind(k) => (k.clone(), None),
         other => return Err(VmError::TypeError { expected: "record", got: other.type_name() }),
     };
-    // A class-level value written at run time shadows the declaration.
+    // A class-level value written at run time shadows the declaration,
+    // and is read through the chain until a nearer Kind writes its own
+    // (CRUSH-285 review #3).
     if recv.is_none()
-        && let Some(v) = kind.static_value(name)
+        && let Some(v) = kind.static_in_chain(name)
     {
         return Ok(MemberRead::Done(v));
     }
     match find_on_kind(&kind, name)? {
+        // Statics live on the class, not on its instances (JS:
+        // `new C().n` is undefined — the strict read refuses, the lax
+        // one reads null, like any missing member).
+        Some(Found::StaticConst(_)) | Some(Found::StaticFn(_))
+            if recv.is_some()
+                && kind.decl().resolution == crush_cosm::Resolution::PrototypeChain =>
+        {
+            if strict {
+                return Err(VmError::Cosm(format!(
+                    "`{}` has no member `{name}`",
+                    kind.name()
+                )));
+            }
+            return Ok(MemberRead::Done(Value::Null));
+        }
         Some(Found::UnsetField) => Ok(MemberRead::Done(Value::Null)),
         Some(Found::StaticConst(c)) => Ok(MemberRead::Done(const_value(c))),
         Some(Found::StaticFn(f)) => Ok(MemberRead::Done(func_value(f, kind.arity_of(f.as_str())?, Vec::new()))),
@@ -720,7 +761,10 @@ pub fn has_member(target: &Value, name: &str) -> Result<bool, VmError> {
     Ok(match target {
         Value::Record(r) => {
             r.has_field(name)
-                || matches!(find_on_kind(&r.kind, name)?, Some(f) if !matches!(f, Found::UnsetField))
+                || matches!(find_on_kind(&r.kind, name)?, Some(f) if !matches!(f, Found::UnsetField)
+                    // Statics aren't members of instances (JS `in`).
+                    && !(matches!(f, Found::StaticConst(_) | Found::StaticFn(_))
+                        && r.kind.decl().resolution == crush_cosm::Resolution::PrototypeChain))
         }
         Value::Kind(k) => find_on_kind(k, name)?.is_some(),
         Value::Map(m) => m.borrow().contains_key(name),
@@ -806,6 +850,17 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
             Ok(MemberCall::Call(Callee { func: func.as_str().to_string(), leading: vec![first] }))
         }
         Some(Found::StaticFn(f)) => {
+            if instance
+                && kind.decl().resolution == crush_cosm::Resolution::PrototypeChain
+            {
+                // JS: `c.s()` where `s` is static is a TypeError — the
+                // static lives on the class (CRUSH-285 review #3).
+                return Err(VmError::Cosm(format!(
+                    "`{}.{name}` is a static method: call it on `{}`, not on an instance",
+                    kind.name(),
+                    kind.name()
+                )));
+            }
             check(f, 0)?;
             Ok(MemberCall::Call(Callee { func: f.as_str().to_string(), leading: Vec::new() }))
         }
