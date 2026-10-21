@@ -353,6 +353,42 @@ fn load_kind_then_a_static_method_call_on_the_kind() {
 }
 
 #[test]
+fn static_members_live_on_the_kind_and_are_writable() {
+    // CRUSH-277 S5: a declared static constant reads off the loaded
+    // kind; `C.x = v` writes a class-level value shadowing it.
+    let m = module(vec![js_kind("Util", |k| {
+        k.members.push(MemberDecl::new(
+            "factor",
+            crush_cosm::Member::Static {
+                value: crush_cosm::StaticValue::Const(crush_cosm::Const::Int(3)),
+            },
+        ));
+    })]);
+    run_both(
+        r#"
+.func main
+    LOAD_KIND "Util"
+    GET_MEMBER "factor"
+    CAP_CALL "io.print" 1
+    LOAD_KIND "Util"
+    PUSH 10
+    SET_MEMBER "factor"
+    POP
+    LOAD_KIND "Util"
+    GET_MEMBER "factor"
+    CAP_CALL "io.print" 1
+    HALT
+.func Util::constructor 1
+    STORE 0
+    PUSH_NULL
+    RET
+"#,
+        m,
+        "3\n10\n",
+    );
+}
+
+#[test]
 fn load_kind_of_an_undeclared_kind_is_a_load_error() {
     fails_on_both(
         r#"

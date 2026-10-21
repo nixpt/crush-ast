@@ -258,10 +258,14 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, false);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_vars);
+        let saved_home = self.home_class.take();
+        let saved_static = std::mem::replace(&mut self.in_static, false);
         let r = self.function_in_scope(params, body, span, declared);
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_vars = saved_instances;
+        self.home_class = saved_home;
+        self.in_static = saved_static;
         self.scopes.leave_fn();
         r
     }
@@ -305,10 +309,12 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_vars);
+        let saved_static = std::mem::replace(&mut self.in_static, true);
         let r = self.function_in_scope(params, body, span, false);
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_vars = saved_instances;
+        self.in_static = saved_static;
         self.scopes.leave_fn();
         let (lowered_params, mut lowered_body) = r?;
         let this_value = CastExpr::Var {

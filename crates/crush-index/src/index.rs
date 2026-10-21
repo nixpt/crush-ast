@@ -746,6 +746,12 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(a, module, caller_fn, out);
             }
         }
+        Expression::MethodCall { target, args, .. } => {
+            collect_calls_in_expr(target, module, caller_fn, out);
+            for a in args {
+                collect_calls_in_expr(a, module, caller_fn, out);
+            }
+        }
         Expression::BinaryOp { left, right, .. } => {
             collect_calls_in_expr(left, module, caller_fn, out);
             collect_calls_in_expr(right, module, caller_fn, out);

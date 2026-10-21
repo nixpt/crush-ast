@@ -465,7 +465,10 @@ impl Lower<'_> {
                 }
             }
             PropertyAccess::Private(_) => Err(self.unsupported("a private field (`#x`)", span)),
-            PropertyAccess::Super(_) => Err(self.unsupported("`super.x`", span)),
+            PropertyAccess::Super(_) => Err(self.unsupported(
+                "a `super.x` read (only `super.m()` calls are lowered yet)",
+                span,
+            )),
         }
     }
 
@@ -632,6 +635,13 @@ impl Lower<'_> {
                     }
                 }
             }
+            Expression::PropertyAccess(PropertyAccess::Super(s)) => {
+                let PropertyAccessField::Const(prop) = s.field() else {
+                    return Err(self.unsupported("a computed `super[..]()` call", span));
+                };
+                let method = self.name(prop.sym());
+                self.super_method_call(&method, args, span, m)
+            }
             Expression::PropertyAccess(PropertyAccess::Simple(s)) => {
                 let PropertyAccessField::Const(prop) = s.field() else {
                     return Err(self.unsupported("a computed method call (`o[k]()`)", span));
@@ -690,6 +700,30 @@ impl Lower<'_> {
                 if let Some(recv) = dotted_recv {
                     return Ok(CastExpr::CapabilityCall {
                         name: format!("{recv}.{method}"),
+                        args: self.args(args)?,
+                        meta: m,
+                    });
+                }
+                // `new P(4).get2()`, `f().m(…)`: a method call on a
+                // computed receiver resolves on its Kind at run time
+                // (CRUSH-277 S5), ahead of the builtin table — a value
+                // produced by `new`, a call or a member read carries its
+                // own methods (a host value errors loudly there instead).
+                // Literal receivers keep the builtin rows (`[1, 2].push(…)`,
+                // `"a,b".split(…)`), and bare identifiers stay with the
+                // conservative cases above (D4).
+                if !matches!(
+                    unparen(s.target()),
+                    Expression::Identifier(_)
+                        | Expression::This(_)
+                        | Expression::ArrayLiteral(_)
+                        | Expression::ObjectLiteral(_)
+                        | Expression::Literal(_)
+                        | Expression::TemplateLiteral(_)
+                ) {
+                    return Ok(CastExpr::MethodCall {
+                        target: Box::new(self.expr(s.target())?),
+                        method,
                         args: self.args(args)?,
                         meta: m,
                     });

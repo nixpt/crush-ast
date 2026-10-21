@@ -181,6 +181,12 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
                 collect_sites_in_expr(fn_name, a, out);
             }
         }
+        Expression::MethodCall { target, args, .. } => {
+            collect_sites_in_expr(fn_name, target, out);
+            for a in args {
+                collect_sites_in_expr(fn_name, a, out);
+            }
+        }
         Expression::Pipeline { segments, .. } => {
             for s in segments {
                 collect_sites_in_expr(fn_name, s, out);

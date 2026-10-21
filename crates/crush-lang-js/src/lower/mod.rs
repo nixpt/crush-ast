@@ -85,6 +85,16 @@ pub(crate) struct Lower<'a> {
     /// as a parameter or a capture isn't tracked (CRUSH-zorro-44's
     /// general problem).
     instance_vars: std::collections::HashSet<String>,
+    /// The class whose method/constructor body is being lowered (its
+    /// JS [[HomeObject]]), for `super.m()` (CRUSH-277 S5). Set only
+    /// around a class member's body, never across a function boundary.
+    home_class: Option<String>,
+    /// Whether the member being lowered is a static one (its `super.m()`
+    /// resolves to the parent's statics).
+    in_static: bool,
+    /// Class hierarchy within this module: child kind → parent kind, for
+    /// resolving `super.m()` starting after the home class.
+    class_parents: HashMap<String, String>,
     /// Source of unique ids for hidden locals (`__sw_val_N`, ...).
     next_id: u32,
     /// The script's top-level `function` names: globals, not captures.
@@ -104,6 +114,9 @@ impl<'a> Lower<'a> {
             this_bound: false,
             super_ctor: None,
             instance_vars: Default::default(),
+            home_class: None,
+            in_static: false,
+            class_parents: HashMap::new(),
             toplevel_fns: Default::default(),
             toplevel_sigs: HashMap::new(),
             next_id: 0,

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-277 |
 | **Priority** | P1 |
-| **Status** | In progress — S1 done (`agent/muse/CRUSH-277`), S2 done (`agent/muse/CRUSH-277-s2`), S3 done (`agent/muse/CRUSH-277-s3`); S4 next |
+| **Status** | All slices done — S1 (`agent/muse/CRUSH-277`), S2 (`agent/muse/CRUSH-277-s2`), S3 (`agent/muse/CRUSH-277-s3`), S4 (`agent/muse/CRUSH-277-s4`), S5 (`agent/muse/CRUSH-277-s5`); one PR for the stack |
 | **Phase** | COSM K3 — JS walker slice |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-266 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
@@ -298,21 +298,74 @@ Census of the JS class surface maya actually uses:
   zorro-18-for-methods, as flagged in S1), `?.`, `.reduce()`,
   `Object.assign`, zorro-44 member calls on parameters.
 
+- **S4 — done** (branch `agent/muse/CRUSH-277-s4`, stacked on S3).
+  `cosm_rt` resolves `Member::Accessor` instead of erroring:
+  `get_member`/`set_member` now report when an accessor must run
+  (getter/setter call, receiver bound per the declaring Kind's
+  receiver strategy), and both VMs run it where the member op stands,
+  in a nested run of the program — the mechanism print hooks already
+  use. An own instance field wins both ways (JS [[Get]]/[[Set]]); a
+  write-only accessor reads as null; writing a read-only accessor
+  errors (strict-mode JS). Index access (`arr_get`/`arr_set` on
+  Records) honours accessors the same way. The casm refusal lifts at
+  `CosmSupport::Kinds`; Maps engines still refuse (a field read would
+  bypass the getter). Evidence: VM tests ×2 VMs (get/set pair,
+  get-only, set-only, inheritance, read-only write refused) and a boa
+  end-to-end run (`get/set doubled` prints 42 then 100).
+
+- **S5 — done** (branch `agent/muse/CRUSH-277-s5`, stacked on S4).
+  `super.m()` resolves lexically from the home class's parent up to a
+  direct call of the ancestor's lifted method (instance/static divide
+  and ancestor accessors stay loud; `super.x` reads stay loud);
+  CAST gains `Expression::MethodCall` for computed receivers
+  (`new P(4).get2()`, `f().m(…)` — ahead of the builtin table for
+  non-literal receivers, never for bare identifiers, D4), and kinds
+  register before their members lower, so methods/field initialisers
+  may construct their own class. Class fields (D7): instance-field
+  initialisers become `this.x = …` statements spliced into the ctor —
+  at the top of a base ctor, right after the `super(...)` call in a
+  derived one (a derived ctor without a visible `super(...)` gets
+  them at the top; invalid JS anyway). Static fields with constant
+  initialisers are `Static::Const`s; the VMs gained per-kind
+  class-level storage so `C.x = v` works and shadows the constant.
+  Two bugs found on the way, fixed here: `arr_set` on a Kind walked
+  into the generic cap path (`is_index_cap` now covers Kinds), and
+  **`Compiler::compile` dropped `Program::cosm` entirely** — the
+  corpus harness compiles through it, so class programs lost their
+  kind table (CRUSH-279).
+  Evidence: boa e2e (fields incl. derived ordering, super chain,
+  statics + mutation, chained `new`), node corpus class area on boa
+  **5 match / 0 loud / 0 silent** (`class_basic`, `class_extends`
+  moved to `BOA_FIXED`; `class_accessor`/`class_fields`/
+  `class_static` added), AOT parity lists updated (the backends still
+  refuse COSM per CRUSH-zorro-43), SDK polyglot refusal cases moved
+  to `static { }` blocks.
+  Maya sweep (boa, after S5): still 2/37 files walk, and that is the
+  expected outcome — no maya file is blocked by anything in this
+  ticket's scope any more. The remaining first-blockers are the rest
+  of CRUSH-276's queue, now headed by method default parameters
+  (8 files) and the PR #283 export fix, then host `new`
+  (`Map`/three.js, CRUSH-110), re-exports, `?.`, callbacks.
+
 ## Success criteria
 
-- [ ] A JS class with constructor, methods, `this` state, `extends` +
+- [x] A JS class with constructor, methods, `this` state, `extends` +
       `super()`, a getter/setter pair, a class field and a static —
       compiled from boa through CAST+COSM → CASM → scheduler VM — runs
       with node-identical observable output, via `node_corpus` harness
-      cases added in the same PRs as each slice.
-- [ ] Every construct outside the slice stays a loud refusal naming the
+      cases added in the same PRs as each slice. (Corpus class area on
+      boa: 5 match / 0 loud / 0 silent.)
+- [x] Every construct outside the slice stays a loud refusal naming the
       construct (expression superclasses, `#private`, static blocks,
       prototype mutation `F.prototype.m = …`, `Proxy`/`Reflect`,
       arrow-function `this`, `new` of non-Kind callees).
-- [ ] No behaviour change for cosm-less programs (CAST/CASM serde
+- [x] No behaviour change for cosm-less programs (CAST/CASM serde
       compatibility asserted by round-trip tests), and the full
       `crush-lang-js`, `crush-frontend`, `crush-vm`, `casm` suites pass.
-- [ ] maya-engine boa walk re-measured at S5 and recorded in CRUSH-276.
+- [ ] maya-engine boa walk re-measured at S5 (done: 2/37, unchanged —
+      remaining blockers all belong to CRUSH-276's other items) and
+      recorded in CRUSH-276 (that ticket lives on the PR #283 branch;
+      fold the note in when the branches merge).
 
 ## Non-goals
 

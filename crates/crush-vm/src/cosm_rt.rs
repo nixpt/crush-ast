@@ -72,6 +72,10 @@ pub struct Kind {
     interfaces: Rc<HashMap<String, InterfaceDecl>>,
     /// Arity of every program function, for function values made from members.
     arity: Rc<HashMap<String, u8>>,
+    /// Class-level values written at run time (`C.x = v` in JS): a
+    /// declared static constant is only the initial value, and the map
+    /// is per loaded program.
+    statics: RefCell<std::collections::HashMap<String, Value>>,
 }
 
 impl Kind {
@@ -92,6 +96,16 @@ impl Kind {
     /// Whether `name` is this Kind or one of its ancestors.
     pub fn is_a(&self, name: &str) -> bool {
         self.resolution_order().any(|k| k == name)
+    }
+
+    /// A class-level value written at run time, if any.
+    fn static_value(&self, name: &str) -> Option<Value> {
+        self.statics.borrow().get(name).cloned()
+    }
+
+    /// Write a class-level value (`C.x = v`).
+    fn set_static(&self, name: &str, v: Value) {
+        self.statics.borrow_mut().insert(name.to_string(), v);
     }
 
     fn is_value(&self) -> bool {
@@ -172,7 +186,12 @@ impl KindTable {
                 .collect::<Result<Vec<_>, _>>()?;
             kinds.insert(
                 k.name.clone(),
-                Rc::new(Kind { mro, interfaces: interfaces.clone(), arity: arity.clone() }),
+                Rc::new(Kind {
+                    mro,
+                    interfaces: interfaces.clone(),
+                    arity: arity.clone(),
+                    statics: RefCell::new(std::collections::HashMap::new()),
+                }),
             );
         }
         let print_hooks = kinds.values().any(|k| k.print_hook().is_some());
@@ -634,6 +653,12 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
         Value::Kind(k) => (k.clone(), None),
         other => return Err(VmError::TypeError { expected: "record", got: other.type_name() }),
     };
+    // A class-level value written at run time shadows the declaration.
+    if recv.is_none()
+        && let Some(v) = kind.static_value(name)
+    {
+        return Ok(MemberRead::Done(v));
+    }
     match find_on_kind(&kind, name)? {
         Some(Found::UnsetField) => Ok(MemberRead::Done(Value::Null)),
         Some(Found::StaticConst(c)) => Ok(MemberRead::Done(const_value(c))),
@@ -655,8 +680,21 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
     }
 }
 
-/// `SET_MEMBER` / `SET_FIELD` on a Record.
+/// `SET_MEMBER` / `SET_FIELD` on a Record (or a class-level write on a
+/// Kind: JS `C.x = v`).
 pub fn set_member(target: &Value, name: &str, v: Value) -> Result<MemberWrite, VmError> {
+    if let Value::Kind(k) = target {
+        // A static method can't be assigned over; anything else becomes
+        // a class-level value (a declared constant is its initial value).
+        if matches!(find_on_kind(k, name)?, Some(Found::StaticFn(_))) {
+            return Err(VmError::Cosm(format!(
+                "`{}.{name}` is a static method; it can't be assigned",
+                k.name()
+            )));
+        }
+        k.set_static(name, v);
+        return Ok(MemberWrite::Done);
+    }
     let Value::Record(r) = target else {
         return Err(VmError::TypeError { expected: "record", got: target.type_name() });
     };
@@ -948,11 +986,15 @@ fn render_seq(
     Ok(out)
 }
 
-/// Whether a call is an indexing capability on a Record (`p["x"]`,
-/// `p["x"] = v`, which the compiler emits as `arr_get` / `arr_set` calls):
-/// [`index_cap`] runs it.
+/// Whether a call is an indexing capability on a Record or a Kind
+/// (`p["x"]`, `p["x"] = v`, `C.x = v`, which the compiler emits as
+/// `arr_get` / `arr_set` calls): [`index_cap`] runs it.
 pub fn is_index_cap(cap: &str, args: &[Value]) -> bool {
-    matches!((cap, args), ("arr_get", [Value::Record(_), _]) | ("arr_set", [Value::Record(_), _, _]))
+    matches!(
+        (cap, args),
+        ("arr_get", [Value::Record(_) | Value::Kind(_), _])
+            | ("arr_set", [Value::Record(_) | Value::Kind(_), _, _])
+    )
 }
 
 /// What an index operation on a Record resolves to (CRUSH-277 S4: a
@@ -965,11 +1007,19 @@ pub enum IndexAccess {
     Call { call: AccessorCall, after: Option<Value> },
 }
 
-/// An [`is_index_cap`] call: the Record's fields, like `ARR_GET` / `ARR_SET`.
+/// An [`is_index_cap`] call: the Record's fields, like `ARR_GET` / `ARR_SET`
+/// (on a Kind: its members and class-level values).
 pub fn index_cap(cap: &str, args: &[Value]) -> Result<IndexAccess, VmError> {
     match (cap, args) {
         ("arr_get", [Value::Record(r), key]) => index_get(r, key),
-        ("arr_set", [rec @ Value::Record(_), key, v]) => {
+        ("arr_get", [k @ Value::Kind(_), key]) => {
+            let key = crate::map_ops::map_key_string(key)?;
+            Ok(match get_member(k, &key, false)? {
+                MemberRead::Done(v) => IndexAccess::Done(v),
+                MemberRead::Call(call) => IndexAccess::Call { call, after: None },
+            })
+        }
+        ("arr_set", [rec @ (Value::Record(_) | Value::Kind(_)), key, v]) => {
             let key = crate::map_ops::map_key_string(key)?;
             Ok(match set_member(rec, &key, v.clone())? {
                 MemberWrite::Done => IndexAccess::Done(rec.clone()),

@@ -357,6 +357,16 @@ pub enum Expression {
         args: Vec<Expression>,
         meta: HashMap<String, serde_json::Value>,
     },
+    /// A method call on a computed receiver (`new P(4).get2()`,
+    /// `f().m(x)`): the member is resolved on the receiver's Kind at
+    /// run time (`call_member`). CRUSH-277 S5.
+    MethodCall {
+        target: Box<Expression>,
+        method: String,
+        args: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     VectorMath {
         operator: String,
         args: Vec<Expression>,

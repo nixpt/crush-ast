@@ -538,12 +538,13 @@ fn test_boa_class_program_compiles() {
 #[test]
 fn test_boa_class_loud_edges() {
     assert!(loud("console.log(class { m() { return 1; } });").contains("anonymous class expression"), "anonymous class expression");
-    assert!(loud("class A { x = 1; }").contains("class field"), "class field");
     assert!(loud("class A { #m() { return 1; } }").contains("private class method"), "private method");
     assert!(loud("class A { static { } }").contains("static {"), "static block");
     assert!(loud("class A extends B { }").contains("isn't declared in this module"), "derived without ctor, parent undeclared");
-    // `super.m()` is S5: loud, never miscompiled.
-    assert!(loud("class B { m() { return 1; } } class A extends B { m() { return super.m(); } }").contains("calling an expression"), "super.m()");
+    // `super.m()` resolves from the parent up; these shapes stay loud.
+    assert!(loud("class A { m() { return super.m(); } }").contains("no ancestor"), "super without parent");
+    assert!(loud("class B { } class A extends B { m() { return super.m(); } }").contains("no ancestor"), "super of nothing");
+    assert!(loud("class B { x = 1; } class A extends B { m() { return super.x; } }").contains("`super.x` read"), "super.x read");
     // `new` of a name that isn't a class declared in this module.
     assert!(loud("const s = new Set();").contains("`new Set`"), "host constructor");
     assert!(loud("class A { } A();").contains("without `new`"), "class called bare");
@@ -648,6 +649,76 @@ m.doubled = 100;
 console.log(m.doubled);
 "#;
     assert_eq!(run_js(source), "42\n100\n");
+}
+
+// CRUSH-277 S5: class fields initialise on the instance — at the top
+// of a base constructor's body, after `super(...)` in a derived one.
+#[test]
+fn test_boa_class_fields_run() {
+    let source = r#"
+class Counter {
+  step = 2;
+  total = 0;
+  constructor(start) { this.x = start; }
+  bump() { this.total = this.total + this.step; return this.x + this.total; }
+}
+const c = new Counter(40);
+console.log(c.bump());
+// A derived class's fields run after super(): the body sees them.
+class Fast extends Counter {
+  step = 10;
+  constructor() { super(0); }
+}
+const f = new Fast();
+console.log(f.bump());
+"#;
+    // c: total 2 -> 40+2; f: x=0, total 10 -> 10.
+    assert_eq!(run_js(source), "42\n10\n");
+}
+
+#[test]
+fn test_boa_super_method_calls_run() {
+    let source = r#"
+class A {
+  hi() { return 'A'; }
+}
+class B extends A {
+  hi() { return 'B' + super.hi(); }
+}
+console.log(new B().hi());
+console.log(new A().hi());
+"#;
+    assert_eq!(run_js(source), "BA\nA\n");
+}
+
+// CRUSH-277 S5: static constants read through the class, static methods
+// run through it, and `C.x = v` writes a class-level value.
+#[test]
+fn test_boa_statics_run() {
+    let source = r#"
+class Util {
+  static factor = 3;
+  static scale(x) { return x * Util.factor; }
+}
+console.log(Util.scale(14));
+Util.factor = 2;
+console.log(Util.scale(14));
+"#;
+    assert_eq!(run_js(source), "42\n28\n");
+}
+
+#[test]
+fn test_boa_chained_calls_run() {
+    let source = r#"
+class P {
+  constructor(x) { this.x = x; }
+  get2() { return this.x * 2; }
+  spawn() { return new P(this.x + 1); }
+}
+console.log(new P(4).get2());
+console.log(new P(1).spawn().get2());
+"#;
+    assert_eq!(run_js(source), "8\n4\n");
 }
 
 // A class name used as a value loads its kind (D8).

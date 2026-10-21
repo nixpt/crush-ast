@@ -14,13 +14,20 @@
 //! `new C(…)` becomes a CAST `Construct`, `super(...)` becomes a call of
 //! the parent's constructor on the same instance, and bindings this
 //! module bound with `new C()` become known instances whose method
-//! calls lower to member calls. Everything outside the slice stays a
-//! typed refusal here: class fields and static fields (S5), `super.m()`
-//! (S5), private members, static blocks, computed member names,
-//! async/generator methods, anonymous class expressions, expression
-//! superclasses, and a derived class whose parent's constructor the
+//! calls lower to member calls. S5 adds the rest of the member shapes:
+//! `super.m()` resolves from the home class's parent up to a direct
+//! call, instance fields initialise on the instance at construction
+//! (D7), static fields with constant initialisers are constants of the
+//! kind, and method calls on computed receivers (`new P(4).get2()`)
+//! lower to a CAST `MethodCall`. Everything outside the slice stays a
+//! typed refusal here: private members, static blocks, computed member
+//! names, async/generator methods, anonymous class expressions,
+//! expression superclasses, non-constant static field initialisers,
+//! `super.x` reads, and a derived class whose parent's constructor the
 //! walker hasn't lowered (imported classes — CRUSH-110).
 
+use boa_ast::expression::literal::LiteralKind;
+use boa_ast::expression::operator::unary::UnaryOp;
 use boa_ast::expression::{Expression, New};
 use boa_ast::function::{
     ClassDeclaration, ClassElement, ClassElementName, ClassExpression, ClassMethodDefinition,
@@ -125,6 +132,184 @@ impl Lower<'_> {
         })
     }
 
+    /// `super.m(args)` (CRUSH-277 S5): JS starts member lookup at the
+    /// parent of the class whose body textually contains the call (its
+    /// [[HomeObject]]), with the same receiver — so the target is known
+    /// exactly at walk time and lowers to a direct call of the ancestor's
+    /// lifted method. Ancestor accessors and the static/instance divide
+    /// stay loud.
+    pub(super) fn super_method_call(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        let Some(home) = self.home_class.clone() else {
+            return Err(self.unsupported(
+                "a `super.m()` call outside a class method",
+                span,
+            ));
+        };
+        let mut cur = self.class_parents.get(&home).cloned();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(ancestor) = cur {
+            if !seen.insert(ancestor.clone()) {
+                break;
+            }
+            if self.in_static {
+                if let Some(f) = self.kind_static_fn(&ancestor, method) {
+                    return Ok(CastExpr::Call {
+                        function: f,
+                        args: self.args(args)?,
+                        meta: m,
+                    });
+                }
+                if self.functions.contains_key(&format!("{ancestor}::{method}")) {
+                    return Err(self.unsupported(
+                        format!(
+                            "`super.{method}()` where `{method}` is an instance method of `{ancestor}`, called from a static method"
+                        ),
+                        span,
+                    ));
+                }
+            } else {
+                if self.functions.contains_key(&format!("{ancestor}::{method}")) {
+                    let args = std::iter::once(CastExpr::Var {
+                        name: "this".to_string(),
+                        meta: m.clone(),
+                    })
+                    .chain(self.args(args)?)
+                    .collect();
+                    return Ok(CastExpr::Call {
+                        function: format!("{ancestor}::{method}"),
+                        args,
+                        meta: m,
+                    });
+                }
+                if self.kind_static_fn(&ancestor, method).is_some() {
+                    return Err(self.unsupported(
+                        format!(
+                            "`super.{method}()` where `{method}` is a static method of `{ancestor}`"
+                        ),
+                        span,
+                    ));
+                }
+            }
+            if self
+                .kinds
+                .iter()
+                .find(|k| k.name == ancestor)
+                .is_some_and(|k| {
+                    k.members
+                        .iter()
+                        .any(|mm| mm.name == method && matches!(mm.member, Member::Accessor { .. }))
+                })
+            {
+                return Err(self.unsupported(
+                    format!(
+                        "`super.{method}()` where `{method}` is an accessor of `{ancestor}`"
+                    ),
+                    span,
+                ));
+            }
+            cur = self.class_parents.get(&ancestor).cloned();
+        }
+        Err(self.unsupported(
+            format!(
+                "`super.{method}()`: no ancestor of `{home}` defines `{method}` in this module"
+            ),
+            span,
+        ))
+    }
+
+    /// A class field's name (computed names stay loud).
+    fn field_name(
+        &self,
+        name: &PropertyName,
+        span: Option<Span>,
+    ) -> anyhow::Result<String> {
+        match name {
+            PropertyName::Literal(id) => Ok(self.name(id.sym())),
+            _ => Err(self.unsupported("a computed member name (`[k]() {}`)", span)),
+        }
+    }
+
+    /// A field initialiser's value (CRUSH-277 S5): JS evaluates it in
+    /// the class scope — not in the constructor's parameter scope — with
+    /// `this` bound to the instance being built.
+    fn field_init(
+        &mut self,
+        init: Option<&Expression>,
+        span: Option<Span>,
+    ) -> anyhow::Result<CastExpr> {
+        self.scopes.enter_fn();
+        let saved_this = std::mem::replace(&mut self.this_bound, true);
+        let saved_super = self.super_ctor.take();
+        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let r = match init {
+            Some(e) => self.expr(e),
+            None => Ok(CastExpr::NullLiteral {
+                meta: self.meta(span),
+            }),
+        };
+        self.this_bound = saved_this;
+        self.super_ctor = saved_super;
+        self.instance_vars = saved_instances;
+        self.scopes.leave_fn();
+        r
+    }
+
+    /// `this.{name} = value` as a statement — the shape the walker's own
+    /// member assignment lowers to.
+    fn this_assign(&self, name: &str, value: CastExpr, span: Option<Span>) -> CastStmt {
+        let m = self.meta(span);
+        CastStmt::ExprStmt {
+            expr: CastExpr::Call {
+                function: "__crush_setindex__".to_string(),
+                args: vec![
+                    CastExpr::Var {
+                        name: "this".to_string(),
+                        meta: m.clone(),
+                    },
+                    CastExpr::StringLiteral {
+                        value: name.to_string(),
+                        meta: m.clone(),
+                    },
+                    value,
+                ],
+                meta: m.clone(),
+            },
+            meta: m,
+        }
+    }
+
+    /// A constant expression, for a static field's initialiser: a
+    /// literal (or a negated number), as the walker itself reads them.
+    fn const_expr(&self, e: &Expression) -> Option<crush_cosm::Const> {
+        match unparen(e) {
+            Expression::Literal(l) => match l.kind() {
+                LiteralKind::String(s) => Some(crush_cosm::Const::Str(self.name(*s))),
+                LiteralKind::Int(i) => Some(crush_cosm::Const::Int(i64::from(*i))),
+                LiteralKind::Num(n) if n.fract() == 0.0 && n.abs() < 9.223_372_036_854_776e18 => {
+                    Some(crush_cosm::Const::Int(*n as i64))
+                }
+                LiteralKind::Num(n) => Some(crush_cosm::Const::Float(*n)),
+                LiteralKind::Bool(b) => Some(crush_cosm::Const::Bool(*b)),
+                LiteralKind::Null => Some(crush_cosm::Const::Null),
+                _ => None,
+            },
+            Expression::Unary(u) if matches!(u.op(), UnaryOp::Minus) => {
+                match self.const_expr(u.target())? {
+                    crush_cosm::Const::Int(i) => Some(crush_cosm::Const::Int(-i)),
+                    crush_cosm::Const::Float(f) => Some(crush_cosm::Const::Float(-f)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// The lifted function of `kind`'s static method `method`, when the
     /// class declares one (a static call's target is known exactly).
     pub(super) fn kind_static_fn(&self, kind: &str, method: &str) -> Option<String> {
@@ -163,7 +348,79 @@ impl Lower<'_> {
             }
         };
 
+        // `super.m()` in this class's members resolves from its parent up
+        // (CRUSH-277 S5); the class itself is the [[HomeObject]] while
+        // its member bodies lower.
+        if let Some(parent) = parents.first() {
+            self.class_parents
+                .insert(kind.clone(), parent.as_str().to_string());
+        }
+        let saved_home = self.home_class.replace(kind.clone());
+
         let ctor_fn = format!("{kind}::constructor");
+        // The kind registers before any member body lowers, so method and
+        // field-initialiser bodies may construct the class itself
+        // (`x = new C()`, `clone() { return new C(…); }`); its member
+        // list is patched in at the end.
+        let make_decl = |members: Vec<MemberDecl>| KindDecl {
+            name: kind.clone(),
+            home_lang: "javascript".to_string(),
+            span: span
+                .map(|s| crush_cosm::Span::new(s.start().line_number(), s.start().column_number())),
+            storage: Storage::OpenDict,
+            semantics: Semantics::Reference,
+            parents: parents.clone(),
+            resolution: Resolution::PrototypeChain,
+            receiver: Receiver::DynamicThis,
+            construct: Construct::JsNew {
+                ctor_fn: FnRef::new(ctor_fn.clone()),
+            },
+            members,
+            hooks: Hooks::default(),
+            conforms: Vec::new(),
+            equality: Equality::Identity,
+        };
+        let kind_idx = self.kinds.len();
+        self.kinds.push(make_decl(Vec::new()));
+
+        // Class fields (CRUSH-277 S5, D7): instance fields initialise on
+        // the instance at construction (statements spliced into the
+        // constructor below); a static field with a constant initialiser
+        // is a constant of the kind.
+        let mut field_stmts: Vec<CastStmt> = Vec::new();
+        let mut static_members: Vec<MemberDecl> = Vec::new();
+        for element in elements {
+            match element {
+                ClassElement::FieldDefinition(f) => {
+                    let name = self.field_name(f.name(), span)?;
+                    let value = self.field_init(f.initializer(), span)?;
+                    field_stmts.push(self.this_assign(&name, value, span));
+                }
+                ClassElement::StaticFieldDefinition(f) => {
+                    let name = self.field_name(f.name(), span)?;
+                    let value = match f.initializer() {
+                        Some(init) => self.const_expr(init).ok_or_else(|| {
+                            self.unsupported(
+                                "a non-constant static field initialiser",
+                                Some(init.span()),
+                            )
+                        })?,
+                        None => crush_cosm::Const::Null,
+                    };
+                    replace(
+                        &mut static_members,
+                        MemberDecl::new(
+                            name,
+                            Member::Static {
+                                value: crush_cosm::StaticValue::Const(value),
+                            },
+                        ),
+                    );
+                }
+                _ => {}
+            }
+        }
+
         match ctor {
             Some(f) => {
                 // `super(...)` in this body calls the parent's constructor
@@ -175,6 +432,10 @@ impl Lower<'_> {
                 let lowered = self.method_function(f.parameters(), f.body(), span);
                 self.super_ctor = saved;
                 let (params, body) = lowered?;
+                let parent_fn = parents
+                    .first()
+                    .map(|p| format!("{}::constructor", p.as_str()));
+                let body = inject_fields(body, parent_fn.as_deref(), field_stmts.clone());
                 self.functions.insert(
                     ctor_fn.clone(),
                     Function {
@@ -186,11 +447,12 @@ impl Lower<'_> {
             }
             // JS gives a base class an empty default constructor.
             None if parents.is_empty() => {
+                let body = inject_fields(Vec::new(), None, field_stmts.clone());
                 self.functions.insert(
                     ctor_fn.clone(),
                     Function {
                         params: vec![("this".to_string(), CastType::Any)],
-                        body: Vec::new(),
+                        body,
                         ..Default::default()
                     },
                 );
@@ -227,14 +489,15 @@ impl Lower<'_> {
                         meta: m.clone(),
                     });
                 }
-                let body = vec![CastStmt::ExprStmt {
+                let mut body = vec![CastStmt::ExprStmt {
                     expr: CastExpr::Call {
-                        function: parent_ctor,
+                        function: parent_ctor.clone(),
                         args: call_args,
                         meta: m.clone(),
                     },
                     meta: m,
                 }];
+                body = inject_fields(body, Some(&parent_ctor), field_stmts.clone());
                 self.functions.insert(
                     ctor_fn.clone(),
                     Function {
@@ -250,12 +513,8 @@ impl Lower<'_> {
         for element in elements {
             match element {
                 ClassElement::MethodDefinition(m) => self.method_member(&kind, m, &mut members)?,
-                ClassElement::FieldDefinition(_) | ClassElement::StaticFieldDefinition(_) => {
-                    return Err(self.unsupported(
-                        "a class field (`x = …` in a class body; arrives with CRUSH-277 S5)",
-                        span,
-                    ));
-                }
+                // Collected above, before the constructor was lowered.
+                ClassElement::FieldDefinition(_) | ClassElement::StaticFieldDefinition(_) => {}
                 ClassElement::PrivateFieldDefinition(_)
                 | ClassElement::PrivateStaticFieldDefinition(_) => {
                     return Err(self.unsupported("a private class field (`#x`)", span));
@@ -265,25 +524,9 @@ impl Lower<'_> {
                 }
             }
         }
-
-        self.kinds.push(KindDecl {
-            name: kind.clone(),
-            home_lang: "javascript".to_string(),
-            span: span
-                .map(|s| crush_cosm::Span::new(s.start().line_number(), s.start().column_number())),
-            storage: Storage::OpenDict,
-            semantics: Semantics::Reference,
-            parents,
-            resolution: Resolution::PrototypeChain,
-            receiver: Receiver::DynamicThis,
-            construct: Construct::JsNew {
-                ctor_fn: FnRef::new(ctor_fn),
-            },
-            members,
-            hooks: Hooks::default(),
-            conforms: Vec::new(),
-            equality: Equality::Identity,
-        });
+        self.home_class = saved_home;
+        members.extend(static_members);
+        self.kinds[kind_idx].members = members;
         Ok(kind)
     }
 
@@ -416,4 +659,32 @@ fn set_accessor(members: &mut Vec<MemberDecl>, name: &str, get: Option<FnRef>, s
         name.to_string(),
         Member::Accessor { get, set },
     ));
+}
+
+/// Splice the field-initialisation statements into a constructor body
+/// (CRUSH-277 S5, D7): JS runs them when the instance is built — at the
+/// top of a base class's constructor, and in a derived class right
+/// after the `super(...)` call (the parentCtor call on `this`). A
+/// derived constructor without a visible `super(...)` call gets them
+/// at the top; such a class is a JS error anyway (`this` before
+/// `super`), so the placement can't mask a valid program.
+fn inject_fields(
+    mut body: Vec<CastStmt>,
+    parent_ctor: Option<&str>,
+    fields: Vec<CastStmt>,
+) -> Vec<CastStmt> {
+    if fields.is_empty() {
+        return body;
+    }
+    let at = parent_ctor
+        .and_then(|pc| {
+            body.iter().position(|s| {
+                matches!(s, CastStmt::ExprStmt { expr: CastExpr::Call { function, args, .. }, .. }
+                    if function == pc
+                        && matches!(args.first(), Some(CastExpr::Var { name, .. }) if name == "this"))
+            })
+        })
+        .map_or(0, |i| i + 1);
+    body.splice(at..at, fields);
+    body
 }

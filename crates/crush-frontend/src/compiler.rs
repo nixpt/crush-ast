@@ -297,7 +297,13 @@ impl Compiler {
     /// Compile a CAST program to CASM. `impl` / `trait` declarations are
     /// lowered to COSM first (see [`Compiler::cosm_module`]).
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
-        let cosm = crate::cosm_lower::lower(&mut program)?;
+        // A walker-supplied COSM module rides on the CAST program
+        // (CRUSH-277 S1); merge it with what the surface syntax declares
+        // rather than dropping it — the same merge `compile_cast_with_cosm`
+        // performs.
+        let walker_cosm = program.cosm.take();
+        let derived_cosm = crate::cosm_lower::lower(&mut program)?;
+        let cosm = crate::cosm_lower::merge_walker_module(walker_cosm, derived_cosm)?;
         self.compile_lowered(program, cosm)
     }
 
@@ -2251,6 +2257,22 @@ impl Compiler {
                     self.compile_expr(arg, instrs)?;
                 }
                 instrs.push(self.create_instr(operator, serde_json::json!({}), meta));
+            }
+            Expression::MethodCall { target, method, args, meta } => {
+                // CRUSH-277 S5: a method call on a computed receiver: the
+                // member resolves on the receiver's Kind at run time
+                // (`call_member`: arguments last-first, the receiver on
+                // top) — the same convention the dotted `CapabilityCall`
+                // path uses for named variables.
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                self.compile_expr(target, instrs)?;
+                instrs.push(self.create_instr(
+                    "call_member",
+                    serde_json::json!({"name": method, "argc": args.len()}),
+                    meta,
+                ));
             }
             Expression::CapabilityCall { name, args, meta } => {
                 // Walkers resolve method receivers before emitting named caps.
