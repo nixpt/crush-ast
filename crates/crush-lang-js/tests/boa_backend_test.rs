@@ -1022,7 +1022,10 @@ fn test_boa_exported_function_is_hoisted_with_its_body() {
 // for COSM; async/generators match the bare-declaration refusals).
 #[test]
 fn test_boa_exported_class_and_async_stay_loud() {
-    assert!(loud("export class Foo {}").contains("exporting a class, generator or async declaration"));
+    // Since CRUSH-277 an exported class lowers (it emits its KindDecl
+    // plus the export); exported async declarations stay loud.
+    let program = test_lower("export class Foo {}");
+    assert!(program.cosm.is_some(), "exported class emits its kind");
     assert!(loud("export async function f() {}").contains("exporting a class, generator or async declaration"));
 }
 
