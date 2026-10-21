@@ -373,6 +373,557 @@ values leak them, as CRUSH-251 §9 already accepts for closures. Kinds make cycl
 on CRUSH-121's direction (arena plus a tracing collector with a correct root set). Interim: Kinds are immortal
 per program; instance cycles leak until CRUSH-121.
 
+### 9. Method dispatch: how `o.m(args)` resolves
+
+Status: **decides CRUSH-zorro-44** (design pass requested by that ticket's
+2026-10-20 status note). This section is the general rule that PRs #285
+(CRUSH-277 S3/S5), #286 (CRUSH-280) and the still-open #288 deliberately did
+not yet implement: they lower a member call only where the receiver is
+provably an instance, and refuse loudly elsewhere. Nothing here changes a
+decision in §§1–8; it names, for every receiver, which of the mechanisms
+those sections already define applies, and what each backend must do.
+
+**The one invariant.** Static knowledge about a receiver may make a call
+*faster* or make it *fail earlier*; it must never change *what the call
+resolves to*. A call whose target depends on the receiver's Kind resolves
+to the same target whether the compiler proved that Kind, guessed it, or
+learned it only at run time. Every rule below is that invariant applied.
+
+**Where the code stands today** (facts, `origin/main` 929662e):
+
+- CAST has exactly one computed-receiver form,
+  `Expression::MethodCall { target, method, args }`
+  (`crates/crush-cast/src/lib.rs:360-369`), and the frontend compiles it
+  unconditionally to CASM `call_member`
+  (`crates/crush-frontend/src/compiler.rs:2279-2293`).
+- The older dotted form is a `CapabilityCall` named `"obj.method"`. In the
+  frontend it becomes `call_member` only when `method` is in the bare-name
+  set of `self`-taking methods of the program's Kinds
+  (`crates/crush-frontend/src/compiler.rs:2390-2417`,
+  `crates/crush-frontend/src/cosm_lower.rs:586-592`); a walker-marked
+  member call (`meta.member_call`) that does not so resolve is refused
+  before it can reach the capability grant below it
+  (`crates/crush-frontend/src/compiler.rs:2364-2388`). An *unmarked*
+  dotted call on a declared variable whose method is not a receiver
+  method still falls through to `cap_call "<method>"` with the receiver
+  as first argument and `method` inserted into the permission set
+  (`crates/crush-frontend/src/compiler.rs:2418-2431`) — the legacy path
+  §9.6 closes for member-call syntax.
+- Both exact VMs dispatch `CALL_MEMBER` through the one shared function
+  `cosm_rt::call_member` (`crates/crush-vm/src/scheduler.rs:1767-1774`,
+  `crates/crush-vm/src/portable_vm.rs:1516-1523`). On a Record it checks
+  an instance field holding a function value *before* the Kind's members
+  (`crates/crush-vm/src/cosm_rt.rs:839-843`), then resolves through the
+  Kind (`crates/crush-vm/src/cosm_rt.rs:843-898`); on any other value it
+  errors `` `.{name}(…)` on a {}: methods resolve on struct instances ``
+  (`crates/crush-vm/src/cosm_rt.rs:828-838`). It never calls a capability:
+  the doc comment says so (`crates/crush-vm/src/cosm_rt.rs:826-828`), and
+  capability inference treats a `CALL_MEMBER` operand as a member name,
+  never a capability (`crates/crush-vm/src/cap_inference.rs:19-21`).
+- FastVM and the JIT refuse every COSM member op at lowering
+  (`crates/crush-vm/src/fastvm/instructions.rs:848-853`, after the
+  kind-table gate at `crates/crush-vm/src/fastvm/instructions.rs:425`);
+  `crush-aotc` refuses `call_member` by name
+  (`crates/crush-aotc/src/codegen.rs:502-510`); the Rust/C AOT backends
+  refuse a non-map-compatible kind table up front
+  (`crates/crush-aot/src/lib.rs:50-58`) and report any op they cannot emit,
+  `call_member` included, as `UnsupportedOps`
+  (`crates/crush-aot/src/codegen.rs:1212`). The shared load-time rule is
+  `casm::cosm_unsupported_reason_on` at `CosmSupport::Maps` for those
+  engines and `CosmSupport::Kinds` for the two exact VMs
+  (`crates/casm/src/lib.rs:1046-1085`, `crates/crush-vm/src/cosm_gate.rs:1-11`).
+
+#### 9.1 The dispatch rule, by receiver
+
+A dotted call is classified **once, at lowering, by its syntactic form and
+by what the lowering knows about the receiver** — never by the method
+name alone, and never re-classified at run time. The classes are disjoint
+and are tried in this order:
+
+| # | Receiver | Lowering | Run-time behaviour |
+|---|---|---|---|
+| 1 | A **capability namespace**: the dotted prefix is not a value binding in scope (`net`, `fs`, `math`, JS `Math`, Python `math`) | A capability call under its full dotted name (`cap_call "net.fetch"`), permission recorded under that name | The capability gate, exactly as today |
+| 2 | A receiver of **provably exact Kind** `K`, with `m` resolving to one target on `K` | A direct `call` to the lifted function (`K::m`), receiver passed per `K`'s receiver strategy, arguments adapted (§9.5) | No dispatch; runs on every backend that runs ordinary calls |
+| 3 | A receiver whose Kind is **known but not exact** (a `this`, a binding that may hold a subclass, a parameter declared of Kind `K`) | `CALL_MEMBER "m"` | Resolution walks the receiver's actual Kind (§2); §9.5's override check has already proved every reachable override has the adapted shape |
+| 4 | A receiver whose Kind is **known only at run time** (an unannotated parameter, a capture, a field read, a call result, a collection element, any computed receiver) | `CALL_MEMBER "m"` (CAST `MethodCall`) | §9.4's fallback, decided by the receiver's actual value |
+| 5 | A **literal or otherwise provably primitive** receiver (`[1, 2].push(x)`, `"a,b".split(",")`, a Python `s.upper()`) | The walker/frontend's existing built-in lowering for that language (a VM op or an internal capability-shaped call), never `CALL_MEMBER` | Exactly as today |
+
+Rule 1 is lexical, not semantic: a namespace prefix is not a value, is
+never evaluated, and cannot be shadowed by a run-time value. It *can* be
+shadowed lexically — if the source binds a value under that name in scope,
+class 1 no longer applies and the call is a member call on that value.
+That is already the frontend's test: a dotted call is a method call only
+when its prefix is a declared variable, and a namespaced capability
+otherwise (`crates/crush-frontend/src/compiler.rs:2390-2397`); the JS
+walker likewise checks user bindings before its global/namespace table
+(`crates/crush-lang-js/src/lower/builtins.rs:75-124` lists the namespace
+rows, e.g. `Math.pow` → `math.pow`), and the Python walker treats
+`math.floor` & friends as module calls only for its closed `MODULES`
+list (`crates/crush-lang-python/src/lower_expr.rs:428`,
+`crates/crush-lang-python/src/lower_expr.rs:496-499`).
+
+Rule 2's "provably exact" is deliberately narrow. It covers: a
+construction expression (`new C(…)`, a struct literal `P { … }`) used
+directly as the receiver; `super.m(…)` (the target ancestor is named by
+the lexically enclosing class — the JS walker already lowers it to a
+direct call, `crates/crush-lang-js/src/lower/class.rs:270-336`); a static
+member called on its Kind's name; and a Crush receiver whose Kind has
+`resolution: none` and no subclassing, where the declared Kind *is* the
+exact Kind. It does **not** cover `this` in a subclassable hierarchy, a
+reassignable binding, or anything a nested function can assign — the JS
+walker already forgets a binding's Kind in exactly those cases
+(`crates/crush-lang-js/src/lower/expr.rs:743-765`). Where rule 2 does not
+apply but the Kind is known, rule 3 applies instead: same target, found
+at run time. **Direct lowering is an optimisation, not a second
+semantics** (§6's static fast paths); an implementation slice that emits
+`CALL_MEMBER` for a rule-2 receiver is conforming, if slower.
+
+Rule 5 keeps the walkers' existing primitive behaviour byte-for-byte:
+the JS builtin table's one live receiver row is `push`
+(`crates/crush-lang-js/src/lower/builtins.rs:128-130`; the string/array
+rows below it are `Planned`, i.e. loud at walk time), the computed-receiver
+path already gives those rows first claim on member-access and call-result
+receivers (`crates/crush-lang-js/src/lower/expr.rs:859-875`), and the
+Python walker translates a method on a value to a named Crush function
+such as `str.to_upper` (`crates/crush-lang-python/src/lower_expr.rs:430-455`).
+Rule 5 applies only where the *walker* knows the receiver is a primitive
+of its own language; a receiver it cannot so classify is rule 4, even if
+the value turns out to be a primitive at run time (§9.4).
+
+*Reason.* Classification by form and provenance is checkable at lowering,
+keeps capability namespaces closed (§9.6), and makes the run-time fallback
+the single place where an unknown receiver is interpreted — one shared
+implementation, as CONTRIBUTING requires, instead of one guess per walker.
+
+*Rejected alternatives.* (a) **Classify by method name** (a global table:
+`push` is always the array builtin, `add` always a Record method): this is
+today's bug class — the name, not the receiver, decides — and it cannot
+express §9.3's clash rule. (b) **Lower every dotted call to `CALL_MEMBER`,
+including namespaces**: a namespace has no value to dispatch on, so
+`net.fetch` would need a fake receiver value and a capability hidden
+inside the member op, breaking §9.6. (c) **Keep unknown identifier
+receivers loud forever** (the #285 D4 position as a permanent rule):
+safe, but it makes `fn apply(o) { o.m() }` inexpressible for Records,
+which is precisely zorro-44's remaining problem; loudness moves to the
+actual failure (a receiver with no such member), which is the honest
+place for it.
+
+*Worked example.*
+
+```crush
+struct Point { x: int, y: int }
+impl Point { fn norm2(self) { return self.x * self.x + self.y * self.y; } }
+fn via_param(p) { return p.norm2(); }        // rule 4 (today: also rule 3's set)
+let p = Point { x: 3, y: 4 };
+print(p.norm2());                            // rule 3, or rule 2 as an optimisation
+print(via_param(p));                         // rule 4
+print(Point { x: 1, y: 2 }.norm2());         // rule 2 eligible
+```
+
+`p.norm2()` lowers to `call_member "norm2" 0` (as it does today,
+`crates/crush-frontend/src/compiler.rs:2400-2416`); `via_param`'s body
+lowers the same way under this section, where today a walker would refuse
+a parameter receiver. Both print `25`/`5` via the receiver's Kind on the
+two exact VMs; a backend that cannot dispatch (§9.4) refuses the
+`via_param` program at load/compile time, never at the `print`.
+
+#### 9.2 Name clashes: a Record method named like a built-in
+
+**Rule.** Precedence is a property of the *receiver's value*, in this
+order, and of nothing else:
+
+1. an instance field holding a value (§9.3) — it shadows everything;
+2. the receiver Kind's own members, then its resolution order, its
+   conformances' impl tables and its interfaces' default methods (§2's
+   lookup, `crates/crush-vm/src/cosm_rt.rs:21-24`);
+3. the built-in method table for the receiver's primitive type (§9.4) —
+   reachable only when the receiver is not a Record/Kind at all, so in
+   practice this tier never competes with tiers 1–2;
+4. otherwise, a loud error (§9.4).
+
+So **a Record's own method always wins over a built-in of the same name**
+(`add`, `get`, `push`, `clone`, …), and a primitive receiver always gets
+its built-in: the two never race, because tier 3 is entered only for
+non-Record receivers. The decision is taken **statically whenever the
+receiver's Kind is statically known** — the lowering must consult the
+Kind before any built-in table, so a known-Record call can never be
+captured by a built-in row — and **at run time otherwise**, by the same
+precedence in the shared `CALL_MEMBER` implementation. By §9's invariant
+the two must agree; a lowering that lets a built-in row claim a receiver
+it merely *cannot prove* is a Record is permitted only because the
+run-time tier order then still applies to whatever value arrives — and
+where a walker does that today for computed receivers
+(`crates/crush-lang-js/src/lower/expr.rs:859-875`), a later slice must
+restrict first claim to receivers the walker cannot prove are instances,
+as it already does for `new C()` results
+(`crates/crush-lang-js/src/lower/expr.rs:866-875`).
+
+Two existing precedents are this rule, not exceptions to it: an instance
+field shadows an inherited accessor on read
+(`crates/crush-vm/src/cosm_rt.rs:690-696`), and `clone` is a built-in
+only when the Kind declares no `clone` member
+(`crates/crush-vm/src/cosm_rt.rs:896-898`).
+
+**A non-Record receiver reaching a member call** is §9.4: if the shared
+built-in table has a row for *(that value's type, that name)*, it runs;
+if the name is a built-in only for some *other* type (`"hi".push(x)`,
+`[1].upper()`), or for no type, the call errors loudly naming the method
+and the receiver's type. It never reads as `null`, never becomes a plain
+function call, and never becomes a capability (§9.6).
+
+*Reason.* Receiver-first precedence is what every hosted language does
+(JS property lookup before any global, Python attribute lookup before
+any builtin function), and it is the only rule under which losing static
+information (inlining a function, passing a value through a collection)
+cannot silently change a program's meaning.
+
+*Rejected alternatives.* (a) **Built-in wins on name clash** (keeps
+primitive programs stable when a Kind grows a method): silently changes
+existing Record programs the day someone adds `impl Bag { fn add … }`.
+(b) **Static-only resolution, error if the Kind is unknown**: makes the
+same program legal or illegal depending on provenance tracking, and
+bans §9.1 rule 4 outright. (c) **Warn/fall through to the built-in when
+a Record has no such method**: a typo'd method name on a Record would
+mutate an array builtin instead of erroring — silently wrong.
+
+*Worked example.*
+
+```javascript
+class Bag { add(x) { return "bag:" + x; } }   // JS slice, CRUSH-277
+let b = new Bag();
+b.add(1);          // "bag:1" — tiers 1–2; the walker's Map/Set `add` row
+                   // is Planned/loud and must not claim this receiver
+let xs = [1, 2];
+xs.push(3);        // tier 3 / rule 5 — the array built-in, as today
+function id(v) { return v; }
+id(b).add(1);      // rule 4 → CALL_MEMBER → tier 2 at run time: "bag:1"
+id(xs).push(3);    // rule 4 → CALL_MEMBER → tier 3 at run time: appends
+id(xs).add(1);     // loud: no `add` method on an array value
+```
+
+#### 9.3 A field holding a function value: `o.f(x)`
+
+**Rule.** Calling a member that resolves to an instance field is calling
+the value stored there: `GET_MEMBER` + `CALL_VALUE`, in that order, with
+**no receiver injected**. Captures/binding already inside the function
+value are its leading arguments, exactly as `CALL_VALUE` passes them
+(`crates/crush-vm/src/vm.rs:177-189`). This holds for a Record field and
+for a `Value::Map` entry alike; a Map has no Kind and no methods, so a
+field function is the *only* thing `m.f(x)` can mean on a Map. If the
+field is absent, the error is the member error (`has no member`/
+`has no method`); if it is present but not callable, the error is
+`CALL_VALUE`'s not-callable error. A bound method obtained by reading a
+method member (§2: `GET_MEMBER` under `bound_self` returns a function
+value already carrying its receiver,
+`crates/crush-vm/src/cosm_rt.rs:570-589`) is indistinguishable from a
+stored lambda at the call site, and needs no special case.
+
+In lowering, `o.f(x)` is **not** special-cased to a literal
+`GET_MEMBER`+`CALL_VALUE` pair unless the compiler can prove `f` is a
+field (it generally cannot); it lowers to `CALL_MEMBER "f"`, whose
+Record branch already implements exactly this order — own field first,
+callable-checked through the same `callable` helper `CALL_VALUE` uses
+(`crates/crush-vm/src/cosm_rt.rs:839-843`). The one new runtime case this
+section adds is the Map branch of §9.4. Keeping one lowering means
+`o.f(x)` and `let g = o.f; g(x)` differ only in the documented way: the
+second has already paid `GET_MEMBER`'s binding policy (a `dynamic_this`
+method read off its object loses `this`, §2), the first has not.
+
+*Reason.* `GET_MEMBER`+`CALL_VALUE` is the semantics the ticket asks for
+and the one the Record path already implements; inventing a receiver
+injection for stored functions would make a field lambda behave unlike
+the same lambda in a variable.
+
+*Rejected alternatives.* (a) **Inject the receiver as first argument**
+(Python-style binding for stored functions): wrong for Crush/JS, where a
+stored function is not a method; binding is a property of *method
+members* under a `bound_*` receiver strategy, decided by `GET_MEMBER`,
+not by the call syntax. (b) **Refuse field-function calls unless the
+field's type is known statically**: Crush fields are not typed that way,
+and the run-time callable check already errors precisely.
+
+*Worked example.*
+
+```crush
+let handlers = { run: fn(x) { return x + 1; } };
+print(handlers.run(41));        // Map field → 42
+struct S { f: any }
+let s = S { f: fn(x) { return x * 2; } };
+print(s.f(21));                 // Record field → 42 (today's Record branch)
+print(s.g(1));                  // loud: `S` has no member `g`
+let t = { run: 3 };
+print(t.run(1));                // loud: `run` is not callable
+```
+
+#### 9.4 The runtime fallback: `CALL_MEMBER` on a non-Record
+
+**Rule.** The shared implementation behind `CALL_MEMBER`
+(`cosm_rt::call_member`, extended in place — not a second copy per VM)
+dispatches on the receiver value, in §9.2's order:
+
+| Receiver value | Behaviour |
+|---|---|
+| `Record` | §9.3's field check, then the Kind lookup; missing method → `` `{Kind}` has no method `{name}` `` (today's error) |
+| `Kind` (a class as a value) | Static members, as today (`crates/crush-vm/src/cosm_rt.rs:829-831,872-888`) |
+| `Map` | §9.3's field check only; absent → a "no member/method" error naming the map and member; present non-function → not-callable |
+| Array, string, and the other primitive types | The **built-in method table**: a closed, per-type table of (type, name, arity) → the VM-internal implementation those methods already use as ops/internal calls. No row → loud error |
+| Anything else (`int`, `bool`, `null`, a function value, …) | Loud error in today's shape: `` `.{name}(…)` on a {type}: … `` (`crates/crush-vm/src/cosm_rt.rs:832-837`), extended to say the built-in table was also consulted |
+
+The built-in fallback table is **not** the capability registry: it is
+keyed by the receiver's type (a name-only match is the §9.2 bug), it is
+implemented once beside `cosm_rt` and called by both exact VMs (the
+`io_print.rs`/`io_read.rs` pattern CONTRIBUTING mandates), it records no
+permission, and it can only perform operations that are already exact,
+in-process VM operations on that value (the array `push`/`append` family
+the scheduler already implements by type-checking its first argument,
+`crates/crush-vm/src/scheduler.rs:2236-2244`, is the model). A method
+whose implementation would need a host capability, a callback into user
+code (the K2 HOFs), or a language runtime is **not** a fallback row; it
+stays loud with the area ticket's name, as the JS table's `Planned` rows
+already are (`crates/crush-lang-js/src/lower/builtins.rs:131-191`).
+
+**Backends, exactly:**
+
+| Backend | `CALL_MEMBER` (any receiver) |
+|---|---|
+| Scheduler VM | Implements this section (shared `cosm_rt`) |
+| Portable VM | Implements this section (the same shared `cosm_rt`) |
+| FastVM | **Refuses at lowering**, as today — on the bytecode path by name (`crates/crush-vm/src/fastvm/instructions.rs:848-853`) and on the CASM path as an unknown op (`crates/crush-vm/src/fastvm/instructions.rs:1447-1448`); a program of rule-2 direct calls and rule-5 built-ins, with no `CALL_MEMBER`, is unaffected |
+| JIT | **Refuses**, through the same FastVM lowering it is built on; it must not fall back to a partial (built-in-only) dispatch |
+| AOT (Rust, C, `crush-aotc`) | **Refuses at compile time**, naming `call_member`/COSM, as `crush-aotc` already does by name (`crates/crush-aotc/src/codegen.rs:502-510`) and the Rust/C backends do via `UnsupportedOps` (`crates/crush-aot/src/codegen.rs:1212`); a map-compatible kind table alone is not a refusal — only the op is. PTX and any other backend fall under the "future backend" row below until they do the same |
+| Any future backend | Implements all four receiver tiers, or refuses any program containing `call_member` at load/compile time. A partial implementation (Records only, or built-ins only) is non-conforming |
+
+No backend may implement the fallback by routing it to `cap_call`: the
+fallback is below the capability gate by construction (§9.6), and the
+kind-table gate (`CosmSupport`) is unchanged — FastVM/JIT/AOT keep
+refusing Kinds a plain map cannot represent
+(`crates/casm/src/lib.rs:870-916`), independently of this section.
+
+*Reason.* The fallback's whole value is that an unknown receiver gets
+*the same answer* the static path would have given. That answer is only
+well-defined if it lives in one shared function (§9's invariant); and a
+backend that can only answer for *some* receiver values must refuse the
+op outright, because the receiver value is exactly what it cannot know
+at compile time — the ticket's exact-or-loud bar.
+
+*Rejected alternatives.* (a) **Fall back to the global capability named
+`m`** (today's unmarked legacy path): turns a typo or a missing method
+into a host-capability grant — the bug PR #285's review removed for
+marked calls; §9.6. (b) **Return `null` for a missing member** (the lax
+`GET_FIELD` convention): a missing *method* is a programming error, and
+JS/Python both raise; the lax read stays for field *reads* only. (c) **A
+per-VM fallback table**: the CRUSH-114 divergence class (`len()` on
+strings) — two tables will drift.
+
+*Worked example.*
+
+```crush
+fn bump(v) { return v.push(9); }   // parameter receiver: rule 4
+bump([1, 2]);                      // array → built-in tier → [1, 2, 9]
+struct B { n: int }
+impl B { fn push(self, x) { return "B.push"; } }
+bump(B { n: 1 });                  // Record → Kind tier → "B.push"
+bump(42);                          // loud: `.push(…)` on an int
+bump({ push: 1 });                 // loud: field `push` is not callable
+```
+
+On the scheduler and portable VMs all five lines behave as annotated.
+On FastVM, the JIT and AOT, the program is refused before it runs
+(`call_member` is present), even though every actual call would have
+succeeded on two of them — that is the accepted cost of exact-or-loud,
+and rule-2/rule-5 programs (where the lowering never emits
+`CALL_MEMBER`) are the way to reach those backends today.
+
+#### 9.5 Argument shapes: default and rest parameters under dynamic dispatch
+
+**Rule. The CRUSH-280 refusal stays.** A dynamically dispatched call is
+passed **raw** (the source arguments, nothing synthesised) unless the
+lowering knows the target signature exactly enough to adapt it, and
+adaptation is positional and therefore only sound when every target the
+call can actually reach has the *same* signature:
+
+- **Exact target** (rule 2, `super`, a Kind's static, `new C()`): adapt
+  against that signature — hidden `__has_<param>` flags appended after
+  the parameters, a rest parameter collected into one array
+  (`crates/crush-lang-js/src/lower/scope.rs:48-57`,
+  `crates/crush-lang-js/src/lower/expr.rs:951-1016`). Unchanged.
+- **Known Kind, inexact receiver** (rule 3): adapt against the declared
+  Kind's signature, and at end of lowering verify that every subclass
+  overriding that member resolves it to the identical signature; any
+  mismatch is a lowering error. This is the check that exists
+  (`crates/crush-lang-js/src/lower/class.rs:169-206`), and this section
+  makes it the rule for every walker, not a JS-local one.
+- **Unknown receiver** (rule 4): pass raw, and at end of lowering verify
+  that **no member of that name anywhere in the program has a
+  non-plain (default/rest) signature**; if one does, refuse at lowering
+  with the existing message ("the arguments could land in the hidden
+  slots", `crates/crush-lang-js/src/lower/class.rs:208-223`). The same
+  scan covers a Record method that would shadow a built-in: an unknown
+  receiver that turns out to hold a primitive therefore also refuses —
+  conservative, loud, accepted.
+- **Field functions** (§9.3): always raw; a function value's arity is
+  checked by `callable` at run time (`crates/crush-vm/src/vm.rs:179-189`).
+  Function values with default/rest parameters are already refused at
+  the point they are used as values
+  (`crates/crush-lang-js/src/lower/expr.rs:41-47`), so no adapted shape
+  can reach this tier.
+- **Built-in fallback rows** (§9.4): plain fixed signatures only, checked
+  against the row's arity when the fallback runs.
+
+At run time nothing changes: `CALL_MEMBER` keeps checking the resolved
+function's exact arity against `argc` plus its leading (receiver/captured)
+arguments (`crates/crush-vm/src/cosm_rt.rs:844-854`), so a raw call that
+reaches a plain-signature method with the wrong count fails loudly there,
+and an adapted call's hidden flags can only reach a target proved to
+share the shape they were built for.
+
+*Reason.* The hidden-flag ABI is positional: a call adapted for one
+signature and dispatched to another does not error, it *misbinds*
+(flags land in user parameters, defaults silently trigger) — the one
+failure mode this repo's bar forbids outright. Since `CALL_MEMBER`'s
+operand carries only a name and a raw `argc`
+(`crates/crush-vm/src/bytecode.rs:204-206`), the call site cannot
+describe an unadapted shape to the callee; until the ABI can, refusal
+is the only exact option.
+
+*Rejected alternatives.* (a) **Run-time shape check on the raw call**
+(compare `argc` against the resolved signature and synthesise
+defaults/rest then): impossible without changing what the instruction
+carries — the callee's default *expressions* live in the callee, but
+deciding "the caller omitted parameter 2" from a raw stack requires the
+instruction to say which source arguments were given, and rest/default
+mixes make that a per-signature descriptor, i.e. a new instruction or a
+wider operand on every backend. (b) **Per-method raw-entry trampolines**
+(each non-plain method grows a plain-ABI wrapper that fills its own
+defaults/rest, and dynamic dispatch targets the wrapper): sound, and the
+likely eventual design, but it changes how every lifted method is named
+and called (including the direct path and the AOT lifted-method calls)
+— a slice of its own, gated on whether dynamic calls to such methods are
+actually wanted; see Open (owner) below. (c) **Adapt speculatively for
+the most likely Kind**: silently wrong on the other Kinds, by
+construction.
+
+*Worked example (JS slice).*
+
+```javascript
+class A { m(a, b = 10) { return a + b; } }
+class B { }                        // no `m` anywhere else, non-plain or not
+function f(o) { return o.m(1); }   // rule 4, unknown receiver
+f(new A());
+```
+
+Today this is refused when lowering finishes, because a member `m` with
+a default exists in the module; under this section it stays refused, on
+every backend, before any code runs. `new A().m(1)` (exact) adapts and
+returns `11`; a `B.m` override with signature `(a, b)` added later makes
+even a rule-3 call through an `A`-typed receiver a lowering error,
+rather than a misbound call.
+
+#### 9.6 Capabilities: no member call can become a host capability
+
+**Rule.** Member calls and capability calls are disjoint at every layer,
+by construction rather than by check:
+
+1. **Syntax.** A capability is named, never computed: a namespace call
+   (§9.1 rule 1) is a `CapabilityCall` whose full dotted name is the
+   capability; a member call is a `MethodCall`, or a dotted
+   `CapabilityCall` *marked* `member_call` by its walker. Walkers must
+   mark every receiver call they emit in dotted form — the JS walker
+   does (`crates/crush-lang-js/src/lower/expr.rs:828-840`) — and the
+   frontend refuses a marked call that does not resolve as a member
+   before the capability grant can see it
+   (`crates/crush-frontend/src/compiler.rs:2364-2388`).
+2. **Compilation.** `call_member` records no permission and emits no
+   `cap_call`. The one place the frontend historically turned
+   `obj.method` into `cap_call "method"` + a recorded permission
+   (`crates/crush-frontend/src/compiler.rs:2418-2431`) is reachable, after
+   the zorro-44 implementation, only from the *unmarked* parser idiom —
+   and that idiom, applied to a declared-variable receiver, is a member
+   call by §9.1 and must be lowered as one (`call_member`). After that
+   change no compiler path takes a receiver call to `cap_call`; a
+   capability name can only originate from a namespace form (rule 1) or
+   a bare capability form, both of which name it in full.
+3. **Bytecode.** `CALL_MEMBER`'s operand is a member name
+   (`OperandKind::Member`), not a capability
+   (`crates/crush-vm/src/cap_inference.rs:19-21`); capability inference
+   therefore never reports a member name as a used capability, and —
+   because dispatch is dynamic — it treats every function the kind table
+   names as reachable, so the capabilities a *method body* uses are
+   still all reported (`crates/crush-vm/src/cap_inference.rs:229-236` has
+   the shape of this test). A method that calls `io.print` needs that
+   grant for its body; the act of calling the method needs none.
+4. **Run time.** `cosm_rt::call_member` and its §9.4 fallback contain no
+   capability lookup, no permission check and no host-cap call; the
+   fallback table (§9.4) is VM-internal operations only. The scheduler's
+   capability dispatcher is reachable only from `CAP_CALL`
+   (`crates/crush-vm/src/scheduler.rs:2051-2060` is its gate).
+
+*Reason.* PR #285's review found a real path from an unresolved member
+call to a granted host capability (fixed by the `member_call` guard
+above). A guard is a check; this rule makes the two name spaces
+unrepresentable in each other's instructions, so the next walker or
+frontend path cannot reintroduce it by forgetting a flag: to reach a
+capability, a program must contain a `cap_call` naming it in full, and
+no lowering of a receiver call emits one.
+
+*Rejected alternatives.* (a) **Keep the guard, skip the lowering change**
+(status quo): the unmarked parser idiom remains a live counterexample —
+any future walker emitting it unmarked regains the grant. (b) **Let the
+runtime fallback consult the capability registry for names no member
+matches** ("convenient" host methods): reintroduces ambient authority
+through the receiver — a value from another language could name host
+capabilities the program never declared — and violates the
+capability-security rule in CLAUDE.md outright.
+
+*Worked example.*
+
+```crush
+struct P { x: int }
+let p = P { x: 1 };
+p.frobnicate();     // no such method: compile- or run-time refusal
+                    // naming `P`/`frobnicate`; no permission is recorded
+net.fetch("https://example.invalid");   // rule 1: cap_call "net.fetch",
+                    // permission "net.fetch", gated as today
+let net = { fetch: fn(u) { return "local"; } };
+print(net.fetch("x"));                  // `net` is a value here: §9.3
+                    // field-function call → "local"; never a capability
+```
+
+#### 9.7 Open (owner)
+
+The following are **not** decided above; each names the recommendation
+the implementation should follow until the owner rules, so no slice
+blocks on them:
+
+1. **Open (owner) — the initial built-in fallback inventory (§9.4).**
+   Recommendation: only (type, name) rows whose implementation is already
+   exact on both exact VMs (the array `push`/`append`/`pop` family and
+   the string rows the Python/JS walkers already lower), each with a
+   parity test; every other name stays loud with its area ticket.
+   Adding a row is adding language surface — should Map/Set `get`/`set`/
+   `add`, array `map`/`filter` (K2 HOFs), or Python dict methods join the
+   *runtime* table, or remain walker-lowered only?
+2. **Open (owner) — field-function receiver binding for `dynamic_this`
+   Kinds (§9.3).** Recommendation: keep "no receiver injected" for
+   Crush, Map and Record field values, matching `GET_MEMBER` +
+   `CALL_VALUE` literally. JavaScript object-literal methods
+   (`let o = { m() { return this; } }; o.m()`) want `this === o`; that
+   is a property of a future `js.Object` Kind's *member* lookup (K3),
+   not of field values generally. Owner to confirm the split before K3
+   lowers object literals.
+3. **Open (owner) — lifting the §9.5 refusal.** Recommendation: keep the
+   refusal until a concrete program needs a dynamic call to a
+   default/rest method. If that day comes, the trampoline design
+   (§9.5, rejected alternative (b)) is the candidate; it touches method
+   naming on every backend, including AOT's lifted-method calls, and
+   should be its own ticket with its own design note.
+4. **Open (owner) — whether FastVM/JIT/AOT ever implement `CALL_MEMBER`.**
+   Recommendation: not in zorro-44; §6 already starts AOT dynamic member
+   ops loud, and rule-2 direct calls give static programs a path to
+   every backend. Owner to say whether K4's static fast paths should
+   grow into full dynamic dispatch on those backends, or whether
+   dynamic-receiver programs are permanently VM-tier programs.
+
 ## How this changes existing plans
 
 - **CRUSH-251.** Its object-model half (prototype get/set, `call_method`/`this`, `construct`) becomes the
