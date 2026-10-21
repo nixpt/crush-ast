@@ -415,3 +415,57 @@ fn test_boa_parameter_abi() {
     assert_eq!(&names[..3], ["a", "b", "rest"]);
     assert!(names[3].starts_with("__has_b_"), "{names:?}");
 }
+
+// CRUSH-266 (boa path): an exported `function` declaration hoists like a
+// bare one and keeps its body; the export itself refers to it. It used to be
+// refused outright ("exporting a function, class, generator or async
+// declaration"), so no ES module lowered through boa at all.
+#[test]
+fn test_boa_exported_function_is_hoisted_with_its_body() {
+    let program = test_lower("export function double(x) { return x * 2; }\nconsole.log(double(21));");
+    let f = program
+        .functions
+        .get("double")
+        .expect("exported function must be hoisted like a bare declaration");
+    assert!(
+        f.body.iter().any(|s| matches!(s, crush_cast::Statement::Return { .. })),
+        "exported function body must be lowered: {:?}",
+        f.body
+    );
+    let main = program.functions.get("main").unwrap();
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::Export { name, .. } if name == "double")),
+        "the Export statement must remain: {:?}",
+        main.body
+    );
+}
+
+// Exported declarations that still have no lowering stay loud (classes wait
+// for COSM; async/generators match the bare-declaration refusals).
+#[test]
+fn test_boa_exported_class_and_async_stay_loud() {
+    assert!(loud("export class Foo {}").contains("exporting a class, generator or async declaration"));
+    assert!(loud("export async function f() {}").contains("exporting a class, generator or async declaration"));
+}
+
+// CRUSH-266 (boa path, end-to-end): the exported function is callable from
+// the module body and computes the right value through CASM -> CVM1.
+#[test]
+fn test_boa_exported_function_runs_end_to_end() {
+    let frontend = crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa);
+    let (_report, cast) = crush_walker_core::frontend_pipeline(
+        &frontend,
+        "export function double(x) { return x * 2; }\nconsole.log(double(21));",
+    )
+    .unwrap();
+    let casm = crush_frontend::compiler::Compiler::new().compile(cast).expect("CAST->CASM");
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("CASM->CVM1");
+    let quotas = crush_vm::Quotas {
+        max_steps: 10_000_000,
+        ..Default::default()
+    };
+    let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
+    assert_eq!(out.trim(), "42");
+}
