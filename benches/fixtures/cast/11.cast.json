@@ -15,17 +15,29 @@
             "left": {
               "type": "IntLiteral",
               "value": 1,
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 15
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 2,
-              "meta": {}
+              "meta": {
+                "col": 18,
+                "line": 2
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 2,
+              "col": 18
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 2,
+            "col": 18
+          }
         },
         {
           "type": "VarDecl",
@@ -36,17 +48,29 @@
             "left": {
               "type": "IntLiteral",
               "value": 3,
-              "meta": {}
+              "meta": {
+                "line": 3,
+                "col": 15
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 4,
-              "meta": {}
+              "meta": {
+                "line": 3,
+                "col": 18
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 3,
+              "col": 18
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 18,
+            "line": 3
+          }
         },
         {
           "type": "Return",
@@ -56,20 +80,34 @@
             "left": {
               "type": "Var",
               "name": "a",
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 14
+              }
             },
             "right": {
               "type": "Var",
               "name": "b",
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 17
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 17,
+              "line": 4
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 4,
+            "col": 17
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

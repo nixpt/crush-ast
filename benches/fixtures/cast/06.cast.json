@@ -15,15 +15,27 @@
               {
                 "type": "IntLiteral",
                 "value": 21,
-                "meta": {}
+                "meta": {
+                  "line": 6,
+                  "col": 21
+                }
               }
             ],
-            "meta": {}
+            "meta": {
+              "col": 22,
+              "line": 6
+            }
           },
-          "meta": {}
+          "meta": {
+            "col": 22,
+            "line": 6
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 5
+      }
     },
     "double": {
       "params": [
@@ -41,20 +53,34 @@
             "left": {
               "type": "Var",
               "name": "n",
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 14
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 2,
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 17
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 17,
+              "line": 2
+            }
           },
-          "meta": {}
+          "meta": {
+            "col": 17,
+            "line": 2
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

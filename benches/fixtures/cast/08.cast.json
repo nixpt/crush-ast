@@ -12,10 +12,16 @@
           "value": {
             "type": "BoolLiteral",
             "value": true,
-            "meta": {}
+            "meta": {
+              "line": 2,
+              "col": 18
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 2,
+            "col": 18
+          }
         },
         {
           "type": "If",
@@ -25,7 +31,10 @@
             "left": {
               "type": "Var",
               "name": "ok",
-              "meta": {}
+              "meta": {
+                "line": 3,
+                "col": 11
+              }
             },
             "right": {
               "type": "BinaryOp",
@@ -33,16 +42,28 @@
               "left": {
                 "type": "IntLiteral",
                 "value": 3,
-                "meta": {}
+                "meta": {
+                  "col": 17,
+                  "line": 3
+                }
               },
               "right": {
                 "type": "IntLiteral",
                 "value": 4,
-                "meta": {}
+                "meta": {
+                  "col": 20,
+                  "line": 3
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 3,
+                "col": 20
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 3,
+              "col": 22
+            }
           },
           "then_body": [
             {
@@ -50,9 +71,15 @@
               "value": {
                 "type": "IntLiteral",
                 "value": 1,
-                "meta": {}
+                "meta": {
+                  "col": 17,
+                  "line": 4
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 17
+              }
             }
           ],
           "else_body": [
@@ -61,16 +88,27 @@
               "value": {
                 "type": "IntLiteral",
                 "value": 2,
-                "meta": {}
+                "meta": {
+                  "line": 6,
+                  "col": 17
+                }
               },
-              "meta": {}
+              "meta": {
+                "col": 17,
+                "line": 6
+              }
             }
           ],
-          "meta": {}
+          "meta": {
+            "line": 7,
+            "col": 6
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }
