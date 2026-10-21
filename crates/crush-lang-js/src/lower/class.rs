@@ -243,6 +243,12 @@ impl Lower<'_> {
                 span,
             ));
         };
+        // `new Map()` / `new Set()` of the host constructors
+        // (CRUSH-288): a user class or binding of that name shadows
+        // them, and keeps the class path below.
+        if let Some(host) = self.host_kind_of_constructor(id) {
+            return self.new_host(host, n.arguments(), span, m);
+        }
         let kind = self.resolve(id.sym());
         if !self.is_kind(&kind) {
             return Err(self.unsupported(
@@ -397,6 +403,7 @@ impl Lower<'_> {
         let saved_this = std::mem::replace(&mut self.this_bound, true);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
         let r = match init {
             Some(e) => self.expr(e),
             None => Ok(CastExpr::NullLiteral {
@@ -406,6 +413,7 @@ impl Lower<'_> {
         self.this_bound = saved_this;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.scopes.leave_fn();
         r
     }
@@ -584,6 +592,14 @@ impl Lower<'_> {
             match element {
                 ClassElement::FieldDefinition(f) => {
                     let name = self.field_name(f.name(), span)?;
+                    // A field initialised with a host collection: a
+                    // proof (or poison) for `check_field_host`
+                    // (CRUSH-288). No initialiser is neutral — the
+                    // constructor's assignments decide.
+                    if let Some(init) = f.initializer() {
+                        let proof = self.host_kind_of(init);
+                        self.record_field_host(&kind, &name, proof);
+                    }
                     let value = self.field_init(f.initializer(), span)?;
                     field_stmts.push(self.this_assign(&name, value, span));
                 }

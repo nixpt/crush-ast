@@ -545,8 +545,9 @@ fn test_boa_class_loud_edges() {
     assert!(loud("class A { m() { return super.m(); } }").contains("no ancestor"), "super without parent");
     assert!(loud("class B { } class A extends B { m() { return super.m(); } }").contains("no ancestor"), "super of nothing");
     assert!(loud("class B { x = 1; } class A extends B { m() { return super.x; } }").contains("`super.x` read"), "super.x read");
-    // `new` of a name that isn't a class declared in this module.
-    assert!(loud("const s = new Set();").contains("`new Set`"), "host constructor");
+    // `new` of a name that isn't a class declared in this module
+    // (`new Map` / `new Set` themselves land with CRUSH-288).
+    assert!(loud("const s = new WeakMap();").contains("`new WeakMap`"), "host constructor");
     assert!(loud("class A { } A();").contains("without `new`"), "class called bare");
     assert!(loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"), "expression superclass");
     assert!(loud("class A { async m() { return 1; } }").contains("async method"), "async method");
@@ -1567,4 +1568,85 @@ fn test_boa_exported_function_runs_end_to_end() {
     };
     let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
     assert_eq!(out.trim(), "42");
+}
+
+// CRUSH-288: host constructors — `new Map()` / `new Set()` on proven
+// receivers (a Map is an array of [key, value] pairs under the hood,
+// a Set an array of values; operations are synthesized helpers).
+#[test]
+fn test_boa_host_map_set_run() {
+    let source = r#"
+const m = new Map();
+m.set("a", 1);
+m.set("b", 2);
+m.set("a", 3);
+console.log(m.get("a"), m.size, m.has("b"), m.get("zz"));
+console.log(m.delete("b"), m.has("b"), m.size);
+console.log(m.keys()[0], m.values()[0], m.entries()[0][1]);
+m.clear();
+console.log(m.size);
+const s = new Set([1, 1, 2]);
+s.add(3);
+s.add(2);
+console.log(s.size, s.has(2), s.has(9));
+console.log(s.delete(1), s.size);
+let total = 0;
+for (const v of s) { total += v; }
+console.log(total);
+const n = new Map([[7, "seven"], ["k", 9]]);
+console.log(n.get(7), n.get("k"));
+const src = [5, 5, 6];
+const dup = new Set(src);
+console.log(dup.size, dup.has(6));
+"#;
+    assert_eq!(
+        run_js(source),
+        "3 2 true null\ntrue false 1\na 3 3\n0\n3 true false\ntrue 2\n5\nseven 9\n2 true\n"
+    );
+    // Maya's shape: collections as class fields, numeric ids as keys.
+    let source = r#"
+class Registry {
+  constructor() { this.entries = new Map(); this.tags = new Set(); }
+  add(id, tag) { this.entries.set(id, tag); this.tags.add(tag); return this.entries.get(id); }
+  has(id) { return this.entries.has(id); }
+  count() { return this.entries.size + this.tags.size; }
+}
+const r = new Registry();
+console.log(r.add(5, "x"), r.has(5), r.has(6), r.count());
+console.log(new Map().set("k", 1).get("k"), new Set().add(4).size);
+"#;
+    assert_eq!(run_js(source), "x true false 2\n1 1\n");
+    // The portable VM runs the same helpers.
+    assert_eq!(
+        run_js_portable(
+            "const m = new Map(); m.set(7, \"s\"); const s = new Set([2, 2]);\nconsole.log(m.get(7), m.size, s.size, s.has(2));"
+        )
+        .unwrap(),
+        "s 1 1 true\n"
+    );
+}
+
+#[test]
+fn test_boa_host_map_set_loud() {
+    // A parameter receiver is never proven (the zorro-44 problem).
+    assert!(loud("function f(m) { return m.get(\"a\"); }").contains("CRUSH-zorro-17"));
+    // Subscripts on a proven Map would read the pair array: refused.
+    assert!(loud("const m = new Map(); console.log(m[\"a\"]);").contains("use .get()"));
+    // Wrong-kind and unsupported methods on a proven receiver.
+    assert!(loud("const s = new Set(); s.set(\"a\", 1);").contains("a Set has no method"));
+    assert!(loud("const m = new Map(); m.forEach((v) => v);").contains("forEach"));
+    // Arity is exact.
+    assert!(loud("const m = new Map(); m.get();").contains("expects"));
+    // Reassignment forgets the host kind.
+    assert!(loud("let m = new Map(); m = []; m.set(\"a\", 1);").contains("CRUSH-zorro-17"));
+    // A field reassigned to a non-collection anywhere in the class
+    // poisons the proof for the whole hierarchy.
+    let msg = loud(
+        "class R { constructor() { this.m = new Map(); } \
+         f() { return this.m.get(\"a\"); } g() { this.m = []; } }",
+    );
+    assert!(msg.contains("cannot be proven"), "got: {msg}");
+    // A user class named Map shadows the host constructor.
+    let source = "class Map { constructor() { this.x = 41; } get() { return this.x + 1; } }\nconsole.log(new Map().get());";
+    assert_eq!(run_js(source), "42\n");
 }
