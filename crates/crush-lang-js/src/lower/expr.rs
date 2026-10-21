@@ -25,6 +25,15 @@ const I64_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 impl Lower<'_> {
     pub(super) fn expr(&mut self, e: &Expression) -> anyhow::Result<CastExpr> {
+        // Track nesting: an assignment nested inside a larger
+        // expression doesn't prove its kind (CRUSH-286 re-review).
+        self.expr_depth += 1;
+        let r = self.expr_top(e);
+        self.expr_depth -= 1;
+        r
+    }
+
+    fn expr_top(&mut self, e: &Expression) -> anyhow::Result<CastExpr> {
         let span = Some(e.span());
         let m = self.meta(span);
         match e {
@@ -525,12 +534,25 @@ impl Lower<'_> {
         // known instance of a known kind (CRUSH-277 D4). Anything else
         // forgets it (CRUSH-286 review #3): the tracker must never
         // adapt a call for a class the binding no longer provably
-        // holds.
+        // holds. The re-review narrowed "anything else":
+        // - only a plain `=` proves the new kind — a compound or
+        //   logical operator (`c ||= new B()`) may keep the old value;
+        // - only at the top of the expression being lowered — an
+        //   assignment nested in a larger expression
+        //   (`f && (c = new B())`, `f ? (c = new B()) : 0`) may never
+        //   run, so it forgets instead;
+        // - inside a nested function the assignment poisons the
+        //   binding for good: a call to that function can swap it at
+        //   any later point.
         if let Target::Var(name) = &target {
             if self.branch_depth > 0 {
                 self.flow_assigned.insert(name.clone());
             }
-            match self.new_kind(a.rhs()) {
+            if self.fn_depth > 0 {
+                self.fn_assigned.insert(name.clone());
+            }
+            let proves = a.op() == AssignOp::Assign && self.expr_depth <= 1;
+            match proves.then(|| self.new_kind(a.rhs())).flatten() {
                 Some(kind) => {
                     self.instance_kinds.insert(name.clone(), kind);
                 }
@@ -721,15 +743,25 @@ impl Lower<'_> {
                     Expression::This(_) if self.this_bound => {
                         Some(("this".to_string(), self.home_class.clone()))
                     }
-                    Expression::Identifier(obj) => self
-                        .instance_kinds
-                        .get(&self.resolve(obj.sym()))
+                    Expression::Identifier(obj) => {
                         // The RESOLVED name: a block-scoped binding is
                         // renamed, and the JS spelling would read an
                         // outer binding of the same name (CRUSH-285
                         // review #2) — or, with no outer binding, fall
-                        // into a host `cap_call` for `name.method`.
-                        .map(|kind| (self.resolve(obj.sym()), Some(kind.clone()))),
+                        // into a host `cap_call` for `name.method`. A
+                        // binding some nested function assigns is
+                        // never a known instance: calling that function
+                        // can swap it at any point (CRUSH-286
+                        // re-review).
+                        let name = self.resolve(obj.sym());
+                        if self.fn_assigned.contains(&name) {
+                            None
+                        } else {
+                            self.instance_kinds
+                                .get(&name)
+                                .map(|kind| (name.clone(), Some(kind.clone())))
+                        }
+                    }
                     _ => None,
                 };
                 if let Some((recv, recv_kind)) = dotted_recv {
@@ -761,9 +793,20 @@ impl Lower<'_> {
                             meta: m,
                         });
                     }
-                    let sig = recv_kind
-                        .as_deref()
-                        .and_then(|kind| self.method_sig(kind, &method));
+                    // In a static, `this.m()` shapes against the
+                    // static signature, never the instance one
+                    // (CRUSH-286 re-review, the `is_static` wiring):
+                    // the exact-static path above already returned
+                    // when one resolves, so this is the raw fallback.
+                    let sig = if is_static {
+                        recv_kind
+                            .as_deref()
+                            .and_then(|kind| self.chain_sig(kind, &method, true))
+                    } else {
+                        recv_kind
+                            .as_deref()
+                            .and_then(|kind| self.method_sig(kind, &method))
+                    };
                     let args = match &sig {
                         Some(sig) => self.adapt_args(
                             sig,
@@ -780,7 +823,7 @@ impl Lower<'_> {
                         method: method.clone(),
                         kind: recv_kind.clone(),
                         adapted: sig,
-                        is_static: false,
+                        is_static,
                         span,
                     });
                     // Marked as a walker-resolved member call: if the

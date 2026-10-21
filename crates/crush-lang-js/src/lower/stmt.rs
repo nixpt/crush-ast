@@ -355,6 +355,22 @@ impl Lower<'_> {
         span: Option<Span>,
         declared: bool,
     ) -> anyhow::Result<LoweredFn> {
+        // Assignments inside a nested function poison the bindings
+        // they touch (CRUSH-286 re-review): `fn_depth` is how the
+        // assignment lowering knows it is inside one.
+        self.fn_depth += 1;
+        let r = self.function_in_scope_body(params, body, span, declared);
+        self.fn_depth -= 1;
+        r
+    }
+
+    fn function_in_scope_body(
+        &mut self,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+        span: Option<Span>,
+        declared: bool,
+    ) -> anyhow::Result<LoweredFn> {
         let mut lowered_params = Vec::new();
         let mut defaults = Vec::new();
         for p in params.as_ref() {
@@ -823,6 +839,27 @@ impl Lower<'_> {
         let saved_kinds = control.then(|| self.instance_kinds.clone());
         if control {
             self.branch_depth += 1;
+        }
+        // The loop back-edge (CRUSH-286 re-review): a binding assigned
+        // anywhere in a loop may hold that assigned value from the
+        // second iteration on, so no call inside the loop may be
+        // shaped for the kind it held on entry. Forget those bindings
+        // before the loop (condition included) is lowered; the
+        // wrapper's restore below still applies after it.
+        if matches!(
+            s,
+            Statement::WhileLoop(_)
+                | Statement::DoWhileLoop(_)
+                | Statement::ForLoop(_)
+                | Statement::ForInLoop(_)
+                | Statement::ForOfLoop(_)
+        ) {
+            let mut syms = Vec::new();
+            super::scope::assigned_syms_stmt(s, &mut syms);
+            for sym in syms {
+                let name = self.resolve(sym);
+                self.instance_kinds.remove(&name);
+            }
         }
         let r = self.stmt_dispatch(s, span, m);
         if control {

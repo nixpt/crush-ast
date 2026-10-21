@@ -121,7 +121,7 @@ impl Lower<'_> {
         self.chain_sig(kind, method, true)
     }
 
-    fn chain_sig(&self, kind: &str, method: &str, is_static: bool) -> Option<Sig> {
+    pub(super) fn chain_sig(&self, kind: &str, method: &str, is_static: bool) -> Option<Sig> {
         self.chain_target(kind, method, is_static)
             .map(|(_, sig)| sig)
     }

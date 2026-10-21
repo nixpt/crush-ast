@@ -58,7 +58,13 @@ receiver kind has a subclass override of the method with a different
 signature, and (b) a raw call while any member of that name has
 default/rest parameters. The tracked-kind map also forgets a binding
 assigned anything but its `new`, and after any branch/loop assigning
-it. What remains genuinely unknown (detached method values, receivers
+it. The re-review narrowed the forgetting further: only a plain,
+statement-level `=` proves a kind (compound/logical operators and
+assignments nested in larger expressions forget); every binding
+assigned anywhere in a loop statement is forgotten before the loop
+is lowered (the back-edge); and a binding any nested function
+assigns is poisoned for good, since calling that function can swap
+it at any point. What remains genuinely unknown (detached method values, receivers
 from outside the module) still fails the VM's exact-arity check —
 loudly, never silently wrong.
 

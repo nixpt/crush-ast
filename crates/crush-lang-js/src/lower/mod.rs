@@ -91,6 +91,20 @@ pub(crate) struct Lower<'a> {
     /// the forgetting rule of [`Lower::stmt`] (CRUSH-286 review #3).
     branch_depth: usize,
     flow_assigned: std::collections::HashSet<String>,
+    /// Depth of nested expression lowering. An assignment proves a new
+    /// kind only at the top of the expression being lowered: one
+    /// nested inside a larger expression (`f && (c = new B())`,
+    /// `f ? (c = new B()) : 0`) may never run (CRUSH-286 re-review).
+    expr_depth: usize,
+    /// Depth of nested-function lowering (a lambda, method, … inside
+    /// the code whose bindings are tracked).
+    fn_depth: usize,
+    /// Bindings some nested function assigns. A call to that function
+    /// can swap the binding at any point, so its kind is never
+    /// tracked again — not even for straight-line `new` assignments
+    /// the function was lowered before (hoisting) (CRUSH-286
+    /// re-review).
+    fn_assigned: std::collections::HashSet<String>,
     /// The visible parameters of every lifted class member function
     /// (constructors, methods, accessors, statics), keyed by lifted
     /// function name, so call sites can adapt their arguments to
@@ -153,6 +167,9 @@ impl<'a> Lower<'a> {
             instance_kinds: Default::default(),
             branch_depth: 0,
             flow_assigned: Default::default(),
+            expr_depth: 0,
+            fn_depth: 0,
+            fn_assigned: Default::default(),
             fn_sigs: HashMap::new(),
             member_calls: Vec::new(),
             home_class: None,

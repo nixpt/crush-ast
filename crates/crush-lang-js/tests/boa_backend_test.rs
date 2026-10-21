@@ -1008,6 +1008,20 @@ console.log(new Sub().run());
 console.log(new Base().run());
 "#;
     assert_eq!(run_js(source), "9\n1\n");
+    // The check walks grandchildren too: an override two levels down
+    // with a different shape refuses; the same shape still runs.
+    let src = "class Base { m(a = 1) { return a; } run() { return this.m(); } } class Mid extends Base { } class Sub extends Mid { m(a, b) { return a; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "grandchild: {}", loud(src));
+    let source = r#"
+class Base {
+  m(a = 1) { return a; }
+  run() { return this.m(); }
+}
+class Mid extends Base { }
+class Sub extends Mid { m(a = 9) { return a; } }
+console.log(new Sub().run());
+"#;
+    assert_eq!(run_js(source), "9\n");
 }
 
 // CRUSH-286 review #2: an unknown-receiver call is refused while any
@@ -1084,6 +1098,79 @@ c = new A(40);
 console.log(c.m());
 "#;
     assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-286 re-review (#3, the shapes plain reassignment didn't
+// cover): a logical or compound assignment, an assignment nested in a
+// larger expression, an assignment anywhere in a loop body (the
+// back-edge), and an assignment inside a nested function all forget
+// the binding's kind — the following call is refused rather than
+// shaped for a class the binding no longer provably holds.
+#[test]
+fn test_boa_instance_kind_forgetting_more_shapes() {
+    let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
+    // Logical assignment may keep the old value; it is refused as a
+    // construct, and must never teach the tracker the new kind.
+    let src = format!("{classes}let c = new A(); c ||= new B(); console.log(c.m(5));");
+    assert!(loud(&src).contains("logical assignment"), "||=: {}", loud(&src));
+    for tail in [
+        // A compound assignment forgets.
+        "let c = new A(); c += 1; console.log(c.m(5));",
+        // Assignments nested in larger expressions may never run.
+        "let c = new A(); const f = true; f && (c = new B()); console.log(c.m(5));",
+        "let c = new A(); const f = true; f ? (c = new B()) : 0; console.log(c.m(5));",
+        // The loop back-edge: from the second iteration the call
+        // would run on B, shaped for A.
+        "let c = new A(); let k = 2; while (k > 0) { console.log(c.m(5)); c = new B(); k = k - 1; }",
+        // A nested function can swap the binding whenever it is called.
+        "let c = new A(); const g = () => { c = new B(); }; g(); console.log(c.m(5));",
+    ] {
+        let src = format!("{classes}{tail}");
+        // Forgotten, the call is refused — at walk time (the receiver
+        // is no longer a known instance) or by the end-of-module
+        // shape check — never adapted for A.
+        assert!(
+            loud(&src).contains("CRUSH"),
+            "{tail} must refuse, not adapt: {}",
+            loud(&src)
+        );
+    }
+    // The reviewer's closure shape, nested in a method (a top-level
+    // `function` body can't `new` a module class yet, CRUSH-281):
+    // the nested function swaps `c`, so `c.m(5)` after `g()` refuses.
+    let src = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } \
+               class Host { run() { let c = new A(); function g() { c = new B(); } g(); return c.m(5); } } \
+               console.log(new Host().run());";
+    assert!(
+        loud(src).contains("CRUSH"),
+        "nested function swap must refuse, not adapt: {}",
+        loud(src)
+    );
+    // Control: a nested function that doesn't assign the binding
+    // leaves the tracked kind alone.
+    let source = r#"
+class A { m(a = 1) { return a; } }
+class Host {
+  run() {
+    let c = new A();
+    function g() { return 1; }
+    g();
+    return c.m(5);
+  }
+}
+console.log(new Host().run());
+"#;
+    assert_eq!(run_js(source), "5\n");
+    // A loop that never assigns the binding still adapts its calls.
+    let source = r#"
+class A { m(a = 40) { return a + 1; } }
+let c = new A();
+let k = 2;
+let total = 0;
+while (k > 0) { total = total + c.m(1); k = k - 1; }
+console.log(total);
+"#;
+    assert_eq!(run_js(source), "4\n");
 }
 
 // CRUSH-277 S4: getters and setters run end to end.
