@@ -697,9 +697,11 @@ impl Lower<'_> {
                     };
                 }
                 // `C.f(...)` with `C` a class this module declares: a
-                // static's target is known exactly (D3).
+                // static's target is known exactly (D3). From a
+                // function body the class may only be pre-registered
+                // so far (CRUSH-281).
                 if let Expression::Identifier(obj) = unparen(s.target())
-                    && self.is_kind(&self.resolve(obj.sym()))
+                    && self.construct_kind(&self.resolve(obj.sym()))
                 {
                     let kind = self.resolve(obj.sym());
                     return match self.kind_static_fn(&kind, &method) {

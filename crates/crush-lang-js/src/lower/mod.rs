@@ -70,6 +70,18 @@ pub(crate) struct Lower<'a> {
     /// COSM kinds declared by JS classes (CRUSH-277 S1), in declaration
     /// order; they ride out in `Program::cosm`.
     kinds: Vec<crush_cosm::KindDecl>,
+    /// Kind names of classes declared anywhere in the statement list
+    /// currently being lowered, registered before its functions
+    /// (CRUSH-281): a function body may construct a class whose
+    /// declaration item hasn't been lowered yet, since the body only
+    /// runs after the whole list has. Statement-position construction
+    /// still requires the class item itself to have run (the JS
+    /// temporal dead zone), via [`Lower::construct_kind`].
+    pending_kinds: std::collections::HashSet<String>,
+    /// Depth of class field initialisers being lowered: they run at
+    /// construction time, so like function bodies they may use
+    /// pending kinds.
+    deferred_new: usize,
     /// Whether `this` names a receiver here: directly inside a class
     /// method, constructor or accessor (CRUSH-277 D2). Entering any other
     /// function clears it — a nested function's `this` is its own, and an
@@ -162,6 +174,8 @@ impl<'a> Lower<'a> {
             scopes: Scopes::default(),
             functions: HashMap::new(),
             kinds: Vec::new(),
+            pending_kinds: Default::default(),
+            deferred_new: 0,
             this_bound: false,
             super_ctor: None,
             instance_kinds: Default::default(),

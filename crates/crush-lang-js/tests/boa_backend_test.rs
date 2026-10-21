@@ -1173,6 +1173,84 @@ console.log(total);
     assert_eq!(run_js(source), "4\n");
 }
 
+// CRUSH-281: `new C()` inside a top-level `function` — the function
+// bodies lower before the class items (hoisting), but the calls run
+// after the whole module, so the classes are registered by then.
+// Both declaration orders work; a module-level `new` before the
+// class declaration still refuses (the JS temporal dead zone).
+#[test]
+fn test_boa_new_inside_top_level_function() {
+    let source = r#"
+class Counter {
+  constructor(x = 40) { this.x = x; }
+  val() { return this.x + 2; }
+}
+function make() { return new Counter(); }
+function makeWith(v) { return new Counter(v).val(); }
+console.log(make().val());
+console.log(makeWith(0));
+"#;
+    assert_eq!(run_js(source), "42\n2\n");
+    // The class declared after the function.
+    let source = r#"
+function make() { return new Counter(41).get(); }
+class Counter {
+  constructor(x) { this.x = x; }
+  get() { return this.x + 1; }
+}
+console.log(make());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // A static called from a top-level function, class after it.
+    let source = r#"
+function pick() { return Util.pick(); }
+class Util { static pick(v = 42) { return v; } }
+console.log(pick());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The temporal dead zone is still refused at module level.
+    let src = "console.log(new Counter(1).get()); class Counter { constructor(x) { this.x = x; } get() { return this.x; } }";
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "statement-order new: {}",
+        loud(src)
+    );
+    // An exported class constructs from a function too.
+    let source = r#"
+export class Counter {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+function make() { return new Counter(42).get(); }
+console.log(make());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // Inside a function body the same pre-registration applies, and a
+    // field initialiser (evaluated at construction) may construct a
+    // class declared later in the module.
+    let source = r#"
+function outer() {
+  class C {
+    constructor(x) { this.x = x; }
+    val() { return this.x + 1; }
+  }
+  function inner() { return new C(41).val(); }
+  return inner();
+}
+console.log(outer());
+class Holder {
+  child = new Later(42);
+  get() { return this.child.val(); }
+}
+class Later {
+  constructor(x) { this.x = x; }
+  val() { return this.x; }
+}
+console.log(new Holder().get());
+"#;
+    assert_eq!(run_js(source), "42\n42\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {

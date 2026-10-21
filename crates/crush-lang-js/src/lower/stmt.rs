@@ -126,6 +126,17 @@ impl Lower<'_> {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
         }
+        // Classes register (names + signatures) before any function
+        // body lowers: the bodies only run after the whole module, so
+        // they may construct classes declared after them (CRUSH-281).
+        for item in &list {
+            self.preregister_kinds(std::slice::from_ref(*item));
+        }
+        for item in items {
+            if let TopItem::Module(ModuleItem::ExportDeclaration(e)) = item {
+                self.preregister_export(e);
+            }
+        }
 
         let mut body = Vec::new();
         for item in &list {
@@ -444,6 +455,9 @@ impl Lower<'_> {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
         }
+        // Classes in this body register before its functions lower,
+        // as at the top level (CRUSH-281).
+        self.preregister_kinds(items);
         let mut out = prologue;
         out.extend(self.uninit_vars(items));
         out.extend(self.hoisted_functions(items, Hoist::Function)?);

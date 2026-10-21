@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-281 |
 | **Priority** | P2 |
-| **Status** | Open |
+| **Status** | Done (PR pending) |
 | **Phase** | COSM K3 follow-up (boa class slice) |
-| **Assignee** | unassigned |
+| **Assignee** | muse |
 | **Filed by** | muse — 2026-10-20, found while testing CRUSH-285 review #5 |
 
 ## Problem
@@ -42,3 +42,22 @@ Statement-order `new` before the class declaration would also start
 lowering (a TDZ the walker would no longer catch — the constructor
 call itself fails loudly at run time only if the class item hasn't
 run; weigh whether to keep statement-order strictness).
+
+## Resolution
+
+Statement lists (the module top level, and every function body)
+pre-register their classes — kind names, parents and member
+signatures (`Lower::preregister_kinds`, with the signature
+registration factored out of `class_kind`) — before any function in
+the list is lowered. `new C()` and `C.f()` may use a
+pre-registered class from code that runs after the list has: a
+function body (`fn_depth > 0`) or a field initialiser
+(`deferred_new`). A statement-position `new` before the class item
+still refuses, naming the temporal dead zone. Class expressions
+bound by a declaration and exported classes pre-register too.
+
+Residual: a function *called during* the list's own evaluation,
+before the class item has run, constructs the class where JS would
+throw a ReferenceError — the VM's kind table is static, so the TDZ
+is not enforced at run time. Filed as CRUSH-285; the construction
+itself is correct, only the error is missing.
