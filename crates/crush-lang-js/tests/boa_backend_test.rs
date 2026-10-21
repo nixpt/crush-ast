@@ -570,6 +570,47 @@ fn run_js(source: &str) -> String {
         .output
 }
 
+/// Like `run_js`, but the run must fail; returns the error's text.
+fn run_js_err(source: &str) -> String {
+    let program = test_lower(source);
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+    let json = casm.serialize(casm::Format::Json).unwrap();
+    let casm = casm::Program::deserialize(&json, casm::Format::Json).unwrap();
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let loaded = crush_vm::Program::from_blob(&vm.to_blob()).unwrap();
+    crush_vm::run(&loaded, &crush_vm::Quotas::default())
+        .unwrap_err()
+        .to_string()
+}
+
+// CRUSH-285 review #1: accessors run as ordinary calls on the running
+// thread — a self-reading getter hits the call-depth quota (a VmError,
+// never a native stack overflow), and a getter's throw is caught by the
+// program's own `try`/`catch`.
+#[test]
+fn test_boa_accessor_recursion_and_throw() {
+    let err = run_js_err(
+        "class C { get x() { return this.x; } } console.log(new C().x);",
+    );
+    assert!(err.contains("call depth"), "recursive getter: {err}");
+    // A getter that never returns burns the program's own step quota.
+    let err = run_js_err(
+        "class C { get x() { for (;;) { } } } console.log(new C().x);",
+    );
+    assert!(err.contains("instruction quota"), "looping getter: {err}");
+    let source = r#"
+class C { get x() { throw "boom"; } }
+const c = new C();
+try {
+  console.log(c.x);
+} catch (e) {
+  console.log("caught");
+}
+console.log("after");
+"#;
+    assert_eq!(run_js(source), "caught\nafter\n");
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {

@@ -782,7 +782,7 @@ impl GreenThread {
         Self {
             ip,
             stack: Vec::new(),
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            call_stack: vec![Frame { return_ip: None, memory: HashMap::new(), on_ret: RetValue::Keep }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -799,7 +799,7 @@ impl GreenThread {
         Self {
             ip,
             stack: args,
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            call_stack: vec![Frame { return_ip: None, memory: HashMap::new(), on_ret: RetValue::Keep }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -898,6 +898,26 @@ pub struct VmResult {
 pub struct Frame {
     pub return_ip: Option<usize>,
     pub memory: HashMap<u16, Value>,
+    /// What this frame's `RET` does with the callee's return value.
+    /// Ordinary calls keep it (it is the call's result). An accessor
+    /// call — run as an ordinary call on the same stack since the
+    /// CRUSH-285 review — is a member operation wearing a call's
+    /// clothes: a setter's value is dropped, an indexed write's is
+    /// replaced by the record written.
+    pub on_ret: RetValue,
+}
+
+/// What a frame's `RET` does with the callee's return value.
+#[derive(Debug, Clone, Default)]
+pub enum RetValue {
+    /// The value is the operation's result (an ordinary call, a getter).
+    #[default]
+    Keep,
+    /// Discard it (a setter: the write is the result).
+    Drop,
+    /// Discard it and leave this instead (an indexed write leaves the
+    /// record).
+    Replace(Value),
 }
 
 /// Run a program with the built-in portable capability registry only.

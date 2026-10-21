@@ -76,6 +76,10 @@ pub struct Frame {
     pub return_ip: Option<usize>,
     /// Local memory slots.
     pub memory: std::collections::HashMap<u16, Value>,
+    /// What this frame's `RET` does with the callee's return value (see
+    /// `crate::vm::RetValue`): accessor calls run as ordinary calls on
+    /// this stack since the CRUSH-285 review.
+    pub on_ret: crate::vm::RetValue,
 }
 
 impl Frame {
@@ -83,6 +87,7 @@ impl Frame {
         Self {
             return_ip,
             memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
         }
     }
 }
@@ -232,6 +237,7 @@ impl PortableVm {
         call_stack.push(Frame {
             return_ip: None,
             memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
         });
 
         let declared_caps: std::collections::HashSet<String> = permissions.into_iter().collect();
@@ -1083,14 +1089,16 @@ impl PortableVm {
                 }
                 if crate::cosm_rt::is_index_cap(&cap, &args) {
                     crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
-                    let v = match crate::cosm_rt::index_cap(&cap, &args)? {
-                        crate::cosm_rt::IndexAccess::Done(v) => v,
+                    match crate::cosm_rt::index_cap(&cap, &args)? {
+                        crate::cosm_rt::IndexAccess::Done(v) => self.push(v),
                         crate::cosm_rt::IndexAccess::Call { call, after } => {
-                            let v = self.run_accessor(call)?;
-                            after.unwrap_or(v)
+                            let on_ret = match after {
+                                Some(v) => crate::vm::RetValue::Replace(v),
+                                None => crate::vm::RetValue::Keep,
+                            };
+                            self.call_accessor(call, next_ip, on_ret)?;
                         }
-                    };
-                    self.push(v);
+                    }
                     return Ok(());
                 }
                 let args = crate::cosm_rt::cap_args(&cap, args)?;
@@ -1195,6 +1203,15 @@ impl PortableVm {
                 // must not catch a later throw in the caller.
                 let depth = self.call_stack.len();
                 self.try_stack.retain(|h| h.call_depth <= depth);
+                // An accessor frame (CRUSH-285 review): its return
+                // value stands where the member op's result belongs,
+                // adjusted per the frame (see `RetValue`).
+                if !matches!(frame.on_ret, crate::vm::RetValue::Keep) {
+                    self.stack.pop();
+                    if let crate::vm::RetValue::Replace(v) = frame.on_ret {
+                        self.stack.push(v);
+                    }
+                }
                 match frame.return_ip {
                     // A spawned task's entry function returned: the task is
                     // done; main returning ends the program (Go-style, #177).
@@ -1233,10 +1250,15 @@ impl PortableVm {
                     }
                     Value::Record(r) => {
                         let v = match crate::cosm_rt::index_get(&r, &idx_v)? {
-                            crate::cosm_rt::IndexAccess::Done(v) => v,
-                            crate::cosm_rt::IndexAccess::Call { call, .. } => self.run_accessor(call)?,
+                            crate::cosm_rt::IndexAccess::Done(v) => Some(v),
+                            crate::cosm_rt::IndexAccess::Call { call, .. } => {
+                                self.call_accessor(call, next_ip, crate::vm::RetValue::Keep)?;
+                                None
+                            }
                         };
-                        self.push(v);
+                        if let Some(v) = v {
+                            self.push(v);
+                        }
                     }
                     Value::Array(arr_rc) => {
                         let idx = need_array_index(&idx_v)?;
@@ -1267,8 +1289,12 @@ impl PortableVm {
                     }
                     rec @ Value::Record(_) => {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
-                        self.set_member(&rec, &key, val)?;
-                        self.push(rec);
+                        if self
+                            .set_member(&rec, &key, val, next_ip, rec.clone())?
+                            .is_some()
+                        {
+                            self.push(rec);
+                        }
                     }
                     other => {
                         let idx = need_array_index(&idx_v)?;
@@ -1407,8 +1433,12 @@ impl PortableVm {
                     Value::Map(m) => m,
                     // A struct instance (COSM K1.4): SET_MEMBER.
                     rec @ Value::Record(_) => {
-                        self.set_member(&rec, &field, val)?;
-                        self.push(rec);
+                        if self
+                            .set_member(&rec, &field, val, next_ip, rec.clone())?
+                            .is_some()
+                        {
+                            self.push(rec);
+                        }
                         return Ok(());
                     }
                     other => {
@@ -1438,8 +1468,9 @@ impl PortableVm {
                     // A struct instance (COSM K1.4): GET_MEMBER, but a name the
                     // instance doesn't have reads `null`, as on a map.
                     target @ (Value::Record(_) | Value::Kind(_)) => {
-                        let v = self.get_member(&target, &field, false)?;
-                        self.push(v);
+                        if let Some(v) = self.get_member(&target, &field, false, next_ip)? {
+                            self.push(v);
+                        }
                         return Ok(());
                     }
                     other => {
@@ -1456,15 +1487,20 @@ impl PortableVm {
             GET_MEMBER => {
                 let name = self.const_operand()?;
                 let target = self.pop()?;
-                let v = self.get_member(&target, &name, true)?;
-                self.push(v);
+                if let Some(v) = self.get_member(&target, &name, true, next_ip)? {
+                    self.push(v);
+                }
             }
             SET_MEMBER => {
                 let name = self.const_operand()?;
                 let val = self.pop()?;
                 let target = self.pop()?;
-                self.set_member(&target, &name, val)?;
-                self.push(target);
+                if self
+                    .set_member(&target, &name, val, next_ip, target.clone())?
+                    .is_some()
+                {
+                    self.push(target);
+                }
             }
             HAS_MEMBER => {
                 let name = self.const_operand()?;
@@ -2235,40 +2271,71 @@ impl PortableVm {
         crate::cosm_rt::render_hooked(v, &mut hook)
     }
 
-    /// A member read that may be a getter call (CRUSH-277 S4).
-    fn get_member(&mut self, target: &Value, name: &str, strict: bool) -> Result<Value, VmError> {
+    /// A member read that may be a getter call (CRUSH-277 S4). `None`:
+    /// a getter call was jumped to — its return value lands on the
+    /// stack where the read's result belongs.
+    fn get_member(
+        &mut self,
+        target: &Value,
+        name: &str,
+        strict: bool,
+        next_ip: usize,
+    ) -> Result<Option<Value>, VmError> {
         match crate::cosm_rt::get_member(target, name, strict)? {
-            crate::cosm_rt::MemberRead::Done(v) => Ok(v),
-            crate::cosm_rt::MemberRead::Call(call) => self.run_accessor(call),
-        }
-    }
-
-    /// A member write that may be a setter call (CRUSH-277 S4).
-    fn set_member(&mut self, target: &Value, name: &str, val: Value) -> Result<(), VmError> {
-        match crate::cosm_rt::set_member(target, name, val)? {
-            crate::cosm_rt::MemberWrite::Done => Ok(()),
-            crate::cosm_rt::MemberWrite::Call(call) => self.run_accessor(call).map(|_| ()),
-        }
-    }
-
-    /// COSM S4 (CRUSH-277): run a getter/setter to completion in a nested
-    /// VM over this program, where the member op stands (accessors are
-    /// synchronous, like print hooks). The result is its return value.
-    fn run_accessor(&mut self, call: crate::cosm_rt::AccessorCall) -> Result<Value, VmError> {
-        let entry = self.get_function_entry(&call.func)?;
-        let mut vm = PortableVm::new(self.program.clone());
-        vm.quotas = self.quotas.clone();
-        vm.ip = entry;
-        vm.stack = call.args.iter().rev().cloned().collect();
-        let result = vm.run()?;
-        if !result.output.is_empty() {
-            self.out_len += result.output.len();
-            if self.out_len > self.quotas.max_output {
-                return Err(VmError::OutputQuota(self.quotas.max_output));
+            crate::cosm_rt::MemberRead::Done(v) => Ok(Some(v)),
+            crate::cosm_rt::MemberRead::Call(call) => {
+                self.call_accessor(call, next_ip, crate::vm::RetValue::Keep)?;
+                Ok(None)
             }
-            self.out_parts.push(result.output);
         }
-        Ok(result.stack.last().cloned().unwrap_or(Value::Null))
+    }
+
+    /// A member write that may be a setter call (CRUSH-277 S4). `None`:
+    /// a setter call was jumped to — `leave` replaces its return value
+    /// on the stack (the write op's result is the record written).
+    fn set_member(
+        &mut self,
+        target: &Value,
+        name: &str,
+        val: Value,
+        next_ip: usize,
+        leave: Value,
+    ) -> Result<Option<()>, VmError> {
+        match crate::cosm_rt::set_member(target, name, val)? {
+            crate::cosm_rt::MemberWrite::Done => Ok(Some(())),
+            crate::cosm_rt::MemberWrite::Call(call) => {
+                self.call_accessor(call, next_ip, crate::vm::RetValue::Replace(leave))?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// COSM S4 (CRUSH-277), reworked by the CRUSH-285 review: run a
+    /// getter/setter as an ordinary call on this VM's own stack, where
+    /// the member op stands — the same frames, step count, call-depth
+    /// budget and try handlers as the code around it. (It previously
+    /// ran in a nested VM with fresh budgets: a self-reading getter
+    /// recursed through native frames until the process aborted, a
+    /// getter loop could spend the whole step quota per call, and a
+    /// getter's throw bypassed the program's own `try`/`catch`.)
+    fn call_accessor(
+        &mut self,
+        call: crate::cosm_rt::AccessorCall,
+        next_ip: usize,
+        on_ret: crate::vm::RetValue,
+    ) -> Result<(), VmError> {
+        let entry = self.get_function_entry(&call.func)?;
+        if self.call_stack.len() >= self.quotas.max_call_depth {
+            return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+        }
+        for v in call.args.iter().rev() {
+            self.push(v.clone());
+        }
+        let mut frame = Frame::new(Some(next_ip));
+        frame.on_ret = on_ret;
+        self.call_stack.push(frame);
+        self.jump_to(entry);
+        Ok(())
     }
 
     fn get_function_entry(&self, name: &str) -> Result<usize, VmError> {

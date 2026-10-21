@@ -740,6 +740,7 @@ fn execute_one(
             call_stack.push(Frame {
                 return_ip: Some(next_ip),
                 memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
             });
             thread.ip = entry;
             return Ok(StepAction::Jump);
@@ -767,27 +768,37 @@ fn execute_one(
             }
         }};
     }
-    // COSM S4 (CRUSH-277): run a getter/setter to completion in a nested
-    // run of this program, where the member op stands (accessors are
-    // synchronous, like print hooks). The result is its return value.
-    macro_rules! run_accessor {
-        ($call:expr) => {{
+    // COSM S4 (CRUSH-277), reworked by the CRUSH-285 review: a
+    // getter/setter runs as an ordinary call ON THIS THREAD, where the
+    // member op stands — the same frame stack, step count, call-depth
+    // budget and try handlers as the code around it. (It previously ran
+    // in a nested `run_from` with fresh budgets: a self-reading getter
+    // recursed through native frames until the process aborted, a
+    // getter loop could spend the whole step quota per call, and a
+    // getter's throw bypassed the program's own `try`/`catch`.) The
+    // callee's `RET` leaves its return value where the member op's
+    // result belongs; the frame's `on_ret` drops or replaces it for
+    // writes. Diverges: never falls through.
+    macro_rules! call_accessor {
+        ($call:expr, $on_ret:expr) => {{
             let call: crate::cosm_rt::AccessorCall = $call;
-            let r = run_from(
-                program,
-                quotas,
-                host_caps,
-                None,
-                Some((call.func.as_str(), call.args.iter().rev().cloned().collect())),
-            )?;
-            if !r.output.is_empty() {
-                *out_len += r.output.len();
-                if *out_len > quotas.max_output {
-                    return Err(VmError::OutputQuota(quotas.max_output));
-                }
-                out_parts.push(r.output);
+            let entry = func_entry
+                .get(call.func.as_str())
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(call.func.clone()))?;
+            if call_stack.len() >= quotas.max_call_depth {
+                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
             }
-            r.return_value.unwrap_or(Value::Null)
+            for v in call.args.iter().rev() {
+                push!(v.clone());
+            }
+            call_stack.push(Frame {
+                return_ip: Some(next_ip),
+                memory: HashMap::new(),
+                on_ret: $on_ret,
+            });
+            thread.ip = entry;
+            return Ok(StepAction::Jump);
         }};
     }
     // A member read that may be an accessor call (CRUSH-277 S4).
@@ -795,17 +806,21 @@ fn execute_one(
         ($target:expr, $name:expr, $strict:expr) => {{
             match crate::cosm_rt::get_member($target, $name, $strict)? {
                 crate::cosm_rt::MemberRead::Done(v) => v,
-                crate::cosm_rt::MemberRead::Call(call) => run_accessor!(call),
+                crate::cosm_rt::MemberRead::Call(call) => {
+                    call_accessor!(call, crate::vm::RetValue::Keep)
+                }
             }
         }};
     }
-    // A member write that may be an accessor call (CRUSH-277 S4).
+    // A member write that may be an accessor call (CRUSH-277 S4). The
+    // write op's result is `$leave` (the record written), which the
+    // frame leaves on the stack when a setter ran.
     macro_rules! set_member {
-        ($target:expr, $name:expr, $val:expr) => {{
+        ($target:expr, $name:expr, $val:expr, $leave:expr) => {{
             match crate::cosm_rt::set_member($target, $name, $val)? {
                 crate::cosm_rt::MemberWrite::Done => {}
                 crate::cosm_rt::MemberWrite::Call(call) => {
-                    run_accessor!(call);
+                    call_accessor!(call, crate::vm::RetValue::Replace($leave));
                 }
             }
         }};
@@ -1105,10 +1120,12 @@ fn execute_one(
                     let key = crate::map_ops::map_key_string(&idx_v)?;
                     push!(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                 }
-                Value::Record(r) => push!(match crate::cosm_rt::index_get(&r, &idx_v)? {
-                    crate::cosm_rt::IndexAccess::Done(v) => v,
-                    crate::cosm_rt::IndexAccess::Call { call, .. } => run_accessor!(call),
-                }),
+                Value::Record(r) => match crate::cosm_rt::index_get(&r, &idx_v)? {
+                    crate::cosm_rt::IndexAccess::Done(v) => push!(v),
+                    crate::cosm_rt::IndexAccess::Call { call, .. } => {
+                        call_accessor!(call, crate::vm::RetValue::Keep)
+                    }
+                },
                 Value::Array(arr_rc) => {
                     let idx = need_array_index(&idx_v)?;
                     let arr = arr_rc.borrow();
@@ -1138,7 +1155,7 @@ fn execute_one(
                 }
                 rec @ Value::Record(_) => {
                     let key = crate::map_ops::map_key_string(&idx_v)?;
-                    set_member!(&rec, &key, val);
+                    set_member!(&rec, &key, val, rec.clone());
                     push!(rec);
                 }
                 other => {
@@ -1323,13 +1340,16 @@ fn execute_one(
             }
             if crate::cosm_rt::is_index_cap(&cap, &args) {
                 check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
-                push!(match crate::cosm_rt::index_cap(&cap, &args)? {
-                    crate::cosm_rt::IndexAccess::Done(v) => v,
+                match crate::cosm_rt::index_cap(&cap, &args)? {
+                    crate::cosm_rt::IndexAccess::Done(v) => push!(v),
                     crate::cosm_rt::IndexAccess::Call { call, after } => {
-                        let v = run_accessor!(call);
-                        after.unwrap_or(v)
+                        let on_ret = match after {
+                            Some(v) => crate::vm::RetValue::Replace(v),
+                            None => crate::vm::RetValue::Keep,
+                        };
+                        call_accessor!(call, on_ret);
                     }
-                });
+                }
                 return Ok(StepAction::Continue);
             }
             let args = crate::cosm_rt::cap_args(&cap, args)?;
@@ -1370,6 +1390,7 @@ fn execute_one(
             call_stack.push(Frame {
                 return_ip: Some(next_ip),
                 memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
             });
             thread.ip = entry;
             return Ok(StepAction::Jump);
@@ -1425,6 +1446,7 @@ fn execute_one(
             call_stack.push(Frame {
                 return_ip: Some(next_ip),
                 memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
             });
             thread.ip = entry;
             return Ok(StepAction::Jump);
@@ -1439,6 +1461,19 @@ fn execute_one(
                     return Ok(StepAction::Done(stack.pop()));
                 }
                 Some(ret) => {
+                    // An accessor frame (CRUSH-285 review): its return
+                    // value stands where the member op's result belongs,
+                    // adjusted per the frame (see `RetValue`).
+                    match frame.on_ret {
+                        crate::vm::RetValue::Keep => {}
+                        crate::vm::RetValue::Drop => {
+                            stack.pop();
+                        }
+                        crate::vm::RetValue::Replace(v) => {
+                            stack.pop();
+                            stack.push(v);
+                        }
+                    }
                     thread.ip = ret;
                     return Ok(StepAction::Jump);
                 }
@@ -1680,7 +1715,7 @@ fn execute_one(
                 Value::Map(m) => m,
                 // A struct instance (COSM K1.4): SET_MEMBER.
                 rec @ Value::Record(_) => {
-                    set_member!(&rec, &field, val);
+                    set_member!(&rec, &field, val, rec.clone());
                     push!(rec);
                     return Ok(StepAction::Continue);
                 }
@@ -1715,7 +1750,7 @@ fn execute_one(
             let name = const_str!();
             let val = pop!();
             let target = pop!();
-            set_member!(&target, &name, val);
+            set_member!(&target, &name, val, target.clone());
             push!(target);
         }
         HAS_MEMBER => {
