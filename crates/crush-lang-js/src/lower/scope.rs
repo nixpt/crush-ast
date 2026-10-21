@@ -303,6 +303,236 @@ fn var_syms_stmt(s: &Statement, out: &mut Vec<Sym>) {
     }
 }
 
+/// Every binding assigned anywhere in `items` — assignments and updates
+/// in expressions included, nested function bodies included (their
+/// assignments are exactly what the caller wants to forget about). The
+/// loop back-edge rule (CRUSH-286 re-review): a binding assigned
+/// anywhere in a loop statement must not be a known instance while the
+/// loop is lowered, because from the second iteration on it may hold
+/// the assigned value instead.
+pub(super) fn assigned_syms_items(items: &[StatementListItem], out: &mut Vec<Sym>) {
+    for item in items {
+        match item {
+            StatementListItem::Statement(s) => assigned_syms_stmt(s, out),
+            StatementListItem::Declaration(d) => match d.as_ref() {
+                Declaration::Lexical(lex) => {
+                    for v in lex.variable_list().as_ref() {
+                        binding_syms(v.binding(), out);
+                        if let Some(init) = v.init() {
+                            assigned_syms_expr(init, out);
+                        }
+                    }
+                }
+                Declaration::FunctionDeclaration(f) => {
+                    assigned_syms_items(f.body().statements(), out);
+                }
+                _ => {}
+            },
+        }
+    }
+}
+
+pub(super) fn assigned_syms_stmt(s: &Statement, out: &mut Vec<Sym>) {
+    match s {
+        Statement::Block(b) => assigned_syms_items(b.statement_list().statements(), out),
+        Statement::Expression(e) => assigned_syms_expr(e, out),
+        Statement::Var(v) => {
+            for d in v.0.as_ref() {
+                binding_syms(d.binding(), out);
+                if let Some(init) = d.init() {
+                    assigned_syms_expr(init, out);
+                }
+            }
+        }
+        Statement::If(i) => {
+            assigned_syms_expr(i.cond(), out);
+            assigned_syms_stmt(i.body(), out);
+            if let Some(e) = i.else_node() {
+                assigned_syms_stmt(e, out);
+            }
+        }
+        Statement::WhileLoop(w) => {
+            assigned_syms_expr(w.condition(), out);
+            assigned_syms_stmt(w.body(), out);
+        }
+        Statement::DoWhileLoop(w) => {
+            assigned_syms_stmt(w.body(), out);
+            assigned_syms_expr(w.cond(), out);
+        }
+        Statement::ForLoop(f) => {
+            match f.init() {
+                Some(ForLoopInitializer::Var(v)) => {
+                    for d in v.0.as_ref() {
+                        binding_syms(d.binding(), out);
+                        if let Some(init) = d.init() {
+                            assigned_syms_expr(init, out);
+                        }
+                    }
+                }
+                Some(ForLoopInitializer::Lexical(l)) => {
+                    for d in l.declaration().variable_list().as_ref() {
+                        binding_syms(d.binding(), out);
+                        if let Some(init) = d.init() {
+                            assigned_syms_expr(init, out);
+                        }
+                    }
+                }
+                Some(ForLoopInitializer::Expression(e)) => assigned_syms_expr(e, out),
+                None => {}
+            }
+            if let Some(c) = f.condition() {
+                assigned_syms_expr(c, out);
+            }
+            if let Some(u) = f.final_expr() {
+                assigned_syms_expr(u, out);
+            }
+            assigned_syms_stmt(f.body(), out);
+        }
+        Statement::ForInLoop(f) => {
+            match f.initializer() {
+                IterableLoopInitializer::Identifier(id) => out.push(id.sym()),
+                IterableLoopInitializer::Var(v) => binding_syms(v.binding(), out),
+                IterableLoopInitializer::Let(b) | IterableLoopInitializer::Const(b) => {
+                    binding_syms(b, out);
+                }
+                _ => {}
+            }
+            assigned_syms_expr(f.target(), out);
+            assigned_syms_stmt(f.body(), out);
+        }
+        Statement::ForOfLoop(f) => {
+            match f.initializer() {
+                IterableLoopInitializer::Identifier(id) => out.push(id.sym()),
+                IterableLoopInitializer::Var(v) => binding_syms(v.binding(), out),
+                IterableLoopInitializer::Let(b) | IterableLoopInitializer::Const(b) => {
+                    binding_syms(b, out);
+                }
+                _ => {}
+            }
+            assigned_syms_expr(f.iterable(), out);
+            assigned_syms_stmt(f.body(), out);
+        }
+        Statement::Switch(sw) => {
+            assigned_syms_expr(sw.val(), out);
+            for c in sw.cases() {
+                if let Some(t) = c.condition() {
+                    assigned_syms_expr(t, out);
+                }
+                assigned_syms_items(c.body().statements(), out);
+            }
+        }
+        Statement::Try(t) => {
+            assigned_syms_items(t.block().statement_list().statements(), out);
+            if let Some(c) = t.catch() {
+                assigned_syms_items(c.block().statement_list().statements(), out);
+            }
+            if let Some(f) = t.finally() {
+                assigned_syms_items(f.block().statement_list().statements(), out);
+            }
+        }
+        Statement::Return(r) => {
+            if let Some(e) = r.target() {
+                assigned_syms_expr(e, out);
+            }
+        }
+        Statement::Throw(t) => assigned_syms_expr(t.target(), out),
+        Statement::Labelled(l) => {
+            if let boa_ast::statement::LabelledItem::Statement(s) = l.item() {
+                assigned_syms_stmt(s, out);
+            }
+        }
+        Statement::With(w) => {
+            assigned_syms_expr(w.expression(), out);
+            assigned_syms_stmt(w.statement(), out);
+        }
+        _ => {}
+    }
+}
+
+fn assigned_syms_expr(e: &boa_ast::expression::Expression, out: &mut Vec<Sym>) {
+    use boa_ast::expression::Expression;
+    use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
+    use boa_ast::expression::literal::{PropertyDefinition, TemplateElement};
+    use boa_ast::expression::operator::assign::AssignTarget;
+    use boa_ast::expression::operator::update::UpdateTarget;
+    match e {
+        Expression::Assign(a) => {
+            match a.lhs() {
+                AssignTarget::Identifier(id) => out.push(id.sym()),
+                AssignTarget::Access(PropertyAccess::Simple(s)) => {
+                    assigned_syms_expr(s.target(), out);
+                    if let PropertyAccessField::Expr(f) = s.field() {
+                        assigned_syms_expr(f, out);
+                    }
+                }
+                _ => {}
+            }
+            assigned_syms_expr(a.rhs(), out);
+        }
+        Expression::Update(u) => match u.target() {
+            UpdateTarget::Identifier(id) => out.push(id.sym()),
+            UpdateTarget::PropertyAccess(PropertyAccess::Simple(s)) => {
+                assigned_syms_expr(s.target(), out);
+            }
+            _ => {}
+        },
+        Expression::Binary(b) => {
+            assigned_syms_expr(b.lhs(), out);
+            assigned_syms_expr(b.rhs(), out);
+        }
+        Expression::Conditional(c) => {
+            assigned_syms_expr(c.condition(), out);
+            assigned_syms_expr(c.if_true(), out);
+            assigned_syms_expr(c.if_false(), out);
+        }
+        Expression::Unary(u) => assigned_syms_expr(u.target(), out),
+        Expression::Parenthesized(p) => assigned_syms_expr(p.expression(), out),
+        Expression::Call(c) => {
+            assigned_syms_expr(c.function(), out);
+            for a in c.args() {
+                assigned_syms_expr(a, out);
+            }
+        }
+        Expression::New(n) => {
+            assigned_syms_expr(n.constructor(), out);
+            for a in n.arguments() {
+                assigned_syms_expr(a, out);
+            }
+        }
+        Expression::PropertyAccess(PropertyAccess::Simple(s)) => {
+            assigned_syms_expr(s.target(), out);
+            if let PropertyAccessField::Expr(f) = s.field() {
+                assigned_syms_expr(f, out);
+            }
+        }
+        Expression::ArrayLiteral(a) => {
+            for el in a.as_ref().iter().flatten() {
+                assigned_syms_expr(el, out);
+            }
+        }
+        Expression::ObjectLiteral(o) => {
+            for p in o.properties() {
+                match p {
+                    PropertyDefinition::Property(_, v) => assigned_syms_expr(v, out),
+                    PropertyDefinition::SpreadObject(v) => assigned_syms_expr(v, out),
+                    _ => {}
+                }
+            }
+        }
+        Expression::TemplateLiteral(t) => {
+            for el in t.elements() {
+                if let TemplateElement::Expr(e) = el {
+                    assigned_syms_expr(e, out);
+                }
+            }
+        }
+        Expression::Spread(s) => assigned_syms_expr(s.target(), out),
+        Expression::ArrowFunction(f) => assigned_syms_items(f.body().statements(), out),
+        Expression::FunctionExpression(f) => assigned_syms_items(f.body().statements(), out),
+        _ => {}
+    }
+}
+
 /// Every `var x;` declarator without an initializer in `items`, at any depth,
 /// but not inside nested functions.
 pub(super) fn uninit_var_syms(items: &[StatementListItem], out: &mut Vec<Sym>) {

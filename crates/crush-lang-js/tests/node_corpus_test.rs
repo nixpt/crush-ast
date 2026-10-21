@@ -54,6 +54,7 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("builtin_number_conv", "CRUSH-zorro-17: parseInt/Number/String/toFixed"),
     ("class_accessor", "out of scope: classes (CRUSH-251 object model)"),
     ("class_basic", "out of scope: classes (CRUSH-251 object model)"),
+    ("class_defaults", "out of scope: classes (CRUSH-251 object model)"),
     ("class_extends", "out of scope: classes (CRUSH-251 object model)"),
     ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
     ("class_static", "out of scope: classes (CRUSH-251 object model)"),
@@ -101,6 +102,7 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
 const BOA_FIXED: &[(&str, &str)] = &[
     ("class_accessor", "get/set accessors on COSM (CRUSH-277)"),
     ("class_basic", "classes, `new` and `this` on COSM (CRUSH-277)"),
+    ("class_defaults", "default/rest parameters on class members (CRUSH-280)"),
     ("class_extends", "`extends` + `super.m()` on COSM (CRUSH-277)"),
     ("class_fields", "class fields (D7 injection) on COSM (CRUSH-277)"),
     ("class_static", "static members on COSM (CRUSH-277)"),

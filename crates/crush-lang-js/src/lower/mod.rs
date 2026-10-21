@@ -80,11 +80,44 @@ pub(crate) struct Lower<'a> {
     /// (CRUSH-277 S3). Set only around a constructor body.
     super_ctor: Option<String>,
     /// Bindings this module itself bound with `new C()` (C a declared
-    /// class), so their method calls lower to member calls (CRUSH-277
-    /// D4). Cleared at every function boundary: an instance flowing in
-    /// as a parameter or a capture isn't tracked (CRUSH-zorro-44's
-    /// general problem).
-    instance_vars: std::collections::HashSet<String>,
+    /// class): binding name → the class's kind name, so their method
+    /// calls lower to member calls with arguments adapted to the
+    /// method's signature (CRUSH-277 D4, CRUSH-280). Cleared at every
+    /// function boundary: an instance flowing in as a parameter or a
+    /// capture isn't tracked (CRUSH-zorro-44's general problem).
+    instance_kinds: HashMap<String, String>,
+    /// Depth of control statements (branches, loops, `try`) currently
+    /// being lowered, and the bindings assigned inside them: both serve
+    /// the forgetting rule of [`Lower::stmt`] (CRUSH-286 review #3).
+    branch_depth: usize,
+    flow_assigned: std::collections::HashSet<String>,
+    /// Depth of nested expression lowering. An assignment proves a new
+    /// kind only at the top of the expression being lowered: one
+    /// nested inside a larger expression (`f && (c = new B())`,
+    /// `f ? (c = new B()) : 0`) may never run (CRUSH-286 re-review).
+    expr_depth: usize,
+    /// Depth of nested-function lowering (a lambda, method, … inside
+    /// the code whose bindings are tracked).
+    fn_depth: usize,
+    /// Bindings some nested function assigns. A call to that function
+    /// can swap the binding at any point, so its kind is never
+    /// tracked again — not even for straight-line `new` assignments
+    /// the function was lowered before (hoisting) (CRUSH-286
+    /// re-review).
+    fn_assigned: std::collections::HashSet<String>,
+    /// The visible parameters of every lifted class member function
+    /// (constructors, methods, accessors, statics), keyed by lifted
+    /// function name, so call sites can adapt their arguments to
+    /// default/rest parameters (CRUSH-280; the CRUSH-zorro-18 ABI).
+    /// A whole class's signatures register before any of its member
+    /// bodies lowers, so self-calls resolve.
+    fn_sigs: HashMap<String, scope::Sig>,
+    /// Every member call the walker emitted with its argument shape,
+    /// for the end-of-module checks (CRUSH-286 review): an adapted call
+    /// must be valid for every override the receiver could dispatch to,
+    /// and a raw call must not be able to land in a member's flag/rest
+    /// slots.
+    member_calls: Vec<MemberCall>,
     /// The class whose method/constructor body is being lowered (its
     /// JS [[HomeObject]]), for `super.m()` (CRUSH-277 S5). Set only
     /// around a class member's body, never across a function boundary.
@@ -103,6 +136,24 @@ pub(crate) struct Lower<'a> {
     toplevel_sigs: HashMap<Sym, scope::Sig>,
 }
 
+/// A member call the walker emitted (CRUSH-286 review): the statically
+/// known receiver kind and the signature its arguments were adapted
+/// to, if any. Checked in [`Lower::check_member_calls`] once the whole
+/// module — every class and override — has been lowered.
+pub(super) struct MemberCall {
+    pub(super) method: String,
+    /// The receiver's statically known kind (for `this`, the home
+    /// class); `None` when the receiver's kind is unknown.
+    pub(super) kind: Option<String>,
+    /// The signature the arguments were adapted to; `None` when they
+    /// were passed raw.
+    pub(super) adapted: Option<scope::Sig>,
+    /// The call goes through `this` in a static method (the target is
+    /// a static, resolved on the class value).
+    pub(super) is_static: bool,
+    pub(super) span: Option<Span>,
+}
+
 impl<'a> Lower<'a> {
     fn new(interner: &'a Interner, ctx: &'a LowerCtx<'a>) -> Self {
         Lower {
@@ -113,7 +164,14 @@ impl<'a> Lower<'a> {
             kinds: Vec::new(),
             this_bound: false,
             super_ctor: None,
-            instance_vars: Default::default(),
+            instance_kinds: Default::default(),
+            branch_depth: 0,
+            flow_assigned: Default::default(),
+            expr_depth: 0,
+            fn_depth: 0,
+            fn_assigned: Default::default(),
+            fn_sigs: HashMap::new(),
+            member_calls: Vec::new(),
             home_class: None,
             in_static: false,
             class_parents: HashMap::new(),
@@ -191,6 +249,7 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
     };
     let mut lower = Lower::new(interner, ctx);
     let main_body = lower.top_level(&items)?;
+    lower.check_member_calls()?;
     let mut functions = std::mem::take(&mut lower.functions);
     if !main_body.is_empty() {
         functions.insert(

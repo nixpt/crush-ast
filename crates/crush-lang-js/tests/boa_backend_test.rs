@@ -936,6 +936,243 @@ console.log(Util.twice(21));
     assert_eq!(params[0].0, "x");
 }
 
+// CRUSH-280: default and rest parameters on constructors, methods and
+// statics — the zorro-18 hidden-flag ABI, adapted at each call site.
+#[test]
+fn test_boa_method_default_and_rest_params_run() {
+    let source = r#"
+class Acc {
+  constructor(start = 40) { this.x = start; }
+  add(by = 1, extra = by) { this.x = this.x + extra; return this.x; }
+  sum(first, ...rest) { return first + rest[0] + rest[1]; }
+  viaThis() { return this.add(); }
+}
+const a = new Acc();
+console.log(a.add());
+console.log(a.add(5, 100));
+console.log(new Acc(1).sum(1, 20, 21));
+const b = new Acc();
+console.log(b.viaThis());
+class Util { static pick(v = 42) { return v; } }
+console.log(Util.pick());
+console.log(Util.pick(1));
+"#;
+    // a: 40 +1 (default extra=by=1) = 41; +100 = 141; sum 1+20+21; viaThis 40+1.
+    assert_eq!(run_js(source), "41\n141\n42\n41\n42\n1\n");
+}
+
+#[test]
+fn test_boa_default_params_super_and_forwarding_run() {
+    let source = r#"
+class Base {
+  constructor(x = 7) { this.x = x; }
+  get() { return this.x; }
+  greet(sep = "B") { return sep; }
+}
+class Mid extends Base {
+  greet() { return super.greet() + "M"; }
+}
+class Leaf extends Mid { }
+console.log(new Leaf().get());
+console.log(new Leaf(9).get());
+console.log(new Mid(1).greet());
+class Sub extends Base {
+  constructor() { super(); }
+}
+console.log(new Sub().get());
+"#;
+    assert_eq!(run_js(source), "7\n9\nBM\n7\n");
+}
+
+// CRUSH-286 review #1: a call adapted for the home class's signature
+// must not dispatch to an override with a different one (positionally
+// shifted flags/rest would run silently wrong) — refused once the
+// whole module is lowered, in both directions. Same-signature
+// overrides still run.
+#[test]
+fn test_boa_override_signature_mismatch_refused() {
+    let src = "class Base { m(a, b) { return a; } run() { return this.m(5, 0); } } class Sub extends Base { m(a = 1) { return a; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "plain->default: {}", loud(src));
+    let src = "class Base { m(a = 1) { return a; } run() { return this.m(); } } class Sub extends Base { m(a, b) { return a; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "default->plain: {}", loud(src));
+    let src = "class Base { m(a) { return a; } run() { return this.m(5); } } class Sub extends Base { m(...xs) { return xs[0]; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "plain->rest: {}", loud(src));
+    // A matching override dispatches as written.
+    let source = r#"
+class Base {
+  m(a = 1) { return a; }
+  run() { return this.m(); }
+}
+class Sub extends Base { m(a = 9) { return a; } }
+console.log(new Sub().run());
+console.log(new Base().run());
+"#;
+    assert_eq!(run_js(source), "9\n1\n");
+    // The check walks grandchildren too: an override two levels down
+    // with a different shape refuses; the same shape still runs.
+    let src = "class Base { m(a = 1) { return a; } run() { return this.m(); } } class Mid extends Base { } class Sub extends Mid { m(a, b) { return a; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "grandchild: {}", loud(src));
+    let source = r#"
+class Base {
+  m(a = 1) { return a; }
+  run() { return this.m(); }
+}
+class Mid extends Base { }
+class Sub extends Mid { m(a = 9) { return a; } }
+console.log(new Sub().run());
+"#;
+    assert_eq!(run_js(source), "9\n");
+}
+
+// CRUSH-286 review #2: an unknown-receiver call is refused while any
+// member of that name in the module has default/rest parameters (raw
+// arguments could land in the hidden slots). Plain members still run.
+#[test]
+fn test_boa_unknown_receiver_defaulted_member_refused() {
+    let src = "class Acc { bump(by = 1) { return by; } } const xs = [new Acc()]; console.log(xs[0].bump(5, 0));";
+    assert!(loud(src).contains("hidden slots"), "defaulted: {}", loud(src));
+    let src = "class Acc { sum(first, ...rest) { return first; } } const xs = [new Acc()]; console.log(xs[0].sum(1, 2));";
+    assert!(loud(src).contains("hidden slots"), "rest: {}", loud(src));
+    let source = r#"
+class Acc { bump(by) { return by; } }
+const xs = [new Acc()];
+console.log(xs[0].bump(42));
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-286 review #4 + friends: `this.m()` with rest parameters, a
+// derived default constructor over a rest-parameter parent, and a
+// static calling another static (with a default) through `this`.
+#[test]
+fn test_boa_member_call_shapes_run() {
+    let source = r#"
+class C {
+  collect(...xs) { return xs[0] + xs[1]; }
+  run() { return this.collect(20, 22); }
+}
+console.log(new C().run());
+class Base {
+  constructor(...xs) { this.total = xs[0] + xs[1]; }
+  get() { return this.total; }
+}
+class Sub extends Base { }
+console.log(new Sub(20, 22).get());
+class U {
+  static a(x = 40) { return x + 2; }
+  static b() { return this.a(); }
+}
+console.log(U.b());
+"#;
+    assert_eq!(run_js(source), "42\n42\n42\n");
+}
+
+// CRUSH-286 review #3: a binding's tracked kind is forgotten when it
+// is assigned anything but its `new`, and after any branch or loop
+// that assigns it — the tracker must never adapt a call for a class
+// the binding no longer provably holds. Straight-line tracking is
+// unaffected.
+#[test]
+fn test_boa_instance_kind_forgetting() {
+    let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
+    for tail in [
+        "let c = new A(); if (true) { c = new B(); } console.log(c.m(5));",
+        "let c = new A(); for (let i = 0; i < 1; i++) { c = new B(); } console.log(c.m(5));",
+        "let c = new A(); c = new B(); console.log(c.m(5));",
+        "let c = new A(); c = 5; console.log(c.m(5));",
+    ] {
+        let src = format!("{classes}{tail}");
+        assert!(
+            loud(&src).contains("CRUSH"),
+            "{tail} must refuse, not adapt: {}",
+            loud(&src)
+        );
+    }
+    let source = r#"
+class A {
+  constructor(x = 1) { this.x = x; }
+  m(a = 2) { return this.x + a; }
+}
+let c = new A();
+c = new A(40);
+console.log(c.m());
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-286 re-review (#3, the shapes plain reassignment didn't
+// cover): a logical or compound assignment, an assignment nested in a
+// larger expression, an assignment anywhere in a loop body (the
+// back-edge), and an assignment inside a nested function all forget
+// the binding's kind — the following call is refused rather than
+// shaped for a class the binding no longer provably holds.
+#[test]
+fn test_boa_instance_kind_forgetting_more_shapes() {
+    let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
+    // Logical assignment may keep the old value; it is refused as a
+    // construct, and must never teach the tracker the new kind.
+    let src = format!("{classes}let c = new A(); c ||= new B(); console.log(c.m(5));");
+    assert!(loud(&src).contains("logical assignment"), "||=: {}", loud(&src));
+    for tail in [
+        // A compound assignment forgets.
+        "let c = new A(); c += 1; console.log(c.m(5));",
+        // Assignments nested in larger expressions may never run.
+        "let c = new A(); const f = true; f && (c = new B()); console.log(c.m(5));",
+        "let c = new A(); const f = true; f ? (c = new B()) : 0; console.log(c.m(5));",
+        // The loop back-edge: from the second iteration the call
+        // would run on B, shaped for A.
+        "let c = new A(); let k = 2; while (k > 0) { console.log(c.m(5)); c = new B(); k = k - 1; }",
+        // A nested function can swap the binding whenever it is called.
+        "let c = new A(); const g = () => { c = new B(); }; g(); console.log(c.m(5));",
+    ] {
+        let src = format!("{classes}{tail}");
+        // Forgotten, the call is refused — at walk time (the receiver
+        // is no longer a known instance) or by the end-of-module
+        // shape check — never adapted for A.
+        assert!(
+            loud(&src).contains("CRUSH"),
+            "{tail} must refuse, not adapt: {}",
+            loud(&src)
+        );
+    }
+    // The reviewer's closure shape, nested in a method (a top-level
+    // `function` body can't `new` a module class yet, CRUSH-281):
+    // the nested function swaps `c`, so `c.m(5)` after `g()` refuses.
+    let src = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } \
+               class Host { run() { let c = new A(); function g() { c = new B(); } g(); return c.m(5); } } \
+               console.log(new Host().run());";
+    assert!(
+        loud(src).contains("CRUSH"),
+        "nested function swap must refuse, not adapt: {}",
+        loud(src)
+    );
+    // Control: a nested function that doesn't assign the binding
+    // leaves the tracked kind alone.
+    let source = r#"
+class A { m(a = 1) { return a; } }
+class Host {
+  run() {
+    let c = new A();
+    function g() { return 1; }
+    g();
+    return c.m(5);
+  }
+}
+console.log(new Host().run());
+"#;
+    assert_eq!(run_js(source), "5\n");
+    // A loop that never assigns the binding still adapts its calls.
+    let source = r#"
+class A { m(a = 40) { return a + 1; } }
+let c = new A();
+let k = 2;
+let total = 0;
+while (k > 0) { total = total + c.m(1); k = k - 1; }
+console.log(total);
+"#;
+    assert_eq!(run_js(source), "4\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {
