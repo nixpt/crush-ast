@@ -14,7 +14,10 @@
             "left": {
               "type": "IntLiteral",
               "value": 2,
-              "meta": {}
+              "meta": {
+                "line": 1,
+                "col": 3
+              }
             },
             "right": {
               "type": "BinaryOp",
@@ -22,22 +25,39 @@
               "left": {
                 "type": "IntLiteral",
                 "value": 3,
-                "meta": {}
+                "meta": {
+                  "line": 1,
+                  "col": 7
+                }
               },
               "right": {
                 "type": "IntLiteral",
                 "value": 4,
-                "meta": {}
+                "meta": {
+                  "line": 1,
+                  "col": 10
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 1,
+                "col": 10
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 10,
+              "line": 1
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 1,
+            "col": 10
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

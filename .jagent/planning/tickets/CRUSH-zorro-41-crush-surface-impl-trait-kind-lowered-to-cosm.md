@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-41 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (PR #214, agent/panini/CRUSH-zorro-41, merged 2026-10-15) |
 | **Phase** | COSM K1 |
-| **Assignee** | unassigned |
+| **Assignee** | panini |
 | **Dependencies** | CRUSH-zorro-40 (for the lowering step; parser/CAST work can start immediately) |
 | **Estimated effort** | L |
 | **Filed by** | vega — 2026-10-15, COSM phase K1 (owner decisions recorded in the design doc and dejavue) |

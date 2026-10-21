@@ -12,10 +12,16 @@
           "value": {
             "type": "IntLiteral",
             "value": 7,
-            "meta": {}
+            "meta": {
+              "col": 14,
+              "line": 2
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 2,
+            "col": 14
+          }
         },
         {
           "type": "If",
@@ -25,14 +31,23 @@
             "left": {
               "type": "Var",
               "name": "x",
-              "meta": {}
+              "meta": {
+                "col": 10,
+                "line": 3
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 3,
-              "meta": {}
+              "meta": {
+                "col": 14,
+                "line": 3
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 3,
+              "col": 14
+            }
           },
           "then_body": [
             {
@@ -40,9 +55,15 @@
               "value": {
                 "type": "Var",
                 "name": "x",
-                "meta": {}
+                "meta": {
+                  "col": 17,
+                  "line": 4
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 17
+              }
             }
           ],
           "else_body": [
@@ -51,16 +72,27 @@
               "value": {
                 "type": "IntLiteral",
                 "value": 0,
-                "meta": {}
+                "meta": {
+                  "col": 17,
+                  "line": 6
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 6,
+                "col": 17
+              }
             }
           ],
-          "meta": {}
+          "meta": {
+            "line": 7,
+            "col": 6
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "line": 1,
+        "col": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

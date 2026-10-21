@@ -15,17 +15,29 @@
             "left": {
               "type": "StringLiteral",
               "value": "compile",
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 29
+              }
             },
             "right": {
               "type": "StringLiteral",
               "value": " benchmark",
-              "meta": {}
+              "meta": {
+                "col": 43,
+                "line": 2
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 2,
+              "col": 43
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 43,
+            "line": 2
+          }
         },
         {
           "type": "VarDecl",
@@ -33,10 +45,16 @@
           "value": {
             "type": "StringLiteral",
             "value": " cast",
-            "meta": {}
+            "meta": {
+              "line": 3,
+              "col": 25
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 25,
+            "line": 3
+          }
         },
         {
           "type": "Return",
@@ -46,20 +64,34 @@
             "left": {
               "type": "Var",
               "name": "message",
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 20
+              }
             },
             "right": {
               "type": "Var",
               "name": "suffix",
-              "meta": {}
+              "meta": {
+                "col": 28,
+                "line": 4
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 4,
+              "col": 28
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 4,
+            "col": 28
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }
