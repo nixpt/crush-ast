@@ -693,7 +693,12 @@ impl Lower<'_> {
                     Expression::Identifier(obj)
                         if self.instance_vars.contains(&self.resolve(obj.sym())) =>
                     {
-                        Some(self.name(obj.sym()))
+                        // The RESOLVED name: a block-scoped binding is
+                        // renamed, and the JS spelling would read an
+                        // outer binding of the same name (CRUSH-285
+                        // review #2) — or, with no outer binding, fall
+                        // into a host `cap_call` for `name.method`.
+                        Some(self.resolve(obj.sym()))
                     }
                     _ => None,
                 };

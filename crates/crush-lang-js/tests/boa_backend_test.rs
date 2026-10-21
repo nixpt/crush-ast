@@ -611,6 +611,38 @@ console.log("after");
     assert_eq!(run_js(source), "caught\nafter\n");
 }
 
+// CRUSH-285 review #2: an instance bound in a block (a renamed, block
+// -scoped binding) calls through its own binding, not an outer one of
+// the same JS name.
+#[test]
+fn test_boa_instance_in_block_calls_own_binding() {
+    let source = r#"
+class C {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+const c = new C(1);
+for (let i = 0; i < 3; i++) {
+  const c = new C(i);
+  console.log(c.get());
+}
+console.log(c.get());
+"#;
+    assert_eq!(run_js(source), "0\n1\n2\n1\n");
+    // No outer binding at all: still a member call, not a host cap call.
+    let source = r#"
+class C {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+for (let i = 0; i < 2; i++) {
+  const c = new C(i);
+  console.log(c.get());
+}
+"#;
+    assert_eq!(run_js(source), "0\n1\n");
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {
