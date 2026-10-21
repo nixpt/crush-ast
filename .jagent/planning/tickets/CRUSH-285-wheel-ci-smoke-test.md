@@ -1,8 +1,11 @@
-# CRUSH-275 — the `crush_vm` wheel has no CI job: it is never built, never imported, never tested
+# CRUSH-285 — the `crush_vm` wheel has no CI job: it is never built, never imported, never tested
+
+> Numbered CRUSH-285 by kai (2026-10-21): first filed as CRUSH-275, which PR #281 (Crush 1.0 release criteria)
+> had already claimed.
 
 | Field | Value |
 |---|---|
-| **ID** | CRUSH-275 |
+| **ID** | CRUSH-285 |
 | **Priority** | P2 |
 | **Status** | Backlog |
 | **Phase** | M6 |
