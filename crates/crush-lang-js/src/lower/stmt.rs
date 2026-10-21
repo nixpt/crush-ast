@@ -503,7 +503,6 @@ impl Lower<'_> {
         span: Option<Span>,
         out: &mut Vec<CastStmt>,
     ) -> anyhow::Result<()> {
-        let m = self.meta(span);
         match pattern {
             Pattern::Object(o) => {
                 for el in o.bindings() {
