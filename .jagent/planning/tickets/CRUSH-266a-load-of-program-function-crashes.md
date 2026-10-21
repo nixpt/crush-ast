@@ -1,13 +1,13 @@
-# CRUSH-284 — `Load` of a program-level function name crashes at runtime
+# CRUSH-266a — `Load` of a program-level function name crashes at runtime
 
-> **Renumbered** by kai (2026-10-20) from `CRUSH-275`: that number was claimed first by PR #281 (Crush 1.0 release
-> criteria, `agent/vega/1.0-criteria`), and also by the branch `agent/nixp/CRUSH-275` (wheel CI smoke test). This ticket
-> came in with PR #283 and is already closed, so it moved rather than the open ones. (Briefly CRUSH-281 in PR #287; that
-> number went to `CRUSH-281-boa-new-inside-top-level-functions` in PR #285, then CRUSH-283 to #285's print-hooks ticket.)
+> **Renumbered** by kai (2026-10-21) from `CRUSH-275` to `CRUSH-266a`, a residue suffix of the ticket it
+> came in with (PR #283, CRUSH-266), so no new ticket can claim the number again. CRUSH-275 was claimed three
+> times (PR #281's 1.0 criteria, PR #284's wheel CI ticket, and this one), and on the way here this ticket
+> briefly held 281, 283 and 284, each taken by a new ticket within hours.
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-284 |
+| **ID** | CRUSH-266a |
 | **Priority** | P1 |
 | **Status** | Done (superseded upstream — no code change needed) |
 | **Phase** | M4 |
