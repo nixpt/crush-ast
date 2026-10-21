@@ -107,6 +107,7 @@ const BOA_FIXED: &[(&str, &str)] = &[
     ("class_destructuring", "destructuring parameters (CRUSH-284)"),
     ("obj_destructure", "destructuring declarations (CRUSH-287)"),
     ("builtin_map_set", "Map/Set host constructors (CRUSH-288)"),
+    ("ops_optional_chain", "optional chaining (CRUSH-289)"),
     ("class_extends", "`extends` + `super.m()` on COSM (CRUSH-277)"),
     ("class_fields", "class fields (D7 injection) on COSM (CRUSH-277)"),
     ("class_static", "static members on COSM (CRUSH-277)"),

@@ -1650,3 +1650,56 @@ fn test_boa_host_map_set_loud() {
     let source = "class Map { constructor() { this.x = 41; } get() { return this.x + 1; } }\nconsole.log(new Map().get());";
     assert_eq!(run_js(source), "42\n");
 }
+
+// CRUSH-289: optional chaining — a chain folds to nested
+// `__crush_ternary__` null tests over its pure prefixes.
+#[test]
+fn test_boa_optional_chaining_run() {
+    let source = r#"
+const a = { b: { c: 42 } };
+console.log(a?.b?.c, a?.x?.y, a?.b.c);
+const n = null;
+console.log(n?.b, n?.b?.c);
+const m = new Map();
+m.set("a", 5);
+console.log(m?.get("a"), m?.size);
+"#;
+    assert_eq!(run_js(source), "42 null 42\nnull null\n5 1\n");
+    // Maya's shapes: an optional delegate, an optional hook.
+    let source = r#"
+class Owner { lookup(t) { return t + 1; } }
+class Comp {
+  constructor(owner) { this.owner = owner; }
+  find(t) { return this.owner?.lookup(t); }
+}
+console.log(new Comp(new Owner()).find(41), new Comp(null).find(41));
+class Base { run() { return this.onAttach?.(); } }
+class Sub extends Base { onAttach() { return 7; } }
+console.log(new Sub().run());
+let calls = 0;
+function side() { calls = calls + 1; return 1; }
+const zip = null;
+console.log(zip?.m(side()), calls);
+const race = null;
+console.log(race?.surface == "vacuum" ? "space" : "rally", (race?.ice || []).length);
+"#;
+    assert_eq!(run_js(source), "42 null\n7\nnull 0\nrally 0\n");
+}
+
+#[test]
+fn test_boa_optional_chaining_loud() {
+    // A side-effecting prefix would be evaluated twice (the test
+    // and the branch), so it refuses instead.
+    assert!(
+        loud("function f() { return { b: 1 }; } console.log(f()?.b);")
+            .contains("side-effecting")
+    );
+    assert!(
+        loud("const a = { b() { return { c: 1 }; } }; console.log(a?.b()?.c);")
+            .contains("side-effecting")
+    );
+    // A private field in a chain.
+    assert!(
+        loud("class A { #x = 1; get(o) { return o?.#x; } }").contains("private")
+    );
+}
