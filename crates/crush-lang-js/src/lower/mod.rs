@@ -93,6 +93,12 @@ pub(crate) struct Lower<'a> {
     /// A whole class's signatures register before any of its member
     /// bodies lowers, so self-calls resolve.
     fn_sigs: HashMap<String, scope::Sig>,
+    /// Every member call the walker emitted with its argument shape,
+    /// for the end-of-module checks (CRUSH-286 review): an adapted call
+    /// must be valid for every override the receiver could dispatch to,
+    /// and a raw call must not be able to land in a member's flag/rest
+    /// slots.
+    member_calls: Vec<MemberCall>,
     /// The class whose method/constructor body is being lowered (its
     /// JS [[HomeObject]]), for `super.m()` (CRUSH-277 S5). Set only
     /// around a class member's body, never across a function boundary.
@@ -111,6 +117,24 @@ pub(crate) struct Lower<'a> {
     toplevel_sigs: HashMap<Sym, scope::Sig>,
 }
 
+/// A member call the walker emitted (CRUSH-286 review): the statically
+/// known receiver kind and the signature its arguments were adapted
+/// to, if any. Checked in [`Lower::check_member_calls`] once the whole
+/// module — every class and override — has been lowered.
+pub(super) struct MemberCall {
+    pub(super) method: String,
+    /// The receiver's statically known kind (for `this`, the home
+    /// class); `None` when the receiver's kind is unknown.
+    pub(super) kind: Option<String>,
+    /// The signature the arguments were adapted to; `None` when they
+    /// were passed raw.
+    pub(super) adapted: Option<scope::Sig>,
+    /// The call goes through `this` in a static method (the target is
+    /// a static, resolved on the class value).
+    pub(super) is_static: bool,
+    pub(super) span: Option<Span>,
+}
+
 impl<'a> Lower<'a> {
     fn new(interner: &'a Interner, ctx: &'a LowerCtx<'a>) -> Self {
         Lower {
@@ -123,6 +147,7 @@ impl<'a> Lower<'a> {
             super_ctor: None,
             instance_kinds: Default::default(),
             fn_sigs: HashMap::new(),
+            member_calls: Vec::new(),
             home_class: None,
             in_static: false,
             class_parents: HashMap::new(),
@@ -200,6 +225,7 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
     };
     let mut lower = Lower::new(interner, ctx);
     let main_body = lower.top_level(&items)?;
+    lower.check_member_calls()?;
     let mut functions = std::mem::take(&mut lower.functions);
     if !main_body.is_empty() {
         functions.insert(

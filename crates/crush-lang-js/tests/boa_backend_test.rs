@@ -984,6 +984,75 @@ console.log(new Sub().get());
     assert_eq!(run_js(source), "7\n9\nBM\n7\n");
 }
 
+// CRUSH-286 review #1: a call adapted for the home class's signature
+// must not dispatch to an override with a different one (positionally
+// shifted flags/rest would run silently wrong) — refused once the
+// whole module is lowered, in both directions. Same-signature
+// overrides still run.
+#[test]
+fn test_boa_override_signature_mismatch_refused() {
+    let src = "class Base { m(a, b) { return a; } run() { return this.m(5, 0); } } class Sub extends Base { m(a = 1) { return a; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "plain->default: {}", loud(src));
+    let src = "class Base { m(a = 1) { return a; } run() { return this.m(); } } class Sub extends Base { m(a, b) { return a; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "default->plain: {}", loud(src));
+    let src = "class Base { m(a) { return a; } run() { return this.m(5); } } class Sub extends Base { m(...xs) { return xs[0]; } } console.log(new Sub().run());";
+    assert!(loud(src).contains("overrides it with a different"), "plain->rest: {}", loud(src));
+    // A matching override dispatches as written.
+    let source = r#"
+class Base {
+  m(a = 1) { return a; }
+  run() { return this.m(); }
+}
+class Sub extends Base { m(a = 9) { return a; } }
+console.log(new Sub().run());
+console.log(new Base().run());
+"#;
+    assert_eq!(run_js(source), "9\n1\n");
+}
+
+// CRUSH-286 review #2: an unknown-receiver call is refused while any
+// member of that name in the module has default/rest parameters (raw
+// arguments could land in the hidden slots). Plain members still run.
+#[test]
+fn test_boa_unknown_receiver_defaulted_member_refused() {
+    let src = "class Acc { bump(by = 1) { return by; } } const xs = [new Acc()]; console.log(xs[0].bump(5, 0));";
+    assert!(loud(src).contains("hidden slots"), "defaulted: {}", loud(src));
+    let src = "class Acc { sum(first, ...rest) { return first; } } const xs = [new Acc()]; console.log(xs[0].sum(1, 2));";
+    assert!(loud(src).contains("hidden slots"), "rest: {}", loud(src));
+    let source = r#"
+class Acc { bump(by) { return by; } }
+const xs = [new Acc()];
+console.log(xs[0].bump(42));
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-286 review #4 + friends: `this.m()` with rest parameters, a
+// derived default constructor over a rest-parameter parent, and a
+// static calling another static (with a default) through `this`.
+#[test]
+fn test_boa_member_call_shapes_run() {
+    let source = r#"
+class C {
+  collect(...xs) { return xs[0] + xs[1]; }
+  run() { return this.collect(20, 22); }
+}
+console.log(new C().run());
+class Base {
+  constructor(...xs) { this.total = xs[0] + xs[1]; }
+  get() { return this.total; }
+}
+class Sub extends Base { }
+console.log(new Sub(20, 22).get());
+class U {
+  static a(x = 40) { return x + 2; }
+  static b() { return this.a(); }
+}
+console.log(U.b());
+"#;
+    assert_eq!(run_js(source), "42\n42\n42\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {

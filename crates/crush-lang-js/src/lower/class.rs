@@ -112,18 +112,119 @@ impl Lower<'_> {
     /// The signature of `kind`'s method `method`: the nearest definition
     /// up the parent chain wins, as at run time (CRUSH-280).
     pub(super) fn method_sig(&self, kind: &str, method: &str) -> Option<Sig> {
+        self.chain_sig(kind, method, false)
+    }
+
+    /// The signature of `kind`'s static method `method`, resolved up
+    /// the parent chain like `method_sig` (CRUSH-286 review #4).
+    pub(super) fn static_method_sig(&self, kind: &str, method: &str) -> Option<Sig> {
+        self.chain_sig(kind, method, true)
+    }
+
+    fn chain_sig(&self, kind: &str, method: &str, is_static: bool) -> Option<Sig> {
+        self.chain_target(kind, method, is_static)
+            .map(|(_, sig)| sig)
+    }
+
+    /// The lifted function a chain-resolved member call targets,
+    /// with its signature.
+    pub(super) fn chain_target(
+        &self,
+        kind: &str,
+        method: &str,
+        is_static: bool,
+    ) -> Option<(String, Sig)> {
+        let sep = if is_static { "::static::" } else { "::" };
         let mut cur = Some(kind.to_string());
         let mut seen = std::collections::HashSet::new();
         while let Some(k) = cur {
             if !seen.insert(k.clone()) {
                 break;
             }
-            if let Some(sig) = self.fn_sigs.get(&format!("{k}::{method}")) {
-                return Some(sig.clone());
+            let func = format!("{k}{sep}{method}");
+            if let Some(sig) = self.fn_sigs.get(&func) {
+                return Some((func, sig.clone()));
             }
             cur = self.class_parents.get(&k).cloned();
         }
         None
+    }
+
+    /// Is `other` `kind` itself or a subclass of it in this module?
+    fn is_subclass(&self, other: &str, kind: &str) -> bool {
+        let mut cur = Some(other.to_string());
+        let mut seen = std::collections::HashSet::new();
+        while let Some(k) = cur {
+            if k == kind {
+                return true;
+            }
+            if !seen.insert(k.clone()) {
+                break;
+            }
+            cur = self.class_parents.get(&k).cloned();
+        }
+        false
+    }
+
+    /// End-of-module checks on the member calls the walker emitted
+    /// (CRUSH-286 review #1/#2). Adaptation is positional (hidden flags
+    /// and the rest slot sit in fixed positions), so a call shaped for
+    /// one signature can run *silently* wrong-shaped when run-time
+    /// dispatch lands on another; both shapes are refused here, once
+    /// every class and override is known:
+    ///
+    /// - a call adapted for kind `K`'s `m` dispatches on the receiver's
+    ///   actual class, so every subclass of `K` that resolves `m` must
+    ///   resolve it to the same signature;
+    /// - a call passed raw (unknown receiver) may reach any member of
+    ///   that name, so no member of that name may have default or rest
+    ///   parameters.
+    pub(super) fn check_member_calls(&self) -> anyhow::Result<()> {
+        for call in &self.member_calls {
+            match (&call.kind, &call.adapted) {
+                (Some(kind), Some(sig)) => {
+                    for decl in &self.kinds {
+                        if !self.is_subclass(&decl.name, kind) {
+                            continue;
+                        }
+                        let found = if call.is_static {
+                            self.static_method_sig(&decl.name, &call.method)
+                        } else {
+                            self.method_sig(&decl.name, &call.method)
+                        };
+                        if let Some(found) = found
+                            && &found != sig
+                        {
+                            return Err(self.unsupported(
+                                format!(
+                                    "the call `{}.{}(...)` is shaped for the signature of `{}`'s `{}`, but `{}` overrides it with a different one (the hidden default/rest slots would land in the wrong positions)",
+                                    kind, call.method, kind, call.method, decl.name
+                                ),
+                                call.span,
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let defaulted = self.fn_sigs.iter().any(|(f, s)| {
+                        (f.ends_with(&format!("::{}", call.method))
+                            || f.ends_with(&format!("::static::{}", call.method)))
+                            && s.iter()
+                                .any(|p| *p != super::scope::Param::Plain)
+                    });
+                    if defaulted {
+                        return Err(self.unsupported(
+                            format!(
+                                "calling `.{}(...)` here, where the receiver's class is unknown, while a member `{}` in this module has default or rest parameters (the arguments could land in the hidden slots)",
+                                call.method, call.method
+                            ),
+                            call.span,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `new C(args)` (CRUSH-277 D3): a CAST `Construct` of the Kind. A

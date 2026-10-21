@@ -17,7 +17,7 @@ use crush_cast::Expression as CastExpr;
 use super::builtins::{self, Lowering};
 use super::scope::{Param, Sig};
 use super::stmt::{comma_parts, unparen};
-use super::{Lower, Meta};
+use super::{Lower, MemberCall, Meta};
 use crate::lower_common::{js_cap, js_div, length_of};
 
 /// 2^63: the first integer an `i64` can't hold.
@@ -726,18 +726,52 @@ impl Lower<'_> {
                     // default/rest parameters adapt (CRUSH-280); an
                     // unknown method keeps the raw arguments (the
                     // member-call machinery refuses it later, loudly).
-                    let args = match recv_kind
-                        .as_deref()
-                        .and_then(|kind| self.method_sig(kind, &method))
+                    // `this.m()` in a static method targets the class's
+                    // static of that name: its function is known
+                    // exactly (a static's `this` is the defining class),
+                    // so it lowers to a direct call (CRUSH-286 review
+                    // #4) — also an exact target, so it isn't recorded
+                    // for the dispatch checks.
+                    let is_static = self.in_static
+                        && matches!(unparen(s.target()), Expression::This(_));
+                    if is_static
+                        && let Some(kind) = &recv_kind
+                        && let Some((func, sig)) =
+                            self.chain_target(kind, &method, true)
                     {
+                        return Ok(CastExpr::Call {
+                            function: func,
+                            args: self.adapt_args(
+                                &sig,
+                                args,
+                                &format!("this.{method}"),
+                                span,
+                            )?,
+                            meta: m,
+                        });
+                    }
+                    let sig = recv_kind
+                        .as_deref()
+                        .and_then(|kind| self.method_sig(kind, &method));
+                    let args = match &sig {
                         Some(sig) => self.adapt_args(
-                            &sig,
+                            sig,
                             args,
                             &format!("{recv}.{method}"),
                             span,
                         )?,
                         None => self.args(args)?,
                     };
+                    // Recorded for the end-of-module checks: the
+                    // shape must stay right under run-time dispatch
+                    // (CRUSH-286 review #1/#2).
+                    self.member_calls.push(MemberCall {
+                        method: method.clone(),
+                        kind: recv_kind.clone(),
+                        adapted: sig,
+                        is_static: false,
+                        span,
+                    });
                     // Marked as a walker-resolved member call: if the
                     // method turns out not to be a member, the compiler
                     // refuses — it must never fall back to granting a
@@ -788,16 +822,24 @@ impl Lower<'_> {
                     // `new C().m(...)`: the receiver's kind is known,
                     // so the method's default/rest parameters adapt
                     // (CRUSH-280). Any other computed receiver keeps raw
-                    // arguments; a member with default/rest parameters
-                    // called that way fails the VM's exact-arity check
-                    // (loud, never silently wrong).
-                    let args = match self
-                        .new_kind(s.target())
-                        .and_then(|kind| self.method_sig(&kind, &method))
-                    {
-                        Some(sig) => self.adapt_args(&sig, args, &method, span)?,
+                    // arguments — refused at the end of lowering if any
+                    // member of the name has default/rest parameters
+                    // they could land in (CRUSH-286 review #2).
+                    let recv_kind = self.new_kind(s.target());
+                    let sig = recv_kind
+                        .as_deref()
+                        .and_then(|kind| self.method_sig(kind, &method));
+                    let args = match &sig {
+                        Some(sig) => self.adapt_args(sig, args, &method, span)?,
                         None => self.args(args)?,
                     };
+                    self.member_calls.push(MemberCall {
+                        method: method.clone(),
+                        kind: recv_kind,
+                        adapted: sig,
+                        is_static: false,
+                        span,
+                    });
                     return Ok(CastExpr::MethodCall {
                         target: Box::new(self.expr(s.target())?),
                         method,
