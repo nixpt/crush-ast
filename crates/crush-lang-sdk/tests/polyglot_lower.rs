@@ -208,7 +208,9 @@ fn a_javascript_construct_the_walker_cannot_lower_names_the_crush_line() {
     assert!(e.contains("@javascript") && e.contains("line 3") && e.contains("a class"), "{e}");
     assert!(e.contains("not as Node"), "{e}");
     // Where the walker knows the construct's position, that `.crush` line too.
-    let src = block("javascript", "", "    let z = 1\n", "let a = 1;\nlet b = a?.c;", "");
+    // (Plain `a?.c` lowers since CRUSH-289; a chain through a call
+    // still refuses, with the chain's position.)
+    let src = block("javascript", "", "    let z = 1\n", "let a = 1;\nlet b = f()?.c;", "");
     let e = compile_err(&src);
     assert!(e.contains("line 3:") && e.contains("at line 5"), "{e}");
 }

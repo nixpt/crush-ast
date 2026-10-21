@@ -248,9 +248,12 @@ pub fn truthy(v: &JsNode) -> bool {
 pub fn loose_eq(a: &JsNode, b: &JsNode) -> Result<bool, String> {
     use JsNode::*;
     Ok(match (a, b) {
-        (Other(t), _) | (_, Other(t)) => return Err(other_type(t)),
+        // Null only equals null (JS `== null` is the nullish test,
+        // CRUSH-289): any other value — a function included — is
+        // simply unequal, never an error.
         (Null, Null) => true,
         (Null, _) | (_, Null) => false,
+        (Other(t), _) | (_, Other(t)) => return Err(other_type(t)),
         (Array { id: x, .. }, Array { id: y, .. }) | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
         (Array { .. }, Object { .. }) | (Object { .. }, Array { .. }) => false,
         (Array { .. } | Object { .. }, _) | (_, Array { .. } | Object { .. }) => {

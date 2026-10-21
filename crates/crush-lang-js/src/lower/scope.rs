@@ -527,6 +527,23 @@ fn assigned_syms_expr(e: &boa_ast::expression::Expression, out: &mut Vec<Sym>) {
             }
         }
         Expression::Spread(s) => assigned_syms_expr(s.target(), out),
+        Expression::Optional(o) => {
+            use boa_ast::expression::OptionalOperationKind;
+            assigned_syms_expr(o.target(), out);
+            for op in o.chain() {
+                match op.kind() {
+                    OptionalOperationKind::Call { args } => {
+                        for a in args {
+                            assigned_syms_expr(a, out);
+                        }
+                    }
+                    OptionalOperationKind::SimplePropertyAccess {
+                        field: PropertyAccessField::Expr(f),
+                    } => assigned_syms_expr(f, out),
+                    _ => {}
+                }
+            }
+        }
         Expression::ArrowFunction(f) => assigned_syms_items(f.body().statements(), out),
         Expression::FunctionExpression(f) => assigned_syms_items(f.body().statements(), out),
         _ => {}
