@@ -936,6 +936,68 @@ console.log(Util.twice(21));
     assert_eq!(params[0].0, "x");
 }
 
+// CRUSH-284: destructuring parameters — the options-object idiom
+// (maya's constructors), renames, per-property defaults, a
+// parameter-level default, array patterns and nested patterns. The
+// destructured parameter is one visible parameter for the signature
+// machinery; property defaults run in the callee's prologue.
+#[test]
+fn test_boa_destructuring_parameters_run() {
+    // Maya's shape: an options object with a parameter-level default.
+    let source = r#"
+class Engine {
+  constructor({ width = 960, height = 540 } = {}) {
+    this.width = width;
+    this.height = height;
+  }
+  area() { return this.width * this.height; }
+}
+console.log(new Engine().area());
+console.log(new Engine({ width: 100 }).area());
+console.log(new Engine({ width: 2, height: 3 }).area());
+"#;
+    assert_eq!(run_js(source), "518400\n54000\n6\n");
+    // Renames, methods, and a default reading an earlier property.
+    let source = r#"
+class Box {
+  volume({ w: width, h, d = h }) { return width * h * d; }
+}
+console.log(new Box().volume({ w: 2, h: 3 }));
+function swap({ a, b }) { return b - a; }
+console.log(swap({ a: 1, b: 43 }));
+"#;
+    assert_eq!(run_js(source), "18\n42\n");
+    // Array patterns, holes, nested patterns, parameter defaults in
+    // plain functions.
+    let source = r#"
+function head([first, , third = 40]) { return first + third; }
+console.log(head([1, 2]));
+function deep({ point: { x, y } }) { return x + y; }
+console.log(deep({ point: { x: 20, y: 22 } }));
+function pair([a, b] = [30, 12]) { return a + b; }
+console.log(pair());
+"#;
+    assert_eq!(run_js(source), "41\n42\n42\n");
+}
+
+#[test]
+fn test_boa_destructuring_parameters_loud() {
+    // Object and array rest elements have no lowering yet.
+    assert!(
+        loud("function f({ ...rest }) { return 1; } console.log(f({}));").contains("rest"),
+        "object rest"
+    );
+    assert!(
+        loud("function f([head, ...tail]) { return head; } console.log(f([1]));").contains("rest"),
+        "array rest"
+    );
+    // A computed property name in a pattern has no lowering yet.
+    assert!(
+        loud("function f({ [k]: v }) { return v; }").contains("computed"),
+        "computed name"
+    );
+}
+
 // CRUSH-280: default and rest parameters on constructors, methods and
 // statics — the zorro-18 hidden-flag ABI, adapted at each call site.
 #[test]

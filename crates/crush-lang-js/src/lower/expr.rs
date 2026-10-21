@@ -306,7 +306,7 @@ impl Lower<'_> {
         })
     }
 
-    fn property_name(&mut self, key: &PropertyName, span: Option<Span>) -> anyhow::Result<String> {
+    pub(super) fn property_name(&mut self, key: &PropertyName, span: Option<Span>) -> anyhow::Result<String> {
         match key {
             PropertyName::Literal(id) => Ok(self.name(id.sym())),
             PropertyName::Computed(Expression::Literal(l)) => match l.kind() {
