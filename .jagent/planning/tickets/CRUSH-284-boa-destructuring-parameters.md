@@ -46,8 +46,12 @@ assignments (separate shapes), destructuring `catch`/loop heads.
 
 ## Semantics to keep
 
-- A property default applies when the property is absent
-  (JS: `undefined`); crush's null stands in for it.
+- A property default applies when the property is *absent*
+  (JS: `undefined`). Crush has no undefined value, so absence is
+  tested directly — a has-key check (`has_member`) for objects,
+  the length guard for arrays — never `== null`: a property present
+  with value null keeps its null, exactly as in JS (PR #288
+  review).
 - Destructuring `null`/`undefined` itself throws in JS; the lowered
   property reads on a non-object fail loudly at run time, which is
   close enough — no silent wrong values.

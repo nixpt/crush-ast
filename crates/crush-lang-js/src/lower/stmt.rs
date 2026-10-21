@@ -491,9 +491,11 @@ impl Lower<'_> {
 
     /// Bind a destructuring parameter's names from its value
     /// (CRUSH-284): each property or element is read once, a
-    /// per-element default replaces a missing (null) value — JS's
-    /// `undefined` — and nested patterns recurse. Object/array rest
-    /// elements and assignment targets stay loud.
+    /// per-element default replaces an *absent* value — JS's
+    /// `undefined`; a value present as null keeps null, so absence is
+    /// tested (a has-key check, the length guard), never `== null` —
+    /// and nested patterns recurse. Object/array rest elements and
+    /// assignment targets stay loud.
     fn destructure(
         &mut self,
         source: CastExpr,
@@ -512,19 +514,15 @@ impl Lower<'_> {
                             default_init,
                         } => {
                             let field = self.property_name(name, span)?;
-                            let read = CastExpr::GetField {
-                                target: Box::new(source.clone()),
-                                field,
-                                meta: m.clone(),
-                            };
-                            let local = self.resolve(ident.sym());
-                            self.bind_destructured(
-                                local,
-                                read,
+                            let value = self.object_element_value(
+                                &source,
+                                &field,
                                 default_init.as_ref(),
                                 span,
                                 out,
                             )?;
+                            let local = self.resolve(ident.sym());
+                            out.push(self.var_decl_stmt(local, value, false, span));
                         }
                         ObjectPatternElement::Pattern {
                             name,
@@ -532,13 +530,9 @@ impl Lower<'_> {
                             default_init,
                         } => {
                             let field = self.property_name(name, span)?;
-                            let read = CastExpr::GetField {
-                                target: Box::new(source.clone()),
-                                field,
-                                meta: m.clone(),
-                            };
-                            let value = self.destructured_value(
-                                read,
+                            let value = self.object_element_value(
+                                &source,
+                                &field,
                                 default_init.as_ref(),
                                 span,
                                 out,
@@ -613,45 +607,73 @@ impl Lower<'_> {
         Ok(())
     }
 
-    /// Declare `local` holding a destructured read (see
-    /// [`Lower::destructured_value`]).
-    fn bind_destructured(
+    /// An object property for destructuring (CRUSH-284): read once
+    /// into a hidden temporary; the per-property default applies only
+    /// when the property is *absent* (`__crush_has__`, the CASM
+    /// `has_member`) — a property present with value null keeps its
+    /// null, exactly as JS's `undefined` test behaves.
+    fn object_element_value(
         &mut self,
-        local: String,
-        read: CastExpr,
-        default_init: Option<&Expression>,
-        span: Option<Span>,
-        out: &mut Vec<CastStmt>,
-    ) -> anyhow::Result<()> {
-        let value = self.destructured_value(read, default_init, span, out)?;
-        out.push(self.var_decl_stmt(local, value, false, span));
-        Ok(())
-    }
-
-    /// A destructured read, evaluated once into a hidden temporary; a
-    /// per-element default replaces the value when it is null (a
-    /// missing property or element: JS's `undefined`).
-    fn destructured_value(
-        &mut self,
-        read: CastExpr,
+        source: &CastExpr,
+        field: &str,
         default_init: Option<&Expression>,
         span: Option<Span>,
         out: &mut Vec<CastStmt>,
     ) -> anyhow::Result<CastExpr> {
         let m = self.meta(span);
         let temp = self.hidden("__dval");
-        out.push(self.var_decl_stmt(temp.clone(), read, false, span));
-        self.apply_destructured_default(&temp, default_init, span, out)?;
-        Ok(CastExpr::Var {
-            name: temp,
-            meta: m,
-        })
+        out.push(self.var_decl_stmt(
+            temp.clone(),
+            CastExpr::GetField {
+                target: Box::new(source.clone()),
+                field: field.to_string(),
+                meta: m.clone(),
+            },
+            false,
+            span,
+        ));
+        let temp_var = CastExpr::Var {
+            name: temp.clone(),
+            meta: m.clone(),
+        };
+        if let Some(init) = default_init {
+            let value = self.expr(init)?;
+            out.push(CastStmt::If {
+                condition: CastExpr::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(CastExpr::Call {
+                        function: "__crush_has__".to_string(),
+                        args: vec![
+                            source.clone(),
+                            CastExpr::StringLiteral {
+                                value: field.to_string(),
+                                meta: m.clone(),
+                            },
+                        ],
+                        meta: m.clone(),
+                    }),
+                    meta: m.clone(),
+                },
+                then_body: vec![CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![temp_var.clone(), value],
+                        meta: m.clone(),
+                    },
+                    meta: m.clone(),
+                }],
+                else_body: None,
+                meta: m,
+            });
+        }
+        Ok(temp_var)
     }
 
-    /// An array element for destructuring (CRUSH-284): a read past
-    /// the end is null (JS's `undefined`), never a bounds error, so
-    /// the guard compares against the length first; the per-element
-    /// default then applies as usual.
+    /// An array element for destructuring (CRUSH-284): the read is
+    /// guarded by the length — past the end the element is absent
+    /// (JS's `undefined`, never a bounds error) and the per-element
+    /// default applies in the guard's `else`; an element present as
+    /// null keeps its null.
     fn array_element_value(
         &mut self,
         source: &CastExpr,
@@ -671,6 +693,20 @@ impl Lower<'_> {
         let temp_var = CastExpr::Var {
             name: temp.clone(),
             meta: m.clone(),
+        };
+        let else_body = match default_init {
+            Some(init) => {
+                let value = self.expr(init)?;
+                Some(vec![CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![temp_var.clone(), value],
+                        meta: m.clone(),
+                    },
+                    meta: m.clone(),
+                }])
+            }
+            None => None,
         };
         out.push(CastStmt::If {
             condition: CastExpr::BinaryOp {
@@ -703,53 +739,13 @@ impl Lower<'_> {
                 },
                 meta: m.clone(),
             }],
-            else_body: None,
+            else_body,
             meta: m,
         });
-        self.apply_destructured_default(&temp, default_init, span, out)?;
         Ok(CastExpr::Var {
             name: temp,
             meta: self.meta(span),
         })
-    }
-
-    /// `if (temp == null) temp = <default>` for a destructured
-    /// element whose value is missing (JS's `undefined`).
-    fn apply_destructured_default(
-        &mut self,
-        temp: &str,
-        default_init: Option<&Expression>,
-        span: Option<Span>,
-        out: &mut Vec<CastStmt>,
-    ) -> anyhow::Result<()> {
-        let Some(init) = default_init else {
-            return Ok(());
-        };
-        let m = self.meta(span);
-        let value = self.expr(init)?;
-        let temp_var = CastExpr::Var {
-            name: temp.to_string(),
-            meta: m.clone(),
-        };
-        out.push(CastStmt::If {
-            condition: CastExpr::BinaryOp {
-                operator: "==".to_string(),
-                left: Box::new(temp_var.clone()),
-                right: Box::new(CastExpr::NullLiteral { meta: m.clone() }),
-                meta: m.clone(),
-            },
-            then_body: vec![CastStmt::ExprStmt {
-                expr: CastExpr::Call {
-                    function: "__crush_assign__".to_string(),
-                    args: vec![temp_var, value],
-                    meta: m.clone(),
-                },
-                meta: m.clone(),
-            }],
-            else_body: None,
-            meta: m,
-        });
-        Ok(())
     }
 
     /// `function f() {}` in a scope, before the other statements of the
