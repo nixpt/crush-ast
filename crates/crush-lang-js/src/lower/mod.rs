@@ -80,11 +80,19 @@ pub(crate) struct Lower<'a> {
     /// (CRUSH-277 S3). Set only around a constructor body.
     super_ctor: Option<String>,
     /// Bindings this module itself bound with `new C()` (C a declared
-    /// class), so their method calls lower to member calls (CRUSH-277
-    /// D4). Cleared at every function boundary: an instance flowing in
-    /// as a parameter or a capture isn't tracked (CRUSH-zorro-44's
-    /// general problem).
-    instance_vars: std::collections::HashSet<String>,
+    /// class): binding name → the class's kind name, so their method
+    /// calls lower to member calls with arguments adapted to the
+    /// method's signature (CRUSH-277 D4, CRUSH-280). Cleared at every
+    /// function boundary: an instance flowing in as a parameter or a
+    /// capture isn't tracked (CRUSH-zorro-44's general problem).
+    instance_kinds: HashMap<String, String>,
+    /// The visible parameters of every lifted class member function
+    /// (constructors, methods, accessors, statics), keyed by lifted
+    /// function name, so call sites can adapt their arguments to
+    /// default/rest parameters (CRUSH-280; the CRUSH-zorro-18 ABI).
+    /// A whole class's signatures register before any of its member
+    /// bodies lowers, so self-calls resolve.
+    fn_sigs: HashMap<String, scope::Sig>,
     /// The class whose method/constructor body is being lowered (its
     /// JS [[HomeObject]]), for `super.m()` (CRUSH-277 S5). Set only
     /// around a class member's body, never across a function boundary.
@@ -113,7 +121,8 @@ impl<'a> Lower<'a> {
             kinds: Vec::new(),
             this_bound: false,
             super_ctor: None,
-            instance_vars: Default::default(),
+            instance_kinds: Default::default(),
+            fn_sigs: HashMap::new(),
             home_class: None,
             in_static: false,
             class_parents: HashMap::new(),

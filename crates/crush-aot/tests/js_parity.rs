@@ -48,6 +48,7 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("builtin_number_conv", "CRUSH-zorro-17: toString/toFixed"),
     ("class_accessor", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_basic", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
+    ("class_defaults", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_extends", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_fields", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_static", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),

@@ -260,7 +260,9 @@ impl Lower<'_> {
     /// `declared`: a `function` declaration, whose calls are adapted to its
     /// parameters ([`super::scope::Param`]), so it may have default and rest
     /// parameters. A function expression or arrow function may not: it can be
-    /// called from anywhere (CRUSH-zorro-18).
+    /// called from anywhere (CRUSH-zorro-18). Class members take the same
+    /// adapted mode through `method_function`/`static_function`
+    /// (CRUSH-280).
     pub(super) fn function(
         &mut self,
         params: &FormalParameterList,
@@ -275,13 +277,13 @@ impl Lower<'_> {
         // bindings of the enclosing function don't cross either (S3).
         let saved = std::mem::replace(&mut self.this_bound, false);
         let saved_super = self.super_ctor.take();
-        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let saved_instances = std::mem::take(&mut self.instance_kinds);
         let saved_home = self.home_class.take();
         let saved_static = std::mem::replace(&mut self.in_static, false);
         let r = self.function_in_scope(params, body, span, declared);
         self.this_bound = saved;
         self.super_ctor = saved_super;
-        self.instance_vars = saved_instances;
+        self.instance_kinds = saved_instances;
         self.home_class = saved_home;
         self.in_static = saved_static;
         self.scopes.leave_fn();
@@ -291,8 +293,11 @@ impl Lower<'_> {
     /// A class method, constructor or accessor body (CRUSH-277 D2): like a
     /// function expression, but `this` is bound — the receiver the VM
     /// passes as a method's leading argument — so it becomes the first
-    /// CAST parameter, and `this` expressions read it. Methods keep the
-    /// function-expression restrictions (no default/rest parameters yet).
+    /// CAST parameter, and `this` expressions read it. Default and rest
+    /// parameters are allowed (CRUSH-280): the walker knows every call
+    /// path to a member and adapts the arguments at each (the
+    /// CRUSH-zorro-18 hidden-flag ABI), so `function_in_scope` runs in
+    /// its adapted mode.
     pub(super) fn method_function(
         &mut self,
         params: &FormalParameterList,
@@ -301,10 +306,10 @@ impl Lower<'_> {
     ) -> anyhow::Result<LoweredFn> {
         self.scopes.enter_fn();
         let saved = std::mem::replace(&mut self.this_bound, true);
-        let saved_instances = std::mem::take(&mut self.instance_vars);
-        let r = self.function_in_scope(params, body, span, false);
+        let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let r = self.function_in_scope(params, body, span, true);
         self.this_bound = saved;
-        self.instance_vars = saved_instances;
+        self.instance_kinds = saved_instances;
         self.scopes.leave_fn();
         let (mut lowered_params, body) = r?;
         lowered_params.insert(0, ("this".to_string(), CastType::Any));
@@ -326,12 +331,12 @@ impl Lower<'_> {
         self.scopes.enter_fn();
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_super = self.super_ctor.take();
-        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let saved_instances = std::mem::take(&mut self.instance_kinds);
         let saved_static = std::mem::replace(&mut self.in_static, true);
-        let r = self.function_in_scope(params, body, span, false);
+        let r = self.function_in_scope(params, body, span, true);
         self.this_bound = saved;
         self.super_ctor = saved_super;
-        self.instance_vars = saved_instances;
+        self.instance_kinds = saved_instances;
         self.in_static = saved_static;
         self.scopes.leave_fn();
         let (lowered_params, mut lowered_body) = r?;
@@ -696,10 +701,10 @@ impl Lower<'_> {
             );
         };
         let name = self.resolve(id.sym());
-        // `const c = new Counter()`: the binding holds an instance, so
-        // `c.m()` lowers to a member call (CRUSH-277 D4).
-        if v.init().is_some_and(|init| self.is_new_of_kind(init)) {
-            self.instance_vars.insert(name.clone());
+        // `const c = new Counter()`: the binding holds an instance of a
+        // known kind, so `c.m()` lowers to a member call (CRUSH-277 D4).
+        if let Some(kind) = v.init().and_then(|init| self.new_kind(init)) {
+            self.instance_kinds.insert(name.clone(), kind);
         }
         let span = v.init().map(Spanned::span);
         let mut value = match v.init() {

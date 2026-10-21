@@ -936,6 +936,54 @@ console.log(Util.twice(21));
     assert_eq!(params[0].0, "x");
 }
 
+// CRUSH-280: default and rest parameters on constructors, methods and
+// statics — the zorro-18 hidden-flag ABI, adapted at each call site.
+#[test]
+fn test_boa_method_default_and_rest_params_run() {
+    let source = r#"
+class Acc {
+  constructor(start = 40) { this.x = start; }
+  add(by = 1, extra = by) { this.x = this.x + extra; return this.x; }
+  sum(first, ...rest) { return first + rest[0] + rest[1]; }
+  viaThis() { return this.add(); }
+}
+const a = new Acc();
+console.log(a.add());
+console.log(a.add(5, 100));
+console.log(new Acc(1).sum(1, 20, 21));
+const b = new Acc();
+console.log(b.viaThis());
+class Util { static pick(v = 42) { return v; } }
+console.log(Util.pick());
+console.log(Util.pick(1));
+"#;
+    // a: 40 +1 (default extra=by=1) = 41; +100 = 141; sum 1+20+21; viaThis 40+1.
+    assert_eq!(run_js(source), "41\n141\n42\n41\n42\n1\n");
+}
+
+#[test]
+fn test_boa_default_params_super_and_forwarding_run() {
+    let source = r#"
+class Base {
+  constructor(x = 7) { this.x = x; }
+  get() { return this.x; }
+  greet(sep = "B") { return sep; }
+}
+class Mid extends Base {
+  greet() { return super.greet() + "M"; }
+}
+class Leaf extends Mid { }
+console.log(new Leaf().get());
+console.log(new Leaf(9).get());
+console.log(new Mid(1).greet());
+class Sub extends Base {
+  constructor() { super(); }
+}
+console.log(new Sub().get());
+"#;
+    assert_eq!(run_js(source), "7\n9\nBM\n7\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {

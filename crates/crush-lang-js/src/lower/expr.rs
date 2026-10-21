@@ -215,13 +215,19 @@ impl Lower<'_> {
                         span,
                     ));
                 };
+                // The parent constructor's parameters are known, so
+                // default/rest parameters adapt (CRUSH-280).
+                let adapted = match self.fn_sigs.get(&ctor).cloned() {
+                    Some(sig) => self.adapt_args(&sig, sup.arguments(), "super", span)?,
+                    None => self.args(sup.arguments())?,
+                };
                 Ok(CastExpr::Call {
                     function: ctor,
                     args: std::iter::once(CastExpr::Var {
                         name: "this".to_string(),
                         meta: m.clone(),
                     })
-                    .chain(self.args(sup.arguments())?)
+                    .chain(adapted)
                     .collect(),
                     meta: m,
                 })
@@ -516,11 +522,11 @@ impl Lower<'_> {
             }
         };
         // `c = new Counter()`: reassignment also makes the target a
-        // known instance (CRUSH-277 D4).
+        // known instance of a known kind (CRUSH-277 D4).
         if let Target::Var(name) = &target
-            && self.is_new_of_kind(a.rhs())
+            && let Some(kind) = self.new_kind(a.rhs())
         {
-            self.instance_vars.insert(name.clone());
+            self.instance_kinds.insert(name.clone(), kind);
         }
         let right = self.expr(a.rhs())?;
         let current = |t: &Target| match t {
@@ -666,11 +672,23 @@ impl Lower<'_> {
                     return match self.kind_static_fn(&kind, &method) {
                         // A static is called with its plain arguments; the
                         // VM's static member calls take no receiver either.
-                        Some(function) => Ok(CastExpr::Call {
-                            function,
-                            args: self.args(args)?,
-                            meta: m,
-                        }),
+                        // Its default/rest parameters adapt (CRUSH-280).
+                        Some(function) => {
+                            let args = match self.fn_sigs.get(&function).cloned() {
+                                Some(sig) => self.adapt_args(
+                                    &sig,
+                                    args,
+                                    &format!("{}.{method}", self.name(obj.sym())),
+                                    span,
+                                )?,
+                                None => self.args(args)?,
+                            };
+                            Ok(CastExpr::Call {
+                                function,
+                                args,
+                                meta: m,
+                            })
+                        }
                         None => Err(self.unsupported(
                             format!(
                                 "`{}.{method}(...)`: `{}` has no static method of that name (an instance method needs an instance and `new`)",
@@ -689,20 +707,37 @@ impl Lower<'_> {
                 // falls through to the builtin table — conservative by
                 // design, so builtin methods never flip to member calls.
                 let dotted_recv = match unparen(s.target()) {
-                    Expression::This(_) if self.this_bound => Some("this".to_string()),
-                    Expression::Identifier(obj)
-                        if self.instance_vars.contains(&self.resolve(obj.sym())) =>
-                    {
+                    Expression::This(_) if self.this_bound => {
+                        Some(("this".to_string(), self.home_class.clone()))
+                    }
+                    Expression::Identifier(obj) => self
+                        .instance_kinds
+                        .get(&self.resolve(obj.sym()))
                         // The RESOLVED name: a block-scoped binding is
                         // renamed, and the JS spelling would read an
                         // outer binding of the same name (CRUSH-285
                         // review #2) — or, with no outer binding, fall
                         // into a host `cap_call` for `name.method`.
-                        Some(self.resolve(obj.sym()))
-                    }
+                        .map(|kind| (self.resolve(obj.sym()), Some(kind.clone()))),
                     _ => None,
                 };
-                if let Some(recv) = dotted_recv {
+                if let Some((recv, recv_kind)) = dotted_recv {
+                    // The receiver's kind is known, so the method's
+                    // default/rest parameters adapt (CRUSH-280); an
+                    // unknown method keeps the raw arguments (the
+                    // member-call machinery refuses it later, loudly).
+                    let args = match recv_kind
+                        .as_deref()
+                        .and_then(|kind| self.method_sig(kind, &method))
+                    {
+                        Some(sig) => self.adapt_args(
+                            &sig,
+                            args,
+                            &format!("{recv}.{method}"),
+                            span,
+                        )?,
+                        None => self.args(args)?,
+                    };
                     // Marked as a walker-resolved member call: if the
                     // method turns out not to be a member, the compiler
                     // refuses — it must never fall back to granting a
@@ -712,7 +747,7 @@ impl Lower<'_> {
                     m.insert("member_call".to_string(), serde_json::json!(true));
                     return Ok(CastExpr::CapabilityCall {
                         name: format!("{recv}.{method}"),
-                        args: self.args(args)?,
+                        args,
                         meta: m,
                     });
                 }
@@ -750,10 +785,23 @@ impl Lower<'_> {
                     {
                         return self.builtin(row, Some(s.target()), args, statement, span, m);
                     }
+                    // `new C().m(...)`: the receiver's kind is known,
+                    // so the method's default/rest parameters adapt
+                    // (CRUSH-280). Any other computed receiver keeps raw
+                    // arguments; a member with default/rest parameters
+                    // called that way fails the VM's exact-arity check
+                    // (loud, never silently wrong).
+                    let args = match self
+                        .new_kind(s.target())
+                        .and_then(|kind| self.method_sig(&kind, &method))
+                    {
+                        Some(sig) => self.adapt_args(&sig, args, &method, span)?,
+                        None => self.args(args)?,
+                    };
                     return Ok(CastExpr::MethodCall {
                         target: Box::new(self.expr(s.target())?),
                         method,
-                        args: self.args(args)?,
+                        args,
                         meta: m,
                     });
                 }
@@ -804,7 +852,7 @@ impl Lower<'_> {
     /// A missing plain argument is `undefined`, which crush doesn't have yet:
     /// refused. Extra arguments are evaluated and ignored in JS: dropped when
     /// that can't matter, refused otherwise.
-    fn adapt_args(
+    pub(super) fn adapt_args(
         &mut self,
         sig: &Sig,
         args: &[Expression],
