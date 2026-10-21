@@ -1,8 +1,12 @@
-# CRUSH-275 — `Load` of a program-level function name crashes at runtime
+# CRUSH-281 — `Load` of a program-level function name crashes at runtime
+
+> **Renumbered** by kai (2026-10-20) from `CRUSH-275`: that number was claimed first by PR #281 (Crush 1.0 release
+> criteria, `agent/vega/1.0-criteria`), and also by the branch `agent/nixp/CRUSH-275` (wheel CI smoke test). This ticket
+> came in with PR #283 and is already closed, so it moved rather than the open ones.
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-275 |
+| **ID** | CRUSH-281 |
 | **Priority** | P1 |
 | **Status** | Done (superseded upstream — no code change needed) |
 | **Phase** | M4 |
