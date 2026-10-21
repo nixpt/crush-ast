@@ -73,6 +73,7 @@ pub(crate) fn lookup(name: &str) -> Option<Intrinsic> {
         "__crush_neg__" | "__crush_pos__" | "__crush_bit_not__" => (1, false, false, First),
         "__crush_slice__" => (4, false, false, First),
         "__crush_setindex__" => (3, false, false, Any),
+        "__crush_deffield__" => (3, false, false, Any),
         "__crush_subscript__" => (2, false, false, Any),
         "__crush_ternary__" => (3, false, false, Branches),
         "__crush_rust_int_cast__" => (3, false, false, Int),

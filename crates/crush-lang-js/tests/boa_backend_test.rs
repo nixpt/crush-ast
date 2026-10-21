@@ -722,6 +722,57 @@ new D().make();
     assert_eq!(run_js(source), "1\n");
 }
 
+// CRUSH-285 review #6: a class field *defines* its own property — a
+// parent setter of the same name must not run for the initialiser.
+#[test]
+fn test_boa_field_defines_not_sets() {
+    let source = r#"
+class Base {
+  set v(x) { this.hidden = x * 100; }
+  get v() { return this.hidden; }
+}
+class Sub extends Base {
+  v = 5;
+  constructor() { super(); }
+}
+const s = new Sub();
+console.log(s.v);
+"#;
+    // JS: the field is an own data property (5); through the setter
+    // this would read back 500.
+    assert_eq!(run_js(source), "5\n");
+}
+
+// CRUSH-285 review #6: a field initialiser must see the outer binding
+// of a name the constructor also declares (refused, not captured), and
+// a branched `super(...)` must not run the fields before the parent
+// constructor (refused, not misplaced).
+#[test]
+fn test_boa_field_init_capture_and_branched_super_refused() {
+    assert!(
+        loud("const n = 5; class A { v = n; constructor(n) { this.n = n; } }")
+            .contains("also declares as a parameter"),
+        "field init shadowed by ctor param"
+    );
+    // Without a collision the initialiser runs (reading a top-level
+    // function here; module-level `const` reads from members are the
+    // separate CRUSH-110 wall).
+    let source = r#"
+function base() { return 5; }
+class A {
+  v = base();
+  constructor(x) { this.x = x; }
+}
+console.log(new A(1).v);
+"#;
+    assert_eq!(run_js(source), "5\n");
+    assert!(
+        loud("class B { constructor() { this.y = 1; } } class A extends B { v = 2; constructor(c) { if (c) { super(); } else { super(); } } }")
+            .contains("inside a branch"),
+        "branched super with fields"
+    );
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {

@@ -1992,6 +1992,18 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_deffield__" {
+                    // Intrinsic: define an own field on an instance,
+                    // bypassing setters (a JS class field initialiser:
+                    // [[Define]], not [[Set]]) — CRUSH-285 review #6.
+                    // args[0] = target, args[1] = name, args[2] = value
+                    if args.len() != 3 {
+                        bail!("__crush_deffield__ expects exactly 3 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    self.compile_expr(&args[2], instrs)?;
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "define_field", "argc": 3}), &meta));
                 } else if function == "__crush_rebind__" {
                     // A fresh binding holding the variable's current value
                     // (JS `for (let ..)` per-iteration copy, CRUSH-251 step

@@ -260,13 +260,15 @@ impl Lower<'_> {
         r
     }
 
-    /// `this.{name} = value` as a statement — the shape the walker's own
-    /// member assignment lowers to.
+    /// `this.{name} = value` as a field *definition* — JS class fields
+    /// use [[Define]] semantics: the field lands on the instance
+    /// directly, never through an inherited setter (CRUSH-285 review
+    /// #6). The ordinary member assignment keeps [[Set]] semantics.
     fn this_assign(&self, name: &str, value: CastExpr, span: Option<Span>) -> CastStmt {
         let m = self.meta(span);
         CastStmt::ExprStmt {
             expr: CastExpr::Call {
-                function: "__crush_setindex__".to_string(),
+                function: "__crush_deffield__".to_string(),
                 args: vec![
                     CastExpr::Var {
                         name: "this".to_string(),
@@ -435,6 +437,43 @@ impl Lower<'_> {
                 let parent_fn = parents
                     .first()
                     .map(|p| format!("{}::constructor", p.as_str()));
+                if !field_stmts.is_empty() {
+                    // A field initialiser is lowered in the class scope
+                    // but spliced into the constructor, where a
+                    // constructor parameter of the same name would
+                    // capture its reads (CRUSH-285 review #6): refuse
+                    // rather than read the parameter.
+                    let param_names: std::collections::HashSet<&str> =
+                        params.iter().map(|(n, _)| n.as_str()).collect();
+                    if let Some(name) = cast_var_names(&field_stmts)
+                        .iter()
+                        .find(|n| n.as_str() != "this" && param_names.contains(n.as_str()))
+                    {
+                        return Err(self.unsupported(
+                            format!(
+                                "a class field initialiser uses `{name}`, which the constructor also declares as a parameter (the initialiser must see the outer `{name}`)"
+                            ),
+                            span,
+                        ));
+                    }
+                    // Fields initialise right after a top-level
+                    // `super(...)` call; one inside a branch would run
+                    // them before the parent constructor (CRUSH-285
+                    // review #6): refuse.
+                    if let Some(pc) = parent_fn.as_deref() {
+                        let top_level = body.iter().any(|s| {
+                            matches!(s, CastStmt::ExprStmt { expr: CastExpr::Call { function, args, .. }, .. }
+                                if function == pc
+                                    && matches!(args.first(), Some(CastExpr::Var { name, .. }) if name == "this"))
+                        });
+                        if !top_level && cast_calls_function(&body, pc) {
+                            return Err(self.unsupported(
+                                "class fields with `super(...)` called from inside a branch (fields initialise after a top-level `super(...)` call)",
+                                span,
+                            ));
+                        }
+                    }
+                }
                 let body = inject_fields(body, parent_fn.as_deref(), field_stmts.clone());
                 self.functions.insert(
                     ctor_fn.clone(),
@@ -622,6 +661,51 @@ impl Lower<'_> {
         );
         Ok(())
     }
+}
+
+/// Names of every `Var` read in lowered statements, via the CAST JSON
+/// (the same `{"type": "Var"}` shape the frontend's scope scan walks).
+fn cast_var_names(stmts: &[CastStmt]) -> std::collections::HashSet<String> {
+    fn walk(v: &serde_json::Value, out: &mut std::collections::HashSet<String>) {
+        match v {
+            serde_json::Value::Object(o) => {
+                if o.get("type").and_then(|t| t.as_str()) == Some("Var")
+                    && let Some(n) = o.get("name").and_then(|n| n.as_str())
+                {
+                    out.insert(n.to_string());
+                }
+                o.values().for_each(|c| walk(c, out));
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|c| walk(c, out)),
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    walk(
+        &serde_json::to_value(stmts).unwrap_or(serde_json::Value::Null),
+        &mut out,
+    );
+    out
+}
+
+/// Does a lowered statement list contain a call of `function` anywhere
+/// (inside branches and expressions included)?
+fn cast_calls_function(stmts: &[CastStmt], function: &str) -> bool {
+    fn walk(v: &serde_json::Value, function: &str) -> bool {
+        match v {
+            serde_json::Value::Object(o) => {
+                (o.get("type").and_then(|t| t.as_str()) == Some("Call")
+                    && o.get("function").and_then(|f| f.as_str()) == Some(function))
+                    || o.values().any(|c| walk(c, function))
+            }
+            serde_json::Value::Array(a) => a.iter().any(|c| walk(c, function)),
+            _ => false,
+        }
+    }
+    walk(
+        &serde_json::to_value(stmts).unwrap_or(serde_json::Value::Null),
+        function,
+    )
 }
 
 /// Append `decl`, dropping any earlier member of the same name and

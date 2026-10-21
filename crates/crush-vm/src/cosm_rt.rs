@@ -1049,6 +1049,7 @@ pub fn is_index_cap(cap: &str, args: &[Value]) -> bool {
         (cap, args),
         ("arr_get", [Value::Record(_) | Value::Kind(_), _])
             | ("arr_set", [Value::Record(_) | Value::Kind(_), _, _])
+            | ("define_field", [Value::Record(_), _, _])
     )
 }
 
@@ -1080,6 +1081,13 @@ pub fn index_cap(cap: &str, args: &[Value]) -> Result<IndexAccess, VmError> {
                 MemberWrite::Done => IndexAccess::Done(rec.clone()),
                 MemberWrite::Call(call) => IndexAccess::Call { call, after: Some(rec.clone()) },
             })
+        }
+        // Define an own field, bypassing any setter (a JS class field
+        // initialiser is [[Define]], not [[Set]]) — CRUSH-285 review #6.
+        ("define_field", [Value::Record(r), key, v]) => {
+            let key = crate::map_ops::map_key_string(key)?;
+            r.set_field(&key, v.clone())?;
+            Ok(IndexAccess::Done(Value::Record(r.clone())))
         }
         _ => Err(VmError::UnknownCap(cap.to_string())),
     }
