@@ -108,14 +108,35 @@ impl Kind {
         self.statics.borrow().get(name).cloned()
     }
 
-    /// A class-level value along the resolution order: this Kind's own
-    /// write wins, then the nearest ancestor's (JS: `B.n` reads `A.n`
-    /// until `B` writes its own).
-    fn static_in_chain(&self, name: &str) -> Option<Value> {
-        self.chain
-            .borrow()
-            .iter()
-            .find_map(|k| k.static_value(name))
+    /// A class-level value along the resolution order, walking the
+    /// chain once: the first Kind that either wrote `name` at run time
+    /// or declares it as a static wins. An ancestor's run-time write
+    /// must not shadow a nearer Kind's own declared static (JS: `B.n`
+    /// is `B`'s own `static n = 1` even after `A.n = 5`); an ancestor's
+    /// write *is* read when no nearer Kind declares the name (JS:
+    /// `B.n` reads `A.n` until `B` writes its own).
+    fn static_in_chain(&self, name: &str) -> Result<Option<Value>, VmError> {
+        for k in self.chain.borrow().iter() {
+            if let Some(v) = k.static_value(name) {
+                return Ok(Some(v));
+            }
+            if let Some(m) = k.decl().member(name) {
+                match &m.member {
+                    Member::Static { value: StaticValue::Const(c) } => {
+                        return Ok(Some(const_value(c)));
+                    }
+                    Member::Static { value: StaticValue::Fn(f) } => {
+                        return Ok(Some(func_value(
+                            f,
+                            self.arity_of(f.as_str())?,
+                            Vec::new(),
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Write a class-level value (`C.x = v`).
@@ -677,11 +698,12 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
         Value::Kind(k) => (k.clone(), None),
         other => return Err(VmError::TypeError { expected: "record", got: other.type_name() }),
     };
-    // A class-level value written at run time shadows the declaration,
-    // and is read through the chain until a nearer Kind writes its own
-    // (CRUSH-285 review #3).
+    // A class-level value: the chain walk stops at the first Kind
+    // holding the name, whether by run-time write or by declaration
+    // (CRUSH-285 review #3, re-review: a nearer declaration beats an
+    // ancestor's write).
     if recv.is_none()
-        && let Some(v) = kind.static_in_chain(name)
+        && let Some(v) = kind.static_in_chain(name)?
     {
         return Ok(MemberRead::Done(v));
     }

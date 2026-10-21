@@ -245,7 +245,7 @@ impl Lower<'_> {
             | ExportDeclaration::DefaultAsyncFunctionDeclaration(_)
             | ExportDeclaration::DefaultAsyncGeneratorDeclaration(_)
             | ExportDeclaration::DefaultClassDeclaration(_) => Err(self.unsupported(
-                "exporting a class, generator or async declaration",
+                "exporting a generator or async declaration, or a default-exported declaration",
                 None,
             )),
         }

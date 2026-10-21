@@ -1996,6 +1996,12 @@ impl Compiler {
                     // Intrinsic: define an own field on an instance,
                     // bypassing setters (a JS class field initialiser:
                     // [[Define]], not [[Set]]) — CRUSH-285 review #6.
+                    // NOTE (re-review): this rides a `cap_call`, so a
+                    // host running with an `allowed_caps` list must
+                    // grant `define_field` or class fields are denied;
+                    // it is VM-internal dispatch (cosm_rt::index_cap),
+                    // never a host capability. Promoting it to a real
+                    // op is the fix if that ever bites.
                     // args[0] = target, args[1] = name, args[2] = value
                     if args.len() != 3 {
                         bail!("__crush_deffield__ expects exactly 3 arguments");
@@ -2356,6 +2362,31 @@ impl Compiler {
                         meta,
                     ));
                 } else {
+                    // A walker-marked member call (CRUSH-285 review #4,
+                    // re-review) must never reach a capability grant
+                    // below — not even when the receiver isn't in
+                    // `declared_vars` here. It resolves only as an exact
+                    // member call on a declared receiver; anything else
+                    // is a missing method (or a field holding a
+                    // function, CRUSH-zorro-44), refused outright.
+                    if meta.get("member_call").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        let resolves = name.find('.').is_some_and(|pos| {
+                            self.declared_vars.contains(&name[..pos])
+                                && (self.receiver_methods.contains(&name[pos + 1..])
+                                    || (&name[pos + 1..] == "clone"
+                                        && self
+                                            .cosm
+                                            .as_ref()
+                                            .is_some_and(|m| !m.kinds.is_empty())))
+                        });
+                        if !resolves {
+                            let (obj_name, method) =
+                                name.split_once('.').unwrap_or((name.as_str(), ""));
+                            bail!(
+                                "`{obj_name}.{method}(...)`: no method `{method}` on the receiver's class"
+                            );
+                        }
+                    }
                     // Check for method-call syntax: obj.method(args)
                     // Parser emits CapabilityCall { name: "obj.method", args } for this.
                     // Only split when the receiver (obj) is a declared variable —
@@ -2385,17 +2416,10 @@ impl Compiler {
                             ));
                             return Ok(());
                         }
-                        if meta.get("member_call").and_then(|v| v.as_bool()).unwrap_or(false) {
-                            // A walker resolved this receiver as an
-                            // object whose members it knows (CRUSH-285
-                            // review #4): a name that isn't a member is
-                            // a missing method (or a field holding a
-                            // function, CRUSH-zorro-44) — never a host
-                            // capability to grant after the method.
-                            bail!(
-                                "`{obj_name}.{method}(...)`: no method `{method}` on the receiver's class"
-                            );
-                        }
+                        // Marked member calls were already resolved
+                        // (or refused) ahead of the `is_method_call`
+                        // split; only the parser's unmarked idiom
+                        // reaches this grant.
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
                         // Push args in order: the receiver is already on the stack, then each

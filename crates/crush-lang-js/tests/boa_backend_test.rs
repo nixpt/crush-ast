@@ -583,6 +583,19 @@ fn run_js_err(source: &str) -> String {
         .to_string()
 }
 
+/// Compile like `run_js` but run on the portable VM.
+fn run_js_portable(source: &str) -> Result<String, String> {
+    let program = test_lower(source);
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+    let json = casm.serialize(casm::Format::Json).unwrap();
+    let casm = casm::Program::deserialize(&json, casm::Format::Json).unwrap();
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let loaded = crush_vm::Program::from_blob(&vm.to_blob()).unwrap();
+    let mut vm = crush_vm::PortableVm::new(loaded);
+    vm.set_quotas(crush_vm::Quotas::default());
+    vm.run().map(|r| r.output).map_err(|e| e.to_string())
+}
+
 // CRUSH-285 review #1: accessors run as ordinary calls on the running
 // thread — a self-reading getter hits the call-depth quota (a VmError,
 // never a native stack overflow), and a getter's throw is caught by the
@@ -609,6 +622,34 @@ try {
 console.log("after");
 "#;
     assert_eq!(run_js(source), "caught\nafter\n");
+}
+
+// CRUSH-285 re-review: the same accessor guarantees on the portable VM —
+// recursion is a call-depth VmError, a looping getter burns the step
+// quota, and a throwing getter is caught by the program's `try`.
+#[test]
+fn test_boa_accessor_recursion_and_throw_portable() {
+    let err = run_js_portable(
+        "class C { get x() { return this.x; } } console.log(new C().x);",
+    )
+    .unwrap_err();
+    assert!(err.contains("call depth"), "portable recursive getter: {err}");
+    let err = run_js_portable(
+        "class C { get x() { for (;;) { } } } console.log(new C().x);",
+    )
+    .unwrap_err();
+    assert!(err.contains("instruction quota"), "portable looping getter: {err}");
+    let source = r#"
+class C { get x() { throw "boom"; } }
+const c = new C();
+try {
+  console.log(c.x);
+} catch (e) {
+  console.log("caught");
+}
+console.log("after");
+"#;
+    assert_eq!(run_js_portable(source).unwrap(), "caught\nafter\n");
 }
 
 // CRUSH-285 review #2: an instance bound in a block (a renamed, block
@@ -641,6 +682,35 @@ for (let i = 0; i < 2; i++) {
 }
 "#;
     assert_eq!(run_js(source), "0\n1\n");
+}
+
+// CRUSH-285 re-review (statics): the chain walk stops at the first
+// class holding the name — a nearer class's own declared static beats
+// an ancestor's run-time write, while a class that declares nothing
+// still reads the ancestor's write.
+#[test]
+fn test_boa_statics_declared_shadows_ancestor_write() {
+    let source = r#"
+class A { static n = 0; }
+class B extends A { static n = 1; }
+class C extends A { }
+A.n = 5;
+console.log(B.n);
+console.log(C.n);
+B.n = 7;
+console.log(B.n);
+console.log(A.n);
+"#;
+    assert_eq!(run_js(source), "1\n5\n7\n5\n");
+    // Same for a declared static method shadowed by an ancestor write
+    // of a data value: the declaration wins.
+    let source = r#"
+class A { }
+class B extends A { static m() { return 42; } }
+A.m = 0;
+console.log(B.m());
+"#;
+    assert_eq!(run_js(source), "42\n");
 }
 
 // CRUSH-285 review #4: calling a method the class doesn't have is a
@@ -1018,15 +1088,26 @@ fn test_boa_exported_function_is_hoisted_with_its_body() {
     );
 }
 
-// Exported declarations that still have no lowering stay loud (classes wait
-// for COSM; async/generators match the bare-declaration refusals).
+// Since CRUSH-277 an exported class lowers (it emits its KindDecl plus
+// the export) and runs end-to-end; exported async/generator declarations
+// stay loud, matching the bare-declaration refusals.
 #[test]
-fn test_boa_exported_class_and_async_stay_loud() {
-    // Since CRUSH-277 an exported class lowers (it emits its KindDecl
-    // plus the export); exported async declarations stay loud.
+fn test_boa_exported_class_runs_and_async_stays_loud() {
     let program = test_lower("export class Foo {}");
     assert!(program.cosm.is_some(), "exported class emits its kind");
-    assert!(loud("export async function f() {}").contains("exporting a class, generator or async declaration"));
+    let source = r#"
+export class Counter {
+  constructor() { this.n = 41; }
+  bump() { return this.n + 1; }
+}
+console.log(new Counter().bump());
+"#;
+    assert_eq!(run_js(source), "42\n", "exported class compiles and runs");
+    assert!(
+        loud("export async function f() {}")
+            .contains("exporting a generator or async declaration"),
+        "async export refusal names what is refused"
+    );
 }
 
 // CRUSH-266 (boa path, end-to-end): the exported function is callable from
