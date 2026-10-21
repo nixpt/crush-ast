@@ -94,4 +94,8 @@ pub enum Error {
     /// The version-3 kind-table section (COSM K1.3) is malformed.
     #[error("malformed kind table: {0}")]
     BadKindTable(String),
+    /// The code section holds a byte that isn't an opcode of this
+    /// format version (found while validating at load).
+    #[error("unknown opcode {0:#04x} at code offset {1}")]
+    UnknownOpcode(u8, usize),
 }

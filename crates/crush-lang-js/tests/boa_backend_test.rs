@@ -773,6 +773,35 @@ console.log(new A(1).v);
     );
 }
 
+// CRUSH-285 review #7: builtin method rows keep first claim on
+// member-access receivers (the pre-S5 compile-time behaviour), while
+// `new C()` results still resolve their Kind methods at run time.
+#[test]
+fn test_boa_member_receiver_builtins_and_kind_calls() {
+    // A `new` result's Kind method wins over the builtin row of the
+    // same name (the Map `get` row must not capture it).
+    let source = r#"
+class P {
+  get() { return 42; }
+}
+console.log(new P().get());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // A planned builtin on a call-result receiver refuses at walk time.
+    assert!(
+        loud("function f() { return [1]; } console.log(f().map((x) => x));")
+            .contains("zorro-20"),
+        "HOF on call result stays a walk-time refusal"
+    );
+    // And a receiver-shaped builtin on a member receiver refuses at
+    // walk time too (not as a run-time member error after output).
+    assert!(
+        loud("class C { items = []; add(x) { this.items.push(x); } }")
+            .contains("anything but a plain name"),
+        "push on a member receiver stays a walk-time refusal"
+    );
+}
+
 // CRUSH-277 S3: `new`, `this` and method calls, end to end.
 #[test]
 fn test_boa_new_this_and_method_calls_run() {

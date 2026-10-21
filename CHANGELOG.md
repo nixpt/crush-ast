@@ -14,6 +14,22 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **CASM/CVM1 versioning (CRUSH-277/278/280, CRUSH-285 review):** every
+  program's CASM is now stamped with the current format version
+  (CRUSH-278) — this applies to *all* programs, not only ones using
+  classes. CVM1 gained the `LOAD_KIND` opcode (`0xCB`) and the blob
+  loader now validates the code section at load time: a byte that
+  isn't an opcode of the format is refused while loading
+  (`unknown opcode … at code offset …`) instead of surfacing
+  mid-execution. Blobs written by older versions still load.
+- **JS classes (CRUSH-277, boa walker):** classes, `new`, `this`,
+  methods, `extends`/`super`, accessors, class fields and statics run
+  on the COSM prototype-chain VMs (scheduler + portable). Accessors
+  execute as ordinary calls on the running thread (the CRUSH-285
+  review): the caller's step/call-depth quotas and `try`/`catch`
+  apply to them. Default and rest parameters work on constructors,
+  methods and statics (CRUSH-280).
+
 ## [0.7.1] - 2026-10-20
 
 - Merge pull request #282 from nixpt/agent/vega/fix-bump-aliased-deps

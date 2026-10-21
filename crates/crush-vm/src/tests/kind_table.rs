@@ -81,6 +81,20 @@ fn old_blobs_without_the_section_still_load() {
 }
 
 #[test]
+fn an_unknown_opcode_is_refused_at_load() {
+    // CRUSH-285 review #8: code bytes are validated while loading, so a
+    // byte that isn't an opcode never reaches an executor (where it
+    // could desync instruction boundaries, or NOP on a backend that
+    // skips unknown bytes).
+    let mut blob = old_blob(2);
+    let code_at = blob.len() - 10; // the `old_blob` code section
+    blob[code_at] = 0xFE;
+    assert!(crate::bytecode::instruction_size(0xFE).is_none());
+    let e = Program::from_blob(&blob).unwrap_err().to_string();
+    assert!(e.contains("unknown opcode"), "{e}");
+}
+
+#[test]
 fn a_v3_blob_must_carry_a_well_formed_section() {
     let good = program_with(Some(point_module())).to_blob();
     let v2_len = program_with(None).to_blob().len();

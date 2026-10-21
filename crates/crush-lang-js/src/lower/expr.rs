@@ -718,12 +718,12 @@ impl Lower<'_> {
                 }
                 // `new P(4).get2()`, `f().m(…)`: a method call on a
                 // computed receiver resolves on its Kind at run time
-                // (CRUSH-277 S5), ahead of the builtin table — a value
-                // produced by `new`, a call or a member read carries its
-                // own methods (a host value errors loudly there instead).
-                // Literal receivers keep the builtin rows (`[1, 2].push(…)`,
-                // `"a,b".split(…)`), and bare identifiers stay with the
-                // conservative cases above (D4).
+                // (CRUSH-277 S5) — a value produced by `new`, a call or a
+                // member read carries its own methods (a host value
+                // errors loudly there instead). Literal receivers keep
+                // the builtin rows (`[1, 2].push(…)`, `"a,b".split(…)`),
+                // and bare identifiers stay with the conservative cases
+                // above (D4).
                 if !matches!(
                     unparen(s.target()),
                     Expression::Identifier(_)
@@ -733,6 +733,23 @@ impl Lower<'_> {
                         | Expression::Literal(_)
                         | Expression::TemplateLiteral(_)
                 ) {
+                    // A member-access or call-result receiver
+                    // (`this.items.push(x)`, `f().map(g)`): the builtin
+                    // rows keep first claim, as they had before computed
+                    // receivers lowered at all (CRUSH-285 review #7) —
+                    // their refusals (the planned HOF rows) stay at walk
+                    // time instead of surfacing as run-time member
+                    // errors. A `new C()` result goes straight to the
+                    // run-time member call: only a class instance
+                    // carries Kind methods, and a builtin name (a Map's
+                    // `get`) must not capture it.
+                    if matches!(
+                        unparen(s.target()),
+                        Expression::PropertyAccess(_) | Expression::Call(_)
+                    ) && let Some(row) = builtins::method(&method)
+                    {
+                        return self.builtin(row, Some(s.target()), args, statement, span, m);
+                    }
                     return Ok(CastExpr::MethodCall {
                         target: Box::new(self.expr(s.target())?),
                         method,

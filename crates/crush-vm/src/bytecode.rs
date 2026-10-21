@@ -522,6 +522,22 @@ impl Program {
         }
         let code = blob[off..off + code_len].to_vec();
         off += code_len;
+        // Validate the code section at load (CRUSH-285 review #8): every
+        // byte must start an instruction of this format, so an unknown
+        // opcode is refused here — never discovered mid-execution,
+        // where it could desync instruction boundaries (or NOP on a
+        // backend that skips unknown bytes).
+        {
+            let mut pc = 0usize;
+            while pc < code.len() {
+                let size = instruction_size(code[pc])
+                    .ok_or(crate::Error::UnknownOpcode(code[pc], pc))?;
+                pc += size;
+            }
+            if pc != code.len() {
+                return Err(crate::Error::Truncated);
+            }
+        }
         let cosm = if version >= VERSION_KIND_TABLE {
             if off >= blob.len() {
                 return Err(crate::Error::Truncated);
