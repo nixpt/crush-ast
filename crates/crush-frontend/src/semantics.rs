@@ -689,6 +689,13 @@ impl SemanticAnalyzer {
                 }
                 Ok(self.capability_return_type(name))
             }
+            Expression::MethodCall { target, args, .. } => {
+                self.check_expr(target)?;
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(Type::Any)
+            }
             // `!x` is always a bool (the VM negates truthiness, so the operand
             // may be anything); `-x` keeps a numeric operand's type. Falling
             // through to `Any` made `if !is_digit(c)` a type error once
@@ -1041,7 +1048,15 @@ fn collect_called_in_expr<'a>(expr: &'a Expression, out: &mut Vec<&'a str>) {
             collect_called_in_expr(right, out);
         }
         Expression::UnaryOp { operand, .. } => collect_called_in_expr(operand, out),
-        Expression::CapabilityCall { args, .. } | Expression::VectorMath { args, .. } => {
+        Expression::CapabilityCall { args, .. }
+        | Expression::VectorMath { args, .. }
+        | Expression::Construct { args, .. } => {
+            for arg in args {
+                collect_called_in_expr(arg, out);
+            }
+        }
+        Expression::MethodCall { target, args, .. } => {
+            collect_called_in_expr(target, out);
             for arg in args {
                 collect_called_in_expr(arg, out);
             }

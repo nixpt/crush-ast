@@ -52,8 +52,11 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
     ("builtin_map_set", "CRUSH-zorro-17: Map/Set"),
     ("builtin_math", "CRUSH-zorro-17: variadic Math.max"),
     ("builtin_number_conv", "CRUSH-zorro-17: parseInt/Number/String/toFixed"),
+    ("class_accessor", "out of scope: classes (CRUSH-251 object model)"),
     ("class_basic", "out of scope: classes (CRUSH-251 object model)"),
     ("class_extends", "out of scope: classes (CRUSH-251 object model)"),
+    ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
+    ("class_static", "out of scope: classes (CRUSH-251 object model)"),
     ("ctrl_finally", "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet"),
     ("ctrl_for_in", "CRUSH-zorro-16: for-in (+ join, CRUSH-zorro-15)"),
     ("ctrl_for_in_array", "CRUSH-zorro-23: `for-in` over an array/string is not supported by the JS walker yet"),
@@ -96,6 +99,11 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
 /// Programs the boa lowering (CRUSH-250) runs exactly that the swc lowering
 /// can't: on boa they are expected to match, not to be loud.
 const BOA_FIXED: &[(&str, &str)] = &[
+    ("class_accessor", "get/set accessors on COSM (CRUSH-277)"),
+    ("class_basic", "classes, `new` and `this` on COSM (CRUSH-277)"),
+    ("class_extends", "`extends` + `super.m()` on COSM (CRUSH-277)"),
+    ("class_fields", "class fields (D7 injection) on COSM (CRUSH-277)"),
+    ("class_static", "static members on COSM (CRUSH-277)"),
     ("arr_push_loop_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
     ("arr_push_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
     ("fn_default_param", "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)"),

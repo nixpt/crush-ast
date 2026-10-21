@@ -15,9 +15,11 @@
 //!
 //! Everything else follows `lower_swc.rs` (statement shapes, the `js.*`
 //! capabilities, CRUSH-251 block bindings) so the parity harness can compare
-//! the two. Classes, `new` and `this` stay loud until COSM's JS slice.
+//! the two. Classes lower to COSM (CRUSH-277 S1, [`class`]); `new` and a
+//! `this` outside a class method stay loud until S3.
 
 mod builtins;
+mod class;
 mod expr;
 mod scope;
 mod stmt;
@@ -65,6 +67,34 @@ pub(crate) struct Lower<'a> {
     scopes: Scopes,
     /// Top-level `function` declarations: their own crush functions.
     functions: HashMap<String, Function>,
+    /// COSM kinds declared by JS classes (CRUSH-277 S1), in declaration
+    /// order; they ride out in `Program::cosm`.
+    kinds: Vec<crush_cosm::KindDecl>,
+    /// Whether `this` names a receiver here: directly inside a class
+    /// method, constructor or accessor (CRUSH-277 D2). Entering any other
+    /// function clears it — a nested function's `this` is its own, and an
+    /// arrow function's lexical `this` isn't lowered yet.
+    this_bound: bool,
+    /// The parent constructor function (`Parent::constructor`) of the
+    /// class whose constructor is being lowered, for `super(...)`
+    /// (CRUSH-277 S3). Set only around a constructor body.
+    super_ctor: Option<String>,
+    /// Bindings this module itself bound with `new C()` (C a declared
+    /// class), so their method calls lower to member calls (CRUSH-277
+    /// D4). Cleared at every function boundary: an instance flowing in
+    /// as a parameter or a capture isn't tracked (CRUSH-zorro-44's
+    /// general problem).
+    instance_vars: std::collections::HashSet<String>,
+    /// The class whose method/constructor body is being lowered (its
+    /// JS [[HomeObject]]), for `super.m()` (CRUSH-277 S5). Set only
+    /// around a class member's body, never across a function boundary.
+    home_class: Option<String>,
+    /// Whether the member being lowered is a static one (its `super.m()`
+    /// resolves to the parent's statics).
+    in_static: bool,
+    /// Class hierarchy within this module: child kind → parent kind, for
+    /// resolving `super.m()` starting after the home class.
+    class_parents: HashMap<String, String>,
     /// Source of unique ids for hidden locals (`__sw_val_N`, ...).
     next_id: u32,
     /// The script's top-level `function` names: globals, not captures.
@@ -80,6 +110,13 @@ impl<'a> Lower<'a> {
             ctx,
             scopes: Scopes::default(),
             functions: HashMap::new(),
+            kinds: Vec::new(),
+            this_bound: false,
+            super_ctor: None,
+            instance_vars: Default::default(),
+            home_class: None,
+            in_static: false,
+            class_parents: HashMap::new(),
             toplevel_fns: Default::default(),
             toplevel_sigs: HashMap::new(),
             next_id: 0,
@@ -165,12 +202,20 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
             },
         );
     }
+    // The object-side sibling of `functions` (CRUSH-277 S1): the classes
+    // this program declares, as COSM. Absent when it declares none, so a
+    // class-less program's CAST is unchanged.
+    let cosm = (!lower.kinds.is_empty()).then(|| crush_cosm::CosmModule {
+        kinds: std::mem::take(&mut lower.kinds),
+        interfaces: Vec::new(),
+    });
     Ok(Program {
         cast_version: "0.2".to_string(),
         entry: "main".to_string(),
         lang: Some("javascript".to_string()),
         functions,
         ai_meta: None,
+        cosm,
         ..Default::default()
     })
 }

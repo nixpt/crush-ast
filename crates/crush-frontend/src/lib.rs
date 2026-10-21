@@ -81,8 +81,10 @@ pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program>
 
 /// Compile a CAST Program and also return its COSM module (COSM K1.2,
 /// CRUSH-zorro-41): the `KindDecl`s / `InterfaceDecl`s its `struct` /
-/// `impl` / `trait` / `@kind(…)` declarations lower to, validated. `None` for
-/// a program that declares none of them.
+/// `impl` / `trait` / `@kind(…)` declarations lower to, validated — merged
+/// with any module the walker supplied in `Program::cosm` (CRUSH-277 S1;
+/// a name both sides declare is an error). `None` for a program that
+/// declares none of them.
 ///
 /// The CASM program carries the same module as its kind table
 /// (`casm::Program::cosm`, COSM K1.3, CRUSH-zorro-42); its functions include
@@ -90,7 +92,9 @@ pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program>
 pub fn compile_cast_with_cosm(
     mut program: crush_cast::Program,
 ) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
-    let cosm = cosm_lower::lower(&mut program)?;
+    let walker_cosm = program.cosm.take();
+    let derived_cosm = cosm_lower::lower(&mut program)?;
+    let cosm = cosm_lower::merge_walker_module(walker_cosm, derived_cosm)?;
     let mut sema = semantics::SemanticAnalyzer::new();
     if let Some(module) = &cosm {
         sema.declare_constructors(module, &program);

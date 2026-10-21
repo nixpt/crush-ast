@@ -225,6 +225,12 @@ impl Lower<'_> {
                 let value = self.lambda(f.parameters(), f.body(), Some(f.name().span()))?;
                 Ok(vec![export(self, "default".to_string(), value)])
             }
+            ExportDeclaration::Declaration(Declaration::ClassDeclaration(c)) => {
+                let mut out = self.class_decl(c)?;
+                let name = self.resolve(c.name().sym());
+                out.push(export(self, name.clone(), var(self, name)));
+                Ok(out)
+            }
             ExportDeclaration::ReExport { .. } => {
                 Err(self.unsupported("a re-export (`export … from …`)", None))
             }
@@ -239,7 +245,7 @@ impl Lower<'_> {
             | ExportDeclaration::DefaultAsyncFunctionDeclaration(_)
             | ExportDeclaration::DefaultAsyncGeneratorDeclaration(_)
             | ExportDeclaration::DefaultClassDeclaration(_) => Err(self.unsupported(
-                "exporting a class, generator or async declaration",
+                "exporting a generator or async declaration, or a default-exported declaration",
                 None,
             )),
         }
@@ -263,9 +269,78 @@ impl Lower<'_> {
         declared: bool,
     ) -> anyhow::Result<LoweredFn> {
         self.scopes.enter_fn();
+        // A nested function's `this` is its own (an arrow's would be the
+        // enclosing method's — not lowered yet), never the method's
+        // receiver (CRUSH-277 D2). `super(...)` and the instance
+        // bindings of the enclosing function don't cross either (S3).
+        let saved = std::mem::replace(&mut self.this_bound, false);
+        let saved_super = self.super_ctor.take();
+        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let saved_home = self.home_class.take();
+        let saved_static = std::mem::replace(&mut self.in_static, false);
         let r = self.function_in_scope(params, body, span, declared);
+        self.this_bound = saved;
+        self.super_ctor = saved_super;
+        self.instance_vars = saved_instances;
+        self.home_class = saved_home;
+        self.in_static = saved_static;
         self.scopes.leave_fn();
         r
+    }
+
+    /// A class method, constructor or accessor body (CRUSH-277 D2): like a
+    /// function expression, but `this` is bound — the receiver the VM
+    /// passes as a method's leading argument — so it becomes the first
+    /// CAST parameter, and `this` expressions read it. Methods keep the
+    /// function-expression restrictions (no default/rest parameters yet).
+    pub(super) fn method_function(
+        &mut self,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+        span: Option<Span>,
+    ) -> anyhow::Result<LoweredFn> {
+        self.scopes.enter_fn();
+        let saved = std::mem::replace(&mut self.this_bound, true);
+        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let r = self.function_in_scope(params, body, span, false);
+        self.this_bound = saved;
+        self.instance_vars = saved_instances;
+        self.scopes.leave_fn();
+        let (mut lowered_params, body) = r?;
+        lowered_params.insert(0, ("this".to_string(), CastType::Any));
+        Ok((lowered_params, body))
+    }
+
+    /// A static method body (CRUSH-277 D8): the VM calls a static with no
+    /// receiver, so its parameters are the plain CAST parameters;
+    /// `this` in JS is the class itself, bound here as a local to the
+    /// class's kind value. (An inherited static's `this` is therefore the
+    /// defining class, not the subclass it was called through.)
+    pub(super) fn static_function(
+        &mut self,
+        kind: &str,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+        span: Option<Span>,
+    ) -> anyhow::Result<LoweredFn> {
+        self.scopes.enter_fn();
+        let saved = std::mem::replace(&mut self.this_bound, true);
+        let saved_super = self.super_ctor.take();
+        let saved_instances = std::mem::take(&mut self.instance_vars);
+        let saved_static = std::mem::replace(&mut self.in_static, true);
+        let r = self.function_in_scope(params, body, span, false);
+        self.this_bound = saved;
+        self.super_ctor = saved_super;
+        self.instance_vars = saved_instances;
+        self.in_static = saved_static;
+        self.scopes.leave_fn();
+        let (lowered_params, mut lowered_body) = r?;
+        let this_value = CastExpr::Var {
+            name: kind.to_string(),
+            meta: self.meta(span),
+        };
+        lowered_body.insert(0, self.var_decl_stmt("this".to_string(), this_value, false, span));
+        Ok((lowered_params, lowered_body))
     }
 
     fn function_in_scope(
@@ -577,9 +652,11 @@ impl Lower<'_> {
             Declaration::AsyncGeneratorDeclaration(f) => {
                 Err(self.unsupported("an async generator", Some(f.name().span())))
             }
-            Declaration::ClassDeclaration(_) => {
-                Err(self.unsupported("a class (waits for the COSM object model)", None))
-            }
+            // The class itself rides in `Program::cosm` and its methods in
+            // `Program::functions` (CRUSH-277 S1); materialising the class
+            // name as a value is S3, and nothing runs until the VM slice
+            // (S2) lifts the prototype-chain gate.
+            Declaration::ClassDeclaration(c) => self.class_decl(c),
         }
     }
 
@@ -619,8 +696,13 @@ impl Lower<'_> {
             );
         };
         let name = self.resolve(id.sym());
+        // `const c = new Counter()`: the binding holds an instance, so
+        // `c.m()` lowers to a member call (CRUSH-277 D4).
+        if v.init().is_some_and(|init| self.is_new_of_kind(init)) {
+            self.instance_vars.insert(name.clone());
+        }
         let span = v.init().map(Spanned::span);
-        let value = match v.init() {
+        let mut value = match v.init() {
             Some(init) => self.expr(init)?,
             // `var x;` is hoisted (see `uninit_vars`): running it again, in a
             // loop or after an assignment, must not reset `x`.
@@ -629,6 +711,22 @@ impl Lower<'_> {
                 meta: self.meta(span),
             },
         };
+        // `const C = class { … }`: the initializer is the class itself,
+        // which the compiler reads by kind name (CRUSH-277 D8) — but it
+        // counts the binding declared while compiling the initializer, so
+        // a direct read would load the uninitialised binding. Go through
+        // a hidden temporary the binding can't shadow.
+        let mut prefix = Vec::new();
+        if v.init().is_some_and(|init| matches!(unparen(init), Expression::ClassExpression(_)))
+            && matches!(&value, CastExpr::Var { name: n, .. } if n == &name)
+        {
+            let temp = self.hidden(&format!("{name}__class"));
+            prefix.push(self.var_decl_stmt(temp.clone(), value, block, span));
+            value = CastExpr::Var {
+                name: temp,
+                meta: self.meta(span),
+            };
+        }
         if block && self.scopes.is_predeclared(id.sym()) {
             // Created on entry to the scope (`predeclare`): assign it.
             let m = self.meta(span);
@@ -641,9 +739,11 @@ impl Lower<'_> {
                 args: vec![target, value],
                 meta: m.clone(),
             };
-            return Ok(vec![CastStmt::ExprStmt { expr, meta: m }]);
+            prefix.push(CastStmt::ExprStmt { expr, meta: m });
+            return Ok(prefix);
         }
-        Ok(vec![self.var_decl_stmt(name, value, block, span)])
+        prefix.push(self.var_decl_stmt(name, value, block, span));
+        Ok(prefix)
     }
 
     /// `x = null` at the start of a function for each `var x;` without an

@@ -297,7 +297,13 @@ impl Compiler {
     /// Compile a CAST program to CASM. `impl` / `trait` declarations are
     /// lowered to COSM first (see [`Compiler::cosm_module`]).
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
-        let cosm = crate::cosm_lower::lower(&mut program)?;
+        // A walker-supplied COSM module rides on the CAST program
+        // (CRUSH-277 S1); merge it with what the surface syntax declares
+        // rather than dropping it — the same merge `compile_cast_with_cosm`
+        // performs.
+        let walker_cosm = program.cosm.take();
+        let derived_cosm = crate::cosm_lower::lower(&mut program)?;
+        let cosm = crate::cosm_lower::merge_walker_module(walker_cosm, derived_cosm)?;
         self.compile_lowered(program, cosm)
     }
 
@@ -334,7 +340,10 @@ impl Compiler {
         let mut debug_info = DebugInfo::new();
         let mut source_files: HashMap<String, usize> = HashMap::new();
         let mut casm_program = CasmProgram::new();
-        casm_program.version = program.cast_version;
+        // The CASM `version` is the CASM schema version, not the CAST one:
+        // a walker's CAST carries `cast_version` "0.2", which the CASM
+        // load gate (VER-02) would refuse on any round trip (CRUSH-278).
+        casm_program.version = casm::CASM_VERSION.to_string();
         casm_program.lang = program.lang;
         // COSM K1.3 (CRUSH-zorro-42): the kind table travels with the program.
         casm_program.cosm = self.cosm.clone();
@@ -1656,12 +1665,24 @@ impl Compiler {
             }
             Expression::Var { name, meta } => {
                 let outer = self.lambda_outer_vars.iter().any(|o| o.contains(name.as_str()));
+                let declared = self.declared_vars.contains(name.as_str());
                 match self.function_arity.get(name.as_str()) {
                     // A function's name used as a value (`apply(fib, 3)`).
-                    Some(&arity) if !self.declared_vars.contains(name.as_str()) && !outer => {
+                    Some(&arity) if !declared && !outer => {
                         instrs.push(self.create_instr(
                             "make_closure",
                             serde_json::json!({"function": name, "arity": arity, "ncap": 0}),
+                            meta,
+                        ));
+                    }
+                    // A class name used as a value (CRUSH-277 D8): JS
+                    // `const K = Counter`, a class passed to a function,
+                    // `Counter` exported. A local of the same name (a
+                    // declared var, a capture) shadows it, as in JS.
+                    _ if !declared && !outer && self.kind(name).is_some() => {
+                        instrs.push(self.create_instr(
+                            "load_kind",
+                            serde_json::json!({"kind": name}),
                             meta,
                         ));
                     }
@@ -1727,6 +1748,25 @@ impl Compiler {
                     _ => bail!("Unsupported op: {}", operator),
                 };
                 instrs.push(self.create_typed_instr(opcode, meta)?);
+            }
+            Expression::Construct { kind, args, meta } => {
+                // CRUSH-277 D3: `new C(…)` from a walker. The Kind must be
+                // one the program's COSM declares — a walker naming a kind
+                // it didn't declare is a compile error, not a runtime one.
+                if self.kind(kind).is_none() {
+                    bail!(
+                        "line {}: `new {kind}(…)` constructs a kind the program doesn't declare",
+                        meta.get("line").and_then(|v| v.as_u64()).unwrap_or(0)
+                    );
+                }
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                instrs.push(self.create_instr(
+                    "construct",
+                    serde_json::json!({"kind": kind, "argc": args.len()}),
+                    meta,
+                ));
             }
             Expression::Call {
                 function,
@@ -1952,6 +1992,24 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_deffield__" {
+                    // Intrinsic: define an own field on an instance,
+                    // bypassing setters (a JS class field initialiser:
+                    // [[Define]], not [[Set]]) — CRUSH-285 review #6.
+                    // NOTE (re-review): this rides a `cap_call`, so a
+                    // host running with an `allowed_caps` list must
+                    // grant `define_field` or class fields are denied;
+                    // it is VM-internal dispatch (cosm_rt::index_cap),
+                    // never a host capability. Promoting it to a real
+                    // op is the fix if that ever bites.
+                    // args[0] = target, args[1] = name, args[2] = value
+                    if args.len() != 3 {
+                        bail!("__crush_deffield__ expects exactly 3 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    self.compile_expr(&args[2], instrs)?;
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "define_field", "argc": 3}), &meta));
                 } else if function == "__crush_rebind__" {
                     // A fresh binding holding the variable's current value
                     // (JS `for (let ..)` per-iteration copy, CRUSH-251 step
@@ -2218,6 +2276,22 @@ impl Compiler {
                 }
                 instrs.push(self.create_instr(operator, serde_json::json!({}), meta));
             }
+            Expression::MethodCall { target, method, args, meta } => {
+                // CRUSH-277 S5: a method call on a computed receiver: the
+                // member resolves on the receiver's Kind at run time
+                // (`call_member`: arguments last-first, the receiver on
+                // top) — the same convention the dotted `CapabilityCall`
+                // path uses for named variables.
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                self.compile_expr(target, instrs)?;
+                instrs.push(self.create_instr(
+                    "call_member",
+                    serde_json::json!({"name": method, "argc": args.len()}),
+                    meta,
+                ));
+            }
             Expression::CapabilityCall { name, args, meta } => {
                 // Walkers resolve method receivers before emitting named caps.
                 // Only unresolved parser calls need the `obj.method` heuristic.
@@ -2288,6 +2362,31 @@ impl Compiler {
                         meta,
                     ));
                 } else {
+                    // A walker-marked member call (CRUSH-285 review #4,
+                    // re-review) must never reach a capability grant
+                    // below — not even when the receiver isn't in
+                    // `declared_vars` here. It resolves only as an exact
+                    // member call on a declared receiver; anything else
+                    // is a missing method (or a field holding a
+                    // function, CRUSH-zorro-44), refused outright.
+                    if meta.get("member_call").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        let resolves = name.find('.').is_some_and(|pos| {
+                            self.declared_vars.contains(&name[..pos])
+                                && (self.receiver_methods.contains(&name[pos + 1..])
+                                    || (&name[pos + 1..] == "clone"
+                                        && self
+                                            .cosm
+                                            .as_ref()
+                                            .is_some_and(|m| !m.kinds.is_empty())))
+                        });
+                        if !resolves {
+                            let (obj_name, method) =
+                                name.split_once('.').unwrap_or((name.as_str(), ""));
+                            bail!(
+                                "`{obj_name}.{method}(...)`: no method `{method}` on the receiver's class"
+                            );
+                        }
+                    }
                     // Check for method-call syntax: obj.method(args)
                     // Parser emits CapabilityCall { name: "obj.method", args } for this.
                     // Only split when the receiver (obj) is a declared variable —
@@ -2317,6 +2416,10 @@ impl Compiler {
                             ));
                             return Ok(());
                         }
+                        // Marked member calls were already resolved
+                        // (or refused) ahead of the `is_method_call`
+                        // split; only the parser's unmarked idiom
+                        // reaches this grant.
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
                         // Push args in order: the receiver is already on the stack, then each
