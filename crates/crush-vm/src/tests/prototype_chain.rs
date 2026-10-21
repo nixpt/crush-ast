@@ -365,3 +365,166 @@ fn load_kind_of_an_undeclared_kind_is_a_load_error() {
         "Nope",
     );
 }
+
+/// `Meter` (CRUSH-277 S4): `x` plus the accessor `doubled` over it, a
+/// get-only `tag` and a set-only `secret`.
+fn meter() -> CosmModule {
+    module(vec![js_kind("Meter", |k| {
+        k.members.push(MemberDecl::accessor(
+            "doubled",
+            Some("Meter::get::doubled".into()),
+            Some("Meter::set::doubled".into()),
+        ));
+        k.members.push(MemberDecl::accessor("tag", Some("Meter::get::tag".into()), None));
+        k.members.push(MemberDecl::accessor("secret", None, Some("Meter::set::secret".into())));
+    })])
+}
+
+const METER_FUNCS: &str = r#"
+.func Meter::constructor 2
+    STORE 0
+    STORE 1
+    LOAD 0
+    LOAD 1
+    SET_MEMBER "x"
+    POP
+    PUSH_NULL
+    RET
+.func Meter::get::doubled 1
+    STORE 0
+    LOAD 0
+    GET_MEMBER "x"
+    PUSH 2
+    MUL
+    RET
+.func Meter::set::doubled 2
+    STORE 0
+    STORE 1
+    LOAD 0
+    LOAD 1
+    PUSH 2
+    DIV
+    SET_MEMBER "x"
+    POP
+    PUSH_NULL
+    RET
+.func Meter::get::tag 1
+    STORE 0
+    PUSH 7
+    RET
+.func Meter::set::secret 2
+    STORE 0
+    STORE 1
+    LOAD 0
+    LOAD 1
+    SET_MEMBER "x"
+    POP
+    PUSH_NULL
+    RET
+"#;
+
+#[test]
+fn accessors_get_set_and_the_odd_halves() {
+    run_both(
+        &format!(
+            r#"
+.func main
+    PUSH 21
+    CONSTRUCT "Meter" 1
+    POP
+    STORE 0
+    LOAD 0
+    GET_MEMBER "doubled"
+    CAP_CALL "io.print" 1
+    LOAD 0
+    PUSH 100
+    SET_MEMBER "doubled"
+    POP
+    LOAD 0
+    GET_MEMBER "doubled"
+    CAP_CALL "io.print" 1
+    LOAD 0
+    GET_MEMBER "tag"
+    CAP_CALL "io.print" 1
+    LOAD 0
+    PUSH 5
+    SET_MEMBER "secret"
+    POP
+    LOAD 0
+    GET_MEMBER "x"
+    CAP_CALL "io.print" 1
+    LOAD 0
+    GET_MEMBER "secret"
+    CAP_CALL "io.print" 1
+    HALT
+{METER_FUNCS}"#
+        ),
+        meter(),
+        "42\n100\n7\n5\nnull\n",
+    );
+}
+
+#[test]
+fn accessors_are_inherited_along_the_chain() {
+    // A subclass with no members of its own reads and writes through the
+    // parent's getter/setter pair, against its own instance state.
+    let mut m = meter();
+    m.kinds.push(js_kind("SubMeter", |k| {
+        k.parents = vec![KindRef::new("Meter")];
+    }));
+    run_both(
+        &format!(
+            r#"
+.func main
+    PUSH 21
+    CONSTRUCT "SubMeter" 1
+    POP
+    STORE 0
+    LOAD 0
+    GET_MEMBER "doubled"
+    CAP_CALL "io.print" 1
+    LOAD 0
+    PUSH 100
+    SET_MEMBER "doubled"
+    POP
+    LOAD 0
+    GET_MEMBER "doubled"
+    CAP_CALL "io.print" 1
+    HALT
+.func SubMeter::constructor 2
+    STORE 0
+    STORE 1
+    LOAD 0
+    LOAD 1
+    SET_MEMBER "x"
+    POP
+    PUSH_NULL
+    RET
+{METER_FUNCS}"#
+        ),
+        m,
+        "42\n100\n",
+    );
+}
+
+#[test]
+fn writing_a_read_only_accessor_is_a_loud_error() {
+    fails_on_both(
+        &format!(
+            r#"
+.func main
+    PUSH 21
+    CONSTRUCT "Meter" 1
+    POP
+    STORE 0
+    LOAD 0
+    PUSH 1
+    SET_MEMBER "tag"
+    POP
+    HALT
+{METER_FUNCS}"#
+        ),
+        meter(),
+        "`Meter.tag` has no setter",
+    );
+}

@@ -767,6 +767,49 @@ fn execute_one(
             }
         }};
     }
+    // COSM S4 (CRUSH-277): run a getter/setter to completion in a nested
+    // run of this program, where the member op stands (accessors are
+    // synchronous, like print hooks). The result is its return value.
+    macro_rules! run_accessor {
+        ($call:expr) => {{
+            let call: crate::cosm_rt::AccessorCall = $call;
+            let r = run_from(
+                program,
+                quotas,
+                host_caps,
+                None,
+                Some((call.func.as_str(), call.args.iter().rev().cloned().collect())),
+            )?;
+            if !r.output.is_empty() {
+                *out_len += r.output.len();
+                if *out_len > quotas.max_output {
+                    return Err(VmError::OutputQuota(quotas.max_output));
+                }
+                out_parts.push(r.output);
+            }
+            r.return_value.unwrap_or(Value::Null)
+        }};
+    }
+    // A member read that may be an accessor call (CRUSH-277 S4).
+    macro_rules! get_member {
+        ($target:expr, $name:expr, $strict:expr) => {{
+            match crate::cosm_rt::get_member($target, $name, $strict)? {
+                crate::cosm_rt::MemberRead::Done(v) => v,
+                crate::cosm_rt::MemberRead::Call(call) => run_accessor!(call),
+            }
+        }};
+    }
+    // A member write that may be an accessor call (CRUSH-277 S4).
+    macro_rules! set_member {
+        ($target:expr, $name:expr, $val:expr) => {{
+            match crate::cosm_rt::set_member($target, $name, $val)? {
+                crate::cosm_rt::MemberWrite::Done => {}
+                crate::cosm_rt::MemberWrite::Call(call) => {
+                    run_accessor!(call);
+                }
+            }
+        }};
+    }
     macro_rules! const_str {
         () => {{
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
@@ -1062,7 +1105,10 @@ fn execute_one(
                     let key = crate::map_ops::map_key_string(&idx_v)?;
                     push!(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                 }
-                Value::Record(r) => push!(crate::cosm_rt::index_get(&r, &idx_v)?),
+                Value::Record(r) => push!(match crate::cosm_rt::index_get(&r, &idx_v)? {
+                    crate::cosm_rt::IndexAccess::Done(v) => v,
+                    crate::cosm_rt::IndexAccess::Call { call, .. } => run_accessor!(call),
+                }),
                 Value::Array(arr_rc) => {
                     let idx = need_array_index(&idx_v)?;
                     let arr = arr_rc.borrow();
@@ -1092,7 +1138,7 @@ fn execute_one(
                 }
                 rec @ Value::Record(_) => {
                     let key = crate::map_ops::map_key_string(&idx_v)?;
-                    crate::cosm_rt::set_member(&rec, &key, val)?;
+                    set_member!(&rec, &key, val);
                     push!(rec);
                 }
                 other => {
@@ -1277,7 +1323,13 @@ fn execute_one(
             }
             if crate::cosm_rt::is_index_cap(&cap, &args) {
                 check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
-                push!(crate::cosm_rt::index_cap(&cap, &args)?);
+                push!(match crate::cosm_rt::index_cap(&cap, &args)? {
+                    crate::cosm_rt::IndexAccess::Done(v) => v,
+                    crate::cosm_rt::IndexAccess::Call { call, after } => {
+                        let v = run_accessor!(call);
+                        after.unwrap_or(v)
+                    }
+                });
                 return Ok(StepAction::Continue);
             }
             let args = crate::cosm_rt::cap_args(&cap, args)?;
@@ -1628,7 +1680,7 @@ fn execute_one(
                 Value::Map(m) => m,
                 // A struct instance (COSM K1.4): SET_MEMBER.
                 rec @ Value::Record(_) => {
-                    crate::cosm_rt::set_member(&rec, &field, val)?;
+                    set_member!(&rec, &field, val);
                     push!(rec);
                     return Ok(StepAction::Continue);
                 }
@@ -1645,7 +1697,7 @@ fn execute_one(
                 // A struct instance (COSM K1.4): GET_MEMBER, but a name the
                 // instance doesn't have reads `null`, as on a map.
                 target @ (Value::Record(_) | Value::Kind(_)) => {
-                    push!(crate::cosm_rt::get_member(&target, &field, false)?);
+                    push!(get_member!(&target, &field, false));
                     return Ok(StepAction::Continue);
                 }
                 other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
@@ -1657,13 +1709,13 @@ fn execute_one(
         GET_MEMBER => {
             let name = const_str!();
             let target = pop!();
-            push!(crate::cosm_rt::get_member(&target, &name, true)?);
+            push!(get_member!(&target, &name, true));
         }
         SET_MEMBER => {
             let name = const_str!();
             let val = pop!();
             let target = pop!();
-            crate::cosm_rt::set_member(&target, &name, val)?;
+            set_member!(&target, &name, val);
             push!(target);
         }
         HAS_MEMBER => {

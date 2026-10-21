@@ -5,10 +5,10 @@
 //! implements. Since K1.4 (CRUSH-zorro-43) these two VMs implement Kinds
 //! ([`casm::CosmSupport::Kinds`], see [`crate::cosm_rt`]): they run Records
 //! with every strategy except the few the rule still lists (Go embedding,
-//! a Python `__new__`, accessors, and hooks other than
-//! `str` / `repr` / `clone`), which are refused when the program is loaded,
-//! before any instruction runs. FastVM, the JIT and AOT apply the same rule
-//! at [`casm::CosmSupport::Maps`].
+//! a Python `__new__`, and hooks other than `str` / `repr` / `clone`),
+//! which are refused when the program is loaded, before any instruction
+//! runs. FastVM, the JIT and AOT apply the same rule at
+//! [`casm::CosmSupport::Maps`].
 
 use crate::vm::VmError;
 use crush_cosm::CosmModule;

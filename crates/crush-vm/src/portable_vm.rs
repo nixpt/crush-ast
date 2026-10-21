@@ -1083,7 +1083,13 @@ impl PortableVm {
                 }
                 if crate::cosm_rt::is_index_cap(&cap, &args) {
                     crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
-                    let v = crate::cosm_rt::index_cap(&cap, &args)?;
+                    let v = match crate::cosm_rt::index_cap(&cap, &args)? {
+                        crate::cosm_rt::IndexAccess::Done(v) => v,
+                        crate::cosm_rt::IndexAccess::Call { call, after } => {
+                            let v = self.run_accessor(call)?;
+                            after.unwrap_or(v)
+                        }
+                    };
                     self.push(v);
                     return Ok(());
                 }
@@ -1225,7 +1231,13 @@ impl PortableVm {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
                         self.push(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                     }
-                    Value::Record(r) => self.push(crate::cosm_rt::index_get(&r, &idx_v)?),
+                    Value::Record(r) => {
+                        let v = match crate::cosm_rt::index_get(&r, &idx_v)? {
+                            crate::cosm_rt::IndexAccess::Done(v) => v,
+                            crate::cosm_rt::IndexAccess::Call { call, .. } => self.run_accessor(call)?,
+                        };
+                        self.push(v);
+                    }
                     Value::Array(arr_rc) => {
                         let idx = need_array_index(&idx_v)?;
                         let arr = arr_rc.borrow();
@@ -1255,7 +1267,7 @@ impl PortableVm {
                     }
                     rec @ Value::Record(_) => {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
-                        crate::cosm_rt::set_member(&rec, &key, val)?;
+                        self.set_member(&rec, &key, val)?;
                         self.push(rec);
                     }
                     other => {
@@ -1395,7 +1407,7 @@ impl PortableVm {
                     Value::Map(m) => m,
                     // A struct instance (COSM K1.4): SET_MEMBER.
                     rec @ Value::Record(_) => {
-                        crate::cosm_rt::set_member(&rec, &field, val)?;
+                        self.set_member(&rec, &field, val)?;
                         self.push(rec);
                         return Ok(());
                     }
@@ -1426,7 +1438,8 @@ impl PortableVm {
                     // A struct instance (COSM K1.4): GET_MEMBER, but a name the
                     // instance doesn't have reads `null`, as on a map.
                     target @ (Value::Record(_) | Value::Kind(_)) => {
-                        self.push(crate::cosm_rt::get_member(&target, &field, false)?);
+                        let v = self.get_member(&target, &field, false)?;
+                        self.push(v);
                         return Ok(());
                     }
                     other => {
@@ -1443,13 +1456,14 @@ impl PortableVm {
             GET_MEMBER => {
                 let name = self.const_operand()?;
                 let target = self.pop()?;
-                self.push(crate::cosm_rt::get_member(&target, &name, true)?);
+                let v = self.get_member(&target, &name, true)?;
+                self.push(v);
             }
             SET_MEMBER => {
                 let name = self.const_operand()?;
                 let val = self.pop()?;
                 let target = self.pop()?;
-                crate::cosm_rt::set_member(&target, &name, val)?;
+                self.set_member(&target, &name, val)?;
                 self.push(target);
             }
             HAS_MEMBER => {
@@ -2219,6 +2233,42 @@ impl PortableVm {
             Ok(result.stack.last().cloned().unwrap_or(Value::Null))
         };
         crate::cosm_rt::render_hooked(v, &mut hook)
+    }
+
+    /// A member read that may be a getter call (CRUSH-277 S4).
+    fn get_member(&mut self, target: &Value, name: &str, strict: bool) -> Result<Value, VmError> {
+        match crate::cosm_rt::get_member(target, name, strict)? {
+            crate::cosm_rt::MemberRead::Done(v) => Ok(v),
+            crate::cosm_rt::MemberRead::Call(call) => self.run_accessor(call),
+        }
+    }
+
+    /// A member write that may be a setter call (CRUSH-277 S4).
+    fn set_member(&mut self, target: &Value, name: &str, val: Value) -> Result<(), VmError> {
+        match crate::cosm_rt::set_member(target, name, val)? {
+            crate::cosm_rt::MemberWrite::Done => Ok(()),
+            crate::cosm_rt::MemberWrite::Call(call) => self.run_accessor(call).map(|_| ()),
+        }
+    }
+
+    /// COSM S4 (CRUSH-277): run a getter/setter to completion in a nested
+    /// VM over this program, where the member op stands (accessors are
+    /// synchronous, like print hooks). The result is its return value.
+    fn run_accessor(&mut self, call: crate::cosm_rt::AccessorCall) -> Result<Value, VmError> {
+        let entry = self.get_function_entry(&call.func)?;
+        let mut vm = PortableVm::new(self.program.clone());
+        vm.quotas = self.quotas.clone();
+        vm.ip = entry;
+        vm.stack = call.args.iter().rev().cloned().collect();
+        let result = vm.run()?;
+        if !result.output.is_empty() {
+            self.out_len += result.output.len();
+            if self.out_len > self.quotas.max_output {
+                return Err(VmError::OutputQuota(self.quotas.max_output));
+            }
+            self.out_parts.push(result.output);
+        }
+        Ok(result.stack.last().cloned().unwrap_or(Value::Null))
     }
 
     fn get_function_entry(&self, name: &str) -> Result<usize, VmError> {

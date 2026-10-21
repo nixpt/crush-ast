@@ -924,13 +924,14 @@ pub fn kind_unsupported_strategies(k: &crush_cosm::KindDecl) -> Vec<String> {
 ///   don't need it to be exact), resolution `none`, `single`, `c3` and
 ///   `prototype_chain` (the JS walker's slice, CRUSH-277 S2), every
 ///   receiver strategy, every construction except a Python `__new__`, field
-///   defaults, both equalities, and the `str`, `repr` and `clone` hooks.
-///   Still refused, until the phase that brings them: resolution
-///   `embedding_promotion` (the Go walker, K3), a
-///   `py_new_init` with a `new_fn`, accessor members, and every other hook
-///   (operators and the eq/hash/cmp/iter/call/missing/set protocols, K2).
+///   defaults, both equalities, accessor members (CRUSH-277 S4: getters and
+///   setters run where the member op stands), and the `str`, `repr` and
+///   `clone` hooks. Still refused, until the phase that brings them:
+///   resolution `embedding_promotion` (the Go walker, K3), a `py_new_init`
+///   with a `new_fn`, and every other hook (operators and the
+///   eq/hash/cmp/iter/call/missing/set protocols, K2).
 pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSupport) -> Vec<String> {
-    use crush_cosm::{Construct, Member, Resolution, Strategy};
+    use crush_cosm::{Construct, Resolution, Strategy};
     if support == CosmSupport::Maps {
         return kind_unsupported_strategies(k);
     }
@@ -940,11 +941,6 @@ pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSup
     }
     if let Construct::PyNewInit { new_fn: Some(f), .. } = &k.construct {
         why.push(format!("construct: py_new_init with a `__new__` (`{f}`)"));
-    }
-    for m in &k.members {
-        if matches!(m.member, Member::Accessor { .. }) {
-            why.push(format!("accessor `{}`", m.name));
-        }
     }
     let h = &k.hooks;
     let mut hooks: Vec<String> = [

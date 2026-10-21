@@ -424,6 +424,7 @@ enum Found<'k> {
     /// A declared field that isn't set (a set one is read off the instance).
     UnsetField,
     Method { func: &'k FnRef, receiver: Receiver },
+    Accessor { get: Option<&'k FnRef>, set: Option<&'k FnRef>, receiver: Receiver },
     StaticConst(&'k Const),
     StaticFn(&'k FnRef),
 }
@@ -438,10 +439,13 @@ fn find_on_kind<'k>(kind: &'k Kind, name: &str) -> Result<Option<Found<'k>>, VmE
                 Member::Field => Found::UnsetField,
                 Member::Static { value: StaticValue::Const(c) } => Found::StaticConst(c),
                 Member::Static { value: StaticValue::Fn(f) } => Found::StaticFn(f),
-                // Refused when the program loads (the shared COSM rule).
-                Member::Accessor { .. } => {
-                    return Err(VmError::Unsupported(format!("accessor `{name}` on `{}`", decl.name)));
-                }
+                // CRUSH-277 S4: accessors run; they resolve like methods
+                // (the declaring Kind's receiver strategy binds them).
+                Member::Accessor { get, set } => Found::Accessor {
+                    get: get.as_ref(),
+                    set: set.as_ref(),
+                    receiver: decl.receiver,
+                },
             }));
         }
         if decl.field_slot(name).is_some() {
@@ -521,16 +525,109 @@ fn method_value(kind: &Rc<Kind>, recv: &Value, func: &FnRef, receiver: Receiver)
     }
 }
 
+/// A getter/setter invocation the VM must perform (CRUSH-277 S4):
+/// accessors are ordinary synchronous functions; the VMs run them to
+/// completion where the member op stands, as they run print hooks.
+/// `args` are in call order (receiver first).
+pub struct AccessorCall {
+    pub func: String,
+    pub args: Vec<Value>,
+}
+
+/// What reading a member resolves to.
+pub enum MemberRead {
+    /// The value, with no call.
+    Done(Value),
+    /// Call this accessor; its return value is the read's result.
+    Call(AccessorCall),
+}
+
+/// What writing a member resolves to.
+pub enum MemberWrite {
+    /// Written (a field set on the instance), with no call.
+    Done,
+    /// Call this setter with (receiver, value); its result is discarded.
+    Call(AccessorCall),
+}
+
+/// The receiver an accessor binds, per the declaring Kind's receiver
+/// strategy — the same binding a method gets (a detached read of a
+/// `dynamic_this` accessor gets a null `this`, as in JS).
+fn accessor_receiver(
+    kind: &Rc<Kind>,
+    recv: Option<&Value>,
+    receiver: Receiver,
+    name: &str,
+) -> Result<Value, VmError> {
+    Ok(match receiver {
+        Receiver::BoundCls => Value::Kind(kind.clone()),
+        Receiver::DynamicThis => recv.cloned().unwrap_or(Value::Null),
+        _ => match recv {
+            Some(v) => v.clone(),
+            None => {
+                return Err(VmError::Cosm(format!(
+                    "the accessor `{name}` of `{}` needs an instance",
+                    kind.name()
+                )));
+            }
+        },
+    })
+}
+
+fn check_accessor_arity(kind: &Kind, func: &FnRef, params: usize, name: &str) -> Result<(), VmError> {
+    let arity = kind.arity_of(func.as_str())? as usize;
+    if arity != params {
+        return Err(VmError::FuncArity {
+            function: format!("{}.{name}", kind.name()),
+            expected: params,
+            got: arity,
+        });
+    }
+    Ok(())
+}
+
+/// The call that reads accessor `name` of `kind` through its getter.
+fn getter_call(
+    kind: &Rc<Kind>,
+    get: &FnRef,
+    receiver: Receiver,
+    recv: Option<&Value>,
+    name: &str,
+) -> Result<AccessorCall, VmError> {
+    check_accessor_arity(kind, get, 1, name)?;
+    Ok(AccessorCall {
+        func: get.as_str().to_string(),
+        args: vec![accessor_receiver(kind, recv, receiver, name)?],
+    })
+}
+
+/// The call that writes accessor `name` of `kind` through its setter.
+fn setter_call(
+    kind: &Rc<Kind>,
+    set: &FnRef,
+    receiver: Receiver,
+    recv: &Value,
+    name: &str,
+    v: Value,
+) -> Result<AccessorCall, VmError> {
+    check_accessor_arity(kind, set, 2, name)?;
+    Ok(AccessorCall {
+        func: set.as_str().to_string(),
+        args: vec![accessor_receiver(kind, Some(recv), receiver, name)?, v],
+    })
+}
+
 /// `GET_MEMBER` (`strict`) and `GET_FIELD` on a Record or a Kind.
 ///
 /// `GET_FIELD` is the map spelling the compiler emits for `p.x`: on a name the
 /// Record doesn't have it reads `null`, as on the map a struct used to be.
 /// `GET_MEMBER` reports the missing member.
-pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<Value, VmError> {
+pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead, VmError> {
     let (kind, recv) = match target {
         Value::Record(r) => {
+            // An instance field shadows an inherited accessor, as in JS.
             if let Some(v) = r.field(name) {
-                return Ok(v);
+                return Ok(MemberRead::Done(v));
             }
             (r.kind.clone(), Some(target))
         }
@@ -538,27 +635,46 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<Value, VmE
         other => return Err(VmError::TypeError { expected: "record", got: other.type_name() }),
     };
     match find_on_kind(&kind, name)? {
-        Some(Found::UnsetField) => Ok(Value::Null),
-        Some(Found::StaticConst(c)) => Ok(const_value(c)),
-        Some(Found::StaticFn(f)) => Ok(func_value(f, kind.arity_of(f.as_str())?, Vec::new())),
-        Some(Found::Method { func, receiver }) => match recv {
-            Some(recv) => method_value(&kind, recv, func, receiver),
+        Some(Found::UnsetField) => Ok(MemberRead::Done(Value::Null)),
+        Some(Found::StaticConst(c)) => Ok(MemberRead::Done(const_value(c))),
+        Some(Found::StaticFn(f)) => Ok(MemberRead::Done(func_value(f, kind.arity_of(f.as_str())?, Vec::new()))),
+        Some(Found::Method { func, receiver }) => Ok(MemberRead::Done(match recv {
+            Some(recv) => method_value(&kind, recv, func, receiver)?,
             // Read off the Kind: a classmethod binds the class; any other
             // method is the plain function.
-            None if receiver == Receiver::BoundCls => method_value(&kind, target, func, receiver),
-            None => Ok(func_value(func, kind.arity_of(func.as_str())?, Vec::new())),
+            None if receiver == Receiver::BoundCls => method_value(&kind, target, func, receiver)?,
+            None => func_value(func, kind.arity_of(func.as_str())?, Vec::new()),
+        })),
+        Some(Found::Accessor { get, receiver, .. }) => match get {
+            // A write-only property reads as undefined.
+            None => Ok(MemberRead::Done(Value::Null)),
+            Some(g) => Ok(MemberRead::Call(getter_call(&kind, g, receiver, recv.as_deref(), name)?)),
         },
         None if strict => Err(VmError::Cosm(format!("`{}` has no member `{name}`", kind.name()))),
-        None => Ok(Value::Null),
+        None => Ok(MemberRead::Done(Value::Null)),
     }
 }
 
 /// `SET_MEMBER` / `SET_FIELD` on a Record.
-pub fn set_member(target: &Value, name: &str, v: Value) -> Result<(), VmError> {
-    match target {
-        Value::Record(r) => r.set_field(name, v),
-        other => Err(VmError::TypeError { expected: "record", got: other.type_name() }),
+pub fn set_member(target: &Value, name: &str, v: Value) -> Result<MemberWrite, VmError> {
+    let Value::Record(r) = target else {
+        return Err(VmError::TypeError { expected: "record", got: target.type_name() });
+    };
+    // An existing instance field wins over an inherited setter (JS
+    // [[Set]]: an own data property is written directly).
+    if r.field(name).is_none()
+        && let Some(Found::Accessor { set, receiver, .. }) = find_on_kind(&r.kind, name)?
+    {
+        return match set {
+            Some(s) => Ok(MemberWrite::Call(setter_call(&r.kind, s, receiver, target, name, v)?)),
+            // A read-only property (JS strict mode throws the same way).
+            None => Err(VmError::Cosm(format!(
+                "`{}.{name}` has no setter",
+                r.kind.name()
+            ))),
+        };
     }
+    r.set_field(name, v).map(|()| MemberWrite::Done)
 }
 
 /// `HAS_MEMBER`: a set field, or any member along the resolution order.
@@ -655,6 +771,10 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
             check(f, 0)?;
             Ok(MemberCall::Call(Callee { func: f.as_str().to_string(), leading: Vec::new() }))
         }
+        Some(Found::Accessor { .. }) => Err(VmError::Cosm(format!(
+            "`{}.{name}` is an accessor, not a method: read it, don't call it",
+            kind.name()
+        ))),
         Some(Found::StaticConst(_)) | Some(Found::UnsetField) => {
             Err(VmError::Cosm(format!("`{}.{name}` is not a method", kind.name())))
         }
@@ -835,13 +955,26 @@ pub fn is_index_cap(cap: &str, args: &[Value]) -> bool {
     matches!((cap, args), ("arr_get", [Value::Record(_), _]) | ("arr_set", [Value::Record(_), _, _]))
 }
 
+/// What an index operation on a Record resolves to (CRUSH-277 S4: a
+/// computed member access honours accessors, like the named member ops).
+pub enum IndexAccess {
+    /// The operation's result.
+    Done(Value),
+    /// Run this accessor call; the result is then `after` when set (a
+    /// write leaves the record), else the call's return value (a read).
+    Call { call: AccessorCall, after: Option<Value> },
+}
+
 /// An [`is_index_cap`] call: the Record's fields, like `ARR_GET` / `ARR_SET`.
-pub fn index_cap(cap: &str, args: &[Value]) -> Result<Value, VmError> {
+pub fn index_cap(cap: &str, args: &[Value]) -> Result<IndexAccess, VmError> {
     match (cap, args) {
         ("arr_get", [Value::Record(r), key]) => index_get(r, key),
         ("arr_set", [rec @ Value::Record(_), key, v]) => {
-            set_member(rec, &crate::map_ops::map_key_string(key)?, v.clone())?;
-            Ok(rec.clone())
+            let key = crate::map_ops::map_key_string(key)?;
+            Ok(match set_member(rec, &key, v.clone())? {
+                MemberWrite::Done => IndexAccess::Done(rec.clone()),
+                MemberWrite::Call(call) => IndexAccess::Call { call, after: Some(rec.clone()) },
+            })
         }
         _ => Err(VmError::UnknownCap(cap.to_string())),
     }
@@ -876,10 +1009,21 @@ pub fn type_name(v: &Value) -> Option<String> {
     }
 }
 
-/// `ARR_GET` / `ARR_SET` with a string index on a Record: its fields.
-pub fn index_get(r: &RecordValue, key: &Value) -> Result<Value, VmError> {
+/// `ARR_GET` with a string index on a Record: an own field, else an
+/// accessor's getter (CRUSH-277 S4), else the absent-key error it has
+/// always been.
+pub fn index_get(r: &Rc<RecordValue>, key: &Value) -> Result<IndexAccess, VmError> {
     let key = crate::map_ops::map_key_string(key)?;
-    r.field(&key).ok_or(VmError::TypeError { expected: "present map key", got: "absent key" })
+    if let Some(v) = r.field(&key) {
+        return Ok(IndexAccess::Done(v));
+    }
+    match find_on_kind(&r.kind, &key)? {
+        Some(Found::Accessor { get: Some(g), receiver, .. }) => Ok(IndexAccess::Call {
+            call: getter_call(&r.kind, g, receiver, Some(&Value::Record(r.clone())), &key)?,
+            after: None,
+        }),
+        _ => Err(VmError::TypeError { expected: "present map key", got: "absent key" }),
+    }
 }
 
 /// The field names a Record has set, in print order (`MAP_KEYS`).

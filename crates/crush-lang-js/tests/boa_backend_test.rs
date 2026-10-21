@@ -633,6 +633,23 @@ console.log(Util.twice(21));
     assert_eq!(params[0].0, "x");
 }
 
+// CRUSH-277 S4: getters and setters run end to end.
+#[test]
+fn test_boa_accessors_run() {
+    let source = r#"
+class Meter {
+  constructor(x) { this.x = x; }
+  get doubled() { return this.x * 2; }
+  set doubled(v) { this.x = v / 2; }
+}
+const m = new Meter(21);
+console.log(m.doubled);
+m.doubled = 100;
+console.log(m.doubled);
+"#;
+    assert_eq!(run_js(source), "42\n100\n");
+}
+
 // A class name used as a value loads its kind (D8).
 #[test]
 fn test_boa_class_as_value_loads_kind() {
