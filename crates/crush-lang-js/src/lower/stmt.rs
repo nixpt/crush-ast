@@ -854,6 +854,12 @@ impl Lower<'_> {
         }
         for (i, f) in decls.iter().enumerate() {
             let span = Some(f.name().span());
+            if f.parameters().as_ref().iter().any(|p| p.is_rest_param()) {
+                let sig = &sigs[i];
+                if let Some(global) = lifted.iter().find(|(sym, _, _)| *sym == f.name().sym()).map(|(_, name, _)| name.clone()) {
+                    self.fn_sigs.insert(global, sig.clone());
+                }
+            }
             if lift[i] {
                 let saved = self.scopes.isolate();
                 self.scopes.enter_fn();

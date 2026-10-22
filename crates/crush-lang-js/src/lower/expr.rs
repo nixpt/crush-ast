@@ -657,6 +657,32 @@ impl Lower<'_> {
                     ));
                 }
                 if let Some(name) = self.user_binding(id.sym()) {
+                    if self.binding_sig(id.sym()).is_none()
+                        && args.iter().any(|a| matches!(a, Expression::Spread(_)))
+                    {
+                        let spread_indices: Vec<_> = args.iter().enumerate()
+                            .filter_map(|(i, a)| matches!(a, Expression::Spread(_)).then_some(i))
+                            .collect();
+                        if spread_indices.len() != 1 || spread_indices[0] != args.len() - 1 {
+                            return Err(self.unsupported(
+                                "mixed or multiple spread arguments to a value callee (CRUSH-293 D3 supports one trailing spread)",
+                                span,
+                            ));
+                        }
+                        if args.len() != 1 {
+                            return Err(self.unsupported(
+                                "mixed fixed and spread arguments to a value callee (CRUSH-293 D3 currently supports spread-only calls)",
+                                span,
+                            ));
+                        }
+                        let Expression::Spread(spread) = &args[0] else { unreachable!() };
+                        let args_array = self.expr(spread.target())?;
+                        return Ok(CastExpr::Call {
+                            function: "__crush_apply__".to_string(),
+                            args: vec![CastExpr::Var { name, meta: m.clone() }, args_array],
+                            meta: m,
+                        });
+                    }
                     let args = match self.binding_sig(id.sym()) {
                         Some(sig) => self.adapt_args(&sig, args, &self.name(id.sym()), span)?,
                         None => self.args(args)?,

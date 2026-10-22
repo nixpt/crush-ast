@@ -1002,6 +1002,12 @@ fn emit_body(
             out.push_str(&format!("{ind}return stack.pop().unwrap_or(RuntimeValue::Null);\n"));
         }
 
+        // CRUSH-293 D3 is VM-only, so never let a function-value array call
+        // reach an AOT stub or fall through silently.
+        "call_value_apply" => {
+            unsupported = Some("`call_value_apply` (function values, CRUSH-293 D3)".to_string());
+        }
+
         // ── Call ──
         "call" => {
             let target = args["function"].as_str().unwrap_or("");

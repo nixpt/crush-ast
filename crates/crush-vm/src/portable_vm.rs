@@ -1197,6 +1197,27 @@ impl PortableVm {
                 self.call_stack.push(Frame::new(Some(next_ip)));
                 self.jump_to(func_entry);
             }
+            CALL_VALUE_APPLY => {
+                // Stack: callee, then its argument array.
+                let args = match self.pop()? {
+                    Value::Array(values) => values.borrow().clone(),
+                    other => return Err(VmError::ApplyArgsType(other.type_name())),
+                };
+                let callee = self.pop()?;
+                let func = crate::vm::callable(&callee, args.len())?;
+                let func_entry = self.get_function_entry(&func.name)?;
+                if self.call_stack.len() >= self.quotas.max_call_depth {
+                    return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                }
+                for value in args.iter().rev() {
+                    self.push(value.clone());
+                }
+                for value in func.captured.iter().rev() {
+                    self.push(value.clone());
+                }
+                self.call_stack.push(Frame::new(Some(next_ip)));
+                self.jump_to(func_entry);
+            }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
                 // A `return` from inside a `try` leaves its handler behind; it

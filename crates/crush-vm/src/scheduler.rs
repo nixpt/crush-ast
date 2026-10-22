@@ -1451,6 +1451,34 @@ fn execute_one(
             thread.ip = entry;
             return Ok(StepAction::Jump);
         }
+        CALL_VALUE_APPLY => {
+            // Stack: callee, then its argument array.
+            let args = match pop!() {
+                Value::Array(values) => values.borrow().clone(),
+                other => return Err(VmError::ApplyArgsType(other.type_name())),
+            };
+            let func = crate::vm::callable(&pop!(), args.len())?;
+            let entry = func_entry
+                .get(func.name.as_str())
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(func.name.clone()))?;
+            if call_stack.len() >= quotas.max_call_depth {
+                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
+            }
+            for value in args.iter().rev() {
+                push!(value.clone());
+            }
+            for value in func.captured.iter().rev() {
+                push!(value.clone());
+            }
+            call_stack.push(Frame {
+                return_ip: Some(next_ip),
+                memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
+            });
+            thread.ip = entry;
+            return Ok(StepAction::Jump);
+        }
         RET => {
             let frame = call_stack.pop().expect("call stack invariant");
             // A `return` from inside a `try` leaves its handler behind; it must
