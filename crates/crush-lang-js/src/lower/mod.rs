@@ -70,6 +70,27 @@ pub(crate) struct Lower<'a> {
     /// COSM kinds declared by JS classes (CRUSH-277 S1), in declaration
     /// order; they ride out in `Program::cosm`.
     kinds: Vec<crush_cosm::KindDecl>,
+    /// Classes visible from the statement lists currently being
+    /// lowered (CRUSH-281): kind name → `Some(owner)` for a class only
+    /// pre-registered so far, where `owner` is the `fn_depth` of the
+    /// statement list that declares it, or `None` once its declaration
+    /// has been lowered. A pre-registered class may be constructed
+    /// only from a function nested deeper than its owning list (the
+    /// body runs after the whole list has); a statement of the list
+    /// itself is in the class's temporal dead zone. Entries are
+    /// snapshotted and restored around each function body and block,
+    /// so a function-local class is invisible to its siblings.
+    visible_kinds: HashMap<String, Option<usize>>,
+    /// Resolved names that are class *bindings* (a class declaration's
+    /// name, or the binding of a class expression of the same name).
+    /// A kind whose name is not a binding here — a class expression's
+    /// inner name (`const C = class K { … }`) — is not constructible
+    /// through that name outside the class (CRUSH-281 review).
+    class_bindings: std::collections::HashSet<String>,
+    /// Depth of class field initialisers being lowered: they run at
+    /// construction time, so like function bodies they may use
+    /// pending kinds.
+    deferred_new: usize,
     /// Whether `this` names a receiver here: directly inside a class
     /// method, constructor or accessor (CRUSH-277 D2). Entering any other
     /// function clears it — a nested function's `this` is its own, and an
@@ -162,6 +183,9 @@ impl<'a> Lower<'a> {
             scopes: Scopes::default(),
             functions: HashMap::new(),
             kinds: Vec::new(),
+            visible_kinds: Default::default(),
+            class_bindings: Default::default(),
+            deferred_new: 0,
             this_bound: false,
             super_ctor: None,
             instance_kinds: Default::default(),
