@@ -2026,6 +2026,7 @@ impl PortableVm {
                 "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
                 "js.truthy" => Ok(Some(crate::js_ops::truthy(&args[0]))),
                 "js.loose_eq" => crate::js_ops::loose_eq(&args[0], &args[1]).map(Some),
+                "js.strict_eq" => crate::js_ops::strict_eq(&args[0], &args[1]).map(Some),
                 "js.format" => crate::js_ops::format(&args).map(Some),
                 "conv.text" => {
                     crate::num_text::text_as(&args[0], &args[1]).map(Some)

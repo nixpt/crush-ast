@@ -1706,3 +1706,69 @@ fn test_boa_exported_function_runs_end_to_end() {
     let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
     assert_eq!(out.trim(), "42");
 }
+
+// CRUSH-290 (boa path, end-to-end): `===` / `!==` are strict equality — no
+// coercion — and compile through the checked path (`compile_cast`, which runs
+// the semantics checker that used to reject the bare `BinaryOp "==="`).
+#[test]
+fn test_boa_strict_equality_runs_end_to_end() {
+    assert_eq!(
+        run_js("console.log(1 === 1);\nconsole.log(1 === \"1\");\n"),
+        "true\nfalse\n"
+    );
+    let source = r#"
+class A { }
+class B { }
+const a = new A();
+const b = new A();
+const f = () => 1;
+const o = {};
+const p = o;
+console.log(a === null, a === a, a === b);
+console.log(A === A, A === B, a === A, A === null);
+console.log(f === f, f === a, o === p, {} === {}, 1 !== '1', 1 !== 1);
+"#;
+    assert_eq!(
+        run_js(source),
+        "false true false\ntrue false false false\ntrue false true false true false\n"
+    );
+}
+
+#[test]
+fn test_boa_switch_on_instance_uses_strict_identity() {
+    let source = r#"
+class A { }
+const a = new A();
+switch (a) {
+  case null: console.log('null'); break;
+  case a: console.log('same'); break;
+  default: console.log('different');
+}
+"#;
+    assert_eq!(run_js(source), "same\n");
+}
+
+// CRUSH-290: a `switch` case test is JS strict equality too — the generated
+// comparison is the `js.strict_eq` capability, so the program compiles
+// through the checked path. Expected output is what `node` prints.
+#[test]
+fn test_boa_switch_matches_on_strict_equality() {
+    let source = r#"
+const n = 2;
+switch (n) {
+  case 1: console.log('one'); break;
+  case 2: console.log('two'); break;
+  default: console.log('many');
+}
+const s = 'b';
+switch (s) {
+  case 'a': console.log('A');
+  case 'b': console.log('B');
+  case 'c': console.log('C'); break;
+  default: console.log('D');
+}
+switch ('3') { case 3: console.log('number 3'); break; default: console.log('not coerced'); }
+switch (n) { case 9: console.log('nine'); break; default: console.log('default only'); }
+"#;
+    assert_eq!(run_js(source), "two\nB\nC\nnot coerced\ndefault only\n");
+}

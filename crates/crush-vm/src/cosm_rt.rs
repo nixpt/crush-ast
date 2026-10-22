@@ -1119,6 +1119,11 @@ pub fn index_cap(cap: &str, args: &[Value]) -> Result<IndexAccess, VmError> {
 /// fields (capabilities know maps, not Kinds), and a Kind reaches a text
 /// capability as its printed form.
 pub fn cap_args(cap: &str, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    // Strict equality needs the original references for Value-level identity;
+    // converting Records to fresh maps or rejecting Kinds would lose that.
+    if cap == "js.strict_eq" {
+        return Ok(args);
+    }
     if !args.iter().any(|a| matches!(a, Value::Record(_) | Value::Kind(_))) {
         return Ok(args);
     }
