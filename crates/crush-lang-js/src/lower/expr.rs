@@ -958,10 +958,8 @@ impl Lower<'_> {
         fname: &str,
         span: Option<Span>,
     ) -> anyhow::Result<Vec<CastExpr>> {
-        if let Some(Expression::Spread(s)) =
-            args.iter().find(|a| matches!(a, Expression::Spread(_)))
-        {
-            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(s.span())));
+        if args.iter().any(|a| matches!(a, Expression::Spread(_))) {
+            return self.spread_args(sig, args, fname, span);
         }
         let m = self.meta(span);
         let mut out = Vec::new();
@@ -1018,6 +1016,169 @@ impl Lower<'_> {
         Ok(out)
     }
 
+    /// The arguments of a direct call that includes a spread, adapted to a
+    /// signature whose parameters are all plain (CRUSH-293 D2): the spread is
+    /// expanded in place — `f(...xs)` becomes `f(xs[0], …, xs[N-1])` with N the
+    /// parameter count — so the callee receives the values JS would pass it.
+    ///
+    /// A spread over an array literal is spliced in as its elements (D1), which
+    /// needs no reads at all. A spread over a plain name is read by slot. A
+    /// mixed list (`f(1, ...xs, 3)`, `f(...xs, ...ys)`) is modelled as one
+    /// array — the ordinary arguments and each spread's elements, concatenated
+    /// in order — and read by slot: the slot an element lands in depends on the
+    /// lengths only at run time, so the concatenation is the argument list.
+    /// Its pieces must be side-effect free, since each slot read evaluates it
+    /// again.
+    ///
+    /// Semantics: a longer array is invisible (a fixed call drops the extras,
+    /// exactly as JS ignores them); a shorter one is loud at run time (`array
+    /// index out of range`), where JS would pass `undefined` (CRUSH-zorro-12).
+    /// The source is assumed array-like — an object with a `length` is not
+    /// iterated the way JS's spread is.
+    fn spread_args(
+        &mut self,
+        sig: &Sig,
+        args: &[Expression],
+        fname: &str,
+        span: Option<Span>,
+    ) -> anyhow::Result<Vec<CastExpr>> {
+        let m = self.meta(span);
+        let spread_span = args
+            .iter()
+            .find_map(|a| match a {
+                Expression::Spread(s) => Some(s.span()),
+                _ => None,
+            })
+            .expect("a spread argument");
+        // A default or rest parameter takes hidden arguments — a "given" flag
+        // appended after the parameters, or one array slot — and a run-time
+        // length can't produce those (CRUSH-zorro-18).
+        if sig.iter().any(|p| *p != Param::Plain) {
+            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(spread_span)));
+        }
+        // The flattened argument list, in call order.
+        enum Piece<'e> {
+            /// An ordinary argument, or an element of a literal spread source.
+            Known(&'e Expression),
+            /// A spread over a plain name: expanded by reading it.
+            Spread(&'e Expression),
+        }
+        let mut pieces: Vec<Piece> = Vec::new();
+        for arg in args {
+            let Expression::Spread(s) = arg else {
+                pieces.push(Piece::Known(arg));
+                continue;
+            };
+            match unparen(s.target()) {
+                Expression::ArrayLiteral(lit) => {
+                    for el in lit.as_ref() {
+                        let Some(el) = el else {
+                            return Err(
+                                self.unsupported("an array hole (`[1, , 3]`)", Some(s.span()))
+                            );
+                        };
+                        pieces.push(Piece::Known(el));
+                    }
+                }
+                // A name reads the same array every time, so expanding it by
+                // slot can't repeat an effect. Anything else would be
+                // evaluated once per slot: refused.
+                Expression::Identifier(_) => pieces.push(Piece::Spread(unparen(s.target()))),
+                _ => {
+                    return Err(self.unsupported(
+                        "a spread argument (`f(...args)`) over something other than a plain name or an array literal",
+                        Some(s.span()),
+                    ));
+                }
+            }
+        }
+        if !pieces.iter().any(|p| matches!(p, Piece::Spread(_))) {
+            // Every source was a literal: a positional list, which is all the
+            // call needs. Truncating and short lists follow a plain call's
+            // rules (extras dropped when that can't matter, a missing
+            // argument refused).
+            let mut out = Vec::new();
+            for (i, p) in pieces.iter().enumerate() {
+                let Piece::Known(e) = p else {
+                    unreachable!("no spread piece")
+                };
+                if i >= sig.len() {
+                    if has_side_effects(e) {
+                        return Err(self.unsupported(
+                            format!("calling `{fname}` with an extra argument that has side effects"),
+                            Some(e.span()),
+                        ));
+                    }
+                    continue;
+                }
+                out.push(self.expr(e)?);
+            }
+            if out.len() < sig.len() {
+                return Err(self.unsupported(
+                    format!(
+                        "calling `{fname}` without its argument {} (a missing argument is `undefined`, CRUSH-zorro-12)",
+                        out.len() + 1
+                    ),
+                    span,
+                ));
+            }
+            return Ok(out);
+        }
+        // The model array: consecutive ordinary/literal arguments as one array
+        // literal, each name spread concatenated in place (crush's `+`
+        // concatenates arrays).
+        let mut segments: Vec<CastExpr> = Vec::new();
+        let mut run: Vec<CastExpr> = Vec::new();
+        for p in &pieces {
+            match p {
+                Piece::Known(e) => {
+                    if has_side_effects(e) {
+                        return Err(self.unsupported(
+                            "a spread argument (`f(...args)`) next to an argument with side effects",
+                            Some(e.span()),
+                        ));
+                    }
+                    run.push(self.expr(e)?);
+                }
+                Piece::Spread(e) => {
+                    if !run.is_empty() {
+                        segments.push(CastExpr::ArrayLiteral {
+                            elements: std::mem::take(&mut run),
+                            meta: m.clone(),
+                        });
+                    }
+                    segments.push(self.expr(e)?);
+                }
+            }
+        }
+        if !run.is_empty() {
+            segments.push(CastExpr::ArrayLiteral {
+                elements: run,
+                meta: m.clone(),
+            });
+        }
+        let mut segments = segments.into_iter();
+        let mut model = segments.next().expect("at least one segment");
+        for segment in segments {
+            model = CastExpr::BinaryOp {
+                operator: "+".to_string(),
+                left: Box::new(model),
+                right: Box::new(segment),
+                meta: m.clone(),
+            };
+        }
+        Ok((0..sig.len() as i64)
+            .map(|i| CastExpr::Index {
+                target: Box::new(model.clone()),
+                index: Box::new(CastExpr::IntLiteral {
+                    value: i,
+                    meta: m.clone(),
+                }),
+                meta: m.clone(),
+            })
+            .collect())
+    }
+
     /// The crush name a callee refers to, if it is a user binding.
     pub(super) fn user_binding(&self, sym: boa_interner::Sym) -> Option<String> {
         if self.scopes.resolve(sym).is_some() || self.toplevel_fns.contains(&sym) {
@@ -1043,6 +1204,13 @@ impl Lower<'_> {
         };
         if let Lowering::Planned(ticket) = row.lower {
             return Err(self.unsupported(format!("`{shown}` ({ticket})"), span));
+        }
+        // A spread is the real blocker, not the row's arity (`Math.max(...xs)`
+        // counts as one argument): name it first (CRUSH-293).
+        if let Some(Expression::Spread(s)) =
+            args.iter().find(|a| matches!(a, Expression::Spread(_)))
+        {
+            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(s.span())));
         }
         if !row.arity.accepts(args.len()) {
             return Err(

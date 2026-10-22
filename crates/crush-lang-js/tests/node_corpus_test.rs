@@ -110,6 +110,7 @@ const BOA_FIXED: &[(&str, &str)] = &[
     ("class_static", "static members on COSM (CRUSH-277)"),
     ("arr_push_loop_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
     ("arr_push_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
+    ("arr_spread_call", "a spread argument at a known plain signature expands to slot reads (CRUSH-293)"),
     ("fn_default_param", "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)"),
     ("fn_default_param_more", "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)"),
     ("fn_rest_param", "a call packs the rest arguments into an array (CRUSH-zorro-18)"),
