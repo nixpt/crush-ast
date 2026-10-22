@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-5 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (boa walker; see probe note) |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-250 (the new lowering) |
@@ -46,3 +46,14 @@ Also listed (partly stale) in CRUSH-199; this ticket supersedes its block-statem
 - Reference implementation: `node` on PATH (v26; TypeScript runs with built-in type stripping). Never hand-write a `.out`.
 - `crates/crush-lang-js/src/lower_swc.rs` is shared by most tickets. Until CRUSH-zorro-11 lands, keep edits local to the area you own and merge `origin/main` often; after it lands, add entries to the builtin/method table instead of new match arms.
 - Gates before the PR: `cargo test -p crush-lang-js -p crush-lang-sdk -p crush-aot`, the walker set, and clippy. A new loud error must say what isn't supported, never "load from uninitialised slot".
+
+## Status under the boa walker (probe, 2026-10-22, freebuff/muse)
+
+Resolved on the boa path: bare blocks lower through `Lower::block`
+with fresh block-scope names, and the corpus already pins all three
+cases from this ticket — `scope_bare_block.js`,
+`scope_bare_block_assign.js`, `scope_block_shadow.js` — matching
+node (probe: boa scope area 13 match / 0 loud / 0 silent-wrong,
+`node_corpus_test` and AOT `js_parity` green). The swc path is
+frozen (CRUSH-zorro-23 makes its silent shapes loud). Nothing left
+to implement here; closing as done-for-boa.

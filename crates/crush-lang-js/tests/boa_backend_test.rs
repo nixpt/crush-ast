@@ -183,6 +183,22 @@ fn test_boa_labeled_break_is_loud() {
     assert!(msg.contains("labeled `break`"), "{msg}");
 }
 
+// The ticket's program (CRUSH-zorro-6): node prints `0 0` then `1 0`. Both
+// jumps name `outer`; the label is refused (never dropped onto the inner
+// loop), and the error names the jump.
+#[test]
+fn test_boa_labeled_continue_is_loud() {
+    let msg = loud(
+        "outer: for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { \
+         if (j == 1) continue outer; if (i == 2) break outer; console.log(i, j); } }",
+    );
+    assert!(msg.contains("labeled `continue` (`continue label`)"), "{msg}");
+    // A labeled block (not a loop) can't be a jump target either: CAST has no
+    // labeled jump, so it must stay loud rather than break the inner loop.
+    let msg = loud("l: { console.log(1); break l; }");
+    assert!(msg.contains("labeled `break` (`break label`)"), "{msg}");
+}
+
 #[test]
 fn test_boa_switch() {
     let source = "const x = 1;\nswitch (x) { case 1: break; default: break; }\n";
