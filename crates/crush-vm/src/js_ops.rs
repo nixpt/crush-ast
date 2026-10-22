@@ -86,6 +86,11 @@ pub fn loose_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
     js_core::loose_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
 }
 
+/// `js.strict_eq(a, b)`: JS `===`.
+pub fn strict_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
+    js_core::strict_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
+}
+
 /// `js.format(args...)`: the line `console.log(args...)` prints.
 pub fn format(args: &[Value]) -> Result<Value, VmError> {
     let nodes: Vec<JsNode> = args.iter().map(|a| node(a, js_core::EXPAND)).collect();
@@ -205,6 +210,37 @@ mod tests {
         assert_eq!(loose_eq(&a, &arr(vec![Value::Int(1)])).unwrap(), Value::Bool(false));
         assert_eq!(loose_eq(&a, &Value::Null).unwrap(), Value::Bool(false));
         assert!(loose_eq(&a, &Value::Int(1)).unwrap_err().to_string().contains("not supported"));
+    }
+
+    #[test]
+    fn strict_equality_matches_js() {
+        // node -e "console.log([1===1, 1===2, 1===1.0, '1'===1, 1==='1', 'a'==='a', 'a'==='b', true===1, true===true, false===0, null===null, null===0, null==='', NaN===NaN, '1'!=='1', 1!=='1'].join())"
+        let cases = [
+            (Value::Int(1), Value::Int(1)), (Value::Int(1), Value::Int(2)), (Value::Int(1), Value::Float(1.0)),
+            (s("1"), Value::Int(1)), (Value::Int(1), s("1")), (s("a"), s("a")), (s("a"), s("b")),
+            (Value::Bool(true), Value::Int(1)), (Value::Bool(true), Value::Bool(true)), (Value::Bool(false), Value::Int(0)),
+            (Value::Null, Value::Null), (Value::Null, Value::Int(0)), (Value::Null, s("")),
+            (Value::Float(f64::NAN), Value::Float(f64::NAN)), (s("1"), s("1")), (Value::Int(1), s("1")),
+        ];
+        let got: Vec<String> = cases.iter().map(|(a, b)| strict_eq(a, b).unwrap().to_string()).collect();
+        assert_eq!(
+            got.join(","),
+            "true,false,true,false,false,true,false,false,true,false,true,false,false,false,true,false"
+        );
+    }
+
+    #[test]
+    fn strict_equality_of_objects_is_identity() {
+        let a = arr(vec![Value::Int(1)]);
+        assert_eq!(strict_eq(&a, &a.clone()).unwrap(), Value::Bool(true));
+        assert_eq!(strict_eq(&a, &arr(vec![Value::Int(1)])).unwrap(), Value::Bool(false));
+        let o = obj(vec![("a", Value::Int(1))]);
+        assert_eq!(strict_eq(&o, &o.clone()).unwrap(), Value::Bool(true));
+        assert_eq!(strict_eq(&o, &obj(vec![("a", Value::Int(1))])).unwrap(), Value::Bool(false));
+        // Unlike `==`, an object against a primitive is `false`, not a
+        // ToPrimitive error.
+        assert_eq!(strict_eq(&a, &Value::Int(1)).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&a, &Value::Null).unwrap(), Value::Bool(false));
     }
 
     fn log(args: Vec<Value>) -> String {
