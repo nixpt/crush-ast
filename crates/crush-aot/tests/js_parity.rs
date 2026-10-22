@@ -81,6 +81,7 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
     ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
     ("ops_int_overflow", "CRUSH-zorro-13: number model"),
+    ("ops_logical_assign", "CRUSH-292: logical assignment is not supported by the swc walker yet"),
     ("ops_nan", "CRUSH-zorro-12: `NaN` is an unassigned local on swc, now loud (CRUSH-zorro-54)"),
     ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` is an unassigned local on swc (matched by accident while it read as null; loud since CRUSH-zorro-54)"),
     ("ops_nullish", "CRUSH-zorro-12: ??"),
@@ -120,6 +121,7 @@ const BOA_EXACT: &[&str] = &[
     "fn_default_param",
     "fn_rest_param",
     "fn_rest_param_more",
+    "ops_logical_assign",
     "scope_block_shadow",
     "scope_shadow_loop",
 ];

@@ -1243,11 +1243,9 @@ console.log(c.m());
 #[test]
 fn test_boa_instance_kind_forgetting_more_shapes() {
     let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
-    // Logical assignment may keep the old value; it is refused as a
-    // construct, and must never teach the tracker the new kind.
-    let src = format!("{classes}let c = new A(); c ||= new B(); console.log(c.m(5));");
-    assert!(loud(&src).contains("logical assignment"), "||=: {}", loud(&src));
     for tail in [
+        // A logical assignment may keep the old value, so it forgets too.
+        "let c = new A(); c ||= new B(); console.log(c.m(5));",
         // A compound assignment forgets.
         "let c = new A(); c += 1; console.log(c.m(5));",
         // Assignments nested in larger expressions may never run.
@@ -1705,4 +1703,84 @@ fn test_boa_exported_function_runs_end_to_end() {
     };
     let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
     assert_eq!(out.trim(), "42");
+}
+
+// CRUSH-292: logical assignment (`&&=`, `||=`, `??=`) — the binary
+// operator's semantics with the write folded in: keep the current value
+// (running nothing of the right side), or assign it. Node prints the same
+// for this program.
+#[test]
+fn test_boa_logical_assignment_runs() {
+    let source = r#"
+let x = 0;
+x ||= 5;
+console.log(x);
+let y = 3;
+y ||= 5;
+console.log(y);
+let a = 1;
+a &&= 7;
+console.log(a);
+let b = 0;
+b &&= 7;
+console.log(b);
+let n = null;
+n ??= 9;
+console.log(n);
+let m = 0;
+m ??= 9;
+console.log(m);
+const o = { v: 0 };
+o.v ||= 6;
+console.log(o.v);
+const arr = [0, 0];
+arr[0] ||= 7;
+console.log(arr[0]);
+console.log(arr[1] ??= 5);
+"#;
+    assert_eq!(run_js(source), "5\n3\n7\n0\n9\n0\n6\n7\n0\n");
+}
+
+// CRUSH-292: a computed target with side effects stays refused — the
+// lowering reads the slot for the condition and writes it on the assign
+// branch, so `a[f()] ||= 1` would call `f()` twice.
+#[test]
+fn test_boa_logical_assignment_computed_target_with_side_effects_is_loud() {
+    assert!(
+        loud("function f() { return 0; } const a = [1]; a[f()] ||= 2;")
+            .contains("computed target with side effects")
+    );
+}
+
+// CRUSH-292: the expression's value is the kept or newly assigned value, and
+// the right side is not evaluated when the current value is kept (the
+// `calls` counter stays put). Node prints the same.
+#[test]
+fn test_boa_logical_assignment_value_and_rhs_laziness() {
+    let source = r#"
+let x = 0;
+console.log(x ||= 4);
+console.log(x);
+let y = 3;
+console.log(y ||= 5);
+console.log(y);
+let calls = 0;
+function bump() { calls = calls + 1; return 9; }
+let kept = 3;
+kept ||= bump();
+console.log(kept);
+console.log(calls);
+let f = 0;
+f &&= bump();
+console.log(f);
+console.log(calls);
+let n = null;
+console.log(n ??= bump());
+console.log(calls);
+let zero = 0;
+zero ??= bump();
+console.log(zero);
+console.log(calls);
+"#;
+    assert_eq!(run_js(source), "4\n4\n3\n3\n3\n0\n0\n0\n9\n1\n0\n1\n");
 }
