@@ -489,6 +489,17 @@ impl SemanticAnalyzer {
                     && self.functions.contains_key(function);
                 if let Some(intrinsic) = crate::walker_intrinsics::lookup(function).filter(|_| !source_global) {
                     intrinsic.validate(function, args)?;
+                    if function == "__crush_apply__" {
+                        let callee_type = self.check_expr(&args[0])?;
+                        if !matches!(callee_type, Type::Function(_, _) | Type::Any) {
+                            bail!("__crush_apply__ callee must be a function value");
+                        }
+                        let args_type = self.check_expr(&args[1])?;
+                        if !matches!(args_type, Type::Array(_) | Type::Any) {
+                            bail!("__crush_apply__ arguments must be an array");
+                        }
+                        return Ok(Type::Any);
+                    }
                     // Assignment's first argument names a destination. It is
                     // not a load; Python's named-expression can bind a new name.
                     if function == "__crush_assign__" {
