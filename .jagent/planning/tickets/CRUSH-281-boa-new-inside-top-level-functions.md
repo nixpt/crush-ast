@@ -59,5 +59,30 @@ bound by a declaration and exported classes pre-register too.
 Residual: a function *called during* the list's own evaluation,
 before the class item has run, constructs the class where JS would
 throw a ReferenceError — the VM's kind table is static, so the TDZ
-is not enforced at run time. Filed as CRUSH-285; the construction
+is not enforced at run time. Filed as CRUSH-291; the construction
 itself is correct, only the error is missing.
+
+## Review fix (kai, PR #289)
+
+The first cut keyed pre-registration by name alone, which leaked:
+a statement of the declaring list itself constructed (its
+`fn_depth > 0` inside any function body), a parameter or local
+named like the class was constructed as the class, a
+function-local class stayed visible to sibling functions, and a
+class expression's inner name (`const C = class K { … }`) was
+constructible outside the class. Now:
+
+- pre-registration records the `fn_depth` of the statement list
+  that owns it, and only a function nested *deeper* than that list
+  (or a field initialiser) may construct a pending class;
+- visible classes and class bindings are snapshotted and restored
+  around every function body and block, so registrations never
+  leak to siblings or out of blocks;
+- scopes tag class bindings, and `new`/`C.f()`/calling `C()` go
+  through that tag (`Lower::class_ref`): a shadowing binding is
+  refused as not-the-class, and a name that is no class binding
+  (the `K` above) does not construct;
+- two classes resolving to one kind name refuse loudly (scoped
+  kind names are the real fix, future work).
+
+Covered by `test_boa_new_pending_class_scope_rules`.

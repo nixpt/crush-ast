@@ -70,14 +70,23 @@ pub(crate) struct Lower<'a> {
     /// COSM kinds declared by JS classes (CRUSH-277 S1), in declaration
     /// order; they ride out in `Program::cosm`.
     kinds: Vec<crush_cosm::KindDecl>,
-    /// Kind names of classes declared anywhere in the statement list
-    /// currently being lowered, registered before its functions
-    /// (CRUSH-281): a function body may construct a class whose
-    /// declaration item hasn't been lowered yet, since the body only
-    /// runs after the whole list has. Statement-position construction
-    /// still requires the class item itself to have run (the JS
-    /// temporal dead zone), via [`Lower::construct_kind`].
-    pending_kinds: std::collections::HashSet<String>,
+    /// Classes visible from the statement lists currently being
+    /// lowered (CRUSH-281): kind name → `Some(owner)` for a class only
+    /// pre-registered so far, where `owner` is the `fn_depth` of the
+    /// statement list that declares it, or `None` once its declaration
+    /// has been lowered. A pre-registered class may be constructed
+    /// only from a function nested deeper than its owning list (the
+    /// body runs after the whole list has); a statement of the list
+    /// itself is in the class's temporal dead zone. Entries are
+    /// snapshotted and restored around each function body and block,
+    /// so a function-local class is invisible to its siblings.
+    visible_kinds: HashMap<String, Option<usize>>,
+    /// Resolved names that are class *bindings* (a class declaration's
+    /// name, or the binding of a class expression of the same name).
+    /// A kind whose name is not a binding here — a class expression's
+    /// inner name (`const C = class K { … }`) — is not constructible
+    /// through that name outside the class (CRUSH-281 review).
+    class_bindings: std::collections::HashSet<String>,
     /// Depth of class field initialisers being lowered: they run at
     /// construction time, so like function bodies they may use
     /// pending kinds.
@@ -174,7 +183,8 @@ impl<'a> Lower<'a> {
             scopes: Scopes::default(),
             functions: HashMap::new(),
             kinds: Vec::new(),
-            pending_kinds: Default::default(),
+            visible_kinds: Default::default(),
+            class_bindings: Default::default(),
             deferred_new: 0,
             this_bound: false,
             super_ctor: None,

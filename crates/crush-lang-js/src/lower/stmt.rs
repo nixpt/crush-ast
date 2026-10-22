@@ -456,12 +456,18 @@ impl Lower<'_> {
             self.scopes.declare_root(sym, name);
         }
         // Classes in this body register before its functions lower,
-        // as at the top level (CRUSH-281).
+        // as at the top level (CRUSH-281). The registration is this
+        // list's alone: it is restored away when the body is done, so
+        // a class local to one function is invisible to its siblings.
+        let saved_kinds = self.visible_kinds.clone();
+        let saved_bindings = self.class_bindings.clone();
         self.preregister_kinds(items);
         let mut out = prologue;
         out.extend(self.uninit_vars(items));
         out.extend(self.hoisted_functions(items, Hoist::Function)?);
         out.extend(self.items(items)?);
+        self.visible_kinds = saved_kinds;
+        self.class_bindings = saved_bindings;
         Ok((lowered_params, out))
     }
 
@@ -654,11 +660,19 @@ impl Lower<'_> {
         let mut syms = Vec::new();
         lexical_syms(items, &mut syms);
         self.declare_block_syms(syms);
+        // A block is a statement list of its own (CRUSH-281): its
+        // classes pre-register for its nested functions, and the
+        // registration is restored away at the end of the block.
+        let saved_kinds = self.visible_kinds.clone();
+        let saved_bindings = self.class_bindings.clone();
+        self.preregister_kinds(items);
         let r = (|| {
             let mut out = self.hoisted_functions(items, Hoist::Block)?;
             out.extend(self.items(items)?);
             Ok(out)
         })();
+        self.visible_kinds = saved_kinds;
+        self.class_bindings = saved_bindings;
         self.scopes.pop_block();
         r
     }

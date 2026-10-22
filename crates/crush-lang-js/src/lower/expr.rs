@@ -644,8 +644,10 @@ impl Lower<'_> {
         match unparen(callee) {
             Expression::Identifier(id) => {
                 // `C(...)` without `new` is not a call of the constructor
-                // (CRUSH-277 D3): never silently construct.
-                if self.is_kind(&self.resolve(id.sym())) {
+                // (CRUSH-277 D3): never silently construct. A binding of
+                // the same spelling that shadows the class is called as
+                // the value it is.
+                if self.class_ref(id.sym()).is_some() {
                     return Err(self.unsupported(
                         format!(
                             "calling the class `{}` without `new`",
@@ -701,9 +703,8 @@ impl Lower<'_> {
                 // function body the class may only be pre-registered
                 // so far (CRUSH-281).
                 if let Expression::Identifier(obj) = unparen(s.target())
-                    && self.construct_kind(&self.resolve(obj.sym()))
+                    && let Some(kind) = self.class_ref(obj.sym())
                 {
-                    let kind = self.resolve(obj.sym());
                     return match self.kind_static_fn(&kind, &method) {
                         // A static is called with its plain arguments; the
                         // VM's static member calls take no receiver either.

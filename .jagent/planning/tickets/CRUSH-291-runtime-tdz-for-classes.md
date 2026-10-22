@@ -1,13 +1,13 @@
-# CRUSH-285 — VM/walker: class temporal dead zone is not enforced at run time
+# CRUSH-291 — VM/walker: class temporal dead zone is not enforced at run time
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-285 |
+| **ID** | CRUSH-291 |
 | **Priority** | P3 |
 | **Status** | Open |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | unassigned |
-| **Filed by** | muse — 2026-10-21, residual of CRUSH-281 |
+| **Filed by** | muse — 2026-10-21, residual of CRUSH-281 (filed as CRUSH-285, renumbered: CRUSH-285 on `main` is the wheel-CI smoke test) |
 
 ## Problem
 

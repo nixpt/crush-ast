@@ -1251,6 +1251,134 @@ console.log(new Holder().get());
     assert_eq!(run_js(source), "42\n42\n");
 }
 
+// CRUSH-281 review (kai): the pre-registration must not leak across
+// statement lists or name bindings. A class is constructible only
+// from a function nested deeper than the list that declares it, only
+// through the binding that declares it, and only in the scope that
+// declares it; two classes that would share one kind name refuse.
+#[test]
+fn test_boa_new_pending_class_scope_rules() {
+    // A statement of the list itself is still in the temporal dead
+    // zone, even inside a function body.
+    let src = r#"
+function f() { const o = new D(1); class D { constructor(x) { this.x = x; } } return o.x; }
+console.log(f());
+"#;
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "TDZ in a function body: {}",
+        loud(src)
+    );
+    // A function nested deeper than the declaring list may construct.
+    let source = r#"
+function f() {
+  function g() { return new D(41).val(); }
+  class D { constructor(x) { this.x = x; } val() { return this.x + 1; } }
+  return g();
+}
+console.log(f());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The same two rules inside a block.
+    let source = r#"
+function f() {
+  {
+    function g() { return new D(41).val(); }
+    class D { constructor(x) { this.x = x; } val() { return this.x + 1; } }
+    return g();
+  }
+}
+console.log(f());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    let src = "function f() { { const o = new D(1); class D { constructor(x) { this.x = x; } } return o; } } console.log(f());";
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "TDZ in a block: {}",
+        loud(src)
+    );
+    // A parameter or local named like the class shadows it: `new` on
+    // that binding is not construction of the module class.
+    let src = r#"
+class C { constructor() { this.v = 7; } }
+function g(C) { return new C(); }
+console.log(g(null));
+"#;
+    assert!(
+        loud(src).contains("not the class"),
+        "parameter shadow: {}",
+        loud(src)
+    );
+    let src = r#"
+class C { constructor() { this.v = 7; } }
+function g() { let C = 5; return new C(); }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("not the class"),
+        "local shadow: {}",
+        loud(src)
+    );
+    // A class local to one function is not visible to a sibling.
+    let src = r#"
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { return new C(2); }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "sibling leak: {}",
+        loud(src)
+    );
+    // Two classes that would share one kind name refuse loudly
+    // (properly scoped kind names are future work).
+    let src = r#"
+class C { constructor(a, b = 2) { this.v = a + b; } }
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { return new C(1).v; }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("share one kind name"),
+        "module/local duplicate: {}",
+        loud(src)
+    );
+    let src = r#"
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { class C { constructor(x) { this.v = x; } } return 0; }
+console.log(f() + g());
+"#;
+    assert!(
+        loud(src).contains("share one kind name"),
+        "sibling duplicates: {}",
+        loud(src)
+    );
+    // A class expression's own name is bound only inside the class:
+    // `const C = class K { … }` does not make `K` constructible here.
+    let src = r#"
+const C = class K { constructor() { this.v = 3; } };
+function h() { return new K(); }
+console.log(h());
+"#;
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "class-expression name leak: {}",
+        loud(src)
+    );
+    let src = "const C = class K { constructor() { this.v = 3; } }; console.log(new K());";
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "class-expression name at statement position: {}",
+        loud(src)
+    );
+    // The same-name shape keeps working.
+    let source = r#"
+const K = class K { constructor() { this.v = 41; } get() { return this.v + 1; } };
+console.log(new K().get());
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {
