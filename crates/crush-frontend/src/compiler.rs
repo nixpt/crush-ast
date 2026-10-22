@@ -1992,6 +1992,26 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_has__" {
+                    // Intrinsic: does the value have the named member
+                    // (CASM `has_member`)? The key must be a literal —
+                    // the op carries it as an operand. Used by the JS
+                    // walker to tell a missing property (which takes a
+                    // destructuring default) from one present with
+                    // value null (which does not) — CRUSH-284 review.
+                    // args[0] = target, args[1] = key literal
+                    if args.len() != 2 {
+                        bail!("__crush_has__ expects exactly 2 arguments");
+                    }
+                    let Expression::StringLiteral { value: key, .. } = &args[1] else {
+                        bail!("__crush_has__ expects a literal member name");
+                    };
+                    self.compile_expr(&args[0], instrs)?;
+                    instrs.push(self.create_instr(
+                        "has_member",
+                        serde_json::json!({"name": key}),
+                        &meta,
+                    ));
                 } else if function == "__crush_deffield__" {
                     // Intrinsic: define an own field on an instance,
                     // bypassing setters (a JS class field initialiser:

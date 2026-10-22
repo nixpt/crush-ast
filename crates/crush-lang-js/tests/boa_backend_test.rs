@@ -936,6 +936,140 @@ console.log(Util.twice(21));
     assert_eq!(params[0].0, "x");
 }
 
+// CRUSH-284: destructuring parameters — the options-object idiom
+// (maya's constructors), renames, per-property defaults, a
+// parameter-level default, array patterns and nested patterns. The
+// destructured parameter is one visible parameter for the signature
+// machinery; property defaults run in the callee's prologue.
+#[test]
+fn test_boa_destructuring_parameters_run() {
+    // Maya's shape: an options object with a parameter-level default.
+    let source = r#"
+class Engine {
+  constructor({ width = 960, height = 540 } = {}) {
+    this.width = width;
+    this.height = height;
+  }
+  area() { return this.width * this.height; }
+}
+console.log(new Engine().area());
+console.log(new Engine({ width: 100 }).area());
+console.log(new Engine({ width: 2, height: 3 }).area());
+"#;
+    assert_eq!(run_js(source), "518400\n54000\n6\n");
+    // Renames, methods, and a default reading an earlier property.
+    let source = r#"
+class Box {
+  volume({ w: width, h, d = h }) { return width * h * d; }
+}
+console.log(new Box().volume({ w: 2, h: 3 }));
+function swap({ a, b }) { return b - a; }
+console.log(swap({ a: 1, b: 43 }));
+"#;
+    assert_eq!(run_js(source), "18\n42\n");
+    // Array patterns, holes, nested patterns, parameter defaults in
+    // plain functions.
+    let source = r#"
+function head([first, , third = 40]) { return first + third; }
+console.log(head([1, 2]));
+function deep({ point: { x, y } }) { return x + y; }
+console.log(deep({ point: { x: 20, y: 22 } }));
+function pair([a, b] = [30, 12]) { return a + b; }
+console.log(pair());
+"#;
+    assert_eq!(run_js(source), "41\n42\n42\n");
+}
+
+// CRUSH-284 review: a per-element default fires on *absence* only —
+// a property or element present with value null keeps its null, as
+// in JS (the default tests `undefined`, and crush has no undefined;
+// absence is a has-key / length question, never `== null`).
+#[test]
+fn test_boa_destructuring_defaults_skip_explicit_null() {
+    let source = r#"
+function f({ a = 1 }) { return a; }
+console.log(f({}));
+console.log(f({ a: null }));
+console.log(f({ a: 5 }));
+function g([a = 1]) { return a; }
+console.log(g([]));
+console.log(g([null]));
+console.log(g([5]));
+"#;
+    assert_eq!(run_js(source), "1\nnull\n5\n1\nnull\n5\n");
+    // Nested patterns follow the same rule.
+    let source = r#"
+function h({ p: { q = 7 } = {} }) { return q; }
+console.log(h({}));
+console.log(h({ p: { q: null } }));
+"#;
+    assert_eq!(run_js(source), "7\nnull\n");
+    // `h({ p: null })`: the nested pattern destructures null — a
+    // run-time error in JS, and a loud one here, never a silent 7.
+    let err = run_js_err("function h({ p: { q = 7 } = {} }) { return q; } console.log(h({ p: null }));");
+    assert!(!err.is_empty(), "destructuring null must fail loudly");
+}
+
+// CRUSH-284 review: the call-shape machinery (CRUSH-280) sees a
+// destructured parameter as one parameter — a missing argument
+// refuses, dispatch through an override must match shape, and an
+// unknown receiver refuses while a defaulted member of the name
+// exists.
+#[test]
+fn test_boa_destructuring_param_call_shapes() {
+    let src = "function f({ a }) { return a; } console.log(f());";
+    assert!(loud(src).contains("CRUSH"), "missing argument: {}", loud(src));
+    // Destructuring null itself is a run-time error, as in JS.
+    let err = run_js_err("function f({ a }) { return a; } console.log(f(null));");
+    assert!(!err.is_empty(), "destructuring null must fail loudly: {err}");
+    // An override whose destructured parameter has a different shape
+    // (here: no parameter-level default) refuses.
+    let src = "class Base { m({ a = 1 } = {}) { return a; } run() { return this.m({ a: 5 }); } } class Sub extends Base { m({ a }) { return a; } } console.log(new Sub().run());";
+    assert!(
+        loud(src).contains("overrides it with a different"),
+        "override shape: {}",
+        loud(src)
+    );
+    // The same shape through an override runs.
+    let source = r#"
+class Base {
+  m({ a = 1 } = {}) { return a; }
+  run() { return this.m(); }
+}
+class Sub extends Base { m({ a = 9 } = {}) { return a; } }
+console.log(new Sub().run());
+"#;
+    assert_eq!(run_js(source), "9\n");
+    // An unknown receiver refuses while a defaulted destructured
+    // member of the name exists; a plain one runs.
+    let src = "class Acc { bump({ by = 1 } = {}) { return by; } } const xs = [new Acc()]; console.log(xs[0].bump({}));";
+    assert!(loud(src).contains("hidden slots"), "unknown receiver: {}", loud(src));
+    let source = r#"
+class Acc { bump({ by }) { return by; } }
+const xs = [new Acc()];
+console.log(xs[0].bump({ by: 42 }));
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
+#[test]
+fn test_boa_destructuring_parameters_loud() {
+    // Object and array rest elements have no lowering yet.
+    assert!(
+        loud("function f({ ...rest }) { return 1; } console.log(f({}));").contains("rest"),
+        "object rest"
+    );
+    assert!(
+        loud("function f([head, ...tail]) { return head; } console.log(f([1]));").contains("rest"),
+        "array rest"
+    );
+    // A computed property name in a pattern has no lowering yet.
+    assert!(
+        loud("function f({ [k]: v }) { return v; }").contains("computed"),
+        "computed name"
+    );
+}
+
 // CRUSH-280: default and rest parameters on constructors, methods and
 // statics — the zorro-18 hidden-flag ABI, adapted at each call site.
 #[test]
