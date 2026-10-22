@@ -1717,15 +1717,35 @@ fn test_boa_strict_equality_runs_end_to_end() {
         "true\nfalse\n"
     );
     let source = r#"
+class A { }
+class B { }
+const a = new A();
+const b = new A();
+const f = () => 1;
 const o = {};
 const p = o;
-console.log(1 === 1.0, true === 1, null === null, null === 0, 'a' === 'a');
-console.log(o === p, {} === {}, 1 !== '1', 1 !== 1);
+console.log(a === null, a === a, a === b);
+console.log(A === A, A === B, a === A, A === null);
+console.log(f === f, f === a, o === p, {} === {}, 1 !== '1', 1 !== 1);
 "#;
     assert_eq!(
         run_js(source),
-        "true false true false true\ntrue false true false\n"
+        "false true false\ntrue false false false\ntrue false true false true false\n"
     );
+}
+
+#[test]
+fn test_boa_switch_on_instance_uses_strict_identity() {
+    let source = r#"
+class A { }
+const a = new A();
+switch (a) {
+  case null: console.log('null'); break;
+  case a: console.log('same'); break;
+  default: console.log('different');
+}
+"#;
+    assert_eq!(run_js(source), "same\n");
 }
 
 // CRUSH-290: a `switch` case test is JS strict equality too — the generated

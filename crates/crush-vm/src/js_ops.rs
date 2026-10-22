@@ -86,8 +86,26 @@ pub fn loose_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
     js_core::loose_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
 }
 
+/// Identity comparison for JS object-like values. `Some` means at least one
+/// operand is a Record, Kind, or function, so identity decides the result;
+/// `None` leaves primitive comparison to the shared JS kernel. Kept separate
+/// for reuse by later equality operations such as SameValueZero.
+fn identity_eq(a: &Value, b: &Value) -> Option<bool> {
+    match (a, b) {
+        (Value::Record(a), Value::Record(b)) => Some(std::rc::Rc::ptr_eq(a, b)),
+        (Value::Kind(a), Value::Kind(b)) => Some(std::rc::Rc::ptr_eq(a, b)),
+        (Value::Func(a), Value::Func(b)) => Some(std::rc::Rc::ptr_eq(a, b)),
+        (Value::Record(_) | Value::Kind(_) | Value::Func(_), _)
+        | (_, Value::Record(_) | Value::Kind(_) | Value::Func(_)) => Some(false),
+        _ => None,
+    }
+}
+
 /// `js.strict_eq(a, b)`: JS `===`.
 pub fn strict_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
+    if let Some(equal) = identity_eq(a, b) {
+        return Ok(Value::Bool(equal));
+    }
     js_core::strict_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
 }
 
@@ -227,6 +245,56 @@ mod tests {
             got.join(","),
             "true,false,true,false,false,true,false,false,true,false,true,false,false,false,true,false"
         );
+    }
+
+    #[test]
+    fn strict_equality_of_records_and_kinds_is_identity() {
+        let mut program = crate::assembler::assemble(".func main\n    HALT\n", None, None).unwrap();
+        program.cosm = Some(crush_cosm::CosmModule {
+            kinds: vec![crush_cosm::KindDecl::crush("A")],
+            interfaces: vec![],
+        });
+        let table = crate::cosm_rt::KindTable::load(&program).unwrap();
+        let kind = Value::Kind(table.get("A").unwrap().clone());
+        let func = Value::Func(Rc::new(crate::vm::FuncValue {
+            name: "f".into(),
+            arity: 0,
+            captured: vec![],
+        }));
+        let record = crate::cosm_rt::new_record(table.get("A").unwrap());
+        let another_record = crate::cosm_rt::new_record(table.get("A").unwrap());
+        let mut other_program = crate::assembler::assemble(".func main\n    HALT\n", None, None).unwrap();
+        other_program.cosm = Some(crush_cosm::CosmModule {
+            kinds: vec![crush_cosm::KindDecl::crush("A")],
+            interfaces: vec![],
+        });
+        let other_table = crate::cosm_rt::KindTable::load(&other_program).unwrap();
+        let other_kind = Value::Kind(other_table.get("A").unwrap().clone());
+
+        assert_eq!(strict_eq(&record, &record.clone()).unwrap(), Value::Bool(true));
+        assert_eq!(strict_eq(&record, &another_record).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&record, &kind).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&record, &func).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&record, &Value::Null).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&record, &Value::Int(1)).unwrap(), Value::Bool(false));
+
+        assert_eq!(strict_eq(&kind, &kind.clone()).unwrap(), Value::Bool(true));
+        assert_eq!(strict_eq(&kind, &other_kind).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&kind, &record).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&kind, &func).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&kind, &Value::Null).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&kind, &Value::Int(1)).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn strict_equality_of_functions_is_identity() {
+        let f = Value::Func(Rc::new(crate::vm::FuncValue { name: "f".into(), arity: 0, captured: vec![] }));
+        let other = Value::Func(Rc::new(crate::vm::FuncValue { name: "f".into(), arity: 0, captured: vec![] }));
+        assert_eq!(strict_eq(&f, &f.clone()).unwrap(), Value::Bool(true));
+        assert_eq!(strict_eq(&f, &other).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&f, &arr(vec![])).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&f, &Value::Null).unwrap(), Value::Bool(false));
+        assert_eq!(strict_eq(&f, &Value::Int(1)).unwrap(), Value::Bool(false));
     }
 
     #[test]
