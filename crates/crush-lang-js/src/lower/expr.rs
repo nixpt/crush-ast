@@ -579,10 +579,70 @@ impl Lower<'_> {
             right: Box::new(r),
             meta: m.clone(),
         };
+        // The write itself: `x = value` / `o[k] = value`, built the same way
+        // for the plain and the logical path.
+        let assign_to = |value: CastExpr| match &target {
+            Target::Var(name) => CastExpr::Call {
+                function: "__crush_assign__".to_string(),
+                args: vec![
+                    CastExpr::Var {
+                        name: name.clone(),
+                        meta: m.clone(),
+                    },
+                    value,
+                ],
+                meta: m.clone(),
+            },
+            Target::Slot(obj, key) => CastExpr::Call {
+                function: "__crush_setindex__".to_string(),
+                args: vec![obj.clone(), key.clone(), value],
+                meta: m.clone(),
+            },
+        };
         let value = match a.op() {
             AssignOp::Assign => right,
+            // `x &&= y` is `x && (x = y)`; `||=` and `??=` keep the current
+            // value for a truthy / non-null `x` instead. The right side runs
+            // only on the assign branch (`__crush_ternary__` jumps), and the
+            // expression's value is the kept or newly assigned value.
             AssignOp::BoolAnd | AssignOp::BoolOr | AssignOp::Coalesce => {
-                return Err(self.unsupported("logical assignment (`&&=`, `||=`, `??=`)", span));
+                let kept = current(&target);
+                let truthy = js_cap("js.truthy", vec![kept.clone()], m.clone());
+                let keep = match a.op() {
+                    AssignOp::BoolOr => truthy,
+                    AssignOp::BoolAnd => CastExpr::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(truthy),
+                        meta: m.clone(),
+                    },
+                    // `??`: null is the only nullish value here
+                    // (`undefined` is a refused literal), so `!js.loose_eq(x,
+                    // null)` is the `x ?? …` keep condition.
+                    _ => CastExpr::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(js_cap(
+                            "js.loose_eq",
+                            vec![kept.clone(), CastExpr::NullLiteral { meta: m.clone() }],
+                            m.clone(),
+                        )),
+                        meta: m.clone(),
+                    },
+                };
+                // `__crush_assign__` leaves null (not the value), so the
+                // assign branch writes first — as a `__crush_ternary__`
+                // condition, whose value is dropped — and then re-reads the
+                // target. Identical branches whatever that value is.
+                let assigned = CastExpr::Call {
+                    function: "__crush_ternary__".to_string(),
+                    args: vec![assign_to(right), kept.clone(), kept.clone()],
+                    meta: m.clone(),
+                };
+                // The conditional does the whole write; nothing wraps it.
+                return Ok(CastExpr::Call {
+                    function: "__crush_ternary__".to_string(),
+                    args: vec![keep, kept, assigned],
+                    meta: m.clone(),
+                });
             }
             AssignOp::Div => js_div(current(&target), right, m.clone()),
             AssignOp::Add => js_cap("js.add", vec![current(&target), right], m.clone()),
@@ -597,24 +657,7 @@ impl Lower<'_> {
             AssignOp::Shr => binop(">>", current(&target), right),
             AssignOp::Ushr => binop(">>>", current(&target), right),
         };
-        Ok(match target {
-            Target::Var(name) => CastExpr::Call {
-                function: "__crush_assign__".to_string(),
-                args: vec![
-                    CastExpr::Var {
-                        name,
-                        meta: m.clone(),
-                    },
-                    value,
-                ],
-                meta: m,
-            },
-            Target::Slot(obj, key) => CastExpr::Call {
-                function: "__crush_setindex__".to_string(),
-                args: vec![obj, key, value],
-                meta: m,
-            },
-        })
+        Ok(assign_to(value))
     }
 
     /// Call arguments. A spread argument would lose its `...`.
