@@ -112,6 +112,18 @@ pub(crate) struct Lower<'a> {
     /// the forgetting rule of [`Lower::stmt`] (CRUSH-286 review #3).
     branch_depth: usize,
     flow_assigned: std::collections::HashSet<String>,
+    /// Lowered finally bodies active at this source location.
+    finally_stack: Vec<Vec<CastStmt>>,
+    /// Current break/continue targets (switches are break-only).
+    jump_targets: Vec<JumpTarget>,
+    /// Private completion signals registered while lowering this function.
+    completion_signals: Vec<CompletionSignal>,
+    /// Nesting of source try statements, including catch-only boundaries.
+    try_depth: usize,
+    /// Source loop nesting and switch floors retain the existing refusal of
+    /// `continue` inside a switch.
+    loop_depth: usize,
+    switch_loop_floors: Vec<usize>,
     /// Depth of nested expression lowering. An assignment proves a new
     /// kind only at the top of the expression being lowered: one
     /// nested inside a larger expression (`f && (c = new B())`,
@@ -157,6 +169,26 @@ pub(crate) struct Lower<'a> {
     toplevel_sigs: HashMap<Sym, scope::Sig>,
 }
 
+/// A syntactic break/continue destination, used to determine which active
+/// finalizers a non-local jump must execute.
+#[derive(Clone)]
+pub(super) struct JumpTarget {
+    pub(super) finally_depth: usize,
+    pub(super) try_depth: usize,
+    pub(super) is_switch: bool,
+    pub(super) is_loop: bool,
+    pub(super) break_action: Vec<CastStmt>,
+    pub(super) continue_action: Vec<CastStmt>,
+}
+
+#[derive(Clone)]
+pub(super) struct CompletionSignal {
+    pub(super) token: String,
+    pub(super) target_try_depth: usize,
+    /// The real loop jump; loop-specific rewrites add `for` updates/tests.
+    pub(super) action: Vec<CastStmt>,
+}
+
 /// A member call the walker emitted (CRUSH-286 review): the statically
 /// known receiver kind and the signature its arguments were adapted
 /// to, if any. Checked in [`Lower::check_member_calls`] once the whole
@@ -191,6 +223,12 @@ impl<'a> Lower<'a> {
             instance_kinds: Default::default(),
             branch_depth: 0,
             flow_assigned: Default::default(),
+            finally_stack: Vec::new(),
+            jump_targets: Vec::new(),
+            completion_signals: Vec::new(),
+            try_depth: 0,
+            loop_depth: 0,
+            switch_loop_floors: Vec::new(),
             expr_depth: 0,
             fn_depth: 0,
             fn_assigned: Default::default(),

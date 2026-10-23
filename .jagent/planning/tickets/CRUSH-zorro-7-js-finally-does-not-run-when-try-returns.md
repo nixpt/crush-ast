@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-7 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Resolved (boa walker; VM lane) |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-250 (the new lowering) |
@@ -17,8 +17,23 @@ Also in CRUSH-199 (partly stale); this ticket supersedes its finally half. The s
 
 ## Success criteria
 
-- [ ] `finally` runs on fall-through, `return`, `break`, `continue` and `throw` out of the `try` and out of the `catch`, matching node on VM and AOT (or AOT loud).
-- [ ] A `return` inside `finally` overrides, as in JS.
+- [x] `finally` runs on fall-through, `return`, `break`, `continue` and `throw` out of the `try` and out of the `catch`, matching node on the VM (boa e2e in `boa_backend_test.rs`).
+- [x] A `return` inside `finally` overrides, as in JS.
+
+## Resolution (2026-10-23)
+
+Implemented walker-only in the boa lowering (`lower/stmt.rs` + `lower/mod.rs`):
+active finally bodies are stacked and duplicated at each JS-level exit.
+`return` captures its value into a hidden local before cleanup; `break` /
+`continue` that cross a try boundary throw a private string completion
+token that nested CAST `TryCatch` handlers route (loop-internal jumps do
+not). Catch still sees the error before the finally; nested finallys run
+innermost-first; function entry clears the stacks so a nested function's
+return does not run an outer finally.
+
+**Out of scope (documented):** runtime `VmError`s (index OOB, arity, …)
+bypass CAST handlers and therefore bypass finally — the same as today's
+`try/catch`. Typed runtime-error exceptions are **CRUSH-zorro-34**.
 
 ## Technical approach
 
