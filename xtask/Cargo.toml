@@ -22,3 +22,7 @@ path = "src/lint_dejavue.rs"
 name = "conformance"
 path = "src/conformance.rs"
 
+[[bin]]
+name = "ticket-id"
+path = "src/ticket_id.rs"
+
