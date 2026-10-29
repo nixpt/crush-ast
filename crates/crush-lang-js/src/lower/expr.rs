@@ -412,6 +412,14 @@ impl Lower<'_> {
                     meta: m,
                 });
             }
+            "===" => return Ok(js_cap("js.strict_eq", vec![left, right], m)),
+            "!==" => {
+                return Ok(CastExpr::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(js_cap("js.strict_eq", vec![left, right], m.clone())),
+                    meta: m,
+                });
+            }
             // The deciding operand, not a bool (`0 || 'dflt'` is 'dflt'); the
             // right side runs only when the left doesn't decide.
             "||" | "&&" => {

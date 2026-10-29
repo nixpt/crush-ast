@@ -25,7 +25,7 @@ use crush_cast::{
 use super::builtins;
 use super::scope::{self, Sig, lexical_syms, param_syms, sig_of, var_syms};
 use super::{Lower, Meta, group};
-use crate::lower_common::{contains_loop_continue, for_in_guarded, rewrite_continue};
+use crate::lower_common::{contains_loop_continue, for_in_guarded, js_cap, rewrite_continue};
 
 /// Where `function` declarations are hoisted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1625,14 +1625,10 @@ impl Lower<'_> {
             let Some(test) = case.condition() else {
                 continue;
             };
-            let test = self.expr(test)?;
+            // JS case matching is strict equality (CRUSH-290).
+            let test = js_cap("js.strict_eq", vec![var(&val), self.expr(test)?], m.clone());
             chain = Some(vec![CastStmt::If {
-                condition: CastExpr::BinaryOp {
-                    operator: "===".to_string(),
-                    left: Box::new(var(&val)),
-                    right: Box::new(test),
-                    meta: m.clone(),
-                },
+                condition: test,
                 then_body: vec![assign_start(i)],
                 else_body: Some(chain.take().unwrap_or_else(|| fallback.clone())),
                 meta: m.clone(),
