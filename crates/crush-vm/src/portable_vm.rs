@@ -2133,34 +2133,7 @@ impl PortableVm {
                     }
                     Ok(Some(Value::Int(character as i64)))
                 }
-                                "arr_slice" => {
-                                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
-                                    match &args[0] {
-                                        Value::Array(elems) => {
-                                            let arr = elems.borrow();
-                                            let len = arr.len() as i64;
-                                            let start = match &args[1] {
-                                                Value::Int(i) => *i,
-                                                Value::Null => 0i64,
-                                                _ => return Err(VmError::TypeError { expected: "int or null", got: args[1].type_name() }),
-                                            };
-                                            let end = if args.len() > 2 {
-                                                match &args[2] {
-                                                    Value::Int(i) => *i,
-                                                    Value::Null => len,
-                                                    _ => return Err(VmError::TypeError { expected: "int or null", got: args[2].type_name() }),
-                                                }
-                                            } else {
-                                                len
-                                            };
-                                            let start = start.max(0).min(len);
-                                            let end = end.max(start).min(len);
-                                            let sliced: Vec<Value> = arr[start as usize..end as usize].to_vec();
-                                            Ok(Some(Value::new_array(sliced)))
-                                        }
-                                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
-                                    }
-                                }
+                                "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
                 "make_range" => crate::make_range::make_range_values(&args).map(Some),
                 "append" | "push" => {
                     if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
