@@ -100,12 +100,14 @@ execute_with(source, { grants: ["polyglot.javascript"] });
   passes as environment variables. The marshaling prologue reads them as
   `process.env[name]`, so the sandbox must provide a `process.env` object.
 - **Typed values in and out** need the `polyglot-javascript` cargo feature
-  (free-variable analysis + guest rewrite via swc; ~1.2 MB more raw `.wasm`).
-  Without it a granted block still runs, but sees no Crush variables and its
-  result is its printed text.
+  (free-variable analysis + guest rewrite via `boa_parser`; about 1.2 MB more raw
+  `.wasm`, 0.4 MB gzipped). It does not link swc, which only lowers whole `.js`
+  files (the SDK's `polyglot-javascript-swc`). Without it a granted block still
+  runs, but sees no Crush variables and its result is its printed text.
 - Python works through the same hook (e.g. Pyodide in a Worker). Its typed
   marshaling needs the `polyglot-python` cargo feature (rustpython's parser,
-  pure Rust). Without it a variable *assigned* inside `@python` and used after
+  pure Rust; about 1.8 MB more raw `.wasm`, 0.66 MB gzipped, on top of
+  `polyglot-javascript`). Without it a variable *assigned* inside `@python` and used after
   it with no `->` declaring it (`@python { result = base ** 3 }` then
   `print(result)`) is a compile error here (`Undefined variable: result`),
   while native — which has the marshaling — prints `125`.
@@ -134,6 +136,10 @@ and no `set_lang_executor`.
   be an output).
 - **The default is `"exec"`.** Native `crush-run` always runs blocks in an
   interpreter.
+- **Known divergence ([#312](https://github.com/nixpt/crush-ast/issues/312)).**
+  Exec mode trims a block's output, so `print("one")`, `@python { print("two") }`,
+  `print("three")` prints `one` / `twothree`. Lowered, the block's `print` keeps its
+  newline and the program prints `one` / `two` / `three`.
 
 ## What this is not (yet)
 
@@ -154,6 +160,22 @@ and no `set_lang_executor`.
 ```bash
 wasm-pack build --target web
 ```
+
+Or with cargo and `wasm-bindgen-cli` (at the version in `Cargo.lock`), which is
+how the size figures above were measured:
+
+```bash
+cargo build --release --target wasm32-unknown-unknown --features polyglot-javascript
+wasm-bindgen --target web --remove-name-section --out-dir pkg \
+    target/wasm32-unknown-unknown/release/crush_web.wasm
+```
+
+This crate is its own workspace root, so its `[profile.release]` (size-tuned:
+`opt-level = "s"`, LTO, one codegen unit) applies to both. The profile strips
+only debug info; `--remove-name-section` drops the ~1.3 MB `name` section. A full
+symbol strip would also remove `target_features`, and wasm-bindgen would then
+fall back from externref to its older glue. With `polyglot-javascript` this gives
+a 5.0 MB `.wasm`, 1.5 MB gzipped.
 
 ## Testing
 

@@ -31,7 +31,7 @@ name = "crush"
 path = "src/bin/crush.rs"
 
 [features]
-default = ["native-plugins", "polyglot-python", "polyglot-javascript", "polyglot-rust", "stdlib"]
+default = ["native-plugins", "polyglot-python", "polyglot-javascript", "polyglot-javascript-swc", "polyglot-rust", "stdlib"]
 net = ["dep:ureq"]
 db = ["dep:rusqlite"]
 graphics = []
@@ -59,13 +59,18 @@ polyglot-python = ["dep:crush-lang-python"]
 polyglot-rust = ["dep:crush-lang-rust"]
 # @javascript{} free-variable analysis + guest rewrite (CRUSH-68), via
 # crush-lang-js; the analysis and inline lowering run on `boa_parser`
-# (CRUSH-250). `swc-backend` stays until CRUSH-250
-# step 6 makes boa the `.js` lowering: without it, anything that walks `.js`
-# through this feature (e.g. `JsAdapter`) would get the boa lowering early.
-polyglot-javascript = ["dep:crush-lang-js", "crush-lang-js/swc-backend", "crush-lang-js/js-boa"]
+# (CRUSH-250). boa only: crush-web (the browser build) uses just this.
+polyglot-javascript = ["dep:crush-lang-js", "crush-lang-js/js-boa"]
+# The swc parser and its whole-file `.js` lowering (what `JsAdapter` /
+# `compile_source("js", …)` use while it is on). On by default, and stays until
+# CRUSH-250 step 6 makes boa the `.js` lowering: without it, `.js` files get the
+# boa lowering early. Kept separate from `polyglot-javascript` because the
+# browser build never lowers a whole `.js` file, and swc alone is ~1.1 MB of
+# its wasm.
+polyglot-javascript-swc = ["polyglot-javascript", "crush-lang-js/swc-backend"]
 # TypeScript support in crush-lang-js (swc), for consumers that walk `.ts`
-# through the SDK. Off by default: it is what pulls swc in.
-polyglot-typescript = ["polyglot-javascript", "crush-lang-js/ts"]
+# through the SDK. Off by default.
+polyglot-typescript = ["polyglot-javascript-swc", "crush-lang-js/ts"]
 
 [dependencies]
 crush-vm = { path = "../crush-vm", version = "0.7.1", default-features = false }
