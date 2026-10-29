@@ -136,10 +136,12 @@ and no `set_lang_executor`.
   be an output).
 - **The default is `"exec"`.** Native `crush-run` always runs blocks in an
   interpreter.
-- **Known divergence ([#312](https://github.com/nixpt/crush-ast/issues/312)).**
-  Exec mode trims a block's output, so `print("one")`, `@python { print("two") }`,
-  `print("three")` prints `one` / `twothree`. Lowered, the block's `print` keeps its
-  newline and the program prints `one` / `two` / `three`.
+- **Output and failure work as with an interpreter**
+  ([#312](https://github.com/nixpt/crush-ast/issues/312)). A block's output is
+  trimmed, so `print("one")`, `@python { print("two") }`, `print("three")` prints
+  `one` / `twothree` in both modes. A block that raises fails the program with the
+  same error (`@python block raised a runtime error: (at .crush line N) ValueError:
+  x`), even inside a Crush `try`, and what it printed before raising is dropped.
 
 ## What this is not (yet)
 

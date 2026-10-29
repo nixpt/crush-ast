@@ -388,6 +388,16 @@ fn a_block_that_raises_fails_like_exec_lang() {
     assert_eq!(streamed, "a\n", "the block's partial output is dropped");
 }
 
+/// #312: a refusal names what the author wrote, not the walker intrinsic it
+/// lowers to (`x in y` was reported as `__crush_contains__`).
+#[test]
+fn an_unlowered_operator_is_named_as_written() {
+    let src = block("python", " -> r", "", "r = 2 in [1, 2]", "    print(r)\n");
+    let e = compile_err(&src);
+    assert!(e.contains("the `in` operator (`x in y`) is not supported"), "{e}");
+    assert!(!e.contains("__crush_contains__"), "{e}");
+}
+
 /// #312: a throw caught inside the block stays inside it.
 #[test]
 fn a_throw_caught_inside_the_block_is_not_a_failure() {

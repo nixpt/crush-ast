@@ -173,8 +173,9 @@ fn compile_lowering_blocks(
     let casm = crush_frontend::compiler::Compiler::new().compile_lowered(program, cosm)?;
     if let Some((name, line, lang)) = unknown_builtin(&casm, &blocks)? {
         anyhow::bail!(
-            "line {line}: this @{lang} block can't be lowered inline: `{name}` is not supported by the \
+            "line {line}: this @{lang} block can't be lowered inline: {} is not supported by the \
              walker yet (it has no Crush lowering)\n  {}",
+            describe_unlowered(&name),
             lowering_help(&lang)
         );
     }
@@ -229,9 +230,26 @@ pub fn compile_lowered_script(
     };
     let casm = crush_frontend::compiler::Compiler::new().compile(program)?;
     if let Some((name, _, _)) = unknown_builtin(&casm, &blocks)? {
-        return Err(refuse(format!("`{name}` is not supported by the walker yet (it has no Crush lowering)")));
+        return Err(refuse(format!(
+            "{} is not supported by the walker yet (it has no Crush lowering)",
+            describe_unlowered(&name)
+        )));
     }
     casm_to_vm(&casm)
+}
+
+/// What [`unknown_builtin`] found, as the source construct: a builtin by name
+/// (`` `sum` ``), but a walker intrinsic by what the author wrote, not by the
+/// internal name the walker lowered it to (#312: `x in y` was reported as
+/// `` `__crush_contains__` ``).
+fn describe_unlowered(name: &str) -> String {
+    match name {
+        "__crush_contains__" => "the `in` operator (`x in y`)".to_string(),
+        n if n.starts_with("__crush_") && n.ends_with("__") => {
+            format!("a construct the walker lowers to its internal `{n}`")
+        }
+        n => format!("`{n}`"),
+    }
 }
 
 /// A Python / JS builtin the walker has no Crush lowering for (`sum`, `int`,
