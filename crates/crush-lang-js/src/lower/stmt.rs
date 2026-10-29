@@ -290,12 +290,14 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, false);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
         let saved_home = self.home_class.take();
         let saved_static = std::mem::replace(&mut self.in_static, false);
         let r = self.function_in_scope(params, body, span, declared);
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.home_class = saved_home;
         self.in_static = saved_static;
         self.scopes.leave_fn();
@@ -319,9 +321,11 @@ impl Lower<'_> {
         self.scopes.enter_fn();
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
         let r = self.function_in_scope(params, body, span, true);
         self.this_bound = saved;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.scopes.leave_fn();
         let (mut lowered_params, body) = r?;
         lowered_params.insert(0, ("this".to_string(), CastType::Any));
@@ -344,11 +348,13 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
         let saved_static = std::mem::replace(&mut self.in_static, true);
         let r = self.function_in_scope(params, body, span, true);
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.in_static = saved_static;
         self.scopes.leave_fn();
         let (lowered_params, mut lowered_body) = r?;
@@ -1089,6 +1095,12 @@ impl Lower<'_> {
         }
         if let Some(kind) = v.init().and_then(|init| self.new_kind(init)) {
             self.instance_kinds.insert(name.clone(), kind);
+            self.host_kinds.remove(&name);
+        } else if let Some(kind) = v.init().and_then(|init| self.host_kind_of(init)) {
+            // `const m = new Map()`: a proven host collection, so
+            // `m.set(...)` lowers to the helpers (CRUSH-288).
+            self.host_kinds.insert(name.clone(), kind);
+            self.instance_kinds.remove(&name);
         }
         let span = v.init().map(Spanned::span);
         let mut value = match v.init() {
@@ -1243,6 +1255,7 @@ impl Lower<'_> {
                 | Statement::Try(_)
         );
         let saved_kinds = control.then(|| self.instance_kinds.clone());
+        let saved_hosts = control.then(|| self.host_kinds.clone());
         if control {
             self.branch_depth += 1;
         }
@@ -1265,15 +1278,18 @@ impl Lower<'_> {
             for sym in syms {
                 let name = self.resolve(sym);
                 self.instance_kinds.remove(&name);
+                self.host_kinds.remove(&name);
             }
         }
         let r = self.stmt_dispatch(s, span, m);
         if control {
             self.branch_depth -= 1;
             self.instance_kinds = saved_kinds.expect("control statements save the kinds");
+            self.host_kinds = saved_hosts.expect("control statements save the kinds");
             let assigned = std::mem::take(&mut self.flow_assigned);
             for name in &assigned {
                 self.instance_kinds.remove(name);
+                self.host_kinds.remove(name);
             }
             if self.branch_depth > 0 {
                 // An enclosing control statement forgets them too.

@@ -21,6 +21,7 @@
 mod builtins;
 mod class;
 mod expr;
+mod host;
 mod scope;
 mod stmt;
 
@@ -107,6 +108,22 @@ pub(crate) struct Lower<'a> {
     /// function boundary: an instance flowing in as a parameter or a
     /// capture isn't tracked (CRUSH-zorro-44's general problem).
     instance_kinds: HashMap<String, String>,
+    /// Bindings proven to hold a JS host collection (`new Map()` /
+    /// `new Set(...)`): binding name → its host kind, proven and
+    /// forgotten by exactly the rules of `instance_kinds`
+    /// (CRUSH-288). A binding is in at most one of the two maps.
+    host_kinds: HashMap<String, host::HostKind>,
+    /// Every assignment to a `this.field` in the module, by lowering
+    /// class and field: a host-kind proof, or a poison when the
+    /// assigned value doesn't prove one (CRUSH-288).
+    field_host_proofs: HashMap<(String, String), host::HostKind>,
+    field_host_poisons: std::collections::HashSet<(String, String)>,
+    /// Field reads/calls that assumed a host kind, validated at end
+    /// of module by [`Lower::check_field_host`].
+    field_host_uses: Vec<host::FieldHostUse>,
+    /// The synthesized Map/Set helper functions' names, chosen on
+    /// first use (CRUSH-288).
+    host_fns: Option<host::HostFns>,
     /// Depth of control statements (branches, loops, `try`) currently
     /// being lowered, and the bindings assigned inside them: both serve
     /// the forgetting rule of [`Lower::stmt`] (CRUSH-286 review #3).
@@ -189,6 +206,11 @@ impl<'a> Lower<'a> {
             this_bound: false,
             super_ctor: None,
             instance_kinds: Default::default(),
+            host_kinds: Default::default(),
+            field_host_proofs: Default::default(),
+            field_host_poisons: Default::default(),
+            field_host_uses: Default::default(),
+            host_fns: None,
             branch_depth: 0,
             flow_assigned: Default::default(),
             expr_depth: 0,
@@ -274,7 +296,14 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
     let mut lower = Lower::new(interner, ctx);
     let main_body = lower.top_level(&items)?;
     lower.check_member_calls()?;
+    lower.check_field_host()?;
     let mut functions = std::mem::take(&mut lower.functions);
+    // The Map/Set helpers, only when the module uses them (CRUSH-288).
+    if let Some(fns) = &lower.host_fns {
+        for (name, f) in host::helpers(fns) {
+            functions.insert(name, f);
+        }
+    }
     if !main_body.is_empty() {
         functions.insert(
             "main".to_string(),
