@@ -146,6 +146,8 @@ pub const CELL_NEW: u8 = 0x85;
 pub const CELL_GET: u8 = 0x86;
 /// Pop a cell, then a value; store the value in the cell.
 pub const CELL_SET: u8 = 0x87;
+/// Call a function value with arguments stored in an array (CRUSH-293 D3).
+pub const CALL_VALUE_APPLY: u8 = 0x88;
 pub const AI_QUERY: u8 = 0x90;
 pub const AI_SYNTHESIZE: u8 = 0x91;
 pub const AI_AGENT_DELEGATION: u8 = 0x92;
@@ -354,7 +356,7 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         CALL => Some(OperandKind::Func),
         MAKE_CLOSURE => Some(OperandKind::Closure),
         CALL_VALUE => Some(OperandKind::Count),
-        CELL_NEW | CELL_GET | CELL_SET => Some(OperandKind::None),
+        CELL_NEW | CELL_GET | CELL_SET | CALL_VALUE_APPLY => Some(OperandKind::None),
         GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD | LOAD_KIND => Some(OperandKind::Str),
         CALL_MEMBER | CONSTRUCT => Some(OperandKind::Member),
         GET_SLOT | SET_SLOT => Some(OperandKind::Count),

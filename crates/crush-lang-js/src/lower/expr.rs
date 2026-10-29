@@ -1,7 +1,8 @@
 //! Expressions.
 
 use boa_ast::expression::Expression;
-use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
+use boa_ast::expression::access::{PropertyAccess, PropertyAccessField, SimplePropertyAccess};
+use boa_ast::expression::{OptionalOperation, OptionalOperationKind};
 use boa_ast::expression::literal::{LiteralKind, PropertyDefinition, TemplateElement};
 use boa_ast::expression::operator::assign::{AssignOp, AssignTarget};
 use boa_ast::expression::operator::binary::{
@@ -248,7 +249,9 @@ impl Lower<'_> {
                     meta: m,
                 })
             }
-            Expression::Optional(_) => Err(self.unsupported("optional chaining (`?.`)", span)),
+            Expression::Optional(o) => {
+                self.optional_chain(o.target(), o.chain(), span, m)
+            }
             Expression::TaggedTemplate(_) => {
                 Err(self.unsupported("a tagged template literal (tag`…`)", span))
             }
@@ -412,6 +415,14 @@ impl Lower<'_> {
                     meta: m,
                 });
             }
+            "===" => return Ok(js_cap("js.strict_eq", vec![left, right], m)),
+            "!==" => {
+                return Ok(CastExpr::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(js_cap("js.strict_eq", vec![left, right], m.clone())),
+                    meta: m,
+                });
+            }
             // The deciding operand, not a bool (`0 || 'dflt'` is 'dflt'); the
             // right side runs only when the left doesn't decide.
             "||" | "&&" => {
@@ -436,6 +447,135 @@ impl Lower<'_> {
         })
     }
 
+    /// Optional chaining (CRUSH-289): boa flattens a chain into a
+    /// target and operations, each shorted (`?.`) or not. A shorted
+    /// operation becomes a null test over the chain so far — JS
+    /// `== null`, matching both `null` and `undefined`, the `?.`
+    /// trigger — with the rest of the chain lowered only on the
+    /// non-null side, so a shorted call's arguments never evaluate.
+    /// The prefix is evaluated twice (test and branch), so it must
+    /// be pure; non-shorted operations fold into the prefix and
+    /// lower through the ordinary access/call paths.
+    fn optional_chain(
+        &mut self,
+        base: &Expression,
+        ops: &[OptionalOperation],
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        self.optional_chain2(base, base, ops, span, m)
+    }
+
+    /// `base` is the prefix the operations apply to (lowered as
+    /// written, plus at most one type-erasing wrap — see below);
+    /// `pure` is the same prefix unwrapped, which the purity check
+    /// and the null test evaluate.
+    fn optional_chain2(
+        &mut self,
+        base: &Expression,
+        pure: &Expression,
+        ops: &[OptionalOperation],
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        let Some((first, rest)) = ops.split_first() else {
+            return self.expr(base);
+        };
+        if !first.shorted() {
+            let applied = self.optional_applied(first, base, span)?;
+            let applied_pure = self.optional_applied(first, pure, span)?;
+            return self.optional_chain2(&applied, &applied_pure, rest, span, m);
+        }
+        if has_side_effects(pure) {
+            return Err(self.unsupported(
+                "optional chaining through a side-effecting expression (the part before `?.` would be evaluated twice)",
+                span,
+            ));
+        }
+        // The test evaluates the lowered prefix (with its wrap);
+        // `pure` is the same value unwrapped, for the check above.
+        let cond = js_cap(
+            "js.loose_eq",
+            vec![
+                self.expr(base)?,
+                CastExpr::NullLiteral { meta: m.clone() },
+            ],
+            m.clone(),
+        );
+        // The branch applies the operation to the tested value. A
+        // plain binding keeps the static type of its initializer in
+        // the checker (`const n = null` is `Null`), which refuses a
+        // field read even in this unreachable-when-null branch, so
+        // such a binding is read back through `[n][0]` — the same
+        // value, typed `Any`. Kind/host-tracked bindings and member
+        // chains keep the plain receiver: their reads are `Any`
+        // already, and their lowering is receiver-sensitive.
+        let applied_base = match unparen(pure) {
+            Expression::Identifier(id)
+                if self.user_binding(id.sym()).is_some()
+                    && !self.instance_kinds.contains_key(&self.resolve(id.sym()))
+                    && !self.host_kinds.contains_key(&self.resolve(id.sym())) =>
+            {
+                let span_of = pure.span();
+                Expression::PropertyAccess(PropertyAccess::Simple(
+                    SimplePropertyAccess::new(
+                        Expression::ArrayLiteral(boa_ast::expression::literal::ArrayLiteral::new(
+                            vec![Some(pure.clone())],
+                            false,
+                            span_of,
+                        )),
+                        PropertyAccessField::Expr(Box::new(Expression::Literal(
+                            boa_ast::expression::literal::Literal::new(0i32, span_of),
+                        ))),
+                    ),
+                ))
+            }
+            _ => base.clone(),
+        };
+        let applied = self.optional_applied(first, &applied_base, span)?;
+        let applied_pure = self.optional_applied(first, pure, span)?;
+        let rest = self.optional_chain2(&applied, &applied_pure, rest, span, m.clone())?;
+        Ok(CastExpr::Call {
+            function: "__crush_ternary__".to_string(),
+            args: vec![
+                cond,
+                CastExpr::NullLiteral { meta: m.clone() },
+                rest,
+            ],
+            meta: m,
+        })
+    }
+
+    /// One chain operation applied to a prefix, as a plain
+    /// (non-optional) expression the ordinary lowering handles.
+    fn optional_applied(
+        &self,
+        op: &OptionalOperation,
+        base: &Expression,
+        span: Option<Span>,
+    ) -> anyhow::Result<Expression> {
+        Ok(match op.kind() {
+            OptionalOperationKind::SimplePropertyAccess { field } => {
+                Expression::PropertyAccess(PropertyAccess::Simple(
+                    SimplePropertyAccess::new(base.clone(), field.clone()),
+                ))
+            }
+            OptionalOperationKind::PrivatePropertyAccess { .. } => {
+                return Err(self.unsupported(
+                    "a private field in an optional chain (`?.#x`)",
+                    span,
+                ));
+            }
+            OptionalOperationKind::Call { args } => {
+                Expression::Call(boa_ast::expression::Call::new(
+                    base.clone(),
+                    args.clone(),
+                    op.span(),
+                ))
+            }
+        })
+    }
+
     fn access(
         &mut self,
         pa: &PropertyAccess,
@@ -454,6 +594,31 @@ impl Lower<'_> {
                         Some(row) => self.planned(row, &format!("`{name}`"), span),
                         None => self.unbound(obj.sym(), span),
                     });
+                }
+                // A proven host collection (CRUSH-288): `.size` is
+                // its length; any other member read — a method as a
+                // value, a subscript into the pair array — refuses.
+                if let Some(kind) = self.host_proof(s.target(), span) {
+                    return match s.field() {
+                        PropertyAccessField::Const(id)
+                            if self.name(id.sym()) == "size" =>
+                        {
+                            let target = self.expr(s.target())?;
+                            Ok(length_of(target, m))
+                        }
+                        PropertyAccessField::Const(id) => Err(self.unsupported(
+                            format!(
+                                "a {} has no property `.{}` (its methods are not values here)",
+                                kind.label(),
+                                self.name(id.sym())
+                            ),
+                            span,
+                        )),
+                        PropertyAccessField::Expr(_) => Err(self.unsupported(
+                            "subscripting a Map/Set (use .get() and .set())",
+                            span,
+                        )),
+                    };
                 }
                 let target = self.expr(s.target())?;
                 match s.field() {
@@ -501,6 +666,20 @@ impl Lower<'_> {
         let target = match a.lhs() {
             AssignTarget::Identifier(id) => Target::Var(self.resolve(id.sym())),
             AssignTarget::Access(PropertyAccess::Simple(s)) => {
+                // Writing a member of a proven host collection
+                // (`m[k] = v`, `m.x = v`) would write its array
+                // representation: refused (CRUSH-288).
+                if self.host_proof(s.target(), span).is_some() {
+                    return Err(self.unsupported(
+                        match s.field() {
+                            PropertyAccessField::Expr(_) => {
+                                "subscripting a Map/Set (use .get() and .set())"
+                            }
+                            _ => "assigning a property on a Map/Set",
+                        },
+                        span,
+                    ));
+                }
                 let obj = self.expr(s.target())?;
                 let key = match s.field() {
                     PropertyAccessField::Const(id) => CastExpr::StringLiteral {
@@ -552,14 +731,28 @@ impl Lower<'_> {
                 self.fn_assigned.insert(name.clone());
             }
             let proves = a.op() == AssignOp::Assign && self.expr_depth <= 1;
-            match proves.then(|| self.new_kind(a.rhs())).flatten() {
-                Some(kind) => {
-                    self.instance_kinds.insert(name.clone(), kind);
-                }
-                None => {
-                    self.instance_kinds.remove(name);
-                }
+            // A host collection proves (and forgets) by the same
+            // rules; a binding is in at most one of the two maps
+            // (CRUSH-288).
+            if proves && let Some(kind) = self.new_kind(a.rhs()) {
+                self.instance_kinds.insert(name.clone(), kind);
+                self.host_kinds.remove(name);
+            } else if proves && let Some(kind) = self.host_kind_of(a.rhs()) {
+                self.host_kinds.insert(name.clone(), kind);
+                self.instance_kinds.remove(name);
+            } else {
+                self.instance_kinds.remove(name);
+                self.host_kinds.remove(name);
             }
+        }
+        // `this.f = …` in a method: a host-kind proof (or poison)
+        // for the field, validated at end of module (CRUSH-288).
+        if let AssignTarget::Access(PropertyAccess::Simple(s)) = a.lhs()
+            && matches!(unparen(s.target()), Expression::This(_))
+            && let PropertyAccessField::Const(field) = s.field()
+        {
+            let field = self.name(field.sym());
+            self.note_field_assign(&field, a.op(), a.rhs());
         }
         let right = self.expr(a.rhs())?;
         let current = |t: &Target| match t {
@@ -579,10 +772,70 @@ impl Lower<'_> {
             right: Box::new(r),
             meta: m.clone(),
         };
+        // The write itself: `x = value` / `o[k] = value`, built the same way
+        // for the plain and the logical path.
+        let assign_to = |value: CastExpr| match &target {
+            Target::Var(name) => CastExpr::Call {
+                function: "__crush_assign__".to_string(),
+                args: vec![
+                    CastExpr::Var {
+                        name: name.clone(),
+                        meta: m.clone(),
+                    },
+                    value,
+                ],
+                meta: m.clone(),
+            },
+            Target::Slot(obj, key) => CastExpr::Call {
+                function: "__crush_setindex__".to_string(),
+                args: vec![obj.clone(), key.clone(), value],
+                meta: m.clone(),
+            },
+        };
         let value = match a.op() {
             AssignOp::Assign => right,
+            // `x &&= y` is `x && (x = y)`; `||=` and `??=` keep the current
+            // value for a truthy / non-null `x` instead. The right side runs
+            // only on the assign branch (`__crush_ternary__` jumps), and the
+            // expression's value is the kept or newly assigned value.
             AssignOp::BoolAnd | AssignOp::BoolOr | AssignOp::Coalesce => {
-                return Err(self.unsupported("logical assignment (`&&=`, `||=`, `??=`)", span));
+                let kept = current(&target);
+                let truthy = js_cap("js.truthy", vec![kept.clone()], m.clone());
+                let keep = match a.op() {
+                    AssignOp::BoolOr => truthy,
+                    AssignOp::BoolAnd => CastExpr::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(truthy),
+                        meta: m.clone(),
+                    },
+                    // `??`: null is the only nullish value here
+                    // (`undefined` is a refused literal), so `!js.loose_eq(x,
+                    // null)` is the `x ?? …` keep condition.
+                    _ => CastExpr::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(js_cap(
+                            "js.loose_eq",
+                            vec![kept.clone(), CastExpr::NullLiteral { meta: m.clone() }],
+                            m.clone(),
+                        )),
+                        meta: m.clone(),
+                    },
+                };
+                // `__crush_assign__` leaves null (not the value), so the
+                // assign branch writes first — as a `__crush_ternary__`
+                // condition, whose value is dropped — and then re-reads the
+                // target. Identical branches whatever that value is.
+                let assigned = CastExpr::Call {
+                    function: "__crush_ternary__".to_string(),
+                    args: vec![assign_to(right), kept.clone(), kept.clone()],
+                    meta: m.clone(),
+                };
+                // The conditional does the whole write; nothing wraps it.
+                return Ok(CastExpr::Call {
+                    function: "__crush_ternary__".to_string(),
+                    args: vec![keep, kept, assigned],
+                    meta: m.clone(),
+                });
             }
             AssignOp::Div => js_div(current(&target), right, m.clone()),
             AssignOp::Add => js_cap("js.add", vec![current(&target), right], m.clone()),
@@ -597,24 +850,7 @@ impl Lower<'_> {
             AssignOp::Shr => binop(">>", current(&target), right),
             AssignOp::Ushr => binop(">>>", current(&target), right),
         };
-        Ok(match target {
-            Target::Var(name) => CastExpr::Call {
-                function: "__crush_assign__".to_string(),
-                args: vec![
-                    CastExpr::Var {
-                        name,
-                        meta: m.clone(),
-                    },
-                    value,
-                ],
-                meta: m,
-            },
-            Target::Slot(obj, key) => CastExpr::Call {
-                function: "__crush_setindex__".to_string(),
-                args: vec![obj, key, value],
-                meta: m,
-            },
-        })
+        Ok(assign_to(value))
     }
 
     /// Call arguments. A spread argument would lose its `...`.
@@ -657,6 +893,32 @@ impl Lower<'_> {
                     ));
                 }
                 if let Some(name) = self.user_binding(id.sym()) {
+                    if self.binding_sig(id.sym()).is_none()
+                        && args.iter().any(|a| matches!(a, Expression::Spread(_)))
+                    {
+                        let spread_indices: Vec<_> = args.iter().enumerate()
+                            .filter_map(|(i, a)| matches!(a, Expression::Spread(_)).then_some(i))
+                            .collect();
+                        if spread_indices.len() != 1 || spread_indices[0] != args.len() - 1 {
+                            return Err(self.unsupported(
+                                "mixed or multiple spread arguments to a value callee (CRUSH-293 D3 supports one trailing spread)",
+                                span,
+                            ));
+                        }
+                        if args.len() != 1 {
+                            return Err(self.unsupported(
+                                "mixed fixed and spread arguments to a value callee (CRUSH-293 D3 currently supports spread-only calls)",
+                                span,
+                            ));
+                        }
+                        let Expression::Spread(spread) = &args[0] else { unreachable!() };
+                        let args_array = self.expr(spread.target())?;
+                        return Ok(CastExpr::Call {
+                            function: "__crush_apply__".to_string(),
+                            args: vec![CastExpr::Var { name, meta: m.clone() }, args_array],
+                            meta: m,
+                        });
+                    }
                     let args = match self.binding_sig(id.sym()) {
                         Some(sig) => self.adapt_args(&sig, args, &self.name(id.sym()), span)?,
                         None => self.args(args)?,
@@ -734,6 +996,14 @@ impl Lower<'_> {
                             span,
                         )),
                     };
+                }
+                // A proven host collection (`new Map()` / `new Set()`,
+                // CRUSH-288): its operations are the synthesized
+                // helpers, never the builtin table or the member-call
+                // machinery, which would misread the representation.
+                if let Some(kind) = self.host_proof(s.target(), span) {
+                    let recv = self.expr(s.target())?;
+                    return self.host_method_call(kind, recv, &method, args, span, m);
                 }
                 // `this.m(...)` in a method, or a variable this module
                 // bound with `new C()` (D4): the dotted-`CapabilityCall`
@@ -958,10 +1228,8 @@ impl Lower<'_> {
         fname: &str,
         span: Option<Span>,
     ) -> anyhow::Result<Vec<CastExpr>> {
-        if let Some(Expression::Spread(s)) =
-            args.iter().find(|a| matches!(a, Expression::Spread(_)))
-        {
-            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(s.span())));
+        if args.iter().any(|a| matches!(a, Expression::Spread(_))) {
+            return self.spread_args(sig, args, fname, span);
         }
         let m = self.meta(span);
         let mut out = Vec::new();
@@ -1018,6 +1286,169 @@ impl Lower<'_> {
         Ok(out)
     }
 
+    /// The arguments of a direct call that includes a spread, adapted to a
+    /// signature whose parameters are all plain (CRUSH-293 D2): the spread is
+    /// expanded in place — `f(...xs)` becomes `f(xs[0], …, xs[N-1])` with N the
+    /// parameter count — so the callee receives the values JS would pass it.
+    ///
+    /// A spread over an array literal is spliced in as its elements (D1), which
+    /// needs no reads at all. A spread over a plain name is read by slot. A
+    /// mixed list (`f(1, ...xs, 3)`, `f(...xs, ...ys)`) is modelled as one
+    /// array — the ordinary arguments and each spread's elements, concatenated
+    /// in order — and read by slot: the slot an element lands in depends on the
+    /// lengths only at run time, so the concatenation is the argument list.
+    /// Its pieces must be side-effect free, since each slot read evaluates it
+    /// again.
+    ///
+    /// Semantics: a longer array is invisible (a fixed call drops the extras,
+    /// exactly as JS ignores them); a shorter one is loud at run time (`array
+    /// index out of range`), where JS would pass `undefined` (CRUSH-zorro-12).
+    /// The source is assumed array-like — an object with a `length` is not
+    /// iterated the way JS's spread is.
+    fn spread_args(
+        &mut self,
+        sig: &Sig,
+        args: &[Expression],
+        fname: &str,
+        span: Option<Span>,
+    ) -> anyhow::Result<Vec<CastExpr>> {
+        let m = self.meta(span);
+        let spread_span = args
+            .iter()
+            .find_map(|a| match a {
+                Expression::Spread(s) => Some(s.span()),
+                _ => None,
+            })
+            .expect("a spread argument");
+        // A default or rest parameter takes hidden arguments — a "given" flag
+        // appended after the parameters, or one array slot — and a run-time
+        // length can't produce those (CRUSH-zorro-18).
+        if sig.iter().any(|p| *p != Param::Plain) {
+            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(spread_span)));
+        }
+        // The flattened argument list, in call order.
+        enum Piece<'e> {
+            /// An ordinary argument, or an element of a literal spread source.
+            Known(&'e Expression),
+            /// A spread over a plain name: expanded by reading it.
+            Spread(&'e Expression),
+        }
+        let mut pieces: Vec<Piece> = Vec::new();
+        for arg in args {
+            let Expression::Spread(s) = arg else {
+                pieces.push(Piece::Known(arg));
+                continue;
+            };
+            match unparen(s.target()) {
+                Expression::ArrayLiteral(lit) => {
+                    for el in lit.as_ref() {
+                        let Some(el) = el else {
+                            return Err(
+                                self.unsupported("an array hole (`[1, , 3]`)", Some(s.span()))
+                            );
+                        };
+                        pieces.push(Piece::Known(el));
+                    }
+                }
+                // A name reads the same array every time, so expanding it by
+                // slot can't repeat an effect. Anything else would be
+                // evaluated once per slot: refused.
+                Expression::Identifier(_) => pieces.push(Piece::Spread(unparen(s.target()))),
+                _ => {
+                    return Err(self.unsupported(
+                        "a spread argument (`f(...args)`) over something other than a plain name or an array literal",
+                        Some(s.span()),
+                    ));
+                }
+            }
+        }
+        if !pieces.iter().any(|p| matches!(p, Piece::Spread(_))) {
+            // Every source was a literal: a positional list, which is all the
+            // call needs. Truncating and short lists follow a plain call's
+            // rules (extras dropped when that can't matter, a missing
+            // argument refused).
+            let mut out = Vec::new();
+            for (i, p) in pieces.iter().enumerate() {
+                let Piece::Known(e) = p else {
+                    unreachable!("no spread piece")
+                };
+                if i >= sig.len() {
+                    if has_side_effects(e) {
+                        return Err(self.unsupported(
+                            format!("calling `{fname}` with an extra argument that has side effects"),
+                            Some(e.span()),
+                        ));
+                    }
+                    continue;
+                }
+                out.push(self.expr(e)?);
+            }
+            if out.len() < sig.len() {
+                return Err(self.unsupported(
+                    format!(
+                        "calling `{fname}` without its argument {} (a missing argument is `undefined`, CRUSH-zorro-12)",
+                        out.len() + 1
+                    ),
+                    span,
+                ));
+            }
+            return Ok(out);
+        }
+        // The model array: consecutive ordinary/literal arguments as one array
+        // literal, each name spread concatenated in place (crush's `+`
+        // concatenates arrays).
+        let mut segments: Vec<CastExpr> = Vec::new();
+        let mut run: Vec<CastExpr> = Vec::new();
+        for p in &pieces {
+            match p {
+                Piece::Known(e) => {
+                    if has_side_effects(e) {
+                        return Err(self.unsupported(
+                            "a spread argument (`f(...args)`) next to an argument with side effects",
+                            Some(e.span()),
+                        ));
+                    }
+                    run.push(self.expr(e)?);
+                }
+                Piece::Spread(e) => {
+                    if !run.is_empty() {
+                        segments.push(CastExpr::ArrayLiteral {
+                            elements: std::mem::take(&mut run),
+                            meta: m.clone(),
+                        });
+                    }
+                    segments.push(self.expr(e)?);
+                }
+            }
+        }
+        if !run.is_empty() {
+            segments.push(CastExpr::ArrayLiteral {
+                elements: run,
+                meta: m.clone(),
+            });
+        }
+        let mut segments = segments.into_iter();
+        let mut model = segments.next().expect("at least one segment");
+        for segment in segments {
+            model = CastExpr::BinaryOp {
+                operator: "+".to_string(),
+                left: Box::new(model),
+                right: Box::new(segment),
+                meta: m.clone(),
+            };
+        }
+        Ok((0..sig.len() as i64)
+            .map(|i| CastExpr::Index {
+                target: Box::new(model.clone()),
+                index: Box::new(CastExpr::IntLiteral {
+                    value: i,
+                    meta: m.clone(),
+                }),
+                meta: m.clone(),
+            })
+            .collect())
+    }
+
     /// The crush name a callee refers to, if it is a user binding.
     pub(super) fn user_binding(&self, sym: boa_interner::Sym) -> Option<String> {
         if self.scopes.resolve(sym).is_some() || self.toplevel_fns.contains(&sym) {
@@ -1043,6 +1474,13 @@ impl Lower<'_> {
         };
         if let Lowering::Planned(ticket) = row.lower {
             return Err(self.unsupported(format!("`{shown}` ({ticket})"), span));
+        }
+        // A spread is the real blocker, not the row's arity (`Math.max(...xs)`
+        // counts as one argument): name it first (CRUSH-293).
+        if let Some(Expression::Spread(s)) =
+            args.iter().find(|a| matches!(a, Expression::Spread(_)))
+        {
+            return Err(self.unsupported("a spread argument (`f(...args)`)", Some(s.span())));
         }
         if !row.arity.accepts(args.len()) {
             return Err(

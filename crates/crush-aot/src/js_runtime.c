@@ -156,6 +156,21 @@ static bool _js_loose_eq(Value a, Value b) {
     if (b.tag == TAG_BOOL) return _js_loose_eq(a, mk_int(b.b));
     return _js_prim_num(a, "JS `==`") == _js_prim_num(b, "JS `==`");
 }
+/* ===: no coercion, so a tag mismatch is false (one number type: int/float
+   compare numerically). Objects and arrays by identity. */
+static bool _js_strict_eq(Value a, Value b) {
+    if (_js_is_obj(a) || _js_is_obj(b)) {
+        if (!_js_is_obj(a) || !_js_is_obj(b)) return false;
+        return a.tag == b.tag && (a.tag == TAG_ARRAY ? a.array_idx == b.array_idx : a.obj_idx == b.obj_idx);
+    }
+    if (a.tag == TAG_NULL || b.tag == TAG_NULL) return a.tag == b.tag;
+    if (a.tag == TAG_STRING || b.tag == TAG_STRING) return a.tag == b.tag && strcmp(a.s, b.s) == 0;
+    if (a.tag == TAG_BOOL || b.tag == TAG_BOOL) return a.tag == b.tag && a.b == b.b;
+    if (a.tag == TAG_INT && b.tag == TAG_INT) return a.i == b.i;
+    /* One JS number type: an int and a float compare numerically; NaN equals
+       nothing. */
+    return _js_prim_num(a, "JS `===`") == _js_prim_num(b, "JS `===`");
+}
 
 /* ── console.log: node's util.format / util.inspect defaults ── */
 typedef struct { char** v; int n, cap; } _JsList;

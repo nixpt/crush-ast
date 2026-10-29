@@ -49,6 +49,8 @@ pub enum VmError {
     NotCallable(&'static str),
     #[error("function `{function}` takes {expected} argument(s), got {got}")]
     FuncArity { function: String, expected: usize, got: usize },
+    #[error("call_value_apply expects an array of arguments, got {0}")]
+    ApplyArgsType(&'static str),
     /// A language-styled printer (`py.print`, `conv.text`) met a function
     /// value; its format isn't pinned by any corpus yet (CRUSH-251).
     #[error("printing a function value (`{0}`) isn't supported in this language's print yet (CRUSH-251)")]
