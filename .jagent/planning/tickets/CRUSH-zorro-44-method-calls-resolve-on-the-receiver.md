@@ -11,6 +11,19 @@
 | **Estimated effort** | M |
 | **Filed by** | vega — 2026-10-15, COSM phase K1 (owner decisions recorded in the design doc and dejavue) |
 
+## Status note (kai, 2026-10-20)
+
+Part of this ticket lands, deliberately narrowed, in **PR #285** (CRUSH-277 S3/S5, open at the time of writing):
+JS method calls lower to member calls only where the receiver is **provably an instance**: `this`, bindings bound with
+`new C()`, and computed receivers (`new P(4).get2()`, CAST `Expression::MethodCall`), plus `super.m()`. Parameter and
+capture receivers stay **loud** on purpose (its decision D4), so built-in methods on primitives never silently change.
+
+What's left here is the **general** rule: a receiver whose Kind isn't known statically (a parameter, a capture, a
+field holding a function), with `CALL_MEMBER` + a runtime fallback to the built-in path. That needs a **design pass
+first** (the dispatch rule for Records vs primitives vs capability namespaces, written into
+`docs/design/object-model.md`), not just an implementation. Keep it Backlog until that design note exists, and check
+it against what #285 ships so the two don't disagree.
+
 ## Problem
 
 Today `obj.m(x)` compiles to a call to the **global** host capability `m` with `obj` as the first argument

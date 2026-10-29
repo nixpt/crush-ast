@@ -1,8 +1,13 @@
-# CRUSH-275 — `Load` of a program-level function name crashes at runtime
+# CRUSH-266a — `Load` of a program-level function name crashes at runtime
+
+> **Renumbered** by kai (2026-10-21) from `CRUSH-275` to `CRUSH-266a`, a residue suffix of the ticket it
+> came in with (PR #283, CRUSH-266), so no new ticket can claim the number again. CRUSH-275 was claimed three
+> times (PR #281's 1.0 criteria, PR #284's wheel CI ticket, and this one), and on the way here this ticket
+> briefly held 281, 283 and 284, each taken by a new ticket within hours.
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-275 |
+| **ID** | CRUSH-266a |
 | **Priority** | P1 |
 | **Status** | Done (superseded upstream — no code change needed) |
 | **Phase** | M4 |

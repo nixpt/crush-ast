@@ -38,8 +38,9 @@ use boa_ast::function::{
     ClassDeclaration, ClassElement, ClassElementName, ClassExpression, ClassMethodDefinition,
     FunctionExpression,
 };
+use boa_ast::declaration::{Declaration, ExportDeclaration};
 use boa_ast::property::{MethodDefinitionKind, PropertyName};
-use boa_ast::{Span, Spanned};
+use boa_ast::{Span, Spanned, Statement, StatementListItem};
 use boa_interner::Sym;
 use crush_cast::{CastType, Expression as CastExpr, Function, Statement as CastStmt};
 use crush_cosm::{
@@ -56,6 +57,11 @@ impl Lower<'_> {
     /// lifted into `Program::functions` by the time this returns, so the
     /// declaration itself contributes no statements.
     pub(super) fn class_decl(&mut self, c: &ClassDeclaration) -> anyhow::Result<Vec<CastStmt>> {
+        // The declaration's name is a class binding in this scope, so
+        // `new` through it constructs (a same-spelled parameter or
+        // local elsewhere shadows it and does not).
+        self.class_bindings.insert(self.resolve(c.name().sym()));
+        self.scopes.mark_class(c.name().sym());
         self.class_kind(
             Some(c.name().sym()),
             c.super_ref(),
@@ -79,19 +85,220 @@ impl Lower<'_> {
                 None,
             ));
         };
-        self.class_kind(
+        // The class's own name is a binding inside the class (its
+        // methods may construct it), but not outside: register it as a
+        // class binding only while this class lowers, unless an outer
+        // binding of the same name already did (`const K = class K`).
+        let kind = self.resolve(name.sym());
+        let outer = !self.class_bindings.insert(kind.clone());
+        let r = self.class_kind(
             Some(name.sym()),
             c.super_ref(),
             c.constructor(),
             c.elements(),
             Some(name.span()),
-        )
+        );
+        if !outer {
+            self.class_bindings.remove(&kind);
+        }
+        r
     }
 
-    /// Is `resolved` (a binding's crush name) a class this module has
-    /// declared as a COSM kind?
-    pub(super) fn is_kind(&self, resolved: &str) -> bool {
-        self.kinds.iter().any(|k| k.name == resolved)
+    /// May `new` construct `resolved` here (CRUSH-281)? A class whose
+    /// declaration item has been lowered always may. A class only
+    /// pre-registered so far may from code that runs after the whole
+    /// statement list has — a function nested deeper than the list
+    /// that declares it, or a field initialiser — but not from a
+    /// statement of the list itself: JS would hit the class's
+    /// temporal dead zone there.
+    pub(super) fn construct_kind(&self, resolved: &str) -> bool {
+        match self.visible_kinds.get(resolved) {
+            Some(None) => true,
+            Some(Some(owner)) => self.fn_depth > *owner || self.deferred_new > 0,
+            None => false,
+        }
+    }
+
+    /// Is `resolved` a pre-registered (not yet lowered) class here?
+    fn pending_here(&self, resolved: &str) -> bool {
+        matches!(self.visible_kinds.get(resolved), Some(Some(_)))
+    }
+
+    /// The kind the identifier `sym` constructs, when it refers to a
+    /// class binding visible here (CRUSH-281 review): the nearest
+    /// binding of that spelling must be the class's own (a parameter
+    /// or local of the same name shadows it), the name must be a class
+    /// binding (a class expression's inner name is not, outside the
+    /// class), and the class must be constructible here.
+    pub(super) fn class_ref(&self, sym: Sym) -> Option<String> {
+        if self.scopes.binding_class(sym) == Some(false) {
+            return None;
+        }
+        let resolved = self.resolve(sym);
+        if !self.class_bindings.contains(&resolved) {
+            return None;
+        }
+        self.construct_kind(&resolved).then_some(resolved)
+    }
+
+    /// Register a class's member signatures (CRUSH-280): the
+    /// constructor's (a derived class without one inherits its
+    /// parent's), and every method's, accessor's and static's, keyed
+    /// by lifted function name. Private and computed members are
+    /// skipped; the member pass refuses them by name. Idempotent —
+    /// the class's own lowering registers the same values again.
+    fn register_class_sigs(
+        &mut self,
+        kind: &str,
+        parents: &[KindRef],
+        ctor: Option<&FunctionExpression>,
+        elements: &[ClassElement],
+    ) {
+        let ctor_fn = format!("{kind}::constructor");
+        if let Some(f) = ctor {
+            self.fn_sigs.insert(ctor_fn.clone(), sig_of(f.parameters()));
+        } else if parents.is_empty() {
+            self.fn_sigs.insert(ctor_fn.clone(), Sig::default());
+        } else if let Some(sig) = self
+            .fn_sigs
+            .get(&format!("{}::constructor", parents[0].as_str()))
+            .cloned()
+        {
+            // The synthesised forwarding constructor takes the parent's
+            // parameters, defaults included.
+            self.fn_sigs.insert(ctor_fn.clone(), sig);
+        }
+        for element in elements {
+            let ClassElement::MethodDefinition(m) = element else {
+                continue;
+            };
+            if m.is_private() {
+                continue;
+            }
+            let ClassElementName::PropertyName(PropertyName::Literal(id)) = m.name() else {
+                continue;
+            };
+            let name = self.name(id.sym());
+            let func = match (m.kind(), m.is_static()) {
+                (MethodDefinitionKind::Ordinary, true) => format!("{kind}::static::{name}"),
+                (MethodDefinitionKind::Ordinary, false) => format!("{kind}::{name}"),
+                (MethodDefinitionKind::Get, _) => format!("{kind}::get::{name}"),
+                (MethodDefinitionKind::Set, _) => format!("{kind}::set::{name}"),
+                _ => continue,
+            };
+            self.fn_sigs.insert(func, sig_of(m.parameters()));
+        }
+    }
+
+    /// Pre-register the classes a statement list declares (CRUSH-281):
+    /// their kind names, parents and member signatures, before any
+    /// function in the list is lowered. The class items themselves
+    /// still lower in order (the temporal-dead-zone rule lives in
+    /// [`Lower::construct_kind`]).
+    pub(super) fn preregister_kinds(&mut self, items: &[StatementListItem]) {
+        for item in items {
+            match item {
+                StatementListItem::Declaration(d) => match d.as_ref() {
+                    Declaration::ClassDeclaration(c) => self.preregister_class(
+                        Some(c.name().sym()),
+                        c.super_ref(),
+                        c.constructor(),
+                        c.elements(),
+                    ),
+                    Declaration::Lexical(l) => {
+                        for v in l.variable_list().as_ref() {
+                            self.preregister_class_expr(v.binding(), v.init());
+                        }
+                    }
+                    _ => {}
+                },
+                StatementListItem::Statement(s) => {
+                    if let Statement::Var(v) = &**s {
+                        for d in v.0.as_ref() {
+                            self.preregister_class_expr(d.binding(), d.init());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Pre-register an exported class (CRUSH-281): same as
+    /// [`Lower::preregister_kinds`], for declarations that ride an
+    /// `export`.
+    pub(super) fn preregister_export(&mut self, e: &ExportDeclaration) {
+        match e {
+            ExportDeclaration::Declaration(Declaration::ClassDeclaration(c)) => {
+                self.preregister_class(
+                    Some(c.name().sym()),
+                    c.super_ref(),
+                    c.constructor(),
+                    c.elements(),
+                );
+            }
+            ExportDeclaration::Declaration(Declaration::Lexical(l)) => {
+                for v in l.variable_list().as_ref() {
+                    self.preregister_class_expr(v.binding(), v.init());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn preregister_class_expr(
+        &mut self,
+        binding: &boa_ast::declaration::Binding,
+        init: Option<&Expression>,
+    ) {
+        if let Some(Expression::ClassExpression(c)) = init.map(unparen) {
+            // Only a class expression whose name is the binding's own
+            // (its own name, or the name boa infers from the binding)
+            // is constructible through the binding. `const C = class
+            // K { … }` binds `C` to a class named `K`; `K` itself is
+            // bound only inside the class, so neither name
+            // pre-registers (CRUSH-281 review #4).
+            let boa_ast::declaration::Binding::Identifier(id) = binding else {
+                return;
+            };
+            if c.name().map(|n| n.sym()) != Some(id.sym()) {
+                return;
+            }
+            self.preregister_class(
+                Some(id.sym()),
+                c.super_ref(),
+                c.constructor(),
+                c.elements(),
+            );
+        }
+    }
+
+    fn preregister_class(
+        &mut self,
+        name: Option<Sym>,
+        super_ref: Option<&Expression>,
+        ctor: Option<&FunctionExpression>,
+        elements: &[ClassElement],
+    ) {
+        let Some(name) = name else {
+            return;
+        };
+        let kind = self.resolve(name);
+        self.visible_kinds.insert(kind.clone(), Some(self.fn_depth));
+        self.class_bindings.insert(kind.clone());
+        self.scopes.mark_class(name);
+        let parents = match super_ref {
+            None => Vec::new(),
+            Some(Expression::Identifier(id)) => vec![KindRef::new(self.resolve(id.sym()))],
+            // A non-name superclass is refused when the class item
+            // itself lowers.
+            Some(_) => Vec::new(),
+        };
+        if let Some(parent) = parents.first() {
+            self.class_parents
+                .insert(kind.clone(), parent.as_str().to_string());
+        }
+        self.register_class_sigs(&kind, &parents, ctor, elements);
     }
 
     /// The kind `e` constructs, when `e` is `new C()` of a class this
@@ -99,10 +306,7 @@ impl Lower<'_> {
     pub(super) fn new_kind(&self, e: &Expression) -> Option<String> {
         match unparen(e) {
             Expression::New(n) => match unparen(n.constructor()) {
-                Expression::Identifier(id) => {
-                    let kind = self.resolve(id.sym());
-                    self.is_kind(&kind).then_some(kind)
-                }
+                Expression::Identifier(id) => self.class_ref(id.sym()),
                 _ => None,
             },
             _ => None,
@@ -250,7 +454,32 @@ impl Lower<'_> {
             return self.new_host(host, n.arguments(), span, m);
         }
         let kind = self.resolve(id.sym());
-        if !self.is_kind(&kind) {
+        // A parameter, local, function or import of the same spelling
+        // shadows the class: `new` on that binding is not construction
+        // of the class (CRUSH-281 review).
+        if self.scopes.binding_class(id.sym()) == Some(false) {
+            return Err(self.unsupported(
+                format!(
+                    "`new {}` where `{}` is a binding here (a parameter, variable, function or import), not the class of that name",
+                    self.name(id.sym()),
+                    self.name(id.sym())
+                ),
+                span,
+            ));
+        }
+        if !self.class_bindings.contains(&kind) || !self.construct_kind(&kind) {
+            // A class declared later in this statement list is known
+            // but not yet initialised: JS's temporal dead zone
+            // (CRUSH-281). Anything else was never a class here.
+            if self.class_bindings.contains(&kind) && self.pending_here(&kind) {
+                return Err(self.unsupported(
+                    format!(
+                        "`new {}` before its class declaration has run (the class is in its temporal dead zone)",
+                        self.name(id.sym())
+                    ),
+                    span,
+                ));
+            }
             return Err(self.unsupported(
                 format!(
                     "`new {}`: only a class declared in this module constructs yet",
@@ -403,6 +632,9 @@ impl Lower<'_> {
         let saved_this = std::mem::replace(&mut self.this_bound, true);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        // A field initialiser runs at construction, after the whole
+        // module: it may construct a class declared later (CRUSH-281).
+        self.deferred_new += 1;
         let saved_hosts = std::mem::take(&mut self.host_kinds);
         let r = match init {
             Some(e) => self.expr(e),
@@ -410,6 +642,7 @@ impl Lower<'_> {
                 meta: self.meta(span),
             }),
         };
+        self.deferred_new -= 1;
         self.this_bound = saved_this;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
@@ -473,16 +706,22 @@ impl Lower<'_> {
     /// The lifted function of `kind`'s static method `method`, when the
     /// class declares one (a static call's target is known exactly).
     pub(super) fn kind_static_fn(&self, kind: &str, method: &str) -> Option<String> {
-        let k = self.kinds.iter().find(|k| k.name == kind)?;
-        k.members
-            .iter()
-            .find(|m| m.name == method)
-            .and_then(|m| match &m.member {
-                Member::Static {
-                    value: crush_cosm::StaticValue::Fn(f),
-                } => Some(f.to_string()),
-                _ => None,
-            })
+        if let Some(k) = self.kinds.iter().find(|k| k.name == kind) {
+            return k
+                .members
+                .iter()
+                .find(|m| m.name == method)
+                .and_then(|m| match &m.member {
+                    Member::Static {
+                        value: crush_cosm::StaticValue::Fn(f),
+                    } => Some(f.to_string()),
+                    _ => None,
+                });
+        }
+        // A class not lowered yet (CRUSH-281 pre-registration): its
+        // signatures registered ahead, so the lifted name is known.
+        let f = format!("{kind}::static::{method}");
+        self.fn_sigs.contains_key(&f).then_some(f)
     }
 
     /// Emit one class as a KindDecl plus its lifted functions; returns the
@@ -497,6 +736,20 @@ impl Lower<'_> {
         span: Option<Span>,
     ) -> anyhow::Result<String> {
         let kind = self.resolve(name.expect("class_kind callers name the class"));
+        // Kinds are keyed by name module-wide (member signatures and
+        // parents too), so two classes that resolve to one kind name —
+        // a module class and a function-local one, or locals of two
+        // sibling functions — would silently share one declaration.
+        // Refuse until kind names are properly scoped (CRUSH-281
+        // review). Block classes get fresh names and are unaffected.
+        if self.kinds.iter().any(|k| k.name == kind) {
+            return Err(self.unsupported(
+                format!(
+                    "two classes named `{kind}` in this module, which would share one kind name (scoped kind names are not supported yet)"
+                ),
+                span,
+            ));
+        }
         let parents = match super_ref {
             None => Vec::new(),
             Some(Expression::Identifier(id)) => vec![KindRef::new(self.resolve(id.sym()))],
@@ -542,45 +795,12 @@ impl Lower<'_> {
         };
         let kind_idx = self.kinds.len();
         self.kinds.push(make_decl(Vec::new()));
+        self.visible_kinds.insert(kind.clone(), None);
 
         // Member signatures register before any body of this class
         // lowers, so a member can call another (`this.m()`, `new C()`,
-        // `C.f()`) whatever the declaration order (CRUSH-280). Private
-        // and computed members are skipped here; the member pass below
-        // refuses them by name.
-        if let Some(f) = ctor {
-            self.fn_sigs.insert(ctor_fn.clone(), sig_of(f.parameters()));
-        } else if parents.is_empty() {
-            self.fn_sigs.insert(ctor_fn.clone(), Sig::default());
-        } else if let Some(sig) = self
-            .fn_sigs
-            .get(&format!("{}::constructor", parents[0].as_str()))
-            .cloned()
-        {
-            // The synthesised forwarding constructor takes the parent's
-            // parameters, defaults included.
-            self.fn_sigs.insert(ctor_fn.clone(), sig);
-        }
-        for element in elements {
-            let ClassElement::MethodDefinition(m) = element else {
-                continue;
-            };
-            if m.is_private() {
-                continue;
-            }
-            let ClassElementName::PropertyName(PropertyName::Literal(id)) = m.name() else {
-                continue;
-            };
-            let name = self.name(id.sym());
-            let func = match (m.kind(), m.is_static()) {
-                (MethodDefinitionKind::Ordinary, true) => format!("{kind}::static::{name}"),
-                (MethodDefinitionKind::Ordinary, false) => format!("{kind}::{name}"),
-                (MethodDefinitionKind::Get, _) => format!("{kind}::get::{name}"),
-                (MethodDefinitionKind::Set, _) => format!("{kind}::set::{name}"),
-                _ => continue,
-            };
-            self.fn_sigs.insert(func, sig_of(m.parameters()));
-        }
+        // `C.f()`) whatever the declaration order (CRUSH-280).
+        self.register_class_sigs(&kind, &parents, ctor, elements);
 
         // Class fields (CRUSH-277 S5, D7): instance fields initialise on
         // the instance at construction (statements spliced into the

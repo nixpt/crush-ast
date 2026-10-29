@@ -3,7 +3,7 @@
   "entry": "main",
   "lang": "crush",
   "functions": {
-    "unused02": {
+    "unused06": {
       "params": [
         [
           "x",
@@ -19,19 +19,34 @@
             "left": {
               "type": "Var",
               "name": "x",
-              "meta": {}
+              "meta": {
+                "col": 32,
+                "line": 6
+              }
             },
             "right": {
               "type": "IntLiteral",
-              "value": 2,
-              "meta": {}
+              "value": 6,
+              "meta": {
+                "col": 36,
+                "line": 6
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 36,
+              "line": 6
+            }
           },
-          "meta": {}
+          "meta": {
+            "col": 36,
+            "line": 6
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "line": 6,
+        "col": 1
+      }
     },
     "unused08": {
       "params": [
@@ -49,49 +64,34 @@
             "left": {
               "type": "Var",
               "name": "x",
-              "meta": {}
+              "meta": {
+                "line": 8,
+                "col": 32
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 8,
-              "meta": {}
+              "meta": {
+                "col": 36,
+                "line": 8
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 8,
+              "col": 36
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 8,
+            "col": 36
+          }
         }
       ],
-      "meta": {}
-    },
-    "unused03": {
-      "params": [
-        [
-          "x",
-          "Int"
-        ]
-      ],
-      "body": [
-        {
-          "type": "Return",
-          "value": {
-            "type": "BinaryOp",
-            "operator": "+",
-            "left": {
-              "type": "Var",
-              "name": "x",
-              "meta": {}
-            },
-            "right": {
-              "type": "IntLiteral",
-              "value": 3,
-              "meta": {}
-            },
-            "meta": {}
-          },
-          "meta": {}
-        }
-      ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 8
+      }
     },
     "unused07": {
       "params": [
@@ -109,49 +109,34 @@
             "left": {
               "type": "Var",
               "name": "x",
-              "meta": {}
+              "meta": {
+                "col": 32,
+                "line": 7
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 7,
-              "meta": {}
+              "meta": {
+                "line": 7,
+                "col": 36
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 7,
+              "col": 36
+            }
           },
-          "meta": {}
+          "meta": {
+            "col": 36,
+            "line": 7
+          }
         }
       ],
-      "meta": {}
-    },
-    "unused01": {
-      "params": [
-        [
-          "x",
-          "Int"
-        ]
-      ],
-      "body": [
-        {
-          "type": "Return",
-          "value": {
-            "type": "BinaryOp",
-            "operator": "+",
-            "left": {
-              "type": "Var",
-              "name": "x",
-              "meta": {}
-            },
-            "right": {
-              "type": "IntLiteral",
-              "value": 1,
-              "meta": {}
-            },
-            "meta": {}
-          },
-          "meta": {}
-        }
-      ],
-      "meta": {}
+      "meta": {
+        "line": 7,
+        "col": 1
+      }
     },
     "main": {
       "params": [],
@@ -162,10 +147,16 @@
           "value": {
             "type": "IntLiteral",
             "value": 8,
-            "meta": {}
+            "meta": {
+              "col": 17,
+              "line": 11
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 11,
+            "col": 17
+          }
         },
         {
           "type": "Return",
@@ -175,79 +166,34 @@
             "left": {
               "type": "Var",
               "name": "seed",
-              "meta": {}
+              "meta": {
+                "line": 12,
+                "col": 17
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 1,
-              "meta": {}
+              "meta": {
+                "col": 20,
+                "line": 12
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 20,
+              "line": 12
+            }
           },
-          "meta": {}
+          "meta": {
+            "col": 20,
+            "line": 12
+          }
         }
       ],
-      "meta": {}
-    },
-    "unused05": {
-      "params": [
-        [
-          "x",
-          "Int"
-        ]
-      ],
-      "body": [
-        {
-          "type": "Return",
-          "value": {
-            "type": "BinaryOp",
-            "operator": "+",
-            "left": {
-              "type": "Var",
-              "name": "x",
-              "meta": {}
-            },
-            "right": {
-              "type": "IntLiteral",
-              "value": 5,
-              "meta": {}
-            },
-            "meta": {}
-          },
-          "meta": {}
-        }
-      ],
-      "meta": {}
-    },
-    "unused06": {
-      "params": [
-        [
-          "x",
-          "Int"
-        ]
-      ],
-      "body": [
-        {
-          "type": "Return",
-          "value": {
-            "type": "BinaryOp",
-            "operator": "+",
-            "left": {
-              "type": "Var",
-              "name": "x",
-              "meta": {}
-            },
-            "right": {
-              "type": "IntLiteral",
-              "value": 6,
-              "meta": {}
-            },
-            "meta": {}
-          },
-          "meta": {}
-        }
-      ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 10
+      }
     },
     "unused04": {
       "params": [
@@ -265,20 +211,214 @@
             "left": {
               "type": "Var",
               "name": "x",
-              "meta": {}
+              "meta": {
+                "col": 32,
+                "line": 4
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 4,
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 36
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 4,
+              "col": 36
+            }
           },
-          "meta": {}
+          "meta": {
+            "col": 36,
+            "line": 4
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "line": 4,
+        "col": 1
+      }
+    },
+    "unused02": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {
+                "col": 32,
+                "line": 2
+              }
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 2,
+              "meta": {
+                "col": 36,
+                "line": 2
+              }
+            },
+            "meta": {
+              "line": 2,
+              "col": 36
+            }
+          },
+          "meta": {
+            "col": 36,
+            "line": 2
+          }
+        }
+      ],
+      "meta": {
+        "col": 1,
+        "line": 2
+      }
+    },
+    "unused01": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {
+                "col": 32,
+                "line": 1
+              }
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 1,
+              "meta": {
+                "col": 36,
+                "line": 1
+              }
+            },
+            "meta": {
+              "line": 1,
+              "col": 36
+            }
+          },
+          "meta": {
+            "line": 1,
+            "col": 36
+          }
+        }
+      ],
+      "meta": {
+        "line": 1,
+        "col": 1
+      }
+    },
+    "unused05": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {
+                "col": 32,
+                "line": 5
+              }
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 5,
+              "meta": {
+                "col": 36,
+                "line": 5
+              }
+            },
+            "meta": {
+              "line": 5,
+              "col": 36
+            }
+          },
+          "meta": {
+            "line": 5,
+            "col": 36
+          }
+        }
+      ],
+      "meta": {
+        "line": 5,
+        "col": 1
+      }
+    },
+    "unused03": {
+      "params": [
+        [
+          "x",
+          "Int"
+        ]
+      ],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "BinaryOp",
+            "operator": "+",
+            "left": {
+              "type": "Var",
+              "name": "x",
+              "meta": {
+                "col": 32,
+                "line": 3
+              }
+            },
+            "right": {
+              "type": "IntLiteral",
+              "value": 3,
+              "meta": {
+                "col": 36,
+                "line": 3
+              }
+            },
+            "meta": {
+              "line": 3,
+              "col": 36
+            }
+          },
+          "meta": {
+            "col": 36,
+            "line": 3
+          }
+        }
+      ],
+      "meta": {
+        "line": 3,
+        "col": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }
