@@ -123,6 +123,7 @@ const BOA_FIXED: &[(&str, &str)] = &[
     ("scope_nested_fn_decl", "a nested `function` is a hoisted closure"),
     ("scope_shadow_closure", "block bindings get their own crush local (alpha-renamed)"),
     ("scope_shadow_loop", "block bindings get their own crush local (alpha-renamed)"),
+    ("ctrl_finally", "`finally` runs on every JS-level exit (CRUSH-zorro-7)"),
 ];
 
 /// Programs that are silently wrong on the VM today: `(program, fixing ticket, symptom)`.
