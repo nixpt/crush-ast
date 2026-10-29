@@ -48,10 +48,13 @@ panic-hook = ["dep:console_error_panic_hook"]
 # (~0.5 MB → ~0.95 MB gzipped, mostly `regex`); build with
 # `--no-default-features --features panic-hook` for a page that doesn't need it.
 stdlib = ["crush-lang-sdk/stdlib"]
-# @javascript{} marshaling (free-variable analysis + guest rewrite, via swc) so a
+# @javascript{} marshaling (free-variable analysis + guest rewrite, via boa) so a
 # host executor (`set_lang_executor`) gets Crush variables in and a typed value
 # out. Without it a granted block still runs, but sees no Crush variables and
-# its result is its printed text. Adds ~1.2 MB to the raw release .wasm.
+# its result is its printed text. Adds ~1.2 MB to the raw release .wasm (with
+# the release profile below). It does not bring in swc: the SDK keeps that in
+# `polyglot-javascript-swc`, for lowering whole `.js` files, which a browser
+# run never does.
 polyglot-javascript = ["crush-lang-sdk/polyglot-javascript"]
 # @python{} marshaling (free-variable analysis + guest rewrite, via
 # rustpython-parser — pure Rust, so it builds for wasm32) and inline lowering
@@ -62,3 +65,16 @@ polyglot-python = ["crush-lang-sdk/polyglot-python"]
 opt-level = "z"
 lto = true
 codegen-units = 1
+
+# crush-web is its own workspace root, so it does not inherit crush-ast's
+# release profile; without this it builds with cargo's defaults (no LTO, 16
+# codegen units, nothing stripped). Measured at b1791d8e with
+# `polyglot-javascript` (wasm-bindgen output, no wasm-opt): cargo defaults
+# 8.65 MB / 2.30 MB gzipped; this profile 4.99 MB / 1.50 MB, about 10% slower
+# on interpreter-bound programs. `opt-level = "z"` saves another 0.56 MB but
+# runs 17-45% slower; `3` with the same LTO/strip is 6.73 MB and no faster.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "symbols"
