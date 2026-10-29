@@ -57,11 +57,57 @@ pub fn slice_values(target: &Value, start: &Value, stop: &Value, step: &Value) -
     }
 }
 
+/// `arr_slice(array, start[, end])` — Crush's own `a[start:end]`: the bounds
+/// of [`slice_indices`] with step 1, so a negative bound counts from the end
+/// as `a[-1]` does (#254: both VMs used to clamp it to 0 — `a[1:-1]` was `[]`
+/// and `a[-3:]` the whole array). One implementation for both VMs.
+pub fn arr_slice_values(cap: &str, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() });
+    }
+    let Value::Array(elems) = &args[0] else {
+        return Err(VmError::TypeError { expected: "array", got: args[0].type_name() });
+    };
+    let bound = |v: &Value| match v {
+        Value::Int(i) => Ok(Some(*i)),
+        Value::Null => Ok(None),
+        other => Err(VmError::TypeError { expected: "int or null", got: other.type_name() }),
+    };
+    let start = bound(&args[1])?;
+    let end = match args.get(2) {
+        Some(v) => bound(v)?,
+        None => None,
+    };
+    let arr = elems.borrow();
+    let idx = slice_indices(arr.len() as i64, start, end, 1);
+    Ok(Value::new_array(idx.into_iter().map(|i| arr[i as usize].clone()).collect()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn s(v: &str) -> Value { Value::Str(v.to_string()) }
+
+    // #254: Crush's `a[start:end]` counts negative bounds from the end.
+    #[test]
+    fn arr_slice_negative_bounds_count_from_the_end() {
+        let n = Value::Null;
+        let i = Value::Int;
+        let a = || Value::new_array(vec![i(1), i(2), i(3), i(4)]);
+        let arr = |v: &[i64]| Value::new_array(v.iter().map(|x| i(*x)).collect());
+        let sl = |args: &[Value]| arr_slice_values("arr_slice", args).unwrap();
+        assert_eq!(sl(&[a(), i(1), i(-1)]), arr(&[2, 3]));
+        assert_eq!(sl(&[a(), i(-3), n.clone()]), arr(&[2, 3, 4]));
+        assert_eq!(sl(&[a(), n.clone(), i(-1)]), arr(&[1, 2, 3]));
+        assert_eq!(sl(&[a(), i(-3)]), arr(&[2, 3, 4]));
+        // non-negative bounds, out-of-range clamping and end <= start: unchanged
+        assert_eq!(sl(&[a(), i(1), i(3)]), arr(&[2, 3]));
+        assert_eq!(sl(&[a(), i(-100), i(100)]), arr(&[1, 2, 3, 4]));
+        assert_eq!(sl(&[a(), i(3), i(1)]), arr(&[]));
+        assert!(arr_slice_values("arr_slice", &[a(), Value::Str("x".into())]).is_err());
+        assert!(arr_slice_values("arr_slice", &[Value::Str("abc".into()), i(1)]).is_err());
+    }
 
     #[test]
     fn matches_cpython_slices() {
