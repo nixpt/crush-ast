@@ -3,7 +3,8 @@
 //! into the program instead of running in `python3` / `node`.
 //!
 //! The bar is exact or loud. Every program of the walker's CPython corpus,
-//! used as an `@python` block body, prints what CPython prints — on the
+//! used as an `@python` block body, prints what the same block prints in
+//! `python3` (`EXEC_LANG`: CPython's stdout, trimmed, #312) — on the
 //! scheduler VM (native) and on the portable VM (the browser's) — without a
 //! `polyglot.python` grant, since nothing is spawned. A construct the walker
 //! can't lower fails compilation with the construct and the block's line.
@@ -58,7 +59,9 @@ fn cpython_corpus_as_python_blocks_matches_cpython() {
     let mut failures = Vec::new();
     for path in corpus() {
         let body = std::fs::read_to_string(&path).unwrap();
-        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        // What the block prints in python3: CPython's stdout as EXEC_LANG
+        // reduces it (trimmed, #312).
+        let expected = crush_vm::block_capture::visible_text(&std::fs::read_to_string(path.with_extension("out")).unwrap());
         // An explicit output, so the implicit rule doesn't pick a function
         // (21_lambda's `double`) to marshal back — see
         // `a_function_output_is_loud`.
@@ -88,7 +91,9 @@ fn inputs_and_outputs_marshal_through_lowering() {
         "import math\ntotal = xs[0] + xs[1] + xs[2] + cfg[\"a\"]\nlabel = name.upper() + \"!\"\ndoubled = [x * scale for x in xs]\nprint(math.sqrt(16))",
         "    print(total)\n    print(label)\n    print(doubled)\n",
     );
-    assert_eq!(run(&src).unwrap(), "4.0\n16\nCRUSH!\n[2.5, 5.0, 7.5]\n");
+    // The block's `print` is trimmed as EXEC_LANG trims it (#312): `crush-run
+    // --polyglot` prints this program as `4.016` / `CRUSH!` / `[2.5, 5.0, 7.5]`.
+    assert_eq!(run(&src).unwrap(), "4.016\nCRUSH!\n[2.5, 5.0, 7.5]\n");
 }
 
 #[test]
@@ -198,7 +203,8 @@ fn javascript_blocks_lower_with_closures_and_outputs() {
         "const xs = [];\nfor (let i = 0; i < n; i++) { xs.push(i * i); }\nfunction sum(a) { let t = 0; for (const v of a) { t += v; } return t + n; }\nlet out = sum(xs);\nconsole.log(\"js\", out, xs);",
         "    print(out)\n",
     );
-    assert_eq!(run(&src).unwrap(), "js 18 [ 0, 1, 4, 9 ]\n18\n");
+    // As `crush-run --polyglot` prints it (node's output trimmed, #312).
+    assert_eq!(run(&src).unwrap(), "js 18 [ 0, 1, 4, 9 ]18\n");
 }
 
 #[test]
@@ -240,7 +246,8 @@ fn node_corpus_as_javascript_blocks_is_exact_or_loud() {
     let (mut exact, mut loud, mut silent) = (Vec::new(), Vec::new(), Vec::new());
     for path in &files {
         let body = std::fs::read_to_string(path).unwrap();
-        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
+        // As for the CPython corpus: node's stdout as EXEC_LANG reduces it.
+        let expected = crush_vm::block_capture::visible_text(&std::fs::read_to_string(path.with_extension("out")).unwrap());
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
         // An explicit output, as for the CPython corpus.
         let source = block("javascript", " -> done", "", &format!("{body}\nlet done = 1;\n"), "");
@@ -333,4 +340,63 @@ fn a_lowered_script_refuses_what_the_walker_cannot_lower() {
         let e = format!("{:#}", crush_lang_sdk::compile::compile_lowered_script(lang, source).unwrap_err());
         assert!(e.contains(construct) && e.contains("runs as Crush"), "{source:?}: {e}");
     }
+}
+
+/// #312: a lowered block prints what the same block prints under `EXEC_LANG`
+/// (`crush-run --polyglot`): its output trimmed, with no trailing newline.
+#[test]
+fn a_blocks_output_is_trimmed_as_exec_lang_trims_it() {
+    let py = block("python", "", "    print(\"one\")\n", "print(\"two\")", "    print(\"three\")\n");
+    assert_eq!(run(&py).unwrap(), "one\ntwothree\n");
+    let js = block("javascript", "", "    print(\"one\")\n", "console.log(\"two\");", "    print(\"three\")\n");
+    assert_eq!(run(&js).unwrap(), "one\ntwothree\n");
+    // Leading and trailing whitespace go too; inner lines stay.
+    let lines = block("python", "", "", "print()\nprint(\"  a\")\nprint(\"b\")\nprint()", "    print(\"!\")\n");
+    assert_eq!(run(&lines).unwrap(), "a\nb!\n");
+}
+
+/// #312: the held output is not streamed before the block ends, so a host
+/// reading the stream (crush-web) sees what the final output says.
+#[test]
+fn a_blocks_output_is_not_streamed_untrimmed() {
+    let src = block("python", "", "    print(\"one\")\n", "print(\"two\")", "    print(\"three\")\n");
+    let program = compile(&src).unwrap();
+    let mut streamed = String::new();
+    let result = crush_vm::vm::run_with_caps_streaming(&program, &crush_vm::Quotas::default(), None, &mut |part| {
+        streamed.push_str(part)
+    })
+    .unwrap();
+    assert_eq!(streamed, "one\ntwothree\n");
+    assert_eq!(result.output, streamed);
+}
+
+/// #312: a block that raises fails as a failing `EXEC_LANG` block does: the
+/// same error, naming the `.crush` line, fatal even inside a Crush `try`, and
+/// what it printed before raising is dropped.
+#[test]
+fn a_block_that_raises_fails_like_exec_lang() {
+    let src = "fn f() {\n    print(\"a\")\n    @python {\n        print(\"partial\")\n        raise ValueError(\"x\")\n    }\n    print(\"not reached\")\n}\nfn main() {\n    try {\n        f()\n    } catch e {\n        print(\"caught\")\n    }\n}\n";
+    assert_eq!(
+        run(src).unwrap_err(),
+        "runtime: @python block raised a runtime error: (at .crush line 3) ValueError: x"
+    );
+    let program = compile(src).unwrap();
+    let mut streamed = String::new();
+    let _ = crush_vm::vm::run_with_caps_streaming(&program, &crush_vm::Quotas::default(), None, &mut |part| {
+        streamed.push_str(part)
+    });
+    assert_eq!(streamed, "a\n", "the block's partial output is dropped");
+}
+
+/// #312: a throw caught inside the block stays inside it.
+#[test]
+fn a_throw_caught_inside_the_block_is_not_a_failure() {
+    let src = block(
+        "python",
+        "",
+        "",
+        "try:\n    raise ValueError(\"x\")\nexcept ValueError:\n    print(\"handled\")\nprint(\"on\")",
+        "    print(\"!\")\n",
+    );
+    assert_eq!(run(&src).unwrap(), "handled\non!\n");
 }

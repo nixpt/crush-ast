@@ -792,16 +792,26 @@ fn lower_block(
             .collect(),
         meta: meta.clone(),
     };
+    // The block prints what EXEC_LANG prints (#312): its output is held while
+    // it runs and emitted trimmed when it returns; a throw out of it is fatal.
+    let capture = |name: &str, args: Vec<Expression>| Statement::ExprStmt {
+        expr: Expression::CapabilityCall { name: name.to_string(), args, meta: meta.clone() },
+        meta: meta.clone(),
+    };
+    let begin = capture(
+        "lang.capture_begin",
+        vec![str_lit(lang), Expression::IntLiteral { value: line as i64, meta: meta.clone() }],
+    );
+    let end = capture("lang.capture_end", Vec::new());
     if output_names.is_empty() {
-        return Ok(vec![Statement::ExprStmt { expr: call, meta: meta.clone() }]);
+        return Ok(vec![begin, Statement::ExprStmt { expr: call, meta: meta.clone() }, end]);
     }
     let result = format!("__crush_{lang}_block_{n}_out");
-    let mut out = vec![Statement::VarDecl {
-        name: result.clone(),
-        value: call,
-        type_hint: CastType::Any,
-        meta: meta.clone(),
-    }];
+    let mut out = vec![
+        begin,
+        Statement::VarDecl { name: result.clone(), value: call, type_hint: CastType::Any, meta: meta.clone() },
+        end,
+    ];
     for (k, name) in output_names.iter().enumerate() {
         let value = marshal(
             Expression::Index {

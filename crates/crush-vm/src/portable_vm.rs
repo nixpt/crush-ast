@@ -104,6 +104,7 @@ struct TaskCtx {
     call_stack: Vec<Frame>,
     ip: usize,
     try_stack: Vec<crate::vm::TryHandler>,
+    captures: Vec<crate::block_capture::OutputCapture>,
 }
 
 /// One cooperative green task (#161).
@@ -160,6 +161,9 @@ pub struct PortableVm {
     privileged_allowed: bool,
     /// Active try blocks, innermost last.
     try_stack: Vec<crate::vm::TryHandler>,
+    /// Open `lang.capture_begin`s of inline-lowered polyglot blocks (#312),
+    /// innermost last; per task, like `try_stack`.
+    captures: Vec<crate::block_capture::OutputCapture>,
     /// Green tasks (#161), indexed by handle id; `tasks[0]` is main. Empty
     /// until the first `SPAWN`, so programs that never spawn pay nothing.
     /// The running task's context lives in `stack` / `call_stack` / `ip` /
@@ -261,6 +265,7 @@ impl PortableVm {
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
+            captures: Vec::new(),
             tasks: Vec::new(),
             current_task: 0,
             slice_remaining: TASK_SLICE,
@@ -1058,7 +1063,7 @@ impl PortableVm {
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(s);
+                self.emit_part(s);
             }
             CAP_CALL => {
                 let idx = u16::from_be_bytes(
@@ -1111,7 +1116,7 @@ impl PortableVm {
                         if self.out_len > self.quotas.max_output {
                             return Err(VmError::OutputQuota(self.quotas.max_output));
                         }
-                        self.out_parts.push(output);
+                        self.emit_part(output);
                     }
                     self.push(results);
                 } else {
@@ -1623,6 +1628,15 @@ impl PortableVm {
             }
             THROW => {
                 let err_val = self.pop()?;
+                // A throw out of an inline-lowered polyglot block fails the
+                // block, as a failing EXEC_LANG does: fatal, its output
+                // dropped (#312).
+                let handler_depth = self.try_stack.last().map(|h| h.call_depth);
+                if let Some(err) =
+                    crate::block_capture::escaping_throw(&mut self.captures, handler_depth, &err_val)
+                {
+                    return Err(err);
+                }
                 if let Some(handler) = self.try_stack.pop() {
                     // Unwind to the frame and stack height that entered the try.
                     self.call_stack.truncate(handler.call_depth);
@@ -1788,7 +1802,7 @@ impl PortableVm {
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(outcome.visible);
+                self.emit_part(outcome.visible);
                 // Push declared outputs in reverse so the first `store`
                 // (`out_0`) sees the first declared value on top (CRUSH-270).
                 let out_values =
@@ -1875,6 +1889,7 @@ impl PortableVm {
                                 call_stack: vec![Frame::new(None)],
                                 ip: entry,
                                 try_stack: Vec::new(),
+            captures: Vec::new(),
                             }),
                             ..GreenTask::default()
                         });
@@ -2004,7 +2019,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 // Like io.print but without the newline (C printf, Rust print!).
@@ -2014,7 +2029,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(text);
+                    self.emit_part(text);
                     Ok(None)
                 }
                 "py.print_sep_end" => {
@@ -2024,7 +2039,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 "py.print" => {
@@ -2035,7 +2050,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 "math.truediv" => {
@@ -2053,6 +2068,10 @@ impl PortableVm {
                     crate::num_text::text_as(&args[0], &args[1]).map(Some)
                 }
                 "lang.marshal" => crate::marshal::marshal_cap(&args),
+                "lang.capture_begin" => {
+                    crate::block_capture::begin(&mut self.captures, &args, self.call_stack.len())
+                }
+                "lang.capture_end" => crate::block_capture::end(&mut self.captures, &mut self.out_parts),
                 "seq.slice" => {
                     crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
                 }
@@ -2259,7 +2278,7 @@ impl PortableVm {
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(result.output);
+                self.emit_part(result.output);
             }
             Ok(result.stack.last().cloned().unwrap_or(Value::Null))
         };
@@ -2422,6 +2441,7 @@ impl PortableVm {
             call_stack: std::mem::take(&mut self.call_stack),
             ip: self.ip,
             try_stack: std::mem::take(&mut self.try_stack),
+            captures: std::mem::take(&mut self.captures),
         };
         if !self.tasks[cur].done {
             self.tasks[cur].ctx = Some(parked);
@@ -2431,7 +2451,14 @@ impl PortableVm {
         self.call_stack = ctx.call_stack;
         self.ip = ctx.ip;
         self.try_stack = ctx.try_stack;
+        self.captures = ctx.captures;
         self.current_task = next;
+    }
+
+    /// One piece of program output: held by an open block capture, if any
+    /// (#312), else appended to the output.
+    fn emit_part(&mut self, part: String) {
+        crate::block_capture::emit(&mut self.captures, &mut self.out_parts, part);
     }
 
     fn take_result(&self) -> VmResult {

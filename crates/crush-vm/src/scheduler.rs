@@ -266,17 +266,11 @@ pub(crate) struct ExecLangOutcome {
 /// value (the `CRUSH_RESULT_SENTINEL` line). Shared by the subprocess path
 /// and host-provided executors ([`crate::portable_vm::LangExecutor`]).
 pub(crate) fn parse_exec_lang_stdout(raw: &str) -> ExecLangOutcome {
-    let mut visible_lines: Vec<&str> = Vec::new();
-    let mut result_payload: Option<&str> = None;
-    for line in raw.lines() {
-        match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
-            // Last one wins, matching "the block's final bound output" if it
-            // somehow printed the sentinel more than once.
-            Some(payload) => result_payload = Some(payload),
-            None => visible_lines.push(line),
-        }
-    }
-    let visible = visible_lines.join("\n").trim().to_string();
+    // Last one wins, matching "the block's final bound output" if it somehow
+    // printed the sentinel more than once.
+    let result_payload = raw.lines().filter_map(|line| line.strip_prefix(CRUSH_RESULT_SENTINEL)).next_back();
+    // Shared with inline-lowered blocks (#312), so both modes print the same.
+    let visible = crate::block_capture::visible_text(raw);
     let result_value = match result_payload {
         Some(payload) => serde_json::from_str::<Value>(payload)
             .unwrap_or_else(|_| Value::Str(payload.to_string())),
@@ -697,6 +691,8 @@ fn execute_one(
     // produced wrong order.)
     let out_parts = shared_out_parts;
     let out_len = shared_out_len;
+    // An inline-lowered polyglot block's output is held here (#312).
+    let captures = &mut thread.captures;
 
     macro_rules! pop {
         () => {{ stack.pop().ok_or(VmError::StackUnderflow)? }};
@@ -760,7 +756,7 @@ fn execute_one(
                         if *out_len > quotas.max_output {
                             return Err(VmError::OutputQuota(quotas.max_output));
                         }
-                        out_parts.push(r.output);
+                        crate::block_capture::emit(captures, out_parts, r.output);
                     }
                     Ok(r.return_value.unwrap_or(Value::Null))
                 };
@@ -1316,7 +1312,7 @@ fn execute_one(
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));
             }
-            out_parts.push(s);
+            crate::block_capture::emit(captures, out_parts, s);
         }
         CAP_CALL => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
@@ -1362,12 +1358,12 @@ fn execute_one(
                     if *out_len > quotas.max_output {
                         return Err(VmError::OutputQuota(quotas.max_output));
                     }
-                    out_parts.push(output);
+                    crate::block_capture::emit(captures, out_parts, output);
                 }
                 push!(results);
             } else {
                 let result = dispatch_cap(
-                    &cap, args, declared, quotas, out_parts, out_len, host_caps,
+                    &cap, args, declared, quotas, out_parts, out_len, host_caps, captures, call_stack.len(),
                 )?;
                 if let Some(v) = result {
                     push!(v);
@@ -1582,7 +1578,7 @@ fn execute_one(
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));
             }
-            out_parts.push(outcome.visible);
+            crate::block_capture::emit(captures, out_parts, outcome.visible);
             // Push the declared outputs in reverse so the first `store` the
             // compiler emits (for `out_0`) sees the first declared value on
             // top of the stack (CRUSH-270 multi-output protocol).
@@ -1658,6 +1654,12 @@ fn execute_one(
         }
         THROW => {
             let err_val = pop!();
+            // A throw out of an inline-lowered polyglot block fails the block,
+            // as a failing EXEC_LANG does: fatal, its output dropped (#312).
+            let handler_depth = try_stack.last().map(|h| h.call_depth);
+            if let Some(err) = crate::block_capture::escaping_throw(captures, handler_depth, &err_val) {
+                return Err(err);
+            }
             if let Some(handler) = try_stack.pop() {
                 // Unwind to the frame and stack height that entered the try.
                 call_stack.truncate(handler.call_depth);
@@ -2076,6 +2078,7 @@ pub(crate) fn parallel_map_counted(
     Ok((output, results, rebuilds))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_cap(
     cap: &str,
     args: Vec<Value>,
@@ -2084,6 +2087,8 @@ fn dispatch_cap(
     out_parts: &mut Vec<String>,
     out_len: &mut usize,
     host_caps: Option<&HostCaps>,
+    captures: &mut Vec<crate::block_capture::OutputCapture>,
+    call_depth: usize,
 ) -> Result<Option<Value>, VmError> {
     check_cap_permitted(cap, declared.contains(cap), quotas)?;
 
@@ -2101,7 +2106,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(line);
+                crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
             // Like io.print but without the newline (C printf, Rust print!).
@@ -2111,7 +2116,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(text);
+                crate::block_capture::emit(captures, out_parts, text);
                 Ok(None)
             }
             "py.print_sep_end" => {
@@ -2121,7 +2126,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(line);
+                crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
             "py.print" => {
@@ -2132,7 +2137,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(line);
+                crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
             "math.truediv" => {
@@ -2150,6 +2155,8 @@ fn dispatch_cap(
                 crate::num_text::text_as(&args[0], &args[1]).map(Some)
             }
             "lang.marshal" => crate::marshal::marshal_cap(&args),
+            "lang.capture_begin" => crate::block_capture::begin(captures, &args, call_depth),
+            "lang.capture_end" => crate::block_capture::end(captures, out_parts),
             "seq.slice" => {
                 crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
             }
