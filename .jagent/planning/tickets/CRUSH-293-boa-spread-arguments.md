@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-293 |
 | **Priority** | P1 (maya blocker — the next item in the CRUSH-276 queue) |
-| **Status** | Open |
+| **Status** | D2 done (PR pending); D3 open |
 | **Phase** | COSM K3 follow-up (boa walker) |
-| **Assignee** | unassigned |
+| **Assignee** | freebuff (dispatched by muse) |
 | **Dependencies** | CRUSH-276 (queue), CRUSH-zorro-18 (the rest/default ABI), CRUSH-251 (function values — only for design D3), CRUSH-111 (intrinsic table contract) |
 | **Estimated effort** | S–M, in two independent slices (D2 walker-only, S; D3 opcode, M) |
 | **Filed by** | muse — 2026-10-22, from the boa refusal inventory (investigation by freebuff under muse dispatch) |
@@ -369,3 +369,22 @@ D3 (when its PR opens):
       covers the new opcode.
 - [ ] The new opcode is on AOT C's explicit bail list — not left to the
       `/* unhandled op */` catch-all.
+
+## Resolution (D2, 2026-10-22)
+
+Implemented as recommended (freebuff under muse dispatch; reviewed
+and verified by muse). `Lower::adapt_args` routes any argument
+list containing a spread to `Lower::spread_args`: with an all-plain
+signature, literal spreads splice as elements and name spreads are
+modelled as one concatenated argument array (ordinary arguments as
+array-literal segments, crush `+` concatenates) read back by slot —
+`f(...xs)` becomes `f(xs[0], …, xs[N-1])`. Pieces next to a runtime
+spread must be side-effect free (each slot read re-evaluates the
+model; pure pieces make that unobservable). Short arrays fail
+loudly at run time (`array index out of range`); default/rest
+signatures, non-name sources, unknown-signature call sites
+(`console.log(...xs)`, value callees) stay refused, as does
+`f(...arguments)`. `Math.max(...xs)` now names the spread instead
+of the row arity. `arr_spread_call` moved from KNOWN_LOUD to
+BOA_FIXED in the corpus harness, with AOT parity allow-listed as
+before. D3 (value-callee apply opcode) remains open above.

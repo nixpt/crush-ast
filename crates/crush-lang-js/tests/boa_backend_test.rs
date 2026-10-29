@@ -2069,3 +2069,101 @@ console.log(calls);
 "#;
     assert_eq!(run_js(source), "4\n4\n3\n3\n3\n0\n0\n0\n9\n1\n0\n1\n");
 }
+
+// CRUSH-293 D2: at a call site whose callee signature the walker knows and
+// whose parameters are all plain, a spread argument is expanded in place —
+// `f(...xs)` becomes `f(xs[0], …, xs[N-1])` — so the callee receives what node
+// passes it. Values below are node's.
+#[test]
+fn test_boa_spread_argument_at_a_known_signature() {
+    let source = r#"
+function f(a, b, c) { return a + b + c; }
+const xs = [1, 2, 3];
+console.log(f(...xs));
+// Extra elements are invisible, exactly as node ignores them.
+const long = [1, 2, 3, 9];
+console.log(f(...long));
+"#;
+    assert_eq!(run_js(source), "6\n6\n");
+}
+
+// Spread first / middle / last / several: the slots an element lands in depend
+// on the arrays' lengths only at run time, so the flattened argument list is
+// read by slot. node: 6, 10, 73.
+#[test]
+fn test_boa_spread_argument_first_middle_last_and_two_spreads() {
+    let source = r#"
+function f(a, b, c) { return a + b + c; }
+function g(a, b, c, d) { return a + b + c + d; }
+const xs = [1, 2];
+const ys = [3, 4];
+console.log(f(1, ...[2], 3));
+console.log(g(...xs, ...ys));
+console.log(g(...[], ...xs, 30, 40));
+"#;
+    assert_eq!(run_js(source), "6\n10\n73\n");
+}
+
+// The same expansion at the other known signatures: `new`, `super(...)` inside
+// a derived constructor, an instance method on a known-instance receiver, and
+// `this.m(...)`. node: 6, 11, `3 3`.
+#[test]
+fn test_boa_spread_argument_into_constructors_and_methods() {
+    let source = r#"
+class B { constructor(a, b, c) { this.n = a + b + c; } }
+class P { constructor(a, b) { this.n = a + b; } }
+class C extends P { constructor(p) { super(...p); } }
+class A { m(a, b) { return a + b; } sum(v) { return this.m(...v); } }
+const xs = [1, 2, 3];
+const a = new A();
+console.log(new B(...xs).n);
+console.log(new C([5, 6]).n);
+console.log(a.m(...[1, 2]), a.sum([1, 2]));
+"#;
+    assert_eq!(run_js(source), "6\n11\n3 3\n");
+}
+
+// What stays loud, with the message naming the spread: a signature with a
+// default or rest parameter (its hidden "given" flag / array slot can't come
+// from a run-time length), a source that isn't a plain name or an array
+// literal (it would be evaluated once per element slot), a builtin row (no
+// signature to expand into), and `arguments` (CRUSH-zorro-18).
+#[test]
+fn test_boa_spread_argument_stays_loud() {
+    let msg = loud("function f(a, b = 2) { return a + b; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "default parameter: {msg}");
+    let msg = loud("function f(...rest) { return rest; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "rest parameter: {msg}");
+    let msg = loud(
+        "function f(a, b) { return a + b; }\nfunction make() { return [1, 2]; }\nconsole.log(f(...make()));",
+    );
+    assert!(
+        msg.contains("other than a plain name or an array literal"),
+        "computed source: {msg}"
+    );
+    let msg = loud("const xs = [1, 2];\nconsole.log(...xs);");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "console.log: {msg}");
+    let msg = loud("function f(a) { return a; }\nfunction g() { return f(...arguments); }\nconsole.log(g(1));");
+    assert!(msg.contains("arguments"), "arguments: {msg}");
+}
+
+// A short array must never turn into a value: the slot read is loud at run
+// time, where JS would pass `undefined` (CRUSH-zorro-12). A literal source is
+// known at walk time, so a short one is refused there, by the plain call's
+// missing-argument rule.
+#[test]
+fn test_boa_spread_argument_short_array_is_loud() {
+    let err = run_js_err("function f(a, b) { return a + b; }\nconst xs = [1];\nconsole.log(f(...xs));");
+    assert!(err.contains("array index out of range"), "{err}");
+    let msg = loud("function f(a, b) { return a + b; }\nconsole.log(f(...[1]));");
+    assert!(msg.contains("without its argument 2"), "{msg}");
+}
+
+// A builtin row counts a spread as one argument; the spread is the real
+// blocker, so that is what the refusal must name (CRUSH-293).
+#[test]
+fn test_boa_spread_argument_math_max_names_the_spread() {
+    let msg = loud("const xs = [1, 2];\nconsole.log(Math.max(...xs));");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "{msg}");
+    assert!(!msg.contains("argument(s)"), "{msg}");
+}

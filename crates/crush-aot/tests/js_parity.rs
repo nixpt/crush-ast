@@ -117,6 +117,7 @@ const C_SILENT: &[(&str, &str, &str)] = RUST_SILENT;
 const BOA_EXACT: &[&str] = &[
     "arr_push_loop_multi",
     "arr_push_multi",
+    "arr_spread_call",
     "builtin_map_set",
     "fn_default_param",
     "ops_optional_chain",
