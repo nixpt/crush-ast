@@ -179,7 +179,7 @@ impl HostCap for RustDebugCap {
 }
 
 mod binary;
-mod bytes;
+pub(crate) mod bytes;
 mod collections_ext;
 mod env_info;
 mod result;

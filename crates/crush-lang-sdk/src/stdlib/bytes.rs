@@ -24,7 +24,7 @@ pub(super) fn register(caps: &mut HostCaps) {
 }
 
 /// Copy the bytes out of a `Value::Bytes` or a buffer.
-pub(super) fn byte_view(cap: &str, v: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn byte_view(cap: &str, v: &Value) -> Result<Vec<u8>, String> {
     match v {
         Value::Bytes(b) => Ok(b.clone()),
         Value::Vector(cells) => cells

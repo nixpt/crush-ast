@@ -670,11 +670,30 @@ impl HostCap for FsWriteCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = crate::caps::value_as_text(&args[1]);
+        let data = fs_write_payload(&args[1])?;
         open_for_write(&path, true)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, data.as_bytes()))
+            .and_then(|mut file| std::io::Write::write_all(&mut file, &data))
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
+    }
+}
+
+/// The bytes `fs.write` puts in the file (#302): a string as UTF-8, `bytes`
+/// and buffers raw (the same reading `bytes.*` / `binary.*` give them, so a
+/// buffer cell outside 0..=255 is an error), and any other data value as its
+/// text form. A value whose text form is only a placeholder (`<fn f>`,
+/// `<handle 3>`, …) is refused instead of being written.
+fn fs_write_payload(value: &Value) -> Result<Vec<u8>, String> {
+    match value {
+        Value::Str(s) => Ok(s.as_bytes().to_vec()),
+        Value::Bytes(_) | Value::Vector(_) => crate::stdlib::bytes::byte_view("fs.write", value),
+        Value::Func(_) | Value::Handle(_) | Value::Foreign(_) | Value::Cell(_) | Value::Kind(_) => {
+            Err(format!(
+                "fs.write: a {} has no file form; write a string, bytes or a buffer",
+                value.type_name()
+            ))
+        }
+        other => Ok(crate::caps::value_as_text(other).into_bytes()),
     }
 }
 
@@ -1164,6 +1183,44 @@ mod tests {
         std::fs::create_dir(root.join("sub")).unwrap();
         write.call(vec![text("sub/../new2.txt"), text("ok")]).unwrap();
         assert!(root.join("new.txt").exists() && root.join("new2.txt").exists());
+    }
+
+    // #302: bytes and buffers land raw; they used to be written as their
+    // display text (`<2 bytes>`, `Vector[202, 254, 0, 0]`).
+    #[test]
+    fn fs_write_writes_bytes_and_buffers_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = FsWriteCap::new(dir.path().to_str().unwrap());
+        let path = |s: &str| Value::Str(s.to_string());
+
+        write.call(vec![path("b.bin"), Value::Bytes(vec![0x41, 0x00, 0xC8, 0xFF])]).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("b.bin")).unwrap(), [0x41, 0x00, 0xC8, 0xFF]);
+
+        let cells = [0xCA, 0xFE, 0, 0].map(Value::Int).to_vec();
+        let buf = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(cells)));
+        write.call(vec![path("v.bin"), buf]).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("v.bin")).unwrap(), [0xCA, 0xFE, 0, 0]);
+
+        // strings and other data values keep their text form
+        write.call(vec![path("s.txt"), path("é")]).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("s.txt")).unwrap(), "é".as_bytes());
+        write.call(vec![path("n.txt"), Value::Int(42)]).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("n.txt")).unwrap(), "42");
+    }
+
+    #[test]
+    fn fs_write_refuses_what_has_no_file_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = FsWriteCap::new(dir.path().to_str().unwrap());
+        let path = |s: &str| Value::Str(s.to_string());
+
+        let bad = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(300)])));
+        let err = write.call(vec![path("bad.bin"), bad]).unwrap_err();
+        assert!(err.contains("fs.write") && err.contains("not a byte"), "{err}");
+
+        let err = write.call(vec![path("h.txt"), Value::Handle(3)]).unwrap_err();
+        assert!(err.contains("has no file form"), "{err}");
+        assert!(!dir.path().join("bad.bin").exists() && !dir.path().join("h.txt").exists());
     }
 
     #[test]
