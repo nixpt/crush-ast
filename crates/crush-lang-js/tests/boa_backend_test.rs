@@ -183,6 +183,22 @@ fn test_boa_labeled_break_is_loud() {
     assert!(msg.contains("labeled `break`"), "{msg}");
 }
 
+// The ticket's program (CRUSH-zorro-6): node prints `0 0` then `1 0`. Both
+// jumps name `outer`; the label is refused (never dropped onto the inner
+// loop), and the error names the jump.
+#[test]
+fn test_boa_labeled_continue_is_loud() {
+    let msg = loud(
+        "outer: for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { \
+         if (j == 1) continue outer; if (i == 2) break outer; console.log(i, j); } }",
+    );
+    assert!(msg.contains("labeled `continue` (`continue label`)"), "{msg}");
+    // A labeled block (not a loop) can't be a jump target either: CAST has no
+    // labeled jump, so it must stay loud rather than break the inner loop.
+    let msg = loud("l: { console.log(1); break l; }");
+    assert!(msg.contains("labeled `break` (`break label`)"), "{msg}");
+}
+
 #[test]
 fn test_boa_switch() {
     let source = "const x = 1;\nswitch (x) { case 1: break; default: break; }\n";
@@ -545,8 +561,9 @@ fn test_boa_class_loud_edges() {
     assert!(loud("class A { m() { return super.m(); } }").contains("no ancestor"), "super without parent");
     assert!(loud("class B { } class A extends B { m() { return super.m(); } }").contains("no ancestor"), "super of nothing");
     assert!(loud("class B { x = 1; } class A extends B { m() { return super.x; } }").contains("`super.x` read"), "super.x read");
-    // `new` of a name that isn't a class declared in this module.
-    assert!(loud("const s = new Set();").contains("`new Set`"), "host constructor");
+    // `new` of a name that isn't a class declared in this module
+    // (`new Map` / `new Set` themselves land with CRUSH-288).
+    assert!(loud("const s = new WeakMap();").contains("`new WeakMap`"), "host constructor");
     assert!(loud("class A { } A();").contains("without `new`"), "class called bare");
     assert!(loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"), "expression superclass");
     assert!(loud("class A { async m() { return 1; } }").contains("async method"), "async method");
@@ -1052,6 +1069,74 @@ console.log(xs[0].bump({ by: 42 }));
     assert_eq!(run_js(source), "42\n");
 }
 
+// CRUSH-287: destructuring declarations — the CRUSH-284 pattern
+// machinery over a declaration's initializer, which is evaluated
+// once before any binding is written.
+#[test]
+fn test_boa_destructuring_declarations_run() {
+    let source = r#"
+const { width, height = 540 } = { width: 100 };
+console.log(width + height);
+let { x: renamed = 1, y } = { y: 41 };
+console.log(renamed + y);
+var [first, , third = 40] = [1, 2];
+console.log(first + third);
+const { p: { q } } = { p: { q: 42 } };
+console.log(q);
+"#;
+    assert_eq!(run_js(source), "640\n42\n41\n42\n");
+    // The initializer evaluates once, and a present null keeps null.
+    let source = r#"
+let calls = 0;
+function src() { calls = calls + 1; return { a: 41, b: null }; }
+const { a, b: bee = 1 } = src();
+console.log(a + calls);
+console.log(bee);
+"#;
+    assert_eq!(run_js(source), "42\nnull\n");
+    // Block-scoped pattern bindings shadow like any other `const`.
+    let source = r#"
+const a = 1;
+{
+  const { a } = { a: 41 };
+  console.log(a + 1);
+}
+console.log(a);
+class Holder {
+  read() {
+    const { v } = { v: 42 };
+    return v;
+  }
+}
+console.log(new Holder().read());
+"#;
+    assert_eq!(run_js(source), "42\n1\n42\n");
+    // No initializer: the names bind null (JS's undefined).
+    assert_eq!(run_js("let { a }; console.log(a);"), "null\n");
+}
+
+#[test]
+fn test_boa_destructuring_declarations_loud() {
+    // Destructuring assignment and loop heads stay loud.
+    assert!(
+        loud("let a; ({ a } = { a: 1 });").contains("destructuring assignment"),
+        "assignment"
+    );
+    assert!(
+        loud("for (const { a } of [[1]]) { console.log(a); }").contains("destructuring loop variable"),
+        "loop head"
+    );
+    // Rest elements stay loud in declarations too.
+    assert!(
+        loud("const { ...rest } = { a: 1 };").contains("rest"),
+        "object rest"
+    );
+    assert!(
+        loud("const [head, ...tail] = [1, 2];").contains("rest"),
+        "array rest"
+    );
+}
+
 #[test]
 fn test_boa_destructuring_parameters_loud() {
     // Object and array rest elements have no lowering yet.
@@ -1243,11 +1328,9 @@ console.log(c.m());
 #[test]
 fn test_boa_instance_kind_forgetting_more_shapes() {
     let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
-    // Logical assignment may keep the old value; it is refused as a
-    // construct, and must never teach the tracker the new kind.
-    let src = format!("{classes}let c = new A(); c ||= new B(); console.log(c.m(5));");
-    assert!(loud(&src).contains("logical assignment"), "||=: {}", loud(&src));
     for tail in [
+        // A logical assignment may keep the old value, so it forgets too.
+        "let c = new A(); c ||= new B(); console.log(c.m(5));",
         // A compound assignment forgets.
         "let c = new A(); c += 1; console.log(c.m(5));",
         // Assignments nested in larger expressions may never run.
@@ -1705,6 +1788,286 @@ fn test_boa_exported_function_runs_end_to_end() {
     };
     let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
     assert_eq!(out.trim(), "42");
+}
+
+// CRUSH-290 (boa path, end-to-end): `===` / `!==` are strict equality — no
+// coercion — and compile through the checked path (`compile_cast`, which runs
+// the semantics checker that used to reject the bare `BinaryOp "==="`).
+#[test]
+fn test_boa_strict_equality_runs_end_to_end() {
+    assert_eq!(
+        run_js("console.log(1 === 1);\nconsole.log(1 === \"1\");\n"),
+        "true\nfalse\n"
+    );
+    let source = r#"
+class A { }
+class B { }
+const a = new A();
+const b = new A();
+const f = () => 1;
+const o = {};
+const p = o;
+console.log(a === null, a === a, a === b);
+console.log(A === A, A === B, a === A, A === null);
+console.log(f === f, f === a, o === p, {} === {}, 1 !== '1', 1 !== 1);
+"#;
+    assert_eq!(
+        run_js(source),
+        "false true false\ntrue false false false\ntrue false true false true false\n"
+    );
+}
+
+#[test]
+fn test_boa_switch_on_instance_uses_strict_identity() {
+    let source = r#"
+class A { }
+const a = new A();
+switch (a) {
+  case null: console.log('null'); break;
+  case a: console.log('same'); break;
+  default: console.log('different');
+}
+"#;
+    assert_eq!(run_js(source), "same\n");
+}
+
+// CRUSH-290: a `switch` case test is JS strict equality too — the generated
+// comparison is the `js.strict_eq` capability, so the program compiles
+// through the checked path. Expected output is what `node` prints.
+#[test]
+fn test_boa_switch_matches_on_strict_equality() {
+    let source = r#"
+const n = 2;
+switch (n) {
+  case 1: console.log('one'); break;
+  case 2: console.log('two'); break;
+  default: console.log('many');
+}
+const s = 'b';
+switch (s) {
+  case 'a': console.log('A');
+  case 'b': console.log('B');
+  case 'c': console.log('C'); break;
+  default: console.log('D');
+}
+switch ('3') { case 3: console.log('number 3'); break; default: console.log('not coerced'); }
+switch (n) { case 9: console.log('nine'); break; default: console.log('default only'); }
+"#;
+    assert_eq!(run_js(source), "two\nB\nC\nnot coerced\ndefault only\n");
+}
+
+// CRUSH-288: host constructors — `new Map()` / `new Set()` on proven
+// receivers (a Map is an array of [key, value] pairs under the hood,
+// a Set an array of values; operations are synthesized helpers).
+#[test]
+fn test_boa_host_map_set_run() {
+    let source = r#"
+const m = new Map();
+m.set("a", 1);
+m.set("b", 2);
+m.set("a", 3);
+console.log(m.get("a"), m.size, m.has("b"), m.get("zz"));
+console.log(m.delete("b"), m.has("b"), m.size);
+console.log(m.keys()[0], m.values()[0], m.entries()[0][1]);
+m.clear();
+console.log(m.size);
+const s = new Set([1, 1, 2]);
+s.add(3);
+s.add(2);
+console.log(s.size, s.has(2), s.has(9));
+console.log(s.delete(1), s.size);
+let total = 0;
+for (const v of s) { total += v; }
+console.log(total);
+const n = new Map([[7, "seven"], ["k", 9]]);
+console.log(n.get(7), n.get("k"));
+const src = [5, 5, 6];
+const dup = new Set(src);
+console.log(dup.size, dup.has(6));
+"#;
+    assert_eq!(
+        run_js(source),
+        "3 2 true null\ntrue false 1\na 3 3\n0\n3 true false\ntrue 2\n5\nseven 9\n2 true\n"
+    );
+    // Maya's shape: collections as class fields, numeric ids as keys.
+    let source = r#"
+class Registry {
+  constructor() { this.entries = new Map(); this.tags = new Set(); }
+  add(id, tag) { this.entries.set(id, tag); this.tags.add(tag); return this.entries.get(id); }
+  has(id) { return this.entries.has(id); }
+  count() { return this.entries.size + this.tags.size; }
+}
+const r = new Registry();
+console.log(r.add(5, "x"), r.has(5), r.has(6), r.count());
+console.log(new Map().set("k", 1).get("k"), new Set().add(4).size);
+"#;
+    assert_eq!(run_js(source), "x true false 2\n1 1\n");
+    // The portable VM runs the same helpers.
+    assert_eq!(
+        run_js_portable(
+            "const m = new Map(); m.set(7, \"s\"); const s = new Set([2, 2]);\nconsole.log(m.get(7), m.size, s.size, s.has(2));"
+        )
+        .unwrap(),
+        "s 1 1 true\n"
+    );
+}
+
+#[test]
+fn test_boa_host_map_set_loud() {
+    // A parameter receiver is never proven (the zorro-44 problem).
+    assert!(loud("function f(m) { return m.get(\"a\"); }").contains("CRUSH-zorro-17"));
+    // Subscripts on a proven Map would read the pair array: refused.
+    assert!(loud("const m = new Map(); console.log(m[\"a\"]);").contains("use .get()"));
+    // Wrong-kind and unsupported methods on a proven receiver.
+    assert!(loud("const s = new Set(); s.set(\"a\", 1);").contains("a Set has no method"));
+    assert!(loud("const m = new Map(); m.forEach((v) => v);").contains("forEach"));
+    // Arity is exact.
+    assert!(loud("const m = new Map(); m.get();").contains("expects"));
+    // Reassignment forgets the host kind.
+    assert!(loud("let m = new Map(); m = []; m.set(\"a\", 1);").contains("CRUSH-zorro-17"));
+    // A field reassigned to a non-collection anywhere in the class
+    // poisons the proof for the whole hierarchy.
+    let msg = loud(
+        "class R { constructor() { this.m = new Map(); } \
+         f() { return this.m.get(\"a\"); } g() { this.m = []; } }",
+    );
+    assert!(msg.contains("cannot be proven"), "got: {msg}");
+    // A user class named Map shadows the host constructor.
+    let source = "class Map { constructor() { this.x = 41; } get() { return this.x + 1; } }\nconsole.log(new Map().get());";
+    assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-289: optional chaining — a chain folds to nested
+// `__crush_ternary__` null tests over its pure prefixes.
+#[test]
+fn test_boa_optional_chaining_run() {
+    let source = r#"
+const a = { b: { c: 42 } };
+console.log(a?.b?.c, a?.x?.y, a?.b.c);
+const n = null;
+console.log(n?.b, n?.b?.c);
+const m = new Map();
+m.set("a", 5);
+console.log(m?.get("a"), m?.size);
+"#;
+    assert_eq!(run_js(source), "42 null 42\nnull null\n5 1\n");
+    // Maya's shapes: an optional delegate, an optional hook.
+    let source = r#"
+class Owner { lookup(t) { return t + 1; } }
+class Comp {
+  constructor(owner) { this.owner = owner; }
+  find(t) { return this.owner?.lookup(t); }
+}
+console.log(new Comp(new Owner()).find(41), new Comp(null).find(41));
+class Base { run() { return this.onAttach?.(); } }
+class Sub extends Base { onAttach() { return 7; } }
+console.log(new Sub().run());
+let calls = 0;
+function side() { calls = calls + 1; return 1; }
+const zip = null;
+console.log(zip?.m(side()), calls);
+const race = null;
+console.log(race?.surface == "vacuum" ? "space" : "rally", (race?.ice || []).length);
+"#;
+    assert_eq!(run_js(source), "42 null\n7\nnull 0\nrally 0\n");
+}
+
+#[test]
+fn test_boa_optional_chaining_loud() {
+    // A side-effecting prefix would be evaluated twice (the test
+    // and the branch), so it refuses instead.
+    assert!(
+        loud("function f() { return { b: 1 }; } console.log(f()?.b);")
+            .contains("side-effecting")
+    );
+    assert!(
+        loud("const a = { b() { return { c: 1 }; } }; console.log(a?.b()?.c);")
+            .contains("side-effecting")
+    );
+    // A private field in a chain.
+    assert!(
+        loud("class A { #x = 1; get(o) { return o?.#x; } }").contains("private")
+    );
+}
+
+// CRUSH-292: logical assignment (`&&=`, `||=`, `??=`) — the binary
+// operator's semantics with the write folded in: keep the current value
+// (running nothing of the right side), or assign it. Node prints the same
+// for this program.
+#[test]
+fn test_boa_logical_assignment_runs() {
+    let source = r#"
+let x = 0;
+x ||= 5;
+console.log(x);
+let y = 3;
+y ||= 5;
+console.log(y);
+let a = 1;
+a &&= 7;
+console.log(a);
+let b = 0;
+b &&= 7;
+console.log(b);
+let n = null;
+n ??= 9;
+console.log(n);
+let m = 0;
+m ??= 9;
+console.log(m);
+const o = { v: 0 };
+o.v ||= 6;
+console.log(o.v);
+const arr = [0, 0];
+arr[0] ||= 7;
+console.log(arr[0]);
+console.log(arr[1] ??= 5);
+"#;
+    assert_eq!(run_js(source), "5\n3\n7\n0\n9\n0\n6\n7\n0\n");
+}
+
+// CRUSH-292: a computed target with side effects stays refused — the
+// lowering reads the slot for the condition and writes it on the assign
+// branch, so `a[f()] ||= 1` would call `f()` twice.
+#[test]
+fn test_boa_logical_assignment_computed_target_with_side_effects_is_loud() {
+    assert!(
+        loud("function f() { return 0; } const a = [1]; a[f()] ||= 2;")
+            .contains("computed target with side effects")
+    );
+}
+
+// CRUSH-292: the expression's value is the kept or newly assigned value, and
+// the right side is not evaluated when the current value is kept (the
+// `calls` counter stays put). Node prints the same.
+#[test]
+fn test_boa_logical_assignment_value_and_rhs_laziness() {
+    let source = r#"
+let x = 0;
+console.log(x ||= 4);
+console.log(x);
+let y = 3;
+console.log(y ||= 5);
+console.log(y);
+let calls = 0;
+function bump() { calls = calls + 1; return 9; }
+let kept = 3;
+kept ||= bump();
+console.log(kept);
+console.log(calls);
+let f = 0;
+f &&= bump();
+console.log(f);
+console.log(calls);
+let n = null;
+console.log(n ??= bump());
+console.log(calls);
+let zero = 0;
+zero ??= bump();
+console.log(zero);
+console.log(calls);
+"#;
+    assert_eq!(run_js(source), "4\n4\n3\n3\n3\n0\n0\n0\n9\n1\n0\n1\n");
 }
 
 // CRUSH-293 D2: at a call site whose callee signature the walker knows and
