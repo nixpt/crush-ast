@@ -27,10 +27,14 @@ pub trait CapsuleRunner {
 /// `host_caps` lets the embedder extend the VM with custom host-provided
 /// capabilities (e.g. a recording `register_command` shim) without forking
 /// `crush-vm`. `None` preserves the historical behaviour: only the
-/// built-in portable capability registry is available.
+/// built-in portable capability registry is available. A program's arguments
+/// (`sys.args()`) travel in `host_caps` too (`HostCapsBuilder::args`).
+///
+/// `quotas` bounds the run (#304); the default is the VM's default.
 #[derive(Default)]
 pub struct CrushRunner {
     pub host_caps: Option<HostCaps>,
+    pub quotas: crush_vm::Quotas,
 }
 
 /// A native plugin and the exports its host explicitly grants to the package.
@@ -83,7 +87,7 @@ impl CrushRunner {
     where
         F: FnOnce(),
     {
-        let quotas = crush_vm::Quotas::default();
+        let quotas = self.quotas.clone();
         // Drop HostCaps (which contains the plugin function pointers) before
         // dropping the libraries that own those pointers.
         let mut _loaded_plugins = Vec::with_capacity(plugins.len());
