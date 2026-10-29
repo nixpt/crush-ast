@@ -103,6 +103,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "JavaScript a == b for primitives (abstract equality); objects by identity",
         });
         reg(CapabilitySpec {
+            name: "js.strict_eq",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a === b (strict equality): no coercion, different types are false, objects by identity",
+        });
+        reg(CapabilitySpec {
             name: "js.format",
             argc: None,
             returns: true,
