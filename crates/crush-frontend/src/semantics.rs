@@ -386,7 +386,17 @@ impl SemanticAnalyzer {
                 Some(ty) => Ok(ty),
                 // A function's name used as a value (CRUSH-251).
                 None if self.functions.contains_key(name) => Ok(Type::Any),
-                None => Err(anyhow::anyhow!("Undefined variable: {}", name)),
+                // A built-in has no function value (#257): say so, with the
+                // lambda that gives it one, instead of "Undefined variable".
+                None => match crate::walker_intrinsics::builtin(name) {
+                    Some(b) => {
+                        let params = ["x", "y", "z"][..b.min_args.clamp(1, 3)].join(", ");
+                        Err(anyhow::anyhow!(
+                            "`{name}` is a built-in, not a function value; wrap it in a lambda: `|{params}| {name}({params})`"
+                        ))
+                    }
+                    None => Err(anyhow::anyhow!("Undefined variable: {}", name)),
+                },
             },
             Expression::BinaryOp {
                 operator,
