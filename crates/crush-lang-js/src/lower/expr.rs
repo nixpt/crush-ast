@@ -1,7 +1,8 @@
 //! Expressions.
 
 use boa_ast::expression::Expression;
-use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
+use boa_ast::expression::access::{PropertyAccess, PropertyAccessField, SimplePropertyAccess};
+use boa_ast::expression::{OptionalOperation, OptionalOperationKind};
 use boa_ast::expression::literal::{LiteralKind, PropertyDefinition, TemplateElement};
 use boa_ast::expression::operator::assign::{AssignOp, AssignTarget};
 use boa_ast::expression::operator::binary::{
@@ -248,7 +249,9 @@ impl Lower<'_> {
                     meta: m,
                 })
             }
-            Expression::Optional(_) => Err(self.unsupported("optional chaining (`?.`)", span)),
+            Expression::Optional(o) => {
+                self.optional_chain(o.target(), o.chain(), span, m)
+            }
             Expression::TaggedTemplate(_) => {
                 Err(self.unsupported("a tagged template literal (tag`…`)", span))
             }
@@ -441,6 +444,135 @@ impl Lower<'_> {
             left: Box::new(left),
             right: Box::new(right),
             meta: m,
+        })
+    }
+
+    /// Optional chaining (CRUSH-289): boa flattens a chain into a
+    /// target and operations, each shorted (`?.`) or not. A shorted
+    /// operation becomes a null test over the chain so far — JS
+    /// `== null`, matching both `null` and `undefined`, the `?.`
+    /// trigger — with the rest of the chain lowered only on the
+    /// non-null side, so a shorted call's arguments never evaluate.
+    /// The prefix is evaluated twice (test and branch), so it must
+    /// be pure; non-shorted operations fold into the prefix and
+    /// lower through the ordinary access/call paths.
+    fn optional_chain(
+        &mut self,
+        base: &Expression,
+        ops: &[OptionalOperation],
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        self.optional_chain2(base, base, ops, span, m)
+    }
+
+    /// `base` is the prefix the operations apply to (lowered as
+    /// written, plus at most one type-erasing wrap — see below);
+    /// `pure` is the same prefix unwrapped, which the purity check
+    /// and the null test evaluate.
+    fn optional_chain2(
+        &mut self,
+        base: &Expression,
+        pure: &Expression,
+        ops: &[OptionalOperation],
+        span: Option<Span>,
+        m: Meta,
+    ) -> anyhow::Result<CastExpr> {
+        let Some((first, rest)) = ops.split_first() else {
+            return self.expr(base);
+        };
+        if !first.shorted() {
+            let applied = self.optional_applied(first, base, span)?;
+            let applied_pure = self.optional_applied(first, pure, span)?;
+            return self.optional_chain2(&applied, &applied_pure, rest, span, m);
+        }
+        if has_side_effects(pure) {
+            return Err(self.unsupported(
+                "optional chaining through a side-effecting expression (the part before `?.` would be evaluated twice)",
+                span,
+            ));
+        }
+        // The test evaluates the lowered prefix (with its wrap);
+        // `pure` is the same value unwrapped, for the check above.
+        let cond = js_cap(
+            "js.loose_eq",
+            vec![
+                self.expr(base)?,
+                CastExpr::NullLiteral { meta: m.clone() },
+            ],
+            m.clone(),
+        );
+        // The branch applies the operation to the tested value. A
+        // plain binding keeps the static type of its initializer in
+        // the checker (`const n = null` is `Null`), which refuses a
+        // field read even in this unreachable-when-null branch, so
+        // such a binding is read back through `[n][0]` — the same
+        // value, typed `Any`. Kind/host-tracked bindings and member
+        // chains keep the plain receiver: their reads are `Any`
+        // already, and their lowering is receiver-sensitive.
+        let applied_base = match unparen(pure) {
+            Expression::Identifier(id)
+                if self.user_binding(id.sym()).is_some()
+                    && !self.instance_kinds.contains_key(&self.resolve(id.sym()))
+                    && !self.host_kinds.contains_key(&self.resolve(id.sym())) =>
+            {
+                let span_of = pure.span();
+                Expression::PropertyAccess(PropertyAccess::Simple(
+                    SimplePropertyAccess::new(
+                        Expression::ArrayLiteral(boa_ast::expression::literal::ArrayLiteral::new(
+                            vec![Some(pure.clone())],
+                            false,
+                            span_of,
+                        )),
+                        PropertyAccessField::Expr(Box::new(Expression::Literal(
+                            boa_ast::expression::literal::Literal::new(0i32, span_of),
+                        ))),
+                    ),
+                ))
+            }
+            _ => base.clone(),
+        };
+        let applied = self.optional_applied(first, &applied_base, span)?;
+        let applied_pure = self.optional_applied(first, pure, span)?;
+        let rest = self.optional_chain2(&applied, &applied_pure, rest, span, m.clone())?;
+        Ok(CastExpr::Call {
+            function: "__crush_ternary__".to_string(),
+            args: vec![
+                cond,
+                CastExpr::NullLiteral { meta: m.clone() },
+                rest,
+            ],
+            meta: m,
+        })
+    }
+
+    /// One chain operation applied to a prefix, as a plain
+    /// (non-optional) expression the ordinary lowering handles.
+    fn optional_applied(
+        &self,
+        op: &OptionalOperation,
+        base: &Expression,
+        span: Option<Span>,
+    ) -> anyhow::Result<Expression> {
+        Ok(match op.kind() {
+            OptionalOperationKind::SimplePropertyAccess { field } => {
+                Expression::PropertyAccess(PropertyAccess::Simple(
+                    SimplePropertyAccess::new(base.clone(), field.clone()),
+                ))
+            }
+            OptionalOperationKind::PrivatePropertyAccess { .. } => {
+                return Err(self.unsupported(
+                    "a private field in an optional chain (`?.#x`)",
+                    span,
+                ));
+            }
+            OptionalOperationKind::Call { args } => {
+                Expression::Call(boa_ast::expression::Call::new(
+                    base.clone(),
+                    args.clone(),
+                    op.span(),
+                ))
+            }
         })
     }
 
