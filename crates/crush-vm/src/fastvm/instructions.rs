@@ -990,6 +990,16 @@ fn lower_instruction(
             );
         }
 
+        "make_closure" => Err(LowerError::UnknownOpcode(
+            "make_closure: function values aren't supported on FastVM or the JIT yet (CRUSH-251)".into(),
+        )),
+        "call_value" => Err(LowerError::UnknownOpcode(
+            "call_value: function values aren't supported on FastVM or the JIT yet (CRUSH-251)".into(),
+        )),
+        "call_value_apply" => Err(LowerError::UnknownOpcode(
+            "call_value_apply: dynamic array-splat calls aren't supported on FastVM or the JIT yet (CRUSH-293 D3)".into(),
+        )),
+
         "call" => {
             let name = instr
                 .args

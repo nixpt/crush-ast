@@ -416,6 +416,10 @@ fn test_boa_parameter_adaptation_refusals() {
     // Its hidden arguments come from direct calls only.
     let msg = loud("function f(a = 1) { return a; }\nconst g = f;\nconsole.log(g());");
     assert!(msg.contains("using `f` as a value"), "{msg}");
+    // A rest/default function remains a blocked value-callee case: applying
+    // through CALL_VALUE's exact-arity ABI cannot synthesize its hidden slots.
+    let msg = loud("function sum(...xs) { return xs.length; } const g = sum; g(...[1, 2]);");
+    assert!(msg.contains("using `sum` as a value"), "{msg}");
     // Arrow functions and function expressions can be called from anywhere.
     assert!(loud("const f = (a = 1) => a;\nconsole.log(f());").contains("outside a `function` declaration"));
     assert!(loud("const f = (...xs) => xs;\nconsole.log(f());").contains("outside a `function` declaration"));
@@ -598,6 +602,16 @@ fn run_js_err(source: &str) -> String {
     crush_vm::run(&loaded, &crush_vm::Quotas::default())
         .unwrap_err()
         .to_string()
+}
+
+/// Like `run_js_err`, but execute on the standalone portable VM.
+fn run_js_portable_err(source: &str) -> String {
+    let program = test_lower(source);
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let mut portable = crush_vm::PortableVm::new(vm);
+    portable.set_quotas(crush_vm::Quotas::default());
+    portable.run().unwrap_err().to_string()
 }
 
 /// Compile like `run_js` but run on the portable VM.
@@ -2166,4 +2180,54 @@ fn test_boa_spread_argument_math_max_names_the_spread() {
     let msg = loud("const xs = [1, 2];\nconsole.log(Math.max(...xs));");
     assert!(msg.contains("a spread argument (`f(...args)`)"), "{msg}");
     assert!(!msg.contains("argument(s)"), "{msg}");
+}
+
+#[test]
+fn test_boa_value_callee_spreads_run_on_both_vms() {
+    let source = r#"
+function add(a, b) { return a + b; }
+function relay(fn, xs) { return fn(...xs); }
+const value = add;
+console.log(relay(add, [1, 2]));
+console.log(value(...[20, 22]));
+"#;
+    assert_eq!(run_js(source), "3\n42\n");
+    assert_eq!(run_js_portable(source).unwrap(), "3\n42\n");
+}
+
+#[test]
+fn test_boa_value_callee_spreads_refuse_mixed_and_multiple_spreads() {
+    let mixed = loud(
+        "function add(a, b) { return a + b; } const value = add; value(1, ...[2]);",
+    );
+    assert!(mixed.contains("mixed fixed and spread arguments to a value callee"), "{mixed}");
+
+    let multiple = loud(
+        "function add(a, b) { return a + b; } const value = add; value(...[1], ...[2]);",
+    );
+    assert!(multiple.contains("mixed or multiple spread arguments to a value callee"), "{multiple}");
+}
+
+#[test]
+fn test_boa_value_callee_spreads_refuse_bad_inputs_on_both_vms() {
+    let cases = [
+        (
+            "function relay(fn, xs) { return fn(...xs); } relay(3, [1, 2]);",
+            "not callable",
+        ),
+        (
+            "function add(a, b) { return a + b; } function relay(fn, xs) { return fn(...xs); } relay(add, \"12\");",
+            "expects an array of arguments, got str",
+        ),
+        (
+            "function add(a, b) { return a + b; } function relay(fn, xs) { return fn(...xs); } relay(add, [1]);",
+            "takes 2 argument(s), got 1",
+        ),
+    ];
+    for (source, expected) in cases {
+        let scheduler_error = run_js_err(source);
+        assert!(scheduler_error.contains(expected), "{scheduler_error}");
+        let portable_error = run_js_portable_err(source);
+        assert!(portable_error.contains(expected), "{portable_error}");
+    }
 }

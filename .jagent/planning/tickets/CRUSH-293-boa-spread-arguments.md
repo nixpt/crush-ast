@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-293 |
 | **Priority** | P1 (maya blocker — the next item in the CRUSH-276 queue) |
-| **Status** | D2 done (PR pending); D3 open |
+| **Status** | Partially resolved (D2 #299 and D3 #300 merged; variadic function-value ABI follow-up open) |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | freebuff (dispatched by muse) |
 | **Dependencies** | CRUSH-276 (queue), CRUSH-zorro-18 (the rest/default ABI), CRUSH-251 (function values — only for design D3), CRUSH-111 (intrinsic table contract) |
@@ -329,14 +329,14 @@ Out of scope, each needing its own ticket if ever wanted: `console.log(...xs)`
 array spread in literals (`[...a]`, zorro-23/16), `o[k](...)`, and
 `Function.prototype.apply`.
 
-Open question to settle in D3's PR: whether `apply(f, xs)` should tolerate
-`len(xs) > f.arity` (JS does, ignoring extras) instead of raising `FuncArity`.
-Consistency with the existing `call_value` check argues for the strict error;
-D2's behaviour (extras invisible) argues for tolerance. Pick one and test it.
+D3 settles the arity question strictly: `call_value_apply` uses the same
+exact-arity check as `call_value`; both too few and too many arguments fail
+with `FuncArity`. This intentionally differs from JS, which ignores extra
+arguments.
 
 ## Acceptance criteria
 
-D2 (boa e2e, each compared against node's output):
+D2 (not part of this resolution; remains open):
 
 - [ ] `function f(a,b,c){return a+b+c} const xs=[1,2,3]; console.log(f(...xs))`
       → `6`; `node_corpus/arr_spread_call` moves from `KNOWN_LOUD` to matching
@@ -357,18 +357,15 @@ D2 (boa e2e, each compared against node's output):
 - [ ] `Math.max(...xs)` names the spread, not the arity.
 - [ ] swc's behaviour is unchanged (its `loud_constructs_test` case stays).
 
-D3 (when its PR opens):
+D3 bounded slice (implemented here; not the generic decorator follow-up):
 
-- [ ] `relay(fn, xs){ return fn(...xs) }` with `relay(add, [1,2])` → `3`, and
-      the decorator shape `function decorate(fn){ return function(...args){
-      return fn(...args) } }` with `d(20,22)` → `42` (node-verified).
-- [ ] `apply` of a non-array, of a non-function, and of a length mismatching
-      the callee's arity each fail loudly with a distinct message.
-- [ ] AOT C, AOT Rust, FastVM and JIT refuse the program loudly (the
-      `function_values_loud.rs` pattern), and `casm_lowering_completeness`
-      covers the new opcode.
-- [ ] The new opcode is on AOT C's explicit bail list — not left to the
-      `/* unhandled op */` catch-all.
+- [x] `relay(fn, xs) { return fn(...xs) }` with `relay(add, [1,2])` → `3`,
+      plus a direct value-callee spread, run on scheduler and PortableVm.
+- [x] `apply` of a non-array, of a non-function, and of an arity mismatch each
+      fail loudly with the pinned VM errors.
+- [x] AOT C, AOT Rust, FastVM/JIT refuse the opcode loudly, and
+      `casm_lowering_completeness` covers it.
+- [x] The opcode is on AOT C and Rust's explicit refusal paths.
 
 ## Resolution (D2, 2026-10-22)
 
@@ -388,3 +385,24 @@ signatures, non-name sources, unknown-signature call sites
 of the row arity. `arr_spread_call` moved from KNOWN_LOUD to
 BOA_FIXED in the corpus harness, with AOT parity allow-listed as
 before. D3 (value-callee apply opcode) remains open above.
+
+## Resolution (D3, 2026-10-22)
+
+Implemented the bounded D3 apply path: Boa lowers a spread-only call through a
+value callee to `__crush_apply__(callee, argsArray)`, a fixed two-arg walker
+intrinsic and `call_value_apply` CASM/CVM1 opcode. Both CVM1 execution engines
+enforce strict function arity; invalid callee, argument-array type, and arity
+mismatch are tested. AOT C/Rust and FastVM (and therefore JIT) reject the
+opcode explicitly. Boa e2e tests exercise `relay(fn, xs)` and a direct
+value-callee spread on both CVM1 engines.
+
+The generic decorator case remains blocked and is intentionally not part of
+this D3 slice: a rest/default-parameter function used as a value depends on a
+variadic function-value ABI, while `CALL_VALUE`/`call_value_apply` retain the
+exact-arity contract and the walker refuses those function values. Do not
+expand that ABI here. Track this as the follow-up slice: **variadic
+function-value ABI for rest/default functions**, including decorator wrappers
+such as `decorate(fn) { return function(...args) { return fn(...args) } }` and
+`d(20, 22)`. The fixed-arity `relay(fn, xs)` path is resolved; that ABI follow-up
+is not. The D2 named-function spread slice above is implemented separately
+in PR #299 (pending review/merge); its checkboxes are ticked there.

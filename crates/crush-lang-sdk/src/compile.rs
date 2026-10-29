@@ -1207,6 +1207,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
                     format!("CALL_VALUE {argc}")
                 }
+                "call_value_apply" => "CALL_VALUE_APPLY".to_string(),
                 // CRUSH-251 step 3: a variable closures capture by reference
                 // lives in a cell in its slot.
                 "cell_new" => "CELL_NEW".to_string(),

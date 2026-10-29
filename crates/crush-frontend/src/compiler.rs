@@ -1796,6 +1796,12 @@ impl Compiler {
                 if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
                     intrinsic.validate(function, args)?;
                 }
+                if function == "__crush_apply__" {
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    instrs.push(self.create_typed_instr(OpCode::CallValueApply, meta)?);
+                    return Ok(());
+                }
                 // #78: `f(x)` where `f` is a variable (a lambda passed in as an
                 // argument, say) would otherwise compile to a capability call
                 // named "f". It holds a function value: call it through the

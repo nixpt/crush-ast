@@ -1837,6 +1837,12 @@ fn emit_c_instr(
             out.push_str("                { Value __ret = _pop(); _lsp = __lb; return __ret; }\n");
         }
 
+        // CRUSH-293 D3 is VM-only; refuse explicitly rather than relying on
+        // the generic unsupported-op fallback.
+        "call_value_apply" => {
+            unsupported = Some("`call_value_apply` (function values, CRUSH-293 D3)".to_string());
+        }
+
         // ── Calls ──
         "call" => {
             let target = args["function"].as_str().unwrap_or("");

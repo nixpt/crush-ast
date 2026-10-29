@@ -120,6 +120,8 @@ pub enum OpCode {
     JmpIf(usize),
     JmpIfNot(usize),
     Call(String),
+    /// Call a function value with arguments supplied as an array (CRUSH-293 D3).
+    CallValueApply,
     Ret,
     Break,    // Exit innermost loop
     Continue, // Jump to loop start
@@ -335,6 +337,7 @@ impl Instruction {
             OpCode::PushBool(value) => ("push_bool", serde_json::json!({"value": value})),
             OpCode::PushNull => ("push_null", serde_json::json!({})),
             OpCode::Load(name) => ("load", serde_json::json!({"name": name})),
+            OpCode::CallValueApply => ("call_value_apply", serde_json::json!({})),
             OpCode::Store(name) => ("store", serde_json::json!({"name": name})),
             OpCode::Add => ("add", serde_json::json!({})),
             OpCode::Sub => ("sub", serde_json::json!({})),
@@ -446,6 +449,7 @@ impl Instruction {
                     v.as_str().map(String::from)
                 })?))
             }
+            "call_value_apply" => Ok(OpCode::CallValueApply),
             "ret" => Ok(OpCode::Ret),
             "break" => Ok(OpCode::Break),
             "continue" => Ok(OpCode::Continue),
