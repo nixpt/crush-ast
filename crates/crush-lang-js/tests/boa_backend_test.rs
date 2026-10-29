@@ -100,6 +100,73 @@ fn test_boa_try_catch() {
     assert!(program.functions.contains_key("main"));
 }
 
+/// CRUSH-zorro-7: walker-level `try…finally` for JS completions (return /
+/// throw / break / continue / fall-through). Runtime `VmError`s still bypass
+/// finally — same as try/catch today (CRUSH-zorro-34).
+#[test]
+fn test_boa_try_finally_completions() {
+    // return runs finally, then yields the captured value (node: fin\n1)
+    assert_eq!(
+        run_js("function f() { try { return 1; } finally { console.log('fin'); } } console.log(f());"),
+        "fin\n1\n"
+    );
+    // finally's return overrides the pending one
+    assert_eq!(
+        run_js("function f() { try { return 1; } finally { return 2; } } console.log(f());"),
+        "2\n"
+    );
+    // value captured before finally mutates the binding
+    assert_eq!(
+        run_js("let x = 1; function f() { try { return x; } finally { x = 9; } } console.log(f()); console.log(x);"),
+        "1\n9\n"
+    );
+    // fall-through
+    assert_eq!(
+        run_js("try { console.log('try'); } finally { console.log('fin'); }"),
+        "try\nfin\n"
+    );
+    // explicit throw: finally then propagate
+    assert_eq!(
+        run_js("try { try { throw 7; } finally { console.log('fin'); } } catch (e) { console.log(e); }"),
+        "fin\n7\n"
+    );
+    // catch runs before finally
+    assert_eq!(
+        run_js("try { throw 3; } catch (e) { console.log('c'+e); } finally { console.log('fin'); }"),
+        "c3\nfin\n"
+    );
+    // throw from catch still runs finally
+    assert_eq!(
+        run_js("try { try { throw 1; } catch (e) { throw 2; } finally { console.log('fin'); } } catch (e) { console.log(e); }"),
+        "fin\n2\n"
+    );
+    // nested finallys: inner then outer
+    assert_eq!(
+        run_js("try { try { console.log('t'); } finally { console.log('i'); } } finally { console.log('o'); }"),
+        "t\ni\no\n"
+    );
+    // break across try runs finally once; loop-internal break does not
+    // (no Array.join — CRUSH-zorro-15; log each push instead)
+    assert_eq!(
+        run_js("for (const n of [1, 2, 3]) { try { if (n == 2) break; console.log(n); } finally { console.log('f'+n); } }"),
+        "1\nf1\nf2\n"
+    );
+    assert_eq!(
+        run_js("try { for (const n of [1, 2]) { if (n == 2) break; console.log(n); } } finally { console.log('fin'); }"),
+        "1\nfin\n"
+    );
+    // continue across try
+    assert_eq!(
+        run_js("for (const n of [1, 2, 3]) { try { if (n == 2) continue; console.log(n); } finally { console.log('f'+n); } }"),
+        "1\nf1\nf2\n3\nf3\n"
+    );
+    // nested function return does not run the outer finally
+    assert_eq!(
+        run_js("function outer() { try { function inner() { return 5; } return inner(); } finally { console.log('fin'); } } console.log(outer());"),
+        "fin\n5\n"
+    );
+}
+
 #[test]
 fn test_boa_function_decl() {
     let source = "function greet(name) { return 'hello ' + name; }";

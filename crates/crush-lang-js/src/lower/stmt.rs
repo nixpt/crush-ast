@@ -25,7 +25,7 @@ use crush_cast::{
 use super::builtins;
 use super::scope::{self, Sig, lexical_syms, param_syms, sig_of, var_syms};
 use super::{Lower, Meta, group};
-use crate::lower_common::{contains_loop_continue, for_in_guarded, js_cap, rewrite_continue};
+use crate::lower_common::{contains_loop_continue, for_in_guarded, js_cap};
 
 /// Where `function` declarations are hoisted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -293,7 +293,19 @@ impl Lower<'_> {
         let saved_hosts = std::mem::take(&mut self.host_kinds);
         let saved_home = self.home_class.take();
         let saved_static = std::mem::replace(&mut self.in_static, false);
+        let saved_finally = std::mem::take(&mut self.finally_stack);
+        let saved_jumps = std::mem::take(&mut self.jump_targets);
+        let saved_signals = std::mem::take(&mut self.completion_signals);
+        let saved_try_depth = std::mem::replace(&mut self.try_depth, 0);
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_switch_floors = std::mem::take(&mut self.switch_loop_floors);
         let r = self.function_in_scope(params, body, span, declared);
+        self.finally_stack = saved_finally;
+        self.jump_targets = saved_jumps;
+        self.completion_signals = saved_signals;
+        self.try_depth = saved_try_depth;
+        self.loop_depth = saved_loop_depth;
+        self.switch_loop_floors = saved_switch_floors;
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
@@ -322,7 +334,19 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_instances = std::mem::take(&mut self.instance_kinds);
         let saved_hosts = std::mem::take(&mut self.host_kinds);
+        let saved_finally = std::mem::take(&mut self.finally_stack);
+        let saved_jumps = std::mem::take(&mut self.jump_targets);
+        let saved_signals = std::mem::take(&mut self.completion_signals);
+        let saved_try_depth = std::mem::replace(&mut self.try_depth, 0);
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_switch_floors = std::mem::take(&mut self.switch_loop_floors);
         let r = self.function_in_scope(params, body, span, true);
+        self.finally_stack = saved_finally;
+        self.jump_targets = saved_jumps;
+        self.completion_signals = saved_signals;
+        self.try_depth = saved_try_depth;
+        self.loop_depth = saved_loop_depth;
+        self.switch_loop_floors = saved_switch_floors;
         self.this_bound = saved;
         self.instance_kinds = saved_instances;
         self.host_kinds = saved_hosts;
@@ -350,7 +374,19 @@ impl Lower<'_> {
         let saved_instances = std::mem::take(&mut self.instance_kinds);
         let saved_hosts = std::mem::take(&mut self.host_kinds);
         let saved_static = std::mem::replace(&mut self.in_static, true);
+        let saved_finally = std::mem::take(&mut self.finally_stack);
+        let saved_jumps = std::mem::take(&mut self.jump_targets);
+        let saved_signals = std::mem::take(&mut self.completion_signals);
+        let saved_try_depth = std::mem::replace(&mut self.try_depth, 0);
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_switch_floors = std::mem::take(&mut self.switch_loop_floors);
         let r = self.function_in_scope(params, body, span, true);
+        self.finally_stack = saved_finally;
+        self.jump_targets = saved_jumps;
+        self.completion_signals = saved_signals;
+        self.try_depth = saved_try_depth;
+        self.loop_depth = saved_loop_depth;
+        self.switch_loop_floors = saved_switch_floors;
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
@@ -1239,6 +1275,121 @@ impl Lower<'_> {
 
     // ── Statements ──────────────────────────────────────────────────────────
 
+    /// Emit the active finally bodies from the top of the stack down to
+    /// `keep_depth` (innermost first). `cleanup(0)` runs every active finally.
+    fn cleanup(&self, keep_depth: usize) -> Vec<CastStmt> {
+        let keep = keep_depth.min(self.finally_stack.len());
+        self.finally_stack[keep..]
+            .iter()
+            .rev()
+            .flat_map(|body| body.iter().cloned())
+            .collect()
+    }
+
+    fn jump(&mut self, is_continue: bool, meta: Meta) -> anyhow::Result<Vec<CastStmt>> {
+        if is_continue
+            && self.switch_loop_floors.last().is_some_and(|floor| self.loop_depth <= *floor)
+        {
+            return Err(self.unsupported("`continue` inside a `switch`", None));
+        }
+        let target = if is_continue {
+            self.jump_targets.iter().rev().find(|target| target.is_loop)
+        } else {
+            self.jump_targets.last()
+        }
+        .cloned()
+        .ok_or_else(|| self.unsupported("a `break` or `continue` without a target", None))?;
+        if is_continue && target.is_switch {
+            return Err(self.unsupported("`continue` inside a `switch`", None));
+        }
+        let action = if is_continue { target.continue_action } else { target.break_action };
+        if target.try_depth == self.try_depth && target.finally_depth == self.finally_stack.len() {
+            return Ok(action);
+        }
+        // Unique string token (not an empty object): CAST `===` lowers to
+        // Value::eq, and two empty records compare equal structurally.
+        let token = self.hidden("__crush_completion_");
+        self.completion_signals.push(super::CompletionSignal {
+            token: token.clone(),
+            target_try_depth: target.try_depth,
+            action,
+        });
+        Ok(vec![CastStmt::Throw {
+            value: CastExpr::StringLiteral { value: token, meta: meta.clone() },
+            meta,
+        }])
+    }
+
+    fn completion_condition(&self, name: &str, signals: &[super::CompletionSignal], meta: &Meta) -> Option<CastExpr> {
+        signals.iter().map(|signal| CastExpr::BinaryOp {
+            operator: "==".to_string(),
+            left: Box::new(CastExpr::Var { name: name.to_string(), meta: meta.clone() }),
+            right: Box::new(CastExpr::StringLiteral { value: signal.token.clone(), meta: meta.clone() }),
+            meta: meta.clone(),
+        }).reduce(|left, right| CastExpr::BinaryOp {
+            operator: "||".to_string(), left: Box::new(left), right: Box::new(right), meta: meta.clone(),
+        })
+    }
+
+    fn dispatch_finally(
+        &self,
+        error_var: &str,
+        finalizer: &[CastStmt],
+        boundary_try_depth: usize,
+        signals: &[super::CompletionSignal],
+        meta: &Meta,
+    ) -> Vec<CastStmt> {
+        let rethrow = CastStmt::Throw {
+            value: CastExpr::Var { name: error_var.to_string(), meta: meta.clone() }, meta: meta.clone(),
+        };
+        let mut handler = finalizer.to_vec();
+        handler.push(rethrow.clone());
+        for signal in signals.iter().rev() {
+            let mut action = finalizer.to_vec();
+            if signal.target_try_depth == boundary_try_depth {
+                action.extend(signal.action.iter().cloned());
+            } else {
+                action.push(rethrow.clone());
+            }
+            handler = vec![CastStmt::If {
+                condition: CastExpr::BinaryOp {
+                    operator: "==".to_string(),
+                    left: Box::new(CastExpr::Var { name: error_var.to_string(), meta: meta.clone() }),
+                    right: Box::new(CastExpr::StringLiteral { value: signal.token.clone(), meta: meta.clone() }),
+                    meta: meta.clone(),
+                },
+                then_body: action,
+                else_body: Some(handler),
+                meta: meta.clone(),
+            }];
+        }
+        handler
+    }
+
+    fn loop_target(&mut self, continue_prefix: &[CastStmt]) -> super::JumpTarget {
+        let meta = self.meta(None);
+        let mut continue_action = continue_prefix.to_vec();
+        continue_action.push(CastStmt::Continue { meta: meta.clone() });
+        super::JumpTarget {
+            finally_depth: self.finally_stack.len(),
+            try_depth: self.try_depth,
+            is_switch: false,
+            is_loop: true,
+            break_action: vec![CastStmt::Break { meta: meta.clone() }],
+            continue_action,
+        }
+    }
+
+    fn loop_body_with_prefix(&mut self, body: &Statement, prefix: &[CastStmt]) -> anyhow::Result<Vec<CastStmt>> {
+        let target = self.loop_target(prefix);
+        self.jump_targets.push(target);
+        self.loop_depth += 1;
+        let result = self.body(body);
+        self.loop_depth -= 1;
+        self.jump_targets.pop();
+        result
+    }
+
     pub(super) fn stmt(&mut self, s: &Statement) -> anyhow::Result<Vec<CastStmt>> {
         let span = stmt_span(s);
         let m = self.meta(span);
@@ -1332,7 +1483,7 @@ impl Lower<'_> {
             }
             Statement::WhileLoop(w) => {
                 let condition = self.expr(w.condition())?;
-                let body = self.body(w.body())?;
+                let body = self.loop_body_with_prefix(w.body(), &[])?;
                 vec![CastStmt::While {
                     condition: Box::new(condition),
                     body,
@@ -1352,8 +1503,7 @@ impl Lower<'_> {
                     else_body: None,
                     meta: m.clone(),
                 };
-                let mut body =
-                    rewrite_continue(self.body(dw.body())?, std::slice::from_ref(&exit_check));
+                let mut body = self.loop_body_with_prefix(dw.body(), std::slice::from_ref(&exit_check))?;
                 body.push(exit_check);
                 vec![CastStmt::While {
                     condition: Box::new(CastExpr::BoolLiteral {
@@ -1382,7 +1532,13 @@ impl Lower<'_> {
             Statement::ForInLoop(fi) => {
                 let is_object = matches!(unparen(fi.target()), Expression::ObjectLiteral(_));
                 let iterable = self.expr(fi.target())?;
-                let (variable, body, scoped) = self.for_head(fi.initializer(), fi.body(), span)?;
+                let target = self.loop_target(&[]);
+                self.jump_targets.push(target);
+                self.loop_depth += 1;
+                let result = self.for_head(fi.initializer(), fi.body(), span);
+                self.loop_depth -= 1;
+                self.jump_targets.pop();
+                let (variable, body, scoped) = result?;
                 let out = if is_object {
                     CastStmt::For {
                         variable,
@@ -1404,7 +1560,13 @@ impl Lower<'_> {
                     return Err(self.unsupported("`for await`", span));
                 }
                 let iterable = self.expr(fo.iterable())?;
-                let (variable, body, scoped) = self.for_head(fo.initializer(), fo.body(), span)?;
+                let target = self.loop_target(&[]);
+                self.jump_targets.push(target);
+                self.loop_depth += 1;
+                let result = self.for_head(fo.initializer(), fo.body(), span);
+                self.loop_depth -= 1;
+                self.jump_targets.pop();
+                let (variable, body, scoped) = result?;
                 if scoped {
                     self.scopes.pop_block();
                 }
@@ -1423,30 +1585,50 @@ impl Lower<'_> {
             Statement::Continue(c) if c.label().is_some() => {
                 return Err(self.unsupported("a labeled `continue` (`continue label`)", span));
             }
-            Statement::Break(_) => vec![CastStmt::Break { meta: m }],
-            Statement::Continue(_) => vec![CastStmt::Continue { meta: m }],
+            Statement::Break(_) => self.jump(false, m)?,
+            Statement::Continue(_) => self.jump(true, m)?,
             Statement::Return(r) => {
                 let value = match r.target() {
-                    Some(e) => Some(self.expr(e)?),
+                    Some(e) => {
+                        let captured = self.hidden("__crush_return_");
+                        let evaluated = self.expr(e)?;
+                        let mut out = vec![self.var_decl_stmt(captured.clone(), evaluated, false, span)];
+                        out.extend(self.cleanup(0));
+                        out.push(CastStmt::Return { value: Some(CastExpr::Var { name: captured, meta: m.clone() }), meta: m });
+                        return Ok(out);
+                    }
                     None => None,
                 };
-                vec![CastStmt::Return { value, meta: m }]
+                let mut out = self.cleanup(0);
+                out.push(CastStmt::Return { value, meta: m });
+                out
             }
-            Statement::Throw(t) => vec![CastStmt::Throw {
-                value: self.expr(t.target())?,
-                meta: m,
-            }],
+            Statement::Throw(t) => {
+                let value = self.expr(t.target())?;
+                vec![CastStmt::Throw { value, meta: m }]
+            }
             Statement::Try(t) => {
-                // `finally` must run on return and on throw.
-                if t.finally().is_some() {
-                    return Err(self.unsupported("`try … finally`", span));
+                // Runtime VmErrors are returned directly by fallible VM ops
+                // and bypass CAST TryCatch (and this duplicated-finally route),
+                // matching existing try/catch behavior. Typed runtime-error
+                // exceptions are CRUSH-zorro-34, not this walker change.
+                let saved_signal_count = self.completion_signals.len();
+                let outer_try_depth = self.try_depth;
+                let outer_finally_depth = self.finally_stack.len();
+                let finalizer = match t.finally() {
+                    Some(f) => Some(self.block(f.block().statement_list().statements())?),
+                    None => None,
+                };
+                if let Some(body) = &finalizer {
+                    self.finally_stack.push(body.clone());
                 }
+                self.try_depth += 1;
                 let body = self.block(t.block().statement_list().statements())?;
                 let (error_var, handler) = match t.catch() {
                     Some(c) => {
                         self.scopes.push_block();
                         let r = (|| {
-                            let var = match c.parameter() {
+                                let var = match c.parameter() {
                                 Some(Binding::Identifier(id)) => {
                                     let fresh = self.fresh_name(id.sym());
                                     self.scopes.declare_block(id.sym(), fresh.clone());
@@ -1459,19 +1641,67 @@ impl Lower<'_> {
                                 }
                                 None => self.hidden("__catch_"),
                             };
-                            Ok((var, self.block(c.block().statement_list().statements())?))
+                            let handler = self.block(c.block().statement_list().statements())?;
+                            Ok((var, handler))
                         })();
                         self.scopes.pop_block();
                         r?
                     }
                     None => (self.hidden("__catch_"), vec![]),
                 };
-                vec![CastStmt::TryCatch {
-                    body,
-                    error_var,
-                    handler,
-                    meta: m,
-                }]
+                self.try_depth = outer_try_depth;
+                let local_signals = self.completion_signals.split_off(saved_signal_count);
+                let signals_outward: Vec<_> = local_signals
+                    .iter()
+                    .filter(|signal| signal.target_try_depth < outer_try_depth)
+                    .cloned()
+                    .collect();
+                let mut user_handler = handler;
+                if t.catch().is_some()
+                    && let Some(condition) = self.completion_condition(&error_var, &local_signals, &m)
+                {
+                    user_handler.insert(0, CastStmt::If {
+                        condition,
+                        then_body: vec![CastStmt::Throw {
+                            value: CastExpr::Var { name: error_var.clone(), meta: m.clone() },
+                            meta: m.clone(),
+                        }],
+                        else_body: Some(vec![]),
+                        meta: m.clone(),
+                    });
+                }
+                let source_try = if t.catch().is_some() {
+                    vec![CastStmt::TryCatch { body, error_var, handler: user_handler, meta: m.clone() }]
+                } else {
+                    body
+                };
+                let mut out = if finalizer.is_some() || !local_signals.is_empty() {
+                    let marker = self.hidden("__crush_completion_error_");
+                    let mut dispatch = self.dispatch_finally(
+                        &marker,
+                        finalizer.as_deref().unwrap_or(&[]),
+                        outer_try_depth,
+                        &local_signals,
+                        &m,
+                    );
+                    if finalizer.is_none() {
+                        // No cleanup at this level: pass the private completion
+                        // through the CAST handler unchanged to the loop boundary.
+                        dispatch = vec![CastStmt::Throw {
+                            value: CastExpr::Var { name: marker.clone(), meta: m.clone() },
+                            meta: m.clone(),
+                        }];
+                    }
+                    vec![CastStmt::TryCatch { body: source_try, error_var: marker, handler: dispatch, meta: m.clone() }]
+                } else {
+                    source_try
+                };
+                if let Some(finally_body) = finalizer {
+                    out.extend(finally_body);
+                }
+                self.completion_signals.extend(signals_outward);
+                self.finally_stack.truncate(outer_finally_depth);
+                out
             }
             // A label nothing jumps to is harmless (labeled jumps are refused).
             Statement::Labelled(l) => match l.item() {
@@ -1537,7 +1767,7 @@ impl Lower<'_> {
         if let Some(u) = fl.final_expr() {
             update.extend(self.expr_to_stmts(u)?);
         }
-        let mut body = rewrite_continue(self.body(fl.body())?, &update);
+        let mut body = self.loop_body_with_prefix(fl.body(), &update)?;
         body.extend(update);
         out.push(CastStmt::While {
             condition: Box::new(condition),
@@ -1665,6 +1895,16 @@ impl Lower<'_> {
         out.extend(chain.unwrap_or(fallback));
 
         self.scopes.push_block();
+        let switch_target = super::JumpTarget {
+            finally_depth: self.finally_stack.len(),
+            try_depth: self.try_depth,
+            is_loop: false,
+            is_switch: true,
+            break_action: vec![CastStmt::Break { meta: m.clone() }],
+            continue_action: vec![],
+        };
+        self.jump_targets.push(switch_target);
+        self.switch_loop_floors.push(self.loop_depth);
         let r = (|| {
             let mut syms = Vec::new();
             for c in cases {
@@ -1696,6 +1936,8 @@ impl Lower<'_> {
             Ok(body)
         })();
         self.scopes.pop_block();
+        self.switch_loop_floors.pop();
+        self.jump_targets.pop();
         out.push(CastStmt::While {
             condition: Box::new(CastExpr::BoolLiteral {
                 value: true,
