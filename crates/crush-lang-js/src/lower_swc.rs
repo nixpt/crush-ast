@@ -869,13 +869,13 @@ fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx) -> anyhow::Result<Option<Statement>> 
                     },
                     meta: sm.clone(),
                 };
+                // JS case matching is strict equality (CRUSH-290).
                 chain = Some(vec![Statement::If {
-                    condition: Expression::BinaryOp {
-                        operator: "===".to_string(),
-                        left: Box::new(Expression::Var { name: val.clone(), meta: sm.clone() }),
-                        right: Box::new(lower_expr(test, ctx)?),
-                        meta: sm.clone(),
-                    },
+                    condition: js_cap(
+                        "js.strict_eq",
+                        vec![Expression::Var { name: val.clone(), meta: sm.clone() }, lower_expr(test, ctx)?],
+                        sm.clone(),
+                    ),
                     then_body: vec![assign],
                     else_body: Some(chain.take().unwrap_or_else(|| fallback.clone())),
                     meta: sm.clone(),
@@ -1384,6 +1384,14 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                     return Ok(Expression::UnaryOp {
                         operator: "!".to_string(),
                         operand: Box::new(js_cap("js.loose_eq", vec![left, right], m.clone())),
+                        meta: m,
+                    })
+                }
+                "===" => return Ok(js_cap("js.strict_eq", vec![left, right], m)),
+                "!==" => {
+                    return Ok(Expression::UnaryOp {
+                        operator: "!".to_string(),
+                        operand: Box::new(js_cap("js.strict_eq", vec![left, right], m.clone())),
                         meta: m,
                     })
                 }
