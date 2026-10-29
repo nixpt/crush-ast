@@ -124,7 +124,7 @@ fn crush_selfhost_demo_runs_and_registers_three_commands() {
     // (`CRUSH-SELFHOST-1.md#constraint-4`) — now the integration
     // test exercises the same code path the `crush-pkg run`
     // subcommand takes in production.
-    let runner = CrushRunner { host_caps: Some(caps) };
+    let runner = CrushRunner { host_caps: Some(caps), ..Default::default() };
     let result = runner
         .run(&manifest, &payload, &[])
         .expect("CrushRunner::run must drive main.crush to completion with the host table wired in");

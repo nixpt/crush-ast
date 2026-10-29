@@ -45,7 +45,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
 
-        /// A program (.crush, .casm or .cvm1) to inspect instead of listing
+        /// A program (.crush, .casm, .cvm1 or .cvm) to inspect instead of listing
         /// every capability.
         path: Option<PathBuf>,
     },
@@ -53,7 +53,7 @@ enum Commands {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Path to the program file (.crush, .casm or .cvm1).
+    /// Path to the program file (.crush, .casm, .cvm1 or .cvm — crush-pkg's name for a CVM1 blob).
     path: PathBuf,
 
     /// Arguments for the program, returned by `sys.args()`. Flags for
@@ -250,8 +250,8 @@ fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) ->
             }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
-        "cvm1" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
-        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"),
+        "cvm1" | "cvm" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
+        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"),
     }
 }
 
@@ -464,9 +464,9 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // cleanly. Hoisting Runtime init above the dispatch would otherwise
     // reorder those warnings before the bail.
     match ext {
-        "crush" | "casm" | "cvm1" => {}
+        "crush" | "casm" | "cvm1" | "cvm" => {}
         _ => anyhow::bail!(
-            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"
+            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"
         ),
     }
 
@@ -578,7 +578,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // `.cvm1` blob that doesn't decode is left to `run_blob` below, which
     // reports it as a typed load error.
     let preflight = match ext {
-        "cvm1" => std::fs::read(&args.path)
+        "cvm1" | "cvm" => std::fs::read(&args.path)
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
         _ => {
