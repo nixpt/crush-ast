@@ -118,6 +118,7 @@ const BOA_EXACT: &[&str] = &[
     "arr_push_loop_multi",
     "arr_push_multi",
     "fn_default_param",
+    "obj_destructure",
     "fn_rest_param",
     "fn_rest_param_more",
     "scope_block_shadow",

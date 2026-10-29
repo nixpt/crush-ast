@@ -1052,6 +1052,74 @@ console.log(xs[0].bump({ by: 42 }));
     assert_eq!(run_js(source), "42\n");
 }
 
+// CRUSH-287: destructuring declarations — the CRUSH-284 pattern
+// machinery over a declaration's initializer, which is evaluated
+// once before any binding is written.
+#[test]
+fn test_boa_destructuring_declarations_run() {
+    let source = r#"
+const { width, height = 540 } = { width: 100 };
+console.log(width + height);
+let { x: renamed = 1, y } = { y: 41 };
+console.log(renamed + y);
+var [first, , third = 40] = [1, 2];
+console.log(first + third);
+const { p: { q } } = { p: { q: 42 } };
+console.log(q);
+"#;
+    assert_eq!(run_js(source), "640\n42\n41\n42\n");
+    // The initializer evaluates once, and a present null keeps null.
+    let source = r#"
+let calls = 0;
+function src() { calls = calls + 1; return { a: 41, b: null }; }
+const { a, b: bee = 1 } = src();
+console.log(a + calls);
+console.log(bee);
+"#;
+    assert_eq!(run_js(source), "42\nnull\n");
+    // Block-scoped pattern bindings shadow like any other `const`.
+    let source = r#"
+const a = 1;
+{
+  const { a } = { a: 41 };
+  console.log(a + 1);
+}
+console.log(a);
+class Holder {
+  read() {
+    const { v } = { v: 42 };
+    return v;
+  }
+}
+console.log(new Holder().read());
+"#;
+    assert_eq!(run_js(source), "42\n1\n42\n");
+    // No initializer: the names bind null (JS's undefined).
+    assert_eq!(run_js("let { a }; console.log(a);"), "null\n");
+}
+
+#[test]
+fn test_boa_destructuring_declarations_loud() {
+    // Destructuring assignment and loop heads stay loud.
+    assert!(
+        loud("let a; ({ a } = { a: 1 });").contains("destructuring assignment"),
+        "assignment"
+    );
+    assert!(
+        loud("for (const { a } of [[1]]) { console.log(a); }").contains("destructuring loop variable"),
+        "loop head"
+    );
+    // Rest elements stay loud in declarations too.
+    assert!(
+        loud("const { ...rest } = { a: 1 };").contains("rest"),
+        "object rest"
+    );
+    assert!(
+        loud("const [head, ...tail] = [1, 2];").contains("rest"),
+        "array rest"
+    );
+}
+
 #[test]
 fn test_boa_destructuring_parameters_loud() {
     // Object and array rest elements have no lowering yet.

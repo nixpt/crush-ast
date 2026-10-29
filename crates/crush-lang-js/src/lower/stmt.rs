@@ -449,7 +449,7 @@ impl Lower<'_> {
                         name: value,
                         meta: self.meta(span),
                     };
-                    self.destructure(source, pat, span, &mut prologue)?;
+                    self.destructure(source, pat, None, span, &mut prologue)?;
                     continue;
                 }
             };
@@ -509,17 +509,23 @@ impl Lower<'_> {
         Ok((lowered_params, out))
     }
 
-    /// Bind a destructuring parameter's names from its value
+    /// Bind a destructuring pattern's names from its value
     /// (CRUSH-284): each property or element is read once, a
     /// per-element default replaces an *absent* value — JS's
     /// `undefined`; a value present as null keeps null, so absence is
     /// tested (a has-key check, the length guard), never `== null` —
     /// and nested patterns recurse. Object/array rest elements and
     /// assignment targets stay loud.
+    ///
+    /// `decl` says how a leaf name is bound: `None` for a parameter
+    /// (a plain local), `Some(block)` for a declaration (CRUSH-287),
+    /// which assigns instead when the binding was created on entry
+    /// to its block, exactly like an identifier declaration.
     fn destructure(
         &mut self,
         source: CastExpr,
         pattern: &Pattern,
+        decl: Option<bool>,
         span: Option<Span>,
         out: &mut Vec<CastStmt>,
     ) -> anyhow::Result<()> {
@@ -540,8 +546,7 @@ impl Lower<'_> {
                                 span,
                                 out,
                             )?;
-                            let local = self.resolve(ident.sym());
-                            out.push(self.var_decl_stmt(local, value, false, span));
+                            self.bind_leaf(ident.sym(), value, decl, span, out);
                         }
                         ObjectPatternElement::Pattern {
                             name,
@@ -556,7 +561,7 @@ impl Lower<'_> {
                                 span,
                                 out,
                             )?;
-                            self.destructure(value, pattern, span, out)?;
+                            self.destructure(value, pattern, decl, span, out)?;
                         }
                         ObjectPatternElement::RestProperty { .. } => {
                             return Err(self.unsupported(
@@ -589,8 +594,7 @@ impl Lower<'_> {
                                 span,
                                 out,
                             )?;
-                            let local = self.resolve(ident.sym());
-                            out.push(self.var_decl_stmt(local, value, false, span));
+                            self.bind_leaf(ident.sym(), value, decl, span, out);
                         }
                         ArrayPatternElement::Pattern {
                             pattern,
@@ -603,7 +607,7 @@ impl Lower<'_> {
                                 span,
                                 out,
                             )?;
-                            self.destructure(value, pattern, span, out)?;
+                            self.destructure(value, pattern, decl, span, out)?;
                         }
                         ArrayPatternElement::SingleNameRest { .. }
                         | ArrayPatternElement::PatternRest { .. } => {
@@ -624,6 +628,42 @@ impl Lower<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Bind one destructured name to its value: a declaration of an
+    /// entry-created (predeclared) block binding assigns it, anything
+    /// else declares it — mirroring an identifier declaration
+    /// (CRUSH-287).
+    fn bind_leaf(
+        &mut self,
+        sym: Sym,
+        value: CastExpr,
+        decl: Option<bool>,
+        span: Option<Span>,
+        out: &mut Vec<CastStmt>,
+    ) {
+        let name = self.resolve(sym);
+        match decl {
+            None => out.push(self.var_decl_stmt(name, value, false, span)),
+            Some(block) if block && self.scopes.is_predeclared(sym) => {
+                let m = self.meta(span);
+                out.push(CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![
+                            CastExpr::Var {
+                                name,
+                                meta: m.clone(),
+                            },
+                            value,
+                        ],
+                        meta: m.clone(),
+                    },
+                    meta: m,
+                });
+            }
+            Some(block) => out.push(self.var_decl_stmt(name, value, block, span)),
+        }
     }
 
     /// An object property for destructuring (CRUSH-284): read once
@@ -1035,10 +1075,11 @@ impl Lower<'_> {
     }
 
     fn variable(&mut self, v: &Variable, block: bool) -> anyhow::Result<Vec<CastStmt>> {
+        if let Binding::Pattern(pat) = v.binding() {
+            return self.destructuring_decl(v, pat, block);
+        }
         let Binding::Identifier(id) = v.binding() else {
-            return Err(
-                self.unsupported("a destructuring declaration", v.init().map(Spanned::span))
-            );
+            unreachable!("bindings are identifiers or patterns");
         };
         let name = self.resolve(id.sym());
         // `const c = new Counter()`: the binding holds an instance of a
@@ -1092,6 +1133,47 @@ impl Lower<'_> {
         }
         prefix.push(self.var_decl_stmt(name, value, block, span));
         Ok(prefix)
+    }
+
+    /// A destructuring declaration (CRUSH-287): the initializer is
+    /// evaluated once into a hidden temporary, then the pattern binds
+    /// its names from it. Without an initializer the names bind null
+    /// (JS's `undefined`) — no destructuring happens.
+    fn destructuring_decl(
+        &mut self,
+        v: &Variable,
+        pat: &Pattern,
+        block: bool,
+    ) -> anyhow::Result<Vec<CastStmt>> {
+        let span = v.init().map(Spanned::span);
+        let mut syms = Vec::new();
+        scope::binding_syms(v.binding(), &mut syms);
+        // What a branch assigns must be forgotten after it, as for
+        // identifier declarations.
+        if self.branch_depth > 0 {
+            for sym in &syms {
+                self.flow_assigned.insert(self.resolve(*sym));
+            }
+        }
+        let mut out = Vec::new();
+        let Some(init) = v.init() else {
+            for sym in syms {
+                let value = CastExpr::NullLiteral {
+                    meta: self.meta(span),
+                };
+                self.bind_leaf(sym, value, Some(block), span, &mut out);
+            }
+            return Ok(out);
+        };
+        let value = self.expr(init)?;
+        let temp = self.hidden("__dsrc");
+        out.push(self.var_decl_stmt(temp.clone(), value, false, span));
+        let source = CastExpr::Var {
+            name: temp,
+            meta: self.meta(span),
+        };
+        self.destructure(source, pat, Some(block), span, &mut out)?;
+        Ok(out)
     }
 
     /// `x = null` at the start of a function for each `var x;` without an
