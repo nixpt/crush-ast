@@ -1245,3 +1245,36 @@ Rejected alternatives:
 Outcome:
 Every engine is loud on unassigned reads; STILL_SILENT empty; 0/2054 example loads checked
 
+
+## 2026-10-20T16:55:43-05:00 — [STRATEGIC] [ADOPTED] crush-vm-py builds against the stable ABI (abi3-py311) and surfaces VmResult.return_value
+
+Reason:
+Two independent gaps in the Python wheel, both found from the chroma side
+(chroma's VM prefers the wheel by default via backend="auto").
+
+1. pyo3 0.23 refuses to build on a Python 3.14 interpreter ("configured
+   Python interpreter version (3.14) is newer than PyO3's maximum supported
+   version (3.13)"), so the wheel could only be built where an older
+   interpreter happened to be available. Adopting abi3 + abi3-py311 — the
+   same pair crush-python already uses — builds against the stable ABI, lifts
+   that ceiling, and lets one wheel serve every interpreter from 3.11 up.
+   Verified: the wheel builds on 3.14 (cp311-abi3 tag) and the same artefact
+   imports and runs on 3.12.
+
+2. run_blob returned {output, result, stack, steps, halted}, where "result" is
+   stack.last(). A program with an explicit `return` leaves an EMPTY stack and
+   puts its value in VmResult.return_value, so the wheel reported result=None
+   for exactly the programs whose value matters — chroma saw a RET-contract
+   divergence against its Python reference tier. The Rust VmResult and the
+   crush-lang-sdk VmResult both carry return_value; the wheel now surfaces it
+   as a new "return_value" key. The change is additive: the key is absent
+   from older wheels and present (None when there is no explicit return) in
+   new ones.
+
+The wheel's version line is deliberately left alone: the crate is excluded from
+the workspace, so bump-version never touches it, and the 0.3.0-vs-workspace
+drift is already tracked as its own backlog item (CRUSH-206). AGENTS.md forbids
+hand-editing versions.
+
+Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
+

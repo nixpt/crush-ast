@@ -415,6 +415,14 @@ impl Lower<'_> {
                     meta: m,
                 });
             }
+            "===" => return Ok(js_cap("js.strict_eq", vec![left, right], m)),
+            "!==" => {
+                return Ok(CastExpr::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(js_cap("js.strict_eq", vec![left, right], m.clone())),
+                    meta: m,
+                });
+            }
             // The deciding operand, not a bool (`0 || 'dflt'` is 'dflt'); the
             // right side runs only when the left doesn't decide.
             "||" | "&&" => {
@@ -829,8 +837,10 @@ impl Lower<'_> {
         match unparen(callee) {
             Expression::Identifier(id) => {
                 // `C(...)` without `new` is not a call of the constructor
-                // (CRUSH-277 D3): never silently construct.
-                if self.is_kind(&self.resolve(id.sym())) {
+                // (CRUSH-277 D3): never silently construct. A binding of
+                // the same spelling that shadows the class is called as
+                // the value it is.
+                if self.class_ref(id.sym()).is_some() {
                     return Err(self.unsupported(
                         format!(
                             "calling the class `{}` without `new`",
@@ -882,11 +892,12 @@ impl Lower<'_> {
                     };
                 }
                 // `C.f(...)` with `C` a class this module declares: a
-                // static's target is known exactly (D3).
+                // static's target is known exactly (D3). From a
+                // function body the class may only be pre-registered
+                // so far (CRUSH-281).
                 if let Expression::Identifier(obj) = unparen(s.target())
-                    && self.is_kind(&self.resolve(obj.sym()))
+                    && let Some(kind) = self.class_ref(obj.sym())
                 {
-                    let kind = self.resolve(obj.sym());
                     return match self.kind_static_fn(&kind, &method) {
                         // A static is called with its plain arguments; the
                         // VM's static member calls take no receiver either.

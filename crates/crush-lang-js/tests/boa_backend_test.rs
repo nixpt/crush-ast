@@ -183,6 +183,22 @@ fn test_boa_labeled_break_is_loud() {
     assert!(msg.contains("labeled `break`"), "{msg}");
 }
 
+// The ticket's program (CRUSH-zorro-6): node prints `0 0` then `1 0`. Both
+// jumps name `outer`; the label is refused (never dropped onto the inner
+// loop), and the error names the jump.
+#[test]
+fn test_boa_labeled_continue_is_loud() {
+    let msg = loud(
+        "outer: for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { \
+         if (j == 1) continue outer; if (i == 2) break outer; console.log(i, j); } }",
+    );
+    assert!(msg.contains("labeled `continue` (`continue label`)"), "{msg}");
+    // A labeled block (not a loop) can't be a jump target either: CAST has no
+    // labeled jump, so it must stay loud rather than break the inner loop.
+    let msg = loud("l: { console.log(1); break l; }");
+    assert!(msg.contains("labeled `break` (`break label`)"), "{msg}");
+}
+
 #[test]
 fn test_boa_switch() {
     let source = "const x = 1;\nswitch (x) { case 1: break; default: break; }\n";
@@ -1376,6 +1392,212 @@ console.log(total);
     assert_eq!(run_js(source), "4\n");
 }
 
+// CRUSH-281: `new C()` inside a top-level `function` — the function
+// bodies lower before the class items (hoisting), but the calls run
+// after the whole module, so the classes are registered by then.
+// Both declaration orders work; a module-level `new` before the
+// class declaration still refuses (the JS temporal dead zone).
+#[test]
+fn test_boa_new_inside_top_level_function() {
+    let source = r#"
+class Counter {
+  constructor(x = 40) { this.x = x; }
+  val() { return this.x + 2; }
+}
+function make() { return new Counter(); }
+function makeWith(v) { return new Counter(v).val(); }
+console.log(make().val());
+console.log(makeWith(0));
+"#;
+    assert_eq!(run_js(source), "42\n2\n");
+    // The class declared after the function.
+    let source = r#"
+function make() { return new Counter(41).get(); }
+class Counter {
+  constructor(x) { this.x = x; }
+  get() { return this.x + 1; }
+}
+console.log(make());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // A static called from a top-level function, class after it.
+    let source = r#"
+function pick() { return Util.pick(); }
+class Util { static pick(v = 42) { return v; } }
+console.log(pick());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The temporal dead zone is still refused at module level.
+    let src = "console.log(new Counter(1).get()); class Counter { constructor(x) { this.x = x; } get() { return this.x; } }";
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "statement-order new: {}",
+        loud(src)
+    );
+    // An exported class constructs from a function too.
+    let source = r#"
+export class Counter {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+function make() { return new Counter(42).get(); }
+console.log(make());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // Inside a function body the same pre-registration applies, and a
+    // field initialiser (evaluated at construction) may construct a
+    // class declared later in the module.
+    let source = r#"
+function outer() {
+  class C {
+    constructor(x) { this.x = x; }
+    val() { return this.x + 1; }
+  }
+  function inner() { return new C(41).val(); }
+  return inner();
+}
+console.log(outer());
+class Holder {
+  child = new Later(42);
+  get() { return this.child.val(); }
+}
+class Later {
+  constructor(x) { this.x = x; }
+  val() { return this.x; }
+}
+console.log(new Holder().get());
+"#;
+    assert_eq!(run_js(source), "42\n42\n");
+}
+
+// CRUSH-281 review (kai): the pre-registration must not leak across
+// statement lists or name bindings. A class is constructible only
+// from a function nested deeper than the list that declares it, only
+// through the binding that declares it, and only in the scope that
+// declares it; two classes that would share one kind name refuse.
+#[test]
+fn test_boa_new_pending_class_scope_rules() {
+    // A statement of the list itself is still in the temporal dead
+    // zone, even inside a function body.
+    let src = r#"
+function f() { const o = new D(1); class D { constructor(x) { this.x = x; } } return o.x; }
+console.log(f());
+"#;
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "TDZ in a function body: {}",
+        loud(src)
+    );
+    // A function nested deeper than the declaring list may construct.
+    let source = r#"
+function f() {
+  function g() { return new D(41).val(); }
+  class D { constructor(x) { this.x = x; } val() { return this.x + 1; } }
+  return g();
+}
+console.log(f());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The same two rules inside a block.
+    let source = r#"
+function f() {
+  {
+    function g() { return new D(41).val(); }
+    class D { constructor(x) { this.x = x; } val() { return this.x + 1; } }
+    return g();
+  }
+}
+console.log(f());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    let src = "function f() { { const o = new D(1); class D { constructor(x) { this.x = x; } } return o; } } console.log(f());";
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "TDZ in a block: {}",
+        loud(src)
+    );
+    // A parameter or local named like the class shadows it: `new` on
+    // that binding is not construction of the module class.
+    let src = r#"
+class C { constructor() { this.v = 7; } }
+function g(C) { return new C(); }
+console.log(g(null));
+"#;
+    assert!(
+        loud(src).contains("not the class"),
+        "parameter shadow: {}",
+        loud(src)
+    );
+    let src = r#"
+class C { constructor() { this.v = 7; } }
+function g() { let C = 5; return new C(); }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("not the class"),
+        "local shadow: {}",
+        loud(src)
+    );
+    // A class local to one function is not visible to a sibling.
+    let src = r#"
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { return new C(2); }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "sibling leak: {}",
+        loud(src)
+    );
+    // Two classes that would share one kind name refuse loudly
+    // (properly scoped kind names are future work).
+    let src = r#"
+class C { constructor(a, b = 2) { this.v = a + b; } }
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { return new C(1).v; }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("share one kind name"),
+        "module/local duplicate: {}",
+        loud(src)
+    );
+    let src = r#"
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { class C { constructor(x) { this.v = x; } } return 0; }
+console.log(f() + g());
+"#;
+    assert!(
+        loud(src).contains("share one kind name"),
+        "sibling duplicates: {}",
+        loud(src)
+    );
+    // A class expression's own name is bound only inside the class:
+    // `const C = class K { … }` does not make `K` constructible here.
+    let src = r#"
+const C = class K { constructor() { this.v = 3; } };
+function h() { return new K(); }
+console.log(h());
+"#;
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "class-expression name leak: {}",
+        loud(src)
+    );
+    let src = "const C = class K { constructor() { this.v = 3; } }; console.log(new K());";
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "class-expression name at statement position: {}",
+        loud(src)
+    );
+    // The same-name shape keeps working.
+    let source = r#"
+const K = class K { constructor() { this.v = 41; } get() { return this.v + 1; } };
+console.log(new K().get());
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
 // CRUSH-277 S4: getters and setters run end to end.
 #[test]
 fn test_boa_accessors_run() {
@@ -1568,6 +1790,72 @@ fn test_boa_exported_function_runs_end_to_end() {
     };
     let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
     assert_eq!(out.trim(), "42");
+}
+
+// CRUSH-290 (boa path, end-to-end): `===` / `!==` are strict equality — no
+// coercion — and compile through the checked path (`compile_cast`, which runs
+// the semantics checker that used to reject the bare `BinaryOp "==="`).
+#[test]
+fn test_boa_strict_equality_runs_end_to_end() {
+    assert_eq!(
+        run_js("console.log(1 === 1);\nconsole.log(1 === \"1\");\n"),
+        "true\nfalse\n"
+    );
+    let source = r#"
+class A { }
+class B { }
+const a = new A();
+const b = new A();
+const f = () => 1;
+const o = {};
+const p = o;
+console.log(a === null, a === a, a === b);
+console.log(A === A, A === B, a === A, A === null);
+console.log(f === f, f === a, o === p, {} === {}, 1 !== '1', 1 !== 1);
+"#;
+    assert_eq!(
+        run_js(source),
+        "false true false\ntrue false false false\ntrue false true false true false\n"
+    );
+}
+
+#[test]
+fn test_boa_switch_on_instance_uses_strict_identity() {
+    let source = r#"
+class A { }
+const a = new A();
+switch (a) {
+  case null: console.log('null'); break;
+  case a: console.log('same'); break;
+  default: console.log('different');
+}
+"#;
+    assert_eq!(run_js(source), "same\n");
+}
+
+// CRUSH-290: a `switch` case test is JS strict equality too — the generated
+// comparison is the `js.strict_eq` capability, so the program compiles
+// through the checked path. Expected output is what `node` prints.
+#[test]
+fn test_boa_switch_matches_on_strict_equality() {
+    let source = r#"
+const n = 2;
+switch (n) {
+  case 1: console.log('one'); break;
+  case 2: console.log('two'); break;
+  default: console.log('many');
+}
+const s = 'b';
+switch (s) {
+  case 'a': console.log('A');
+  case 'b': console.log('B');
+  case 'c': console.log('C'); break;
+  default: console.log('D');
+}
+switch ('3') { case 3: console.log('number 3'); break; default: console.log('not coerced'); }
+switch (n) { case 9: console.log('nine'); break; default: console.log('default only'); }
+"#;
+    assert_eq!(run_js(source), "two\nB\nC\nnot coerced\ndefault only\n");
 }
 
 // CRUSH-288: host constructors — `new Map()` / `new Set()` on proven

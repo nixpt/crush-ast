@@ -507,7 +507,8 @@ impl<'a> Lower<'a> {
         &self,
         id: &boa_ast::expression::Identifier,
     ) -> Option<HostKind> {
-        if self.user_binding(id.sym()).is_some() || self.is_kind(&self.resolve(id.sym())) {
+        let kind = self.resolve(id.sym());
+        if self.user_binding(id.sym()).is_some() || self.kinds.iter().any(|k| k.name == kind) {
             return None;
         }
         match self.name(id.sym()).as_str() {

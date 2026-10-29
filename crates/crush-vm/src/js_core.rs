@@ -1,7 +1,8 @@
 //! JavaScript value semantics: one implementation for every crush backend.
 //!
 //! The JS walkers lower the JS operators whose meaning differs from crush's
-//! to `js.*` capabilities (`js.add`, `js.truthy`, `js.loose_eq`, `js.format`).
+//! to `js.*` capabilities (`js.add`, `js.truthy`, `js.loose_eq`,
+//! `js.strict_eq`, `js.format`).
 //! Crush's own `+`, `&&`, `||` and `==` are unchanged: other languages share
 //! them.
 //!
@@ -266,6 +267,31 @@ pub fn loose_eq(a: &JsNode, b: &JsNode) -> Result<bool, String> {
         (other, Bool(y)) => return loose_eq(other, &Int(*y as i64)),
         (Str(s), n) | (n, Str(s)) => primitive_number(n)? == string_to_number(s)?,
         (x, y) => primitive_number(x)? == primitive_number(y)?,
+    })
+}
+
+/// JS `===` (IsStrictlyEqual): no coercion, so different types are `false`
+/// (`1 === '1'`, `true === 1`, `null === 0`) rather than a number conversion;
+/// there is one number type (`1 === 1.0`, and `NaN` equals nothing);
+/// `null === null`; two objects are equal only when they are the same object.
+pub fn strict_eq(a: &JsNode, b: &JsNode) -> Result<bool, String> {
+    use JsNode::*;
+    Ok(match (a, b) {
+        (Other(t), _) | (_, Other(t)) => return Err(other_type(t)),
+        (Null, Null) => true,
+        (Null, _) | (_, Null) => false,
+        (Array { id: x, .. }, Array { id: y, .. }) | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
+        // A container against anything else (including the other container
+        // kind) is a different type (or a different object): never equal.
+        (Array { .. } | Object { .. }, _) | (_, Array { .. } | Object { .. }) => false,
+        (Str(x), Str(y)) => x == y,
+        (Bool(x), Bool(y)) => x == y,
+        (Int(x), Int(y)) => x == y,
+        (Int(x), Float(y)) => *x as f64 == *y,
+        (Float(x), Int(y)) => *x == *y as f64,
+        (Float(x), Float(y)) => x == y,
+        // Different primitive types: `'1' === 1`, `true === 1`.
+        _ => false,
     })
 }
 
