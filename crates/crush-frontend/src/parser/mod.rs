@@ -1677,7 +1677,16 @@ impl Parser {
             // `return |b| a + b` parsed as a bare `return` (CRUSH-251).
             | Token::Bar(..)
             | Token::Or(..)
-            | Token::Pipe(..) => true,
+            | Token::Pipe(..)
+            // Every other token `parse_primary` starts an expression with
+            // (#253): without them `return match v { … }` and
+            // `return new P()` parsed as a bare `return` followed by an
+            // unreachable statement — the function silently returned null.
+            | Token::Match(..)
+            | Token::New(..) => true,
+            // `async.*` — the contextual-keyword namespace (`return
+            // async.sleep(1)` likewise became a bare `return`).
+            Token::Async(..) => matches!(self.peek_ahead(1), Token::Dot(_)),
             _ => false,
         }
     }
