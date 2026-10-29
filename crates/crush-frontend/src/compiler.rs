@@ -1026,6 +1026,10 @@ impl Compiler {
                     serde_json::json!({"name": variable}),
                     meta,
                 ));
+                // The loop variable is a local like a `let` (#256): without
+                // this, `s.area()` in the body was classified as a capability
+                // named `s.area` ("not available in this host").
+                self.declared_vars.insert(variable.clone());
 
                 // Compile body
                 for s in body {
