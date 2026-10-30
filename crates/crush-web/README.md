@@ -112,6 +112,34 @@ execute_with(source, { grants: ["polyglot.javascript"] });
   `print(result)`) is a compile error here (`Undefined variable: result`),
   while native — which has the marshaling — prints `125`.
 
+### Blocks that run asynchronously (`deferLang`)
+
+The executor above is called synchronously, inside the VM's step, so a block
+can't wait for anything: no promises, `await` or timers. A `Session` created
+with `deferLang: true` hands each granted block to the page instead. The run
+pauses, the page runs the block however long that takes, and then continues
+the run:
+
+```js
+const s = new Session(source, { grants: ["polyglot.javascript"], deferLang: true });
+let r = s.run();
+while (r.status === "need_lang" || r.status === "need_input") {
+  if (r.status === "need_lang") {
+    const { lang, code, env } = r.lang;            // env: inputs as JSON text, by name
+    try { r = s.provide_lang(await runAsync(lang, code, env)); }  // everything it printed
+    catch (e) { r = s.fail_lang(String(e.message)); }              // what it would print on stderr
+  } else {
+    r = s.provide(await nextLine());
+  }
+}
+```
+
+`provide_lang` gives the block's output exactly as an executor returns it,
+with the result-sentinel line its marshaling prints, so outputs, `->` values
+and errors are the same as with `set_lang_executor`. The grant is checked
+before the pause, and an ungranted block is refused before anything runs.
+`execute_with` can't pause, so it reports an error for a deferred block.
+
 ### Lowered polyglot blocks (no interpreter)
 
 ```js
