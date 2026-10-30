@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Stdlib caps no longer panic or abort the host on bad arguments
+  (CRUSH-181):** `str.repeat`, `str.pad_left`/`pad_right` and
+  `collections.chunk` cast negative lengths to `usize` (wrapping to a huge
+  value → "capacity overflow" / OOM abort); `conv.parse_int` panicked on a
+  radix outside 2..=36; `buffer.alloc` and `str.repeat` could request an
+  unbounded allocation. All now give a runtime error, and every
+  allocation-growing cap (`str.repeat`/`pad_*`/`join`, `buffer.alloc`) is
+  bounded by a fixed 64 MiB limit.
+
 ## [0.8.0] - 2026-10-30
 
 - Merge pull request #315 from nixpt/agent/vega/fs-backend
