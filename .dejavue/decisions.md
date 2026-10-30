@@ -1278,3 +1278,9 @@ hand-editing versions.
 
 Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
 
+
+## 2026-10-30T18:04:54-05:00 — [ARCHITECTURAL] The FastVM/JIT print formatter resolves every heap kind through the arena (CRUSH-294, GitHub #267)
+
+Reason:
+runtime_value_to_text (used by PrintCap, the io.print capability on FastVM and the JIT) resolved a RuntimeValue::Ref only when it pointed at Object::Str; every other object kind printed @N (the arena index) and the run finished successfully, so FastVM/JIT silently printed the wrong thing for arrays, maps and structs. It now matches the VM's impl Display for Value: arrays [a, b], tuples (a, b), Vector/Set/List prefixes, maps and structs {k: v, ...}, bytes/handles/tagged/results tagged, strings raw including inside a container. One formatter, both fast engines; pinned by an all-engine stdout test.
+
