@@ -1279,6 +1279,10 @@ hand-editing versions.
 Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
 
 
+## 2026-10-30T05:07:40-05:00 — [ARCHITECTURAL] One canonical equality backs FastVM and the JIT (CRUSH-215)
+
+Reason:
+FastVM's compare_op was arena-blind: it fell through to _ => false for every non-numeric kind (strings, arrays, maps) and its Bool arm computed x == y even for !=. The JIT's inline do_cmp compared NaN-boxed strings/bools/refs by their float bits, so string == was always false and != always true. Added crush_vm::value::runtime_value_eq, mirroring the interpreter's Value::PartialEq, and routed FastVM Eq/Ne and a new JIT OP_CMP_EQUAL helper through it. FastVM keeps its RuntimeValue+Arena representation; the JIT converts its operands to RuntimeValue and shares the function, so the two fast engines cannot drift again. A six-engine differential test (backend_agreement::equality_agrees_across_every_engine) pins agreement.
 ## 2026-10-30T18:17:19-05:00 — [ARCHITECTURAL] The JIT frame stride is the program's largest local count, not a fixed 8 (CRUSH-295, GitHub #273)
 
 Reason:

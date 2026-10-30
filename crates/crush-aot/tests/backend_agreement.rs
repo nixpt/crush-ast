@@ -528,6 +528,57 @@ fn map_and_array_equality_agrees_across_engines() {
     }
 }
 
+// ── CRUSH-215: EQ/NE must agree on *every* engine, not just VM + AOT ──
+
+/// `source`'s `main` returns a Bool; every engine (scheduler VM, portable VM,
+/// FastVM, JIT, AOT Rust, AOT C) must return `expected`.
+fn expect_bool_everywhere(source: &str, expected: bool, name: &str) {
+    let program = compile(source);
+    let outcomes = run_on_every_engine(&program, name);
+    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
+    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    let want = if expected { "true" } else { "false" };
+    for (engine, o) in &outcomes {
+        assert!(
+            matches!(o, Ok(v) if v.contains(want)),
+            "{name}: {engine} must return {want} for {source:?}:\n{}",
+            report.join("\n")
+        );
+    }
+}
+
+#[test]
+fn equality_agrees_across_every_engine() {
+    // CRUSH-215: FastVM fell through to `_ => false` for every non-numeric
+    // `==` (so `"ab" == "ab"` was false and `"ab" != "ab"` was false too), its
+    // Bool arm computed `x == y` even for `!=`, and the JIT compared strings
+    // by NaN-boxed bits so string `==` was always false. Every value kind the
+    // engines share must now agree with the interpreter.
+    let cases: &[(&str, bool)] = &[
+        // Strings (the ticket's headline).
+        (r#"fn main() { return "ab" == "ab"; }"#, true),
+        (r#"fn main() { return "ab" != "ab"; }"#, false),
+        (r#"fn main() { return "ab" == "ba"; }"#, false),
+        (r#"fn main() { return "ab" != "ba"; }"#, true),
+        // Bool / null via a call, so the frontend cannot fold the comparison.
+        (r#"fn id(x) { return x; } fn main() { return id(true) != id(false); }"#, true),
+        (r#"fn id(x) { return x; } fn main() { return id(true) == id(true); }"#, true),
+        (r#"fn id(x) { return x; } fn main() { return id(null) != id(1); }"#, true),
+        (r#"fn id(x) { return x; } fn main() { return id(null) == id(null); }"#, true),
+        // Arrays and maps: by value, not identity.
+        (r#"fn main() { return [1, 2, 3] == [1, 2, 3]; }"#, true),
+        (r#"fn main() { return [1, 2] != [1, 3]; }"#, true),
+        (r#"fn main() { return {"a": 1, "b": 2} == {"b": 2, "a": 1}; }"#, true),
+        (r#"fn main() { return {"a": 1} == {"a": 2}; }"#, false),
+        // Numeric cross-type.
+        (r#"fn main() { return 1 == 1.0; }"#, true),
+        (r#"fn main() { return 1 != 1.0; }"#, false),
+    ];
+    for (i, (source, expected)) in cases.iter().enumerate() {
+        expect_bool_everywhere(source, *expected, &format!("eq215_{i}"));
+    }
+}
+
 // ── CRUSH-295 (GitHub #273): a function with more locals than the JIT's
 //    per-frame stride must not have them overwritten by a callee ──
 
