@@ -198,7 +198,9 @@ fn names(path: &Path) -> io::Result<Vec<OsString>> {
             Component::Normal(n) => out.push(n.to_os_string()),
         }
     }
-    if !path.is_absolute() {
+    // has_root, not is_absolute: on wasm32-unknown-unknown (crush-web) std
+    // calls `/x` relative, since that target is neither unix nor windows.
+    if !path.has_root() {
         return Err(enoent());
     }
     Ok(out)

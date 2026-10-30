@@ -384,7 +384,10 @@ fn resolve_in(
 
     let s = crate::caps::value_as_text(path);
     let p = Path::new(&s);
-    if p.is_absolute() {
+    // has_root, as is_absolute on unix: on wasm32-unknown-unknown (crush-web's
+    // in-memory fs) std calls `/x` relative, and `/etc/x` would be refused
+    // only later, as an escape, with a different message.
+    if p.has_root() {
         return Err(format!("absolute paths are not allowed: {s}"));
     }
     let escapes = || Unconfined::Escapes.message(&s);
