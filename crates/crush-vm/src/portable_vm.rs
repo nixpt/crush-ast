@@ -149,6 +149,15 @@ pub struct PortableVm {
     input: crate::io_read::InputSource,
     /// Runs `@lang` blocks instead of a subprocess when set (#91).
     lang_executor: Option<LangExecutor>,
+    /// Deferred `@lang` blocks: an EXEC_LANG yields
+    /// `VmYield::HostCall { capability: "lang.exec", .. }` and runs again, with
+    /// the result, once the host calls [`PortableVm::provide_lang_result`].
+    lang_deferred: bool,
+    /// The host's result for the pending deferred block: its stdout, or what it
+    /// reported on failure.
+    lang_result: Option<Result<String, String>>,
+    /// Set by EXEC_LANG when it defers its block: the `lang.exec` arguments.
+    lang_yield: Option<Vec<Value>>,
     /// Instruction pointer.
     ip: usize,
     /// Total instruction steps executed.
@@ -259,6 +268,9 @@ impl PortableVm {
             out_taken: 0,
             input: crate::io_read::InputSource::Stdin,
             lang_executor: None,
+            lang_deferred: false,
+            lang_result: None,
+            lang_yield: None,
             ip: start_ip,
             steps: 0,
             jumped: false,
@@ -297,6 +309,26 @@ impl PortableVm {
     /// only decides *where* granted code runs.
     pub fn set_lang_executor(&mut self, executor: LangExecutor) {
         self.lang_executor = Some(executor);
+    }
+
+    /// Hand `@lang` blocks to the host instead of running them during a step,
+    /// for a host that runs a block asynchronously (a browser running
+    /// JavaScript with promises and timers). A granted block's EXEC_LANG makes
+    /// `step()` return `VmYield::HostCall { capability: "lang.exec", args:
+    /// [lang, code, env] }` (`env` a map of the block's inputs, as a
+    /// subprocess would get them) without advancing; the host runs it, calls
+    /// [`PortableVm::provide_lang_result`], and the next `step()` finishes the
+    /// EXEC_LANG with that result: its output, its `->` values, or its error.
+    /// Takes precedence over [`PortableVm::set_lang_executor`].
+    pub fn set_lang_deferred(&mut self, deferred: bool) {
+        self.lang_deferred = deferred;
+    }
+
+    /// The result of the block a `lang.exec` yield handed out: `Ok(stdout)`, or
+    /// `Err(message)` for a block that failed (what a subprocess would print
+    /// on stderr).
+    pub fn provide_lang_result(&mut self, result: Result<String, String>) {
+        self.lang_result = Some(result);
     }
 
     /// Choose where `io.read` lines come from. The default is process stdin.
@@ -640,6 +672,11 @@ impl PortableVm {
         // (a recursive call in tail position, #94) or `loop: JMP loop`.
         self.jumped = false;
         self.execute_instruction(opcode, next_ip)?;
+        if let Some(args) = self.lang_yield.take() {
+            // A deferred `@lang` block: this EXEC_LANG runs again once the
+            // host provides its result (see `set_lang_deferred`).
+            return Ok(Some(VmYield::HostCall { capability: "lang.exec".to_string(), args }));
+        }
         if !self.jumped {
             self.ip = next_ip;
         }
@@ -1771,31 +1808,53 @@ impl PortableVm {
                 // `SubprocessExecutor` (`crate::scheduler::run_exec_lang_stdout` — see its doc
                 // comment for the CRUSH-20 buckets-sandboxing wiring). A `LangExecutor` set with
                 // `set_lang_executor` (#91) takes precedence over both.
-                let outcome = match self.lang_executor.as_mut() {
-                    // #91: the host runs the block (e.g. a browser Worker).
-                    Some(executor) => match executor(lang, code_str, &env_vars) {
-                        Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
-                        // What the guest reported, as a subprocess's stderr is: the
-                        // same error, and message, as a native run of the block.
-                        Err(message) => {
+                let outcome = if self.lang_deferred {
+                    match self.lang_result.take() {
+                        Some(Ok(stdout)) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                        Some(Err(message)) => {
                             return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
                         }
-                    },
-                    None => {
-                        let outputs = crate::lang_exec::declared_outputs(&spec);
-                        let request = crate::lang_exec::PolyglotRequest {
-                            lang,
-                            code: code_str,
-                            vars: &env_vars,
-                            outputs: &outputs,
-                            deps: &deps,
-                            gate: &gate,
-                            deadline_ms: self.quotas.max_wall_time_ms,
-                            crush_line,
-                        };
-                        let executor =
-                            self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
-                        crate::lang_exec::run_block(executor, &request)?
+                        None => {
+                            // Hand the block to the host: put the inputs back,
+                            // so this EXEC_LANG runs again with its result.
+                            let env = Value::new_map(
+                                env_vars.iter().map(|(k, v)| (k.clone(), Value::Str(v.clone()))),
+                            );
+                            for value in var_values {
+                                self.push(value);
+                            }
+                            self.lang_yield =
+                                Some(vec![Value::Str(lang.to_string()), Value::Str(code_str.to_string()), env]);
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    match self.lang_executor.as_mut() {
+                        // #91: the host runs the block (e.g. a browser Worker).
+                        Some(executor) => match executor(lang, code_str, &env_vars) {
+                            Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                            // What the guest reported, as a subprocess's stderr is: the
+                            // same error, and message, as a native run of the block.
+                            Err(message) => {
+                                return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
+                            }
+                        },
+                        None => {
+                            let outputs = crate::lang_exec::declared_outputs(&spec);
+                            let request = crate::lang_exec::PolyglotRequest {
+                                lang,
+                                code: code_str,
+                                vars: &env_vars,
+                                outputs: &outputs,
+                                deps: &deps,
+                                gate: &gate,
+                                deadline_ms: self.quotas.max_wall_time_ms,
+                                crush_line,
+                            };
+                            let executor =
+                                self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+                            crate::lang_exec::run_block(executor, &request)?
+                        }
                     }
                 };
                 self.out_len += outcome.visible.len();

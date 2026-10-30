@@ -254,6 +254,15 @@ pub struct RunOptions {
     /// naming it. Lowering needs this build's `polyglot-python` /
     /// `polyglot-javascript` feature.
     pub polyglot: Option<String>,
+    /// `Session` only: hand each granted `@lang` block to the page instead of
+    /// calling the [`set_lang_executor`] function during the run. The run
+    /// pauses with `status: "need_lang"` and `lang: { lang, code, env }`; the
+    /// page runs the block however long that takes (a JavaScript block's
+    /// promises and timers, as node runs them before it exits) and continues
+    /// the run with [`Session::provide_lang`] (the block's stdout) or
+    /// [`Session::fail_lang`] (what it reported on failure).
+    #[serde(alias = "deferLang")]
+    pub defer_lang: Option<bool>,
 }
 
 /// Compile `source` for a run with `options` (its `polyglot` mode).
@@ -282,6 +291,9 @@ fn parse_options(options: JsValue) -> Result<RunOptions, JsValue> {
 pub enum Status {
     /// The program called `io.read` and no line is pending.
     NeedInput,
+    /// A granted `@lang` block waits for the page to run it (`deferLang`);
+    /// see `Report::lang`.
+    NeedLang,
     /// The program finished.
     Done,
     /// Compile or runtime error; see `error`.
@@ -301,6 +313,41 @@ pub struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     pub steps: usize,
+    /// For `need_lang`: the block to run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lang: Option<LangRequest>,
+}
+
+/// A `@lang` block handed to the page (`deferLang`): its language, its code
+/// (with the marshaling prologue and epilogue), and its inputs as a
+/// subprocess gets them, JSON text by name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LangRequest {
+    pub lang: String,
+    pub code: String,
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+fn lang_request(args: &[crush_vm::vm::Value]) -> Option<LangRequest> {
+    use crush_vm::vm::Value;
+    match args {
+        [Value::Str(lang), Value::Str(code), Value::Map(env)] => Some(LangRequest {
+            lang: lang.clone(),
+            code: code.clone(),
+            env: env
+                .borrow()
+                .iter()
+                .map(|(k, v)| {
+                    let text = match v {
+                        Value::Str(s) => s.clone(),
+                        other => crush_vm::value_to_text(other),
+                    };
+                    (k.clone(), text)
+                })
+                .collect(),
+        }),
+        _ => None,
+    }
 }
 
 fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) -> Result<PortableVm, String> {
@@ -317,33 +364,42 @@ fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) 
     if let Some(executor) = LANG_EXECUTOR.with(|e| e.borrow().clone()) {
         vm.set_lang_executor(Box::new(move |lang, code, env| executor(lang, code, env)));
     }
+    vm.set_lang_deferred(options.defer_lang.unwrap_or(false));
     Ok(vm)
 }
 
-/// Where [`drive`] stopped: the status, the error for `Status::Error`, and
-/// the `sys.exit` status if the program called it.
-type Stop = (Status, Option<String>, Option<i32>);
+/// Where [`drive`] stopped: the status, the error for `Status::Error`, the
+/// `sys.exit` status if the program called it, and the block for
+/// `Status::NeedLang`.
+type Stop = (Status, Option<String>, Option<i32>, Option<LangRequest>);
 
 /// Step `vm` until it finishes, errors, exits, or pauses for input.
 fn drive(vm: &mut PortableVm) -> Stop {
     loop {
         if vm.is_halted() {
-            return (Status::Done, None, None);
+            return (Status::Done, None, None, None);
         }
         match vm.step() {
             Ok(None) => {}
             Ok(Some(VmYield::HostCall { capability, .. })) if capability == "io.read" => {
-                return (Status::NeedInput, None, None);
+                return (Status::NeedInput, None, None, None);
+            }
+            Ok(Some(VmYield::HostCall { capability, args })) if capability == "lang.exec" => {
+                return match lang_request(&args) {
+                    Some(request) => (Status::NeedLang, None, None, Some(request)),
+                    None => (Status::Error, Some("malformed lang.exec pause".to_string()), None, None),
+                };
             }
             Ok(Some(other)) => {
                 return (
                     Status::Error,
                     Some(format!("unexpected VM pause: {other:?}")),
                     None,
+                    None,
                 );
             }
-            Err(VmError::Exit(code)) => return (Status::Done, None, Some(code)),
-            Err(e) => return (Status::Error, Some(format!("runtime error: {e}")), None),
+            Err(VmError::Exit(code)) => return (Status::Done, None, Some(code), None),
+            Err(e) => return (Status::Error, Some(format!("runtime error: {e}")), None, None),
         }
     }
 }
@@ -386,7 +442,10 @@ pub fn execute_with_options(source: &str, options: &RunOptions) -> ExecuteWithRe
             return ExecuteWithResult { ok: false, output: String::new(), error: Some(e), exit_code: None, steps: 0 };
         }
     };
-    let (status, error, exit_code) = drive(&mut vm);
+    let (status, mut error, exit_code, _) = drive(&mut vm);
+    if status == Status::NeedLang {
+        error = Some("deferLang needs a Session: execute_with cannot pause for a @lang block".to_string());
+    }
     ExecuteWithResult {
         ok: status == Status::Done && exit_code.unwrap_or(0) == 0,
         output: vm.take_output(),
@@ -463,6 +522,20 @@ impl Session {
         to_js(&self.close_report())
     }
 
+    /// The pending `@lang` block (`need_lang`) ran: `stdout` is everything it
+    /// printed (with the result-sentinel line its marshaling prints). Continue.
+    #[wasm_bindgen(js_name = provide_lang)]
+    pub fn provide_lang(&mut self, stdout: &str) -> Result<JsValue, JsValue> {
+        to_js(&self.lang_report(Ok(stdout.to_string())))
+    }
+
+    /// The pending `@lang` block (`need_lang`) failed with `message` (what it
+    /// would print on stderr). The run then fails as a native run does.
+    #[wasm_bindgen(js_name = fail_lang)]
+    pub fn fail_lang(&mut self, message: &str) -> Result<JsValue, JsValue> {
+        to_js(&self.lang_report(Err(message.to_string())))
+    }
+
     /// Everything the program has printed so far.
     pub fn transcript(&self) -> String {
         self.transcript.clone()
@@ -470,7 +543,10 @@ impl Session {
 }
 
 fn to_js(report: &Report) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(report).map_err(|e| JsValue::from_str(&e.to_string()))
+    // Maps as plain objects: `lang.env` is `{ name: json }`, as a page passes
+    // it on (to `process.env`, to Python's `os.environ`), not an ES `Map`.
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    report.serialize(&serializer).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Pure-Rust surface of [`Session`], usable from native tests.
@@ -503,7 +579,7 @@ impl Session {
         if matches!(self.status, Some(Status::Done | Status::Error)) {
             return self.terminal_report();
         }
-        let (status, error, exit_code) = drive(vm);
+        let (status, error, exit_code, lang) = drive(vm);
         let output = vm.take_output();
         self.transcript.push_str(&output);
         self.status = Some(status);
@@ -515,7 +591,21 @@ impl Session {
             error,
             exit_code,
             steps: vm.steps(),
+            lang,
         }
+    }
+
+    /// [`Session::provide_lang`] / [`Session::fail_lang`].
+    pub fn lang_report(&mut self, result: Result<String, String>) -> Report {
+        if self.status != Some(Status::NeedLang) {
+            self.status = Some(Status::Error);
+            self.error = Some("no @lang block is waiting to run".to_string());
+            return self.terminal_report();
+        }
+        if let Some(vm) = self.vm.as_mut() {
+            vm.provide_lang_result(result);
+        }
+        self.run_report()
     }
 
     pub fn provide_report(&mut self, line: &str) -> Report {
@@ -544,6 +634,7 @@ impl Session {
             error: self.error.clone(),
             exit_code: self.exit_code,
             steps: self.vm.as_ref().map_or(0, PortableVm::steps),
+            lang: None,
         }
     }
 }
