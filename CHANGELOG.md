@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **JIT: a function with more than 8 locals lost them across a call
+  (CRUSH-295, GitHub #273):** the JIT addressed each frame with a fixed 8-slot
+  stride and did not bounds-check local indices, so a caller using local 8+
+  spilled into the callee's frame and had its locals overwritten — the run
+  finished with wrong values while VM/FastVM/AOT were correct. The frame stride
+  is now the program's largest local count, so frames cannot overlap (a frame
+  that does not fit is refused → FastVM fallback).
+
 ## [0.8.0] - 2026-10-30
 
 - Merge pull request #315 from nixpt/agent/vega/fs-backend
