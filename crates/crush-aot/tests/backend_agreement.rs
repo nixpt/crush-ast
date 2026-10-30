@@ -527,3 +527,40 @@ fn map_and_array_equality_agrees_across_engines() {
         expect_print_everywhere_str(source, expected);
     }
 }
+
+// ── CRUSH-295 (GitHub #273): a function with more locals than the JIT's
+//    per-frame stride must not have them overwritten by a callee ──
+
+#[test]
+fn many_locals_survive_a_call_on_every_engine() {
+    // `f` uses 11 locals (a..j, k) and calls `g`. With the JIT's old fixed
+    // 8-slot frame, g's frame overlapped f's locals 8+ and clobbered them, so
+    // the JIT returned a wrong sum while every other engine was correct.
+    let src = r#"
+        fn g(x) { let p = x + 1; let q = p * 2; let r = q + 3; return r; }
+        fn f(n) {
+            let a = n + 1; let b = a + 1; let c = b + 1; let d = c + 1; let e = d + 1;
+            let f1 = e + 1; let g1 = f1 + 1; let h = g1 + 1; let i = h + 1; let j = i + 1;
+            let k = g(a);
+            return a + b + c + d + e + f1 + g1 + h + i + j + k;
+        }
+        fn main() { return f(1); }
+    "#;
+    assert_value_everywhere(&compile(src), "c295_many_locals", "74", "int:74");
+}
+
+#[test]
+fn recursion_with_many_locals_agrees_on_every_engine() {
+    // Recursive `r` with 10 locals, called to depth 4 — the frame at each
+    // depth must keep its own locals.
+    let src = r#"
+        fn r(n) {
+            let a = n; let b = a + 1; let c = b + 1; let d = c + 1; let e = d + 1;
+            let f1 = e + 1; let g1 = f1 + 1; let h = g1 + 1; let i = h + 1; let j = i + 1;
+            if n == 0 { return a + b + c + d + e + f1 + g1 + h + i + j; }
+            return r(n - 1) + j;
+        }
+        fn main() { return r(3); }
+    "#;
+    assert_value_everywhere(&compile(src), "c295_recursion", "78", "int:78");
+}

@@ -95,7 +95,8 @@ impl JitCompiler {
         let mut fctx = FunctionBuilderContext::new();
         let mut bld = FunctionBuilder::new(&mut func, &mut fctx);
         let helper_sig = import_helper_sig(&mut bld, ptr_ty);
-        build_fn(&mut bld, &blocks, program, ptr_ty, helper_sig)?;
+        let frame_locals = program_frame_locals(program)?;
+        build_fn(&mut bld, &blocks, program, ptr_ty, helper_sig, frame_locals)?;
         bld.finalize();
 
         let mut ctx = Context::for_function(func);
@@ -178,7 +179,36 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
 
 // ── Builder ────────────────────────────────────────────────────────────────
 
-fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef) -> Result<(), CompileError> {
+/// The number of local slots each call frame reserves.
+///
+/// All frames share one stride in the flat `locals` array, so the stride must
+/// be at least the largest local index any function uses (plus one). With the
+/// old fixed stride of 8, a function using local 8+ spilled into the *next*
+/// frame, and a callee's `store` clobbered the caller's locals — silently
+/// wrong output (CRUSH-295 / GitHub #273). Refuse the program when the frame
+/// does not fit the shared `locals` array (→ FastVM fallback) rather than
+/// corrupt it.
+fn program_frame_locals(program: &LoweredProgram) -> Result<i64, CompileError> {
+    let max = program
+        .instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i.op,
+                FastOp::LoadLocal | FastOp::StoreLocal | FastOp::LoadLocalChecked
+            )
+        })
+        .map(|i| i.arg as i64)
+        .max()
+        .unwrap_or(-1);
+    let frame_locals = (max + 1).max(1);
+    if frame_locals > JIT_MAX_LOCALS as i64 {
+        return Err(CompileError::Unsupported(vec![FastOp::StoreLocal]));
+    }
+    Ok(frame_locals)
+}
+
+fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef, frame_locals: i64) -> Result<(), CompileError> {
     let mut map: HashMap<usize, ir::Block> = HashMap::new();
     for &(off, _) in blocks { map.insert(off, bld.create_block()); }
 
@@ -231,7 +261,7 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     let main_end = program.symbols.functions.values()
         .find(|&&(start, _, _)| start == program.entry_point)
         .map_or(program.instructions.len(), |&(_, end, _)| end);
-    unassign_frame(bld, ctx, program, program.entry_point, main_end);
+    unassign_frame(bld, ctx, program, program.entry_point, main_end, frame_locals);
     let entry_pc = iconst(bld, program.entry_point as i64);
     bld.ins().jump(merge_bb, &[BlockArg::Value(entry_pc)]);
 
@@ -315,7 +345,7 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
         bld.switch_to_block(block);
         let mut term = false;
         for (i, instr) in instrs.iter().enumerate() {
-            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig)?;
+            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig, frame_locals)?;
         }
         if !term {
             if let Some(&next_block) = next_off_map.get(&off) {
@@ -467,30 +497,29 @@ fn poke(b: &mut FunctionBuilder, ctx: ir::Value, n: u32, val: ir::Value) {
     store(b, addr, val);
 }
 
-/// Max number of locals per call frame (frame-relative addressing).
-/// Each call frame gets its own `FRAME_LOCALS` slots, physically separated
-/// in the `locals` array by `call_stack_top * FRAME_LOCALS`.
-/// This prevents recursive callees from clobbering caller locals
-/// (CRUSH-17: recursive flag=1 bug).
-const FRAME_LOCALS: i64 = 8;
-
-fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize) -> ir::Value {
-    // Frame-relative: each call frame gets its own locals at
-    // OFF_LOCALS + call_stack_top * FRAME_LOCALS * 8 + idx * 8.
+/// Frame-relative local addressing.
+///
+/// Each call frame gets its own `frame_locals` slots, physically separated in
+/// the flat `locals` array by `call_stack_top * frame_locals`. `frame_locals`
+/// is the program's largest local count (see [`program_frame_locals`]), so a
+/// callee can never overlap the caller's locals (CRUSH-295 / GitHub #273;
+/// CRUSH-17 fixed the recursion case at the old fixed stride of 8).
+fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, frame_locals: i64) -> ir::Value {
+    // OFF_LOCALS + call_stack_top * frame_locals * 8 + idx * 8.
     // Uses MemFlagsData::new() to avoid aggressive trusted() hoisting.
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
-    let stride = iconst(b, FRAME_LOCALS * 8);
+    let stride = iconst(b, frame_locals * 8);
     let frame_off = imul(b, frame, stride);
     let base = iadd_imm(b, ctx, OFF_LOCALS);
     let off = iadd_imm(b, frame_off, (idx as i64) * 8);
     let addr = iadd(b, base, off);
     load(b, addr)
 }
-fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
+fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value, frame_locals: i64) {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
-    let stride = iconst(b, FRAME_LOCALS * 8);
+    let stride = iconst(b, frame_locals * 8);
     let frame_off = imul(b, frame, stride);
     let base = iadd_imm(b, ctx, OFF_LOCALS);
     let off = iadd_imm(b, frame_off, (idx as i64) * 8);
@@ -504,7 +533,7 @@ fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
 /// at the same depth: without it a checked load could read the value a
 /// previous call (or a deeper recursion) left there. Slots only proven loads
 /// read need nothing — a proven load always follows this activation's store.
-fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProgram, start: usize, end: usize) {
+fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProgram, start: usize, end: usize, frame_locals: i64) {
     let mut slots: Vec<usize> = program.instructions[start.min(end)..end.min(program.instructions.len())]
         .iter()
         .filter(|i| i.op == FastOp::LoadLocalChecked)
@@ -514,7 +543,7 @@ fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProg
     slots.dedup();
     for slot in slots {
         let sentinel = iconst(b, TAG_UNASSIGNED);
-        lstore(b, ctx, slot, sentinel);
+        lstore(b, ctx, slot, sentinel, frame_locals);
     }
 }
 
@@ -610,7 +639,7 @@ fn tbool(b: &mut FunctionBuilder, cond: ir::Value) -> ir::Value {
 /// Push a return frame onto the JIT call stack.
 /// Frame layout: [return_block:8].
 /// The callee's locals are automatically frame-relative via `call_stack_top`
-/// in lload/lstore (FRAME_LOCALS per frame), so no explicit locals save is needed.
+/// in lload/lstore (frame_locals per frame), so no explicit locals save is needed.
 fn push_frame(b: &mut FunctionBuilder, ctx: ir::Value, return_block: i64) {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let top = load(b, cst_addr);
@@ -786,6 +815,7 @@ fn emit_one(
     handler_entries: &[(usize, ir::Block)],
     _ptr_ty: types::Type,
     helper_sig: ir::SigRef,
+    frame_locals: i64,
 ) -> Result<bool, CompileError> {
     use FastOp::*;
     match instr.op {
@@ -1024,12 +1054,12 @@ fn emit_one(
                 // This used to reverse them, mirroring FastVM's Call — both
                 // bound multi-argument calls backwards (CRUSH-138).
 
-                // Guard: check call-stack depth before pushing.
-                // With FRAME_LOCALS=2, only 32 frames fit in the 64-entry
-                // locals array before overwriting OFF_RESULT/OFF_BUDGET.
+                // Guard: check call-stack depth before pushing. Only
+                // `JIT_MAX_LOCALS / frame_locals` frames fit in the shared
+                // `locals` array before a deeper frame would run off its end.
                 let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
                 let cst = load(b, cst_addr);
-                let max_frames = (JIT_MAX_LOCALS as i64) / FRAME_LOCALS; // 64/8 = 8
+                let max_frames = (JIT_MAX_LOCALS as i64) / frame_locals;
                 let limit = iconst(b, max_frames);
                 let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
                 let ok_bb = b.create_block();
@@ -1053,7 +1083,7 @@ fn emit_one(
                 let ret_idx = call_idx_to_ret.get(&global_idx).copied().unwrap_or(0);
                 push_frame(b, ctx, ret_idx as i64);
                 // The callee's frame starts unassigned (CRUSH-zorro-55).
-                unassign_frame(b, ctx, program, target_pc, _end_pc);
+                unassign_frame(b, ctx, program, target_pc, _end_pc, frame_locals);
 
                 dec_budget(b, ctx);
                 if let Some(&target_block) = clif.get(&target_pc) {
@@ -1099,16 +1129,16 @@ fn emit_one(
         Halt => { let val = pop(b, ctx); sres(b, ctx, val); b.ins().return_(&[] as &[ir::Value]); return Ok(true); }
         Nop => {}
 
-        LoadLocal => { let v = lload(b, ctx, instr.arg as usize); push(b, ctx, v); }
-        StoreLocal => { let v = pop(b, ctx); lstore(b, ctx, instr.arg as usize, v); }
+        LoadLocal => { let v = lload(b, ctx, instr.arg as usize, frame_locals); push(b, ctx, v); }
+        StoreLocal => { let v = pop(b, ctx); lstore(b, ctx, instr.arg as usize, v, frame_locals); }
         LoadLocalChecked => {
             // A slot past this frame's share of the locals array would alias
             // the next frame's, so its sentinel can't be trusted: leave the
             // function to FastVM (CRUSH-zorro-55).
-            if instr.arg >= FRAME_LOCALS as u64 {
+            if instr.arg >= frame_locals as u64 {
                 return Err(CompileError::Unsupported(vec![LoadLocalChecked]));
             }
-            let v = lload(b, ctx, instr.arg as usize);
+            let v = lload(b, ctx, instr.arg as usize, frame_locals);
             let sentinel = iconst(b, TAG_UNASSIGNED);
             let unassigned = icmp_eq(b, v, sentinel);
             let ok_bb = b.create_block();
