@@ -24,6 +24,25 @@ add its entry after yours.
   thing. All six engines agree (verified by
   `backend_agreement::division_edge_cases_agree_across_every_engine`).
 
+- **FastVM/JIT `==`/`!=` for strings, arrays, maps, bools and null
+  (CRUSH-215):** both fast engines reported `false` for every non-numeric
+  `==` — so `"ab" == "ab"` was `false` and `"ab" != "ab"` was `false` too
+  (FastVM), and the JIT compared strings by their NaN-boxed bits so string
+  `==` was always `false` and `!=` always `true`. A single canonical equality
+  (`crush_vm::value::runtime_value_eq`) now backs FastVM (`Eq`/`Ne`) and the
+  JIT (new `OP_CMP_EQUAL` runtime helper); it mirrors the interpreter's
+  `Value::PartialEq`. All six engines now agree on `==`/`!=` for every shared
+  value kind (verified by
+  `backend_agreement::equality_agrees_across_every_engine`).
+
+- **JIT: a function with more than 8 locals lost them across a call
+  (CRUSH-295, GitHub #273):** the JIT addressed each frame with a fixed 8-slot
+  stride and did not bounds-check local indices, so a caller using local 8+
+  spilled into the callee's frame and had its locals overwritten — the run
+  finished with wrong values while VM/FastVM/AOT were correct. The frame stride
+  is now the program's largest local count, so frames cannot overlap (a frame
+  that does not fit is refused → FastVM fallback).
+
 ## [0.8.0] - 2026-10-30
 
 - Merge pull request #315 from nixpt/agent/vega/fs-backend

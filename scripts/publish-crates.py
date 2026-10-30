@@ -205,12 +205,48 @@ def main():
         return
 
     # Already verified above; --no-verify skips building each crate twice.
+    # A crate that fails to upload (typically crates.io refusing this
+    # workflow's token for it: no Trusted Publishing config for that crate)
+    # doesn't stop the run. Only the crates that need it are skipped, so one
+    # run reports every crate that needs attention, not just the first.
+    failed, skipped, published = {}, {}, []
     for name, version in todo:
+        blocked = sorted(d for d in needs[name] if d in failed or d in skipped)
+        if blocked:
+            skipped[name] = blocked
+            print(f"\nskipping {name}: needs {', '.join(blocked)}, which did not publish", flush=True)
+            continue
         print(f"\n::group::cargo publish -p {name} ({version})", flush=True)
-        subprocess.run(["cargo", "publish", "-p", name, "--locked", "--no-verify"], check=True)
+        result = subprocess.run(
+            ["cargo", "publish", "-p", name, "--locked", "--no-verify"],
+            stderr=subprocess.PIPE, text=True,
+        )
+        sys.stderr.write(result.stderr)
         print("::endgroup::", flush=True)
-    print(f"\npublished {len(todo)} crate(s)")
+        if result.returncode == 0:
+            published.append(name)
+        else:
+            denied = "403" in result.stderr or "not valid for crate" in result.stderr
+            failed[name] = "token refused" if denied else f"cargo publish exited {result.returncode}"
+            print(f"::error::{name}: {failed[name]}", flush=True)
+    print(f"\npublished {len(published)} crate(s)" + (f": {', '.join(published)}" if published else ""))
     report_waiting()
+    if failed or skipped:
+        print(f"\nFAILED ({len(failed)}):")
+        for name, why in failed.items():
+            print(f"  {name}: {why}")
+        if skipped:
+            print(f"SKIPPED ({len(skipped)}), because a crate they need did not publish:")
+            for name, blocked in skipped.items():
+                print(f"  {name} needs {', '.join(blocked)}")
+        refused = [n for n, why in failed.items() if why == "token refused"]
+        if refused:
+            print("crates.io refused this workflow's token for these. Add Trusted Publishing for each")
+            print("(crates.io > crate > Settings > Trusted Publishing: GitHub, repository nixpt/crush-ast,")
+            print("workflow publish.yml), then run this again: it skips what is already published.")
+            for n in refused:
+                print(f"  https://crates.io/crates/{n}/settings")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

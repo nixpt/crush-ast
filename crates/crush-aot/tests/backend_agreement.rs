@@ -583,3 +583,91 @@ fn division_edge_cases_agree_across_every_engine() {
         expect_error_everywhere(source, Some(mentions), name);
     }
 }
+
+// ── CRUSH-215: EQ/NE must agree on *every* engine, not just VM + AOT ──
+
+/// `source`'s `main` returns a Bool; every engine (scheduler VM, portable VM,
+/// FastVM, JIT, AOT Rust, AOT C) must return `expected`.
+fn expect_bool_everywhere(source: &str, expected: bool, name: &str) {
+    let program = compile(source);
+    let outcomes = run_on_every_engine(&program, name);
+    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
+    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    let want = if expected { "true" } else { "false" };
+    for (engine, o) in &outcomes {
+        assert!(
+            matches!(o, Ok(v) if v.contains(want)),
+            "{name}: {engine} must return {want} for {source:?}:\n{}",
+            report.join("\n")
+        );
+    }
+}
+
+#[test]
+fn equality_agrees_across_every_engine() {
+    // CRUSH-215: FastVM fell through to `_ => false` for every non-numeric
+    // `==` (so `"ab" == "ab"` was false and `"ab" != "ab"` was false too), its
+    // Bool arm computed `x == y` even for `!=`, and the JIT compared strings
+    // by NaN-boxed bits so string `==` was always false. Every value kind the
+    // engines share must now agree with the interpreter.
+    let cases: &[(&str, bool)] = &[
+        // Strings (the ticket's headline).
+        (r#"fn main() { return "ab" == "ab"; }"#, true),
+        (r#"fn main() { return "ab" != "ab"; }"#, false),
+        (r#"fn main() { return "ab" == "ba"; }"#, false),
+        (r#"fn main() { return "ab" != "ba"; }"#, true),
+        // Bool / null via a call, so the frontend cannot fold the comparison.
+        (r#"fn id(x) { return x; } fn main() { return id(true) != id(false); }"#, true),
+        (r#"fn id(x) { return x; } fn main() { return id(true) == id(true); }"#, true),
+        (r#"fn id(x) { return x; } fn main() { return id(null) != id(1); }"#, true),
+        (r#"fn id(x) { return x; } fn main() { return id(null) == id(null); }"#, true),
+        // Arrays and maps: by value, not identity.
+        (r#"fn main() { return [1, 2, 3] == [1, 2, 3]; }"#, true),
+        (r#"fn main() { return [1, 2] != [1, 3]; }"#, true),
+        (r#"fn main() { return {"a": 1, "b": 2} == {"b": 2, "a": 1}; }"#, true),
+        (r#"fn main() { return {"a": 1} == {"a": 2}; }"#, false),
+        // Numeric cross-type.
+        (r#"fn main() { return 1 == 1.0; }"#, true),
+        (r#"fn main() { return 1 != 1.0; }"#, false),
+    ];
+    for (i, (source, expected)) in cases.iter().enumerate() {
+        expect_bool_everywhere(source, *expected, &format!("eq215_{i}"));
+    }
+}
+
+// ── CRUSH-295 (GitHub #273): a function with more locals than the JIT's
+//    per-frame stride must not have them overwritten by a callee ──
+
+#[test]
+fn many_locals_survive_a_call_on_every_engine() {
+    // `f` uses 11 locals (a..j, k) and calls `g`. With the JIT's old fixed
+    // 8-slot frame, g's frame overlapped f's locals 8+ and clobbered them, so
+    // the JIT returned a wrong sum while every other engine was correct.
+    let src = r#"
+        fn g(x) { let p = x + 1; let q = p * 2; let r = q + 3; return r; }
+        fn f(n) {
+            let a = n + 1; let b = a + 1; let c = b + 1; let d = c + 1; let e = d + 1;
+            let f1 = e + 1; let g1 = f1 + 1; let h = g1 + 1; let i = h + 1; let j = i + 1;
+            let k = g(a);
+            return a + b + c + d + e + f1 + g1 + h + i + j + k;
+        }
+        fn main() { return f(1); }
+    "#;
+    assert_value_everywhere(&compile(src), "c295_many_locals", "74", "int:74");
+}
+
+#[test]
+fn recursion_with_many_locals_agrees_on_every_engine() {
+    // Recursive `r` with 10 locals, called to depth 4 — the frame at each
+    // depth must keep its own locals.
+    let src = r#"
+        fn r(n) {
+            let a = n; let b = a + 1; let c = b + 1; let d = c + 1; let e = d + 1;
+            let f1 = e + 1; let g1 = f1 + 1; let h = g1 + 1; let i = h + 1; let j = i + 1;
+            if n == 0 { return a + b + c + d + e + f1 + g1 + h + i + j; }
+            return r(n - 1) + j;
+        }
+        fn main() { return r(3); }
+    "#;
+    assert_value_everywhere(&compile(src), "c295_recursion", "78", "int:78");
+}

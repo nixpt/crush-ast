@@ -455,12 +455,18 @@ mod tests {
     }
 
     #[test]
-    fn a_checked_load_past_the_frame_falls_back_to_fastvm() {
-        // Slot 9 would alias the next JIT frame: the JIT refuses it and the
-        // engine's FastVM fallback still fails loudly.
+    fn a_checked_load_past_the_old_frame_stride_is_a_real_slot() {
+        // At the old fixed stride of 8, slot 9 aliased the next JIT frame, so
+        // the JIT refused the program (CRUSH-zorro-55). Frames are now sized to
+        // the program's locals (CRUSH-295), so slot 9 is a real slot: it
+        // compiles and reads as unassigned, exactly like slot 0.
         let prog = make_prog(vec![(FastOp::LoadLocalChecked, 9, 0), (FastOp::Halt, 0, 0)]);
-        assert!(crate::compiler::JitCompiler::new().unwrap().compile(&prog).is_err());
-        assert_uninit(run_jit(&prog), 9, "jit (FastVM fallback)");
+        assert!(crate::compiler::JitCompiler::new()
+            .unwrap()
+            .compile(&prog)
+            .is_ok());
+        assert_uninit(run_fastvm(&prog), 9, "fastvm");
+        assert_uninit(run_jit_compiled(&prog), 9, "jit");
     }
 
     // ── Individual instruction tests ──────────────────────────────────────────
@@ -2584,7 +2590,7 @@ mod tests {
     /// recursion / local save/restore.
     /// NOTE: This test is `#[ignore]`d because recursive JIT calls have a
     /// Cranelift GVN issue.  The frame-relative locals implementation in
-    /// compiler.rs (FRAME_LOCALS=8, lload/lstore use call_stack_top as
+    /// compiler.rs (frame_locals, lload/lstore use call_stack_top as
     /// frame index) is structurally correct and passes all non-recursive
     /// multi-function tests (87/89).  However, for recursive calls,
     /// CRUSH-17 GVN/LICM: 7 approaches attempted, none have defeated

@@ -61,34 +61,6 @@ where
     Ok(())
 }
 
-/// Execute a comparison operation on two values
-#[inline(always)]
-pub fn compare_op<F, G>(
-    stack: &mut Vec<RuntimeValue>,
-    int_cmp: F,
-    float_cmp: G,
-) -> Result<(), FastError>
-where
-    F: Fn(i64, i64) -> bool,
-    G: Fn(f64, f64) -> bool,
-{
-    let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-    let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-
-    let result = match (&a, &b) {
-        (RuntimeValue::Int(x), RuntimeValue::Int(y)) => int_cmp(*x, *y),
-        (RuntimeValue::Float(x), RuntimeValue::Float(y)) => float_cmp(*x, *y),
-        (RuntimeValue::Int(x), RuntimeValue::Float(y)) => float_cmp(*x as f64, *y),
-        (RuntimeValue::Float(x), RuntimeValue::Int(y)) => float_cmp(*x, *y as f64),
-        (RuntimeValue::Bool(x), RuntimeValue::Bool(y)) => x == y,
-        (RuntimeValue::Null, RuntimeValue::Null) => true,
-        _ => false,
-    };
-
-    stack.push(RuntimeValue::Bool(result));
-    Ok(())
-}
-
 /// Helper to get current locals base
 #[inline(always)]
 pub fn current_locals_base(call_stack: &[FastFrame]) -> usize {

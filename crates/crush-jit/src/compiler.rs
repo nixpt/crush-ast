@@ -18,7 +18,7 @@ use cranelift_native;
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 use crate::runtime::{ERR_ARITH_OVERFLOW, ERR_DIV_ZERO, OP_UNINIT_LOAD};
 
-use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_MAP_KEYS, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
+use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_MAP_KEYS, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_CMP_EQUAL, OP_TRUTHY};
 
 const OFF_STACK: i64 = 0;
 const OFF_STACK_TOP: i64 = 8192;
@@ -95,7 +95,8 @@ impl JitCompiler {
         let mut fctx = FunctionBuilderContext::new();
         let mut bld = FunctionBuilder::new(&mut func, &mut fctx);
         let helper_sig = import_helper_sig(&mut bld, ptr_ty);
-        build_fn(&mut bld, &blocks, program, ptr_ty, helper_sig)?;
+        let frame_locals = program_frame_locals(program)?;
+        build_fn(&mut bld, &blocks, program, ptr_ty, helper_sig, frame_locals)?;
         bld.finalize();
 
         let mut ctx = Context::for_function(func);
@@ -178,7 +179,36 @@ fn analyze_blocks(program: &LoweredProgram) -> Vec<(usize, Vec<FastInstr>)> {
 
 // ── Builder ────────────────────────────────────────────────────────────────
 
-fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef) -> Result<(), CompileError> {
+/// The number of local slots each call frame reserves.
+///
+/// All frames share one stride in the flat `locals` array, so the stride must
+/// be at least the largest local index any function uses (plus one). With the
+/// old fixed stride of 8, a function using local 8+ spilled into the *next*
+/// frame, and a callee's `store` clobbered the caller's locals — silently
+/// wrong output (CRUSH-295 / GitHub #273). Refuse the program when the frame
+/// does not fit the shared `locals` array (→ FastVM fallback) rather than
+/// corrupt it.
+fn program_frame_locals(program: &LoweredProgram) -> Result<i64, CompileError> {
+    let max = program
+        .instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i.op,
+                FastOp::LoadLocal | FastOp::StoreLocal | FastOp::LoadLocalChecked
+            )
+        })
+        .map(|i| i.arg as i64)
+        .max()
+        .unwrap_or(-1);
+    let frame_locals = (max + 1).max(1);
+    if frame_locals > JIT_MAX_LOCALS as i64 {
+        return Err(CompileError::Unsupported(vec![FastOp::StoreLocal]));
+    }
+    Ok(frame_locals)
+}
+
+fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], program: &LoweredProgram, ptr_ty: types::Type, helper_sig: ir::SigRef, frame_locals: i64) -> Result<(), CompileError> {
     let mut map: HashMap<usize, ir::Block> = HashMap::new();
     for &(off, _) in blocks { map.insert(off, bld.create_block()); }
 
@@ -231,7 +261,7 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
     let main_end = program.symbols.functions.values()
         .find(|&&(start, _, _)| start == program.entry_point)
         .map_or(program.instructions.len(), |&(_, end, _)| end);
-    unassign_frame(bld, ctx, program, program.entry_point, main_end);
+    unassign_frame(bld, ctx, program, program.entry_point, main_end, frame_locals);
     let entry_pc = iconst(bld, program.entry_point as i64);
     bld.ins().jump(merge_bb, &[BlockArg::Value(entry_pc)]);
 
@@ -315,7 +345,7 @@ fn build_fn(bld: &mut FunctionBuilder, blocks: &[(usize, Vec<FastInstr>)], progr
         bld.switch_to_block(block);
         let mut term = false;
         for (i, instr) in instrs.iter().enumerate() {
-            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig)?;
+            term = emit_one(bld, ctx, off + i, instr, &map, program, &ret_blocks, &call_idx_to_ret, &handler_entries, ptr_ty, helper_sig, frame_locals)?;
         }
         if !term {
             if let Some(&next_block) = next_off_map.get(&off) {
@@ -482,30 +512,29 @@ fn poke(b: &mut FunctionBuilder, ctx: ir::Value, n: u32, val: ir::Value) {
     store(b, addr, val);
 }
 
-/// Max number of locals per call frame (frame-relative addressing).
-/// Each call frame gets its own `FRAME_LOCALS` slots, physically separated
-/// in the `locals` array by `call_stack_top * FRAME_LOCALS`.
-/// This prevents recursive callees from clobbering caller locals
-/// (CRUSH-17: recursive flag=1 bug).
-const FRAME_LOCALS: i64 = 8;
-
-fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize) -> ir::Value {
-    // Frame-relative: each call frame gets its own locals at
-    // OFF_LOCALS + call_stack_top * FRAME_LOCALS * 8 + idx * 8.
+/// Frame-relative local addressing.
+///
+/// Each call frame gets its own `frame_locals` slots, physically separated in
+/// the flat `locals` array by `call_stack_top * frame_locals`. `frame_locals`
+/// is the program's largest local count (see [`program_frame_locals`]), so a
+/// callee can never overlap the caller's locals (CRUSH-295 / GitHub #273;
+/// CRUSH-17 fixed the recursion case at the old fixed stride of 8).
+fn lload(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, frame_locals: i64) -> ir::Value {
+    // OFF_LOCALS + call_stack_top * frame_locals * 8 + idx * 8.
     // Uses MemFlagsData::new() to avoid aggressive trusted() hoisting.
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
-    let stride = iconst(b, FRAME_LOCALS * 8);
+    let stride = iconst(b, frame_locals * 8);
     let frame_off = imul(b, frame, stride);
     let base = iadd_imm(b, ctx, OFF_LOCALS);
     let off = iadd_imm(b, frame_off, (idx as i64) * 8);
     let addr = iadd(b, base, off);
     load(b, addr)
 }
-fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
+fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value, frame_locals: i64) {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let frame = b.ins().load(types::I64, MemFlagsData::new(), cst_addr, 0);
-    let stride = iconst(b, FRAME_LOCALS * 8);
+    let stride = iconst(b, frame_locals * 8);
     let frame_off = imul(b, frame, stride);
     let base = iadd_imm(b, ctx, OFF_LOCALS);
     let off = iadd_imm(b, frame_off, (idx as i64) * 8);
@@ -519,7 +548,7 @@ fn lstore(b: &mut FunctionBuilder, ctx: ir::Value, idx: usize, val: ir::Value) {
 /// at the same depth: without it a checked load could read the value a
 /// previous call (or a deeper recursion) left there. Slots only proven loads
 /// read need nothing — a proven load always follows this activation's store.
-fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProgram, start: usize, end: usize) {
+fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProgram, start: usize, end: usize, frame_locals: i64) {
     let mut slots: Vec<usize> = program.instructions[start.min(end)..end.min(program.instructions.len())]
         .iter()
         .filter(|i| i.op == FastOp::LoadLocalChecked)
@@ -529,7 +558,7 @@ fn unassign_frame(b: &mut FunctionBuilder, ctx: ir::Value, program: &LoweredProg
     slots.dedup();
     for slot in slots {
         let sentinel = iconst(b, TAG_UNASSIGNED);
-        lstore(b, ctx, slot, sentinel);
+        lstore(b, ctx, slot, sentinel, frame_locals);
     }
 }
 
@@ -625,7 +654,7 @@ fn tbool(b: &mut FunctionBuilder, cond: ir::Value) -> ir::Value {
 /// Push a return frame onto the JIT call stack.
 /// Frame layout: [return_block:8].
 /// The callee's locals are automatically frame-relative via `call_stack_top`
-/// in lload/lstore (FRAME_LOCALS per frame), so no explicit locals save is needed.
+/// in lload/lstore (frame_locals per frame), so no explicit locals save is needed.
 fn push_frame(b: &mut FunctionBuilder, ctx: ir::Value, return_block: i64) {
     let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
     let top = load(b, cst_addr);
@@ -801,6 +830,7 @@ fn emit_one(
     handler_entries: &[(usize, ir::Block)],
     _ptr_ty: types::Type,
     helper_sig: ir::SigRef,
+    frame_locals: i64,
 ) -> Result<bool, CompileError> {
     use FastOp::*;
     match instr.op {
@@ -965,8 +995,24 @@ fn emit_one(
             b.seal_block(merge_bb);
         }
 
-        Eq => do_cmp(b, ctx, IntCC::Equal, FloatCC::Equal),
-        Ne => do_cmp(b, ctx, IntCC::NotEqual, FloatCC::NotEqual),
+        // EQ/NE delegate to the OP_CMP_EQUAL runtime helper, which uses the
+        // canonical structural equality shared with FastVM (CRUSH-215):
+        // strings, arrays and maps compare by value, and `!=` is the exact
+        // negation of `==` for every kind. Selector: 0 = EQ, 1 = NE.
+        Eq => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_EQUAL, 0, _ptr_ty, helper_sig);
+        },
+        Ne => {
+            let bv = pop(b, ctx);
+            let a = pop(b, ctx);
+            push(b, ctx, a);
+            push(b, ctx, bv);
+            emit_helper_call(b, ctx, OP_CMP_EQUAL, 1, _ptr_ty, helper_sig);
+        },
         // Ordered comparison (LT/LE/GT/GE): pop both operands from
         // the CLIF shadow stack, push them back (so the shadow stack
         // stays synced with the runtime stack), then dispatch to the
@@ -1066,12 +1112,12 @@ fn emit_one(
                 // This used to reverse them, mirroring FastVM's Call — both
                 // bound multi-argument calls backwards (CRUSH-138).
 
-                // Guard: check call-stack depth before pushing.
-                // With FRAME_LOCALS=2, only 32 frames fit in the 64-entry
-                // locals array before overwriting OFF_RESULT/OFF_BUDGET.
+                // Guard: check call-stack depth before pushing. Only
+                // `JIT_MAX_LOCALS / frame_locals` frames fit in the shared
+                // `locals` array before a deeper frame would run off its end.
                 let cst_addr = iadd_imm(b, ctx, OFF_CALL_STACK_TOP);
                 let cst = load(b, cst_addr);
-                let max_frames = (JIT_MAX_LOCALS as i64) / FRAME_LOCALS; // 64/8 = 8
+                let max_frames = (JIT_MAX_LOCALS as i64) / frame_locals;
                 let limit = iconst(b, max_frames);
                 let overflow = icmp(b, IntCC::SignedGreaterThanOrEqual, cst, limit);
                 let ok_bb = b.create_block();
@@ -1095,7 +1141,7 @@ fn emit_one(
                 let ret_idx = call_idx_to_ret.get(&global_idx).copied().unwrap_or(0);
                 push_frame(b, ctx, ret_idx as i64);
                 // The callee's frame starts unassigned (CRUSH-zorro-55).
-                unassign_frame(b, ctx, program, target_pc, _end_pc);
+                unassign_frame(b, ctx, program, target_pc, _end_pc, frame_locals);
 
                 dec_budget(b, ctx);
                 if let Some(&target_block) = clif.get(&target_pc) {
@@ -1141,16 +1187,16 @@ fn emit_one(
         Halt => { let val = pop(b, ctx); sres(b, ctx, val); b.ins().return_(&[] as &[ir::Value]); return Ok(true); }
         Nop => {}
 
-        LoadLocal => { let v = lload(b, ctx, instr.arg as usize); push(b, ctx, v); }
-        StoreLocal => { let v = pop(b, ctx); lstore(b, ctx, instr.arg as usize, v); }
+        LoadLocal => { let v = lload(b, ctx, instr.arg as usize, frame_locals); push(b, ctx, v); }
+        StoreLocal => { let v = pop(b, ctx); lstore(b, ctx, instr.arg as usize, v, frame_locals); }
         LoadLocalChecked => {
             // A slot past this frame's share of the locals array would alias
             // the next frame's, so its sentinel can't be trusted: leave the
             // function to FastVM (CRUSH-zorro-55).
-            if instr.arg >= FRAME_LOCALS as u64 {
+            if instr.arg >= frame_locals as u64 {
                 return Err(CompileError::Unsupported(vec![LoadLocalChecked]));
             }
-            let v = lload(b, ctx, instr.arg as usize);
+            let v = lload(b, ctx, instr.arg as usize, frame_locals);
             let sentinel = iconst(b, TAG_UNASSIGNED);
             let unassigned = icmp_eq(b, v, sentinel);
             let ok_bb = b.create_block();
@@ -1608,78 +1654,8 @@ fn math_apply_f64_bin(b: &mut FunctionBuilder, a: ir::Value, e: ir::Value, _op: 
 }
 
 // ── Comparison dispatch ────────────────────────────────────────────────────
-
-/// Comparison family (EQ/NE/LT/LE/GT/GE) share this lowering. Both operands
-/// int-tagged -> integer compare. Otherwise -> float compare, with each
-/// operand independently promoted: an int-tagged operand is converted via
-/// `fcvt_from_sint` (matching `math_binary`'s mixed-type promotion), a
-/// float-tagged operand is reinterpreted via `bf64` bitcast (it already IS
-/// an f64 bit pattern), and any other tag (bool/null/ref) falls through to
-/// the bitcast path unchanged -- preserving the pre-existing "never equal
-/// to a real number" behavior for non-numeric operands (their NaN-boxed
-/// bits bitcast to a NaN, and IEEE-754 NaN never compares equal). This is
-/// what keeps `2 == 2.0` numerically true while `true == 1` and `2 == "2"`
-/// stay unequal: only the (Int, Float) / (Float, Int) pairing is coerced,
-/// not (Bool, Int) or anything else. Precision note: ints with |i| > 2^53
-/// lose exactness under `i as f64`, same caveat as the interpreter tiers.
-fn do_cmp(b: &mut FunctionBuilder, ctx: ir::Value, icc: IntCC, fcc: FloatCC) {
-    let bv = pop(b, ctx);
-    let a = pop(b, ctx);
-    let ia = is_int(b, a);
-    let ib = is_int(b, bv);
-    let bi = band(b, ia, ib);
-    let ibb = b.create_block();
-    let fbb = b.create_block();
-    let mb2 = b.create_block();
-    b.append_block_param(mb2, types::I64);
-    b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
-
-    b.switch_to_block(ibb);
-    let av = eint(b, a);
-    let bv2 = eint(b, bv);
-    let cmp = icmp(b, icc, av, bv2);
-    let r1 = tbool(b, cmp);
-    b.ins().jump(mb2, &[BlockArg::Value(r1)]);
-
-    b.switch_to_block(fbb);
-    // Promote per-operand: int-tagged -> real float conversion; anything else
-    // (including a genuine float operand) -> bitcast reinterpretation.
-    let raw_a = bf64(b, a);
-    let conv_a = { let iv = eint(b, a); b.ins().fcvt_from_sint(types::F64, iv) };
-    let af = select(b, ia, conv_a, raw_a);
-
-    let raw_b = bf64(b, bv);
-    let conv_b = { let iv = eint(b, bv); b.ins().fcvt_from_sint(types::F64, iv) };
-    let bf2 = select(b, ib, conv_b, raw_b);
-
-    let cmp = fcmp(b, fcc, af, bf2);
-    let r2 = tbool(b, cmp);
-    b.ins().jump(mb2, &[BlockArg::Value(r2)]);
-
-    b.switch_to_block(mb2);
-    let raw_result = b.block_params(mb2)[0];
-    // Null/bool identity override: if both operands have identical raw bits,
-    // they are the same runtime value (null, bool, or identical tagged int).
-    // The float path treats null/bool NaN-boxes as IEEE NaN which returns
-    // false for equality comparisons. Override with the identity-correct result.
-    // GATE (CRUSH-108): never apply the override when BOTH operands are
-    // genuine floats — bit-identical NaNs must still compare unequal under
-    // IEEE-754 (fcmp answers correctly; the override would force `true`).
-    let bits_eq = icmp_eq(b, a, bv);
-    let fa = is_float(b, a);
-    let fb = is_float(b, bv);
-    let both_floats = band(b, fa, fb);
-    let identity_result = if icc == IntCC::Equal {
-        iconst(b, TAG_TRUE)
-    } else {
-        iconst(b, TAG_FALSE)
-    };
-    let not_both_floats = lnot(b, both_floats);
-    let override_on = band(b, bits_eq, not_both_floats);
-    let result = select(b, override_on, identity_result, raw_result);
-    push(b, ctx, result);
-
-    b.seal_block(ibb);
-    b.seal_block(fbb);
-    b.seal_block(mb2);
-}
+//
+// EQ/NE are lowered to the OP_CMP_EQUAL runtime helper (see the `Eq`/`Ne`
+// arms above), which calls the canonical structural equality shared with
+// FastVM. Ordered comparisons (LT/LE/GT/GE) use OP_CMP_ORDERED. There is no
+// inline comparison lowering any more (CRUSH-215).
