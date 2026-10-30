@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Go walker: no more silent drops (CRUSH-198):** the walker matched
+  `short_variable_declaration`, but tree-sitter-go emits `short_var_declaration`,
+  so `a := 7` was dropped and `a` read as uninitialised; `var`, assignment,
+  `++`/`--`, `for` (all shapes), bare blocks and `if`/`for` initializers were
+  silently dropped too, and unknown expressions became `null`. All are lowered
+  now, and any construct the walker does not support (`switch`, `defer`, a
+  two-variable range, a multi-value `return`, unknown expressions) is a loud
+  error instead of a silent drop. The README feature table matches reality.
 - **JIT: a function with more than 8 locals lost them across a call
   (CRUSH-295, GitHub #273):** the JIT addressed each frame with a fixed 8-slot
   stride and did not bounds-check local indices, so a caller using local 8+
