@@ -543,7 +543,10 @@ impl Session {
 }
 
 fn to_js(report: &Report) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(report).map_err(|e| JsValue::from_str(&e.to_string()))
+    // Maps as plain objects: `lang.env` is `{ name: json }`, as a page passes
+    // it on (to `process.env`, to Python's `os.environ`), not an ES `Map`.
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    report.serialize(&serializer).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Pure-Rust surface of [`Session`], usable from native tests.
