@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **FastVM/JIT `==`/`!=` for strings, arrays, maps, bools and null
+  (CRUSH-215):** both fast engines reported `false` for every non-numeric
+  `==` — so `"ab" == "ab"` was `false` and `"ab" != "ab"` was `false` too
+  (FastVM), and the JIT compared strings by their NaN-boxed bits so string
+  `==` was always `false` and `!=` always `true`. A single canonical equality
+  (`crush_vm::value::runtime_value_eq`) now backs FastVM (`Eq`/`Ne`) and the
+  JIT (new `OP_CMP_EQUAL` runtime helper); it mirrors the interpreter's
+  `Value::PartialEq`. All six engines now agree on `==`/`!=` for every shared
+  value kind (verified by
+  `backend_agreement::equality_agrees_across_every_engine`).
+
 ## [0.8.0] - 2026-10-30
 
 - Merge pull request #315 from nixpt/agent/vega/fs-backend
