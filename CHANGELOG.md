@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **FastVM/JIT print heap values, not the arena ref (CRUSH-294, GitHub #267):**
+  `io.print` of an array, map or struct printed the arena index (`@259`) on
+  FastVM and the JIT and finished successfully, while every other engine
+  printed the value. `runtime_value_to_text` (the `io.print` formatter both
+  fast engines use) resolved a ref only for strings; it now renders every heap
+  kind exactly like the VM's `Display` (`[a, b]`, `{k: v}`, `Vector[…]`, …).
+  Covered by an all-engine print test (`stdout_parity::heap_values_print_…`).
+
 - **Division edge cases fail loudly on every engine (CRUSH-213):**
   `i64::MIN / -1` (and `% -1`) panicked in the interpreter and FastVM and
   SIGFPE'd on AOT C; the JIT trapped (SIGILL/SIGFPE) on a zero divisor and
