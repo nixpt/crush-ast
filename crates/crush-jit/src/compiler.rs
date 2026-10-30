@@ -16,7 +16,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_native;
 
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
-use crate::runtime::OP_UNINIT_LOAD;
+use crate::runtime::{ERR_ARITH_OVERFLOW, ERR_DIV_ZERO, OP_UNINIT_LOAD};
 
 use crate::runtime::{JitContext, jit_runtime_helper, JIT_MAX_LOCALS, OP_PUSH_STR, OP_MAKE_LIST, OP_MAKE_MAP, OP_INDEX, OP_LEN, OP_TYPEOF, OP_NEW_ARRAY, OP_ARRAY_PUSH, OP_ARRAY_POP, OP_ARR_SET, OP_STR_CONTAINS, OP_STR_STARTS_WITH, OP_STR_ENDS_WITH, OP_STR_TO_UPPER, OP_STR_TO_LOWER, OP_STR_TRIM, OP_STR_SPLIT, OP_STR_REPLACE, OP_STR_JOIN, OP_CAST, OP_NEW_TUPLE, OP_NEW_LIST, OP_NEW_VECTOR, OP_NEW_SET, OP_MAKE_RANGE, OP_CAP_CALL, OP_TUPLE_PUSH, OP_LIST_PUSH, OP_VECTOR_PUSH, OP_SET_PUSH, OP_MAP_KEYS, OP_GET_FIELD, OP_SET_FIELD, OP_NEW_OBJ, OP_NEW_STRUCT, OP_STR_SIM, OP_ENTER_TRY, OP_EXIT_TRY, OP_THROW, OP_ADD_STR, OP_CMP_ORDERED, OP_TRUTHY};
 
@@ -426,6 +426,21 @@ fn serr(b: &mut FunctionBuilder, ctx: ir::Value) {
     let a = iadd_imm(b, ctx, OFF_ERROR);
     let one = iconst(b, 1);
     store(b, a, one);
+}
+/// Set `ctx.error = ERR_DIV_ZERO` (the engine maps it to "division by zero").
+/// Used by Div/Mod before `sdiv`/`srem` (which trap in hardware) and before
+/// `fdiv` (which would otherwise yield `inf`) — CRUSH-213.
+fn serr_div_zero(b: &mut FunctionBuilder, ctx: ir::Value) {
+    let a = iadd_imm(b, ctx, OFF_ERROR);
+    let code = iconst(b, ERR_DIV_ZERO as i64);
+    store(b, a, code);
+}
+/// Set `ctx.error = ERR_ARITH_OVERFLOW` (mapped to "arithmetic overflow") —
+/// the 48-bit int payload check, e.g. `i64::MIN / -1`'s analog (CRUSH-213).
+fn serr_arith_overflow(b: &mut FunctionBuilder, ctx: ir::Value) {
+    let a = iadd_imm(b, ctx, OFF_ERROR);
+    let code = iconst(b, ERR_ARITH_OVERFLOW as i64);
+    store(b, a, code);
 }
 
 fn push(b: &mut FunctionBuilder, ctx: ir::Value, val: ir::Value) {
@@ -840,13 +855,26 @@ fn emit_one(
             b.append_block_param(mbb, types::I64);
             b.ins().brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
 
-            // Int mod: srem(a, b)
+            // Int mod: srem(a, b), guarding a zero divisor (srem traps in
+            // hardware). CRUSH-213.
             b.switch_to_block(ibb);
             let av = eint(b, a);
             let bvv = eint(b, bv);
+            let mrem = b.create_block();
+            let zerr = b.create_block();
+            let izero = iconst(b, 0);
+            let izero_cond = icmp_eq(b, bvv, izero);
+            b.ins().brif(izero_cond, zerr, &[] as &[BlockArg], mrem, &[] as &[BlockArg]);
+            b.switch_to_block(zerr);
+            serr_div_zero(b, ctx);
+            let znv = iconst(b, TAG_NULL);
+            b.ins().jump(mbb, &[BlockArg::Value(znv)]);
+            b.seal_block(zerr);
+            b.switch_to_block(mrem);
             let ri = srem(b, av, bvv);
             let rti = tint(b, ri);
             b.ins().jump(mbb, &[BlockArg::Value(rti)]);
+            b.seal_block(mrem);
 
             // Float mod: not yet implemented (needs fmod which Cranelift lacks)
             b.switch_to_block(fbb);
@@ -859,9 +887,22 @@ fn emit_one(
             b.ins().brif(bf, ok, &[] as &[BlockArg], err, &[] as &[BlockArg]);
 
             b.switch_to_block(ok);
-            // fmod(a, b) = a - trunc(a / b) * b
             let af = bf64(b, a);
             let bf2 = bf64(b, bv);
+            // Guard a zero divisor (fdiv by zero would yield inf/NaN rather
+            // than a runtime error). CRUSH-213.
+            let mfmod = b.create_block();
+            let zerrf = b.create_block();
+            let fzero = b.ins().f64const(0.0);
+            let fzero_cond = fcmp(b, FloatCC::Equal, bf2, fzero);
+            b.ins().brif(fzero_cond, zerrf, &[] as &[BlockArg], mfmod, &[] as &[BlockArg]);
+            b.switch_to_block(zerrf);
+            serr_div_zero(b, ctx);
+            let fznv = iconst(b, TAG_NULL);
+            b.ins().jump(mbb, &[BlockArg::Value(fznv)]);
+            b.seal_block(zerrf);
+            b.switch_to_block(mfmod);
+            // fmod(a, b) = a - trunc(a / b) * b
             let div = fdiv(b, af, bf2);
             // Compute trunc(div) via floor/ceil.
             // Band with sign_mask gives 0 or 0x8000...; select tests the LOW bit,
@@ -890,6 +931,7 @@ fn emit_one(
             b.seal_block(ibb);
             b.seal_block(fbb);
             b.seal_block(ok);
+            b.seal_block(mfmod);
             b.seal_block(err);
             b.seal_block(mbb);
         }
@@ -1331,6 +1373,8 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     let ibb = b.create_block();
     let fbb = b.create_block();
     let mb = b.create_block();
+    // `sub=false, mul=false` is Div (Add is handled via OP_ADD_STR).
+    let is_div = !sub && !mul;
     b.append_block_param(mb, types::I64);
 
     // Sub/Mul/Div: 2-way branch (int vs float).
@@ -1341,12 +1385,28 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     b.switch_to_block(ibb);
     let av = eint(b, a);
     let bv2 = eint(b, bv);
+    // Div guards a zero divisor before `sdiv`: the instruction traps in
+    // hardware (SIGILL/SIGFPE) instead of raising a runtime error. CRUSH-213.
+    let idiv = b.create_block();
+    if is_div {
+        let zero = iconst(b, 0);
+        let is_zero = icmp_eq(b, bv2, zero);
+        let zerr = b.create_block();
+        b.ins().brif(is_zero, zerr, &[] as &[BlockArg], idiv, &[] as &[BlockArg]);
+        b.switch_to_block(zerr);
+        serr_div_zero(b, ctx);
+        let nv = iconst(b, TAG_NULL);
+        b.ins().jump(mb, &[BlockArg::Value(nv)]);
+        b.seal_block(zerr);
+    } else {
+        b.ins().jump(idiv, &[] as &[BlockArg]);
+    }
+    b.switch_to_block(idiv);
     // Compute the full i64 result, then check it fits the 48-bit int
     // payload: overflow = result != sign_extend(low48). This works for add,
     // sub, mul, and div uniformly — except that a product of two 48-bit
     // values can wrap i64 itself, so for mul also require the high half of
     // the 128-bit product to be the low half's sign extension.
-    // NOTE: Cranelift sdiv traps on zero (div-by-zero is pre-existing gap).
     let ri = if sub { isub(b, av, bv2) } else if mul { imul(b, av, bv2) } else { sdiv(b, av, bv2) };
     let shifted = ishl_imm(b, ri, 16);
     let low48 = sshr_imm(b, shifted, 16);
@@ -1367,7 +1427,7 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     b.seal_block(iok);
 
     b.switch_to_block(ierr);
-    serr(b, ctx);
+    serr_arith_overflow(b, ctx);
     let nv = iconst(b, TAG_NULL);
     b.ins().jump(mb, &[BlockArg::Value(nv)]);
     b.seal_block(ierr);
@@ -1395,9 +1455,27 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     let b_fcvt = b.ins().fcvt_from_sint(types::F64, b_int2);
     let b_bits = bf64(b, bv);
     let bf2 = select(b, fb, b_bits, b_fcvt);
+    // Div guards a zero divisor: `fdiv` by zero would silently yield `inf`
+    // where every other engine raises a runtime error. CRUSH-213.
+    let fdiv_ok = b.create_block();
+    if is_div {
+        let zero_f = b.ins().f64const(0.0);
+        let is_zero = fcmp(b, FloatCC::Equal, bf2, zero_f);
+        let zerr = b.create_block();
+        b.ins().brif(is_zero, zerr, &[] as &[BlockArg], fdiv_ok, &[] as &[BlockArg]);
+        b.switch_to_block(zerr);
+        serr_div_zero(b, ctx);
+        let nv = iconst(b, TAG_NULL);
+        b.ins().jump(mb, &[BlockArg::Value(nv)]);
+        b.seal_block(zerr);
+    } else {
+        b.ins().jump(fdiv_ok, &[] as &[BlockArg]);
+    }
+    b.switch_to_block(fdiv_ok);
     let rf = if sub { fsub(b, af, bf2) } else if mul { fmul(b, af, bf2) } else { fdiv(b, af, bf2) };
     let rfb = bi64(b, rf);
     b.ins().jump(mb, &[BlockArg::Value(rfb)]);
+    b.seal_block(fdiv_ok);
 
     // ── Non-numeric fallback (Bug 4: string concat via helper) ─────────
     b.switch_to_block(err);
@@ -1409,6 +1487,7 @@ fn arith(b: &mut FunctionBuilder, ctx: ir::Value, sub: bool, mul: bool,
     push(b, ctx, b.block_params(mb)[0]);
 
     b.seal_block(ibb);
+    b.seal_block(idiv);
     b.seal_block(fbb);
     b.seal_block(ok);
     b.seal_block(err);

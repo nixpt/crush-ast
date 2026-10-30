@@ -1278,3 +1278,9 @@ hand-editing versions.
 
 Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
 
+
+## 2026-10-30T05:29:24-05:00 — [ARCHITECTURAL] Division/remainder edge cases are one rule across engines; the JIT must guard the divisor (CRUSH-213)
+
+Reason:
+The interp and FastVM did int / and % unchecked, so i64::MIN / -1 panicked in Rust and AOT C SIGFPE'd; the JIT lowered Div/Mod straight to sdiv/srem (which trap: SIGILL/SIGFPE) and fdiv (which silently yields inf for 1.0/0.0). AOT Rust/C already used checked_div/checked_rem. Fixed: interp and FastVM use checked_div/checked_rem -> ArithmeticOverflow; the JIT guards the divisor before sdiv/srem/fdiv and reports via two new ctx.error codes (ERR_DIV_ZERO, ERR_ARITH_OVERFLOW) mapped to the same text as the other engines. The JIT's 48-bit int payload means i64::MIN is unrepresentable, so it refuses to compile and falls back to FastVM (which errors) - an acceptable loud refusal, not a wrong result. Pinned by a six-engine differential test.
+

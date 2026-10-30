@@ -127,6 +127,13 @@ pub(crate) const OP_UNINIT_LOAD: i64 = 42;
 /// `ctx.error` for a load of an unassigned local; the message is in
 /// [`take_error_message`] (CRUSH-zorro-55).
 pub(crate) const ERR_UNINIT: i32 = 6;
+/// `ctx.error` for integer or float division/remainder by zero (CRUSH-213).
+/// The JIT must check the divisor itself: `sdiv`/`srem` trap in the hardware
+/// (SIGILL/SIGFPE), and `fdiv` by zero would silently yield `inf`.
+pub(crate) const ERR_DIV_ZERO: i32 = 7;
+/// `ctx.error` for an arithmetic overflow, e.g. the 48-bit int payload check
+/// on `i64::MIN / -1`'s analog (CRUSH-213).
+pub(crate) const ERR_ARITH_OVERFLOW: i32 = 8;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
