@@ -40,6 +40,8 @@ pub struct HostCapsBuilder {
     #[cfg(feature = "stdlib")]
     stdlib: bool,
     fs_root: Option<String>,
+    /// Where the files are (`fs_memory`); the host's disk when unset.
+    fs_backend: Option<Arc<dyn crate::fs_backend::FsBackend>>,
     env_vars: HashMap<String, String>,
     /// Pre-built codebase index for `codebase.*` caps.
     codebase_index: Option<Arc<CrushIndex>>,
@@ -96,6 +98,18 @@ impl HostCapsBuilder {
     /// Restrict filesystem access to paths under `root`.
     pub fn fs_root(mut self, root: impl Into<String>) -> Self {
         self.fs_root = Some(root.into());
+        self
+    }
+
+    /// Enable the filesystem capabilities ([`fs`](Self::fs)) over an empty
+    /// in-memory tree instead of the host's disk: the same caps, the same
+    /// sandbox rules and the same results and error messages as an empty
+    /// `fs_root` directory, for a host with no disk to give (a browser). The
+    /// files live as long as the registry this builds.
+    pub fn fs_memory(mut self) -> Self {
+        self.fs = true;
+        self.fs_root = Some("/".to_string());
+        self.fs_backend = Some(Arc::new(crate::fs_backend::MemFs::new()));
         self
     }
 
@@ -265,7 +279,11 @@ impl HostCapsBuilder {
         if self.fs {
             // One sandbox, so `fs.cd` moves the working directory every
             // file cap in this registry resolves against.
-            let fs = FsSandbox::new(self.fs_root.as_deref().unwrap_or("."));
+            let root = self.fs_root.as_deref().unwrap_or(".");
+            let fs = match self.fs_backend.clone() {
+                Some(backend) => FsSandbox::with_backend(root, backend),
+                None => FsSandbox::new(root),
+            };
             caps.register(Box::new(FsReadCap { fs: fs.clone() }));
             caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
             caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
@@ -356,6 +374,7 @@ impl HostCapsBuilder {
 /// `root`. With `follow` false the last component is not resolved through a
 /// symlink, so `fs.rm`/`fs.mv` act on a link rather than on what it names.
 fn resolve_in(
+    backend: &dyn crate::fs_backend::FsBackend,
     root: &str,
     cwd: &std::path::Path,
     path: &Value,
@@ -370,7 +389,7 @@ fn resolve_in(
     }
     let escapes = || Unconfined::Escapes.message(&s);
     let root = Path::new(root);
-    let root_canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let root_canonical = backend.canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
 
     // Resolve `.` / `..` lexically first. A path that does not exist yet
     // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
@@ -393,10 +412,10 @@ fn resolve_in(
     // Not following the last component: confine its parent, keep the name.
     if !follow && let Some(name) = relative.file_name().map(|n| n.to_os_string()) {
         let parent = relative.parent().unwrap_or(Path::new("")).to_path_buf();
-        let dir = confine(&root_canonical, &parent).map_err(|e| e.message(&s))?;
+        let dir = confine(backend, &root_canonical, &parent).map_err(|e| e.message(&s))?;
         return Ok(dir.join(name));
     }
-    confine(&root_canonical, &relative).map_err(|e| e.message(&s))
+    confine(backend, &root_canonical, &relative).map_err(|e| e.message(&s))
 }
 
 /// Why [`confine`] refused a path.
@@ -428,6 +447,7 @@ const MAX_SYMLINKS: usize = 40;
 /// is resolved whether or not it exists. Components past the first missing
 /// one cannot be links and are kept as they are.
 fn confine(
+    backend: &dyn crate::fs_backend::FsBackend,
     root_canonical: &std::path::Path,
     relative: &std::path::Path,
 ) -> Result<std::path::PathBuf, Unconfined> {
@@ -461,13 +481,13 @@ fn confine(
             continue;
         };
         let candidate = resolved.join(&part); // an absolute `part` replaces it
-        match std::fs::symlink_metadata(&candidate) {
-            Ok(meta) if meta.file_type().is_symlink() => {
+        match backend.symlink_kind(&candidate) {
+            Ok(crate::fs_backend::Kind::Symlink) => {
                 links += 1;
                 if links > MAX_SYMLINKS {
                     return Err(Unconfined::Loop);
                 }
-                let target = std::fs::read_link(&candidate).map_err(|_| Unconfined::Escapes)?;
+                let target = backend.read_link(&candidate).map_err(|_| Unconfined::Escapes)?;
                 queue(&target, &mut pending);
             }
             // Present and not a link, or missing (so nothing below it can be
@@ -532,14 +552,36 @@ pub(crate) struct FsSandbox {
     root: String,
     /// Relative to the canonical root; empty = the root itself.
     cwd: Arc<std::sync::Mutex<std::path::PathBuf>>,
+    /// Where the files are: the host's disk, or memory (`fs_memory`).
+    backend: Arc<dyn crate::fs_backend::FsBackend>,
 }
 
 impl FsSandbox {
     pub(crate) fn new(root: &str) -> Self {
+        Self::with_backend(root, Arc::new(crate::fs_backend::DiskFs))
+    }
+
+    pub(crate) fn with_backend(root: &str, backend: Arc<dyn crate::fs_backend::FsBackend>) -> Self {
         Self {
             root: root.to_string(),
             cwd: Arc::default(),
+            backend,
         }
+    }
+
+    /// The storage every file cap of this sandbox goes through.
+    pub(crate) fn backend(&self) -> &dyn crate::fs_backend::FsBackend {
+        &*self.backend
+    }
+
+    /// Whether `path` names a directory (following symlinks), as `Path::is_dir`.
+    pub(crate) fn is_dir(&self, path: &std::path::Path) -> bool {
+        matches!(self.backend.kind(path), Ok(crate::fs_backend::Kind::Dir))
+    }
+
+    /// Whether `path` names a regular file (following symlinks), as `Path::is_file`.
+    pub(crate) fn is_file(&self, path: &std::path::Path) -> bool {
+        matches!(self.backend.kind(path), Ok(crate::fs_backend::Kind::File))
     }
 
     fn cwd(&self) -> std::path::PathBuf {
@@ -548,24 +590,24 @@ impl FsSandbox {
 
     fn root_canonical(&self) -> std::path::PathBuf {
         let root = std::path::Path::new(&self.root);
-        root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+        self.backend.canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
     }
 
     /// Resolve a program path against the working directory, inside the root.
     pub(crate) fn resolve(&self, path: &Value) -> Result<std::path::PathBuf, String> {
-        resolve_in(&self.root, &self.cwd(), path, true)
+        resolve_in(&*self.backend, &self.root, &self.cwd(), path, true)
     }
 
     /// Like [`resolve`](Self::resolve), but a symlink in the last component
     /// is the target itself rather than what it points to.
     pub(crate) fn resolve_nofollow(&self, path: &Value) -> Result<std::path::PathBuf, String> {
-        resolve_in(&self.root, &self.cwd(), path, false)
+        resolve_in(&*self.backend, &self.root, &self.cwd(), path, false)
     }
 
     /// `fs.cd`: move the working directory to an existing directory.
     pub(crate) fn cd(&self, path: &Value) -> Result<(), String> {
         let target = self.resolve(path)?;
-        if !target.is_dir() {
+        if !self.is_dir(&target) {
             return Err(format!("fs.cd {}: not a directory", self.display(&target)));
         }
         let relative = target
@@ -639,7 +681,7 @@ impl HostCap for FsReadCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = std::fs::read_to_string(&path)
+        let data = self.fs.backend().read_to_string(&path)
             .map_err(|e| format!("fs.read {}: {e}", self.fs.display(&path)))?;
         Ok(Some(Value::Str(data)))
     }
@@ -671,8 +713,7 @@ impl HostCap for FsWriteCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
         let data = fs_write_payload(&args[1])?;
-        open_for_write(&path, true)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, &data))
+        self.fs.backend().write(&path, &data)
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
@@ -722,7 +763,7 @@ impl HostCap for FsExistsCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        Ok(Some(Value::Int(if path.exists() { 1 } else { 0 })))
+        Ok(Some(Value::Int(if self.fs.backend().kind(&path).is_ok() { 1 } else { 0 })))
     }
 }
 

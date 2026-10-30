@@ -106,9 +106,10 @@ pub fn set_lang_executor(executor: JsValue) -> Result<(), JsValue> {
 /// `crush-run` flag: `polyglot.<lang>` (#91, `--polyglot`; a granted block runs
 /// through [`set_lang_executor`]), `time` (`--time`, the browser's clock) and
 /// `env` (`--env`; a browser has no environment, so `env.get` returns null and
-/// `env.all` is empty). `polyglot.bash`, `fs`, `process` and `net` are never
-/// grantable here.
-const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python", "time", "env"];
+/// `env.all` is empty) and `fs` (`--fs`: an empty in-memory directory of the
+/// run's own, see `HostCapsBuilder::fs_memory`). `polyglot.bash`, `process` and
+/// `net` are never grantable here.
+const GRANTABLE: &[&str] = &["polyglot.javascript", "polyglot.python", "time", "env", "fs"];
 
 /// [`browser_caps`] plus `grants`, or an error naming a grant a browser can't give.
 fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String> {
@@ -120,6 +121,9 @@ fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String
     }
     let granted = |name: &str| grants.iter().any(|g| g == name);
     let builder = crush_lang_sdk::HostCapsBuilder::new().args(args).env(granted("env"));
+    // `fs` (crush-run's `--fs`): the file caps over an empty in-memory root of
+    // this run's own, with the same results and errors as an empty --fs-root.
+    let builder = if granted("fs") { builder.fs_memory() } else { builder };
     #[cfg(feature = "stdlib")]
     let builder = builder.stdlib(true);
     let mut caps = builder.build();
@@ -243,7 +247,7 @@ pub struct RunOptions {
     pub args: Option<Vec<String>>,
     /// Capabilities the page grants this run: `polyglot.javascript` /
     /// `polyglot.python` (a granted block runs through [`set_lang_executor`]),
-    /// `time`, `env`. See `GRANTABLE`.
+    /// `time`, `env`, `fs` (an empty in-memory directory per run). See `GRANTABLE`.
     pub grants: Option<Vec<String>>,
     /// What `@python` / `@javascript` blocks become (CRUSH-272): `"exec"`
     /// (the default) runs each through the executor, behind its grant;
@@ -314,6 +318,11 @@ fn new_vm(program: crush_vm::Program, options: &RunOptions, input: InputSource) 
     vm.set_quotas(quotas);
     vm.set_input(input);
     vm.set_host_caps(caps);
+    // The fs caps that change files (fs.write, mkdir, rm, cp, mv, touch) are
+    // privileged in the portable VM; `fs` grants them, as `--fs` does natively.
+    // Only registered caps can run, and no other privileged cap (net.*,
+    // wallet.*, vm.*) is ever registered here.
+    vm.set_privileged_allowed(options.grants.as_deref().unwrap_or_default().iter().any(|g| g == "fs"));
     if let Some(executor) = LANG_EXECUTOR.with(|e| e.borrow().clone()) {
         vm.set_lang_executor(Box::new(move |lang, code, env| executor(lang, code, env)));
     }

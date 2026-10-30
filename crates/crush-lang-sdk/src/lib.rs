@@ -46,6 +46,7 @@ pub mod db;
 mod util;
 #[cfg(feature = "graphics")]
 pub mod graphics;
+pub mod fs_backend;
 mod fs_tools;
 pub mod host_caps;
 #[cfg(feature = "gpu")]
