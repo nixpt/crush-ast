@@ -42,7 +42,12 @@ flags, all of it pure computation that never leaves the VM:
 - `caison.parse`.
 
 Nothing that reaches outside the VM (`fs`, `time`, `env`, `process`, `net`)
-is registered; calling one is a runtime error.
+is registered unless the page grants it (the `grants` option); calling an
+ungranted one is refused before the program runs. A page can grant `time` (the
+browser's clock), `env` (empty, as under `env -i`) and `fs`: the `fs.*` and
+`text.*` file caps over an empty in-memory directory of the run's own, with
+the same results and error messages as `crush-run --fs` in an empty
+`--fs-root`. `process`, `net` and `polyglot.bash` are never grantable.
 
 The standard library roughly doubles the module (about 0.5 MB to 0.95 MB
 gzipped after `wasm-bindgen`, mostly `regex`). A page that doesn't need it can
