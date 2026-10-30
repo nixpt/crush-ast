@@ -1283,4 +1283,8 @@ Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crate
 
 Reason:
 FastVM's compare_op was arena-blind: it fell through to _ => false for every non-numeric kind (strings, arrays, maps) and its Bool arm computed x == y even for !=. The JIT's inline do_cmp compared NaN-boxed strings/bools/refs by their float bits, so string == was always false and != always true. Added crush_vm::value::runtime_value_eq, mirroring the interpreter's Value::PartialEq, and routed FastVM Eq/Ne and a new JIT OP_CMP_EQUAL helper through it. FastVM keeps its RuntimeValue+Arena representation; the JIT converts its operands to RuntimeValue and shares the function, so the two fast engines cannot drift again. A six-engine differential test (backend_agreement::equality_agrees_across_every_engine) pins agreement.
+## 2026-10-30T18:17:19-05:00 — [ARCHITECTURAL] The JIT frame stride is the program's largest local count, not a fixed 8 (CRUSH-295, GitHub #273)
+
+Reason:
+The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
 
