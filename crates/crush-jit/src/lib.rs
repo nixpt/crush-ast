@@ -177,6 +177,10 @@ impl JitEngine {
             use crush_vm::fastvm::FastError;
             let msg = if ctx.error == runtime::ERR_COSM || ctx.error == runtime::ERR_UNINIT {
                 runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+            } else if ctx.error == runtime::ERR_DIV_ZERO {
+                "division by zero".to_string()
+            } else if ctx.error == runtime::ERR_ARITH_OVERFLOW {
+                "arithmetic overflow".to_string()
             } else if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
             } else if ctx.error == 4 {
@@ -260,6 +264,10 @@ impl JitEngine {
             use crush_vm::fastvm::FastError;
             let msg = if ctx.error == runtime::ERR_COSM || ctx.error == runtime::ERR_UNINIT {
                 runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+            } else if ctx.error == runtime::ERR_DIV_ZERO {
+                "division by zero".to_string()
+            } else if ctx.error == runtime::ERR_ARITH_OVERFLOW {
+                "arithmetic overflow".to_string()
             } else if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
             } else if ctx.error == 4 {

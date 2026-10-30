@@ -528,6 +528,62 @@ fn map_and_array_equality_agrees_across_engines() {
     }
 }
 
+// ── CRUSH-213: division edge cases must fail loudly on every engine ──
+
+/// `source`'s `main` must *fail* (a runtime error, not a crash) on every
+/// engine. When `mentions` is set, every engine's error text must contain it
+/// (lower-cased substring).
+fn expect_error_everywhere(source: &str, mentions: Option<&str>, name: &str) {
+    let program = compile(source);
+    let outcomes = run_on_every_engine(&program, name);
+    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
+    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    for (engine, o) in &outcomes {
+        assert!(o.is_err(), "{name}: {engine} must fail for {source:?}:\n{}", report.join("\n"));
+        // The JIT refuses some programs it cannot represent exactly (e.g. an
+        // int outside its 48-bit payload, like `i64::MIN`) and falls back to
+        // FastVM — which still errors. That is a compile refusal, not a wrong
+        // result, so it does not have to carry the engine's error text.
+        if *engine == "jit" && o.as_ref().unwrap_err().contains("fell back") {
+            continue;
+        }
+        if let Some(m) = mentions {
+            let text = o.as_ref().unwrap_err().to_lowercase();
+            assert!(
+                text.contains(m),
+                "{name}: {engine} error {text:?} must mention {m:?}:\n{}",
+                report.join("\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn division_edge_cases_agree_across_every_engine() {
+    // `i64::MIN / -1` and `% -1` overflow; `/ 0` and `% 0` are division by
+    // zero. AOT C used to SIGFPE, the interp and FastVM panicked in Rust, and
+    // the JIT trapped (SIGILL/SIGFPE) or returned `inf` for floats — a crash
+    // on some engines and a wrong value on another (CRUSH-213). `id(…)` stops
+    // the frontend folding the operands.
+    let cases: &[(&str, &str, &str)] = &[
+        ("c213_min_div", "overflow",
+         r#"fn id(x) { return x; } fn main() { let m = id(0 - 9223372036854775807) - 1; return m / id(-1); }"#),
+        ("c213_min_mod", "overflow",
+         r#"fn id(x) { return x; } fn main() { let m = id(0 - 9223372036854775807) - 1; return m % id(-1); }"#),
+        ("c213_int_div0", "divi",
+         r#"fn id(x) { return x; } fn main() { return 10 / id(0); }"#),
+        ("c213_int_mod0", "divi",
+         r#"fn id(x) { return x; } fn main() { return 10 % id(0); }"#),
+        ("c213_float_div0", "divi",
+         r#"fn id(x) { return x; } fn main() { return 1.0 / id(0.0); }"#),
+        ("c213_float_mod0", "divi",
+         r#"fn id(x) { return x; } fn main() { return 1.0 % id(0.0); }"#),
+    ];
+    for (name, mentions, source) in cases {
+        expect_error_everywhere(source, Some(mentions), name);
+    }
+}
+
 // ── CRUSH-215: EQ/NE must agree on *every* engine, not just VM + AOT ──
 
 /// `source`'s `main` returns a Bool; every engine (scheduler VM, portable VM,

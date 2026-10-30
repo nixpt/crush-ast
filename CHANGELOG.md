@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Division edge cases fail loudly on every engine (CRUSH-213):**
+  `i64::MIN / -1` (and `% -1`) panicked in the interpreter and FastVM and
+  SIGFPE'd on AOT C; the JIT trapped (SIGILL/SIGFPE) on a zero divisor and
+  silently returned `inf` for `1.0 / 0.0`. The interpreter and FastVM now use
+  `checked_div`/`checked_rem` (→ `arithmetic overflow`), and the JIT guards
+  the divisor before `sdiv`/`srem`/`fdiv`, reporting `division by zero` /
+  `arithmetic overflow` like the other engines. AOT already did the right
+  thing. All six engines agree (verified by
+  `backend_agreement::division_edge_cases_agree_across_every_engine`).
+
 - **FastVM/JIT `==`/`!=` for strings, arrays, maps, bools and null
   (CRUSH-215):** both fast engines reported `false` for every non-numeric
   `==` — so `"ab" == "ab"` was `false` and `"ab" != "ab"` was `false` too
