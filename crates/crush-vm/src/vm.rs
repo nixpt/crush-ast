@@ -777,6 +777,8 @@ pub struct GreenThread {
     pub return_value: Option<Value>,
     pub out_parts: Vec<String>,
     pub out_len: usize,
+    /// Open `lang.capture_begin`s of inline-lowered polyglot blocks (#312).
+    pub captures: Vec<crate::block_capture::OutputCapture>,
 }
 
 impl GreenThread {
@@ -793,6 +795,7 @@ impl GreenThread {
             return_value: None,
             out_parts: Vec::new(),
             out_len: 0,
+            captures: Vec::new(),
         }
     }
 
@@ -810,6 +813,7 @@ impl GreenThread {
             return_value: None,
             out_parts: Vec::new(),
             out_len: 0,
+            captures: Vec::new(),
         }
     }
 }

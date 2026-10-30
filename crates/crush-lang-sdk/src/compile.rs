@@ -173,8 +173,9 @@ fn compile_lowering_blocks(
     let casm = crush_frontend::compiler::Compiler::new().compile_lowered(program, cosm)?;
     if let Some((name, line, lang)) = unknown_builtin(&casm, &blocks)? {
         anyhow::bail!(
-            "line {line}: this @{lang} block can't be lowered inline: `{name}` is not supported by the \
+            "line {line}: this @{lang} block can't be lowered inline: {} is not supported by the \
              walker yet (it has no Crush lowering)\n  {}",
+            describe_unlowered(&name),
             lowering_help(&lang)
         );
     }
@@ -229,9 +230,26 @@ pub fn compile_lowered_script(
     };
     let casm = crush_frontend::compiler::Compiler::new().compile(program)?;
     if let Some((name, _, _)) = unknown_builtin(&casm, &blocks)? {
-        return Err(refuse(format!("`{name}` is not supported by the walker yet (it has no Crush lowering)")));
+        return Err(refuse(format!(
+            "{} is not supported by the walker yet (it has no Crush lowering)",
+            describe_unlowered(&name)
+        )));
     }
     casm_to_vm(&casm)
+}
+
+/// What [`unknown_builtin`] found, as the source construct: a builtin by name
+/// (`` `sum` ``), but a walker intrinsic by what the author wrote, not by the
+/// internal name the walker lowered it to (#312: `x in y` was reported as
+/// `` `__crush_contains__` ``).
+fn describe_unlowered(name: &str) -> String {
+    match name {
+        "__crush_contains__" => "the `in` operator (`x in y`)".to_string(),
+        n if n.starts_with("__crush_") && n.ends_with("__") => {
+            format!("a construct the walker lowers to its internal `{n}`")
+        }
+        n => format!("`{n}`"),
+    }
 }
 
 /// A Python / JS builtin the walker has no Crush lowering for (`sum`, `int`,
@@ -792,16 +810,26 @@ fn lower_block(
             .collect(),
         meta: meta.clone(),
     };
+    // The block prints what EXEC_LANG prints (#312): its output is held while
+    // it runs and emitted trimmed when it returns; a throw out of it is fatal.
+    let capture = |name: &str, args: Vec<Expression>| Statement::ExprStmt {
+        expr: Expression::CapabilityCall { name: name.to_string(), args, meta: meta.clone() },
+        meta: meta.clone(),
+    };
+    let begin = capture(
+        "lang.capture_begin",
+        vec![str_lit(lang), Expression::IntLiteral { value: line as i64, meta: meta.clone() }],
+    );
+    let end = capture("lang.capture_end", Vec::new());
     if output_names.is_empty() {
-        return Ok(vec![Statement::ExprStmt { expr: call, meta: meta.clone() }]);
+        return Ok(vec![begin, Statement::ExprStmt { expr: call, meta: meta.clone() }, end]);
     }
     let result = format!("__crush_{lang}_block_{n}_out");
-    let mut out = vec![Statement::VarDecl {
-        name: result.clone(),
-        value: call,
-        type_hint: CastType::Any,
-        meta: meta.clone(),
-    }];
+    let mut out = vec![
+        begin,
+        Statement::VarDecl { name: result.clone(), value: call, type_hint: CastType::Any, meta: meta.clone() },
+        end,
+    ];
     for (k, name) in output_names.iter().enumerate() {
         let value = marshal(
             Expression::Index {
