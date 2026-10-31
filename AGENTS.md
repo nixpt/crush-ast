@@ -86,12 +86,15 @@ the version in `Cargo.toml`.
 ```
 source.(crush|py|rs|go|c|js|sh|zig|wasm|...)
   → walker (tree-sitter → CAST, crates/crush-lang-*)
-  → CAST (crush-cast — JSON IR)
+  → CAST (crush-cast — IR: JSON .cast.json, CBOR .castb)
   → crush-frontend (parse/semantics/optimize/compile)
-  → CASM (casm — assembly, JSON or binary .castb)
+  → CASM (casm — IR: JSON .casm, MessagePack .casmb)
+  → CVM1 (crush-vm — bytecode .cvm1; assembly text .cvms)
   → execution: CVM1 PortableVm (crush-vm) | FastVM | crush-jit (Cranelift)
               | AOT C/Rust (crush-aot, crush-aotc) | PTX (crush-ptx)
 ```
+
+Every extension, encoding and version gate: `docs/FILE-FORMATS.md`.
 
 44 workspace members as of 2026-10-31 (`cargo metadata --no-deps`: 43 under
 `crates/` plus `xtask`; 43 default members — all but `crush-gui`; see

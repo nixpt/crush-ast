@@ -936,6 +936,32 @@ mod cap_header_tests {
         assert_eq!(program.manifest.permissions, ["io.print", "fs.read"]);
     }
 
+    /// `.cvm1` bytes don't depend on `HashMap` order (#365): the manifest's
+    /// function table is written in name order, and the version byte is 2
+    /// for a program without a kind table.
+    #[test]
+    fn to_blob_is_deterministic_and_writes_version_2_without_a_kind_table() {
+        let text: String = ["zeta", "main", "alpha", "mid", "beta", "omega"]
+            .iter()
+            .map(|f| format!(".func {f}\nRET\n"))
+            .collect();
+        let program = assemble(&text, None, None).unwrap();
+        let blob = program.to_blob();
+        assert_eq!(&blob[..4], b"CVM1");
+        assert_eq!(blob[4], crate::bytecode::VERSION_NO_KIND_TABLE);
+        for _ in 0..16 {
+            let mut copy = program.clone();
+            copy.manifest.functions = program.manifest.functions.clone().into_iter().collect();
+            assert_eq!(copy.to_blob(), blob);
+        }
+        let json = serde_json::to_string(&program.manifest).unwrap();
+        let order: Vec<usize> = ["alpha", "beta", "main", "mid", "omega", "zeta"]
+            .iter()
+            .map(|f| json.find(&format!("\"{f}\":{{")).unwrap())
+            .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{json}");
+    }
+
     #[test]
     fn bare_cap_directive_is_an_error() {
         let err = assemble(&format!(".cap\n{SRC}"), None, None).unwrap_err();

@@ -61,8 +61,9 @@ All crates are released together at the workspace version in `Cargo.toml`.
 | Command | What it does |
 |---|---|
 | `crush` / `crush repl` | interactive REPL |
-| `crush run FILE` | run a `.crush` / `.casm` / `.cvm1` program |
-| `crush build FILE` | compile to `.cvm1` |
+| `crush run FILE` | run a program: `.crush`, CAST (`.cast.json`/`.castb`), CASM (`.casm`), `.cvms`, `.cvm1` |
+| `crush build FILE` | compile to `.cvm1` (`--emit casm\|cvms\|cast\|ast` for the other forms) |
+| `crush cast CMD FILE` | CAST tools: `validate`, `pack`, `unpack`, `format`, `diff` |
 | `crush debug FILE --step --inspect` | breakpoints by source line, step, watch, print (grant-gated) |
 | `crush gui run FILE --ui` | run a program that draws a window with `ui.*` (needs `crush-gui`) |
 | `crush doctor` | check the host runtimes polyglot blocks need |
@@ -188,17 +189,21 @@ The Crush pipeline seamlessly converts polyglot source code down to execution-re
 graph TD
     A[Source File<br/>.crush, .py, .rs, .go, .c, .js, .sh, .zig, .wasm] --> B
     B(Walker<br/>Language-specific tree-sitter → CAST) --> C
-    C[CAST<br/>Crush AST — JSON] --> D
+    C[CAST<br/>Crush AST — .cast.json / CBOR .castb] --> D
     D(Crush Compiler<br/>crates/crush-frontend) --> E
-    E[CASM<br/>Crush Assembly — JSON / binary .castb] --> F
+    E[CASM<br/>Crush Assembly IR — JSON .casm / MessagePack .casmb] --> G
+    G[CVM1 bytecode<br/>.cvm1 — assembly text .cvms] --> F
     F((CVM1 VM<br/>Execution))
     
     classDef file fill:#2d3436,stroke:#74b9ff,stroke-width:2px,color:#fff
     classDef process fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#fff
     
-    class A,C,E file
+    class A,C,E,G file
     class B,D,F process
 ```
+
+Every extension, its encoding, version constant and who reads/writes it:
+[`docs/FILE-FORMATS.md`](docs/FILE-FORMATS.md).
 
 ## 🎮 Examples
 

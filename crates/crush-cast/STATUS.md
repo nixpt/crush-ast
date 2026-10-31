@@ -79,7 +79,7 @@ See `src/` for the full Rust definitions. Key types:
 Every `Statement` and `Expression` carries `meta: Option<HashMap<String, Value>>`
 for source location, compiler hints, and custom tool data.
 
-For the CASM bytecode output schema (the compiled form), see `SCHEMA.md`.
+For the CASM bytecode output schema (the compiled form, `.casm`), see `crates/casm/SCHEMA.md`; every file format is in `docs/FILE-FORMATS.md`.
 
 ---
 
