@@ -14,6 +14,141 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-31
+
+- Merge pull request #281 from nixpt/agent/vega/1.0-criteria
+- docs(planning): R1 done (#348 merged); scoreboard recounted
+- Merge remote-tracking branch 'origin/main' into vega-281-update
+- Merge pull request #353 from nixpt/agent/vega/crush-errors-bucketspike
+- Merge pull request #350 from nixpt/agent/vega/CRUSH-166-exec-lang-callbacks
+- Merge pull request #354 from nixpt/agent/satya/CRUSH-165
+- Merge pull request #351 from nixpt/agent/nova/CRUSH-164
+- Merge remote-tracking branch 'origin/main' into agent/vega/crush-errors-bucketspike
+- Merge pull request #352 from nixpt/agent/vega/remove-top-level-stdlib
+- Merge pull request #349 from nixpt/agent/vega/docs-refresh-0.9
+- Merge pull request #348 from nixpt/agent/vega/no-accidental-1.0
+- feat(crush-vm): tamper-evident CVM1 execution transcript (CRUSH-165)
+- refactor(crush-errors): drop exosphere-only error modules and version boundaries; remove crush-bucketspike
+- chore: remove the top-level stdlib/ (unused transpiled-module experiment)
+- feat(crush-vm): wildcard + expiry entries in Quotas::allowed_caps (CRUSH-164)
+- docs(planning): migration re-check covers nanovm, casm, crush-cast
+- docs(design): EXEC_LANG callbacks design note (CRUSH-166); re-check exosphere migration
+- Merge remote-tracking branch 'origin/main' into agent/vega/docs-refresh-0.9
+- docs: refresh README, CLAUDE.md/AGENTS.md, .dejavue and .jagent for 0.9
+- Merge pull request #347 from nixpt/agent/nixp/unicode-support
+- docs(planning): re-score the 1.0 criteria against main 2026-10-31; split CRUSH-75
+- Merge remote-tracking branch 'origin/main' into agent/vega/1.0-criteria-rescore
+- fix(release): no accidental 1.0 — a breaking change on 0.x bumps minor
+- feat(tree-sitter): slices and hex/binary integer literals
+- Merge origin/main into unicode-support (CHANGELOG: keep both; .dejavue union files)
+- Merge pull request #290 from nixpt/agent/cursor/CRUSH-zorro-44-design
+- Merge pull request #346 from nixpt/agent/nova/CRUSH-342
+- Merge pull request #345 from nixpt/agent/buffy/shell-walkers-completion
+- feat(slices): bracket slices desugar to seq.slice — string slicing + [::step] syntax
+- docs(CRUSH-342): ticket lists crush-gui as shipped
+- Merge origin/main into agent/nova/CRUSH-342; ship crush-gui in release tarball
+- Merge pull request #344 from nixpt/agent/nova/CRUSH-319
+- fix(ci): artifacts smoke test - crush-run has no --version
+- Merge pull request #277 from pranix/bro/fix-bash-vars-255
+- Merge pull request #291 from nixpt/agent/cursor/CRUSH-286-ticket-ids
+- docs(CRUSH-310): record what CI runs and the workspace link failure
+- ci(release): pre-release per tag with prebuilt artifacts; PR CI checks release instead of building (CRUSH-342)
+- Merge pull request #342 from nixpt/agent/nixp/CRUSH-207
+- feat(walkers): glob options, file tests and a merge-sorted glob walk (CRUSH-310)
+- Merge origin/main (#334) into CRUSH-207 (.dejavue union files)
+- Merge pull request #334 from nixpt/agent/buffy/shell-walkers-completion
+- ci(gui): keep crush-gui out of the default and --workspace builds; add a Test (gui) job
+- Merge origin/main into fix-bash-vars-255
+- fix(xtask): ticket-id next also counts local branches; allowlist matches main (CRUSH-286)
+- feat(gui): crush-gui - grant-gated ui.* API and arniko desktop backend (CRUSH-319)
+- Merge remote-tracking branch 'origin/main' into agent/vega/CRUSH-286-update
+- Merge origin/main into CRUSH-207 (CHANGELOG: keep both; .dejavue union files)
+- Merge origin/main into shell-walkers-completion
+- Merge pull request #343 from nixpt/agent/nova/CRUSH-318
+- fix(walkers): refuse multi-column `wc` on a `< file`, whose padding is version-dependent
+- Merge pull request #337 from nixpt/agent/nixp/CRUSH-zorro-8
+- Merge pull request #335 from nixpt/agent/nixp/CRUSH-203
+- docs(CRUSH-311): record builtin-only pipelines as the decision, and what it covers
+- feat(walkers): run pipelines, redirections and a builtin command set in-VM (CRUSH-311)
+- Merge pull request #341 from nixpt/agent/nova/CRUSH-317
+- Merge #337 (with #335, #334, #341, #340, main) into CRUSH-318
+- Merge #335 (with #341, #340, #334, main) into CRUSH-zorro-8 (CHANGELOG: keep both)
+- Merge #341 (with #340, main) and #334 into CRUSH-203 (CHANGELOG: keep both)
+- local base: #341 + #334 (not pushed)
+- Merge pull request #340 from nixpt/agent/nova/CRUSH-264
+- Merge #340 (with main, incl. #336/#338/#339) into CRUSH-317
+- fix(tree-sitter): track the frontend's syntax, and check the corpus in CI (CRUSH-207)
+- Merge origin/main (incl. #336, #338, #339) into CRUSH-264 (CHANGELOG: keep both)
+- Merge pull request #338 from nixpt/agent/nova/CRUSH-315
+- Merge pull request #339 from nixpt/agent/satya/planning-survey
+- Merge pull request #336 from nixpt/agent/nova/CRUSH-316
+- feat(sdk): wire crush-net in as tcp.* capabilities behind --tcp / --tcp-listen
+- feat(debugger): crush debug FILE / crush-debug, grant flags, NDJSON mode (CRUSH-317)
+- feat(sdk): net on by default, http.* renamed loudly, document time.now unit (CRUSH-264)
+- docs(planning): add SURVEY-2026-10-31 — what changed, judgment calls, unverified items
+- docs: fix verified drift in crate counts, version, internal links; point docs/tasks at the board
+- refactor(crush-net): depend on crush-vm not crush-lang-sdk; rename caps net.* -> tcp.*; split register into client/listen/io groups
+- docs(planning): bring indexes in line with ticket statuses and v0.8.0
+- docs(CRUSH-310): point the pipelines follow-up at CRUSH-311
+- docs(planning): renumber colliding CRUSH-266 / CRUSH-271 tickets to CRUSH-340 / CRUSH-341
+- docs(planning): set ticket statuses from merge evidence; normalise spellings
+- fix(diagnostics): one JSON schema and one record per error across crushc and crush-run (CRUSH-315)
+- fix(js): a JS/TS dialect comes from the real extension; unknown ones refused (CRUSH-zorro-8)
+- fix(crush-lint): report real parser/semantic diagnostics, never a guessed syntax error (CRUSH-316)
+- fix(walkers): lower a node or refuse it loudly, never fabricate null/empty (CRUSH-203)
+- Merge remote-tracking branch 'origin/main' into agent/buffy/shell-walkers-completion
+- feat(walkers): glob every path component, not just the last (CRUSH-310)
+- docs: bring the Bash/Zsh walker rows up to date, and file the process/fs-write decision
+- Merge pull request #325 from nixpt/agent/nixp/CRUSH-299
+- Merge pull request #326 from nixpt/agent/nixp/CRUSH-300
+- Merge #326 (with main, incl. #322/#327) into CRUSH-299; combine walk_run's error handling
+- Merge origin/main into CRUSH-300 (CHANGELOG: keep both)
+- Merge pull request #327 from nixpt/agent/buffy/shell-walkers-completion
+- Merge pull request #328 from nixpt/agent/nixp/CRUSH-301
+- fix(sdk): kill spawned tasks when the run ends; --task states its process grant (CRUSH-182)
+- Merge remote-tracking branch 'origin/main' into agent/buffy/shell-walkers-completion
+- feat(walkers): pathname expansion over fs.exists/fs.list (CRUSH-310)
+- fix(capi): report runtime errors, route io.print to stdout (CRUSH-205)
+- Merge pull request #322 from nixpt/agent/buffy/shell-walkers-completion
+- Merge pull request #324 from nixpt/agent/nixp/CRUSH-298
+- fix(cli): crush-walk-run keeps output before a runtime error and exits non-zero (CRUSH-184)
+- Merge pull request #323 from nixpt/agent/nixp/CRUSH-297
+- Merge pull request #321 from nixpt/agent/nixp/CRUSH-296
+- docs(walkers): point printf-float divergence at the renumbered ticket
+- Merge #323 (with #321 and main) into CRUSH-298 (CHANGELOG: keep both)
+- Merge remote-tracking branch 'origin/agent/buffy/shell-walkers-completion' into agent/buffy/shell-walkers-completion
+- feat(walkers): glob patterns in ${x/pat/rep} and printf float conversions (CRUSH-294)
+- fix(sdk): deterministic CASM function layout (CRUSH-188)
+- planning: renumber the shell-walkers ticket CRUSH-298 -> CRUSH-310
+- Merge #321 (CRUSH-296, with main) into CRUSH-297 (CHANGELOG: keep both)
+- Merge origin/main into CRUSH-296 (CHANGELOG: keep both)
+- planning: CRUSH-298 inside the renumbered ticket, too
+- planning: renumber the shell-walkers ticket CRUSH-294 -> CRUSH-298
+- Merge pull request #319 from nixpt/agent/nixp/CRUSH-294
+- fix(go-walker): no silent drops — lower or loudly reject (CRUSH-198)
+- Merge pull request #318 from nixpt/agent/nixp/CRUSH-213
+- Merge pull request #317 from nixpt/agent/nixp/CRUSH-215
+- feat(walkers): lower [[ ]], arrays, ${…} operators, case globs, printf formats, read for bash/zsh (CRUSH-294)
+- Merge #318 (CRUSH-213, with #317) into CRUSH-294
+- Merge #317 (CRUSH-215) into CRUSH-213; restore the JIT's fcmp helper
+- Merge origin/main into CRUSH-215 (keep both CHANGELOG entries and both new tests)
+- fix(sdk): stdlib caps reject negative lengths and bound allocations (CRUSH-181)
+- Merge pull request #316 from nixpt/agent/nixp/CRUSH-295
+- Merge pull request #320 from nixpt/agent/vega/publish-keep-going
+- ci(publish): keep going past a crate crates.io refuses; list them all
+- fix(jit): frame stride is the program's largest local count (CRUSH-295, GitHub #273)
+- fix(vm): FastVM/JIT print heap values, not the arena ref (CRUSH-294, GitHub #267)
+- fix(vm,jit): division/remainder edge cases fail loudly on every engine (CRUSH-213)
+- fix(vm,jit): one canonical equality — strings/arrays/maps compare by value (CRUSH-215)
+- docs: get ticket numbers with ticket-id next (CRUSH-286)
+- test(xtask): gate duplicate ticket IDs in CI
+- feat(xtask): ticket-id allocator and shared unique ticket-ID check
+- docs(design): COSM method dispatch rule for receivers (CRUSH-zorro-44)
+- docs(planning): draft Crush 1.0 release criteria (CRUSH-275)
+- Fix #255: restore Crush var access in @bash blocks via $name/${name} scan
+
+
+
 - **Source-level string slices (and full `xs[start:stop:step]` syntax) via the
   shared `seq.slice` capability:** the parser desugared bracket slices to the
   array-only `arr_slice`, so `s[0:5]` on a string errored at runtime with
