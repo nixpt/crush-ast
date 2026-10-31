@@ -7,7 +7,7 @@
 | **Status** | Done — S1–S5 merged as one stack in PR #285 (2026-10-21) |
 | **Phase** | COSM K3 — JS walker slice |
 | **Assignee** | unassigned |
-| **Dependencies** | CRUSH-266 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
+| **Dependencies** | CRUSH-340 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
 | **Estimated effort** | L total; S1 M, S2 S–M, S3 M, S4 M, S5 M |
 | **Filed by** | muse — 2026-10-20, scoped against `origin/main` at PR #283 |
 
@@ -195,7 +195,7 @@ Census of the JS class surface maya actually uses:
   CAST node + compiler; `this` expressions; D8 `load_kind`; D5
   `super()` + synthesised forwarding constructors; `this.m()` calls.
   *Tests*: node_corpus class cases (below) run green on scheduler;
-  CRUSH-266-style end-to-end test (`class Counter { … }`, mutate via
+  CRUSH-340-style end-to-end test (`class Counter { … }`, mutate via
   `this`, read back) prints the node-identical result.
 - **S4 — Accessors.** `cosm_rt` `get_member`/`set_member` invoke
   `Member::Accessor` get/set with the receiver bound per the Kind's
