@@ -207,3 +207,16 @@ fn new_scaffolds_the_standard_layout() {
     let both = crush_pkg(tmp.path(), &cache, &["new", "x", "--cli", "--lib"]);
     assert_eq!(both.status.code(), Some(2), "{}", text(&both));
 }
+
+#[test]
+fn quiet_builder_writes_output_to_a_chosen_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = tmp.path().join("app");
+    crush_pkg::manifest::scaffold_package(&app, "app").unwrap();
+    let b = builder(&app).quiet(true);
+    let out = b.build().unwrap();
+    let dir = app.join("target/release");
+    b.write_output_to(&out, &dir).unwrap();
+    assert!(dir.join("app.cvm1").is_file() && dir.join("app.casm").is_file());
+    assert!(!app.join("target/app.cvm1").exists());
+}

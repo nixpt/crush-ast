@@ -28,6 +28,9 @@ pub struct PackageBuilder {
     root_dir: PathBuf,
     /// Never touch the network for git dependencies (`--offline`).
     offline: bool,
+    /// Don't print the per-stage detail lines (`compiled …`, `wrote …`):
+    /// for front ends such as squeeze that print their own status.
+    quiet: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -428,12 +431,18 @@ pub fn uses_imports(entry: &Path) -> bool {
 
 impl PackageBuilder {
     pub fn new(manifest: Manifest, root_dir: PathBuf) -> Self {
-        Self { manifest, root_dir, offline: false }
+        Self { manifest, root_dir, offline: false, quiet: false }
     }
 
     /// Resolve git dependencies from `capsule.lock` and the local cache only.
     pub fn offline(mut self, offline: bool) -> Self {
         self.offline = offline;
+        self
+    }
+
+    /// Suppress the detail lines `build` / `write_output` print to stdout.
+    pub fn quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
         self
     }
 
@@ -516,13 +525,15 @@ impl PackageBuilder {
         let functions: Vec<String> = program.manifest.functions.keys().cloned().collect();
         let all_source_paths: Vec<PathBuf> = sources.into_iter().map(|(p, _)| p).collect();
 
-        println!(
-            "  compiled {} -> {} function(s), {} byte(s)",
-            entry.display(),
-            functions.len(),
-            program.code.len(),
-        );
-        if !deps.is_empty() {
+        if !self.quiet {
+            println!(
+                "  compiled {} -> {} function(s), {} byte(s)",
+                entry.display(),
+                functions.len(),
+                program.code.len(),
+            );
+        }
+        if !deps.is_empty() && !self.quiet {
             println!("  deps: {}", dep_names.join(", "));
         }
 
@@ -554,13 +565,15 @@ impl PackageBuilder {
         let mut program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
         program.warnings = warnings;
         let functions: Vec<String> = program.manifest.functions.keys().cloned().collect();
-        println!(
-            "  compiled {} -> {} function(s), {} byte(s)",
-            file.display(),
-            functions.len(),
-            program.code.len(),
-        );
-        if !deps.is_empty() {
+        if !self.quiet {
+            println!(
+                "  compiled {} -> {} function(s), {} byte(s)",
+                file.display(),
+                functions.len(),
+                program.code.len(),
+            );
+        }
+        if !deps.is_empty() && !self.quiet {
             let names: Vec<&str> = deps.iter().map(|d| d.name.as_str()).collect();
             println!("  deps: {}", names.join(", "));
         }
@@ -630,7 +643,9 @@ impl PackageBuilder {
             }
 
             let source = std::fs::read_to_string(&dep_entry)?;
-            println!("  resolved dep {} -> {}", name, dep_entry.display());
+            if !self.quiet {
+                println!("  resolved dep {} -> {}", name, dep_entry.display());
+            }
 
             resolved.push(DepResolution {
                 name: name.clone(),
@@ -673,8 +688,13 @@ impl PackageBuilder {
     }
 
     pub fn write_output(&self, output: &BuildOutput) -> anyhow::Result<()> {
-        let target_dir = self.root_dir.join("target");
-        std::fs::create_dir_all(&target_dir)?;
+        self.write_output_to(output, &self.root_dir.join("target"))
+    }
+
+    /// [`write_output`](Self::write_output) into `target_dir` instead of
+    /// `<root>/target` (squeeze's `--release` profile directory).
+    pub fn write_output_to(&self, output: &BuildOutput, target_dir: &Path) -> anyhow::Result<()> {
+        std::fs::create_dir_all(target_dir)?;
 
         let name = &self.manifest.capsule.name;
 
@@ -683,7 +703,9 @@ impl PackageBuilder {
         let cvm_path = target_dir.join(format!("{}.cvm1", name));
         let blob = output.program.to_blob();
         std::fs::write(&cvm_path, blob)?;
-        println!("  wrote {}", cvm_path.display());
+        if !self.quiet {
+            println!("  wrote {}", cvm_path.display());
+        }
 
         // The CASM IR as CASM JSON (`casm::Program`), which `crush-run` runs.
         // (Before #365 this was a `.casm.json` summary — function names and a
@@ -693,7 +715,9 @@ impl PackageBuilder {
             .casm
             .save(&casm_path)
             .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", casm_path.display()))?;
-        println!("  wrote {}", casm_path.display());
+        if !self.quiet {
+            println!("  wrote {}", casm_path.display());
+        }
 
         Ok(())
     }
