@@ -17,10 +17,6 @@ use std::process::{Command, Stdio};
 /// Cases whose Crush version is known not to match bash yet, and why.
 const KNOWN_GAPS: &[(&str, &str)] = &[
     (
-        "t03_csv_sum",
-        "io.read() returns \"\" for both a blank line and end of input, so the loop stops at the first blank line (CRUSH-239)",
-    ),
-    (
         "t11_missing_file",
         "a failing capability call can't be caught by try/catch (CRUSH-219)",
     ),

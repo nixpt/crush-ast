@@ -177,7 +177,14 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             argc: Some(0),
             returns: true,
             privileged: false,
-            summary: "read one line from stdin, trimmed of trailing newline; empty string on EOF",
+            summary: "read one line from stdin, trimmed of trailing newline; empty string on EOF (cannot tell EOF from a blank line; see io.read_line)",
+        });
+        reg(CapabilitySpec {
+            name: "io.read_line",
+            argc: Some(0),
+            returns: true,
+            privileged: false,
+            summary: "read one line from stdin, trimmed of trailing newline; null on EOF (a blank line is \"\")",
         });
         // String
         reg(CapabilitySpec {

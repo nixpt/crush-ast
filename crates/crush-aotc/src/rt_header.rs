@@ -257,6 +257,16 @@ static inline CrushValue cap_io_read(void) {
     return cv_string(crush_input_buf);
 }
 
+/* `io.read_line`: as cap_io_read, but end of input yields null; a blank line
+   is still the empty string (CRUSH-239). */
+static inline CrushValue cap_io_read_line(void) {
+    if (fgets(crush_input_buf, sizeof(crush_input_buf), stdin) == NULL) {
+        return CV_NULL;
+    }
+    crush_input_buf[strcspn(crush_input_buf, "\r\n")] = '\0';
+    return cv_string(crush_input_buf);
+}
+
 static inline CrushValue cap_conv_chr(CrushValue v) {
     if (!cv_is_int(v)) crush_arith_error("conv.chr: expected int");
     int64_t codepoint = cv_as_int(v);

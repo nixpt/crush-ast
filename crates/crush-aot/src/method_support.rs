@@ -139,7 +139,7 @@ pub(crate) fn check_rust_result(program: &casm::Program) -> Result<(), crate::Un
             || i.op == "cap_call"
                 && matches!(
                     i.args.get("name").and_then(|v| v.as_str()),
-                    Some("io.read" | "conv.chr")
+                    Some("io.read" | "io.read_line" | "conv.chr")
                 )
     });
     if nul_source && !scalar_root("main", program, &mut Vec::new()) {
@@ -194,7 +194,7 @@ pub(crate) fn check_c(program: &casm::Program) -> Result<(), crate::UnsupportedO
                 }
             }
 
-            if (i.op == "cap_call" && matches!(name, "io.read" | "conv.chr"))
+            if (i.op == "cap_call" && matches!(name, "io.read" | "io.read_line" | "conv.chr"))
                 || matches!(i.op.as_str(), "io_read" | "chr" | "conv_chr")
             {
                 ops.push("C method input has unproven external/character text representability (CRUSH-xps-13)".into());

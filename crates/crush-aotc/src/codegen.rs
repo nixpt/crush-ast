@@ -456,6 +456,11 @@ impl AotcCompiler {
                             writeln!(out, "    CrushValue {} = cap_io_read();", t)?;
                             stack.push((t, ty));
                         }
+                        "io.read_line" => {
+                            let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                            writeln!(out, "    CrushValue {} = cap_io_read_line();", t)?;
+                            stack.push((t, ty));
+                        }
                         "math.sqrt"  => emit_math_cap(out, "cap_math_sqrt",  &boxed_args, &mut stack, &mut tmp_count)?,
                         "math.pow"   => emit_math_cap(out, "cap_math_pow",   &boxed_args, &mut stack, &mut tmp_count)?,
                         "math.abs"   => emit_math_cap(out, "cap_math_abs",   &boxed_args, &mut stack, &mut tmp_count)?,
@@ -759,6 +764,20 @@ mod tests {
             .compile(&program).expect("emit C");
         assert!(c.contains("cap_io_read"), "generated C should call cap_io_read");
         assert!(c.contains("CRUSH_INPUT_BUF_SIZE"), "generated runtime should define stdin storage");
+    }
+
+    #[test]
+    fn c_aot_io_read_line_yields_null_at_eof() {
+        let source = r#"
+            fn main() {
+                let line = io.read_line()
+                print(line)
+            }
+        "#;
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let c = AotcCompiler::new(AotcOpts::default())
+            .compile(&program).expect("emit C");
+        assert!(c.contains("cap_io_read_line()"), "generated C should call cap_io_read_line");
     }
 
     #[test]

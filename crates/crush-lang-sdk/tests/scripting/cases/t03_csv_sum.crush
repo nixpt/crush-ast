@@ -2,9 +2,10 @@
 fn main() {
   let teams = []
   let sums = []
-  let header = io.read()
-  let line = io.read()
-  while line != "" {
+  let header = io.read_line()
+  let line = io.read_line()
+  // io.read_line() is null only at end of input; a blank line is "" and is skipped by the len check.
+  while line != null {
     let cols = str.split(line, ",")
     if len(cols) == 3 {
       let team = cols[1]
@@ -22,7 +23,7 @@ fn main() {
         sums[found] = sums[found] + amount
       }
     }
-    line = io.read()
+    line = io.read_line()
   }
   let order = text.sort(teams)
   let i = 0

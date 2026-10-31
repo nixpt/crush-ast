@@ -390,7 +390,9 @@ fn drive(vm: &mut PortableVm) -> Stop {
         }
         match vm.step() {
             Ok(None) => {}
-            Ok(Some(VmYield::HostCall { capability, .. })) if capability == "io.read" => {
+            Ok(Some(VmYield::HostCall { capability, .. }))
+                if capability == "io.read" || capability == "io.read_line" =>
+            {
                 return (Status::NeedInput, None, None, None);
             }
             Ok(Some(VmYield::HostCall { capability, args })) if capability == "lang.exec" => {

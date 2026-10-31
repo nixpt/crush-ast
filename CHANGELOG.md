@@ -14,6 +14,8 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- feat: `io.read_line()` capability (CRUSH-239). Like `io.read()` but returns `null` at end of input, so a blank line (`""`) and EOF are distinguishable: `while line != null { ... line = io.read_line() }` no longer stops at the first blank line of piped input. Implemented once in `crush_vm::io_read` and wired into the scheduler, PortableVm (including the pause/resume host contract and crush-web), the AOT Rust, AOT C and `crush-aotc` backends. `io.read()` is unchanged (`""` at EOF), so existing scripts keep working; grant `io.read_line` with `--cap io.read_line` where caps are explicit.
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots

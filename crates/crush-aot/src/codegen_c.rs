@@ -421,6 +421,20 @@ static inline const char* io_read_line(void) {
     return _str_dup(input);
 }
 
+// `io.read_line`: as io_read_line, but EOF yields null (a blank line stays
+// the empty string), so the two differ (CRUSH-239).
+static inline Value io_read_line_opt(void) {
+    static char input[4096];
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        return mk_null();
+    }
+    size_t len = strlen(input);
+    while (len > 0 && (input[len - 1] == '\n' || input[len - 1] == '\r')) {
+        input[--len] = '\0';
+    }
+    return mk_string(_str_dup(input));
+}
+
 "#);
 }
 
@@ -1938,6 +1952,9 @@ fn emit_c_instr(
                 }
                 "conv.ord" => {
                     out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_STRING) _crush_arith_error(\"conv.ord: expected string\"); _push(mk_int(_conv_ord(__v.s))); }} _pc={next_pc}; break; // cap_call conv.ord\n"));
+                }
+                "io.read_line" => {
+                    out.push_str(&format!("                {{ _push(io_read_line_opt()); }} _pc={next_pc}; break; // cap_call io.read_line\n"));
                 }
                 "io.print" | "print" => {
                     // Same text as string concatenation (`_to_text_buf`), and pushes null like

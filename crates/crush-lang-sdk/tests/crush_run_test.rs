@@ -283,6 +283,46 @@ fn crush_run_reads_piped_stdin_through_source_pipeline() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "piped input\n");
 }
 
+// CRUSH-239: `io.read_line()` is null only at end of input, so a loop over
+// piped stdin survives a blank line in the middle; `io.read()` ("" at EOF) cannot.
+#[test]
+fn crush_run_io_read_line_distinguishes_blank_line_from_eof() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("lines.crush");
+    std::fs::write(
+        &src,
+        "fn main() {\n  let n = 0\n  let line = io.read_line()\n  while line != null {\n    n = n + 1\n    io.print(\"[\" + line + \"]\")\n    line = io.read_line()\n  }\n  io.print(n)\n  return 0\n}\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(crush_run_bin())
+        .args(["run", "--cap", "io.read_line", src.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to execute crush-run");
+    child
+        .stdin
+        .take()
+        .expect("stdin pipe")
+        .write_all(b"a\n\nb\n")
+        .expect("write piped input");
+    let output = child.wait_with_output().expect("wait for crush-run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("[a]\n[]\n[b]\n3\n"), "got: {stdout:?}");
+}
+
 // CRUSH-113: the stdlib is on by default — a conv.* call needs no flag —
 // and `--no-stdlib` takes it away again.
 #[test]
