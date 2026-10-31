@@ -1,6 +1,6 @@
 #![allow(improper_ctypes_definitions)]
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::c_char;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -103,7 +103,15 @@ impl FfiValue {
 }
 
 /// A standard signature for an FFI exported function.
-/// Returns true if successful, false if it threw an error (which is written to out_result).
+///
+/// Argument buffers and strings are borrowed from the host and remain valid
+/// only until this function returns. A plugin must not retain their pointers.
+/// The host copies scalar output values immediately after return. String and
+/// error result pointers remain plugin-owned and must stay valid until the
+/// plugin's next call on the same thread; a per-thread scratch buffer is a
+/// suitable implementation for dynamically formatted results.
+///
+/// Returns true on success. On failure, write a string error to `out_result`.
 pub type CrushPluginFunc = extern "C" fn(args: *const FfiValue, arg_count: usize, out_result: *mut FfiValue) -> bool;
 
 #[repr(C)]

@@ -158,6 +158,12 @@ pub enum FastOp {
     MathRound,
     MathFloor,
     MathCeil,
+
+    // A `LoadLocal` that may run before its local is assigned (arg = local
+    // slot index): it fails with "load from uninitialised slot N" instead of
+    // reading null (CRUSH-zorro-55). Lowering emits it only for the loads
+    // `casm::assigned::loads_to_check` can't prove are preceded by a store.
+    LoadLocalChecked,
 }
 
 /// Compact instruction - 16 bytes total
@@ -338,7 +344,19 @@ pub enum LowerError {
     MissingArgument(String),
     InvalidJumpTarget(String),
     FunctionNotFound(String),
+    /// The program's kind table declares a Kind that can't run as a plain map
+    /// (COSM K1.3, `casm::cosm_unsupported_reason`): FastVM and the JIT,
+    /// which both run this lowering's output, don't implement Kinds yet.
+    CosmUnsupported(String),
+    /// The program uses a green-task construct (`spawn`/`yield`/`await`, issue
+    /// #161) that FastVM and the JIT — which both run this lowering's output —
+    /// can't service: the `Spawn`/`Await` requests these lower to have no host
+    /// loop, so a task would be silently skipped.
+    GreenTasksUnsupported(String),
 }
+
+/// The engines that run a [`LoweredProgram`], as a COSM refusal names them.
+const FASTVM_ENGINES: &str = "FastVM or the JIT";
 
 impl std::fmt::Display for LowerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -347,14 +365,70 @@ impl std::fmt::Display for LowerError {
             LowerError::MissingArgument(msg) => write!(f, "Missing argument: {}", msg),
             LowerError::InvalidJumpTarget(t) => write!(f, "Invalid jump target: {}", t),
             LowerError::FunctionNotFound(name) => write!(f, "Function not found: {}", name),
+            LowerError::CosmUnsupported(msg) => write!(f, "{}", msg),
+            LowerError::GreenTasksUnsupported(msg) => write!(f, "{}", msg),
         }
     }
 }
 
 impl std::error::Error for LowerError {}
 
+/// COSM K1.4: on the VMs `type_of` a struct instance is its Kind's name;
+/// here a struct is a map. A program with Kinds that asks for a type name is
+/// refused rather than answered differently.
+fn typeof_of_a_struct() -> LowerError {
+    LowerError::CosmUnsupported(format!(
+        "`type_of` in a program with Kinds isn't supported on {FASTVM_ENGINES}: a struct instance is a map \
+         here, while the scheduler VM and the portable VM name its Kind (CRUSH-zorro-43)"
+    ))
+}
+
+/// Separates the parts of a sealed struct's class name ([`sealed_class`]).
+const SEALED_SEP: char = '\u{1f}';
+
+/// COSM K1.4: the class name a struct map gets when its Kind is sealed —
+/// the Kind and its declared fields, which [`check_sealed_write`] reads back
+/// (FastVM and the JIT build struct instances as `Object`s; the class name is
+/// never printed).
+pub fn sealed_class(kind: &str, fields: &[&str]) -> String {
+    let mut class = format!("{SEALED_SEP}{kind}");
+    for f in fields {
+        class.push(SEALED_SEP);
+        class.push_str(f);
+    }
+    class
+}
+
+/// A field write to an `Object` of class `class_name`: `Err` with the shared
+/// message (`casm::sealed_field_error`) when the object is an instance of a
+/// sealed Kind that doesn't declare `field` — what the VMs refuse too.
+pub fn check_sealed_write(class_name: &str, field: &str) -> Result<(), String> {
+    let Some(rest) = class_name.strip_prefix(SEALED_SEP) else {
+        return Ok(());
+    };
+    let mut parts = rest.split(SEALED_SEP);
+    let kind = parts.next().unwrap_or_default();
+    let fields: Vec<&str> = parts.collect();
+    if fields.contains(&field) { Ok(()) } else { Err(casm::sealed_field_error(kind, field, &fields)) }
+}
+
+/// The struct map a sealed Kind's instance starts as: `NewStruct` with its
+/// [`sealed_class`]; `None` for any other Kind (a plain `NewObj`).
+fn sealed_new(module: Option<&crush_cosm::CosmModule>, kind: Option<&str>, symbols: &mut SymbolTables) -> Option<FastInstr> {
+    let fields = casm::sealed_fields(module?, kind?)?;
+    let idx = symbols.intern_string(&sealed_class(kind?, &fields));
+    Some(FastInstr::new(FastOp::NewStruct, idx as u64, 0))
+}
+
 /// Lower a CASM program to FastInstr representation
 pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
+    program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
+    program.refuse_green_task(FASTVM_ENGINES).map_err(LowerError::GreenTasksUnsupported)?;
+    if program.kind_table().is_some()
+        && program.functions.values().flat_map(|f| &f.body).any(|i| i.op == "type_of")
+    {
+        return Err(typeof_of_a_struct());
+    }
     let mut symbols = SymbolTables::new();
     let mut instructions = Vec::new();
     let mut label_positions: HashMap<String, usize> = HashMap::new();
@@ -402,15 +476,31 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
             symbols.get_or_create_local(param);
         }
 
-        for instr in &func.body {
-            let fast = lower_instruction(
-                instr,
-                func_name,
-                &mut symbols,
-                &label_positions,
-                &mut pending_jumps,
-                pc,
-            )?;
+        // CRUSH-zorro-55: a load that may run before its local is assigned
+        // is checked; the rest keep the unchecked fast path.
+        let to_check = casm::assigned::loads_to_check(func);
+
+        for (at, instr) in func.body.iter().enumerate() {
+            // COSM K1.4: a struct literal of a sealed Kind (`new_obj` tagged
+            // with it) remembers its declared fields, so a write of any
+            // other field is refused as on the VMs.
+            let tag = (instr.op == "new_obj").then(|| instr.args.get("kind").and_then(|v| v.as_str())).flatten();
+            let sealed = sealed_new(program.kind_table(), tag, &mut symbols);
+            let fast = match sealed {
+                Some(fast) => fast,
+                None => lower_instruction(
+                    instr,
+                    func_name,
+                    &mut symbols,
+                    &label_positions,
+                    &mut pending_jumps,
+                    pc,
+                )?,
+            };
+            let fast = match fast.op {
+                FastOp::LoadLocal if to_check[at] => FastInstr { op: FastOp::LoadLocalChecked, ..fast },
+                _ => fast,
+            };
             instructions.push(fast);
             pc += 1;
         }
@@ -455,6 +545,7 @@ pub fn lower_bytecode_program(
     program: &crate::bytecode::Program,
 ) -> Result<LoweredProgram, LowerError> {
     use crate::bytecode::*;
+    program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
     
     let mut symbols = SymbolTables::new();
     let mut instructions: Vec<FastInstr> = Vec::new();
@@ -587,6 +678,7 @@ pub fn lower_bytecode_program(
             SHL    => FastInstr::simple(FastOp::Shl),
             SHR    => FastInstr::simple(FastOp::Shr),
             
+            TYPEOF if program.kind_table().is_some() => return Err(typeof_of_a_struct()),
             TYPEOF => FastInstr::simple(FastOp::TypeOf),
             
             LOAD => {
@@ -594,7 +686,9 @@ pub fn lower_bytecode_program(
                     code[pc+1..pc+3].try_into().map_err(|_|
                         LowerError::MissingArgument("LOAD slot".into()))?,
                 ) as u64;
-                FastInstr::new(FastOp::LoadLocal, slot, 0)
+                // No definite-assignment pass over CVM1 bytecode: every load
+                // is checked (CRUSH-zorro-55).
+                FastInstr::new(FastOp::LoadLocalChecked, slot, 0)
             }
             STORE => {
                 let slot = u16::from_be_bytes(
@@ -739,6 +833,25 @@ pub fn lower_bytecode_program(
             AWAIT => FastInstr::simple(FastOp::Await),
             
             HALT => FastInstr::simple(FastOp::Halt),
+
+            // COSM K1.4 (CRUSH-zorro-43): struct instances are maps here. The
+            // shared rule (`refuse_cosm` above) already refused every Kind a
+            // map can't represent, so `CONSTRUCT k 0` / `NEW_RECORD k` of a
+            // remaining one is exactly `NEW_OBJ` (its fields follow as
+            // `SET_FIELD`s). Every
+            // other member op needs Kinds: refuse it, never drop it.
+            CONSTRUCT | NEW_RECORD if opcode == NEW_RECORD || code.get(pc + 3) == Some(&0) => {
+                let idx = u16::from_be_bytes([code[pc + 1], code[pc + 2]]) as usize;
+                let kind = program.consts.get(idx).map(String::as_str);
+                sealed_new(program.kind_table(), kind, &mut symbols).unwrap_or(FastInstr::simple(FastOp::NewObj))
+            }
+            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT | GET_SLOT
+            | SET_SLOT | IS_KIND | COPY | LOAD_KIND => {
+                return Err(LowerError::UnknownOpcode(format!(
+                    "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
+                     which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"
+                )));
+            }
             
             _ => FastInstr::simple(FastOp::Nop),
         };
@@ -876,6 +989,16 @@ fn lower_instruction(
                 func_start,
             );
         }
+
+        "make_closure" => Err(LowerError::UnknownOpcode(
+            "make_closure: function values aren't supported on FastVM or the JIT yet (CRUSH-251)".into(),
+        )),
+        "call_value" => Err(LowerError::UnknownOpcode(
+            "call_value: function values aren't supported on FastVM or the JIT yet (CRUSH-251)".into(),
+        )),
+        "call_value_apply" => Err(LowerError::UnknownOpcode(
+            "call_value_apply: dynamic array-splat calls aren't supported on FastVM or the JIT yet (CRUSH-293 D3)".into(),
+        )),
 
         "call" => {
             let name = instr
@@ -1268,7 +1391,11 @@ fn lower_instruction(
         }
 
         // VM control
-        "yield" => Ok(FastInstr::simple(FastOp::Yield)),
+        // issue #161: `yield` without a `spawn` is a cooperative-yield no-op
+        // (no other task to hand control to), so it lowers to nothing rather
+        // than a refusal — matching the scheduler and portable VM, where a lone
+        // `yield` continues immediately. `spawn` is refused up front.
+        "yield" => Ok(FastInstr::simple(FastOp::Nop)),
         "halt" => Ok(FastInstr::simple(FastOp::Halt)),
         "nop" | "label" => Ok(FastInstr::simple(FastOp::Nop)),
         "gc" => Ok(FastInstr::simple(FastOp::Gc)),

@@ -16,6 +16,26 @@
 > Sources: `ROADMAP.md` (M5–M11 specs), `research/2026-07-14-crush-ast-opportunities.md`
 > (ranked findings), CRUSH-71 audit (in flight, panini), dejavue timeline captures.
 
+## Rust SDK completion lane (CRUSH-xps identity)
+
+Detailed proposal: [xps-8–13 completion spec](designs/rust-parity-xps-8-13.md).
+These existing IDs belong to this box's `CRUSH-xps` lane, separate from the
+`CRUSH-zorro` and historical numeric ranges. No IDs are re-minted by this update.
+
+| ID | Dispatch state | Specification |
+|---|---|---|
+| CRUSH-xps-8 | In progress; proven dynamic casts, lengths and bounded unsigned values | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
+| CRUSH-xps-9 | In progress; shared Debug kernel and conservative descriptors | [Typed Debug and macro evaluation](tickets/CRUSH-xps-9-rust-debug-format.md) |
+| CRUSH-xps-10 | In review in #213; preserve implementation/evidence | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
+| CRUSH-xps-11 | In review in #213; preserve implementation/evidence | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |
+| CRUSH-xps-12 | In review in #213; preserve implementation/evidence | [Complete bodies and safe value-block refusal](tickets/CRUSH-xps-12-rust-expression-block-lowering.md) |
+| CRUSH-xps-13 | In review; all slices folded; shared kernels, typed dispatch, private C bridge; 820 scoped tests passed | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
+
+Implementation base: 2026-10-15 main `ca5c662`; the SDK stack through #233
+and design #237 are merged. The xps-10–12 review entries above retain their
+ticket closure gates; implementation merged in #213 does not complete their
+new review-exit matrices automatically.
+
 ## ID ledger
 
 | Range | Allocation |
@@ -41,7 +61,7 @@
 | 107   | CAST meta → packed Span (audit finding #2 — contract-coordinated; reshapes CRUSH-74's mechanism) |
 | 108   | ~~superseded (CRUSH-169)~~ Reconcile CRUSH-56's restoration source + dedupe against already-wired `crush-lang-sdk` stdcaps (found during `awesome-crush` exploration, s439) |
 | 109   | Disambiguate top-level `stdlib/` (polyglot transpiled modules) from CRUSH-56/57's native HostCap restoration work — includes an already-observed string-function naming overlap |
-| 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
+| 110–114 | awesome-crush toolchain findings (buffy): import-is-a-noop (110), semantics-vs-compiler builtin drift (111 — **reinforced 2026-10-16**: walker vector measured, `compile_cast` refuses walker-emitted `make_range` while `Compiler::new().compile` accepts; `walker_intrinsics` covers only `__crush_*__`), dotted builtins → unregistered caps (112), stdlib feature-gated off default (113), `len()` backend divergence (114) |
 | 115   | `io.read` — interactive stdin input capability | **Done 2026-08-21** — canonical implementation merged in #52 and released in v0.3.5; verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
 | 116   | `math.random`/`math.seed` — real numeric RNG | **Done 2026-08-24** — deterministic SplitMix64 stdlib caps, native source pipeline, and JS `Math.random()` lowering merged in v0.3.6. |
 | 117   | `conv.chr`/`conv.ord` — character ↔ codepoint | **Done 2026-08-24** — implemented across VM, PortableVM, Rust AOT, C AOT, and AOT-C in v0.3.6. |
@@ -65,6 +85,9 @@
 | 232–238 | 2026-10-09 use-case review (claude): agent capabilities — declare + preflight (232), pause-to-approve (233), AI-native fail closed (234), memory quota (235); polyglot — sandbox default (236), marshaling gaps (237), walker stubs + doc overclaims (238) |
 | 239–242 | 2026-10-09 scripting test drive (claude): stdin EOF vs blank line (239), fs.stat/append (240), stderr + run-summary noise (241), process.exec result type (242) |
 | 244–249 | 2026-10-09 CASM↔WASM test drive (claude): crush-web stdlib (244, done), crush-web grant preflight (245), WASM walker keeps only calls (246), .wasm read as UTF-8 (247), export-name mismatch (248), crush-walk-run exit status (249) |
+| 266   | Rust ↔ Crush interop audit and Rust crate access (user-directed, gates native extensions on CRUSH-179) |
+| 271   | Python/JS walker unary `+` and `~` refused by the compiler: `Unsupported op` on **both** entry points (buffy, 2026-10-16, from PR #263 review; distinct from CRUSH-111 — there the doors disagree, here both refuse; C walker's `__crush_pos__`/`__crush_bit_not__` route already works) |
+| xps  | Box-scoped Rust ↔ Crush pipeline: xps-1 manual host-approved plugins; xps-2 phased design; xps-3 shared SDK walker registry; xps-5 exact-or-loud harness (in review in #220, based on #213); xps-13 AOT mapped-capability parity; xps-6 lexical bindings in review in #224 (based on #220); xps-6..12 Rust parity, semantic-analysis, closure, and expression-lowering fixes; xps-4 gated shared-registry CLI dispatch; xps-3/10..12 in review in #213 |
 | 231 | s476 (kai): CI toolchain pin dead + 24 crates never run tests in CI |
 | 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
 
@@ -85,10 +108,10 @@
 
 | ID | What to verify | Note |
 |----|----------------|------|
-| CRUSH-11 | AOT-C string garbling repro (`--emit c` + ctypes) | ring-buffer fixes on HEAD; ticket says "needs re-verification" |
+| ~~CRUSH-11~~ | AOT-C string garbling repro | **DONE** — ticket marked Done 2026-08-07; repro independently re-verified 2026-10-16 (differential_aot ok) |
 | CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
-| CRUSH-30 | whether E-EXH-001 wildcard-warn satisfies the ticket | `missing_arms` is a documented stub pending a type registry — needs a scope ruling, then either close or re-scope |
-| CRUSH-35 | VISION.md walker table refresh | 6/7 gaps verified closed in code; table still shows all red |
+| ~~CRUSH-30~~ | exhaustive-match-sites lint | **DONE** (scope ruling 2026-10-16): opt-in wildcard lint E-EXH-001 satisfies intent; residue (narrowing/missing_arms/workspace tracking) minted as CRUSH-30a |
+| CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row *runtime* evidence — corrected after PR #263 review: 4/7 ✅, 1 partial (comprehensions: RHS/`return`/call-arg only), 2 🔴 (tuple unpacking, Uint8Array); ticket stays open, residual now includes tuple-unpacking lowering + the `compile_cast` vs `Compiler` entry-point divergence |
 
 ## In flight
 
@@ -140,14 +163,14 @@ the spine; most later work is gated on 73/77 existing.
 | ID | Title | Status |
 |----|-------|--------|
 | CRUSH-27 annotation nodes · 28 crush-index v0 · 29 codebase.* caps · 31 dejavue join · 32 AI opcodes · 33 DOM opcodes | | ALL DONE on HEAD (verified s412) |
-| CRUSH-30 | @exhaustive-match-sites lint | partial — see quick wins |
+| CRUSH-30 | @exhaustive-match-sites lint | DONE 2026-10-16 — residue → CRUSH-30a |
 | CRUSH-34 | spawn/await/yield wire-up | in progress — Commits 2 (5-tier wiring) + 3 (differential fixture) remain → ticket `## Dispatch` |
 
 ## M6 — Walker parity
 
 | ID | Title | Status | Gate | Dispatch |
 |----|-------|--------|------|--------|
-| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + VISION.md table refresh (6/7 verified closed) | open | — | ticket `## Dispatch` |
+| CRUSH-35 | Walker-lowering: residual = typed arrays (Uint8Array) + tuple unpacking + comprehension nested positions + VISION.md table refresh (4/7 ✅, 1 partial, 2 🔴 — runtime-verified) | open | — | ticket `## Dispatch` |
 | CRUSH-36 | LanguageAdapter unification | partial — Sub-Commit 3 + CLI py/pyw fix remain | — | ticket `## Dispatch` |
 | CRUSH-37 | Java walker | partial — skeleton landed, real parsing remains | CRUSH-36 | ticket `## Dispatch` |
 | CRUSH-38 | Kotlin walker | open (no crate yet) | CRUSH-37 | ticket `## Dispatch` |
@@ -207,6 +230,42 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-100 | Universal native compile CLI | CRUSH-99 |
 | CRUSH-101 | Notebook self-hosting pipeline | CRUSH-98 |
 | CRUSH-102 | Notebook cross-language state-sharing CI | CRUSH-101 |
+
+## JS/TS parity spike (2026-10-15 — CRUSH-zorro-4..23)
+
+Design + measured baseline: `research/2026-10-15-JS-TS-parity-spike.md` (54 probes: 15 match, 33 loud,
+6 silently wrong). Bar: VM exact vs `node`, AOT exact-or-loud, never silently wrong.
+
+**Parser decided 2026-10-15: option B.** One JS frontend on `boa_parser` 0.22 (CRUSH-250, widened, shared
+with bozo); swc only strips TS types.
+
+| Wave | ID | Title | Gate |
+|------|----|-------|------|
+| 0 | CRUSH-zorro-4 | Harness: feature corpus vs node, TS twin, AOT `js_parity.rs`, both lowerings during migration | — |
+| 1 | CRUSH-zorro-23 | Make silently mis-lowered constructs loud on the swc path (incl. blocks, labels, finally) | — |
+| 1 | CRUSH-zorro-9, 22, 10 | `js.*` runtime: `+` ToString, `&&`/`||`/`==`, console.log inspect | — |
+| 1 | CRUSH-zorro-26 | **AOT Rust/C read missing values as null where the VM errors** (found by the harness; backend-level, P0) | — |
+| — | CRUSH-zorro-37 | **Crush `match` ignores struct names** (P0, silent; found in the object-model survey #206) | — |
+| — | CRUSH-zorro-38 | **Python walker drops call keyword arguments** (P0, silent; `print(x, end="")`) | — |
+| 2 | **CRUSH-250** | The JS frontend: boa 0.22 + scope/semantic pass + builtin table; flip `.js` when ≥ swc | z-4 |
+| 2 | CRUSH-zorro-8 | TS: swc blanks types → boa lowering (`ts` feature) | CRUSH-250 |
+| 3 | CRUSH-zorro-5, 6, 7, 16, 18 | blocks/scoping, labels, finally, objects, params — in the new lowering | CRUSH-250 |
+| 3 | CRUSH-zorro-12..15, 17, 19 | operators, number model (owner decision), strings, arrays, builtins, errors (runtime part may start early) | CRUSH-250 |
+| 4 | CRUSH-zorro-20, 21 | closures + callbacks; TypeScript constructs | CRUSH-251 step 3; z-8 |
+| — | ~~CRUSH-zorro-11~~ | superseded by CRUSH-250 | — |
+
+## COSM — the Crush Object Semantic Model, phase K1 (2026-10-15 — CRUSH-zorro-40..44)
+
+Design: `docs/design/object-model.md` (#206). Objects are lowered to declarative Kinds, like code to CAST.
+Tickets zorro-40..49 are reserved for COSM.
+
+| ID | Title | Gate |
+|----|-------|------|
+| CRUSH-zorro-40 | K1.1 `crush-cosm` crate: schema, serde, validation (C3, conformance) | — |
+| CRUSH-zorro-41 | K1.2 Crush `impl` / `trait` / `@kind(…)` → COSM | zorro-40 (lowering) |
+| CRUSH-zorro-42 | K1.3 CASM + CVM1 carry the kind table; FastVM/JIT/AOT loud | zorro-40 |
+| CRUSH-zorro-43 | K1.4 VM: Records, Kinds, member ops, CONSTRUCT, receivers; struct patterns test the Kind (closes zorro-37) | zorro-42 |
+| CRUSH-zorro-44 | K1.5 `o.m(x)` resolves on the receiver | zorro-43, zorro-41 |
 
 ## Publish lane
 

@@ -3,6 +3,20 @@ use anyhow::{Result, bail};
 use crush_cast::*;
 use std::collections::HashMap;
 
+/// The marshaled output names a `@lang` block records in
+/// `meta["polyglot_outputs"]` (CRUSH-270) — an array of strings, empty when
+/// the block has no outputs.
+pub(crate) fn polyglot_outputs(meta: &HashMap<String, serde_json::Value>) -> Vec<String> {
+    meta.get("polyglot_outputs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub struct SemanticAnalyzer {
     structs: HashMap<String, HashMap<String, Type>>,
     functions: HashMap<String, (Vec<Type>, Type)>,
@@ -27,12 +41,32 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// COSM K1.4: a Kind built by a constructor function is called like one
+    /// (`Acc(5)` → `CONSTRUCT`), taking the constructor's parameters (after
+    /// `self`, for an initialiser).
+    pub fn declare_constructors(&mut self, module: &crush_cosm::CosmModule, program: &Program) {
+        for k in &module.kinds {
+            let Some((ctor, usage)) = casm::kind_constructor_in(module, &k.name) else { continue };
+            let Some(f) = program.functions.get(ctor.as_str()) else { continue };
+            let leading = usize::from(usage == casm::ConstructorUse::Initialiser);
+            let params = f.params.len().saturating_sub(leading);
+            self.functions.insert(k.name.clone(), (vec![Type::Any; params], Type::Any));
+        }
+    }
+
     pub fn check(&mut self, program: &Program) -> Result<()> {
-        // Register built-in functions
-        self.functions
-            .insert("len".to_string(), (vec![Type::Any], Type::Int));
-        self.functions
-            .insert("print".to_string(), (vec![Type::Any], Type::Null));
+        // A program that still has `impl` / `trait` nodes is checked as it
+        // will be compiled: lowered, with the methods as functions (COSM
+        // K1.2). `compile_cast_owned` lowers before checking, so this is only
+        // for callers that check a freshly parsed program directly.
+        if crate::cosm_lower::has_impl_or_trait(program) {
+            let mut lowered = program.clone();
+            crate::cosm_lower::lower(&mut lowered)?;
+            return self.check(&lowered);
+        }
+        // Built-in function names are not registered here any more: the checker
+        // consults `walker_intrinsics::BUILTINS`, the same table `compile_call`
+        // lowers from, so the two lists cannot drift apart (CRUSH-111).
 
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;
@@ -257,6 +291,9 @@ impl SemanticAnalyzer {
                 type_hint,
                 ..
             } => {
+                if matches!(value, Expression::Lambda { .. }) {
+                    self.define_var(name, Type::Any);
+                }
                 let expr_type = self.check_expr(value)?;
                 if *type_hint != CastType::Any {
                     let hinted_type = self.parse_cast_type(type_hint)?;
@@ -291,6 +328,14 @@ impl SemanticAnalyzer {
                 check_condition("While", &cond_type)?;
                 self.check_block(body)?;
             }
+            Statement::For { variable, iterable, body, .. } => {
+                let item_type = self.iterable_item_type(iterable)?;
+                self.enter_scope();
+                self.define_var(variable, item_type);
+                let result = body.iter().try_for_each(|stmt| self.check_stmt(stmt));
+                self.exit_scope();
+                result?;
+            }
             Statement::ExprStmt { expr, .. } => {
                 self.check_expr(expr)?;
             }
@@ -304,14 +349,14 @@ impl SemanticAnalyzer {
                 // A polyglot block's own body is opaque to Crush's checker
                 // (it's a different language's source text), but if a
                 // free-variable analysis pass (crush-lang-sdk::compile, for
-                // @python blocks) determined an output variable and
-                // recorded it in meta["polyglot_output"], that name is
+                // @python blocks) determined output variables and
+                // recorded them in meta["polyglot_outputs"], those names are
                 // real and must be declared here — otherwise every read of
-                // it later in the same scope reports as undefined, even
-                // though the compiler emits a `store` into exactly that
-                // name right after `exec_lang`.
-                if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
-                    self.define_var(output_var, Type::Any);
+                // them later in the same scope reports as undefined, even
+                // though the compiler emits a `store` into exactly those
+                // names right after `exec_lang`.
+                for output_var in polyglot_outputs(meta) {
+                    self.define_var(&output_var, Type::Any);
                 }
             }
             _ => {
@@ -337,9 +382,22 @@ impl SemanticAnalyzer {
             Expression::StringLiteral { .. } => Ok(Type::String),
             Expression::BoolLiteral { .. } => Ok(Type::Bool),
             Expression::NullLiteral { .. } => Ok(Type::Null),
-            Expression::Var { name, .. } => self
-                .resolve_var(name)
-                .ok_or_else(|| anyhow::anyhow!("Undefined variable: {}", name)),
+            Expression::Var { name, .. } => match self.resolve_var(name) {
+                Some(ty) => Ok(ty),
+                // A function's name used as a value (CRUSH-251).
+                None if self.functions.contains_key(name) => Ok(Type::Any),
+                // A built-in has no function value (#257): say so, with the
+                // lambda that gives it one, instead of "Undefined variable".
+                None => match crate::walker_intrinsics::builtin(name) {
+                    Some(b) => {
+                        let params = ["x", "y", "z"][..b.min_args.clamp(1, 3)].join(", ");
+                        Err(anyhow::anyhow!(
+                            "`{name}` is a built-in, not a function value; wrap it in a lambda: `|{params}| {name}({params})`"
+                        ))
+                    }
+                    None => Err(anyhow::anyhow!("Undefined variable: {}", name)),
+                },
+            },
             Expression::BinaryOp {
                 operator,
                 left,
@@ -431,7 +489,57 @@ impl SemanticAnalyzer {
                     _ => bail!("Unknown operator: {}", operator),
                 }
             }
-            Expression::Call { function, args, .. } => {
+            Expression::Call { function, args, meta } => {
+                if function == "len" && meta.get("rust_value_method").and_then(serde_json::Value::as_str) == Some("len") {
+                    if args.len() != 1 { bail!("Rust len method expects exactly 1 argument"); }
+                    self.check_expr(&args[0])?;
+                    return Ok(Type::Int);
+                }
+                let source_global = meta.get("rust_source_call") == Some(&serde_json::Value::Bool(true))
+                    && self.functions.contains_key(function);
+                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function).filter(|_| !source_global) {
+                    intrinsic.validate(function, args)?;
+                    if function == "__crush_apply__" {
+                        let callee_type = self.check_expr(&args[0])?;
+                        if !matches!(callee_type, Type::Function(_, _) | Type::Any) {
+                            bail!("__crush_apply__ callee must be a function value");
+                        }
+                        let args_type = self.check_expr(&args[1])?;
+                        if !matches!(args_type, Type::Array(_) | Type::Any) {
+                            bail!("__crush_apply__ arguments must be an array");
+                        }
+                        return Ok(Type::Any);
+                    }
+                    // Assignment's first argument names a destination. It is
+                    // not a load; Python's named-expression can bind a new name.
+                    if function == "__crush_assign__" {
+                        let ty = self.check_expr(&args[1])?;
+                        if let Expression::Var { name, .. } = &args[0] {
+                            if self.resolve_var(name).is_none() {
+                                self.define_var(name, ty);
+                            }
+                        }
+                        return Ok(Type::Null);
+                    }
+                    let types = args.iter()
+                        .map(|arg| self.check_expr(arg))
+                        .collect::<Result<Vec<_>>>()?;
+                    use crate::walker_intrinsics::ResultType;
+                    return Ok(match intrinsic.result {
+                        ResultType::Null => Type::Null,
+                        ResultType::Bool => Type::Bool,
+                        ResultType::First => types[0].clone(),
+                        ResultType::Branches => self.merge_types(&types[1], &types[2])
+                            .unwrap_or(Type::Any),
+                        ResultType::Any => Type::Any,
+                        ResultType::Int => {
+                            if !matches!(types[0], Type::Int | Type::Any) {
+                                bail!("{function} requires an integer operand");
+                            }
+                            Type::Int
+                        }
+                    });
+                }
                 let func_type = if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {
                     Some((arg_types, ret_type))
                 } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function) {
@@ -462,11 +570,52 @@ impl SemanticAnalyzer {
                         }
                     }
                     Ok(ret_type)
-                } else if let Some(Type::Any) = self.resolve_var(function) {
+                } else if self.resolve_var(function).is_some() {
+                    // A variable holding a function value (CRUSH-251). Its
+                    // static type isn't reliable here (a function returning a
+                    // lambda infers as null; a variable keeps its first type
+                    // after reassignment), so a non-function is caught at run
+                    // time: "<type> is not callable".
                     for arg in args {
                         self.check_expr(arg)?;
                     }
                     Ok(Type::Any)
+                } else if let Some(builtin) = crate::walker_intrinsics::builtin(function) {
+                    // A name `Compiler::compile_call` lowers inline (CRUSH-111).
+                    // Declared functions and variables were tried first, so they
+                    // still shadow it; the argument types themselves are the
+                    // compiler's business, not the checker's.
+                    builtin.check_arity(args.len())?;
+                    for arg in args {
+                        self.check_expr(arg)?;
+                    }
+                    use crate::walker_intrinsics::BuiltinRet;
+                    Ok(match builtin.ret {
+                        BuiltinRet::Null => Type::Null,
+                        BuiltinRet::Bool => Type::Bool,
+                        BuiltinRet::Int => Type::Int,
+                        BuiltinRet::Str => Type::String,
+                        BuiltinRet::Any => Type::Any,
+                        BuiltinRet::ArrayAny => Type::Array(Box::new(Type::Any)),
+                        BuiltinRet::ArrayInt => Type::Array(Box::new(Type::Int)),
+                        BuiltinRet::ArrayStr => Type::Array(Box::new(Type::String)),
+                    })
+                } else if let Some((receiver, _method)) = function.split_once('.') {
+                    // `obj.method(args)` — the compiler lowers this shape as
+                    // `load obj` + `cap_call method` (CRUSH-111). For a receiver
+                    // the walker generated itself, the name cannot be a source
+                    // typo, so accept it and let the runtime resolve the method.
+                    if crate::walker_intrinsics::is_generated_receiver(receiver) {
+                        if self.resolve_var(receiver).is_none() {
+                            bail!("Undefined variable: {}", receiver);
+                        }
+                        for arg in args {
+                            self.check_expr(arg)?;
+                        }
+                        Ok(Type::Any)
+                    } else {
+                        bail!("Undefined function: {}", function)
+                    }
                 } else {
                     bail!("Undefined function: {}", function)
                 }
@@ -483,6 +632,33 @@ impl SemanticAnalyzer {
                     current = self.merge_types(&current, &elem_ty).unwrap_or(Type::Any);
                 }
                 Ok(Type::Array(Box::new(current)))
+            }
+            Expression::Range { start, end, .. } => {
+                self.check_expr(start)?;
+                self.check_expr(end)?;
+                Ok(Type::Array(Box::new(Type::Int)))
+            }
+            Expression::Lambda { params, body, .. } => {
+                self.enter_scope();
+                let result = (|| {
+                    let mut param_types = Vec::new();
+                    for (name, ty) in params {
+                        let ty = self.parse_cast_type(ty)?;
+                        self.define_var(name, ty.clone());
+                        param_types.push(ty);
+                    }
+                    let mut returns = Vec::new();
+                    self.collect_return_types_in_order(body, &mut returns)?;
+                    for stmt in body {
+                        self.check_stmt(stmt)?;
+                    }
+                    let ret = returns.into_iter().reduce(|left, right| {
+                        self.merge_types(&left, &right).unwrap_or(Type::Any)
+                    }).unwrap_or(Type::Null);
+                    Ok(Type::Function(param_types, Box::new(ret)))
+                })();
+                self.exit_scope();
+                result
             }
             Expression::ObjectLiteral { properties, .. } => {
                 // Object literals are used for dynamic JSON construction; allow mixed types.
@@ -534,6 +710,13 @@ impl SemanticAnalyzer {
                 }
                 Ok(self.capability_return_type(name))
             }
+            Expression::MethodCall { target, args, .. } => {
+                self.check_expr(target)?;
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(Type::Any)
+            }
             // `!x` is always a bool (the VM negates truthiness, so the operand
             // may be anything); `-x` keeps a numeric operand's type. Falling
             // through to `Any` made `if !is_digit(c)` a type error once
@@ -552,6 +735,19 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// Bind loop variables to the element (or map key) type.
+    fn iterable_item_type(&mut self, iterable: &Expression) -> Result<Type> {
+        Ok(match self.check_expr(iterable)? {
+            Type::Array(item) | Type::List(item) | Type::Vector(item) | Type::Set(item) => *item,
+            Type::Map(key, _) => *key,
+            // Structs currently use the VM's map representation, so the
+            // existing loop lowering visits their field names.
+            Type::String | Type::Struct(_) => Type::String,
+            Type::Any | Type::Optional(_) | Type::Tuple(_) => Type::Any,
+            other => bail!("For requires an iterable, found {other}"),
+        })
+    }
+
     /// Return the known return type for a built-in capability name
     fn capability_return_type(&self, name: &str) -> Type {
         match name {
@@ -562,7 +758,7 @@ impl SemanticAnalyzer {
             "arr_slice" => Type::Array(Box::new(Type::Any)),
             "str.contains" => Type::Bool,
             "str.split" => Type::Array(Box::new(Type::String)),
-            "str.replace" | "str.join" => Type::String,
+            "str.replace" | "str.join" | "type_of" => Type::String,
             "str.len" | "len" => Type::Int,
             _ => Type::Any,
         }
@@ -672,6 +868,9 @@ impl SemanticAnalyzer {
         for stmt in stmts {
             match stmt {
                 Statement::VarDecl { name, value, .. } => {
+                    if matches!(value, Expression::Lambda { .. }) {
+                        self.define_var(name, Type::Any);
+                    }
                     let ty = self.check_expr(value)?;
                     self.define_var(name, ty);
                 }
@@ -721,11 +920,12 @@ impl SemanticAnalyzer {
                     body,
                     ..
                 } => {
-                    self.check_expr(iterable)?;
+                    let item_type = self.iterable_item_type(iterable)?;
                     self.enter_scope();
-                    self.define_var(variable, Type::Any);
-                    self.collect_return_types_in_order(body, out)?;
+                    self.define_var(variable, item_type);
+                    let result = self.collect_return_types_in_order(body, out);
                     self.exit_scope();
+                    result?;
                 }
                 Statement::TryCatch {
                     body,
@@ -743,13 +943,12 @@ impl SemanticAnalyzer {
                 }
                 Statement::LangBlock { meta, .. } => {
                     // See the matching arm in `check_stmt` for why this is
-                    // needed: a polyglot block's marshaled output variable
-                    // (meta["polyglot_output"]) is real and must be
-                    // declared, or any read of it later in this same
+                    // needed: a polyglot block's marshaled output variables
+                    // (meta["polyglot_outputs"]) are real and must be
+                    // declared, or any read of them later in this same
                     // return-type-inference walk reports as undefined.
-                    if let Some(output_var) = meta.get("polyglot_output").and_then(|v| v.as_str())
-                    {
-                        self.define_var(output_var, Type::Any);
+                    for output_var in polyglot_outputs(meta) {
+                        self.define_var(&output_var, Type::Any);
                     }
                 }
                 _ => {}
@@ -828,6 +1027,13 @@ fn collect_called_functions<'a>(stmts: &'a [Statement], out: &mut Vec<&'a str>) 
                 collect_called_in_expr(target, out);
                 collect_called_in_expr(callback, out);
             }
+            Statement::ImplBlock { methods, .. } | Statement::TraitDef { methods, .. } => {
+                for m in methods {
+                    if let Some(body) = &m.body {
+                        collect_called_functions(body, out);
+                    }
+                }
+            }
             Statement::LangBlock { .. }
             | Statement::Import { .. }
             | Statement::StructDef { .. }
@@ -863,7 +1069,15 @@ fn collect_called_in_expr<'a>(expr: &'a Expression, out: &mut Vec<&'a str>) {
             collect_called_in_expr(right, out);
         }
         Expression::UnaryOp { operand, .. } => collect_called_in_expr(operand, out),
-        Expression::CapabilityCall { args, .. } | Expression::VectorMath { args, .. } => {
+        Expression::CapabilityCall { args, .. }
+        | Expression::VectorMath { args, .. }
+        | Expression::Construct { args, .. } => {
+            for arg in args {
+                collect_called_in_expr(arg, out);
+            }
+        }
+        Expression::MethodCall { target, args, .. } => {
+            collect_called_in_expr(target, out);
             for arg in args {
                 collect_called_in_expr(arg, out);
             }

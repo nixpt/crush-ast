@@ -1,6 +1,5 @@
-//! #78: the documented lambda forms parse and run; what lambdas can't do yet
-//! (capture, being called through a variable) is a compile error, not a
-//! runtime fault or a bogus capability call.
+//! #78: the documented lambda forms parse and run. Calling a lambda through a
+//! variable works since CRUSH-251 step 2, capturing since step 3.
 
 use crush_lang_sdk::{HostCapsBuilder, Runtime};
 
@@ -11,10 +10,6 @@ fn run(source: &str) -> String {
         .run(&program)
         .expect("runs")
         .output
-}
-
-fn compile_err(source: &str) -> String {
-    format!("{:#}", crush_lang_sdk::compile::compile_crush_source(source).expect_err("should not compile"))
 }
 
 /// The issue's repro: was `unexpected token in expression: =>`.
@@ -49,15 +44,17 @@ fn main() {
     assert_eq!(out, "10\n");
 }
 
+// Was a compile error ("lambdas can't capture") until CRUSH-251 step 3.
 #[test]
-fn capture_is_a_compile_error() {
-    let err = compile_err("fn main() {\n  let k = 3\n  let f = |x| { return x + k }\n  print(f(1))\n}");
-    assert!(err.contains("lambdas can't capture"), "{err}");
-    assert!(err.contains("`k`"), "{err}");
+fn a_lambda_captures_an_enclosing_variable() {
+    let out = run("fn main() {\n  let k = 3\n  let f = |x| { return x + k }\n  print(f(1))\n}");
+    assert_eq!(out, "4\n");
 }
 
+// Was a compile error ("`f` is a variable, not a function") until CRUSH-251
+// step 2 gave the VMs function values.
 #[test]
-fn calling_a_function_value_is_a_compile_error() {
-    let err = compile_err("fn apply(f, v) { return f(v) }\nfn main() { print(apply(|x| => x * 2, 21)) }");
-    assert!(err.contains("`f` is a variable, not a function"), "{err}");
+fn calling_a_function_value_through_a_parameter() {
+    let out = run("fn apply(f, v) { return f(v) }\nfn main() { print(apply(|x| => x * 2, 21)) }");
+    assert_eq!(out, "42\n");
 }

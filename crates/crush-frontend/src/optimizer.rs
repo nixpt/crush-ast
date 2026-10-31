@@ -196,6 +196,13 @@ impl Optimizer {
                 Self::optimize_expr(&mut iterable);
                 let mut for_consts = consts.clone();
                 for_consts.remove(&variable);
+                // A loop-carried assignment cannot use a value known only
+                // before the first iteration (including walker intrinsics).
+                let mut mutated = HashSet::new();
+                Self::collect_mutated_vars(&body, &mut mutated);
+                for name in mutated {
+                    for_consts.remove(&name);
+                }
                 Self::optimize_block_with_consts(&mut body, &mut for_consts);
                 consts.clear();
 
@@ -286,7 +293,20 @@ impl Optimizer {
             Expression::UnaryOp { operand, .. } => {
                 Self::replace_vars_expr(operand, consts);
             }
-            Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } => {
+            Expression::Call { function, args, .. } => {
+                let skip = usize::from(crate::walker_intrinsics::lookup(function)
+                    .is_some_and(|intrinsic| intrinsic.variable_target));
+                for arg in args.iter_mut().skip(skip) {
+                    Self::replace_vars_expr(arg, consts);
+                }
+            }
+            Expression::CapabilityCall { args, .. } => {
+                for arg in args {
+                    Self::replace_vars_expr(arg, consts);
+                }
+            }
+            Expression::MethodCall { target, args, .. } => {
+                Self::replace_vars_expr(target, consts);
                 for arg in args {
                     Self::replace_vars_expr(arg, consts);
                 }
@@ -373,7 +393,9 @@ impl Optimizer {
                         _ => None,
                     };
 
-                    if let Some(val) = folded {
+                    // CAST/CASM JSON cannot encode NaN or infinity. Keep the
+                    // operation at runtime, where Value::Float represents them.
+                    if let Some(val) = folded.filter(|v| v.is_finite()) {
                         *expr = Expression::FloatLiteral {
                             value: val,
                             meta: meta.clone(),
@@ -450,6 +472,12 @@ impl Optimizer {
                     Self::optimize_expr(arg);
                 }
             }
+            Expression::MethodCall { target, args, .. } => {
+                Self::optimize_expr(target);
+                for arg in args {
+                    Self::optimize_expr(arg);
+                }
+            }
             Expression::ArrayLiteral { elements, .. } => {
                 for el in elements {
                     Self::optimize_expr(el);
@@ -496,6 +524,13 @@ impl Optimizer {
     }
 
     fn collect_mutated_in_expr(expr: &Expression, out: &mut HashSet<String>) {
+        if let Expression::Call { function, args, .. } = expr
+            && crate::walker_intrinsics::lookup(function)
+                .is_some_and(|intrinsic| intrinsic.writes_binding)
+            && let Some(Expression::Var { name, .. }) = args.first()
+        {
+            out.insert(name.clone());
+        }
         match expr {
             Expression::Match {
                 expression, arms, ..
@@ -522,8 +557,15 @@ impl Optimizer {
                 Self::collect_mutated_in_expr(target, out);
                 Self::collect_mutated_in_expr(index, out);
             }
+            Expression::MethodCall { target, args, .. } => {
+                Self::collect_mutated_in_expr(target, out);
+                for a in args {
+                    Self::collect_mutated_in_expr(a, out);
+                }
+            }
             Expression::Call { args: es, .. }
             | Expression::CapabilityCall { args: es, .. }
+            | Expression::Construct { args: es, .. }
             | Expression::VectorMath { args: es, .. }
             | Expression::Spawn { args: es, .. }
             | Expression::Pipeline { segments: es, .. }
@@ -558,8 +600,8 @@ impl Optimizer {
                     out.insert(name.clone());
                 }
                 Statement::LangBlock { meta, .. } => {
-                    if let Some(var) = meta.get("polyglot_output").and_then(|v| v.as_str()) {
-                        out.insert(var.to_string());
+                    for var in crate::semantics::polyglot_outputs(meta) {
+                        out.insert(var);
                     }
                 }
                 Statement::If { then_body, else_body, .. } => {
@@ -580,6 +622,19 @@ impl Optimizer {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod rust_method_float_tests {
+    use super::*;
+    #[test]
+    fn nonfinite_results_stay_runtime_operations() {
+        for (op, a, b) in [("*",1e308,1e308),("+",1e308,1e308),("-",-1e308,1e308)] {
+            let mut e=Expression::BinaryOp { operator:op.into(),left:Box::new(Expression::FloatLiteral { value:a,meta:Default::default() }),right:Box::new(Expression::FloatLiteral { value:b,meta:Default::default() }),meta:Default::default() };
+            Optimizer::optimize_expr(&mut e);
+            assert!(matches!(e,Expression::BinaryOp { .. }));
         }
     }
 }

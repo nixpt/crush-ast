@@ -696,6 +696,22 @@ fn collect_calls_in_stmt(
             collect_calls_in_expr(target, module, caller_fn, out);
             collect_calls_in_expr(callback, module, caller_fn, out);
         }
+        // COSM K1.2: method bodies are called from their lifted name
+        // (`Point::norm2`, `Shape::describe`).
+        Statement::ImplBlock { type_name, methods, .. } => {
+            for m in methods {
+                if let Some(body) = &m.body {
+                    collect_calls_in_stmts(body, module, &format!("{type_name}::{}", m.name), out);
+                }
+            }
+        }
+        Statement::TraitDef { name, methods, .. } => {
+            for m in methods {
+                if let Some(body) = &m.body {
+                    collect_calls_in_stmts(body, module, &format!("{name}::{}", m.name), out);
+                }
+            }
+        }
         Statement::LangBlock { .. }
         | Statement::Import { .. }
         | Statement::StructDef { .. }
@@ -723,7 +739,15 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(a, module, caller_fn, out);
             }
         }
-        Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } => {
+        Expression::CapabilityCall { args, .. }
+        | Expression::Spawn { args, .. }
+        | Expression::Construct { args, .. } => {
+            for a in args {
+                collect_calls_in_expr(a, module, caller_fn, out);
+            }
+        }
+        Expression::MethodCall { target, args, .. } => {
+            collect_calls_in_expr(target, module, caller_fn, out);
             for a in args {
                 collect_calls_in_expr(a, module, caller_fn, out);
             }

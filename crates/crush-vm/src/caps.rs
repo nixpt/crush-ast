@@ -54,6 +54,104 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "Python print: space-separated args, True/False/None spelling",
         });
         reg(CapabilitySpec {
+            name: "py.print_sep_end",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "Python print with sep= / end=: (sep, end, *values); null = default (CRUSH-zorro-38)",
+        });
+        reg(CapabilitySpec {
+            name: "lang.marshal",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "lang.marshal(value, name): copy a value across an inline-lowered polyglot block's boundary as JSON would; loud for a value JSON can't carry (CRUSH-272)",
+        });
+        reg(CapabilitySpec {
+            name: "lang.capture_begin",
+            argc: Some(2),
+            returns: false,
+            privileged: false,
+            summary: "lang.capture_begin(lang, line): hold this thread's output for an inline-lowered polyglot block, so it prints what EXEC_LANG prints (#312)",
+        });
+        reg(CapabilitySpec {
+            name: "lang.capture_end",
+            argc: Some(0),
+            returns: false,
+            privileged: false,
+            summary: "lang.capture_end(): emit the block's held output trimmed, with no trailing newline, as EXEC_LANG does (#312)",
+        });
+        reg(CapabilitySpec {
+            name: "parallel_map",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "parallel_map(items, f): f(item) for each item in its own VM (share-nothing), results in order (#175)",
+        });
+        reg(CapabilitySpec {
+            name: "js.div",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a / b: an exact int quotient stays an int, otherwise float",
+        });
+        reg(CapabilitySpec {
+            name: "js.add",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a + b: string concatenation with JS ToString when either side is a string, else numeric",
+        });
+        reg(CapabilitySpec {
+            name: "js.truthy",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript truthiness (0, NaN, '', null, false are falsy; arrays and objects truthy)",
+        });
+        reg(CapabilitySpec {
+            name: "js.loose_eq",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a == b for primitives (abstract equality); objects by identity",
+        });
+        reg(CapabilitySpec {
+            name: "js.strict_eq",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a === b (strict equality): no coercion, different types are false, objects by identity",
+        });
+        reg(CapabilitySpec {
+            name: "js.format",
+            argc: None,
+            returns: true,
+            privileged: false,
+            summary: "the line console.log(args...) prints: strings as-is, other values like node's util.inspect",
+        });
+        reg(CapabilitySpec {
+            name: "conv.text",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "value as text in a language style (\"js\" / \"rust\"): numbers as that language prints them",
+        });
+        reg(CapabilitySpec {
+            name: "seq.slice",
+            argc: Some(4),
+            returns: true,
+            privileged: false,
+            summary: "Python slice target[start:stop:step] on a string or array (bounds/step may be null)",
+        });
+        reg(CapabilitySpec {
+            name: "math.power",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "a ** b: exact for int ** non-negative int, float otherwise",
+        });
+        reg(CapabilitySpec {
             name: "math.floordiv",
             argc: Some(2),
             returns: true,

@@ -175,7 +175,13 @@ impl JitEngine {
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
-            let msg = if ctx.error == 3 {
+            let msg = if ctx.error == runtime::ERR_COSM || ctx.error == runtime::ERR_UNINIT {
+                runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+            } else if ctx.error == runtime::ERR_DIV_ZERO {
+                "division by zero".to_string()
+            } else if ctx.error == runtime::ERR_ARITH_OVERFLOW {
+                "arithmetic overflow".to_string()
+            } else if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
             } else if ctx.error == 4 {
                 "Capability call failed".to_string()
@@ -256,7 +262,13 @@ impl JitEngine {
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
-            let msg = if ctx.error == 3 {
+            let msg = if ctx.error == runtime::ERR_COSM || ctx.error == runtime::ERR_UNINIT {
+                runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+            } else if ctx.error == runtime::ERR_DIV_ZERO {
+                "division by zero".to_string()
+            } else if ctx.error == runtime::ERR_ARITH_OVERFLOW {
+                "arithmetic overflow".to_string()
+            } else if ctx.error == 3 {
                 "Uncaught exception (no handler)".to_string()
             } else if ctx.error == 4 {
                 "Capability call failed".to_string()
@@ -366,6 +378,95 @@ mod tests {
     fn run_jit(prog: &LoweredProgram) -> FastYield {
         let engine = JitEngine::new().expect("JitEngine::new");
         engine.run(prog).expect("JIT execution should not fail")
+    }
+
+    // ── CRUSH-zorro-55: a checked load of an unassigned local fails ─────────
+
+    /// Run on the JIT, asserting it compiled rather than fell back to FastVM.
+    fn run_jit_compiled(prog: &LoweredProgram) -> FastYield {
+        let engine = JitEngine::new().expect("JitEngine::new");
+        let r = engine.run(prog).expect("JIT execution should not fail");
+        assert_eq!(engine.compilation_count(), 1, "the JIT must compile this, not fall back");
+        r
+    }
+
+    fn assert_uninit(r: FastYield, slot: u64, engine: &str) {
+        let want = format!("load from uninitialised slot {slot}");
+        assert!(
+            matches!(&r, FastYield::Error(crush_vm::fastvm::FastError::ExecutionError(m)) if *m == want),
+            "{engine}: want `{want}`, got {r:?}"
+        );
+    }
+
+    /// `g(c) { if c { x = 7 } return x }` (`x` read by a checked load), called
+    /// as `g(true) + g(second)`: both calls use the same JIT frame.
+    fn reused_frame_prog(second: bool) -> LoweredProgram {
+        make_multi_fn(
+            vec![
+                // g (PC 0-6, arity 1)
+                (FastOp::StoreLocal, 0, 0),           // 0: c
+                (FastOp::LoadLocal, 0, 0),            // 1
+                (FastOp::JumpIfNot, 5, 0),            // 2
+                (FastOp::PushInt, 7, 0),              // 3
+                (FastOp::StoreLocal, 1, 0),           // 4: x = 7
+                (FastOp::LoadLocalChecked, 1, 0),     // 5: x
+                (FastOp::Return, 0, 0),               // 6
+                // main (PC 7-12)
+                (FastOp::PushBool, 1, 0),             // 7
+                (FastOp::Call, 0, 1),                 // 8: g(true)
+                (FastOp::PushBool, second as u64, 0), // 9
+                (FastOp::Call, 0, 1),                 // 10: g(second)
+                (FastOp::Add, 0, 0),                  // 11
+                (FastOp::Halt, 0, 0),                 // 12
+            ],
+            vec!["g", "main"],
+            vec![("g", 0, 7, 1), ("main", 7, 13, 0)],
+            7,
+        )
+    }
+
+    #[test]
+    fn a_reused_frame_does_not_leak_the_previous_calls_local() {
+        // Without re-marking the frame on entry, the JIT read the first
+        // call's 7 and returned 14.
+        let prog = reused_frame_prog(false);
+        assert_uninit(run_fastvm(&prog), 1, "fastvm");
+        assert_uninit(run_jit_compiled(&prog), 1, "jit");
+        let prog = reused_frame_prog(true);
+        assert_eq!(run_fastvm(&prog), FastYield::Finished(Some(RuntimeValue::Int(14))));
+        assert_eq!(run_jit_compiled(&prog), FastYield::Finished(Some(RuntimeValue::Int(14))));
+    }
+
+    #[test]
+    fn a_checked_load_in_main_tells_unassigned_from_stored_null() {
+        let unassigned = make_prog(vec![(FastOp::LoadLocalChecked, 0, 0), (FastOp::Halt, 0, 0)]);
+        assert_uninit(run_fastvm(&unassigned), 0, "fastvm");
+        assert_uninit(run_jit_compiled(&unassigned), 0, "jit");
+        for (push, want) in [((FastOp::PushNull, 0), RuntimeValue::Null), ((FastOp::PushInt, 3), RuntimeValue::Int(3))] {
+            let prog = make_prog(vec![
+                (push.0, push.1, 0),
+                (FastOp::StoreLocal, 0, 0),
+                (FastOp::LoadLocalChecked, 0, 0),
+                (FastOp::Halt, 0, 0),
+            ]);
+            assert_eq!(run_fastvm(&prog), FastYield::Finished(Some(want.clone())));
+            assert_eq!(run_jit_compiled(&prog), FastYield::Finished(Some(want)));
+        }
+    }
+
+    #[test]
+    fn a_checked_load_past_the_old_frame_stride_is_a_real_slot() {
+        // At the old fixed stride of 8, slot 9 aliased the next JIT frame, so
+        // the JIT refused the program (CRUSH-zorro-55). Frames are now sized to
+        // the program's locals (CRUSH-295), so slot 9 is a real slot: it
+        // compiles and reads as unassigned, exactly like slot 0.
+        let prog = make_prog(vec![(FastOp::LoadLocalChecked, 9, 0), (FastOp::Halt, 0, 0)]);
+        assert!(crate::compiler::JitCompiler::new()
+            .unwrap()
+            .compile(&prog)
+            .is_ok());
+        assert_uninit(run_fastvm(&prog), 9, "fastvm");
+        assert_uninit(run_jit_compiled(&prog), 9, "jit");
     }
 
     // ── Individual instruction tests ──────────────────────────────────────────
@@ -2489,7 +2590,7 @@ mod tests {
     /// recursion / local save/restore.
     /// NOTE: This test is `#[ignore]`d because recursive JIT calls have a
     /// Cranelift GVN issue.  The frame-relative locals implementation in
-    /// compiler.rs (FRAME_LOCALS=8, lload/lstore use call_stack_top as
+    /// compiler.rs (frame_locals, lload/lstore use call_stack_top as
     /// frame index) is structurally correct and passes all non-recursive
     /// multi-function tests (87/89).  However, for recursive calls,
     /// CRUSH-17 GVN/LICM: 7 approaches attempted, none have defeated

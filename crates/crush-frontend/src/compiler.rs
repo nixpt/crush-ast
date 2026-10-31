@@ -4,6 +4,18 @@ use casm::{Function as CasmFunction, Instruction, Manifest, OpCode, Program as C
 use crush_cast::*;
 use std::collections::{HashMap, HashSet};
 
+/// Device-side GPU intrinsics lowered to `ptx_*` CASM ops (CRUSH-zorro-3). Host-side
+/// `gpu.launch` is deliberately NOT here: it stays an ordinary capability call.
+const GPU_INTRINSICS: &[&str] = &[
+    "gpu.thread_idx",
+    "gpu.block_idx",
+    "gpu.block_dim",
+    "gpu.global_id",
+    "gpu.load_f32",
+    "gpu.store_f32",
+    "gpu.f32",
+];
+
 pub type CompileError = anyhow::Error;
 
 pub struct Compiler {
@@ -26,6 +38,37 @@ pub struct Compiler {
     /// from inside a lambda is a capture we can't honour yet (CRUSH-251) — it is
     /// reported at compile time instead of faulting at run time.
     lambda_outer_vars: Vec<HashSet<String>>,
+    /// CRUSH-251 step 1: `let f = |x| ..` binds `f` to a uniquely lifted
+    /// `__lambda_N_f` in the current scope (one map per function / lambda
+    /// body, innermost last). Lambdas used to be lifted *as* `f`, so two
+    /// functions' `let h = ..` lambdas overwrote each other and a `let f`
+    /// lambda replaced a top-level `fn f` program-wide. `None` is a tombstone:
+    /// `f` is bound to something else in that scope (`let f = 5`, a parameter
+    /// named `f`), so an outer alias must not be found through it.
+    lambda_aliases: Vec<HashMap<String, Option<String>>>,
+    /// Program-wide counter for unique lambda names.
+    lambda_counter: usize,
+    /// Names bound more than once in the top-level function being compiled
+    /// (see `rebound_names`): a lambda bound to one gets no alias.
+    rebound: HashSet<String>,
+    /// Arity of every program function (top-level and nested defs), for
+    /// `make_closure` when a function's name is used as a value.
+    function_arity: HashMap<String, usize>,
+    /// CRUSH-251 step 3: variables of the function being compiled that some
+    /// closure captures by reference (see `boxed_names`). Their slots hold a
+    /// cell; loads and stores go through it (`load_cell` / `store_cell`).
+    boxed: HashSet<String>,
+    /// Names each enclosing scope binds (function, then lambda bodies,
+    /// innermost last) — what a lambda can capture.
+    scopes: Vec<HashSet<String>>,
+    /// COSM K1.2 (CRUSH-zorro-41): the module the last compiled program's
+    /// `struct` / `impl` / `trait` declarations lowered to.
+    cosm: Option<crush_cosm::CosmModule>,
+    /// Names of methods (with `self`) defined in the program's `impl`s. A
+    /// `x.m(…)` call naming one compiles to `call_member` (COSM K1.4): the
+    /// method resolves on the receiver's Kind, never as the global
+    /// capability `m`.
+    receiver_methods: std::collections::BTreeSet<String>,
 }
 
 struct LoopInfo {
@@ -52,15 +95,185 @@ impl Compiler {
             invariant_runtime: false,
             lambdas: HashMap::new(),
             lambda_outer_vars: Vec::new(),
+            lambda_aliases: Vec::new(),
+            lambda_counter: 0,
+            rebound: HashSet::new(),
+            function_arity: HashMap::new(),
+            boxed: HashSet::new(),
+            scopes: Vec::new(),
+            cosm: None,
+            receiver_methods: Default::default(),
         }
+    }
+
+    /// The COSM module of the last compiled program (COSM K1.2): `None` when
+    /// it declares no struct, impl or trait.
+    pub fn cosm_module(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref()
+    }
+
+    /// The program's Kind named `name` (COSM K1.4).
+    fn kind(&self, name: &str) -> Option<&crush_cosm::KindDecl> {
+        self.cosm.as_ref().and_then(|m| m.kind(name))
+    }
+
+    /// Whether the program declares a `value(copy)` / `value(move)` Kind: then
+    /// assignment, argument passing and `return` copy the value (`copy` — a
+    /// no-op on anything but an instance of such a Kind). The compiler doesn't
+    /// know a variable's Kind statically, so with no such Kind in the program
+    /// it emits nothing and every other program compiles exactly as before.
+    fn copies_values(&self) -> bool {
+        self.cosm.as_ref().is_some_and(|m| {
+            m.kinds.iter().any(|k| {
+                matches!(
+                    k.semantics,
+                    crush_cosm::Semantics::Value(crush_cosm::ValueMode::Copy | crush_cosm::ValueMode::Move)
+                )
+            })
+        })
+    }
+
+    /// `copy` after a value that is assigned, passed or returned (see
+    /// [`Compiler::copies_values`]).
+    fn emit_value_copy(&self, instrs: &mut Vec<Instruction>, meta: &HashMap<String, serde_json::Value>) {
+        if self.copies_values() {
+            instrs.push(self.create_instr("copy", serde_json::json!({}), meta));
+        }
+    }
+
+    /// An argument: the expression, copied if it is a value-semantics instance.
+    fn compile_arg(&mut self, arg: &Expression, instrs: &mut Vec<Instruction>) -> Result<()> {
+        self.compile_expr(arg, instrs)?;
+        self.emit_value_copy(instrs, &HashMap::new());
+        Ok(())
+    }
+
+    /// The Kind `C(…)` constructs: a Kind built by a constructor function
+    /// (`@kind(construct: ctor(f) | js_new(f) | py_new_init(…))`), when no
+    /// function of that name shadows it.
+    fn constructed_kind(&self, function: &str) -> Option<String> {
+        let k = self.kind(function)?;
+        let constructed = !matches!(k.construct, crush_cosm::Construct::Literal);
+        (constructed && !self.local_functions.contains(function) && !self.declared_vars.contains(function))
+            .then(|| k.name.clone())
+    }
+
+    /// Compile a CAST program whose `impl` / `trait` declarations
+    /// [`crate::cosm_lower::lower`] has already lowered to `cosm` (methods
+    /// lifted into `program.functions`).
+    pub fn compile_lowered(
+        &mut self,
+        program: Program,
+        cosm: Option<crush_cosm::CosmModule>,
+    ) -> Result<CasmProgram> {
+        if let Some(module) = &cosm {
+            crate::cosm_lower::refuse_unimplemented_strategies(module)?;
+        }
+        self.receiver_methods =
+            cosm.as_ref().map(crate::cosm_lower::receiver_methods).unwrap_or_default();
+        self.cosm = cosm;
+        self.compile_program(program)
     }
 
     /// #78: a lambda body may not read or assign the enclosing function's
     /// variables — lambdas don't capture yet (CRUSH-251).
+    /// CRUSH-251 step 1: a `let`-bound lambda is a compile-time alias, resolved
+    /// in source order — so reassigning it (in a loop, a branch, or even
+    /// straight-line) would make calls silently use the wrong lambda. Until
+    /// function values exist (step 2) that is a loud error.
+    fn reject_lambda_alias_reassignment(&self, name: &str) -> Result<()> {
+        if self.resolve_lambda_alias(name).is_some() {
+            bail!(
+                "reassigning `{name}`, which is bound to a lambda, needs function values \
+                 (CRUSH-251 step 2); bind the new lambda to a different name"
+            );
+        }
+        Ok(())
+    }
+
+    /// Scope entry for boxed variables (CRUSH-251 step 3): a boxed parameter's
+    /// incoming value is wrapped in a cell, a boxed local starts as a cell
+    /// holding null. These stores are `raw` (they write the cell itself).
+    fn emit_cell_init(
+        &self,
+        params: &[String],
+        locals: &HashSet<String>,
+        instrs: &mut Vec<Instruction>,
+        meta: &HashMap<String, serde_json::Value>,
+    ) {
+        for p in params.iter().filter(|p| self.boxed.contains(*p)) {
+            instrs.push(self.create_instr("load", serde_json::json!({"name": p, "raw": true}), meta));
+            instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("store", serde_json::json!({"name": p, "raw": true}), meta));
+        }
+        let mut boxed_locals: Vec<&String> = locals
+            .iter()
+            .filter(|l| self.boxed.contains(*l) && !params.contains(*l))
+            .collect();
+        boxed_locals.sort();
+        for l in boxed_locals {
+            instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("store", serde_json::json!({"name": l, "raw": true}), meta));
+        }
+    }
+
+    /// Route every load / store of a boxed variable from `from` on through its
+    /// cell. Renaming in place keeps instruction indices (jump targets) valid.
+    fn rewrite_cells(&self, instrs: &mut [Instruction], from: usize) {
+        if self.boxed.is_empty() {
+            return;
+        }
+        for instr in &mut instrs[from..] {
+            let raw = instr.args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
+            let boxed = instr.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| self.boxed.contains(n));
+            if raw || !boxed {
+                continue;
+            }
+            match instr.op.as_str() {
+                "load" => instr.op = "load_cell".to_string(),
+                "store" => instr.op = "store_cell".to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Set up a function-level scope (a top-level fn or a nested `def`):
+    /// boxed variables, the scope's names, cell init after the param stores.
+    /// Returns where the body starts (for `rewrite_cells`).
+    fn enter_function_scope(
+        &mut self,
+        params: &[(String, CastType)],
+        body: &[Statement],
+        instrs: &mut Vec<Instruction>,
+        meta: &HashMap<String, serde_json::Value>,
+    ) -> usize {
+        let pnames: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
+        let body_json = serde_json::to_value(body).unwrap_or_default();
+        self.boxed = boxed_names(&pnames, &body_json);
+        let mut level = Level::default();
+        scan_level(&body_json, &mut level);
+        let locals: HashSet<String> = level.decls.union(&level.assigns).cloned().collect();
+        self.scopes = vec![pnames.iter().cloned().chain(locals.iter().cloned()).collect()];
+        self.emit_cell_init(&pnames, &locals, instrs, meta);
+        instrs.len()
+    }
+
+    /// The lifted name a `let`-bound lambda alias resolves to, innermost scope first.
+    fn resolve_lambda_alias(&self, name: &str) -> Option<String> {
+        self.lambda_aliases
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .cloned()
+            .flatten()
+    }
+
     fn check_lambda_capture(&self, name: &str) -> Result<()> {
         if !self.lambda_outer_vars.is_empty()
             && !self.declared_vars.contains(name)
             && !self.local_functions.contains(name)
+            && self.resolve_lambda_alias(name).is_none()
             && self.lambda_outer_vars.iter().any(|outer| outer.contains(name))
         {
             bail!(
@@ -81,31 +294,43 @@ impl Compiler {
         self
     }
 
+    /// Compile a CAST program to CASM. `impl` / `trait` declarations are
+    /// lowered to COSM first (see [`Compiler::cosm_module`]).
     pub fn compile(&mut self, mut program: Program) -> Result<CasmProgram> {
+        // A walker-supplied COSM module rides on the CAST program
+        // (CRUSH-277 S1); merge it with what the surface syntax declares
+        // rather than dropping it — the same merge `compile_cast_with_cosm`
+        // performs.
+        let walker_cosm = program.cosm.take();
+        let derived_cosm = crate::cosm_lower::lower(&mut program)?;
+        let cosm = crate::cosm_lower::merge_walker_module(walker_cosm, derived_cosm)?;
+        self.compile_lowered(program, cosm)
+    }
+
+    fn compile_program(&mut self, mut program: Program) -> Result<CasmProgram> {
         self.local_functions.clear();
         self.lambdas.clear();
-        for name in program.functions.keys() {
+        self.lambda_aliases.clear();
+        self.lambda_counter = 0;
+        self.function_arity.clear();
+        for (name, func) in &program.functions {
             self.local_functions.insert(name.clone());
+            self.function_arity.insert(name.clone(), func.params.len());
         }
         // Pre-pass: track VarDecls and populate LangBlock variables
         for func in program.functions.values_mut() {
-            let mut declared: Vec<String> = Vec::new();
             self.declared_vars.clear();
             for stmt in &mut func.body {
                 match stmt {
                     Statement::VarDecl { name, .. } => {
-                        declared.push(name.clone());
                         self.declared_vars.insert(name.clone());
                     }
                     Statement::Assign { target, .. } => {
-                        declared.push(target.clone());
                         self.declared_vars.insert(target.clone());
                     }
-                    Statement::FunctionDef { name, .. } => {
+                    Statement::FunctionDef { name, params, .. } => {
                         self.local_functions.insert(name.clone());
-                    }
-                    Statement::LangBlock { variables, .. } if variables.is_empty() => {
-                        *variables = declared.clone();
+                        self.function_arity.insert(name.clone(), params.len());
                     }
                     _ => {}
                 }
@@ -114,15 +339,25 @@ impl Compiler {
 
         let mut debug_info = DebugInfo::new();
         let mut source_files: HashMap<String, usize> = HashMap::new();
-        let mut casm_program = CasmProgram {
-            version: program.cast_version,
-            functions: HashMap::new(),
-            lang: program.lang,
-            manifest: Manifest::default(),
-        };
+        let mut casm_program = CasmProgram::new();
+        // The CASM `version` is the CASM schema version, not the CAST one:
+        // a walker's CAST carries `cast_version` "0.2", which the CASM
+        // load gate (VER-02) would refuse on any round trip (CRUSH-278).
+        casm_program.version = casm::CASM_VERSION.to_string();
+        casm_program.lang = program.lang;
+        // COSM K1.3 (CRUSH-zorro-42): the kind table travels with the program.
+        casm_program.cosm = self.cosm.clone();
 
-        for (name, func) in program.functions {
+        // Name order, not `HashMap` order: temporaries and lambdas are numbered
+        // by one counter across functions, so the order decides their names, and
+        // the same source must compile to the same CASM every time (the AOT
+        // build cache is keyed on the code generated from it).
+        let mut functions: Vec<_> = program.functions.into_iter().collect();
+        functions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        for (name, func) in functions {
             let mut instrs = Vec::new();
+            self.lambda_aliases.push(HashMap::new());
+            self.rebound = rebound_names(&func.params, &func.body);
 
             // First pass: Handle nested FunctionDef nodes
             for stmt in &func.body {
@@ -141,9 +376,15 @@ impl Compiler {
                             meta,
                         ));
                     }
-                    for inner_stmt in body {
-                        self.compile_stmt(inner_stmt, &mut func_instrs)?;
-                    }
+                    self.lambda_aliases
+                        .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
+                    let body_start = self.enter_function_scope(params, body, &mut func_instrs, meta);
+                    let nested: Result<()> = body
+                        .iter()
+                        .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                    self.lambda_aliases.pop();
+                    nested?;
+                    self.rewrite_cells(&mut func_instrs, body_start);
                     self.ensure_return(&mut func_instrs, Some(meta));
                     self.record_debug_info_for_function(
                         name,
@@ -178,6 +419,11 @@ impl Compiler {
                     &func.meta,
                 ));
             }
+            let body_start = if func.is_async {
+                0
+            } else {
+                self.enter_function_scope(&func.params, &func.body, &mut instrs, &func.meta)
+            };
 
             // Optionally emit `cap_call "invariant.evaluate"` for every
             // `@invariant` that targets this function name AND carries a
@@ -227,12 +473,15 @@ impl Compiler {
                         &func.meta,
                     ));
                 }
+                let inner_start =
+                    self.enter_function_scope(&func.params, &func.body, &mut inner_instrs, &func.meta);
 
                 for stmt in &func.body {
                     if !matches!(stmt, Statement::FunctionDef { .. }) {
                         self.compile_stmt(stmt, &mut inner_instrs)?;
                     }
                 }
+                self.rewrite_cells(&mut inner_instrs, inner_start);
 
                 self.ensure_return(&mut inner_instrs, Some(&func.meta));
                 self.record_debug_info_for_function(&inner_name, &inner_instrs, &mut debug_info, &mut source_files);
@@ -248,7 +497,8 @@ impl Compiler {
                     },
                 );
 
-                for (param_name, _) in &func.params {
+                // Last-first, as for a call (see `Expression::Spawn`).
+                for (param_name, _) in func.params.iter().rev() {
                     instrs.push(self.create_instr(
                         "load",
                         serde_json::json!({"name": param_name}),
@@ -287,6 +537,7 @@ impl Compiler {
                         self.compile_stmt(stmt, &mut instrs)?;
                     }
                 }
+                self.rewrite_cells(&mut instrs, body_start);
 
                 self.ensure_return(&mut instrs, Some(&func.meta));
                 self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
@@ -302,6 +553,7 @@ impl Compiler {
                     },
                 );
             }
+            self.lambda_aliases.pop();
         }
 
         // Merge lambdas
@@ -442,7 +694,28 @@ impl Compiler {
                     &HashMap::new(),
                 ));
             }
-            Pattern::Struct { name: _, fields } => {
+            Pattern::Struct { name, fields } => {
+                // COSM K1.4 (closes CRUSH-zorro-37): a struct pattern tests the
+                // value's Kind first — fields alone used to decide, so the first
+                // arm with the same field names won, whatever the struct.
+                if self.kind(name).is_none() {
+                    bail!(
+                        "struct pattern `{name} {{ … }}`: no struct `{name}` is declared, so no value \
+                         can match it (a struct pattern tests the value's Kind)"
+                    );
+                }
+                instrs.push(self.create_instr(
+                    "load",
+                    serde_json::json!({"name": matched_val}),
+                    &HashMap::new(),
+                ));
+                instrs.push(self.create_instr("is_kind", serde_json::json!({"kind": name}), &HashMap::new()));
+                fail_jumps.push(instrs.len());
+                instrs.push(self.create_instr(
+                    "jmp_if_not",
+                    serde_json::json!({"target": 0}),
+                    &HashMap::new(),
+                ));
                 for (field_name, sub_pattern) in fields {
                     instrs.push(self.create_instr(
                         "load",
@@ -537,15 +810,40 @@ impl Compiler {
                 name, value, meta, ..
             } => {
                 self.declared_vars.insert(name.clone());
+                // `let f = 5` after `let f = |x| ..`: `f` is no longer the lambda,
+                // so a later `f(..)` must not call it (a new lambda re-adds it).
+                if !matches!(value, Expression::Lambda { .. }) {
+                    if let Some(scope) = self.lambda_aliases.last_mut() {
+                        scope.insert(name.clone(), None);
+                    }
+                }
+                // A Crush `let` — or a walker declaration marked as a block
+                // binding (JS `let` / `const`) — is a fresh binding each time
+                // it runs (in a loop body: one per iteration), so closures
+                // made in different iterations don't share it. The cell is
+                // made before the initializer, so a lambda that refers to its
+                // own name captures this binding. Other walker declarations
+                // keep one binding: Python variables and JS `var` are
+                // function-scoped.
+                let block_binding = !meta.contains_key("lang")
+                    || meta.get("binding").and_then(|b| b.as_str()) == Some("block");
+                if self.boxed.contains(name.as_str()) && block_binding {
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
+                self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }
             Statement::Assign {
                 target, value, meta
             } => {
+                self.reject_lambda_alias_reassignment(target)?;
                 self.check_lambda_capture(target)?;
                 self.declared_vars.insert(target.clone());
                 self.compile_expr_with_name_hint(value, instrs, Some(target))?;
+                self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_typed_instr(OpCode::Store(target.clone()), meta)?);
             }
             Statement::Export { name, value, meta } => {
@@ -568,6 +866,7 @@ impl Compiler {
             Statement::Return { value, meta } => {
                 if let Some(val) = value {
                     self.compile_expr(val, instrs)?;
+                    self.emit_value_copy(instrs, meta);
                 } else {
                     instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 }
@@ -727,6 +1026,10 @@ impl Compiler {
                     serde_json::json!({"name": variable}),
                     meta,
                 ));
+                // The loop variable is a local like a `let` (#256): without
+                // this, `s.area()` in the body was classified as a capability
+                // named `s.area` ("not available in this host").
+                self.declared_vars.insert(variable.clone());
 
                 // Compile body
                 for s in body {
@@ -778,6 +1081,7 @@ impl Compiler {
             } => {
                 self.compile_expr(target, instrs)?;
                 self.compile_expr(value, instrs)?;
+                self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_instr(
                     "set_field",
                     serde_json::json!({"name": field}),
@@ -831,6 +1135,7 @@ impl Compiler {
                 imports,
                 deps,
                 meta,
+                ..
             } => {
                 // CRUSH-224: each block runs in a fresh interpreter, so the `use @lang`
                 // imports that reach it are written into its own source.
@@ -849,17 +1154,39 @@ impl Compiler {
                     ));
                 }
 
+                // The declared outputs (CRUSH-270): `meta["polyglot_outputs"]`
+                // is an array of names set by the polyglot pass. Each becomes a
+                // `store` after `exec_lang`, in declaration order; the VM
+                // pushes the values in reverse so the first store sees the
+                // first name's value.
+                let output_names: Vec<String> = meta
+                    .get("polyglot_outputs")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 // Build variable name mapping for the exec_lang instruction
                 let mut var_args = serde_json::json!({
                     "lang": lang,
                     "code": code,
-                    "var_count": variables.len()
+                    "var_count": variables.len(),
+                    "out_count": output_names.len()
                 });
 
                 // Add variable names as var_0, var_1, etc.
                 if let serde_json::Value::Object(ref mut map) = var_args {
                     for (i, var_name) in variables.iter().enumerate() {
                         map.insert(format!("var_{}", i), serde_json::json!(var_name));
+                    }
+                    // Outputs as out_0, out_1, etc. — the VM reads these and
+                    // pushes each declared value, in reverse order so the
+                    // `store`s below line up with declaration order.
+                    for (i, out_name) in output_names.iter().enumerate() {
+                        map.insert(format!("out_{}", i), serde_json::json!(out_name));
                     }
                     // CRUSH-18: carry the `.crush`-source line of this
                     // `@lang { ... }` block into the compiled spec so a
@@ -881,23 +1208,16 @@ impl Compiler {
 
                 instrs.push(self.create_instr("exec_lang", var_args, meta));
 
-                // exec_lang always pushes a return value; it must always be
-                // consumed — either stored into the block's designated
-                // output variable (`meta["polyglot_output"]`, set by a
-                // language-specific free-variable analysis pass before
-                // compilation — see crush-lang-sdk::compile for Python) or
-                // explicitly popped, never left to leak on the stack.
-                match meta.get("polyglot_output").and_then(|v| v.as_str()) {
-                    Some(output_var) => {
-                        instrs.push(self.create_instr(
-                            "store",
-                            serde_json::json!({"name": output_var}),
-                            meta,
-                        ));
-                    }
-                    None => {
-                        instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
-                    }
+                // Store each declared output. With zero outputs the VM pushes
+                // nothing and there is nothing to consume; with one or more,
+                // the VM pushes exactly `out_count` values (reverse order) and
+                // every one is stored to its name.
+                for name in &output_names {
+                    instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": name}),
+                        meta,
+                    ));
                 }
             }
             Statement::Break { meta } => {
@@ -924,6 +1244,16 @@ impl Compiler {
                 self.loop_stack.last_mut().unwrap().continue_indices.push(idx);
             }
             Statement::StructDef { .. } => {}
+            // Lowered to COSM + lifted functions before code generation
+            // (`cosm_lower`); reaching here means an `impl`/`trait` outside
+            // the top level of a file.
+            Statement::ImplBlock { meta, .. } | Statement::TraitDef { meta, .. } => {
+                let at = match (meta.get("line").and_then(|v| v.as_u64()), meta.get("col").and_then(|v| v.as_u64())) {
+                    (Some(l), Some(c)) => format!("line {l}, col {c}: "),
+                    _ => String::new(),
+                };
+                bail!("{at}`impl` / `trait` blocks are only allowed at the top level of a file");
+            }
             Statement::Import { import, meta } => {
                 // Compile import statements to capability/module load instructions.
                 // The ImportResolver handles resolution at runtime via capabilities.
@@ -1227,88 +1557,30 @@ impl Compiler {
                     meta,
                 ));
             }
-            AIStatement::CapabilityDiscovery {
-                domain,
-                requirements,
-                discovery_strategy,
-            } => {
-                instrs.push(self.create_instr(
-                    "ai_capability_discovery",
-                    serde_json::json!({
-                        "domain": domain,
-                        "requirements": requirements,
-                        "discovery_strategy": format!("{:?}", discovery_strategy)
-                    }),
-                    meta,
-                ));
+            AIStatement::CapabilityDiscovery { .. } => {
+                // CRUSH-265: declined — this would compile to a silent NOP on CVM1.
+                // Fail loudly at compile time instead; porting onto `ai_native` is a
+                // later ticket.
+                bail!(
+                    "`capability_discovery` isn't supported yet (CRUSH-265): it would compile to a no-op"
+                );
             }
-            AIStatement::AdaptationRequest {
-                adaptation_type,
-                reason,
-                parameters,
-            } => {
-                instrs.push(self.create_instr(
-                    "ai_adaptation_request",
-                    serde_json::json!({
-                        "adaptation_type": format!("{:?}", adaptation_type),
-                        "reason": reason,
-                        "parameters": parameters
-                    }),
-                    meta,
-                ));
+            AIStatement::AdaptationRequest { .. } => {
+                // CRUSH-265: declined — this would compile to a silent NOP on CVM1.
+                // Fail loudly at compile time instead; porting onto `ai_native` is a
+                // later ticket.
+                bail!(
+                    "`adaptation_request` isn't supported yet (CRUSH-265): it would compile to a no-op"
+                );
             }
-            AIStatement::SemanticSwitch {
-                target,
-                cases,
-                fallback,
-            } => {
-                self.compile_expr(target, instrs)?;
-
-                let switch_idx = instrs.len();
-                instrs.push(self.create_instr(
-                    "ai_semantic_switch",
-                    serde_json::json!({}), // We'll patch this later
-                    meta,
-                ));
-
-                let mut switch_cases = Vec::new();
-                let mut jump_to_end_indices = Vec::new();
-
-                for (concept, block) in cases {
-                    let start_idx = instrs.len();
-                    for s in block {
-                        self.compile_stmt(s, instrs)?;
-                    }
-                    switch_cases.push(serde_json::json!({
-                        "concept": concept,
-                        "target_pc": start_idx
-                    }));
-                    jump_to_end_indices.push(instrs.len());
-                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
-                }
-
-                let fallback_target = if let Some(fb) = fallback {
-                    let start_idx = instrs.len();
-                    for s in fb {
-                        self.compile_stmt(s, instrs)?;
-                    }
-                    Some(start_idx)
-                } else {
-                    None
-                };
-
-                let end_label = instrs.len();
-
-                // Patch the switch instruction
-                instrs[switch_idx].args = serde_json::json!({
-                    "cases": switch_cases,
-                    "fallback_target": fallback_target.unwrap_or(end_label)
-                });
-
-                // Patch all the jumps
-                for idx in jump_to_end_indices {
-                    instrs[idx].args = serde_json::json!({"target": end_label});
-                }
+            AIStatement::SemanticSwitch { .. } => {
+                // CRUSH-265: declined — the `ai_semantic_switch` opcode lowers to a
+                // silent NOP on CVM1 (the case blocks would run, but the dispatch
+                // itself does nothing, so the first case always wins). Fail loudly
+                // at compile time instead; porting onto `ai_native` is a later ticket.
+                bail!(
+                    "`semantic_switch` isn't supported yet (CRUSH-265): it would compile to a no-op"
+                );
             }
         }
         Ok(())
@@ -1396,8 +1668,33 @@ impl Compiler {
                 instrs.push(self.create_typed_instr(OpCode::PushNull, meta)?);
             }
             Expression::Var { name, meta } => {
-                self.check_lambda_capture(name)?;
-                instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
+                let outer = self.lambda_outer_vars.iter().any(|o| o.contains(name.as_str()));
+                let declared = self.declared_vars.contains(name.as_str());
+                match self.function_arity.get(name.as_str()) {
+                    // A function's name used as a value (`apply(fib, 3)`).
+                    Some(&arity) if !declared && !outer => {
+                        instrs.push(self.create_instr(
+                            "make_closure",
+                            serde_json::json!({"function": name, "arity": arity, "ncap": 0}),
+                            meta,
+                        ));
+                    }
+                    // A class name used as a value (CRUSH-277 D8): JS
+                    // `const K = Counter`, a class passed to a function,
+                    // `Counter` exported. A local of the same name (a
+                    // declared var, a capture) shadows it, as in JS.
+                    _ if !declared && !outer && self.kind(name).is_some() => {
+                        instrs.push(self.create_instr(
+                            "load_kind",
+                            serde_json::json!({"kind": name}),
+                            meta,
+                        ));
+                    }
+                    _ => {
+                        self.check_lambda_capture(name)?;
+                        instrs.push(self.create_typed_instr(OpCode::Load(name.clone()), meta)?);
+                    }
+                }
             }
             Expression::BinaryOp {
                 operator,
@@ -1407,6 +1704,20 @@ impl Compiler {
             } => {
                 if matches!(operator.as_str(), "and" | "&&" | "or" | "||") {
                     return self.compile_short_circuit(operator, left, right, meta, instrs);
+                }
+                // `a ** b`: exact for int ** non-negative int, float otherwise
+                // (one shared implementation in every engine; `math_pow` is
+                // always float).
+                if operator == "**" {
+                    self.all_permissions.insert("math.power".to_string());
+                    self.compile_expr(left, instrs)?;
+                    self.compile_expr(right, instrs)?;
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "math.power", "argc": 2}),
+                        meta,
+                    ));
+                    return Ok(());
                 }
                 self.compile_expr(left, instrs)?;
                 self.compile_expr(right, instrs)?;
@@ -1442,32 +1753,105 @@ impl Compiler {
                 };
                 instrs.push(self.create_typed_instr(opcode, meta)?);
             }
+            Expression::Construct { kind, args, meta } => {
+                // CRUSH-277 D3: `new C(…)` from a walker. The Kind must be
+                // one the program's COSM declares — a walker naming a kind
+                // it didn't declare is a compile error, not a runtime one.
+                if self.kind(kind).is_none() {
+                    bail!(
+                        "line {}: `new {kind}(…)` constructs a kind the program doesn't declare",
+                        meta.get("line").and_then(|v| v.as_u64()).unwrap_or(0)
+                    );
+                }
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                instrs.push(self.create_instr(
+                    "construct",
+                    serde_json::json!({"kind": kind, "argc": args.len()}),
+                    meta,
+                ));
+            }
             Expression::Call {
                 function,
                 args,
                 meta,
             } => {
+                if meta.get("rust_source_call") == Some(&serde_json::Value::Bool(true))
+                    && self.local_functions.contains(function)
+                {
+                    // Numeric summaries describe the Rust function, including
+                    // when its name shadows a compiler builtin. Evaluate Rust
+                    // arguments left-to-right, then restore the stack ABI order.
+                    let mut temporaries = Vec::new();
+                    for arg in args {
+                        let name = format!("__crush_rust_call_arg_{}", self.temp_counter);
+                        self.temp_counter += 1;
+                        self.compile_arg(arg, instrs)?;
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                        temporaries.push(name);
+                    }
+                    for name in temporaries.iter().rev() {
+                        instrs.push(self.create_instr("load", serde_json::json!({"name": name}), meta));
+                    }
+                    instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), meta));
+                    return Ok(());
+                }
+                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
+                    intrinsic.validate(function, args)?;
+                }
+                if function == "__crush_apply__" {
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    instrs.push(self.create_typed_instr(OpCode::CallValueApply, meta)?);
+                    return Ok(());
+                }
                 // #78: `f(x)` where `f` is a variable (a lambda passed in as an
                 // argument, say) would otherwise compile to a capability call
-                // named "f". Calling function values needs an indirect call the VMs
-                // don't have yet (CRUSH-251); a lambda bound with `let f = |..| ..`
-                // is lifted to a function named `f` and is callable directly.
-                if !function.contains('.')
-                    && self.declared_vars.contains(function.as_str())
-                    && !self.local_functions.contains(function.as_str())
-                {
-                    bail!(
-                        "`{function}` is a variable, not a function: calling a function value \
-                         isn't supported yet (CRUSH-251). Call the lambda by the name it was \
-                         bound to (`let {function} = |x| ...` in the same function), or a named fn"
-                    );
+                // named "f". It holds a function value: call it through the
+                // value (CRUSH-251). A `let`-bound lambda alias in scope is
+                // called directly.
+                let aliased = self.resolve_lambda_alias(function);
+                if aliased.is_none() && !function.contains('.') {
+                    // `f` from an enclosing function would be a capture (step 3).
+                    self.check_lambda_capture(function)?;
                 }
-                if function == "len" {
+                let function: &String = aliased.as_ref().unwrap_or(function);
+                if aliased.is_none()
+                    && !function.contains('.')
+                    && self.declared_vars.contains(function.as_str())
+                {
+                    // Args last-first (as for `call`), then the callee on top.
+                    for arg in args.iter().rev() {
+                        self.compile_arg(arg, instrs)?;
+                    }
+                    instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
+                    instrs.push(self.create_instr(
+                        "call_value",
+                        serde_json::json!({"argc": args.len()}),
+                        meta,
+                    ));
+                } else if function == "len" {
                     if args.len() != 1 {
                         bail!("len() expects exactly 1 argument");
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if function == "parallel_map" && !self.local_functions.contains("parallel_map") {
+                    // #175: a VM capability (it starts workers); capabilities
+                    // take their arguments in order.
+                    if args.len() != 2 {
+                        bail!("parallel_map(items, f) expects exactly 2 arguments");
+                    }
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    self.all_permissions.insert("parallel_map".to_string());
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "parallel_map", "argc": 2}),
+                        meta,
+                    ));
                 } else if function == "print" {
                     self.all_permissions.insert("io.print".to_string());
                     for arg in args {
@@ -1548,8 +1932,18 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("str_join", serde_json::json!({}), meta));
-                } else if function == "make_range" {
-                    // make_range handles 0..2 args at capability runtime
+                } else if function == "make_range" || function == "range" {
+                    // 1–3 args: the capability runtime takes `stop`, `start, stop`
+                    // or `start, stop, step` and rejects an empty call
+                    // (crush-vm::make_range). Checked here too so the compile
+                    // time contract matches the runtime and the checker's
+                    // table (CRUSH-111).
+                    if args.is_empty() || args.len() > 3 {
+                        bail!(
+                            "make_range() expects 1 to 3 arguments, found {}",
+                            args.len()
+                        );
+                    }
                     let argc = args.len();
                     for arg in args { self.compile_expr(arg, instrs)?; }
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
@@ -1575,16 +1969,29 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("array_push", serde_json::json!({}), meta));
-                } else if function == "range" || function == "make_range" {
-                    let argc = args.len();
-                    for arg in args { self.compile_expr(arg, instrs)?; }
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
+
                 } else if function == "array.pop" {
                     if args.len() != 1 {
                         bail!("array.pop() expects exactly 1 argument");
                     }
                     self.compile_expr(&args[0], instrs)?;
+                    // The `array_pop` op leaves [array, value]; `array.pop(a)` is
+                    // an expression whose value is the element, so drop the
+                    // array — otherwise it shifts the operands of whatever
+                    // encloses the call (`print(len(a), a.pop())` printed the array).
                     instrs.push(self.create_instr("array_pop", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("swap", serde_json::json!({}), meta));
+                    instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
+                } else if function == "__crush_slice__" {
+                    // `t[start:stop:step]` (null bounds = from the edge).
+                    if args.len() != 4 {
+                        bail!("slice as a value (outside a subscript) is not supported yet");
+                    }
+                    self.all_permissions.insert("seq.slice".to_string());
+                    for a in args {
+                        self.compile_expr(a, instrs)?;
+                    }
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "seq.slice", "argc": 4}), &meta));
                 } else if function == "__crush_setindex__" {
                     // Intrinsic: indexed assignment lowered from walker (e.g., `arr[i] = val`)
                     // args[0] = target, args[1] = index, args[2] = value
@@ -1595,11 +2002,66 @@ impl Compiler {
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
                     instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                } else if function == "__crush_has__" {
+                    // Intrinsic: does the value have the named member
+                    // (CASM `has_member`)? The key must be a literal —
+                    // the op carries it as an operand. Used by the JS
+                    // walker to tell a missing property (which takes a
+                    // destructuring default) from one present with
+                    // value null (which does not) — CRUSH-284 review.
+                    // args[0] = target, args[1] = key literal
+                    if args.len() != 2 {
+                        bail!("__crush_has__ expects exactly 2 arguments");
+                    }
+                    let Expression::StringLiteral { value: key, .. } = &args[1] else {
+                        bail!("__crush_has__ expects a literal member name");
+                    };
+                    self.compile_expr(&args[0], instrs)?;
+                    instrs.push(self.create_instr(
+                        "has_member",
+                        serde_json::json!({"name": key}),
+                        &meta,
+                    ));
+                } else if function == "__crush_deffield__" {
+                    // Intrinsic: define an own field on an instance,
+                    // bypassing setters (a JS class field initialiser:
+                    // [[Define]], not [[Set]]) — CRUSH-285 review #6.
+                    // NOTE (re-review): this rides a `cap_call`, so a
+                    // host running with an `allowed_caps` list must
+                    // grant `define_field` or class fields are denied;
+                    // it is VM-internal dispatch (cosm_rt::index_cap),
+                    // never a host capability. Promoting it to a real
+                    // op is the fix if that ever bites.
+                    // args[0] = target, args[1] = name, args[2] = value
+                    if args.len() != 3 {
+                        bail!("__crush_deffield__ expects exactly 3 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
+                    self.compile_expr(&args[2], instrs)?;
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "define_field", "argc": 3}), &meta));
+                } else if function == "__crush_rebind__" {
+                    // A fresh binding holding the variable's current value
+                    // (JS `for (let ..)` per-iteration copy, CRUSH-251 step
+                    // 4b): closures made so far keep the old binding. Only a
+                    // boxed (captured) variable has a binding to renew.
+                    let Some(Expression::Var { name, .. }) = args.first() else {
+                        bail!("__crush_rebind__ expects a variable");
+                    };
+                    if self.boxed.contains(name.as_str()) {
+                        instrs.push(self.create_instr("load_cell", serde_json::json!({"name": name}), meta));
+                        instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
+                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                    }
+                    instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 } else if function == "__crush_assign__" {
                     // Intrinsic: assignment lowered from walker (e.g., `x = 42` in JS)
                     // args[0] = target Var, args[1] = value expression
                     if args.len() != 2 {
                         bail!("__crush_assign__ expects exactly 2 arguments");
+                    }
+                    if let Expression::Var { name, .. } = &args[0] {
+                        self.reject_lambda_alias_reassignment(name)?;
                     }
                     self.compile_expr(&args[1], instrs)?;
                     if let Expression::Var { name, meta: _ } = &args[0] {
@@ -1616,6 +2078,37 @@ impl Compiler {
                         ));
                     } else {
                         bail!("__crush_assign__ target must be a variable");
+                    }
+                } else if function == "__crush_rust_int_cast__" {
+                    // Shared CASM expansion: one source evaluation, no new
+                    // runtime opcode, host capability, temporary binding or ABI.
+                    self.compile_expr(&args[0], instrs)?;
+                    let Expression::IntLiteral { value: width, .. } = args[1] else { unreachable!() };
+                    let Expression::BoolLiteral { value: signed, .. } = args[2] else { unreachable!() };
+                    if width != 64 {
+                        let modulus = 1i64 << width;
+                        instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Mod, meta)?);
+                        // Rust/Crush remainder has the dividend's sign. Make
+                        // the low bits nonnegative before interpreting sign.
+                        instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::PushInt(0), meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Lt, meta)?);
+                        let skip = instrs.len();
+                        instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                        instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Add, meta)?);
+                        instrs[skip].args = serde_json::json!({"target": instrs.len()});
+                        if signed {
+                            instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
+                            instrs.push(self.create_typed_instr(OpCode::PushInt(modulus / 2), meta)?);
+                            instrs.push(self.create_typed_instr(OpCode::Ge, meta)?);
+                            let skip = instrs.len();
+                            instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                            instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
+                            instrs.push(self.create_typed_instr(OpCode::Sub, meta)?);
+                            instrs[skip].args = serde_json::json!({"target": instrs.len()});
+                        }
                     }
                 } else if function == "__crush_not__" {
                     if args.len() != 1 { bail!("__crush_not__ expects exactly 1 argument"); }
@@ -1651,6 +2144,35 @@ impl Compiler {
                     self.compile_expr(&args[2], instrs)?;
                     let end_label = instrs.len();
                     instrs[jmp_end_idx].args = serde_json::json!({"target": end_label});
+                } else if function == "__crush_js_or__" || function == "__crush_js_and__" {
+                    // JS `a || b` / `a && b`: the deciding operand itself, by JS
+                    // truthiness (`js.truthy`); `b` runs only when `a` doesn't
+                    // decide. Crush's own `||`/`&&` (compile_short_circuit) stay
+                    // boolean.
+                    //   ||:  <a> dup js.truthy jmp_if_not R  jmp E  R: pop <b>  E:
+                    //   &&:  <a> dup js.truthy jmp_if_not E  pop <b>  E:
+                    if args.len() != 2 { bail!("{function} expects exactly 2 arguments"); }
+                    self.compile_expr(&args[0], instrs)?;
+                    instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
+                    self.all_permissions.insert("js.truthy".to_string());
+                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "js.truthy", "argc": 1}), meta));
+                    let test_idx = instrs.len();
+                    instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                    let mut to_end = Vec::new();
+                    if function == "__crush_js_or__" {
+                        to_end.push(instrs.len());
+                        instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+                        let rhs = instrs.len();
+                        instrs[test_idx].args = serde_json::json!({"target": rhs});
+                    } else {
+                        to_end.push(test_idx);
+                    }
+                    instrs.push(self.create_typed_instr(OpCode::Pop, meta)?);
+                    self.compile_expr(&args[1], instrs)?;
+                    let end_label = instrs.len();
+                    for idx in to_end {
+                        instrs[idx].args = serde_json::json!({"target": end_label});
+                    }
                 } else if function == "__crush_pre_inc__" || function == "__crush_post_inc__"
                     || function == "__crush_pre_dec__" || function == "__crush_post_dec__"
                 {
@@ -1748,16 +2270,31 @@ impl Compiler {
                         let obj_name = &function[..dot_pos];
                         let method = &function[dot_pos + 1..];
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
-                        // Push args in reverse so callee's store pops them correctly
-                        for arg in args.iter().rev() {
+                        // Push args in order: the receiver is already on the stack, then each
+                        // argument, then cap_call pops them off in the same order the capability
+                        // expects (receiver, arg1, arg2, …). Pushes are in order because the
+                        // stack is LIFO and cap_call reads params bottom-up (unlike the `call`
+                        // user-function path below, where last-to-first is right per CRUSH-138).
+                        for arg in args {
                             self.compile_expr(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
+                    } else if let Some(kind) = self.constructed_kind(function) {
+                        // COSM K1.4: `C(…)` of a Kind built by a constructor
+                        // function — CONSTRUCT (arguments last-first, as for `call`).
+                        for arg in args.iter().rev() {
+                            self.compile_arg(arg, instrs)?;
+                        }
+                        instrs.push(self.create_instr(
+                            "construct",
+                            serde_json::json!({"kind": kind, "argc": args.len()}),
+                            meta,
+                        ));
                     } else {
                         // Push args in REVERSE order so the callee's `store param` instructions
                         // pop them in the correct order (stack is LIFO: last pushed = first popped).
                         for arg in args.iter().rev() {
-                            self.compile_expr(arg, instrs)?;
+                            self.compile_arg(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), &meta));
                     }
@@ -1769,16 +2306,47 @@ impl Compiler {
                 }
                 instrs.push(self.create_instr(operator, serde_json::json!({}), meta));
             }
+            Expression::MethodCall { target, method, args, meta } => {
+                // CRUSH-277 S5: a method call on a computed receiver: the
+                // member resolves on the receiver's Kind at run time
+                // (`call_member`: arguments last-first, the receiver on
+                // top) — the same convention the dotted `CapabilityCall`
+                // path uses for named variables.
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                self.compile_expr(target, instrs)?;
+                instrs.push(self.create_instr(
+                    "call_member",
+                    serde_json::json!({"name": method, "argc": args.len()}),
+                    meta,
+                ));
+            }
             Expression::CapabilityCall { name, args, meta } => {
+                // Walkers resolve method receivers before emitting named caps.
+                // Only unresolved parser calls need the `obj.method` heuristic.
+                let resolved_capability = meta.get("resolved_capability")
+                    .and_then(|value| value.as_bool()).unwrap_or(false);
                 if name == "len" {
                     if args.len() != 1 {
                         bail!("len() expects exactly 1 argument");
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
+                } else if name == "type_of" {
+                    // The CASM `type_of` op (CVM1 `TYPEOF`): the value's runtime
+                    // type name. Used by the JS walker's `for-in` guard
+                    // (CRUSH-zorro-23). Strings are "str" on the CVM1 VMs and
+                    // "string" on FastVM/JIT; an AOT backend without the op
+                    // refuses it at compile time.
+                    if args.len() != 1 {
+                        bail!("type_of() expects exactly 1 argument");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    instrs.push(self.create_instr("type_of", serde_json::json!({}), meta));
                 } else if (name == "array.push" || name == "array.pop")
-                    && !self.declared_vars.contains("array")
-                    && !self.local_functions.contains(name)
+                    && (resolved_capability || (!self.declared_vars.contains("array")
+                        && !self.local_functions.contains(name)))
                 {
                     // The parser emits `array.push(a, x)` / `array.pop(a)` as a
                     // dotted CapabilityCall, not a `Call`, so the `Call`-branch
@@ -1807,11 +2375,16 @@ impl Compiler {
                         instrs.push(self.create_instr("swap", serde_json::json!({}), meta));
                         instrs.push(self.create_instr("pop", serde_json::json!({}), meta));
                     }
-                } else if self.local_functions.contains(name) {
+                } else if GPU_INTRINSICS.contains(&name.as_str())
+                    && !self.declared_vars.contains("gpu")
+                    && !self.local_functions.contains(name)
+                {
+                    self.compile_gpu_intrinsic(name, args, meta, instrs)?;
+                } else if !resolved_capability && self.local_functions.contains(name) {
                     // Last-to-first, like every other `call`: the callee's
                     // `store <param1>` pops the first argument (CRUSH-138).
                     for arg in args.iter().rev() {
-                        self.compile_expr(arg, instrs)?;
+                        self.compile_arg(arg, instrs)?;
                     }
                     instrs.push(self.create_instr(
                         "call",
@@ -1819,20 +2392,71 @@ impl Compiler {
                         meta,
                     ));
                 } else {
+                    // A walker-marked member call (CRUSH-285 review #4,
+                    // re-review) must never reach a capability grant
+                    // below — not even when the receiver isn't in
+                    // `declared_vars` here. It resolves only as an exact
+                    // member call on a declared receiver; anything else
+                    // is a missing method (or a field holding a
+                    // function, CRUSH-zorro-44), refused outright.
+                    if meta.get("member_call").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        let resolves = name.find('.').is_some_and(|pos| {
+                            self.declared_vars.contains(&name[..pos])
+                                && (self.receiver_methods.contains(&name[pos + 1..])
+                                    || (&name[pos + 1..] == "clone"
+                                        && self
+                                            .cosm
+                                            .as_ref()
+                                            .is_some_and(|m| !m.kinds.is_empty())))
+                        });
+                        if !resolves {
+                            let (obj_name, method) =
+                                name.split_once('.').unwrap_or((name.as_str(), ""));
+                            bail!(
+                                "`{obj_name}.{method}(...)`: no method `{method}` on the receiver's class"
+                            );
+                        }
+                    }
                     // Check for method-call syntax: obj.method(args)
                     // Parser emits CapabilityCall { name: "obj.method", args } for this.
                     // Only split when the receiver (obj) is a declared variable —
                     // dotted names like "net.fetch" are namespaced capabilities.
-                    let is_method_call = name.find('.')
+                    let is_method_call = !resolved_capability && name.find('.')
                         .map(|pos| self.declared_vars.contains(&name[..pos]))
                         .unwrap_or(false);
                     if is_method_call {
                         let dot_pos = name.find('.').unwrap();
                         let obj_name = &name[..dot_pos];
                         let method = &name[dot_pos + 1..];
+                        if self.receiver_methods.contains(method)
+                            || (method == "clone" && self.cosm.as_ref().is_some_and(|m| !m.kinds.is_empty()))
+                        {
+                            // COSM K1.4: `p.norm2(…)` resolves the method on the
+                            // receiver's Kind (CALL_MEMBER: arguments last-first,
+                            // the receiver on top) — never a global capability.
+                            // `clone()` is built in for every struct instance.
+                            for arg in args.iter().rev() {
+                                self.compile_arg(arg, instrs)?;
+                            }
+                            instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), meta));
+                            instrs.push(self.create_instr(
+                                "call_member",
+                                serde_json::json!({"name": method, "argc": args.len()}),
+                                meta,
+                            ));
+                            return Ok(());
+                        }
+                        // Marked member calls were already resolved
+                        // (or refused) ahead of the `is_method_call`
+                        // split; only the parser's unmarked idiom
+                        // reaches this grant.
                         self.all_permissions.insert(method.to_string());
                         instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
-                        for arg in args.iter().rev() {
+                        // Push args in order: the receiver is already on the stack, then each
+                        // argument, then cap_call pops them top-first and reverses, so the
+                        // capability sees (receiver, arg1, arg2, …). (CRUSH-235: the old
+                        // last-to-first push reached the capability as (receiver, argN, … arg1).)
+                        for arg in args {
                             self.compile_expr(arg, instrs)?;
                         }
                         instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
@@ -1917,14 +2541,34 @@ impl Compiler {
                 // before the function name. The scheduler will pop argc
                 // args + fn_name, then create a new thread with args
                 // pre-loaded on the stack.
-                for arg in args {
+                // Args last-first, as for `call`: the task's first `store` pops
+                // the first argument. (They were pushed first-first, so a
+                // spawned `w(10, 3)` ran as `w(3, 10)`.)
+                for arg in args.iter().rev() {
                     self.compile_expr(arg, instrs)?;
                 }
-                instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": function}),
-                    meta,
-                ));
+                // The task's function is a function value (CRUSH-251 step 5),
+                // so SPAWN checks its arity and passes its captured values as
+                // leading parameters: a variable holds one (a `let`-bound
+                // lambda's variable too); a named function becomes one.
+                if self.declared_vars.contains(function.as_str()) {
+                    self.check_lambda_capture(function)?;
+                    instrs.push(self.create_typed_instr(OpCode::Load(function.clone()), meta)?);
+                } else if let Some(&arity) = self.function_arity.get(function.as_str()) {
+                    instrs.push(self.create_instr(
+                        "make_closure",
+                        serde_json::json!({"function": function, "arity": arity, "ncap": 0}),
+                        meta,
+                    ));
+                } else {
+                    // Unknown here (an async wrapper, a name only the VM has):
+                    // SPAWN resolves it at run time.
+                    instrs.push(self.create_instr(
+                        "push_str",
+                        serde_json::json!({"value": function}),
+                        meta,
+                    ));
+                }
                 instrs.push(self.create_instr(
                     "spawn",
                     serde_json::json!({"argc": args.len()}),
@@ -2056,9 +2700,20 @@ impl Compiler {
                 // — e.g. THROW's `error_var` binding — once anything with
                 // >1 property or a nested Array/Object value was built).
                 // No `dup` needed: stack stays exactly `[map]` throughout.
-                instrs.push(self.create_instr("new_obj", serde_json::json!({}), meta));
+                // COSM K1.4: a struct literal (`P { … }`, tagged by the parser)
+                // carries its Kind; the VMs build a Record (NEW_RECORD), FastVM,
+                // the JIT and AOT a map, as before. A literal builds the
+                // instance directly, whatever the Kind's `construct` (a
+                // factory constructor is written with one).
+                let kind = meta.get("struct").and_then(|v| v.as_str()).filter(|k| self.kind(k).is_some());
+                let args = match kind {
+                    Some(k) => serde_json::json!({"kind": k}),
+                    None => serde_json::json!({}),
+                };
+                instrs.push(self.create_instr("new_obj", args, meta));
                 for (key, value) in properties {
                     self.compile_expr(value, instrs)?;
+                    self.emit_value_copy(instrs, meta);
                     instrs.push(self.create_instr(
                         "set_field",
                         serde_json::json!({"name": key}),
@@ -2086,51 +2741,95 @@ impl Compiler {
                 ));
             }
             Expression::Lambda { params, body, meta } => {
-                let lambda_name = if let Some(hint) = name_hint {
-                    hint.to_string()
-                } else {
-                    format!("__lambda_{}", self.temp_counter)
+                // Always a unique lifted name; the binding name is only a readable
+                // suffix and a scoped alias (see `lambda_aliases`).
+                let lambda_name = match name_hint {
+                    Some(hint) => format!("__lambda_{}_{hint}", self.lambda_counter),
+                    None => format!("__lambda_{}", self.lambda_counter),
                 };
-                self.temp_counter += 1;
-                self.local_functions.insert(lambda_name.clone());
+                self.lambda_counter += 1;
+                // CRUSH-251 step 3: the enclosing variables this lambda uses
+                // (transitively, through nested lambdas) become hidden leading
+                // parameters; `make_closure` carries their values — the cell
+                // for a boxed variable, so writes are shared.
+                let pnames: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
+                let body_json = serde_json::to_value(body).unwrap_or_default();
+                let enclosing: HashSet<String> = self.scopes.iter().flatten().cloned().collect();
+                let nonlocals = python_nonlocals(serde_json::to_value(meta).ok().as_ref());
+                let captures: Vec<String> =
+                    lambda_captures(&pnames, &body_json, nonlocals.as_ref(), &enclosing)
+                        .into_iter()
+                        .collect();
+                let mut level = Level::default();
+                scan_level(&body_json, &mut level);
+                let locals: HashSet<String> =
+                    lambda_locals(&[], &level, &enclosing, nonlocals.as_ref());
+                // Only a capture-free lambda bound to a name bound exactly once
+                // keeps the direct-call alias (a direct `call` can't pass
+                // captures); otherwise calls go through the value.
+                if let Some(hint) = name_hint
+                    .filter(|h| !self.rebound.contains(*h))
+                    .filter(|_| captures.is_empty())
+                {
+                    if self.lambda_aliases.is_empty() {
+                        self.lambda_aliases.push(HashMap::new());
+                    }
+                    self.lambda_aliases.last_mut().expect("scope").insert(hint.to_string(), Some(lambda_name.clone()));
+                }
 
+                // Entry: captures, then parameters, popped in that order. These
+                // stores are raw: a boxed capture arrives as its cell.
                 let mut func_instrs = Vec::new();
-                for (param_name, _) in params {
+                for name in captures.iter().chain(pnames.iter()) {
                     func_instrs.push(self.create_instr(
                         "store",
-                        serde_json::json!({"name": param_name}),
+                        serde_json::json!({"name": name, "raw": true}),
                         meta,
                     ));
                 }
-                // The lifted function has its own scope: its parameters, plus what
-                // its body declares. The enclosing scope is kept to detect captures.
+                self.emit_cell_init(&pnames, &locals, &mut func_instrs, meta);
+                let body_start = func_instrs.len();
+                // The lifted function has its own scope: its parameters and
+                // captures, plus what its body declares.
                 let outer = std::mem::replace(
                     &mut self.declared_vars,
-                    params.iter().map(|(n, _)| n.clone()).collect(),
+                    pnames.iter().chain(captures.iter()).cloned().collect(),
                 );
                 self.lambda_outer_vars.push(outer.clone());
+                self.lambda_aliases
+                    .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
+                self.scopes.push(
+                    pnames.iter().chain(captures.iter()).chain(locals.iter()).cloned().collect(),
+                );
                 let body_result: Result<()> = body
                     .iter()
                     .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                self.scopes.pop();
+                self.lambda_aliases.pop();
                 self.lambda_outer_vars.pop();
                 self.declared_vars = outer;
                 body_result?;
                 self.ensure_return(&mut func_instrs, Some(meta));
+                self.rewrite_cells(&mut func_instrs, body_start);
 
                 let hints = extract_type_hints(params, body);
                 self.lambdas.insert(
                     lambda_name.clone(),
                     CasmFunction {
-                        params: params.iter().map(|(n, _)| n.clone()).collect(),
+                        params: captures.iter().chain(pnames.iter()).cloned().collect(),
                         locals: vec![],
                         type_hints: if hints.is_empty() { None } else { Some(hints) },
                         body: func_instrs,
                     },
                 );
 
+                // The captured values, in order (raw: a boxed variable's cell).
+                for name in &captures {
+                    instrs.push(self.create_instr("load", serde_json::json!({"name": name, "raw": true}), meta));
+                }
                 instrs.push(self.create_instr(
-                    "push_str",
-                    serde_json::json!({"value": lambda_name}),
+                    "make_closure",
+                    serde_json::json!({"function": lambda_name, "arity": params.len(), "ncap": captures.len()}),
                     meta,
                 ));
             }
@@ -2461,6 +3160,86 @@ impl Compiler {
         Ok(())
     }
 
+    /// Lower a device-side `gpu.*` intrinsic (CRUSH-zorro-3) to the `ptx_*` CASM ops that
+    /// crush-ptx compiles. A function using any of these is a GPU kernel: crush-ptx turns
+    /// it into PTX, and the CVM1 lowering skips it (it cannot run on the host VM).
+    ///
+    /// Every integer result is widened to s64, the type crush-ptx gives kernel
+    /// parameters and integer literals, so `gpu.global_id() < n` type-checks without a
+    /// manual `cvt`. Buffers are f32 device pointers; `gpu.load_f32` / `gpu.store_f32`
+    /// take an element index and scale it by 4 themselves.
+    fn compile_gpu_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Expression],
+        meta: &HashMap<String, serde_json::Value>,
+        instrs: &mut Vec<Instruction>,
+    ) -> Result<()> {
+        let expect = |n: usize| -> Result<()> {
+            if args.len() != n {
+                bail!("{name}() expects exactly {n} argument(s), got {}", args.len());
+            }
+            Ok(())
+        };
+        let op = |s: &Self, op: &str, args: serde_json::Value| s.create_instr(op, args, meta);
+        let s64 = || serde_json::json!({"type": "s64"});
+        // `buf + i*4`: the f32 element address, left on the stack.
+        let f32_addr = |s: &mut Self, instrs: &mut Vec<Instruction>| -> Result<()> {
+            s.compile_expr(&args[0], instrs)?;
+            s.compile_expr(&args[1], instrs)?;
+            instrs.push(op(s, "push_int", serde_json::json!({"value": 2})));
+            instrs.push(op(s, "shl", serde_json::json!({})));
+            instrs.push(op(s, "add", serde_json::json!({})));
+            Ok(())
+        };
+        match name {
+            "gpu.thread_idx" | "gpu.block_idx" | "gpu.block_dim" => {
+                expect(0)?;
+                let ptx = match name {
+                    "gpu.thread_idx" => "ptx_thread_idx_x",
+                    "gpu.block_idx" => "ptx_block_idx_x",
+                    _ => "ptx_block_dim_x",
+                };
+                instrs.push(op(self, ptx, serde_json::json!({})));
+                instrs.push(op(self, "cvt", s64()));
+            }
+            "gpu.global_id" => {
+                // block_idx * block_dim + thread_idx (x dimension).
+                expect(0)?;
+                for ptx in ["ptx_block_idx_x", "ptx_block_dim_x"] {
+                    instrs.push(op(self, ptx, serde_json::json!({})));
+                    instrs.push(op(self, "cvt", s64()));
+                }
+                instrs.push(op(self, "mul", serde_json::json!({})));
+                instrs.push(op(self, "ptx_thread_idx_x", serde_json::json!({})));
+                instrs.push(op(self, "cvt", s64()));
+                instrs.push(op(self, "add", serde_json::json!({})));
+            }
+            "gpu.load_f32" => {
+                expect(2)?;
+                f32_addr(self, instrs)?;
+                instrs.push(op(self, "ptx_ld_global", serde_json::json!({"type": "f32"})));
+            }
+            "gpu.store_f32" => {
+                expect(3)?;
+                f32_addr(self, instrs)?;
+                self.compile_expr(&args[2], instrs)?;
+                instrs.push(op(self, "cvt", serde_json::json!({"type": "f32"})));
+                instrs.push(op(self, "ptx_st_global", serde_json::json!({})));
+                // A store is a statement; give the expression its usual null value so
+                // the `ExprStmt` pop stays balanced.
+                instrs.push(op(self, "push_null", serde_json::json!({})));
+            }
+            "gpu.f32" => {
+                expect(1)?;
+                self.compile_expr(&args[0], instrs)?;
+                instrs.push(op(self, "cvt", serde_json::json!({"type": "f32"})));
+            }
+            _ => bail!("unknown GPU intrinsic {name}"),
+        }
+        Ok(())
+    }
+
     fn create_instr(
         &self,
         op: &str,
@@ -2528,4 +3307,252 @@ fn extract_type_hints(params: &[(String, CastType)], body: &[Statement]) -> Hash
     }
     scan_stmts(body, &mut hints);
     hints
+}
+
+/// CRUSH-251: names bound more than once anywhere in a top-level function —
+/// its parameters, `let`s, assignments, loop variables, nested `def` names and
+/// parameters, lambda parameters, walker `__crush_assign__` targets. A
+/// `let`-bound lambda keeps its direct-call alias only when its name is bound
+/// exactly once; otherwise which lambda the name holds depends on control flow
+/// (a reassignment in a loop or a branch, a shadowing inner binding), so calls
+/// go through the value with `call_value`. Walks the serialized CAST so a new
+/// kind of node can't slip past unseen.
+fn rebound_names(params: &[(String, CastType)], body: &[Statement]) -> HashSet<String> {
+    use serde_json::Value as J;
+    fn bind(name: Option<&str>, counts: &mut HashMap<String, usize>) {
+        if let Some(n) = name {
+            *counts.entry(n.to_string()).or_default() += 1;
+        }
+    }
+    fn walk(v: &J, counts: &mut HashMap<String, usize>) {
+        match v {
+            J::Array(items) => items.iter().for_each(|i| walk(i, counts)),
+            J::Object(o) => {
+                let field = |k: &str| o.get(k).and_then(J::as_str);
+                match field("type") {
+                    Some("VarDecl") => bind(field("name"), counts),
+                    Some("Assign") => bind(field("target"), counts),
+                    Some("FunctionDef") | Some("Lambda") => {
+                        if o.get("type").and_then(J::as_str) == Some("FunctionDef") {
+                            bind(field("name"), counts);
+                        }
+                        for p in o.get("params").and_then(J::as_array).into_iter().flatten() {
+                            bind(p.get(0).and_then(J::as_str), counts);
+                        }
+                    }
+                    Some("Call") if field("function") == Some("__crush_assign__") => bind(
+                        o.get("args")
+                            .and_then(|a| a.get(0))
+                            .and_then(|t| t.get("name"))
+                            .and_then(J::as_str),
+                        counts,
+                    ),
+                    _ => {}
+                }
+                bind(field("variable"), counts);
+                o.values().for_each(|c| walk(c, counts));
+            }
+            _ => {}
+        }
+    }
+    let mut counts = HashMap::new();
+    for (p, _) in params {
+        bind(Some(p), &mut counts);
+    }
+    walk(&serde_json::to_value(body).unwrap_or_default(), &mut counts);
+    counts.into_iter().filter(|(_, n)| *n > 1).map(|(k, _)| k).collect()
+}
+
+/// What one scope binds and references at its own level — not inside nested
+/// lambdas (collected in `lambdas`) or nested `def`s (their own scopes).
+#[derive(Default)]
+struct Level<'a> {
+    /// `let`s and loop variables: always local to the scope.
+    decls: HashSet<String>,
+    /// Plain assignment targets: local unless an enclosing scope has the name
+    /// (then the assignment writes the enclosing variable).
+    assigns: HashSet<String>,
+    /// Names read or called.
+    refs: HashSet<String>,
+    lambdas: Vec<&'a serde_json::Value>,
+}
+
+fn scan_level<'a>(v: &'a serde_json::Value, level: &mut Level<'a>) {
+    use serde_json::Value as J;
+    match v {
+        J::Array(items) => items.iter().for_each(|i| scan_level(i, level)),
+        J::Object(o) => {
+            let field = |k: &str| o.get(k).and_then(J::as_str);
+            match field("type") {
+                Some("Lambda") => {
+                    level.lambdas.push(v);
+                    return;
+                }
+                Some("FunctionDef") => return,
+                Some("VarDecl") => {
+                    level.decls.extend(field("name").map(str::to_string));
+                }
+                Some("Assign") => {
+                    level.assigns.extend(field("target").map(str::to_string));
+                }
+                Some("Var") => {
+                    level.refs.extend(field("name").map(str::to_string));
+                }
+                Some("Spawn") => {
+                    level.refs.extend(field("function").map(str::to_string));
+                }
+                // The parser emits `obj.method(..)` as a CapabilityCall named
+                // "obj.method"; it loads `obj` when `obj` is a variable.
+                Some("CapabilityCall") => {
+                    if let Some((receiver, _)) = field("name").and_then(|n| n.split_once('.')) {
+                        level.refs.insert(receiver.to_string());
+                    }
+                }
+                Some("Call") => {
+                    if let Some(f) = field("function") {
+                        if f == "__crush_assign__" {
+                            let target = o
+                                .get("args")
+                                .and_then(|a| a.get(0))
+                                .and_then(|t| t.get("name"))
+                                .and_then(J::as_str);
+                            level.assigns.extend(target.map(str::to_string));
+                        } else {
+                            // `obj.method(..)` loads `obj`.
+                            level.refs.insert(f.split('.').next().unwrap_or(f).to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            level.decls.extend(field("variable").map(str::to_string));
+            o.values().for_each(|c| scan_level(c, level));
+        }
+        _ => {}
+    }
+}
+
+fn lambda_params(lambda: &serde_json::Value) -> Vec<String> {
+    lambda
+        .get("params")
+        .and_then(|p| p.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.get(0).and_then(|n| n.as_str()).map(str::to_string))
+        .collect()
+}
+
+/// Python scoping (CRUSH-251 step 4): the Python walker marks a lambda it
+/// lowered (a `lambda` or a nested `def`) with meta `scope: "python"` and its
+/// `nonlocal` names. There, assigning a name makes it local unless it is
+/// declared `nonlocal` — unlike Crush / JS, where assigning a name an
+/// enclosing scope has writes that variable.
+fn python_nonlocals(meta: Option<&serde_json::Value>) -> Option<HashSet<String>> {
+    let meta = meta?;
+    if meta.get("scope").and_then(|s| s.as_str()) != Some("python") {
+        return None;
+    }
+    Some(
+        meta.get("nonlocal")
+            .and_then(|n| n.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
+/// The names a lambda's scope binds: parameters, `let`s / loop variables, and
+/// assignment targets — those no enclosing scope has, or (Python) those not
+/// declared `nonlocal`.
+fn lambda_locals(
+    params: &[String],
+    level: &Level,
+    enclosing: &HashSet<String>,
+    python_nonlocals: Option<&HashSet<String>>,
+) -> HashSet<String> {
+    let local_assign = |a: &&String| match python_nonlocals {
+        Some(nonlocals) => !nonlocals.contains(*a),
+        None => !enclosing.contains(*a),
+    };
+    // The Python walker lowers every assignment to a `VarDecl`, so a
+    // `nonlocal` name must not become local through one either.
+    let not_nonlocal = |d: &&String| python_nonlocals.is_none_or(|nl| !nl.contains(*d));
+    params
+        .iter()
+        .chain(level.decls.iter().filter(not_nonlocal))
+        .chain(level.assigns.iter().filter(local_assign))
+        .cloned()
+        .collect()
+}
+
+/// CRUSH-251 step 3: the enclosing variables a lambda uses — read, called,
+/// assigned, or needed by a nested lambda (transitive capture: a middle lambda
+/// captures what an inner one needs so it can pass it down). Sorted: the
+/// order of the hidden parameters.
+fn lambda_captures(
+    params: &[String],
+    body: &serde_json::Value,
+    own_nonlocals: Option<&HashSet<String>>,
+    enclosing: &HashSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let mut level = Level::default();
+    scan_level(body, &mut level);
+    let locals = lambda_locals(params, &level, enclosing, own_nonlocals);
+    let inner_enclosing: HashSet<String> = enclosing.union(&locals).cloned().collect();
+    let mut used: HashSet<String> = level.refs.union(&level.assigns).cloned().collect();
+    for nested in &level.lambdas {
+        let body = nested.get("body").unwrap_or(&serde_json::Value::Null);
+        let nonlocals = python_nonlocals(nested.get("meta"));
+        used.extend(lambda_captures(&lambda_params(nested), body, nonlocals.as_ref(), &inner_enclosing));
+    }
+    used.into_iter()
+        .filter(|n| !locals.contains(n) && enclosing.contains(n))
+        .collect()
+}
+
+/// CRUSH-251 step 3: the variables of a function (and of every lambda inside
+/// it) that closures capture by reference, so they live in cells. Capture is
+/// by reference — Python and JS closures see later writes and can write the
+/// variable — so every captured variable is boxed, except a parameter bound
+/// exactly once in the whole function: its value can't change after the
+/// closure is made, so the closure gets a copy.
+fn boxed_names(params: &[String], body: &serde_json::Value) -> HashSet<String> {
+    fn walk(lambdas: &[&serde_json::Value], enclosing: &HashSet<String>, captured: &mut HashSet<String>, all_params: &mut HashSet<String>) {
+        for lambda in lambdas {
+            let ps = lambda_params(lambda);
+            all_params.extend(ps.iter().cloned());
+            let body = lambda.get("body").unwrap_or(&serde_json::Value::Null);
+            let nonlocals = python_nonlocals(lambda.get("meta"));
+            captured.extend(lambda_captures(&ps, body, nonlocals.as_ref(), enclosing));
+            let mut level = Level::default();
+            scan_level(body, &mut level);
+            let inner: HashSet<String> = enclosing
+                .union(&lambda_locals(&ps, &level, enclosing, nonlocals.as_ref()))
+                .cloned()
+                .collect();
+            walk(&level.lambdas, &inner, captured, all_params);
+        }
+    }
+    let mut level = Level::default();
+    scan_level(body, &mut level);
+    let scope: HashSet<String> = params
+        .iter()
+        .chain(level.decls.iter())
+        .chain(level.assigns.iter())
+        .cloned()
+        .collect();
+    let mut captured = HashSet::new();
+    let mut all_params: HashSet<String> = params.iter().cloned().collect();
+    walk(&level.lambdas, &scope, &mut captured, &mut all_params);
+    if captured.is_empty() {
+        return captured;
+    }
+    let cast_params: Vec<(String, CastType)> = params.iter().map(|p| (p.clone(), CastType::Any)).collect();
+    let body_stmts: Vec<Statement> = serde_json::from_value(body.clone()).unwrap_or_default();
+    let rebound = rebound_names(&cast_params, &body_stmts);
+    captured
+        .into_iter()
+        .filter(|n| !(all_params.contains(n) && !rebound.contains(n)))
+        .collect()
 }

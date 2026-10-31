@@ -109,6 +109,21 @@ fn collect_sites_in_stmt(fn_name: &str, stmt: &Statement, out: &mut Vec<Exhausti
             collect_sites_in_expr(fn_name, target, out);
             collect_sites_in_expr(fn_name, callback, out);
         }
+        // COSM K1.2: methods are sites of their lifted functions.
+        Statement::ImplBlock { type_name, methods, .. } => {
+            for m in methods {
+                if let Some(body) = &m.body {
+                    collect_sites_in_stmts(&format!("{type_name}::{}", m.name), body, out);
+                }
+            }
+        }
+        Statement::TraitDef { name, methods, .. } => {
+            for m in methods {
+                if let Some(body) = &m.body {
+                    collect_sites_in_stmts(&format!("{name}::{}", m.name), body, out);
+                }
+            }
+        }
         // No expressions to walk in these:
         Statement::LangBlock { .. }
         | Statement::Import { .. }
@@ -161,7 +176,13 @@ fn collect_sites_in_expr(fn_name: &str, expr: &Expression, out: &mut Vec<Exhaust
         Expression::UnaryOp { operand, .. } => {
             collect_sites_in_expr(fn_name, operand, out);
         }
-        Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } => {
+        Expression::Call { args, .. } | Expression::CapabilityCall { args, .. } | Expression::Spawn { args, .. } | Expression::Construct { args, .. } => {
+            for a in args {
+                collect_sites_in_expr(fn_name, a, out);
+            }
+        }
+        Expression::MethodCall { target, args, .. } => {
+            collect_sites_in_expr(fn_name, target, out);
             for a in args {
                 collect_sites_in_expr(fn_name, a, out);
             }

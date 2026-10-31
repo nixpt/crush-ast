@@ -47,6 +47,8 @@ pub fn assemble(
     let mut parsed: Vec<Parsed> = Vec::new();
     let mut labels: HashMap<String, usize> = HashMap::new();
     let mut functions: HashMap<String, usize> = HashMap::new();
+    // `.func name arity` (COSM K1.4): the function's recorded arity.
+    let mut arities: HashMap<String, u8> = HashMap::new();
     let mut entry_name: Option<String> = None;
     let mut consts: Vec<String> = Vec::new();
     let mut const_index: HashMap<String, usize> = HashMap::new();
@@ -63,9 +65,24 @@ pub fn assemble(
             i
         };
 
+    // COSM K1.3 (CRUSH-zorro-42): `.cosm <json>` carries the kind table
+    // (what the disassembler prints), so a disassembly reassembles without
+    // losing it.
+    let mut cosm: Option<crush_cosm::CosmModule> = None;
+
     // Pass 1: compute label byte offsets.
     for (raw_line, raw) in source.lines().enumerate() {
         let lineno = raw_line + 1;
+        // Before comment stripping: the JSON's strings may hold `;` or `#`.
+        if let Some(json) = raw.trim_start().strip_prefix(".cosm").filter(|r| r.starts_with(char::is_whitespace)) {
+            if cosm.is_some() {
+                return Err(AssemblyError::new(lineno, "duplicate .cosm kind table"));
+            }
+            let module = crush_cosm::CosmModule::from_json(json.trim())
+                .map_err(|e| AssemblyError::new(lineno, format!("malformed .cosm kind table: {e}")))?;
+            cosm = Some(module);
+            continue;
+        }
         let mut line = strip_comment(raw).trim().to_string();
         if line.is_empty() {
             continue;
@@ -96,8 +113,14 @@ pub fn assemble(
             let toks = split_tokens(&line);
             match toks[0].as_str() {
                 ".func" => {
-                    if toks.len() != 2 {
-                        return Err(AssemblyError::new(lineno, ".func needs exactly one name"));
+                    if toks.len() != 2 && toks.len() != 3 {
+                        return Err(AssemblyError::new(lineno, ".func needs a name (and optionally its arity)"));
+                    }
+                    if let Some(a) = toks.get(2) {
+                        let n = parse_int(a, lineno)?;
+                        let n = u8::try_from(n)
+                            .map_err(|_| AssemblyError::new(lineno, format!("arity out of range: {n}")))?;
+                        arities.insert(toks[1].clone(), n);
                     }
                     let fname = toks[1].clone();
                     if !is_valid_ident(&fname) {
@@ -195,11 +218,11 @@ pub fn assemble(
                     .ok_or_else(|| AssemblyError::new(p.line, format!("unknown label {v:?}")))?;
                 code.extend_from_slice(&(target as u32).to_be_bytes());
             }
-            OperandKind::Cap => {
+            OperandKind::Cap | OperandKind::Member => {
                 if p.args.len() != 2 {
                     return Err(AssemblyError::new(
                         p.line,
-                        "CAP_CALL needs <\"cap\"> <argc>",
+                        format!("{} needs <\"name\"> <argc>", p.op),
                     ));
                 }
                 let cap = parse_string(&p.args[0], p.line)?;
@@ -225,6 +248,32 @@ pub fn assemble(
                 let idx = intern(v.to_string(), &mut consts, &mut const_index);
                 code.extend_from_slice(&(idx as u16).to_be_bytes());
             }
+            OperandKind::Closure => {
+                if p.args.len() != 3 {
+                    return Err(AssemblyError::new(
+                        p.line,
+                        "MAKE_CLOSURE needs <function> <arity> <captured>",
+                    ));
+                }
+                let v = p.args[0].as_str();
+                if !functions.contains_key(v) {
+                    return Err(AssemblyError::new(
+                        p.line,
+                        format!("closure over unknown function {v:?}"),
+                    ));
+                }
+                let byte = |s: &str, what: &str| -> Result<u8, AssemblyError> {
+                    let n = parse_int(s, p.line)?;
+                    u8::try_from(n).map_err(|_| {
+                        AssemblyError::new(p.line, format!("{what} out of range: {n}"))
+                    })
+                };
+                let (arity, ncap) = (byte(&p.args[1], "arity")?, byte(&p.args[2], "captured count")?);
+                let idx = intern(v.to_string(), &mut consts, &mut const_index);
+                code.extend_from_slice(&(idx as u16).to_be_bytes());
+                code.push(arity);
+                code.push(ncap);
+            }
         }
     }
 
@@ -240,12 +289,43 @@ pub fn assemble(
         manifest.runtime = "casm-v1".to_string();
         manifest.functions = functions
             .iter()
-            .map(|(k, &v)| (k.clone(), crate::bytecode::FunctionEntry { entry: v }))
+            .map(|(k, &v)| {
+                (k.clone(), crate::bytecode::FunctionEntry { entry: v, arity: arities.get(k).copied() })
+            })
             .collect();
         manifest.entry = entry_name;
     }
 
-    Ok(Program::with_source_map(code, consts, manifest, source_map))
+    let mut program = Program::with_source_map(code, consts, manifest, source_map);
+    program.cosm = cosm;
+    Ok(program)
+}
+
+/// The disassembly's kind-table header: a readable summary as comments, then
+/// the `.cosm` directive that [`assemble`] reads back.
+fn disassemble_kind_table(module: &crush_cosm::CosmModule, lines: &mut Vec<String>) {
+    let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    lines.push(format!(
+        "; kind table (COSM): {}, {}",
+        plural(module.kinds.len(), "Kind", "Kinds"),
+        plural(module.interfaces.len(), "interface", "interfaces"),
+    ));
+    for k in &module.kinds {
+        let fields: Vec<&str> = k.declared_fields().iter().map(|f| f.name.as_str()).collect();
+        let members: Vec<&str> = k.members.iter().map(|m| m.name.as_str()).collect();
+        lines.push(format!(
+            ";   kind {} ({}): fields [{}], members [{}]",
+            k.name,
+            k.home_lang,
+            fields.join(", "),
+            members.join(", ")
+        ));
+    }
+    for i in &module.interfaces {
+        let members: Vec<&str> = i.members.iter().map(|m| m.name.as_str()).collect();
+        lines.push(format!(";   interface {} ({}): [{}]", i.name, i.home_lang, members.join(", ")));
+    }
+    lines.push(format!(".cosm {}", module.to_json()));
 }
 
 pub fn disassemble(program: &Program) -> String {
@@ -253,14 +333,17 @@ pub fn disassemble(program: &Program) -> String {
 
     let code = &program.code;
     let mut lines: Vec<String> = Vec::new();
+    if let Some(module) = program.kind_table() {
+        disassemble_kind_table(module, &mut lines);
+    }
 
     // Collect jump targets and function offsets for label placement.
     let mut jump_targets: std::collections::BTreeSet<usize> = Default::default();
-    let func_at: HashMap<usize, &str> = program
+    let func_at: HashMap<usize, (&str, Option<u8>)> = program
         .manifest
         .functions
         .iter()
-        .map(|(k, v)| (v.entry, k.as_str()))
+        .map(|(k, v)| (v.entry, (k.as_str(), v.arity)))
         .collect();
     let mut scan = 0usize;
     while scan < code.len() {
@@ -320,6 +403,12 @@ pub fn disassemble(program: &Program) -> String {
         (PRINT, "PRINT"),
         (CAP_CALL, "CAP_CALL"),
         (CALL, "CALL"),
+        (MAKE_CLOSURE, "MAKE_CLOSURE"),
+        (CALL_VALUE, "CALL_VALUE"),
+        (CELL_NEW, "CELL_NEW"),
+        (CELL_GET, "CELL_GET"),
+        (CELL_SET, "CELL_SET"),
+        (CALL_VALUE_APPLY, "CALL_VALUE_APPLY"),
         (RET, "RET"),
         (ENTER_TRY, "ENTER_TRY"),
         (EXIT_TRY, "EXIT_TRY"),
@@ -373,6 +462,18 @@ pub fn disassemble(program: &Program) -> String {
         (NEW_SET, "NEW_SET"),
         (SET_PUSH, "SET_PUSH"),
         (MAP_KEYS, "MAP_KEYS"),
+        (GET_MEMBER, "GET_MEMBER"),
+        (SET_MEMBER, "SET_MEMBER"),
+        (HAS_MEMBER, "HAS_MEMBER"),
+        (DEL_MEMBER, "DEL_MEMBER"),
+        (CALL_MEMBER, "CALL_MEMBER"),
+        (CONSTRUCT, "CONSTRUCT"),
+        (GET_SLOT, "GET_SLOT"),
+        (SET_SLOT, "SET_SLOT"),
+        (IS_KIND, "IS_KIND"),
+        (COPY, "COPY"),
+        (NEW_RECORD, "NEW_RECORD"),
+        (LOAD_KIND, "LOAD_KIND"),
         (HALT, "HALT"),
     ]
     .iter()
@@ -381,8 +482,10 @@ pub fn disassemble(program: &Program) -> String {
 
     let mut ip = 0usize;
     while ip < code.len() {
-        if let Some(fname) = func_at.get(&ip) {
-            lines.push(format!(".func {fname}"));
+        match func_at.get(&ip) {
+            Some((fname, Some(arity))) => lines.push(format!(".func {fname} {arity}")),
+            Some((fname, None)) => lines.push(format!(".func {fname}")),
+            None => {}
         }
         if jump_targets.contains(&ip) {
             lines.push(format!("L{ip}:"));
@@ -420,7 +523,7 @@ pub fn disassemble(program: &Program) -> String {
                 let t = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap());
                 format!("    {op_name} L{t}")
             }
-            OperandKind::Cap => {
+            OperandKind::Cap | OperandKind::Member => {
                 let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
                 let argc = code[ip + 3];
                 let cap = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
@@ -430,6 +533,11 @@ pub fn disassemble(program: &Program) -> String {
                 let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
                 let fname = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
                 format!("    {op_name} {fname}")
+            }
+            OperandKind::Closure => {
+                let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
+                let fname = program.consts.get(idx).map(|s| s.as_str()).unwrap_or("?");
+                format!("    {op_name} {fname} {} {}", code[ip + 3], code[ip + 4])
             }
         };
         lines.push(line);
@@ -486,6 +594,12 @@ fn opcode_for(name: &str) -> Option<u8> {
         "PRINT" => Some(PRINT),
         "CAP_CALL" => Some(CAP_CALL),
         "CALL" => Some(CALL),
+        "MAKE_CLOSURE" => Some(MAKE_CLOSURE),
+        "CALL_VALUE" => Some(CALL_VALUE),
+        "CELL_NEW" => Some(CELL_NEW),
+        "CELL_GET" => Some(CELL_GET),
+        "CELL_SET" => Some(CELL_SET),
+        "CALL_VALUE_APPLY" => Some(CALL_VALUE_APPLY),
         "RET" => Some(RET),
         "EXEC_LANG" => Some(EXEC_LANG),
         "ENTER_TRY" => Some(ENTER_TRY),
@@ -541,6 +655,18 @@ fn opcode_for(name: &str) -> Option<u8> {
         "STR_TO_UPPER" => Some(STR_TO_UPPER),
         "STR_TO_LOWER" => Some(STR_TO_LOWER),
         "STR_TRIM" => Some(STR_TRIM),
+        "GET_MEMBER" => Some(GET_MEMBER),
+        "SET_MEMBER" => Some(SET_MEMBER),
+        "HAS_MEMBER" => Some(HAS_MEMBER),
+        "DEL_MEMBER" => Some(DEL_MEMBER),
+        "CALL_MEMBER" => Some(CALL_MEMBER),
+        "CONSTRUCT" => Some(CONSTRUCT),
+        "GET_SLOT" => Some(GET_SLOT),
+        "SET_SLOT" => Some(SET_SLOT),
+        "IS_KIND" => Some(IS_KIND),
+        "COPY" => Some(COPY),
+        "NEW_RECORD" => Some(NEW_RECORD),
+        "LOAD_KIND" => Some(LOAD_KIND),
         "HALT" => Some(HALT),
         _ => None,
     }
@@ -599,13 +725,16 @@ fn strip_label(line: &str) -> Option<String> {
     Some(line[pos + 1..].to_string())
 }
 
+/// A function name: an identifier, possibly qualified with `.` or `::`
+/// (`Point::norm2`, `Point::Shape::area` — methods lifted from Crush `impl`
+/// blocks, COSM K1.2 / CRUSH-zorro-41).
 fn is_valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
         _ => return false,
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ':')
 }
 
 fn split_tokens(text: &str) -> Vec<String> {

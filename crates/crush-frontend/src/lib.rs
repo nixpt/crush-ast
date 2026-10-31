@@ -2,6 +2,8 @@ pub mod ai_runtime;
 pub mod cson_desugar;
 pub mod cast_enrich;
 pub mod compiler;
+mod cosm_kind;
+pub mod cosm_lower;
 pub mod diagnostics;
 pub mod exhaustive_check;
 pub mod import_system;
@@ -14,6 +16,7 @@ pub mod semantics;
 pub mod types;
 pub mod mutation_check;
 pub mod wip_check;
+mod walker_intrinsics;
 
 use anyhow::Result;
 
@@ -72,18 +75,72 @@ pub fn compile_cast(program: &crush_cast::Program) -> Result<casm::Program> {
 ///
 /// Identical to [`compile_cast`] but takes the program by value, avoiding a
 /// deep clone of the whole AST on the hot compile path.
-pub fn compile_cast_owned(mut program: crush_cast::Program) -> Result<casm::Program> {
-    let mut sema = semantics::SemanticAnalyzer::new();
-    sema.check(&program)?;
+pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program> {
+    Ok(compile_cast_with_cosm(program)?.0)
+}
+
+/// Compile a CAST Program and also return its COSM module (COSM K1.2,
+/// CRUSH-zorro-41): the `KindDecl`s / `InterfaceDecl`s its `struct` /
+/// `impl` / `trait` / `@kind(…)` declarations lower to, validated — merged
+/// with any module the walker supplied in `Program::cosm` (CRUSH-277 S1;
+/// a name both sides declare is an error). `None` for a program that
+/// declares none of them.
+///
+/// The CASM program carries the same module as its kind table
+/// (`casm::Program::cosm`, COSM K1.3, CRUSH-zorro-42); its functions include
+/// the lifted methods (`Point::norm2`, …).
+pub fn compile_cast_with_cosm(
+    program: crush_cast::Program,
+) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
+    let (mut program, cosm) = lower_and_check(program)?;
     optimizer::Optimizer::optimize(&mut program);
     let mut comp = compiler::Compiler::new();
-    comp.compile(program)
+    let casm = comp.compile_lowered(program, cosm.clone())?;
+    Ok((casm, cosm))
+}
+
+/// The front half every compile path shares: lower the program's `struct` /
+/// `impl` / `trait` / `@kind(…)` declarations (merging a walker-supplied COSM
+/// module), then semantic-check it with the constructors of constructed Kinds
+/// declared, so `Acc(10)` of a `@kind(construct: ctor(…))` Kind checks
+/// (#260: `crushc` used to check without them). Returns the lowered program
+/// and its module, ready for `Compiler::compile_lowered`.
+pub fn lower_and_check(
+    mut program: crush_cast::Program,
+) -> Result<(crush_cast::Program, Option<crush_cosm::CosmModule>)> {
+    let walker_cosm = program.cosm.take();
+    let derived_cosm = cosm_lower::lower(&mut program)?;
+    let cosm = cosm_lower::merge_walker_module(walker_cosm, derived_cosm)?;
+    let mut sema = semantics::SemanticAnalyzer::new();
+    if let Some(module) = &cosm {
+        sema.declare_constructors(module, &program);
+    }
+    sema.check(&program)?;
+    Ok((program, cosm))
 }
 
 /// Parse Crush source and compile directly to CASM bytecode.
 pub fn compile_crush_source(source: &str) -> Result<casm::Program> {
     let program = parse_source(source)?;
     compile_cast_owned(program)
+}
+
+/// Parse Crush source and lower its `struct` / `impl` / `trait` / `@kind(…)`
+/// declarations to a validated COSM module, without generating code (COSM
+/// K1.2, CRUSH-zorro-41). Unlike compiling, this accepts every strategy in
+/// the catalogue — including ones the VMs can't run yet. `None` when the
+/// source declares none of them.
+pub fn lower_to_cosm(source: &str) -> Result<Option<crush_cosm::CosmModule>> {
+    let mut program = parse_source(source)?;
+    cosm_lower::lower(&mut program)
+}
+
+/// Parse Crush source and compile it, also returning its COSM module (see
+/// [`compile_cast_with_cosm`]).
+pub fn compile_crush_source_with_cosm(
+    source: &str,
+) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
+    compile_cast_with_cosm(parse_source(source)?)
 }
 
 // ── Surgical symbol extraction ───────────────────────────────────────────────

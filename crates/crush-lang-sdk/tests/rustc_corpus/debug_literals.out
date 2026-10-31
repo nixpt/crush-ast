@@ -1,0 +1,8 @@
+"" "a\"b\\c\n\t\0" "é🦀" 'é'
+'\n' '\'' '"' '\0'
+true false () -128
+-1 6.0 -0.0 1e21
+["a", "b\n"] [['x', '\t'], ['é', '\0']]
+display 'x' display 'x'
+"hello"
+empty=

@@ -1,7 +1,7 @@
 use crush_lang_rust::RustFrontend;
-use crush_walker_core::Frontend;
+use crush_walker_core_no_tree_sitter::Frontend;
 
-fn test_analyze(source: &str) -> crush_walker_core::FeatureReport {
+fn test_analyze(source: &str) -> crush_walker_core_no_tree_sitter::FeatureReport {
     let frontend = RustFrontend;
     let ast = frontend.parse(source).unwrap();
     frontend.analyze(&ast).unwrap()
@@ -37,7 +37,18 @@ fn test_rust_frontend_detects_ffi() {
 fn test_rust_frontend_pipeline_run() {
     let source = "fn main() { let x = 42; println!(\"value: {}\", x); }";
     let frontend = RustFrontend;
-    let (report, program) = crush_walker_core::frontend_pipeline(&frontend, source).unwrap();
+    let (report, program) =
+        crush_walker_core_no_tree_sitter::frontend_pipeline(&frontend, source).unwrap();
     assert!(report.uses_functions);
     assert!(program.functions.contains_key("main"));
+}
+
+// A destructuring closure parameter used to become a placeholder `_param`, so
+// the body's names were free variables (captured from an enclosing scope if
+// one had them: silently wrong). It is refused until destructuring exists.
+#[test]
+fn destructuring_closure_parameters_fail_loudly() {
+    let err = crush_lang_rust::rust_to_cast("fn main() { let f = |(a, b): (i32, i32)| a + b; println!(\"{}\", f((1, 2))); }")
+        .expect_err("must not lower");
+    assert!(format!("{err:#}").contains("destructuring"), "{err:#}");
 }

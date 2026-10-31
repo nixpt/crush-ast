@@ -19,17 +19,31 @@ pub mod fastvm;
 pub mod value;
 pub mod assembler;
 pub mod bytecode;
+pub mod cosm_gate;
+pub mod cosm_rt;
 pub mod ai_args;
 pub mod arithmetic;
 pub mod make_range;
+pub mod seq;
+pub mod num_text;
+pub mod rust_debug;
+pub mod rust_methods;
+pub mod rust_methods_core;
+pub mod rust_debug_core;
+pub mod js_core;
+pub mod js_ops;
 pub mod map_ops;
+pub mod marshal;
+pub mod block_capture;
 pub mod caps;
 pub mod cap_inference;
 pub mod debug;
 pub mod host;
 pub mod io_print;
 pub mod io_read;
+pub mod lang_exec;
 pub mod str_len;
+pub mod parallel;
 pub mod portable_vm;
 pub mod scheduler;
 pub mod vm;
@@ -42,6 +56,9 @@ pub use debug::{
 };
 pub use host::{HostCap, HostCapSpec, HostCaps, polyglot_gate};
 pub use io_read::InputSource;
+pub use lang_exec::{
+    PolyglotError, PolyglotExecutor, PolyglotRequest, SubprocessExecutor, polyglot_executor_fn,
+};
 pub use portable_vm::{Frame, LangExecutor, PortableVm, VmYield, value_to_text};
 pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 pub use scheduler::{polyglot_gate_name, resolve_lang_binary};
@@ -75,4 +92,11 @@ pub enum Error {
     Truncated,
     #[error("malformed manifest: {0}")]
     BadManifest(String),
+    /// The version-3 kind-table section (COSM K1.3) is malformed.
+    #[error("malformed kind table: {0}")]
+    BadKindTable(String),
+    /// The code section holds a byte that isn't an opcode of this
+    /// format version (found while validating at load).
+    #[error("unknown opcode {0:#04x} at code offset {1}")]
+    UnknownOpcode(u8, usize),
 }

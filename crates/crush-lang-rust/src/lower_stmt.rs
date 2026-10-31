@@ -1,16 +1,25 @@
 //! syn statement → CAST statement lowering.
 
-use crush_walker_core::LowerCtx;
+use crush_walker_core_no_tree_sitter::LowerCtx;
 
 use crush_cast::{CastType, Expression, Statement};
-use syn::Stmt;
+use quote::ToTokens;
+use syn::{Stmt, spanned::Spanned};
 
 use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
 
 pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
-    let meta = ctx.meta_at(0);
+    lower_stmt_inner(stmt, ctx).map_err(|error| crate::diagnostics::at("statement", stmt.span(), error))
+}
+
+fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
+    let start = stmt.span().start();
+    let meta = ctx.meta_lc(start.line, start.column + 1);
     match stmt {
         Stmt::Local(local) => {
+            let mut meta = meta;
+            meta.insert("rust_numeric_hint".into(), crate::numeric::hint(&local.pat));
+            meta.insert("rust_value_hint".into(), crate::values::hint(&local.pat));
             let name = pat_to_ident(&local.pat)?;
             let value = match &local.init {
                 Some(init) => lower_expr(&init.expr, ctx)?,
@@ -25,6 +34,16 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
         }
         Stmt::Item(item) => match item {
             syn::Item::Fn(item_fn) => {
+                if item_fn.sig.asyncness.is_some() {
+                    return Err(crate::lower_expr::unsupported_at(item_fn.sig.span(), "async function", "Future/poll semantics are required before treating its declared output as a ready method value (CRUSH-xps-13)"));
+                }
+                let mut meta = meta;
+                let (numeric_params, numeric_return) = crate::numeric::signature(&item_fn.sig);
+                meta.insert("rust_numeric_params".into(), numeric_params);
+                meta.insert("rust_numeric_return".into(), numeric_return);
+                let (params, ret) = crate::values::signature(&item_fn.sig);
+                meta.insert("rust_value_params".into(), params);
+                meta.insert("rust_value_return".into(), ret);
                 let name = item_fn.sig.ident.to_string();
                 let params: Vec<(String, CastType)> = item_fn
                     .sig
@@ -52,10 +71,10 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                     meta,
                 })
             }
-            _ => Ok(Statement::ExprStmt {
-                expr: Expression::NullLiteral { meta: meta.clone() },
-                meta,
-            }),
+            _ => anyhow::bail!(
+                "unsupported Rust item in a block: `{}`",
+                item.to_token_stream()
+            ),
         },
         Stmt::Expr(expr, _) => match expr {
             syn::Expr::Return(e_ret) => {
@@ -159,18 +178,17 @@ pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> 
                 .map(|i| i.to_string())
                 .unwrap_or_default();
             match mac_name.as_str() {
-                // CRUSH-197: the format string and its `{}` arguments are now
-                // lowered (they used to be dropped — every program printed blank
-                // lines). `print!` still ends the line: there is no newline-free
-                // print capability yet.
-                "println" | "print" | "eprintln" | "eprint" => Ok(Statement::ExprStmt {
-                    expr: Expression::CapabilityCall {
-                        name: "io.print".to_string(),
-                        args: vec![format_args_to_expr(&mac.mac.tokens, ctx)?],
-                        meta,
-                    },
-                    meta: ctx.meta_at(0),
-                }),
+                "println" | "print" | "eprintln" | "eprint" => {
+                    crate::formatting::output_macro(&mac.mac)?;
+                    Ok(Statement::ExprStmt {
+                        expr: Expression::CapabilityCall {
+                            name: "io.print".to_string(),
+                            args: vec![format_args_to_expr(&mac.mac.tokens, ctx)?],
+                            meta,
+                        },
+                        meta: ctx.meta_at(0),
+                    })
+                },
                 _ => anyhow::bail!("macro invocation not supported: {}!", mac_name),
             }
         }
@@ -215,7 +233,7 @@ fn is_statement_like(e: &syn::Expr) -> bool {
 }
 
 /// A tail expression in a function with a return type: branches return their own tails.
-fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+pub(crate) fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
     let meta = ctx.meta_at(0);
     Ok(match e {
         syn::Expr::If(e_if) => {

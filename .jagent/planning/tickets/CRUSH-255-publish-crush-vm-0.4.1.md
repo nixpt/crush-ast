@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-255 |
 | **Priority** | P2 — unblocks exo-light inside surfer-browser |
-| **Status** | Backlog |
+| **Status** | Done (superseded) |
 | **Phase** | M0 — release hygiene |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -30,3 +30,11 @@ version.
 ## Cross-refs
 
 exo-light EXOLIGHT-12; surfer-browser SURF-EXOLIGHT-1.
+
+## Resolution (2026-10-16, superseded)
+
+crush-vm **0.6.0** is published on crates.io (crush-ast v0.6.0), with `HostCaps::register_shared` and the
+`HostCap` surface this ticket asked for. Nothing is left to publish at 0.4.1. The embedder alignment it was
+blocking moved to the embedder: exo-light EXOLIGHT-16 (move exo-light from crush-vm 0.3.6 to 0.6.x, with a
+`[patch.crates-io]` recipe for path consumers). Embedders that want CRUSH-271's `PolyglotExecutor` will need
+the next crush-vm release.

@@ -1,0 +1,97 @@
+{
+  "kinds": [
+    {
+      "name": "Point",
+      "home_lang": "crush",
+      "span": {
+        "file": "example",
+        "line": 1,
+        "col": 1
+      },
+      "storage": {
+        "sealed": {
+          "fields": [
+            {
+              "name": "x",
+              "type": "Int"
+            },
+            {
+              "name": "y",
+              "type": "Int"
+            }
+          ]
+        }
+      },
+      "semantics": "reference",
+      "resolution": "none",
+      "receiver": "explicit_ref",
+      "construct": "literal",
+      "members": [
+        {
+          "name": "new",
+          "span": {
+            "line": 3,
+            "col": 5
+          },
+          "kind": "static",
+          "value": {
+            "fn": "Point::new"
+          }
+        },
+        {
+          "name": "norm2",
+          "span": {
+            "line": 4,
+            "col": 5
+          },
+          "kind": "method",
+          "fn": "Point::norm2"
+        }
+      ],
+      "conforms": [
+        {
+          "interface": "Shape",
+          "check": "nominal",
+          "members": [
+            {
+              "name": "area",
+              "kind": "method",
+              "fn": "<Point as Shape>::area"
+            }
+          ],
+          "span": {
+            "file": "example",
+            "line": 7,
+            "col": 1
+          }
+        }
+      ],
+      "equality": "structural"
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Shape",
+      "home_lang": "crush",
+      "span": {
+        "file": "example",
+        "line": 6,
+        "col": 1
+      },
+      "members": [
+        {
+          "name": "area",
+          "receiver": "explicit_ref",
+          "returns": "Any"
+        },
+        {
+          "name": "describe",
+          "receiver": "explicit_ref",
+          "returns": "Any",
+          "default": "Shape::describe"
+        }
+      ],
+      "satisfaction": "nominal"
+    }
+  ]
+}

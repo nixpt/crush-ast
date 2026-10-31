@@ -181,3 +181,13 @@ mod async_green;
 #[cfg(test)]
 mod matrix;
 
+
+#[cfg(test)]
+mod func_values;
+
+#[cfg(test)]
+mod kind_table;
+// COSM K1.4 (CRUSH-zorro-43): Records, Kinds and the member ops on both VMs.
+mod records;
+// COSM K3 JS slice (CRUSH-277 S2): prototype-chain Kinds on both VMs.
+mod prototype_chain;

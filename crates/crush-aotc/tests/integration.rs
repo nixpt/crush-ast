@@ -32,6 +32,46 @@ fn compile_and_run(source: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// `source` with the first `store` to `local` in `func` sent to a dead local,
+/// compiled and run: `(exit ok, stdout, stderr)`. (The frontend refuses a
+/// read of an unassigned local; a walker can emit one — CRUSH-zorro-55.)
+fn run_unassigned(source: &str, func: &str, local: &str) -> (bool, String, String) {
+    let mut program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let f = program.functions.get_mut(func).expect("function");
+    let store = f
+        .body
+        .iter_mut()
+        .find(|i| i.op == "store" && i.args.get("name").and_then(|n| n.as_str()) == Some(local))
+        .expect("a store to the local");
+    store.args["name"] = serde_json::Value::from("__dead");
+    let c_source = AotcCompiler::new(AotcOpts::default()).compile(&program).expect("aotc");
+    let dir = tempfile::tempdir().unwrap();
+    let (c_path, exe_path) = (dir.path().join("t.c"), dir.path().join("t"));
+    std::fs::write(&c_path, &c_source).unwrap();
+    let status = Command::new("cc")
+        .args([&c_path.to_string_lossy(), "-o", &exe_path.to_string_lossy(), "-lm"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cc failed:\n{c_source}");
+    let o = Command::new(&exe_path).output().unwrap();
+    (o.status.success(), String::from_utf8_lossy(&o.stdout).into(), String::from_utf8_lossy(&o.stderr).into())
+}
+
+/// CRUSH-zorro-55: a read of an unassigned local fails, as on the VMs,
+/// instead of reading the `= 0` it used to be declared with.
+#[test]
+fn unassigned_local_read_fails() {
+    let (ok, _, err) = run_unassigned("fn n(v) { return v; }\nfn main() { let x = n(5)\n print(x) }\n", "main", "x");
+    assert!(!ok && err.contains("load from uninitialised slot `x`"), "{err}");
+
+    let src = |arg: &str| format!("fn f(c) {{ let x = 0\n if c {{ x = 7 }}\n return x }}\nfn main() {{ print(f({arg})) }}\n");
+    let (ok, _, err) = run_unassigned(&src("false"), "f", "x");
+    assert!(!ok && err.contains("load from uninitialised slot `x`"), "{err}");
+    // ... and the path that assigns it still reads the value.
+    let (ok, out, err) = run_unassigned(&src("true"), "f", "x");
+    assert!(ok && out.trim() == "7", "{out} {err}");
+}
+
 #[test]
 fn string_equality_true() {
     let source = r#"
@@ -194,4 +234,87 @@ fn truthiness_is_canonical() {
         ["0", "0", "1", "0", "1", "0", "1", "0", "1"],
         "{out}"
     );
+}
+
+/// COSM K1.3 (CRUSH-zorro-42): a kind table whose Kinds all behave as plain
+/// maps (Crush's defaults) compiles and runs like the scheduler VM; a Kind a
+/// map can't represent is refused before any C is generated.
+const COSM_POINT: &str = r#"
+struct Point { x: int, y: int }
+impl Point {
+    fn new(x, y) { return Point { x: x, y: y }; }
+    fn norm2(self) { return self.x * self.x + self.y * self.y; }
+}
+trait Shape { fn area(self); fn sides(self) { return 4; } }
+impl Shape for Point { fn area(self) { return 100; } }
+fn main() {
+    let p = Point::new(3, 4)
+    print(Point::norm2(p) + Point::Shape::area(p) + Shape::sides(p))
+}
+"#;
+
+/// The COSM rule lets a map-compatible kind table through on crush-aotc, as on
+/// every engine. crush-aotc has no objects or maps at all, though: the struct
+/// instances are refused as object ops — loudly, where they used to compile to
+/// C that read every field as the last value set (this program printed 136,
+/// not the VM's 129).
+#[test]
+fn a_map_compatible_kind_table_passes_the_cosm_rule_but_objects_are_refused() {
+    let program = crush_frontend::compile_crush_source(COSM_POINT).expect("frontend");
+    assert!(program.kind_table().is_some());
+    assert_eq!(program.refuse_cosm("crush-aotc"), Ok(()));
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("objects refused");
+    let err = err.to_string();
+    assert!(!err.contains("COSM"), "{err}");
+    assert!(err.contains("(objects and maps, including struct instances) isn't supported"), "{err}");
+    // The same refusal for a plain map, without any kind table.
+    let plain = crush_frontend::compile_crush_source("fn main() { let p = {x: 3, y: 4}\n print(p.x) }\n").unwrap();
+    assert!(AotcCompiler::new(AotcOpts::default()).compile(&plain).is_err());
+}
+
+#[test]
+fn a_kind_maps_cant_represent_is_refused() {
+    let mut program = crush_frontend::compile_crush_source(COSM_POINT).expect("frontend");
+    let mut v = serde_json::to_value(program.cosm.as_ref().unwrap()).unwrap();
+    v["kinds"][0]["equality"] = serde_json::json!("identity");
+    program.cosm = Some(serde_json::from_value(v).unwrap());
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("refused");
+    let err = err.to_string();
+    assert!(err.starts_with("COSM objects aren't supported on crush-aotc yet (CRUSH-zorro-43)"), "{err}");
+    assert!(err.contains("`Point` declares equality: identity"), "{err}");
+}
+
+/// issue #161: no green-task scheduler here — `spawn` is refused by name, not
+/// compiled to `unhandled op` C that silently skips the task. `yield`/`await`
+/// without `spawn` are no-ops (a lone `yield` has nothing to yield to, and an
+/// `await` has no handle — issue #251: `await v` returns `v`), so they
+/// compile, not refuse.
+#[test]
+fn green_tasks_are_refused_by_name() {
+    let program = crush_frontend::compile_crush_source("fn worker() {}\nfn main() { spawn worker() }\n")
+        .expect("frontend");
+    let err = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("refused");
+    let err = err.to_string();
+    assert!(err.contains("spawn"), "{err}");
+    assert!(!err.contains("make_closure"), "{err}");
+}
+
+#[test]
+fn lone_yield_and_await_compile_not_refuse() {
+    for source in ["fn main() { yield }\n", "fn main() { let h = 1\n await h }\n"] {
+        let program = crush_frontend::compile_crush_source(source).expect("frontend");
+        AotcCompiler::new(AotcOpts::default()).compile(&program).expect("compiles: a lone yield/await is a no-op");
+    }
+}
+
+#[test]
+fn await_on_a_non_handle_returns_the_value() {
+    // issue #251: `await v` on a non-handle returns `v` (JS semantics), so
+    // `print(await v)` prints `v`, not `null`.
+    let out = compile_and_run("fn main() { print(await 5) }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["5"], "unexpected output: {out}");
+    let out = compile_and_run("fn main() { print(await \"x\") }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["x"], "unexpected output: {out}");
+    let out = compile_and_run("fn main() { print(await null) }\n").expect("compile and run");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["null"], "unexpected output: {out}");
 }

@@ -46,8 +46,11 @@ pub mod db;
 mod util;
 #[cfg(feature = "graphics")]
 pub mod graphics;
+pub mod fs_backend;
 mod fs_tools;
 pub mod host_caps;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod repl;
@@ -67,6 +70,9 @@ pub use crush_vm::run as run_program;
 pub use crush_vm::vm::Value;
 pub use crush_vm::{HostCap, HostCapSpec, HostCaps, run_with_caps};
 pub use crush_vm::{Program, Quotas, VmError, VmResult, assemble, disassemble};
+pub use crush_vm::{
+    PolyglotError, PolyglotExecutor, PolyglotRequest, SubprocessExecutor, polyglot_executor_fn,
+};
 
 pub use builder::{ProgramBuilder, ProgramBuilderError};
 pub use caps::{CapabilityError, concat, len, print};

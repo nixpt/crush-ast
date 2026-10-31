@@ -1,0 +1,1 @@
+fn main() { let a = [1, 2]; let mut b = a.clone(); b[0] = 9; println!("{} {}", a[0], b[0]); }

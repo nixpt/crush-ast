@@ -76,6 +76,10 @@ pub struct Frame {
     pub return_ip: Option<usize>,
     /// Local memory slots.
     pub memory: std::collections::HashMap<u16, Value>,
+    /// What this frame's `RET` does with the callee's return value (see
+    /// `crate::vm::RetValue`): accessor calls run as ordinary calls on
+    /// this stack since the CRUSH-285 review.
+    pub on_ret: crate::vm::RetValue,
 }
 
 impl Frame {
@@ -83,8 +87,36 @@ impl Frame {
         Self {
             return_ip,
             memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
         }
     }
+}
+
+/// Instructions a green task runs before the next one gets a turn — the same
+/// slice the native scheduler uses (`scheduler.rs` `SLICE_SIZE`), so both
+/// engines interleave spawned tasks identically.
+const TASK_SLICE: usize = 50;
+
+/// A parked task's execution context.
+#[derive(Debug, Default)]
+struct TaskCtx {
+    stack: Vec<Value>,
+    call_stack: Vec<Frame>,
+    ip: usize,
+    try_stack: Vec<crate::vm::TryHandler>,
+    captures: Vec<crate::block_capture::OutputCapture>,
+}
+
+/// One cooperative green task (#161).
+#[derive(Debug, Default)]
+struct GreenTask {
+    /// Saved context while parked; `None` while running (or finished).
+    ctx: Option<TaskCtx>,
+    done: bool,
+    /// The finished task's return value.
+    result: Option<Value>,
+    /// Handle id this task is blocked on in `AWAIT`.
+    waiting_for: Option<usize>,
 }
 
 /// Portable bytecode interpreter.
@@ -117,6 +149,15 @@ pub struct PortableVm {
     input: crate::io_read::InputSource,
     /// Runs `@lang` blocks instead of a subprocess when set (#91).
     lang_executor: Option<LangExecutor>,
+    /// Deferred `@lang` blocks: an EXEC_LANG yields
+    /// `VmYield::HostCall { capability: "lang.exec", .. }` and runs again, with
+    /// the result, once the host calls [`PortableVm::provide_lang_result`].
+    lang_deferred: bool,
+    /// The host's result for the pending deferred block: its stdout, or what it
+    /// reported on failure.
+    lang_result: Option<Result<String, String>>,
+    /// Set by EXEC_LANG when it defers its block: the `lang.exec` arguments.
+    lang_yield: Option<Vec<Value>>,
     /// Instruction pointer.
     ip: usize,
     /// Total instruction steps executed.
@@ -129,10 +170,21 @@ pub struct PortableVm {
     privileged_allowed: bool,
     /// Active try blocks, innermost last.
     try_stack: Vec<crate::vm::TryHandler>,
-    /// Next task ID for async spawn.
-    next_task_id: u64,
-    /// Scheduled tasks: task_id → (function name, args).
-    scheduled_tasks: std::collections::HashMap<u64, (String, Vec<Value>)>,
+    /// Open `lang.capture_begin`s of inline-lowered polyglot blocks (#312),
+    /// innermost last; per task, like `try_stack`.
+    captures: Vec<crate::block_capture::OutputCapture>,
+    /// Green tasks (#161), indexed by handle id; `tasks[0]` is main. Empty
+    /// until the first `SPAWN`, so programs that never spawn pay nothing.
+    /// The running task's context lives in `stack` / `call_stack` / `ip` /
+    /// `try_stack`; parked tasks keep theirs in `GreenTask::ctx`.
+    tasks: Vec<GreenTask>,
+    /// Handle id of the running task.
+    current_task: usize,
+    /// Instructions left in the running task's time slice.
+    slice_remaining: usize,
+    /// Set by `YIELD`, a blocking `AWAIT`, or a task finishing: switch tasks
+    /// after the current instruction.
+    switch_requested: bool,
     /// Bytecode-level breakpoints (instruction offsets).
     breakpoints: Vec<usize>,
     /// Per-IP counter: how many breakpoint hits have been reported
@@ -152,11 +204,28 @@ pub struct PortableVm {
     next_watch_id: u32,
     /// Why the last `DebugBreak` happened.
     last_stop: Option<crate::debug::DebugStop>,
+    /// COSM: why the program's kind table can't run on this VM (`cosm_gate`,
+    /// or a malformed table), found at load. `step` reports it before
+    /// running anything.
+    load_error: Option<LoadError>,
+    /// COSM K1.4: the program's Kinds.
+    kinds: crate::cosm_rt::KindTable,
+}
+
+/// A kind table this VM refused at load ([`PortableVm::new`]).
+enum LoadError {
+    Unsupported(String),
+    Cosm(String),
 }
 
 impl PortableVm {
     /// Create a new portable VM with the given program.
     pub fn new(program: Program) -> Self {
+        let (kinds, load_error) = match crate::cosm_rt::KindTable::load(&program) {
+            Ok(kinds) => (kinds, None),
+            Err(VmError::Unsupported(reason)) => (Default::default(), Some(LoadError::Unsupported(reason))),
+            Err(e) => (Default::default(), Some(LoadError::Cosm(e.to_string()))),
+        };
         // Extract permissions before moving program
         let permissions = program.manifest.permissions.clone();
 
@@ -181,6 +250,7 @@ impl PortableVm {
         call_stack.push(Frame {
             return_ip: None,
             memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
         });
 
         let declared_caps: std::collections::HashSet<String> = permissions.into_iter().collect();
@@ -198,14 +268,20 @@ impl PortableVm {
             out_taken: 0,
             input: crate::io_read::InputSource::Stdin,
             lang_executor: None,
+            lang_deferred: false,
+            lang_result: None,
+            lang_yield: None,
             ip: start_ip,
             steps: 0,
             jumped: false,
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
-            next_task_id: 1,
-            scheduled_tasks: std::collections::HashMap::new(),
+            captures: Vec::new(),
+            tasks: Vec::new(),
+            current_task: 0,
+            slice_remaining: TASK_SLICE,
+            switch_requested: false,
             breakpoints: Vec::new(),
             breakpoint_hit: std::collections::HashMap::new(),
             breakpoint_count: std::collections::HashMap::new(),
@@ -213,6 +289,8 @@ impl PortableVm {
             watches: Vec::new(),
             next_watch_id: 0,
             last_stop: None,
+            load_error,
+            kinds,
         }
     }
 
@@ -231,6 +309,26 @@ impl PortableVm {
     /// only decides *where* granted code runs.
     pub fn set_lang_executor(&mut self, executor: LangExecutor) {
         self.lang_executor = Some(executor);
+    }
+
+    /// Hand `@lang` blocks to the host instead of running them during a step,
+    /// for a host that runs a block asynchronously (a browser running
+    /// JavaScript with promises and timers). A granted block's EXEC_LANG makes
+    /// `step()` return `VmYield::HostCall { capability: "lang.exec", args:
+    /// [lang, code, env] }` (`env` a map of the block's inputs, as a
+    /// subprocess would get them) without advancing; the host runs it, calls
+    /// [`PortableVm::provide_lang_result`], and the next `step()` finishes the
+    /// EXEC_LANG with that result: its output, its `->` values, or its error.
+    /// Takes precedence over [`PortableVm::set_lang_executor`].
+    pub fn set_lang_deferred(&mut self, deferred: bool) {
+        self.lang_deferred = deferred;
+    }
+
+    /// The result of the block a `lang.exec` yield handed out: `Ok(stdout)`, or
+    /// `Err(message)` for a block that failed (what a subprocess would print
+    /// on stderr).
+    pub fn provide_lang_result(&mut self, result: Result<String, String>) {
+        self.lang_result = Some(result);
     }
 
     /// Choose where `io.read` lines come from. The default is process stdin.
@@ -502,6 +600,11 @@ impl PortableVm {
         if self.halted {
             return Ok(None);
         }
+        match &self.load_error {
+            Some(LoadError::Unsupported(reason)) => return Err(VmError::Unsupported(reason.clone())),
+            Some(LoadError::Cosm(reason)) => return Err(VmError::Cosm(reason.clone())),
+            None => {}
+        }
 
         // Check breakpoints BEFORE execution. When multiple
         // breakpoints are registered at the same IP, each fires
@@ -569,10 +672,22 @@ impl PortableVm {
         // (a recursive call in tail position, #94) or `loop: JMP loop`.
         self.jumped = false;
         self.execute_instruction(opcode, next_ip)?;
+        if let Some(args) = self.lang_yield.take() {
+            // A deferred `@lang` block: this EXEC_LANG runs again once the
+            // host provides its result (see `set_lang_deferred`).
+            return Ok(Some(VmYield::HostCall { capability: "lang.exec".to_string(), args }));
+        }
         if !self.jumped {
             self.ip = next_ip;
         }
         self.steps += 1;
+        if !self.tasks.is_empty() && !self.halted {
+            self.slice_remaining = self.slice_remaining.saturating_sub(1);
+            if self.switch_requested || self.slice_remaining == 0 {
+                self.switch_requested = false;
+                self.switch_task();
+            }
+        }
         self.last_stop = None;
         if let Some(req) = self.step_request.as_mut() {
             req.executed = true;
@@ -906,7 +1021,8 @@ impl PortableVm {
             }
             TYPEOF => {
                 let v = self.pop()?;
-                self.push(Value::Str(value_type_name(&v).to_string()));
+                let name = crate::cosm_rt::type_name(&v).unwrap_or_else(|| value_type_name(&v).to_string());
+                self.push(Value::Str(name));
             }
             CAST => {
                 let idx = u16::from_be_bytes(
@@ -978,12 +1094,13 @@ impl PortableVm {
                 }
             }
             PRINT => {
-                let s = value_to_text(&self.pop()?);
+                let v = self.pop()?;
+                let s = value_to_text(&self.render_hooked(&v)?.unwrap_or(v));
                 self.out_len += s.len();
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(s);
+                self.emit_part(s);
             }
             CAP_CALL => {
                 let idx = u16::from_be_bytes(
@@ -1005,10 +1122,45 @@ impl PortableVm {
                     args.push(self.pop()?);
                 }
                 args.reverse();
+                if crate::cosm_rt::is_text_cap(&cap) {
+                    for a in args.iter_mut() {
+                        if let Some(text) = self.render_hooked(a)? {
+                            *a = text;
+                        }
+                    }
+                }
+                if crate::cosm_rt::is_index_cap(&cap, &args) {
+                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
+                    match crate::cosm_rt::index_cap(&cap, &args)? {
+                        crate::cosm_rt::IndexAccess::Done(v) => self.push(v),
+                        crate::cosm_rt::IndexAccess::Call { call, after } => {
+                            let on_ret = match after {
+                                Some(v) => crate::vm::RetValue::Replace(v),
+                                None => crate::vm::RetValue::Keep,
+                            };
+                            self.call_accessor(call, next_ip, on_ret)?;
+                        }
+                    }
+                    return Ok(());
+                }
+                let args = crate::cosm_rt::cap_args(&cap, args)?;
 
-                let result = self.dispatch_cap(&cap, args)?;
-                if let Some(v) = result {
-                    self.push(v);
+                if cap == "parallel_map" {
+                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
+                    let (output, results) = self.parallel_map(&args)?;
+                    if !output.is_empty() {
+                        self.out_len += output.len();
+                        if self.out_len > self.quotas.max_output {
+                            return Err(VmError::OutputQuota(self.quotas.max_output));
+                        }
+                        self.emit_part(output);
+                    }
+                    self.push(results);
+                } else {
+                    let result = self.dispatch_cap(&cap, args)?;
+                    if let Some(v) = result {
+                        self.push(v);
+                    }
                 }
             }
             CALL => {
@@ -1033,13 +1185,103 @@ impl PortableVm {
                 self.call_stack.push(Frame::new(Some(next_ip)));
                 self.jump_to(func_entry);
             }
+            MAKE_CLOSURE => {
+                let code = &self.program.code;
+                let idx = u16::from_be_bytes(code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let (arity, ncap) = (code[self.ip + 3], code[self.ip + 4] as usize);
+                let fname = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
+                self.get_function_entry(&fname)?;
+                let mut captured = Vec::with_capacity(ncap);
+                for _ in 0..ncap {
+                    captured.push(self.pop()?);
+                }
+                captured.reverse();
+                self.push(Value::Func(std::rc::Rc::new(crate::vm::FuncValue {
+                    name: fname,
+                    arity,
+                    captured,
+                })));
+            }
+            CELL_NEW => {
+                let v = self.pop()?;
+                self.push(Value::Cell(std::rc::Rc::new(std::cell::RefCell::new(v))));
+            }
+            CELL_GET => {
+                let c = crate::vm::cell(&self.pop()?)?;
+                let v = c.borrow().clone();
+                self.push(v);
+            }
+            CELL_SET => {
+                // Stack: value, then the cell on top.
+                let c = crate::vm::cell(&self.pop()?)?;
+                *c.borrow_mut() = self.pop()?;
+            }
+            CALL_VALUE => {
+                // Stack: args (pushed last-first, as for CALL), then the callee.
+                let argc = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let callee = self.pop()?;
+                let func = crate::vm::callable(&callee, argc)?;
+                let func_entry = self.get_function_entry(&func.name)?;
+                if self.call_stack.len() >= self.quotas.max_call_depth {
+                    return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                }
+                // Captured values are the callee's leading parameters.
+                for v in func.captured.iter().rev() {
+                    self.push(v.clone());
+                }
+                self.call_stack.push(Frame::new(Some(next_ip)));
+                self.jump_to(func_entry);
+            }
+            CALL_VALUE_APPLY => {
+                // Stack: callee, then its argument array.
+                let args = match self.pop()? {
+                    Value::Array(values) => values.borrow().clone(),
+                    other => return Err(VmError::ApplyArgsType(other.type_name())),
+                };
+                let callee = self.pop()?;
+                let func = crate::vm::callable(&callee, args.len())?;
+                let func_entry = self.get_function_entry(&func.name)?;
+                if self.call_stack.len() >= self.quotas.max_call_depth {
+                    return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                }
+                for value in args.iter().rev() {
+                    self.push(value.clone());
+                }
+                for value in func.captured.iter().rev() {
+                    self.push(value.clone());
+                }
+                self.call_stack.push(Frame::new(Some(next_ip)));
+                self.jump_to(func_entry);
+            }
             RET => {
                 let frame = self.call_stack.pop().ok_or(VmError::StackUnderflow)?;
                 // A `return` from inside a `try` leaves its handler behind; it
                 // must not catch a later throw in the caller.
                 let depth = self.call_stack.len();
                 self.try_stack.retain(|h| h.call_depth <= depth);
+                // An accessor frame (CRUSH-285 review): its return
+                // value stands where the member op's result belongs,
+                // adjusted per the frame (see `RetValue`).
+                if !matches!(frame.on_ret, crate::vm::RetValue::Keep) {
+                    self.stack.pop();
+                    if let crate::vm::RetValue::Replace(v) = frame.on_ret {
+                        self.stack.push(v);
+                    }
+                }
                 match frame.return_ip {
+                    // A spawned task's entry function returned: the task is
+                    // done; main returning ends the program (Go-style, #177).
+                    None if self.current_task != 0 => {
+                        let result = self.stack.pop().unwrap_or(Value::Null);
+                        self.finish_task(result);
+                    }
                     None => {
                         self.halted = true;
                     }
@@ -1069,6 +1311,18 @@ impl PortableVm {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
                         self.push(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                     }
+                    Value::Record(r) => {
+                        let v = match crate::cosm_rt::index_get(&r, &idx_v)? {
+                            crate::cosm_rt::IndexAccess::Done(v) => Some(v),
+                            crate::cosm_rt::IndexAccess::Call { call, .. } => {
+                                self.call_accessor(call, next_ip, crate::vm::RetValue::Keep)?;
+                                None
+                            }
+                        };
+                        if let Some(v) = v {
+                            self.push(v);
+                        }
+                    }
                     Value::Array(arr_rc) => {
                         let idx = need_array_index(&idx_v)?;
                         let arr = arr_rc.borrow();
@@ -1095,6 +1349,15 @@ impl PortableVm {
                         let key = crate::map_ops::map_key_string(&idx_v)?;
                         map_rc.borrow_mut().insert(key, val);
                         self.push(Value::Map(map_rc));
+                    }
+                    rec @ Value::Record(_) => {
+                        let key = crate::map_ops::map_key_string(&idx_v)?;
+                        if self
+                            .set_member(&rec, &key, val, next_ip, rec.clone())?
+                            .is_some()
+                        {
+                            self.push(rec);
+                        }
                     }
                     other => {
                         let idx = need_array_index(&idx_v)?;
@@ -1204,11 +1467,12 @@ impl PortableVm {
                 let val = self.pop()?;
                 match val {
                     Value::Map(m) => {
-                        let mut keys: Vec<String> = m.borrow().keys().cloned().collect();
-                        keys.sort();
+                        // Insertion order (MapStore is an IndexMap).
+                        let keys: Vec<String> = m.borrow().keys().cloned().collect();
                         let key_vals: Vec<Value> = keys.into_iter().map(Value::Str).collect();
                         self.push(Value::new_array(key_vals));
                     }
+                    Value::Record(r) => self.push(crate::cosm_rt::keys(&r)),
                     other => self.push(other),
                 }
             }
@@ -1230,6 +1494,16 @@ impl PortableVm {
                 let val = self.pop()?;
                 let map_rc = match self.pop()? {
                     Value::Map(m) => m,
+                    // A struct instance (COSM K1.4): SET_MEMBER.
+                    rec @ Value::Record(_) => {
+                        if self
+                            .set_member(&rec, &field, val, next_ip, rec.clone())?
+                            .is_some()
+                        {
+                            self.push(rec);
+                        }
+                        return Ok(());
+                    }
                     other => {
                         return Err(VmError::TypeError {
                             expected: "map",
@@ -1254,6 +1528,14 @@ impl PortableVm {
                     .clone();
                 let map_rc = match self.pop()? {
                     Value::Map(m) => m,
+                    // A struct instance (COSM K1.4): GET_MEMBER, but a name the
+                    // instance doesn't have reads `null`, as on a map.
+                    target @ (Value::Record(_) | Value::Kind(_)) => {
+                        if let Some(v) = self.get_member(&target, &field, false, next_ip)? {
+                            self.push(v);
+                        }
+                        return Ok(());
+                    }
                     other => {
                         return Err(VmError::TypeError {
                             expected: "map",
@@ -1263,6 +1545,105 @@ impl PortableVm {
                 };
                 let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
                 self.push(val);
+            }
+            // ── COSM K1.4 (CRUSH-zorro-43): the generic member ops (`cosm_rt`) ──
+            GET_MEMBER => {
+                let name = self.const_operand()?;
+                let target = self.pop()?;
+                if let Some(v) = self.get_member(&target, &name, true, next_ip)? {
+                    self.push(v);
+                }
+            }
+            SET_MEMBER => {
+                let name = self.const_operand()?;
+                let val = self.pop()?;
+                let target = self.pop()?;
+                if self
+                    .set_member(&target, &name, val, next_ip, target.clone())?
+                    .is_some()
+                {
+                    self.push(target);
+                }
+            }
+            HAS_MEMBER => {
+                let name = self.const_operand()?;
+                let target = self.pop()?;
+                self.push(Value::Bool(crate::cosm_rt::has_member(&target, &name)?));
+            }
+            DEL_MEMBER => {
+                let name = self.const_operand()?;
+                let target = self.pop()?;
+                crate::cosm_rt::del_member(&target, &name)?;
+                self.push(target);
+            }
+            CALL_MEMBER => {
+                let name = self.const_operand()?;
+                let argc = self.program.code[self.ip + 3] as usize;
+                let recv = self.pop()?;
+                match crate::cosm_rt::call_member(&recv, &name, argc)? {
+                    crate::cosm_rt::MemberCall::Call(callee) => self.call_callee(callee, next_ip)?,
+                    crate::cosm_rt::MemberCall::Done(v) => self.push(v),
+                }
+            }
+            CONSTRUCT => {
+                let kind = self.kinds.get(&self.const_operand()?)?.clone();
+                let argc = self.program.code[self.ip + 3] as usize;
+                let base = self.stack.len().checked_sub(argc).ok_or(VmError::StackUnderflow)?;
+                // First argument first (they were pushed last-first).
+                let args: Vec<Value> = self.stack[base..].iter().rev().cloned().collect();
+                match crate::cosm_rt::construct(&kind, &args)? {
+                    crate::cosm_rt::Construction::Done(v) => {
+                        self.stack.truncate(base);
+                        self.push(v);
+                    }
+                    crate::cosm_rt::Construction::Call { instance, callee } => {
+                        // An initialiser's instance stays below the arguments;
+                        // the `POP` after this instruction drops its return
+                        // value.
+                        if let Some(instance) = instance {
+                            self.stack.insert(base, instance);
+                        }
+                        self.call_callee(callee, next_ip)?;
+                    }
+                }
+            }
+            // CRUSH-277 D8: a class name as a value.
+            LOAD_KIND => {
+                let kind = self.kinds.get(&self.const_operand()?)?.clone();
+                self.push(Value::Kind(kind));
+            }
+            NEW_RECORD => {
+                let record = crate::cosm_rt::new_record(self.kinds.get(&self.const_operand()?)?);
+                self.push(record);
+            }
+            GET_SLOT | SET_SLOT => {
+                let slot = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                ) as usize;
+                let val = if opcode == SET_SLOT { Some(self.pop()?) } else { None };
+                let target = self.pop()?;
+                let Value::Record(r) = &target else {
+                    return Err(VmError::TypeError { expected: "record", got: value_type_name(&target) });
+                };
+                match val {
+                    Some(v) => {
+                        r.set_slot(slot, v)?;
+                        self.push(target);
+                    }
+                    None => {
+                        let v = r.slot(slot)?;
+                        self.push(v);
+                    }
+                }
+            }
+            IS_KIND => {
+                let name = self.const_operand()?;
+                let v = self.pop()?;
+                self.push(Value::Bool(crate::cosm_rt::is_kind(&v, &name)));
+            }
+            COPY => {
+                let v = self.pop()?;
+                self.push(crate::cosm_rt::copy_value(&v));
             }
             ENTER_TRY => {
                 let target = u32::from_be_bytes(
@@ -1284,6 +1665,15 @@ impl PortableVm {
             }
             THROW => {
                 let err_val = self.pop()?;
+                // A throw out of an inline-lowered polyglot block fails the
+                // block, as a failing EXEC_LANG does: fatal, its output
+                // dropped (#312).
+                let handler_depth = self.try_stack.last().map(|h| h.call_depth);
+                if let Some(err) =
+                    crate::block_capture::escaping_throw(&mut self.captures, handler_depth, &err_val)
+                {
+                    return Err(err);
+                }
                 if let Some(handler) = self.try_stack.pop() {
                     // Unwind to the frame and stack height that entered the try.
                     self.call_stack.truncate(handler.call_depth);
@@ -1390,7 +1780,7 @@ impl PortableVm {
                 // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
                 // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
                 // named "javascript" with `-c`. An unknown language is a loud error, never a
-                // silent spawn attempt. (Re-checked inside `run_exec_lang` too, cheaply — kept
+                // silent spawn attempt. (Re-checked inside `run_exec_lang_stdout` too, cheaply — kept
                 // here so an unknown language fails before the capability gate, not after.)
                 crate::scheduler::resolve_lang_binary(lang)
                     .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
@@ -1413,34 +1803,72 @@ impl PortableVm {
                         ))
                     })
                     .collect::<Result<Vec<_>, VmError>>()?;
-                // SHARED with scheduler.rs's EXEC_LANG handler (crate::scheduler::run_exec_lang)
-                // — see that function's doc comment for the CRUSH-20 buckets-sandboxing wiring
-                // and the sentinel-scan bug this consolidation fixed in this backend.
-                let outcome = match self.lang_executor.as_mut() {
-                    // #91: the host runs the block (e.g. a browser Worker).
-                    Some(executor) => match executor(lang, code_str, &env_vars) {
-                        Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
-                        Err(message) => {
-                            let at = crush_line.map(|l| format!(" (line {l})")).unwrap_or_default();
-                            return Err(VmError::UnknownCap(format!("@{lang} block failed{at}: {message}")));
+                // SHARED with scheduler.rs's EXEC_LANG handler: the embedder's
+                // `PolyglotExecutor` from `host_caps` (CRUSH-271), else the built-in
+                // `SubprocessExecutor` (`crate::scheduler::run_exec_lang_stdout` — see its doc
+                // comment for the CRUSH-20 buckets-sandboxing wiring). A `LangExecutor` set with
+                // `set_lang_executor` (#91) takes precedence over both.
+                let outcome = if self.lang_deferred {
+                    match self.lang_result.take() {
+                        Some(Ok(stdout)) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                        Some(Err(message)) => {
+                            return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
                         }
-                    },
-                    None => crate::scheduler::run_exec_lang(
-                        lang,
-                        code_str,
-                        &deps,
-                        &env_vars,
-                        crush_line,
-                        &gate,
-                        self.quotas.max_wall_time_ms,
-                    )?,
+                        None => {
+                            // Hand the block to the host: put the inputs back,
+                            // so this EXEC_LANG runs again with its result.
+                            let env = Value::new_map(
+                                env_vars.iter().map(|(k, v)| (k.clone(), Value::Str(v.clone()))),
+                            );
+                            for value in var_values {
+                                self.push(value);
+                            }
+                            self.lang_yield =
+                                Some(vec![Value::Str(lang.to_string()), Value::Str(code_str.to_string()), env]);
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    match self.lang_executor.as_mut() {
+                        // #91: the host runs the block (e.g. a browser Worker).
+                        Some(executor) => match executor(lang, code_str, &env_vars) {
+                            Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                            // What the guest reported, as a subprocess's stderr is: the
+                            // same error, and message, as a native run of the block.
+                            Err(message) => {
+                                return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
+                            }
+                        },
+                        None => {
+                            let outputs = crate::lang_exec::declared_outputs(&spec);
+                            let request = crate::lang_exec::PolyglotRequest {
+                                lang,
+                                code: code_str,
+                                vars: &env_vars,
+                                outputs: &outputs,
+                                deps: &deps,
+                                gate: &gate,
+                                deadline_ms: self.quotas.max_wall_time_ms,
+                                crush_line,
+                            };
+                            let executor =
+                                self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+                            crate::lang_exec::run_block(executor, &request)?
+                        }
+                    }
                 };
                 self.out_len += outcome.visible.len();
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(outcome.visible);
-                self.push(outcome.result_value);
+                self.emit_part(outcome.visible);
+                // Push declared outputs in reverse so the first `store`
+                // (`out_0`) sees the first declared value on top (CRUSH-270).
+                let out_values =
+                    crate::scheduler::exec_lang_outputs(&spec, &outcome.result_value, lang)?;
+                for value in out_values.into_iter().rev() {
+                    self.push(value);
+                }
             }
             AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
             | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
@@ -1499,40 +1927,78 @@ impl PortableVm {
                 let argc = u16::from_be_bytes(
                     self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
                 ) as usize;
-                let fn_name = value_to_text(&self.pop()?);
+                let callee = self.pop()?;
                 let mut args = Vec::with_capacity(argc);
                 for _ in 0..argc {
                     args.push(self.pop()?);
                 }
                 args.reverse();
-                let task_id = self.next_task_id;
-                self.next_task_id += 1;
-                self.scheduled_tasks.insert(task_id, (fn_name, args));
-                self.push(Value::Int(task_id as i64));
+                let fn_name = crate::scheduler::spawn_target(callee, argc, &mut args)?;
+                // A real green task, like the native scheduler: it runs at the
+                // next YIELD / slice boundary, not only when awaited (#161).
+                match self.func_entry.get(&fn_name) {
+                    Some(&entry) => {
+                        if self.tasks.is_empty() {
+                            self.tasks.push(GreenTask::default()); // main, running
+                        }
+                        let id = self.tasks.len();
+                        self.tasks.push(GreenTask {
+                            ctx: Some(TaskCtx {
+                                stack: args,
+                                call_stack: vec![Frame::new(None)],
+                                ip: entry,
+                                try_stack: Vec::new(),
+            captures: Vec::new(),
+                            }),
+                            ..GreenTask::default()
+                        });
+                        self.push(Value::Handle(id as u64));
+                    }
+                    // Not a null handle: `await` would turn it into a null result.
+                    None => return Err(VmError::UnknownFunction(fn_name)),
+                }
             }
             YIELD => {
-                // No OS threads on wasm32 — cooperative single-threaded execution
-                // already yields nothing to yield to, so this is a no-op there.
-                #[cfg(not(target_arch = "wasm32"))]
-                std::thread::yield_now();
+                if self.tasks.is_empty() {
+                    // Nothing spawned: no other task to hand control to.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::yield_now();
+                } else {
+                    self.switch_requested = true;
+                }
             }
             AWAIT => {
                 let handle = self.pop()?;
-                if let Value::Int(task_id) = handle {
-                    if let Some((fn_name, args)) = self.scheduled_tasks.remove(&(task_id as u64)) {
-                        if let Some(&entry) = self.func_entry.get(&fn_name) {
-                            if self.call_stack.len() >= self.quotas.max_call_depth {
-                                return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                match handle {
+                    Value::Handle(id) => {
+                        let id = id as usize;
+                        match self.tasks.get(id).map(|t| (id, t.done)) {
+                            // Already finished: its result right away.
+                            Some((id, true)) => {
+                                let v = self.tasks[id].result.clone().unwrap_or(Value::Null);
+                                self.push(v);
                             }
-                            self.stack.extend(args);
-                            self.call_stack
-                                .push(Frame::new(Some(next_ip)));
-                            self.jump_to(entry);
-                            return Ok(());
+                            // Still running: block until it finishes; `finish_task`
+                            // pushes the result onto this task's stack.
+                            Some((id, false)) if id != self.current_task => {
+                                self.tasks[self.current_task].waiting_for = Some(id);
+                                self.switch_requested = true;
+                            }
+                            // Awaiting self, or a handle with no live task: nothing
+                            // to join — keep the previous behaviour (push null).
+                            _ => self.push(Value::Null),
                         }
                     }
+                    // Not a handle: `await v` returns `v` itself (JS semantics,
+                    // issue #251) — push the awaited value straight back.
+                    other => self.push(other),
                 }
-                self.push(Value::Null);
+            }
+            // HALT in a spawned task ends only that task (owner decision
+            // 2026-10-15), like the scheduler; main's HALT ends the program.
+            HALT if self.current_task != 0 => {
+                let result = self.stack.pop().unwrap_or(Value::Null);
+                self.finish_task(result);
             }
             HALT => {
                 self.halted = true;
@@ -1562,6 +2028,33 @@ impl PortableVm {
                 .is_none_or(|allowed| allowed.iter().any(|a| a == "io.read"))
     }
 
+    /// `parallel_map` without threads (wasm): the same share-nothing jobs as
+    /// the native scheduler, one after another, so the results, the output and
+    /// the first error are identical (#175).
+    fn parallel_map(&self, args: &[Value]) -> Result<(String, Value), VmError> {
+        let jobs = crate::parallel::jobs(args)?;
+        let program = crate::parallel::worker_program(&self.program);
+        let entry = *self
+            .func_entry
+            .get(&jobs.function)
+            .ok_or_else(|| VmError::UnknownFunction(jobs.function.clone()))?;
+        let mut worker = crate::parallel::Worker::new(&jobs);
+        let results = (0..jobs.items.len())
+            .map(|i| {
+                let mut vm = PortableVm::new(program.clone());
+                vm.quotas = self.quotas.clone();
+                vm.ip = entry;
+                vm.stack = worker.stack(i);
+                let result = vm.run();
+                worker.check()?;
+                let result = result?;
+                let value = result.stack.last().cloned().unwrap_or(Value::Null);
+                Ok((result.output, crate::parallel::move_out(&value)?))
+            })
+            .collect();
+        crate::parallel::collect(results)
+    }
+
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
         // Check permission
         crate::scheduler::check_cap_permitted(cap, self.declared_caps.contains(cap), &self.quotas)?;
@@ -1585,7 +2078,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 // Like io.print but without the newline (C printf, Rust print!).
@@ -1595,21 +2088,54 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(text);
+                    self.emit_part(text);
+                    Ok(None)
+                }
+                "py.print_sep_end" => {
+                    crate::vm::reject_func_print(&args)?;
+                    let line = crate::io_print::format_py_print_sep_end(&args);
+                    self.out_len += line.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.emit_part(line);
                     Ok(None)
                 }
                 "py.print" => {
+                    crate::vm::reject_func_print(&args)?;
                     let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
                     let line = crate::io_print::format_py_print_line(&parts);
                     self.out_len += line.len();
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 "math.truediv" => {
                     crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
+                }
+                "js.div" => {
+                    crate::arithmetic::js_div_values(&args[0], &args[1]).map(Some)
+                }
+                "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
+                "js.truthy" => Ok(Some(crate::js_ops::truthy(&args[0]))),
+                "js.loose_eq" => crate::js_ops::loose_eq(&args[0], &args[1]).map(Some),
+                "js.strict_eq" => crate::js_ops::strict_eq(&args[0], &args[1]).map(Some),
+                "js.format" => crate::js_ops::format(&args).map(Some),
+                "conv.text" => {
+                    crate::num_text::text_as(&args[0], &args[1]).map(Some)
+                }
+                "lang.marshal" => crate::marshal::marshal_cap(&args),
+                "lang.capture_begin" => {
+                    crate::block_capture::begin(&mut self.captures, &args, self.call_stack.len())
+                }
+                "lang.capture_end" => crate::block_capture::end(&mut self.captures, &mut self.out_parts),
+                "seq.slice" => {
+                    crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
+                }
+                "math.power" => {
+                    crate::arithmetic::power_values(&args[0], &args[1]).map(Some)
                 }
                 "math.floordiv" => {
                     crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)
@@ -1630,11 +2156,7 @@ impl PortableVm {
                     let s = value_to_text(&args[0]);
                     Ok(Some(Value::Int(crate::str_len::str_len(&s))))
                 }
-                "str.contains" => {
-                    let haystack = value_to_text(&args[0]);
-                    let needle = value_to_text(&args[1]);
-                    Ok(Some(Value::Bool(haystack.contains(&needle))))
-                }
+                "str.contains" => crate::rust_methods::call(cap, &args).map(Some).map_err(VmError::Io),
                 "str.split" => {
                     let s = value_to_text(&args[0]);
                     let delim = value_to_text(&args[1]);
@@ -1645,12 +2167,7 @@ impl PortableVm {
                     };
                     Ok(Some(Value::new_array(parts)))
                 }
-                "str.replace" => {
-                    let s = value_to_text(&args[0]);
-                    let from = value_to_text(&args[1]);
-                    let to = value_to_text(&args[2]);
-                    Ok(Some(Value::Str(s.replace(&from, &to))))
-                }
+                "str.replace" => crate::rust_methods::call(cap, &args).map(Some).map_err(VmError::Io),
                 "str.join" => {
                     let delim = value_to_text(&args[1]);
                     match &args[0] {
@@ -1694,34 +2211,7 @@ impl PortableVm {
                     }
                     Ok(Some(Value::Int(character as i64)))
                 }
-                                "arr_slice" => {
-                                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
-                                    match &args[0] {
-                                        Value::Array(elems) => {
-                                            let arr = elems.borrow();
-                                            let len = arr.len() as i64;
-                                            let start = match &args[1] {
-                                                Value::Int(i) => *i,
-                                                Value::Null => 0i64,
-                                                _ => return Err(VmError::TypeError { expected: "int or null", got: args[1].type_name() }),
-                                            };
-                                            let end = if args.len() > 2 {
-                                                match &args[2] {
-                                                    Value::Int(i) => *i,
-                                                    Value::Null => len,
-                                                    _ => return Err(VmError::TypeError { expected: "int or null", got: args[2].type_name() }),
-                                                }
-                                            } else {
-                                                len
-                                            };
-                                            let start = start.max(0).min(len);
-                                            let end = end.max(start).min(len);
-                                            let sliced: Vec<Value> = arr[start as usize..end as usize].to_vec();
-                                            Ok(Some(Value::new_array(sliced)))
-                                        }
-                                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
-                                    }
-                                }
+                                "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
                 "make_range" => crate::make_range::make_range_values(&args).map(Some),
                 "append" | "push" => {
                     if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
@@ -1806,6 +2296,121 @@ impl PortableVm {
         Err(VmError::UnknownCap(cap.to_string()))
     }
 
+    /// The string-constant operand of the current instruction.
+    fn const_operand(&self) -> Result<String, VmError> {
+        let idx = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+        self.program.consts.get(idx).cloned().ok_or(VmError::ConstOutOfRange(idx))
+    }
+
+    /// COSM K1.4: call `callee` as `CALL_VALUE` calls a function value — its
+    /// leading values (the receiver) on top of the arguments already pushed.
+    fn call_callee(&mut self, callee: crate::cosm_rt::Callee, next_ip: usize) -> Result<(), VmError> {
+        let entry = self.get_function_entry(&callee.func)?;
+        if self.call_stack.len() >= self.quotas.max_call_depth {
+            return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+        }
+        for v in callee.leading.into_iter().rev() {
+            self.push(v);
+        }
+        self.call_stack.push(Frame::new(Some(next_ip)));
+        self.jump_to(entry);
+        Ok(())
+    }
+
+    /// COSM K1.4: `v` with every Record whose Kind has a `str`/`repr` hook
+    /// printed through it (`None` when nothing has one). The hook runs to
+    /// completion in a nested VM over this program, like a `parallel_map`
+    /// item; what it prints is kept.
+    fn render_hooked(&mut self, v: &Value) -> Result<Option<Value>, VmError> {
+        if !self.kinds.has_print_hooks() {
+            return Ok(None);
+        }
+        let mut hook = |f: &str, recv: Value| -> Result<Value, VmError> {
+            let entry = self.get_function_entry(f)?;
+            let mut vm = PortableVm::new(self.program.clone());
+            vm.quotas = self.quotas.clone();
+            vm.ip = entry;
+            vm.stack = vec![recv];
+            let result = vm.run()?;
+            if !result.output.is_empty() {
+                self.out_len += result.output.len();
+                if self.out_len > self.quotas.max_output {
+                    return Err(VmError::OutputQuota(self.quotas.max_output));
+                }
+                self.emit_part(result.output);
+            }
+            Ok(result.stack.last().cloned().unwrap_or(Value::Null))
+        };
+        crate::cosm_rt::render_hooked(v, &mut hook)
+    }
+
+    /// A member read that may be a getter call (CRUSH-277 S4). `None`:
+    /// a getter call was jumped to — its return value lands on the
+    /// stack where the read's result belongs.
+    fn get_member(
+        &mut self,
+        target: &Value,
+        name: &str,
+        strict: bool,
+        next_ip: usize,
+    ) -> Result<Option<Value>, VmError> {
+        match crate::cosm_rt::get_member(target, name, strict)? {
+            crate::cosm_rt::MemberRead::Done(v) => Ok(Some(v)),
+            crate::cosm_rt::MemberRead::Call(call) => {
+                self.call_accessor(call, next_ip, crate::vm::RetValue::Keep)?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// A member write that may be a setter call (CRUSH-277 S4). `None`:
+    /// a setter call was jumped to — `leave` replaces its return value
+    /// on the stack (the write op's result is the record written).
+    fn set_member(
+        &mut self,
+        target: &Value,
+        name: &str,
+        val: Value,
+        next_ip: usize,
+        leave: Value,
+    ) -> Result<Option<()>, VmError> {
+        match crate::cosm_rt::set_member(target, name, val)? {
+            crate::cosm_rt::MemberWrite::Done => Ok(Some(())),
+            crate::cosm_rt::MemberWrite::Call(call) => {
+                self.call_accessor(call, next_ip, crate::vm::RetValue::Replace(leave))?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// COSM S4 (CRUSH-277), reworked by the CRUSH-285 review: run a
+    /// getter/setter as an ordinary call on this VM's own stack, where
+    /// the member op stands — the same frames, step count, call-depth
+    /// budget and try handlers as the code around it. (It previously
+    /// ran in a nested VM with fresh budgets: a self-reading getter
+    /// recursed through native frames until the process aborted, a
+    /// getter loop could spend the whole step quota per call, and a
+    /// getter's throw bypassed the program's own `try`/`catch`.)
+    fn call_accessor(
+        &mut self,
+        call: crate::cosm_rt::AccessorCall,
+        next_ip: usize,
+        on_ret: crate::vm::RetValue,
+    ) -> Result<(), VmError> {
+        let entry = self.get_function_entry(&call.func)?;
+        if self.call_stack.len() >= self.quotas.max_call_depth {
+            return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+        }
+        for v in call.args.iter().rev() {
+            self.push(v.clone());
+        }
+        let mut frame = Frame::new(Some(next_ip));
+        frame.on_ret = on_ret;
+        self.call_stack.push(frame);
+        self.jump_to(entry);
+        Ok(())
+    }
+
     fn get_function_entry(&self, name: &str) -> Result<usize, VmError> {
         self.func_entry
             .get(name)
@@ -1847,12 +2452,81 @@ impl PortableVm {
         Ok(())
     }
 
+    /// The running task finished with `result`: record it, wake its waiters,
+    /// and switch away.
+    fn finish_task(&mut self, result: Value) {
+        let me = self.current_task;
+        for (i, t) in self.tasks.iter_mut().enumerate() {
+            if i != me && t.waiting_for == Some(me) {
+                t.waiting_for = None;
+                if let Some(ctx) = t.ctx.as_mut() {
+                    ctx.stack.push(result.clone());
+                }
+            }
+        }
+        let task = &mut self.tasks[me];
+        task.done = true;
+        task.result = Some(result);
+        self.switch_requested = true;
+    }
+
+    /// Whether task `i` can run: not finished and not blocked.
+    fn task_runnable(&self, i: usize) -> bool {
+        let t = &self.tasks[i];
+        !t.done && t.waiting_for.is_none()
+    }
+
+    /// Park the running task (unless it finished) and resume the next runnable
+    /// one, round-robin. If nothing is runnable — every task finished or blocked
+    /// — the program ends, as in the native scheduler.
+    fn switch_task(&mut self) {
+        self.slice_remaining = TASK_SLICE;
+        let n = self.tasks.len();
+        let cur = self.current_task;
+        let next = (1..=n).map(|k| (cur + k) % n).find(|&i| self.task_runnable(i));
+        // Nothing runnable: the program ends with main's result, as natively.
+        let Some(next) = next.or((cur != 0).then_some(0)) else {
+            self.halted = true;
+            return;
+        };
+        if !self.task_runnable(next) {
+            self.halted = true;
+        }
+        if next == cur {
+            return;
+        }
+        let parked = TaskCtx {
+            stack: std::mem::take(&mut self.stack),
+            call_stack: std::mem::take(&mut self.call_stack),
+            ip: self.ip,
+            try_stack: std::mem::take(&mut self.try_stack),
+            captures: std::mem::take(&mut self.captures),
+        };
+        if !self.tasks[cur].done {
+            self.tasks[cur].ctx = Some(parked);
+        }
+        let ctx = self.tasks[next].ctx.take().unwrap_or_default();
+        self.stack = ctx.stack;
+        self.call_stack = ctx.call_stack;
+        self.ip = ctx.ip;
+        self.try_stack = ctx.try_stack;
+        self.captures = ctx.captures;
+        self.current_task = next;
+    }
+
+    /// One piece of program output: held by an open block capture, if any
+    /// (#312), else appended to the output.
+    fn emit_part(&mut self, part: String) {
+        crate::block_capture::emit(&mut self.captures, &mut self.out_parts, part);
+    }
+
     fn take_result(&self) -> VmResult {
         VmResult {
             output: self.out_parts.concat(),
             steps: self.steps,
             halted: self.halted,
             stack: self.stack.clone(),
+            return_value: None,
         }
     }
 }
@@ -1964,6 +2638,10 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Bytes(_) => "bytes",
         Value::Handle(_) => "handle",
         Value::Foreign(_) => "foreign",
+        Value::Func(_) => "function",
+        Value::Cell(_) => "cell",
+        Value::Record(_) => "record",
+        Value::Kind(_) => "kind",
     }
 }
 
@@ -2013,6 +2691,14 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         Value::Handle(id) => format!("<handle {}>", id),
         Value::Foreign(id) => format!("<foreign {}>", id),
+        Value::Func(func) => format!("<fn {}>", func.display_name()),
+        Value::Cell(_) => "<cell>".to_string(),
+        // Crush's struct print: the map the struct used to be.
+        Value::Record(r) => {
+            let items: Vec<String> = r.fields().iter().map(|(k, v)| format!("{}: {}", k, value_to_text(v))).collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Kind(k) => format!("<kind {}>", k.name()),
     }
 }
 

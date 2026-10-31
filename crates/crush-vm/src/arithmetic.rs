@@ -112,11 +112,16 @@ pub fn div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
         }
         Ok(Value::Float(to_f64(a) / bf))
     } else {
+        let ai = to_i64(a);
         let bi = to_i64(b);
         if bi == 0 {
             return Err(VmError::DivByZero);
         }
-        Ok(Value::Int(to_i64(a) / bi))
+        // `i64::MIN / -1` overflows (it would panic in Rust); report it the
+        // same way every other engine does (CRUSH-213).
+        ai.checked_div(bi)
+            .map(Value::Int)
+            .ok_or(VmError::ArithmeticOverflow)
     }
 }
 
@@ -134,9 +139,28 @@ pub fn mod_values(a: &Value, b: &Value) -> Result<Value, VmError> {
         if bi == 0 {
             return Err(VmError::DivByZero);
         }
-        // Truncating remainder, matching Rust's `%` operator.
-        Ok(Value::Int(ai % bi))
+        // Truncating remainder, matching Rust's `%` operator; `i64::MIN % -1`
+        // overflows, as on the AOT backends (CRUSH-213).
+        ai.checked_rem(bi)
+            .map(Value::Int)
+            .ok_or(VmError::ArithmeticOverflow)
     }
+}
+
+/// JavaScript `/`: an exact quotient of two ints stays an Int (JS has one
+/// number type, so `4 / 2` is `2` — usable as an index, printed `2`);
+/// anything else is the float quotient (`7 / 2` is 3.5). Division by zero is
+/// a loud error rather than JS's Infinity.
+pub fn js_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
+    if let (Value::Int(x), Value::Int(y)) = (a, b) {
+        if *y == 0 {
+            return Err(VmError::DivByZero);
+        }
+        if let (Some(q), Some(0)) = (x.checked_div(*y), x.checked_rem(*y)) {
+            return Ok(Value::Int(q));
+        }
+    }
+    true_div_values(a, b)
 }
 
 /// Python-style true division (`/`) — always yields a float.
@@ -150,6 +174,30 @@ pub fn true_div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
         return Err(VmError::DivByZero);
     }
     Ok(Value::Float(to_f64(a) / bf))
+}
+
+/// `a ** b`. Integer base and non-negative integer exponent stay an exact
+/// integer (overflow is `ArithmeticOverflow`, never a wrap or a float);
+/// anything else is a float. `0 ** -n` is division by zero, as in Python.
+pub fn power_values(a: &Value, b: &Value) -> Result<Value, VmError> {
+    require_numeric(a, b)?;
+    if let (Value::Int(base), Value::Int(exp)) = (a, b) {
+        if *exp >= 0 {
+            return match u32::try_from(*exp) {
+                Ok(e) => base.checked_pow(e).map(Value::Int).ok_or(VmError::ArithmeticOverflow),
+                // Huge exponents only fit for bases 0, 1 and -1.
+                Err(_) => match base {
+                    0 | 1 => Ok(Value::Int(*base)),
+                    -1 => Ok(Value::Int(if exp % 2 == 0 { 1 } else { -1 })),
+                    _ => Err(VmError::ArithmeticOverflow),
+                },
+            };
+        }
+        if *base == 0 {
+            return Err(VmError::DivByZero);
+        }
+    }
+    Ok(Value::Float(to_f64(a).powf(to_f64(b))))
 }
 
 /// Python-style floor division (`//`) — rounds toward −∞.
@@ -281,6 +329,27 @@ mod tests {
     fn true_div_always_float() {
         assert_eq!(true_div_values(&Value::Int(7), &Value::Int(2)).unwrap(), Value::Float(3.5));
         assert_eq!(true_div_values(&Value::Int(4), &Value::Int(2)).unwrap(), Value::Float(2.0));
+    }
+
+    #[test]
+    fn js_div_keeps_exact_int_quotients() {
+        assert_eq!(js_div_values(&Value::Int(4), &Value::Int(2)).unwrap(), Value::Int(2));
+        assert_eq!(js_div_values(&Value::Int(-6), &Value::Int(3)).unwrap(), Value::Int(-2));
+        assert_eq!(js_div_values(&Value::Int(7), &Value::Int(2)).unwrap(), Value::Float(3.5));
+        assert_eq!(js_div_values(&Value::Int(-7), &Value::Int(2)).unwrap(), Value::Float(-3.5));
+        assert_eq!(js_div_values(&Value::Float(5.0), &Value::Int(2)).unwrap(), Value::Float(2.5));
+        assert!(matches!(js_div_values(&Value::Int(1), &Value::Int(0)), Err(VmError::DivByZero)));
+    }
+
+    #[test]
+    fn power_is_exact_for_ints_and_float_otherwise() {
+        assert_eq!(power_values(&Value::Int(2), &Value::Int(10)).unwrap(), Value::Int(1024));
+        assert_eq!(power_values(&Value::Int(-3), &Value::Int(3)).unwrap(), Value::Int(-27));
+        assert_eq!(power_values(&Value::Int(2), &Value::Int(-1)).unwrap(), Value::Float(0.5));
+        assert_eq!(power_values(&Value::Float(2.0), &Value::Int(3)).unwrap(), Value::Float(8.0));
+        assert_eq!(power_values(&Value::Int(1), &Value::Int(1 << 40)).unwrap(), Value::Int(1));
+        assert!(matches!(power_values(&Value::Int(2), &Value::Int(64)), Err(VmError::ArithmeticOverflow)));
+        assert!(matches!(power_values(&Value::Int(0), &Value::Int(-1)), Err(VmError::DivByZero)));
     }
 
     #[test]

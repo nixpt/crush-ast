@@ -5,16 +5,29 @@
 /// Fails with [`crate::UnsupportedOps`] if any instruction has no Rust
 /// translation.
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
+    crate::refuse_cosm(program, "Rust")?;
+    crate::refuse_green_task(program, "Rust")?;
+    crate::method_support::check_rust_result(program)?;
     let mut out = String::new();
 
     emit_header(&mut out);
+    if crate::method_support::used(program) { crate::method_support::emit_rust(&mut out); }
     emit_runtime_value(&mut out);
     emit_helpers(&mut out);
+    if uses_js_core(program) {
+        emit_js_core(&mut out);
+    }
+    if program.functions.values().flat_map(|f| &f.body).any(|i|
+        i.op == "cap_call" && i.args.get("name").and_then(|v| v.as_str()) == Some("rust.debug")) {
+        emit_rust_debug(&mut out);
+    }
     emit_ai_stub(&mut out);
     emit_dom_stub(&mut out);
 
     let mut unsupported = Vec::new();
-    for (name, func) in &program.functions {
+    // Name order, not `HashMap` order: the same program must give the same
+    // source in every process, or the AOT build cache (keyed on it) misses.
+    for (name, func) in sorted_functions(program) {
         emit_function(&mut out, name, func, program, &mut unsupported);
     }
     if !unsupported.is_empty() {
@@ -26,6 +39,136 @@ pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::Unsuppo
 
     emit_entry_point(&mut out);
     Ok(out)
+}
+
+/// `program`'s functions in name order.
+pub(crate) fn sorted_functions(program: &casm::Program) -> Vec<(&String, &casm::Function)> {
+    let mut functions: Vec<_> = program.functions.iter().collect();
+    functions.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    functions
+}
+
+/// Whether the program calls a `js.*` capability that runs crush-vm's
+/// `js_core` (embedded only then: it is ~500 lines for rustc to compile).
+fn uses_js_core(program: &casm::Program) -> bool {
+    program.functions.values().flat_map(|f| &f.body).any(|i| {
+        i.op == "cap_call"
+            && i.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| matches!(n, "js.add" | "js.truthy" | "js.loose_eq" | "js.strict_eq" | "js.format"))
+    })
+}
+
+/// The JS runtime: crush-vm's `js_core.rs` verbatim (the VM runs the same
+/// code), plus the conversions between it and `RuntimeValue`.
+fn emit_js_core(out: &mut String) {
+    out.push_str("#[allow(dead_code)]\nmod js_core {\n");
+    out.push_str(crush_vm::js_ops::JS_CORE_SRC);
+    out.push_str(r#"}
+
+/// A value as JS sees it (mirrors crush-vm `js_ops::owned_node`).
+fn js_node(v: &RuntimeValue, expand: usize) -> js_core::JsNode<'static> {
+    use js_core::JsNode;
+    match v {
+        RuntimeValue::Null => JsNode::Null,
+        RuntimeValue::Bool(b) => JsNode::Bool(*b),
+        RuntimeValue::Int(i) => JsNode::Int(*i),
+        RuntimeValue::Float(f) => JsNode::Float(*f),
+        RuntimeValue::String(s) => JsNode::Str(std::borrow::Cow::Owned(s.clone())),
+        RuntimeValue::Array(a) => {
+            let items = a.borrow();
+            JsNode::Array {
+                id: Rc::as_ptr(a) as *const () as usize,
+                len: items.len(),
+                items: (expand > 0).then(|| items.iter().take(js_core::ITEMS).map(|x| js_node(x, expand - 1)).collect()),
+            }
+        }
+        RuntimeValue::Object(m) => {
+            let entries = m.borrow();
+            JsNode::Object {
+                id: Rc::as_ptr(m) as *const () as usize,
+                len: entries.len(),
+                entries: (expand > 0).then(|| entries.iter().map(|(k, x)| (k.clone(), js_node(x, expand - 1))).collect()),
+            }
+        }
+    }
+}
+
+fn js_fail(e: String) -> ! {
+    if e == "arithmetic overflow" { arith_overflow() }
+    eprintln!("crush(aot): not supported: {e}");
+    std::process::exit(1);
+}
+
+fn js_add(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    if let (RuntimeValue::String(x), RuntimeValue::String(y)) = (a, b) {
+        return RuntimeValue::String(format!("{x}{y}"));
+    }
+    match js_core::add(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(js_core::JsNode::Int(i)) => RuntimeValue::Int(i),
+        Ok(js_core::JsNode::Float(f)) => RuntimeValue::Float(f),
+        Ok(js_core::JsNode::Str(s)) => RuntimeValue::String(s.into_owned()),
+        Ok(_) => RuntimeValue::Null,
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_loose_eq(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    match js_core::loose_eq(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(r) => RuntimeValue::Bool(r),
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_strict_eq(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    match js_core::strict_eq(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(r) => RuntimeValue::Bool(r),
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_format(args: &[RuntimeValue]) -> RuntimeValue {
+    let nodes: Vec<js_core::JsNode> = args.iter().map(|a| js_node(a, js_core::EXPAND)).collect();
+    match js_core::format(&nodes) {
+        Ok(s) => RuntimeValue::String(s),
+        Err(e) => js_fail(e),
+    }
+}
+
+"#);
+}
+
+/// Embed the same std-only kernel used by the VM. Only value access differs.
+fn emit_rust_debug(out: &mut String) {
+    out.push_str("#[allow(dead_code)]\nmod rust_debug_core {\n");
+    out.push_str(crush_vm::rust_debug::CORE_SOURCE);
+    out.push_str(r#"}
+impl rust_debug_core::View for RuntimeValue {
+    fn atom(&self) -> rust_debug_core::Atom<'_> {
+        use rust_debug_core::Atom;
+        match self {
+            Self::Null => Atom::Unit, Self::Bool(v) => Atom::Bool(*v),
+            Self::Int(v) => Atom::Int(*v), Self::Float(v) => Atom::Float(*v),
+            Self::String(v) => Atom::Text(v), Self::Array(v) => Atom::Seq(Rc::as_ptr(v) as usize),
+            _ => Atom::Other,
+        }
+    }
+    fn with_items<R>(&self, visit: impl FnOnce(&[Self]) -> Result<R, rust_debug_core::Error>) -> Result<R, rust_debug_core::Error> {
+        match self {
+            Self::Array(v) => visit(&v.try_borrow().map_err(|_| rust_debug_core::Error::Borrow)?),
+            _ => Err(rust_debug_core::Error::Mismatch),
+        }
+    }
+}
+fn rust_debug(value: &RuntimeValue, descriptor: &RuntimeValue) -> RuntimeValue {
+    let result = match descriptor {
+        RuntimeValue::String(d) => rust_debug_core::descriptor(d).and_then(|ty| rust_debug_core::format(value, &ty)),
+        _ => Err(rust_debug_core::Error::Descriptor),
+    };
+    match result {
+        Ok(s) => RuntimeValue::String(s),
+        Err(e) => { eprintln!("crush(aot): {e}"); std::process::exit(1); }
+    }
+}
+"#);
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -52,7 +195,7 @@ pub enum RuntimeValue {
     Null,
     String(String),
     Array(std::rc::Rc<std::cell::RefCell<Vec<RuntimeValue>>>),
-    Object(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, RuntimeValue>>>),
+    Object(std::rc::Rc<std::cell::RefCell<OrdMap>>),
 }
 
 impl std::fmt::Display for RuntimeValue {
@@ -127,8 +270,101 @@ fn pop2(stack: &mut Vec<RuntimeValue>) -> (RuntimeValue, RuntimeValue) {
     (a, b)
 }
 
+/// `conv.text` — mirrors crush-vm `num_text::text_as` / `float_text`.
+fn conv_text(v: &RuntimeValue, style: &RuntimeValue) -> RuntimeValue {
+    let js = match style { RuntimeValue::String(s) if s == "js" => true, RuntimeValue::String(s) if s == "rust" => false, _ => { eprintln!("crush(aot): conv.text style must be \"js\" or \"rust\""); std::process::exit(1) } };
+    RuntimeValue::String(match v {
+        RuntimeValue::String(s) => s.clone(),
+        RuntimeValue::Float(f) => {
+            let f = *f;
+            if f.is_nan() { "NaN".to_string() }
+            else if f.is_infinite() { match (js, f > 0.0) { (true, true) => "Infinity", (true, false) => "-Infinity", (false, true) => "inf", (false, false) => "-inf" }.to_string() }
+            else if js && f != 0.0 && !(1e-6..1e21).contains(&f.abs()) {
+                let e = format!("{f:e}"); let (m, x) = e.split_once('e').unwrap();
+                if x.starts_with('-') { format!("{m}e{x}") } else { format!("{m}e+{x}") }
+            } else { format!("{f}") }
+        }
+        other => other.to_string(),
+    })
+}
+
+/// `seq.slice` — mirrors crush-vm `seq::slice_indices` (CPython slice.indices).
+fn seq_slice(t: RuntimeValue, a: RuntimeValue, b: RuntimeValue, st: RuntimeValue) -> RuntimeValue {
+    let opt = |v: &RuntimeValue| match v { RuntimeValue::Int(i) => Some(*i), RuntimeValue::Null => None, _ => { eprintln!("crush(aot): slice bounds must be int or null"); std::process::exit(1) } };
+    let step = opt(&st).unwrap_or(1);
+    if step == 0 { eprintln!("crush(aot): slice step cannot be zero"); std::process::exit(1); }
+    let (start, stop) = (opt(&a), opt(&b));
+    let idx = |len: i64| -> Vec<i64> {
+        let norm = |v: i64, lo: i64, hi: i64| { let v = if v < 0 { v + len } else { v }; v.clamp(lo, hi) };
+        let (s, e) = if step > 0 { (start.map_or(0, |v| norm(v, 0, len)), stop.map_or(len, |v| norm(v, 0, len))) }
+                     else { (start.map_or(len - 1, |v| norm(v, -1, len - 1)), stop.map_or(-1, |v| norm(v, -1, len - 1))) };
+        let mut out = Vec::new(); let mut i = s;
+        while (step > 0 && i < e) || (step < 0 && i > e) { out.push(i); i += step; }
+        out
+    };
+    match t {
+        RuntimeValue::String(s) => { let cs: Vec<char> = s.chars().collect(); RuntimeValue::String(idx(cs.len() as i64).into_iter().map(|i| cs[i as usize]).collect()) }
+        RuntimeValue::Array(a) => { let a = a.borrow(); RuntimeValue::Array(std::rc::Rc::new(std::cell::RefCell::new(idx(a.len() as i64).into_iter().map(|i| a[i as usize].clone()).collect()))) }
+        _ => { eprintln!("crush(aot): can only slice a string or array"); std::process::exit(1) }
+    }
+}
+
+/// Insertion-ordered string map (Python dicts / JS objects iterate in
+/// insertion order; crush-vm's Value::Map is an IndexMap). Emitted programs
+/// are built with plain rustc, so no indexmap crate here.
+#[derive(Debug, Clone, Default)]
+pub struct OrdMap {
+    entries: Vec<(String, RuntimeValue)>,
+    /// A struct of a sealed Kind (COSM K1.4): its name and declared fields.
+    sealed: Option<(&'static str, &'static [&'static str])>,
+}
+impl OrdMap {
+    pub fn new() -> Self { Self::default() }
+    pub fn with_capacity(n: usize) -> Self { Self { entries: Vec::with_capacity(n), sealed: None } }
+    pub fn sealed(kind: &'static str, fields: &'static [&'static str]) -> Self { Self { entries: Vec::new(), sealed: Some((kind, fields)) } }
+    pub fn get(&self, k: &str) -> Option<&RuntimeValue> { self.entries.iter().find(|(key, _)| key == k).map(|(_, v)| v) }
+    pub fn insert(&mut self, k: String, v: RuntimeValue) {
+        if let Some((kind, fields)) = self.sealed {
+            if !fields.contains(&k.as_str()) {
+                let list = if fields.is_empty() { "none".to_string() } else { fields.join(", ") };
+                eprintln!("crush(aot): `{kind}` is sealed: it has no field `{k}` (fields: {list})");
+                std::process::exit(1);
+            }
+        }
+        match self.entries.iter_mut().find(|(key, _)| *key == k) { Some(e) => e.1 = v, None => self.entries.push((k, v)) }
+    }
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn keys(&self) -> impl Iterator<Item = &String> { self.entries.iter().map(|(k, _)| k) }
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &RuntimeValue)> { self.entries.iter().map(|(k, v)| (k, v)) }
+}
+impl PartialEq for OrdMap {
+    // Like a HashMap / IndexMap: equal contents, order-insensitive.
+    fn eq(&self, o: &Self) -> bool { self.len() == o.len() && self.iter().all(|(k, v)| o.get(k) == Some(v)) }
+}
+
+fn map_index(m: &OrdMap, k: &RuntimeValue) -> RuntimeValue {
+    match k {
+        RuntimeValue::String(s) => m.get(s).cloned().unwrap_or_else(|| { eprintln!("crush(aot): key not found in map"); std::process::exit(1) }),
+        _ => { eprintln!("crush(aot): map keys must be strings"); std::process::exit(1) }
+    }
+}
+fn map_index_set(m: &mut OrdMap, k: RuntimeValue, v: RuntimeValue) {
+    match k {
+        RuntimeValue::String(s) => m.insert(s, v),
+        _ => { eprintln!("crush(aot): map keys must be strings"); std::process::exit(1) }
+    }
+}
+
 fn arith_overflow() -> ! {
     eprintln!("crush(aot): arithmetic overflow");
+    std::process::exit(1);
+}
+
+// CRUSH-zorro-54: a read of a local that has no value yet fails, as on the VM.
+#[cold]
+fn uninit_load(name: &str) -> ! {
+    eprintln!("crush(aot): load from uninitialised slot `{name}`");
     std::process::exit(1);
 }
 
@@ -344,6 +580,52 @@ fn io_print_line(parts: &[&str]) -> String {
 
 /// Format a float the same way crush-vm's scheduler does:
 /// integer-valued finite floats get a `.0` suffix so `3.0` prints as `3.0`.
+/// CPython `str()` for print: a top-level string raw, everything else repr.
+/// Mirrors crush-vm `io_print::py_value_to_text`.
+fn py_text(v: &RuntimeValue) -> String {
+    match v { RuntimeValue::String(s) => s.clone(), other => py_repr(other) }
+}
+fn py_repr(v: &RuntimeValue) -> String {
+    match v {
+        RuntimeValue::Bool(true) => "True".to_string(),
+        RuntimeValue::Bool(false) => "False".to_string(),
+        RuntimeValue::Null => "None".to_string(),
+        RuntimeValue::Int(i) => i.to_string(),
+        RuntimeValue::Float(f) => py_float(*f),
+        RuntimeValue::String(s) => py_str_repr(s),
+        RuntimeValue::Array(a) => format!("[{}]", a.borrow().iter().map(py_repr).collect::<Vec<_>>().join(", ")),
+        RuntimeValue::Object(o) => format!("{{{}}}", o.borrow().iter().map(|(k, v)| format!("{}: {}", py_str_repr(k), py_repr(v))).collect::<Vec<_>>().join(", ")),
+    }
+}
+fn py_float(f: f64) -> String {
+    if f.is_nan() { return "nan".to_string(); }
+    if f.is_infinite() { return if f > 0.0 { "inf" } else { "-inf" }.to_string(); }
+    let a = f.abs();
+    if a == 0.0 || (1e-4..1e16).contains(&a) { return if f.fract() == 0.0 { format!("{f:.1}") } else { format!("{f}") }; }
+    let e = format!("{f:e}");
+    let (mant, exp) = e.split_once('e').unwrap();
+    let exp: i32 = exp.parse().unwrap();
+    format!("{mant}e{}{:02}", if exp < 0 { '-' } else { '+' }, exp.abs())
+}
+fn py_str_repr(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == q => { out.push('\\'); out.push(c); }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push(q);
+    out
+}
+
 fn crush_float_to_text(f: f64) -> String {
     if f.is_finite() && f.fract() == 0.0 {
         format!("{:.1}", f)
@@ -361,12 +643,14 @@ fn emit_function(
     out: &mut String,
     name: &str,
     func: &casm::Function,
-    _program: &casm::Program,
+    program: &casm::Program,
     unsupported: &mut Vec<String>,
 ) {
     let fn_name = sanitize_fn_name(name);
     let is_main = name == "main";
     let n = func.body.len();
+    // CRUSH-zorro-54: loads not preceded by a store on every path.
+    let to_check = casm::assigned::loads_to_check(func);
 
     out.push_str(&format!("#[inline(never)]\nfn {fn_name}("));
     if is_main {
@@ -397,7 +681,12 @@ fn emit_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            {i} => {{\n"));
-        if let Some(op) = emit_body(out, instr, i, n) {
+        if let Some(sealed) = sealed_new_obj(program, instr) {
+            // COSM K1.4: a struct literal of a sealed Kind — the map
+            // remembers the Kind's fields and refuses any other (as the VMs do).
+            out.push_str(&format!("                stack.push(RuntimeValue::Object(Rc::new(RefCell::new({sealed}))));\n"));
+            out.push_str(&format!("                __pc = {};\n                continue;\n", (i + 1).min(n)));
+        } else if let Some(op) = emit_body(out, instr, i, n, to_check[i]) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
@@ -421,11 +710,23 @@ fn sanitize_fn_name(name: &str) -> String {
 
 /// Emits one instruction; returns a description of it if it has no Rust
 /// translation.
+/// `OrdMap::sealed(…)` for a `new_obj` tagged with a sealed Kind.
+fn sealed_new_obj(program: &casm::Program, instr: &casm::Instruction) -> Option<String> {
+    if instr.op != "new_obj" {
+        return None;
+    }
+    let kind = instr.args.get("kind")?.as_str()?;
+    let fields = casm::sealed_fields(program.kind_table()?, kind)?;
+    let list: Vec<String> = fields.iter().map(|f| format!("{f:?}")).collect();
+    Some(format!("OrdMap::sealed({kind:?}, &[{}])", list.join(", ")))
+}
+
 fn emit_body(
     out: &mut String,
     instr: &casm::Instruction,
     this_pc: usize,
     total_instrs: usize,
+    check_load: bool,
 ) -> Option<String> {
     let mut unsupported = None;
     let args = &instr.args;
@@ -481,9 +782,19 @@ fn emit_body(
         // ── Locals ──
         "load" => {
             let name = args["name"].as_str().unwrap_or("");
-            out.push_str(&format!(
-                "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
-            ));
+            if check_load {
+                // CRUSH-zorro-54: a local is unassigned until its first store
+                // (it isn't in `locals` yet); reading it then fails, as on the VM.
+                let msg = name.escape_default();
+                out.push_str(&format!(
+                    "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{msg}\") }});\n"
+                ));
+            } else {
+                // Every path here stored to it first (`casm::assigned::loads_to_check`).
+                out.push_str(&format!(
+                    "{ind}stack.push(locals.get(\"{name}\").cloned().unwrap_or(RuntimeValue::Null));\n"
+                ));
+            }
             out.push_str(&next_pc_str);
         }
         "store" => {
@@ -572,8 +883,18 @@ fn emit_body(
             out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match v {{ RuntimeValue::String(s)=>RuntimeValue::String(s.trim().to_string()), other=>other }}; stack.push(r); }}\n"));
             out.push_str(&next_pc_str);
         }
-        "str_split" | "str_replace" | "str_join" => {
-            out.push_str(&format!("{ind}stack.pop(); stack.pop(); stack.push(RuntimeValue::Null);\n"));
+        // Same semantics as the VM's str.split / str.replace / str.join caps.
+        // (They used to pop two values and push null — `replace` takes three.)
+        "str_split" => {
+            out.push_str(&format!("{ind}{{ let __sep = stack.pop().unwrap_or(RuntimeValue::Null); let __s = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match (&__s, &__sep) {{ (RuntimeValue::String(s), RuntimeValue::String(sep)) if !sep.is_empty() => RuntimeValue::Array(Rc::new(RefCell::new(s.split(sep.as_str()).map(|p| RuntimeValue::String(p.to_string())).collect()))), _ => {{ eprintln!(\"crush(aot): str.split expects a string and a non-empty separator\"); std::process::exit(1) }} }}; stack.push(__r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_replace" => {
+            out.push_str(&format!("{ind}{{ let __to = stack.pop().unwrap_or(RuntimeValue::Null); let __from = stack.pop().unwrap_or(RuntimeValue::Null); let __s = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match (&__s, &__from, &__to) {{ (RuntimeValue::String(s), RuntimeValue::String(a), RuntimeValue::String(b)) => RuntimeValue::String(s.replace(a.as_str(), b.as_str())), _ => {{ eprintln!(\"crush(aot): str.replace expects strings\"); std::process::exit(1) }} }}; stack.push(__r); }}\n"));
+            out.push_str(&next_pc_str);
+        }
+        "str_join" => {
+            out.push_str(&format!("{ind}{{ let __sep = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__arr {{ RuntimeValue::Array(a) => RuntimeValue::String(a.borrow().iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&__sep.to_string())), _ => {{ eprintln!(\"crush(aot): str.join expects an array\"); std::process::exit(1) }} }}; stack.push(__r); }}\n"));
             out.push_str(&next_pc_str);
         }
 
@@ -632,31 +953,6 @@ fn emit_body(
                 out.push_str(&next_pc_str);
             }
         }
-        // ── Async / AI opcodes ──
-        // AOT backends can't spawn OS threads or yield at the instruction level;
-        // these are stubbed to the minimum safe behavior (no crash, no deadlock).
-        "spawn" => {
-            // Pop function name + argc args (left on stack), push null.
-            // AOT can't spawn green threads, but we must keep the stack balanced.
-            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
-            out.push_str(&format!("{ind}stack.pop(); // fn name\n"));
-            for _ in 0..argc {
-                out.push_str(&format!("{ind}stack.pop(); // arg\n"));
-            }
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
-        "yield" => {
-            // Cooperative yield is a no-op in sequential AOT execution.
-            out.push_str(&next_pc_str);
-        }
-        "await" => {
-            // Pop handle, push null (can't actually await in AOT).
-            out.push_str(&format!("{ind}stack.pop(); // handle\n"));
-            out.push_str(&format!("{ind}stack.push(RuntimeValue::Null);\n"));
-            out.push_str(&next_pc_str);
-        }
-
         // ── AI opcodes ──
         // CRUSH-32 follow-up: each AI opcode now emits a per-opcode inline stub
         // Object ({ok: true, kind, echo: ([])}) via `make_ai_stub`, so the 5
@@ -713,6 +1009,12 @@ fn emit_body(
             out.push_str(&format!("{ind}return stack.pop().unwrap_or(RuntimeValue::Null);\n"));
         }
 
+        // CRUSH-293 D3 is VM-only, so never let a function-value array call
+        // reach an AOT stub or fall through silently.
+        "call_value_apply" => {
+            unsupported = Some("`call_value_apply` (function values, CRUSH-293 D3)".to_string());
+        }
+
         // ── Call ──
         "call" => {
             let target = args["function"].as_str().unwrap_or("");
@@ -739,19 +1041,19 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else if let Some(RuntimeValue::String(ref s)) = __arr {{ /* #148: index by character, like the VM */ let __v = match __idx {{ RuntimeValue::Int(i) => wrap_index(i, s.chars().count()).and_then(|j| s.chars().nth(j)).map(|c| RuntimeValue::String(c.to_string())).unwrap_or(RuntimeValue::Null), _ => RuntimeValue::Null }}; stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} else {{ stack.push(RuntimeValue::Null); }} }} else if let Some(RuntimeValue::String(ref s)) = __arr {{ /* #148: index by character, like the VM */ let __v = match __idx {{ RuntimeValue::Int(i) => wrap_index(i, s.chars().count()).and_then(|j| s.chars().nth(j)).map(|c| RuntimeValue::String(c.to_string())).unwrap_or(RuntimeValue::Null), _ => RuntimeValue::Null }}; stack.push(__v); }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ stack.push(map_index(&m.borrow(), &__idx)); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_set" => {{
-            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ map_index_set(&mut m.borrow_mut(), __idx, __val); }} }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_len" | "len" => {{
-            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __l = match &__v {{ RuntimeValue::Array(a) => a.borrow().len() as i64, RuntimeValue::String(s) => s.len() as i64, _ => 0 }}; stack.push(RuntimeValue::Int(__l)); }}\n"));
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __l = match &__v {{ RuntimeValue::Array(a) => a.borrow().len() as i64, RuntimeValue::String(s) => s.len() as i64, RuntimeValue::Object(m) => m.borrow().len() as i64, _ => 0 }}; stack.push(RuntimeValue::Int(__l)); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "map_keys" => {{
-            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Object(m) => {{ let mut __k: Vec<String> = m.borrow().keys().cloned().collect(); __k.sort(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
+            out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); let __r = match &__v {{ RuntimeValue::Object(m) => {{ let __k: Vec<String> = m.borrow().keys().cloned().collect(); let __kv: Vec<RuntimeValue> = __k.into_iter().map(|k| RuntimeValue::String(k)).collect(); RuntimeValue::Array(Rc::new(RefCell::new(__kv))) }}, _ => __v.clone() }}; stack.push(__r); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "arr_push" | "array_push" => {{
@@ -769,7 +1071,7 @@ fn emit_body(
 
         // ── Objects ──
         "new_obj" => {{
-            out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::Object(Rc::new(RefCell::new(HashMap::new())))); }}\n"));
+            out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::Object(Rc::new(RefCell::new(OrdMap::new())))); }}\n"));
             out.push_str(&next_pc_str);
         }}
         "get_field" => {{
@@ -788,16 +1090,30 @@ fn emit_body(
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
+                name if crate::method_support::id(name).is_some() => {
+                    let expected = crush_vm::rust_methods_core::arity(name).unwrap();
+                    if argc != expected { unsupported = Some(format!("cap_call '{name}' needs {expected} arguments (CRUSH-xps-13)")); }
+                    else {
+                        out.push_str(&format!("{ind}{{ let mut __a=Vec::with_capacity({argc}); for _ in 0..{argc} {{ __a.push(stack.pop().unwrap_or(RuntimeValue::Null)); }} __a.reverse(); stack.push(rust_method_call({name:?},__a)); }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                }
+                // Returns the array, as the VM's `push` does: a statement's
+                // `pop` then balances, and `len(xs.push(v))` sees it.
+                // One value per push; anything else would pop the wrong slots.
+                "append" | "push" | "arr.push" | "array.push" if argc != 2 => {
+                    unsupported = Some(format!("cap_call '{cap_name}' with {argc} arguments (one value per push)"));
+                }
                 "append" | "push" | "arr.push" | "array.push" => {
-                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ a.borrow_mut().push(__val); }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ a.borrow_mut().push(__val); }} stack.push(__arr.unwrap_or(RuntimeValue::Null)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "arr_get" => {
-                    out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ stack.push(map_index(&m.borrow(), &__idx)); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "arr_set" => {
-                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ map_index_set(&mut m.borrow_mut(), __idx, __val); }} }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "make_range" => {
@@ -817,7 +1133,12 @@ fn emit_body(
                     out.push_str(&next_pc_str);
                 }
                 "io.print" | "print" => {
-                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", io_print_line(&[__v.to_string().as_str()])); }}\n"));
+                    // All `argc` arguments, concatenated like the VM (it used to
+                    // pop one, so `console.log(a, b)` printed only `b`).
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("{ind}print!(\"\\n\");\n")); } else {
+                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({n}); for _ in 0..{n} {{ __parts.push(stack.pop().unwrap_or(RuntimeValue::Null).to_string()); }} __parts.reverse(); let __refs: Vec<&str> = __parts.iter().map(|s| s.as_str()).collect(); print!(\"{{}}\", io_print_line(&__refs)); }}\n"));
+                    }
                     out.push_str(&next_pc_str);
                 }
                 "io.write" => {
@@ -826,11 +1147,61 @@ fn emit_body(
                 }
                 "py.print" => {
                     // Python print: space-separated, True/False/None (CRUSH-200).
-                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(match &__v {{ RuntimeValue::Bool(true) => \"True\".to_string(), RuntimeValue::Bool(false) => \"False\".to_string(), RuntimeValue::Null => \"None\".to_string(), other => other.to_string() }}); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));
+                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); __parts.push(py_text(&__v)); }} __parts.reverse(); print!(\"{{}}\\n\", __parts.join(\" \")); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "py.print_sep_end" => {
+                    // print(*values, sep=, end=) (CRUSH-zorro-38): args are (sep, end, values..);
+                    // null means CPython's default.
+                    out.push_str(&format!("{ind}{{ let mut __a: Vec<RuntimeValue> = Vec::with_capacity({argc}); for _ in 0..{argc} {{ __a.push(stack.pop().unwrap_or(RuntimeValue::Null)); }} __a.reverse(); let __t = |i: usize, d: &str| match __a.get(i) {{ None | Some(RuntimeValue::Null) => d.to_string(), Some(v) => py_text(v) }}; let (__sep, __end) = (__t(0, \" \"), __t(1, \"\\n\")); let __parts: Vec<String> = __a.iter().skip(2).map(py_text).collect(); print!(\"{{}}{{}}\", __parts.join(&__sep), __end); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "math.truediv" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(*x as f64 / *y as f64) }} }}, (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.div" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(_),RuntimeValue::Int(0))=>div_zero(), (RuntimeValue::Int(x),RuntimeValue::Int(y)) if x.checked_rem(*y)==Some(0) => RuntimeValue::Int(x.checked_div(*y).unwrap_or_else(|| arith_overflow())), (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Float(*x as f64 / *y as f64), (RuntimeValue::Float(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(x/y) }} }}, (RuntimeValue::Int(x),RuntimeValue::Float(y))=>{{ if *y==0.0 {{ div_zero_f() }} else {{ RuntimeValue::Float(*x as f64 / y) }} }}, (RuntimeValue::Float(x),RuntimeValue::Int(y))=>{{ if *y==0 {{ div_zero() }} else {{ RuntimeValue::Float(x / *y as f64) }} }}, _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.add" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_add(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.truthy" => {
+                    out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(RuntimeValue::Bool(js_core::truthy(&js_node(&__v, 0)))); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.loose_eq" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_loose_eq(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.strict_eq" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_strict_eq(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.format" => {
+                    out.push_str(&format!("{ind}{{ let __at = stack.len().saturating_sub({argc}); let __args: Vec<RuntimeValue> = stack.split_off(__at); stack.push(js_format(&__args)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "rust.debug" => {
+                    if argc != 2 {
+                        unsupported = Some("cap_call 'rust.debug' needs 2 arguments (CRUSH-xps-9)".into());
+                    } else {
+                        out.push_str(&format!("{ind}{{ let __d = stack.pop().unwrap_or(RuntimeValue::Null); let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(rust_debug(&__v, &__d)); }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                }
+                "conv.text" => {
+                    out.push_str(&format!("{ind}{{ let __st = stack.pop().unwrap_or(RuntimeValue::Null); let __v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_text(&__v, &__st)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "seq.slice" => {
+                    out.push_str(&format!("{ind}{{ let __st = stack.pop().unwrap_or(RuntimeValue::Null); let __b = stack.pop().unwrap_or(RuntimeValue::Null); let __a = stack.pop().unwrap_or(RuntimeValue::Null); let __t = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(seq_slice(__t, __a, __b, __st)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "math.power" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); let r=match (&__a,&__b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y)) if *y>=0 => {{ match u32::try_from(*y) {{ Ok(e)=>RuntimeValue::Int(x.checked_pow(e).unwrap_or_else(|| arith_overflow())), Err(_)=>match *x {{ 0|1=>RuntimeValue::Int(*x), -1=>RuntimeValue::Int(if *y%2==0 {{1}} else {{-1}}), _=>arith_overflow() }} }} }}, (RuntimeValue::Int(0),RuntimeValue::Int(_))=>div_zero(), (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Float((*x as f64).powf(*y as f64)), (RuntimeValue::Float(x),RuntimeValue::Float(y))=>RuntimeValue::Float(x.powf(*y)), (RuntimeValue::Int(x),RuntimeValue::Float(y))=>RuntimeValue::Float((*x as f64).powf(*y)), (RuntimeValue::Float(x),RuntimeValue::Int(y))=>RuntimeValue::Float(x.powf(*y as f64)), _=>arith_type_error(&__a,&__b) }}; stack.push(r); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "math.floordiv" => {
@@ -844,6 +1215,15 @@ fn emit_body(
                 _ => unsupported = Some(format!("cap_call '{cap_name}'")),
             }
         }
+
+        // ── Green tasks without `spawn` (issue #161) ──
+        // With no spawned task `yield` is a cooperative-yield no-op and `await`
+        // has no handle (issue #251: `await v` on a non-handle returns `v`, so
+        // the awaited value stays on the stack). A program that does `spawn` is
+        // refused up front by `refuse_green_task`, so these never run a task
+        // here.
+        "yield" => out.push_str(&next_pc_str),
+        "await" => out.push_str(&next_pc_str),
 
         "nop" => out.push_str(&next_pc_str),
         _ => unsupported = Some(format!("`{}`", instr.op)),
@@ -862,7 +1242,7 @@ fn emit_ai_stub(out: &mut String) {
     out.push_str(r#"
 #[inline(always)]
 fn make_ai_stub(kind: &str) -> RuntimeValue {
-    let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
+    let mut obj = OrdMap::with_capacity(3);
     obj.insert("ok".to_string(), RuntimeValue::Bool(true));
     obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));
     obj.insert("echo".to_string(), RuntimeValue::Array(Rc::new(RefCell::new(Vec::new()))));
@@ -883,7 +1263,7 @@ fn emit_dom_stub(out: &mut String) {
     out.push_str(r#"
 #[inline(always)]
 fn make_dom_stub(kind: &str) -> RuntimeValue {
-    let mut obj: HashMap<String, RuntimeValue> = HashMap::with_capacity(3);
+    let mut obj = OrdMap::with_capacity(3);
     obj.insert("ok".to_string(), RuntimeValue::Bool(true));
     obj.insert("kind".to_string(), RuntimeValue::String(kind.to_string()));
     obj.insert("echo".to_string(), RuntimeValue::Array(Rc::new(RefCell::new(Vec::new()))));
@@ -899,8 +1279,16 @@ fn emit_entry_point(out: &mut String) {
 #[unsafe(no_mangle)]
 pub extern "C" fn crush_run() -> *mut std::ffi::c_char {
     let result = crush_fn_main();
-    let json = format!("{}", result);
-    let c_str = std::ffi::CString::new(json).unwrap_or_default();
+    // Preserve String identity using the loader's existing quoted-string
+    // transport, including numeric/Boolean-looking strings and whitespace.
+    let json = match &result {
+        RuntimeValue::String(s) => format!("\"{}\"", s),
+        _ => format!("{}", result),
+    };
+    let c_str = std::ffi::CString::new(json).unwrap_or_else(|_| {
+        eprintln!("NUL host result requires a length-aware result ABI (CRUSH-xps-13)");
+        std::process::exit(1);
+    });
     c_str.into_raw()
 }
 

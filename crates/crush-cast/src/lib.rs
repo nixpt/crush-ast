@@ -47,6 +47,15 @@ pub struct Program {
     /// Set for each type listed in `manifest.exhaustive_types`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exhaustive_sites: Vec<manifest::ExhaustiveMatchSite>,
+    /// COSM declarations a walker lowered alongside the code (CRUSH-277):
+    /// the object-side sibling of `functions`, merged by crush-frontend
+    /// with anything it derives itself and carried into
+    /// `casm::Program::cosm`. `None` for a program that declares no kinds,
+    /// and for CAST written before the field existed (it is omitted when
+    /// `None`, so such a program serializes exactly as before).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(skip))]
+    pub cosm: Option<crush_cosm::CosmModule>,
     /// Work-in-progress node, if a `@wip { ... }` block was declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wip: Option<manifest::WipNode>,
@@ -167,6 +176,12 @@ pub enum Statement {
         /// Variables to inject into the sandbox
         #[serde(default)]
         variables: Vec<String>,
+        /// Explicit output declarations from the `-> name` / `-> (a, b)` block
+        /// header (CRUSH-270). Empty means "no `->` written": the pre-CRUSH-270
+        /// implicit rule (last top-level assignment) applies, plus a compile
+        /// warning. Every name here becomes a Crush variable at this line.
+        #[serde(default)]
+        outputs: Vec<String>,
         /// Import statements within the block
         #[serde(default)]
         imports: Vec<ImportStatement>,
@@ -198,6 +213,34 @@ pub enum Statement {
     StructDef {
         name: String,
         fields: Vec<(String, CastType)>,
+        /// `@kind(key: value, …)` written on the struct (COSM K1.2,
+        /// CRUSH-zorro-41): overrides Crush's default KindDecl strategies.
+        /// Kept syntactic here; checked against the COSM catalogue when the
+        /// program is lowered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<KindAnnotation>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    /// `impl P { … }` or `impl T for P { … }` (COSM K1.2, CRUSH-zorro-41).
+    /// Every `impl` of a type in a file merges into that type's one COSM
+    /// `KindDecl`; the methods are lifted to ordinary functions with `self`
+    /// (an ordinary parameter name) first.
+    ImplBlock {
+        /// The type the methods belong to (`P`).
+        type_name: String,
+        /// `T` in `impl T for P`; `None` for an inherent impl.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trait_name: Option<String>,
+        methods: Vec<MethodDef>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    /// `trait T { fn m(self) -> R; fn d(self) { … } }` (COSM K1.2): method
+    /// signatures (no body) and default methods (with a body).
+    TraitDef {
+        name: String,
+        methods: Vec<MethodDef>,
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
@@ -314,6 +357,16 @@ pub enum Expression {
         args: Vec<Expression>,
         meta: HashMap<String, serde_json::Value>,
     },
+    /// A method call on a computed receiver (`new P(4).get2()`,
+    /// `f().m(x)`): the member is resolved on the receiver's Kind at
+    /// run time (`call_member`). CRUSH-277 S5.
+    MethodCall {
+        target: Box<Expression>,
+        method: String,
+        args: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     VectorMath {
         operator: String,
         args: Vec<Expression>,
@@ -343,6 +396,17 @@ pub enum Expression {
     },
     NewStruct {
         name: String,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    /// Construct an instance of the COSM Kind `kind` with `args`
+    /// (CRUSH-277 D3): JS `new C(…)` — distinct from `Call`, which a
+    /// class must refuse (a class called without `new` is an error, so
+    /// the two are never interchangeable). The compiler emits the CASM
+    /// `construct` op; the Kind's `construct` strategy decides what runs.
+    Construct {
+        kind: String,
+        args: Vec<Expression>,
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
@@ -413,6 +477,95 @@ pub enum Expression {
     },
     /// AI-specific expression
     AI(ai::AIExpression),
+}
+
+impl Statement {
+    /// A plain `struct` declaration: no `@kind(…)` annotation. Producers
+    /// (walkers, tests) should build `StructDef` through this rather than a
+    /// field-by-field literal, so optional parts added later (like `kind`,
+    /// COSM K1.2) don't break them.
+    pub fn struct_def(
+        name: impl Into<String>,
+        fields: Vec<(String, CastType)>,
+        meta: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Statement::StructDef { name: name.into(), fields, kind: None, meta }
+    }
+}
+
+/// A method in an `impl` block or a `trait` (COSM K1.2, CRUSH-zorro-41).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct MethodDef {
+    pub name: String,
+    /// All parameters, `self` included when present. A method whose first
+    /// parameter is not `self` is a static member (`fn new(…)`).
+    pub params: Vec<(String, CastType)>,
+    /// The body. `None` only for a trait method signature without a default
+    /// (`fn area(self);`); impl methods always have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<Vec<Statement>>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_async: bool,
+    #[serde(default)]
+    pub meta: HashMap<String, serde_json::Value>,
+}
+
+impl MethodDef {
+    /// Whether the method takes a receiver (`self` as its first parameter).
+    pub fn has_self(&self) -> bool {
+        self.params.first().is_some_and(|(n, _)| n == "self")
+    }
+}
+
+/// `@kind(key: value, …)` on a `struct` (COSM K1.2, CRUSH-zorro-41).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct KindAnnotation {
+    pub args: Vec<KindArg>,
+    #[serde(default)]
+    pub meta: HashMap<String, serde_json::Value>,
+}
+
+/// One `key: value` entry of a `@kind(…)` annotation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct KindArg {
+    pub key: String,
+    pub value: KindValue,
+    #[serde(default)]
+    pub meta: HashMap<String, serde_json::Value>,
+}
+
+/// The value of a `@kind` entry, kept as written: `sealed`, `value(copy)`,
+/// `[Base, Mixin]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(tag = "type")]
+pub enum KindValue {
+    /// A bare name: `sealed`, `c3`, `Base`.
+    Name { name: String },
+    /// A name applied to arguments: `value(copy)`, `ctor(make)`.
+    Apply { name: String, args: Vec<KindValue> },
+    /// A list: `[Base, Mixin]`.
+    List { items: Vec<KindValue> },
+}
+
+impl std::fmt::Display for KindValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let join = |items: &[KindValue]| {
+            items.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+        };
+        match self {
+            KindValue::Name { name } => write!(f, "{name}"),
+            KindValue::Apply { name, args } => write!(f, "{name}({})", join(args)),
+            KindValue::List { items } => write!(f, "[{}]", join(items)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

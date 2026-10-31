@@ -1,0 +1,22 @@
+{ a: 1, b: 'two' }
+{}
+{ nested: { deeper: { deepest: [Object] } }, list: [ 1, { k: 'v' } ] }
+{ 'my-key': 1, _ok: 2, x1: 3, 'with space': 4 }
+{ '1': 'one', '2': 'two', b: 1 }
+{
+  name: 'crush',
+  version: 6,
+  tags: [ 'vm', 'aot' ],
+  ok: true,
+  none: null
+}
+{
+  name: 'crush',
+  version: 6,
+  tags: [ 'vm', 'aot' ],
+  ok: true,
+  none: null,
+  extra: 'a fairly long string value to push the line over the limit'
+}
+{ quote: "it's", empty: '', arr: [] }
+obj: { a: [] } 7

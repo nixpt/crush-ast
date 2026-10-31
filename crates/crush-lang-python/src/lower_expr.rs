@@ -23,6 +23,32 @@ fn fresh_comp_temp() -> String {
     format!("__comp_{n}")
 }
 
+thread_local! {
+    /// Set while an inline `@python` block is lowered (CRUSH-272): a tuple
+    /// lowers to an array, which prints as `[1, 2]` and equals the list
+    /// `[1, 2]`, so there it is refused instead of silently changing meaning;
+    /// so is reading a module attribute (`math.pi`).
+    static STRICT_TUPLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with tuples refused (see `STRICT_TUPLES`).
+pub(crate) fn with_strict_tuples<T>(f: impl FnOnce() -> T) -> T {
+    let before = STRICT_TUPLES.with(|s| s.replace(true));
+    let out = f();
+    STRICT_TUPLES.with(|s| s.set(before));
+    out
+}
+
+fn refuse_tuple_if_strict() -> anyhow::Result<()> {
+    if STRICT_TUPLES.with(|s| s.get()) {
+        anyhow::bail!(
+            "tuples are not supported yet: the walker makes them lists, which print as `[...]` \
+             and compare equal to lists"
+        );
+    }
+    Ok(())
+}
+
 /// Lower a Python AST expression to a CAST expression.
 pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
     let offset = u32::from(expr.start()) as usize;
@@ -127,8 +153,30 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 meta,
             })
         }
-        py_ast::Expr::Lambda { .. } => {
-            anyhow::bail!("lambda expressions not yet supported")
+        py_ast::Expr::Lambda(py_ast::ExprLambda { args, body, .. }) => {
+            if args.defaults().next().is_some()
+                || args.vararg.is_some()
+                || args.kwarg.is_some()
+                || !args.kwonlyargs.is_empty()
+                || !args.posonlyargs.is_empty()
+            {
+                anyhow::bail!(
+                    "lambda with default, keyword-only, positional-only or */** parameters \
+                     is not supported yet"
+                );
+            }
+            let params: Vec<(String, CastType)> = args
+                .args
+                .iter()
+                .map(|a| (a.def.arg.to_string(), CastType::Any))
+                .collect();
+            let (mut stmts, value) = lower_expr_hoist(body, ctx)?;
+            stmts.push(Statement::Return { value: Some(value), meta: meta.clone() });
+            Ok(Expression::Lambda {
+                params,
+                body: stmts,
+                meta: crate::lower_stmt::python_lambda_meta(&meta, Vec::new()),
+            })
         }
         py_ast::Expr::IfExp(py_ast::ExprIfExp {
             test, body, orelse, ..
@@ -258,10 +306,19 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 .iter()
                 .map(|a| lower_expr(a, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
-            lower_call(func, lowered_args, keywords, meta)
+            lower_call(func, lowered_args, keywords, meta, ctx)
         }
         py_ast::Expr::Constant(py_ast::ExprConstant { value, .. }) => lower_constant(value, meta),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
+            // `math.pi`: only module *calls* lower (to Crush builtins); the
+            // module itself is no value, so reading it would hit an unset
+            // local at run time.
+            if let py_ast::Expr::Name(py_ast::ExprName { id, .. }) = value.as_ref()
+                && MODULES.contains(&id.as_str())
+                && STRICT_TUPLES.with(|s| s.get())
+            {
+                anyhow::bail!("module attribute `{id}.{attr}` is not supported yet (only calls like `{id}.f(...)`)");
+            }
             let target = lower_expr(value, ctx)?;
             Ok(Expression::GetField {
                 target: Box::new(target),
@@ -312,6 +369,7 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         py_ast::Expr::Tuple(py_ast::ExprTuple { elts, .. }) => {
+            refuse_tuple_if_strict()?;
             let elements: Vec<Expression> = elts
                 .iter()
                 .map(|e| lower_expr(e, ctx))
@@ -364,25 +422,99 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
     }
 }
 
+/// Modules whose functions are called as `module.fn(...)` (dotted builtins),
+/// not as a method on a value.
+pub(crate) const MODULES: &[&str] = &["math", "random", "time", "os", "sys", "json", "re", "string", "py", "io"];
+
+/// A method call on a value → the crush builtin that implements it.
+fn lower_method(
+    receiver: Expression,
+    method: &str,
+    mut args: Vec<Expression>,
+    meta: HashMap<String, serde_json::Value>,
+) -> anyhow::Result<Expression> {
+    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call { function: function.to_string(), args, meta };
+    Ok(match (method, args.len()) {
+        ("upper", 0) => call("str.to_upper", vec![receiver], meta),
+        ("lower", 0) => call("str.to_lower", vec![receiver], meta),
+        ("strip", 0) => call("str.trim", vec![receiver], meta),
+        ("startswith", 1) => call("str.starts_with", vec![receiver, args.remove(0)], meta),
+        ("endswith", 1) => call("str.ends_with", vec![receiver, args.remove(0)], meta),
+        ("split", 1) => call("str.split", vec![receiver, args.remove(0)], meta),
+        ("replace", 2) => {
+            let (a, b) = (args.remove(0), args.remove(0));
+            call("str.replace", vec![receiver, a, b], meta)
+        }
+        // `sep.join(items)`: crush's str.join takes the list first.
+        ("join", 1) => call("str.join", vec![args.remove(0), receiver], meta),
+        ("append", 1) => call("array.push", vec![receiver, args.remove(0)], meta),
+        ("pop", 0) => call("array.pop", vec![receiver], meta),
+        ("split", 0) => anyhow::bail!("`.split()` without a separator (whitespace runs) is not supported yet"),
+        (other, n) => anyhow::bail!("method `.{other}()` with {n} argument(s) is not supported yet"),
+    })
+}
+
 fn lower_call(
     func: &py_ast::Expr,
     lowered_args: Vec<Expression>,
-    _keywords: &[py_ast::Keyword],
+    keywords: &[py_ast::Keyword],
     meta: HashMap<String, serde_json::Value>,
+    ctx: &LowerCtx<'_>,
 ) -> anyhow::Result<Expression> {
+    // CRUSH-zorro-38: no keyword argument may be dropped — they used to be
+    // ignored, so `print('a', end='')` printed a newline. Each one is
+    // supported or a walk-time error naming the callee and the keyword.
+    let callee = match func {
+        py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
+        py_ast::Expr::Attribute(py_ast::ExprAttribute { attr, .. }) => format!(".{attr}()"),
+        _ => "the called value".to_string(),
+    };
+    let mut print_sep = None;
+    let mut print_end = None;
+    for keyword in keywords {
+        let Some(name) = &keyword.arg else {
+            anyhow::bail!("`**` keyword arguments (in a call to `{callee}`) are not supported yet");
+        };
+        match (callee.as_str(), name.as_str()) {
+            ("print", "sep") => print_sep = Some(lower_expr(&keyword.value, ctx)?),
+            ("print", "end") => print_end = Some(lower_expr(&keyword.value, ctx)?),
+            // crush writes output unbuffered and in order: flushing changes nothing.
+            ("print", "flush") => {}
+            (callee, name) => anyhow::bail!(
+                "keyword argument `{name}=` to `{callee}` is not supported yet"
+            ),
+        }
+    }
+    if callee == "print" && (print_sep.is_some() || print_end.is_some()) {
+        let default = || Expression::NullLiteral { meta: meta.clone() };
+        let mut args = vec![print_sep.unwrap_or_else(default), print_end.unwrap_or_else(default)];
+        args.extend(lowered_args);
+        return Ok(Expression::CapabilityCall { name: "py.print_sep_end".to_string(), args, meta });
+    }
     let func_name = match func {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
-            let obj = match value.as_ref() {
-                py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
-                _ => return Err(anyhow::anyhow!("complex method calls not yet supported")),
-            };
-            format!("{}.{}", obj, attr)
+            match value.as_ref() {
+                py_ast::Expr::Name(py_ast::ExprName { id, .. }) if MODULES.contains(&id.as_str()) => {
+                    format!("{}.{}", id, attr)
+                }
+                // A method on a value (`s.upper()`, `"a,b".split(",")`,
+                // `items.append(x)`): used to be rejected unless the receiver
+                // was a plain name, and then emitted a call to a function
+                // literally named "s.upper".
+                receiver => return lower_method(lower_expr(receiver, ctx)?, attr.as_str(), lowered_args, meta),
+            }
         }
         _ => return Err(anyhow::anyhow!("complex function calls not yet supported")),
     };
 
     match func_name.as_str() {
+        // Crush's math.floor / math.ceil return a float; Python's return an
+        // int, so `print(math.floor(2.5))` printed `2.0` (CRUSH-272). Loud
+        // until they lower to an exact int.
+        "math.floor" | "math.ceil" => anyhow::bail!(
+            "`{func_name}()` is not supported yet: it would return a float, where Python returns an int"
+        ),
         "print" => Ok(Expression::CapabilityCall {
             name: "py.print".to_string(),
             args: lowered_args,
@@ -436,6 +568,7 @@ pub(crate) fn lower_constant(
         py_ast::Constant::Complex { .. } => anyhow::bail!("complex numbers not yet supported"),
         py_ast::Constant::Ellipsis => anyhow::bail!("ellipsis literal not yet supported"),
         py_ast::Constant::Tuple(t) => {
+            refuse_tuple_if_strict()?;
             let elements: Vec<Expression> = t
                 .iter()
                 .map(|e| match e {
@@ -546,6 +679,7 @@ fn lower_list_or_set_comprehension(
         meta: meta.clone(),
     };
     let loop_stmt = build_comprehension_loop(generators, 0, vec![push_stmt], ctx, &meta)?;
+    let loop_stmt = comprehension_scope(loop_stmt, generators)?;
     Ok((
         vec![init, loop_stmt],
         Expression::Var {
@@ -553,6 +687,64 @@ fn lower_list_or_set_comprehension(
             meta,
         },
     ))
+}
+
+/// Python 3 gives a comprehension its own scope: its loop variables don't
+/// overwrite a same-named variable of the enclosing function
+/// (`n = 10; [n for n in range(3)]` leaves `n` at 10). The loop is lowered
+/// inline, so rename every target to a fresh name throughout it — a
+/// consistent rename to an unused name keeps the meaning (closures in the
+/// comprehension still share the renamed variable: late binding holds). The
+/// first `for`'s iterable is evaluated in the enclosing scope, so it keeps
+/// the outer names.
+fn comprehension_scope(
+    loop_stmt: Statement,
+    generators: &[py_ast::Comprehension],
+) -> anyhow::Result<Statement> {
+    use serde_json::Value as J;
+    fn rename(v: &mut J, from: &str, to: &str) {
+        match v {
+            J::Array(items) => items.iter_mut().for_each(|i| rename(i, from, to)),
+            J::Object(o) => {
+                for key in ["name", "variable", "target"] {
+                    if o.get(key).and_then(J::as_str) == Some(from) {
+                        o.insert(key.to_string(), J::from(to));
+                    }
+                }
+                if let Some(f) = o.get("function").and_then(J::as_str) {
+                    let renamed = if f == from {
+                        Some(to.to_string())
+                    } else {
+                        f.strip_prefix(from).filter(|rest| rest.starts_with('.')).map(|rest| format!("{to}{rest}"))
+                    };
+                    if let Some(r) = renamed {
+                        o.insert("function".to_string(), J::from(r));
+                    }
+                }
+                if let Some(J::Array(params)) = o.get_mut("params") {
+                    for p in params.iter_mut() {
+                        if p.get(0).and_then(J::as_str) == Some(from) {
+                            p[0] = J::from(to);
+                        }
+                    }
+                }
+                o.values_mut().for_each(|c| rename(c, from, to));
+            }
+            _ => {}
+        }
+    }
+    let mut json = serde_json::to_value(&loop_stmt)?;
+    let first_iterable = json.get("iterable").cloned();
+    for generator in generators {
+        if let py_ast::Expr::Name(py_ast::ExprName { id, .. }) = &generator.target {
+            let fresh = format!("{}_{}", fresh_comp_temp(), id);
+            rename(&mut json, id.as_str(), &fresh);
+        }
+    }
+    if let (Some(original), Some(obj)) = (first_iterable, json.as_object_mut()) {
+        obj.insert("iterable".to_string(), original);
+    }
+    Ok(serde_json::from_value(json)?)
 }
 
 /// Recursively build the (possibly nested, for multiple `for` clauses)
@@ -643,13 +835,38 @@ pub(crate) fn lower_expr_hoist(
             ..
         }) => {
             let mut hoisted = Vec::new();
+            // Calling a value that isn't a name or a method (`make_adder(3)(4)`,
+            // `fs[0]()`): evaluate the callee first — Python's order — into a
+            // temporary and call that (a call through a variable is
+            // `call_value`, CRUSH-251). Only where statements can be hoisted;
+            // elsewhere it stays an error (CRUSH-zorro-24).
+            let temp_callee;
+            let func = if matches!(func.as_ref(), py_ast::Expr::Name(_) | py_ast::Expr::Attribute(_)) {
+                func.as_ref()
+            } else {
+                let (h, callee) = lower_expr_hoist(func, ctx)?;
+                hoisted.extend(h);
+                let temp = fresh_comp_temp();
+                hoisted.push(Statement::VarDecl {
+                    name: temp.clone(),
+                    value: callee,
+                    type_hint: CastType::Any,
+                    meta: meta.clone(),
+                });
+                temp_callee = py_ast::Expr::Name(py_ast::ExprName {
+                    range: func.range(),
+                    id: temp.as_str().into(),
+                    ctx: py_ast::ExprContext::Load,
+                });
+                &temp_callee
+            };
             let mut lowered_args = Vec::new();
             for a in args {
                 let (h, e) = lower_expr_hoist(a, ctx)?;
                 hoisted.extend(h);
                 lowered_args.push(e);
             }
-            let call_expr = lower_call(func, lowered_args, keywords, meta)?;
+            let call_expr = lower_call(func, lowered_args, keywords, meta, ctx)?;
             Ok((hoisted, call_expr))
         }
         _ => Ok((Vec::new(), lower_expr(expr, ctx)?)),
@@ -680,7 +897,8 @@ mod comprehension_lowering_tests {
         }
         match &hoisted[1] {
             Statement::For { variable, body, .. } => {
-                assert_eq!(variable, "i");
+                // Renamed to the comprehension's own scope (`__comp_N_i`).
+                assert!(variable.starts_with("__comp_") && variable.ends_with("_i"), "{variable}");
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     Statement::ExprStmt { expr: Expression::Call { function, args, .. }, .. } => {

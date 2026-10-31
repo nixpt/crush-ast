@@ -32,8 +32,9 @@ fn ungranted_block_is_refused_and_executor_not_called() {
     let r = execute_with_options(PRINT_AROUND, &RunOptions::default());
     set_host_lang_executor(None);
     assert!(!r.ok);
-    assert!(r.error.as_deref().unwrap_or("").contains("polyglot.javascript"), "{:?}", r.error);
-    assert_eq!(r.output, "before\n", "output before the refusal is kept");
+    let err = r.error.unwrap_or_default();
+    assert!(err.contains("nothing was run") && err.contains("--polyglot: polyglot.javascript"), "{err}");
+    assert_eq!(r.output, "", "refused before running, as crush-run does");
     assert_eq!(calls.get(), 0);
 }
 
@@ -60,7 +61,8 @@ fn executor_failure_keeps_earlier_output() {
     assert!(!r.ok);
     assert_eq!(r.output, "before\n");
     let err = r.error.unwrap_or_default();
-    assert!(err.contains("@javascript block failed") && err.contains("ReferenceError: nope"), "{err}");
+    // The same error a native run reports when node exits non-zero.
+    assert_eq!(err, "runtime error: @javascript block raised a runtime error: (at .crush line 4) ReferenceError: nope");
 }
 
 #[test]
@@ -80,7 +82,8 @@ fn marshaling_round_trip() {
     set_host_lang_executor(Some(Rc::new(|_, code, env| {
         assert!(code.contains("process.env"), "marshaling prologue present: {code}");
         let base: i64 = env.iter().find(|(k, _)| k == "base").map(|(_, v)| v.parse().unwrap()).expect("base passed in");
-        Ok(format!("\u{0}CRUSH_RESULT\u{0}{}\n", base * 3))
+        // The sentinel carries an object keyed by output name (CRUSH-270).
+        Ok(format!("\u{0}CRUSH_RESULT\u{0}{{\"result\": {}}}\n", base * 3))
     })));
     let r = execute_with_options(
         "fn main() {\n  let base = 5\n  @javascript {\n    var result = base * 3\n  }\n  print(result + 1)\n}\n",
@@ -89,4 +92,21 @@ fn marshaling_round_trip() {
     set_host_lang_executor(None);
     assert!(r.ok, "{:?}", r.error);
     assert_eq!(r.output.trim(), "16");
+}
+
+/// A build without `polyglot-python` can't marshal a `@python` block, but the
+/// program still compiles and is refused like a native run without
+/// `--polyglot` (not "Undefined variable: total").
+#[test]
+fn ungranted_python_outputs_are_refused_like_native() {
+    let r = execute_with_options(
+        "print(\"a\")\n@python -> total {\ntotal = 1 + 2\n}\nprint(total)\n",
+        &RunOptions::default(),
+    );
+    assert!(!r.ok);
+    assert_eq!(r.output, "");
+    assert_eq!(
+        r.error.as_deref(),
+        Some("this program needs capabilities this run does not grant; nothing was run:\n  --polyglot: polyglot.python")
+    );
 }

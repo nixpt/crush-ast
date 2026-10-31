@@ -45,7 +45,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
 
-        /// A program (.crush, .casm or .cvm1) to inspect instead of listing
+        /// A program (.crush, .casm, .cvm1 or .cvm) to inspect instead of listing
         /// every capability.
         path: Option<PathBuf>,
     },
@@ -53,7 +53,7 @@ enum Commands {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Path to the program file (.crush, .casm or .cvm1).
+    /// Path to the program file (.crush, .casm, .cvm1 or .cvm — crush-pkg's name for a CVM1 blob).
     path: PathBuf,
 
     /// Arguments for the program, returned by `sys.args()`. Flags for
@@ -106,6 +106,11 @@ struct RunArgs {
     /// Enable cryptography host capabilities (crypto.sha256, crypto.random).
     #[arg(long)]
     crypto: bool,
+
+    /// Enable `gpu.launch`: run the program's GPU kernels on an NVIDIA GPU
+    /// (CRUSH-zorro-3). Needs a build with the `gpu` feature.
+    #[arg(long)]
+    gpu: bool,
 
     /// Enable graphics host capabilities (graphics.canvas/rect/circle/text/to_svg).
     #[arg(long)]
@@ -245,8 +250,8 @@ fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) ->
             }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
-        "cvm1" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
-        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"),
+        "cvm1" | "cvm" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
+        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"),
     }
 }
 
@@ -459,9 +464,9 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // cleanly. Hoisting Runtime init above the dispatch would otherwise
     // reorder those warnings before the bail.
     match ext {
-        "crush" | "casm" | "cvm1" => {}
+        "crush" | "casm" | "cvm1" | "cvm" => {}
         _ => anyhow::bail!(
-            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"
+            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"
         ),
     }
 
@@ -503,6 +508,22 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         .akg(args.akg)
         .process(args.process)
         .crypto(args.crypto);
+
+    // `gpu.launch` compiles kernels from the program's CASM, which the CVM1
+    // program doesn't keep — so give the capability its own compile of the source.
+    #[cfg(feature = "gpu")]
+    if args.gpu {
+        builder = builder.gpu(true);
+        if ext == "crush" {
+            let source = std::fs::read_to_string(&args.path)?;
+            let casm = crush_lang_sdk::compile::compile_crush_to_casm(&source).map_err(CompileFailed)?;
+            builder = builder.gpu_program(std::sync::Arc::new(casm));
+        }
+    }
+    #[cfg(not(feature = "gpu"))]
+    if args.gpu {
+        anyhow::bail!("--gpu requires the 'gpu' feature, which this build of crush-run was compiled without");
+    }
 
     #[cfg(feature = "graphics")]
     {
@@ -557,10 +578,18 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // `.cvm1` blob that doesn't decode is left to `run_blob` below, which
     // reports it as a typed load error.
     let preflight = match ext {
-        "cvm1" => std::fs::read(&args.path)
+        "cvm1" | "cvm" => std::fs::read(&args.path)
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
-        _ => Some(load_program(&args.path, &args.caps, args.polyglot)?.0),
+        _ => {
+            let (program, _declared) = load_program(&args.path, &args.caps, args.polyglot)?;
+            // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
+            // warnings) go to stderr, never the program's stdout.
+            for warning in &program.warnings {
+                eprintln!("warning: {warning}");
+            }
+            Some(program)
+        }
     };
     if let Some(program) = &preflight {
         let missing = runtime.missing_grants(program)?;

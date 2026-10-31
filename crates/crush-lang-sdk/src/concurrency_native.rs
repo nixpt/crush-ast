@@ -40,9 +40,7 @@
 
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 /// All 3 `concurrency_native.<kind>` caps registered.
 ///
@@ -96,7 +94,7 @@ fn stub_map(kind: &str, args: &[Value]) -> Value {
         "echo".to_string(),
         Value::new_array(args.to_vec()),
     );
-    Value::Map(Rc::new(RefCell::new(obj)))
+    Value::new_map(obj)
 }
 
 /// Single-cap declaration. `argc: Some(0)` (each concurrency cap

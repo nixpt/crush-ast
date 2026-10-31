@@ -89,13 +89,12 @@ mod tests {
         );
     }
 
-    // CRUSH-196: slicing and `in` have no implementation yet. They used to
-    // run against stubs that returned None (`print(arr[0:2])` printed
-    // `None`); until they are implemented they must fail loudly instead.
+    // CRUSH-196: slicing used to run against a stub that returned None; it is
+    // now `seq.slice` (CPython slice semantics). `in` is still unimplemented
+    // and must fail loudly.
     #[test]
-    fn test_slice_fails_loudly_until_implemented() {
-        let err = run_python("arr = [1,2,3]\nprint(arr[0:2])").unwrap_err();
-        assert!(err.to_string().contains("__crush_slice__"), "{err}");
+    fn test_slice() {
+        assert_eq!(run_python("arr = [1,2,3]\nprint(arr[0:2])").unwrap(), "[1, 2]");
     }
 
     #[test]
@@ -292,6 +291,21 @@ mod tests {
             err.to_string().contains("for ... else"),
             "expected for-else bail, got: {err}"
         );
+    }
+
+    // CRUSH-zorro-38: keyword arguments were dropped (`print('a', end='')`
+    // printed a newline). Unsupported ones are now walk-time errors.
+    #[test]
+    fn unsupported_keyword_arguments_fail_loud() {
+        for (src, want) in [
+            ("def f(a, b):\n    return a - b\nprint(f(b=1, a=10))\n", "keyword argument `b=` to `f`"),
+            ("import sys\nprint('x', file=sys.stderr)\n", "keyword argument `file=` to `print`"),
+            ("print('a,b'.split(sep=','))\n", "keyword argument `sep=` to `.split()`"),
+            ("d = {}\nprint(1, **d)\n", "`**` keyword arguments"),
+        ] {
+            let err = run_python(src).unwrap_err();
+            assert!(err.to_string().contains(want), "{src:?}: {err}");
+        }
     }
 
     #[test]

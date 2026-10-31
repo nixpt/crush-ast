@@ -55,6 +55,7 @@ pub use crush_errors::convert::casm::CasmError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod assigned;
 pub mod debug_info;
 
 pub use debug_info::{DebugInfo, SourceLocation};
@@ -119,6 +120,8 @@ pub enum OpCode {
     JmpIf(usize),
     JmpIfNot(usize),
     Call(String),
+    /// Call a function value with arguments supplied as an array (CRUSH-293 D3).
+    CallValueApply,
     Ret,
     Break,    // Exit innermost loop
     Continue, // Jump to loop start
@@ -241,6 +244,45 @@ pub enum OpCode {
     StrSplit,    // str, delimiter -> array[str]
     StrReplace,  // str, old, new -> str
     StrJoin,     // array[str], delimiter -> str
+
+    // COSM K1.4 (CRUSH-zorro-43): the generic member ops. They run on the
+    // scheduler VM and the portable VM; every other engine refuses them.
+    /// `obj -> value`: a field, a method (bound per the Kind's receiver) or a
+    /// static member, looked up along the Kind's resolution order.
+    GetMember(String),
+    /// `obj, value -> obj`.
+    SetMember(String),
+    /// `obj -> bool`.
+    HasMember(String),
+    /// `obj -> obj`.
+    DelMember(String),
+    /// `argN … arg1, obj -> result`: a method call through the receiver's
+    /// Kind (arguments pushed last-first, as for `call`; the receiver on top).
+    CallMember {
+        name: String,
+        argc: usize,
+    },
+    /// `argN … arg1 -> instance`: create an instance of a Kind by its
+    /// `construct` strategy.
+    Construct {
+        kind: String,
+        argc: usize,
+    },
+    /// `record -> value`: the declared field at slot `i` (static fast path).
+    GetSlot(usize),
+    /// `record, value -> record`.
+    SetSlot(usize),
+    /// `value -> bool`: is it an instance of the Kind (or of a Kind that has
+    /// it in its resolution order)? What a struct pattern tests.
+    IsKind(String),
+    /// `value -> value`: a copy of an instance of a `value(…)` Kind (value
+    /// semantics on assignment, argument passing and return); any other value
+    /// unchanged.
+    Copy,
+    /// `-> kind`: the Kind itself as a value (CRUSH-277 D8) — what a class
+    /// name evaluates to in JS (`const K = Counter`), the receiver of a
+    /// static member access. Runs where member ops run.
+    LoadKind(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +337,7 @@ impl Instruction {
             OpCode::PushBool(value) => ("push_bool", serde_json::json!({"value": value})),
             OpCode::PushNull => ("push_null", serde_json::json!({})),
             OpCode::Load(name) => ("load", serde_json::json!({"name": name})),
+            OpCode::CallValueApply => ("call_value_apply", serde_json::json!({})),
             OpCode::Store(name) => ("store", serde_json::json!({"name": name})),
             OpCode::Add => ("add", serde_json::json!({})),
             OpCode::Sub => ("sub", serde_json::json!({})),
@@ -406,6 +449,7 @@ impl Instruction {
                     v.as_str().map(String::from)
                 })?))
             }
+            "call_value_apply" => Ok(OpCode::CallValueApply),
             "ret" => Ok(OpCode::Ret),
             "break" => Ok(OpCode::Break),
             "continue" => Ok(OpCode::Continue),
@@ -541,6 +585,39 @@ impl Instruction {
             "str_to_upper" => Ok(OpCode::StrToUpper),
             "str_to_lower" => Ok(OpCode::StrToLower),
             "str_trim" => Ok(OpCode::StrTrim),
+            "get_member" => Ok(OpCode::GetMember(
+                self.require_field("name", |v| v.as_str().map(String::from))?,
+            )),
+            "set_member" => Ok(OpCode::SetMember(
+                self.require_field("name", |v| v.as_str().map(String::from))?,
+            )),
+            "has_member" => Ok(OpCode::HasMember(
+                self.require_field("name", |v| v.as_str().map(String::from))?,
+            )),
+            "del_member" => Ok(OpCode::DelMember(
+                self.require_field("name", |v| v.as_str().map(String::from))?,
+            )),
+            "call_member" => Ok(OpCode::CallMember {
+                name: self.require_field("name", |v| v.as_str().map(String::from))?,
+                argc: self.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            }),
+            "construct" => Ok(OpCode::Construct {
+                kind: self.require_field("kind", |v| v.as_str().map(String::from))?,
+                argc: self.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            }),
+            "get_slot" => Ok(OpCode::GetSlot(
+                self.require_field("slot", |v| v.as_u64().map(|n| n as usize))?,
+            )),
+            "set_slot" => Ok(OpCode::SetSlot(
+                self.require_field("slot", |v| v.as_u64().map(|n| n as usize))?,
+            )),
+            "is_kind" => Ok(OpCode::IsKind(
+                self.require_field("kind", |v| v.as_str().map(String::from))?,
+            )),
+            "copy" => Ok(OpCode::Copy),
+            "load_kind" => Ok(OpCode::LoadKind(
+                self.require_field("kind", |v| v.as_str().map(String::from))?,
+            )),
             _ => Err(CasmError::UnknownOpcode(self.op.clone()).into()),
         }
     }
@@ -588,8 +665,83 @@ pub struct Program {
     /// Optional language hint for the program (e.g., "crush", "python")
     #[serde(default)]
     pub lang: Option<String>,
+    /// COSM K1.3 (CRUSH-zorro-42): the program's kind table — every object
+    /// declaration (`KindDecl` / `InterfaceDecl`) its source lowered to COSM.
+    /// `None` for a program that declares none, and for CASM written before
+    /// the field existed (it is omitted when `None`, so such a program
+    /// serializes exactly as before).
+    ///
+    /// Keep this the **last** field: the binary format encodes a struct as a
+    /// positional array, and an omitted trailing field is what lets old
+    /// binary CASM (four fields) still load. In the binary format the module
+    /// is embedded as its canonical COSM JSON (see [`cosm_serde`]).
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "cosm_serde")]
+    pub cosm: Option<crush_cosm::CosmModule>,
 }
+
 impl Program {
+    /// A program with no functions, the current [`CASM_VERSION`] and every
+    /// other field empty. Prefer this (or [`Default`]) plus field assignment
+    /// to a struct literal, so a new field doesn't break every construction
+    /// site.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The kind table, if the program has a non-empty one (at least one Kind
+    /// or interface).
+    pub fn kind_table(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref().filter(|m| !cosm_is_empty(m))
+    }
+
+    /// `Err(message)` when the kind table declares a Kind that can't run as a
+    /// plain map ([`cosm_unsupported_reason`]): the refusal for an engine
+    /// whose struct instances are maps (FastVM, the JIT, AOT). `engine` names
+    /// the refusing engine.
+    pub fn refuse_cosm(&self, engine: &str) -> std::result::Result<(), String> {
+        self.refuse_cosm_on(engine, CosmSupport::Maps)
+    }
+
+    /// [`Program::refuse_cosm`] for an engine that implements `support`
+    /// ([`cosm_unsupported_reason_on`]).
+    pub fn refuse_cosm_on(&self, engine: &str, support: CosmSupport) -> std::result::Result<(), String> {
+        match self.cosm.as_ref().and_then(|m| cosm_unsupported_reason_on(m, engine, support)) {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        }
+    }
+
+    /// `Some("spawn")` when this program spawns a green task, else `None`
+    /// (issue #161). Only `spawn` *starts* a task, so it is the one construct
+    /// refused by name on an engine with no green-task scheduler. A `yield` or
+    /// `await` without a `spawn` is not a green-task construct: with no
+    /// spawned task `yield` is a no-op and `await` has no handle (the scheduler
+    /// and the portable VM both push null), so each backend lowers those to a
+    /// no-op instead of refusing.
+    ///
+    /// A `make_closure` by itself (a function value used without `spawn`) is a
+    /// distinct, already-refused feature (CRUSH-251), so it is deliberately
+    /// not reported here.
+    pub fn green_task_op(&self) -> Option<&'static str> {
+        self.functions
+            .values()
+            .flat_map(|f| &f.body)
+            .any(|i| i.op == "spawn")
+            .then_some("spawn")
+    }
+
+    /// `Err(message)` when this program `spawn`s a green task, naming `spawn`
+    /// and `engine` (issue #161) — the refusal for an engine with no green-task
+    /// scheduler. Mirrors [`Program::refuse_cosm`]: refuse by name rather than
+    /// fail on the `make_closure` a `spawn` compiles through. A `yield`/`await`
+    /// without `spawn` is not refused here; each backend lowers it to a no-op.
+    pub fn refuse_green_task(&self, engine: &str) -> std::result::Result<(), String> {
+        match self.green_task_op() {
+            Some(op) => Err(format!("`{op}` (green tasks) isn't supported on {engine} yet (#161)")),
+            None => Ok(()),
+        }
+    }
+
     /// Serialize program to bytes
     pub fn serialize(&self, format: Format) -> Result<Vec<u8>> {
         match format {
@@ -695,6 +847,274 @@ impl Default for Program {
             functions: HashMap::new(),
             manifest: Manifest::default(),
             lang: None,
+            cosm: None,
+        }
+    }
+}
+
+/// Whether a COSM module declares nothing (no Kind, no interface).
+pub fn cosm_is_empty(module: &crush_cosm::CosmModule) -> bool {
+    module.kinds.is_empty() && module.interfaces.is_empty()
+}
+
+/// How much of COSM an engine implements: the level the one shared kind-table
+/// rule ([`cosm_unsupported_reason_on`]) checks a program against. Defined
+/// here, once, so every engine refuses exactly what it can't run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CosmSupport {
+    /// Struct instances are plain maps and methods are ordinary functions
+    /// called by their qualified name: FastVM, the JIT, AOT Rust and C,
+    /// crush-aotc.
+    Maps,
+    /// Records and Kinds (COSM K1.4, CRUSH-zorro-43): the scheduler VM and the
+    /// portable VM.
+    Kinds,
+}
+
+/// Why a Kind can't run as a plain map: each strategy it declares that a map
+/// would silently not honour (empty when it can run as one). The
+/// [`CosmSupport::Maps`] level of [`kind_unsupported_strategies_on`].
+///
+/// On an engine without Kinds a struct instance is a map and a method is an
+/// ordinary function called by its qualified name. Crush's defaults —
+/// `reference` semantics, `structural` equality, `literal` construction — are
+/// exactly how maps behave, and the strategies that only govern member lookup
+/// and receiver binding (storage, resolution, parents, receiver,
+/// conformances) are inert there: what uses them — `p.m()`, a struct
+/// pattern, `type_of` — compiles to member ops (`call_member`, `is_kind`)
+/// these engines refuse, and FastVM refuses `type_of` in a program with
+/// Kinds. What a map can't honour:
+/// - `value(…)` semantics (instances would be shared, not copied or moved);
+/// - `identity` equality (maps compare structurally);
+/// - a non-`literal` construction (no constructor would run);
+/// - a protocol hook (`eq`, `str`, operators, …);
+/// - an accessor member (a field read would bypass the getter);
+/// - a field default (a literal that omits the field would leave it unset).
+pub fn kind_unsupported_strategies(k: &crush_cosm::KindDecl) -> Vec<String> {
+    use crush_cosm::{Construct, Equality, Member, Semantics, Strategy};
+    let mut why = Vec::new();
+    if k.semantics != Semantics::Reference {
+        why.push(format!("semantics: {}", k.semantics.as_str()));
+    }
+    if k.equality != Equality::Structural {
+        why.push(format!("equality: {}", k.equality.as_str()));
+    }
+    if k.construct != Construct::Literal {
+        why.push(format!("construct: {}", k.construct.strategy_name()));
+    }
+    if !k.hooks.is_empty() {
+        why.push("protocol hooks".to_string());
+    }
+    for m in &k.members {
+        if matches!(m.member, Member::Accessor { .. }) {
+            why.push(format!("accessor `{}`", m.name));
+        }
+    }
+    for f in k.declared_fields() {
+        if f.default.is_some() {
+            why.push(format!("a default for field `{}`", f.name));
+        }
+    }
+    why
+}
+
+/// What a Kind declares that an engine implementing `support` can't run
+/// (empty when it runs).
+///
+/// - `CosmSupport::Maps`: see [`kind_unsupported_strategies`].
+/// - [`CosmSupport::Kinds`] (the scheduler VM and the portable VM, K1.4) run
+///   every storage, `reference` and `value(…)` semantics (`move` behaves as
+///   `copy` at run time: use-after-move is a compile-time check, and the VMs
+///   don't need it to be exact), resolution `none`, `single`, `c3` and
+///   `prototype_chain` (the JS walker's slice, CRUSH-277 S2), every
+///   receiver strategy, every construction except a Python `__new__`, field
+///   defaults, both equalities, accessor members (CRUSH-277 S4: getters and
+///   setters run where the member op stands), and the `str`, `repr` and
+///   `clone` hooks. Still refused, until the phase that brings them:
+///   resolution `embedding_promotion` (the Go walker, K3), a `py_new_init`
+///   with a `new_fn`, and every other hook (operators and the
+///   eq/hash/cmp/iter/call/missing/set protocols, K2).
+pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSupport) -> Vec<String> {
+    use crush_cosm::{Construct, Resolution, Strategy};
+    if support == CosmSupport::Maps {
+        return kind_unsupported_strategies(k);
+    }
+    let mut why = Vec::new();
+    if matches!(k.resolution, Resolution::EmbeddingPromotion) {
+        why.push(format!("resolution: {}", k.resolution.as_str()));
+    }
+    if let Construct::PyNewInit { new_fn: Some(f), .. } = &k.construct {
+        why.push(format!("construct: py_new_init with a `__new__` (`{f}`)"));
+    }
+    let h = &k.hooks;
+    let mut hooks: Vec<String> = [
+        ("missing", h.missing.is_some()),
+        ("set", h.set.is_some()),
+        ("call", h.call.is_some()),
+        ("iter", h.iter.is_some()),
+        ("eq", h.eq.is_some()),
+        ("hash", h.hash.is_some()),
+        ("cmp", h.cmp.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, declared)| *declared)
+    .map(|(name, _)| name.to_string())
+    .collect();
+    hooks.extend(h.op.keys().map(|op| format!("op:{}", op_symbol(*op))));
+    hooks.extend(h.op_reflected.keys().map(|op| format!("op_reflected:{}", op_symbol(*op))));
+    if !hooks.is_empty() {
+        why.push(format!("hooks {}", hooks.join(", ")));
+    }
+    why
+}
+
+/// The declared fields of the Kind `kind` in `module` when its storage is
+/// `sealed` (`None` for open storage or an unknown Kind). Every engine
+/// refuses a write of any other field to an instance of such a Kind, with
+/// [`sealed_field_error`]'s message: the VMs on their Records, FastVM, the
+/// JIT and AOT on the struct maps they build (COSM K1.4).
+pub fn sealed_fields<'m>(module: &'m crush_cosm::CosmModule, kind: &str) -> Option<Vec<&'m str>> {
+    let k = module.kind(kind)?;
+    match &k.storage {
+        crush_cosm::Storage::Sealed { fields } => Some(fields.iter().map(|f| f.name.as_str()).collect()),
+        _ => None,
+    }
+}
+
+/// The one error text for a write of `field` to an instance of the sealed
+/// Kind `kind` declaring `fields`.
+pub fn sealed_field_error(kind: &str, field: &str, fields: &[&str]) -> String {
+    let list = if fields.is_empty() { "none".to_string() } else { fields.join(", ") };
+    format!("`{kind}` is sealed: it has no field `{field}` (fields: {list})")
+}
+
+/// How `CONSTRUCT` uses a Kind's constructor function ([`kind_constructor`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstructorUse {
+    /// The function initialises a new, empty instance: it gets the instance
+    /// as its first parameter (`self`), then the arguments, and its own
+    /// return value is dropped — Dart/Java constructors, JS `new`, Python
+    /// `__init__`.
+    Initialiser,
+    /// The function is a static member of the Kind: it gets the arguments
+    /// and returns the instance (a Crush `fn new(x, y) { return P { … } }`).
+    Factory,
+}
+
+/// The function `CONSTRUCT` calls to build an instance of a Kind whose
+/// resolution order is `mro` (the Kind first), and how: `ctor(f)` /
+/// `js_new(f)` → `f`; `py_new_init` → its `init_fn`, else an `__init__`
+/// method inherited through the MRO; `None` for a `literal` Kind (or a
+/// Python class with no `__init__` anywhere). `f` is a [`ConstructorUse::Factory`]
+/// when it is one of the Kind's static members, an initialiser otherwise.
+/// Shared by the compiler (`C(…)` takes the function's parameters, after
+/// `self` for an initialiser) and the VMs.
+pub fn kind_constructor<'d>(
+    mro: &[&'d crush_cosm::KindDecl],
+) -> Option<(&'d crush_cosm::FnRef, ConstructorUse)> {
+    use crush_cosm::{Construct, Member, StaticValue};
+    let decl = mro.first()?;
+    let func = match &decl.construct {
+        Construct::Literal => None,
+        Construct::Ctor { func } => Some(func),
+        Construct::JsNew { ctor_fn } => Some(ctor_fn),
+        Construct::PyNewInit { init_fn: Some(f), .. } => Some(f),
+        Construct::PyNewInit { init_fn: None, .. } => mro.iter().find_map(|k| match k.member("__init__") {
+            Some(crush_cosm::MemberDecl { member: Member::Method { func, .. }, .. }) => Some(func),
+            _ => None,
+        }),
+    }?;
+    let factory = decl
+        .members
+        .iter()
+        .any(|m| matches!(&m.member, Member::Static { value: StaticValue::Fn(f) } if f == func));
+    Some((func, if factory { ConstructorUse::Factory } else { ConstructorUse::Initialiser }))
+}
+
+/// [`kind_constructor`] for the Kind named `kind` in `module` (its
+/// resolution order computed there); `None` when it has none, or its order
+/// can't be computed.
+pub fn kind_constructor_in<'m>(
+    module: &'m crush_cosm::CosmModule,
+    kind: &str,
+) -> Option<(&'m crush_cosm::FnRef, ConstructorUse)> {
+    let order = crush_cosm::resolution_order(&crush_cosm::KindRef::new(kind), module).ok()?;
+    let mro: Vec<&crush_cosm::KindDecl> = order.iter().filter_map(|r| module.kind(r.as_str())).collect();
+    kind_constructor(&mro)
+}
+
+/// An operator's COSM spelling (`+`, `[]`, `neg`).
+fn op_symbol(op: crush_cosm::Op) -> String {
+    serde_json::to_value(op).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| format!("{op:?}"))
+}
+
+/// The one COSM load/compile-time rule for an engine whose struct instances
+/// are plain maps: [`cosm_unsupported_reason_on`] at [`CosmSupport::Maps`].
+pub fn cosm_unsupported_reason(module: &crush_cosm::CosmModule, engine: &str) -> Option<String> {
+    cosm_unsupported_reason_on(module, engine, CosmSupport::Maps)
+}
+
+/// The one COSM load/compile-time rule every engine applies: a kind table
+/// runs on an engine implementing `support` iff every Kind's
+/// [`kind_unsupported_strategies_on`] is empty. Returns the refusal — naming
+/// `engine`, each refused Kind and what it declares — or `None` when the
+/// program runs.
+pub fn cosm_unsupported_reason_on(
+    module: &crush_cosm::CosmModule,
+    engine: &str,
+    support: CosmSupport,
+) -> Option<String> {
+    let problems: Vec<String> = module
+        .kinds
+        .iter()
+        .filter_map(|k| {
+            let why = kind_unsupported_strategies_on(k, support);
+            (!why.is_empty()).then(|| format!("`{}` declares {}", k.name, why.join(", ")))
+        })
+        .collect();
+    if problems.is_empty() {
+        return None;
+    }
+    Some(match support {
+        CosmSupport::Maps => format!(
+            "COSM objects aren't supported on {engine} yet (CRUSH-zorro-43): {}; \
+             without Kinds its instances would silently run as plain maps",
+            problems.join("; ")
+        ),
+        CosmSupport::Kinds => format!(
+            "COSM strategies not supported on {engine} yet: {}; operator and protocol hooks \
+             arrive with COSM K2, embedding with the Go walker (K3)",
+            problems.join("; ")
+        ),
+    })
+}
+
+/// Serde for [`Program::cosm`]: the module as-is in human-readable formats
+/// (CASM JSON), and as its canonical COSM JSON text in binary ones. The COSM
+/// schema omits empty fields, which a positional binary encoding (MessagePack
+/// structs-as-arrays, as [`Format::Binary`] uses) can't represent.
+pub mod cosm_serde {
+    use crush_cosm::CosmModule;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Option<CosmModule>, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            v.serialize(s)
+        } else {
+            v.as_ref().map(CosmModule::to_json).serialize(s)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<CosmModule>, D::Error> {
+        if d.is_human_readable() {
+            Option::<CosmModule>::deserialize(d)
+        } else {
+            match Option::<String>::deserialize(d)? {
+                Some(json) => CosmModule::from_json(&json)
+                    .map(Some)
+                    .map_err(|e| serde::de::Error::custom(format!("kind table: {e}"))),
+                None => Ok(None),
+            }
         }
     }
 }
@@ -720,6 +1140,27 @@ pub fn format_runtime_error_with_location(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prototype_chain_runs_at_kinds_level_embedding_does_not() {
+        // CRUSH-277 S2: the JS slice's resolution strategy leaves the
+        // refusal list; Go's embedding stays on it.
+        let mut k = crush_cosm::KindDecl::crush("C");
+        k.resolution = crush_cosm::Resolution::PrototypeChain;
+        assert_eq!(kind_unsupported_strategies_on(&k, CosmSupport::Kinds), Vec::<String>::new());
+        k.resolution = crush_cosm::Resolution::EmbeddingPromotion;
+        assert_eq!(
+            kind_unsupported_strategies_on(&k, CosmSupport::Kinds),
+            vec!["resolution: embedding_promotion".to_string()]
+        );
+        // A maps-level engine still can't honour a JS construction.
+        k.resolution = crush_cosm::Resolution::PrototypeChain;
+        k.construct = crush_cosm::Construct::JsNew { ctor_fn: crush_cosm::FnRef::new("C::constructor") };
+        assert_eq!(
+            kind_unsupported_strategies_on(&k, CosmSupport::Maps),
+            vec!["construct: js_new".to_string()]
+        );
+    }
 
     #[test]
     fn runtime_error_location_formats_with_source_location() {
@@ -765,6 +1206,48 @@ mod tests {
         // With "helper": pc=1 returns line 11.
         let msg = format_runtime_error_with_location("boom", Some(&dbg), 1, Some("helper"));
         assert_eq!(msg, "Error at line 11, col 5: boom");
+    }
+
+    #[test]
+    fn green_task_op_names_the_starting_construct() {
+        let instr = |op: &str| Instruction {
+            op: op.to_string(),
+            lang: None,
+            meta: None,
+            args: serde_json::json!({}),
+        };
+        let body_of = |ops: &[&str]| Function {
+            params: vec![],
+            locals: vec![],
+            type_hints: None,
+            body: ops.iter().map(|op| instr(op)).collect(),
+        };
+        let mut program = Program::new();
+
+        // `spawn` is the only green-task construct refused by name — it is what
+        // *starts* the task (issue #161), even though `yield` appears first.
+        program.functions.insert("main".to_string(), body_of(&["make_closure", "yield", "spawn"]));
+        assert_eq!(program.green_task_op(), Some("spawn"));
+
+        // `yield` and `await` without `spawn` are no-ops, not green-task
+        // constructs: they are not reported (each backend lowers them to
+        // nothing / a null push).
+        program.functions.insert("main".to_string(), body_of(&["yield"]));
+        assert_eq!(program.green_task_op(), None);
+        program.functions.insert("main".to_string(), body_of(&["await"]));
+        assert_eq!(program.green_task_op(), None);
+
+        // A `make_closure` by itself (a function value used without `spawn`) is
+        // NOT a green-task construct.
+        program.functions.insert("main".to_string(), body_of(&["make_closure"]));
+        assert_eq!(program.green_task_op(), None);
+
+        // `refuse_green_task` names the construct and the engine.
+        program.functions.insert("main".to_string(), body_of(&["spawn"]));
+        assert_eq!(
+            program.refuse_green_task("the test backend"),
+            Err("`spawn` (green tasks) isn't supported on the test backend yet (#161)".to_string())
+        );
     }
 
     // VER-02 CASM version-gate tests live in `tests/ver02_version_gate.rs`
