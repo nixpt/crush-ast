@@ -160,7 +160,15 @@ exits with the requested status.
   warnings.
 - Live, through the real CLI:
   `crush-walk-run kitchen_sink.sh` is byte-identical to `bash kitchen_sink.sh`
-  (and the zsh-walker path matches `zsh -f`).
+  (and the zsh-walker path matches `zsh -f`), as are a file-test script and a
+  `sort | uniq | cut | tr` pipeline.
+- CI: `Test (walkers)` runs the oracle corpus. The workspace-wide
+  `Test (workspace)` job — the only one that links every test binary in one go —
+  has failed on a hosted runner as `ld terminated with signal 7 [Bus error]`
+  (lld's output mmap off a full disk) while the same commit passed on the
+  pull_request run, so it is a runner-capacity problem rather than a test: the
+  job needs the test binaries built without debug info and the runner's unused
+  toolchains freed first.
 
 ## Pathname expansion
 
