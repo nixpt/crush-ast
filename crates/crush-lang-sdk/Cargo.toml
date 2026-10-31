@@ -136,3 +136,12 @@ crush-frontend = { workspace = true }
 crush-cosm = { workspace = true }
 crush-index = { workspace = true }
 tempfile = "3"
+
+# `cargo binstall` fetches the prebuilt Linux tarball attached to the version's
+# GitHub Release (.github/workflows/artifacts.yml, CRUSH-342) instead of compiling.
+# The asset name and its top-level directory both embed the version and target;
+# keep them in step with that workflow. Other targets fall back to a source build.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/crush-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "crush-{ version }-{ target }/{ bin }{ binary-ext }"

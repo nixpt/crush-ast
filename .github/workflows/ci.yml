@@ -566,7 +566,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
-      - run: |
+      # Pull requests only type-check the release profile (CRUSH-342): the full
+      # build was ~9.4 of the ~12 min PR wall time and its output was thrown
+      # away. `cargo check --release` still catches release-only breakage
+      # (cfg(not(debug_assertions)) code, release-profile feature paths); it
+      # does not link, so link-time failures (the ort-sys/onnxruntime relink)
+      # are caught on the push to main, where the full build runs. Tagged
+      # builds are done by artifacts.yml (full release build, from the tag).
+      - name: Check (release profile, same packages)
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo check --release \
+            -p crush-aot \
+            -p crush-vm \
+            -p crush-lang-sdk \
+            -p crush-lang-python \
+            -p crush-lang-js \
+            -p crush-lang-rust \
+            -p crush-lang-c \
+            -p crush-lang-bash \
+            -p crush-lang-go \
+            -p crush-lang-zig \
+            -p crush-lang-dart \
+            -p crush-pkg \
+            2>&1
+      - name: Build (release)
+        if: github.event_name != 'pull_request'
+        run: |
           cargo build --release \
             -p crush-aot \
             -p crush-vm \
@@ -585,6 +611,7 @@ jobs:
       # download a release build instead of spending 20+ minutes compiling one.
       # Public repo → no Actions storage charge; 14 days keeps the list short.
       - name: Package release binaries
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           dist="crush-linux-x86_64"
@@ -603,6 +630,7 @@ jobs:
           tar -czf "$dist.tar.gz" "$dist"
           ls -la "$dist" "$dist.tar.gz"
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: crush-linux-x86_64-${{ github.sha }}
           path: crush-linux-x86_64.tar.gz

@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Every tag now has a GitHub pre-release with prebuilt artifacts (CRUSH-342):**
+  `release.yml` dispatches the new `artifacts.yml`, which builds the tag and
+  attaches `crush-<ver>-x86_64-unknown-linux-gnu.tar.gz` (the CLIs),
+  `crush-web-<ver>-pkg.tar.gz` (browser wasm package) and `SHA256SUMS`;
+  `cargo binstall crush-lang-sdk` / `crush-pkg` use it. Pre-1.0 releases are
+  marked pre-release and not latest. PR CI runs `cargo check --release` instead
+  of the full release build (which still runs on `main`).
+
 - **`tree-sitter-crush` tracks the frontend again, and CI now checks it
   (CRUSH-207):** the grammar parsed **1 of 51** `examples/crush/*.crush` without
   ERROR nodes. The comment rule knew only `#`, so a file opening with `//` died
