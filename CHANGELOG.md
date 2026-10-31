@@ -14,6 +14,8 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Float literals take a decimal exponent: `1e10`, `1.5E10`, `1e-7`, `2.5e+3` lex as one Float (CRUSH-221). A malformed exponent (`1e`, `1e+`, `1.5e`, `1.e5`) is now an "invalid number literal" error, not a parse error or a field access. The `--emit ast` view renders large floats (`1e20`) as float literals instead of an out-of-range integer.
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots
