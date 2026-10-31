@@ -1,5 +1,13 @@
 # Crush AI-Native Language Design Roadmap
 
+> **Status (CRUSH-371, 2026-10-31).** This is the 2026-06 design. Built: annotations
+> as CAST nodes and parser support, `crush-index`, eleven `codebase.*` caps,
+> W-WIP-001/W-TMP-001/E-EXH-001/E-MUT warnings. **Not built:** `codebase.semantic_search`
+> (no such cap), any compiler *enforcement* that a module declares `@module` (nothing
+> requires annotations; the compiler only warns on stale `@wip`/`@temporary`, wildcard
+> arms in `@exhaustive-match-sites` types and `@must-call-*` order), and any real model
+> behind the `ai.*` caps. See [`ai-native-status.md`](ai-native-status.md).
+
 > **Thesis**: Most Crush programs will be written by AI agents, not humans.
 > Design for the agent as primary author; the human is director and reviewer.
 >
@@ -100,7 +108,7 @@ query for free.
 ### Proposed Annotations
 
 ```crush
-// Every module declares itself — compiler enforces presence
+// Every module declares itself — NOT enforced: presence is optional
 @module {
     purpose: "cooperative green-thread scheduler for CVM1"
     exports: [run_scheduled, StepAction]
@@ -130,8 +138,9 @@ fn test_stack_underflow() { ... }
 }
 ```
 
-Every annotation is a typed CAST node. It cannot be ignored by the compiler, cannot
-go stale silently, and is queryable at runtime via host caps.
+Every annotation is a typed CAST node, queryable at runtime via host caps. It *can* go
+stale silently: only `@wip`, `@temporary`, exhaustive-site wildcards and `@must-call-*`
+are checked, and only as warnings.
 
 ---
 
@@ -184,7 +193,7 @@ codebase.exhaustive_sites("TypeName")
 
 codebase.semantic_search("natural language query")
     → [{module, relevance_score, purpose}]
-    -- ranked by purpose-field similarity, not string match
+    -- NOT IMPLEMENTED: no such cap exists (CRUSH-371)
 ```
 
 ---
