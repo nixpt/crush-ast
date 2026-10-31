@@ -16,3 +16,10 @@ fn facet_parse(spec) {
     }
     return { words: words, repeat: 1, verbose: false }
 }
+
+// facet_run(spec, { main: |args| => ... }): parse, then call the handler.
+fn facet_run(spec, handlers) {
+    let args = facet_parse(spec)
+    let handler = handlers.main
+    return handler(args)
+}

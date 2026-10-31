@@ -247,10 +247,14 @@ enum Commands {
         /// Output directory (defaults to ./<name>)
         #[arg(short, long)]
         dir: Option<PathBuf>,
-        /// Scaffold a command-line program: category `cli`, a `main.crush`
-        /// with a working argument spec, and facet as a git dependency
-        #[arg(long)]
+        /// Scaffold a command-line program: category `cli`, a `src/main.crush`
+        /// that does `import facet { facet_run }`, and facet as a git dependency
+        #[arg(long, conflicts_with = "lib")]
         cli: bool,
+        /// Scaffold a library: `src/lib.crush` (no `main`), category
+        /// `library`, and a test that imports it by name
+        #[arg(long)]
+        lib: bool,
         /// With --cli: use a local facet checkout (path dependency) instead
         /// of the published git tag
         #[arg(long, value_name = "DIR", requires = "cli")]
@@ -643,7 +647,7 @@ fn dispatch(
             .map_err(|e| e.into_failure());
     };
     match command {
-        Commands::New { name, dir, cli, facet_path } => handle_new(name, dir, cli, facet_path)
+        Commands::New { name, dir, cli, lib, facet_path } => handle_new(name, dir, cli, lib, facet_path)
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
         Commands::Build => handle_build()
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
@@ -684,6 +688,7 @@ fn handle_new(
     name: String,
     dir: Option<PathBuf>,
     cli: bool,
+    lib: bool,
     facet_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let target = dir.unwrap_or_else(|| PathBuf::from(&name));
@@ -700,11 +705,15 @@ fn handle_new(
             "created new Crush CLI package at {}",
             target.join("capsule.toml").display()
         );
-        println!("  entry:   main.crush");
+        println!("  entry:   src/main.crush");
         println!("  next:    cd {} && crush-pkg run -- --help", target.display());
         return Ok(());
     }
-    let manifest = crush_pkg::manifest::scaffold_package(&target, &name)?;
+    let manifest = if lib {
+        crush_pkg::manifest::scaffold_lib_package(&target, &name)?
+    } else {
+        crush_pkg::manifest::scaffold_package(&target, &name)?
+    };
     println!(
         "created new Crush package at {}",
         target.join("capsule.toml").display()

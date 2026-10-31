@@ -619,28 +619,99 @@ impl Manifest {
 // Scaffold
 // ---------------------------------------------------------------------------
 
+/// The standard package layout (what `crush-pkg new` and `squeeze new`
+/// generate):
+///
+/// ```text
+/// NAME/
+///   capsule.toml     name, version, entry = "src/main.crush", [[dependencies]], [capabilities]
+///   capsule.lock     pinned git revs, written by the first build (commit it)
+///   src/main.crush   fn main(); `import cli` → src/cli.crush, `import util.strings` → src/util/strings.crush
+///   tests/*.crush    one program per file; passes when it exits 0 (`squeeze test`)
+///   target/          build output (in .gitignore)
+/// ```
+///
+/// Existing files are never overwritten (scaffolding into a directory that
+/// already holds a `src/main.crush` keeps it).
 pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
-    let src_dir = dir.join("src");
-    std::fs::create_dir_all(&src_dir)?;
+    let own = crate::builder::import_name(name);
+    write_if_absent(
+        &dir.join("src/main.crush"),
+        "fn greeting() {\n    return \"hello from Crush\"\n}\n\nfn main() {\n    io.print(greeting())\n}\n",
+    )?;
+    write_if_absent(
+        &dir.join("tests/greeting.crush"),
+        &format!(
+            "// A test passes when it exits 0; `squeeze test` runs every tests/*.crush.\n\
+             // The package itself (`{own}`, from src/) and its dependencies are importable.\n\
+             import {own} {{ greeting }}\n\n\
+             fn main() {{\n\
+             \x20   if greeting() != \"hello from Crush\" {{\n\
+             \x20       io.print(\"unexpected greeting: \" + greeting())\n\
+             \x20       sys.exit(1)\n\
+             \x20   }}\n\
+             }}\n"
+        ),
+    )?;
+    let manifest = standard_manifest(name, "src/main.crush", None);
+    manifest.write_to_dir(dir)?;
+    write_if_absent(&dir.join(".gitignore"), "target/\n")?;
+    Ok(manifest)
+}
 
-    let main_path = src_dir.join("main.crush");
-    if !main_path.exists() {
-        std::fs::write(
-            &main_path,
-            "fn main() {\n    io.print(\"hello from Crush\")\n}\n",
-        )?;
+/// [`scaffold_package`] for a library: `src/lib.crush` with no `main`,
+/// category `library`, and a test that imports it by name.
+pub fn scaffold_lib_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
+    let own = crate::builder::import_name(name);
+    write_if_absent(
+        &dir.join("src/lib.crush"),
+        &format!(
+            "// {name} \u{2014} a Crush library. Other packages depend on it in their\n\
+             // capsule.toml and `import {own} {{ greet }}`.\n\n\
+             fn greet(who) {{\n    return \"hello, \" + who\n}}\n"
+        ),
+    )?;
+    write_if_absent(
+        &dir.join("tests/greet.crush"),
+        &format!(
+            "// A test passes when it exits 0; `squeeze test` runs every tests/*.crush.\n\
+             import {own} {{ greet }}\n\n\
+             fn main() {{\n\
+             \x20   if greet(\"world\") != \"hello, world\" {{\n\
+             \x20       io.print(\"unexpected: \" + greet(\"world\"))\n\
+             \x20       sys.exit(1)\n\
+             \x20   }}\n\
+             }}\n"
+        ),
+    )?;
+    let manifest = standard_manifest(name, "src/lib.crush", Some("library"));
+    manifest.write_to_dir(dir)?;
+    write_if_absent(&dir.join(".gitignore"), "target/\n")?;
+    Ok(manifest)
+}
+
+fn write_if_absent(path: &Path, content: &str) -> anyhow::Result<()> {
+    if path.exists() {
+        return Ok(());
     }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)?;
+    Ok(())
+}
 
-    let manifest = Manifest {
+fn standard_manifest(name: &str, entry: &str, category: Option<&str>) -> Manifest {
+    Manifest {
         capsule: CapsuleSection {
             name: name.to_string(),
             version: default_version(),
             description: Some(format!("{} — a Crush program", name)),
             author: None,
-            entry: "src/main.crush".to_string(),
+            entry: entry.to_string(),
             language: "crush".to_string(),
             runtime_version: None,
-            category: None,
+            category: category.map(str::to_string),
             platforms: Vec::new(),
             network_access: None,
             seccomp_profile: None,
@@ -663,10 +734,7 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
         service: None,
         dependencies: Vec::new(),
         runtime: None,
-    };
-
-    manifest.write_to_dir(dir)?;
-    Ok(manifest)
+    }
 }
 
 /// facet, the CLI library `crush-pkg new --cli` depends on.
@@ -701,42 +769,58 @@ pub fn scaffold_cli_package(dir: &Path, name: &str, facet: &FacetSource) -> anyh
             format!("path = \"{}\"", abs.display())
         }
     };
+    let own = crate::builder::import_name(name);
     std::fs::create_dir_all(dir)?;
     std::fs::write(
         dir.join("capsule.toml"),
         format!(
             "[capsule]\nname = \"{name}\"\nversion = \"0.1.0\"\ndescription = \"{name} \u{2014} a Crush command-line program\"\n\
-             entry = \"main.crush\"\nlanguage = \"crush\"\ncategory = \"cli\"\n\n\
+             entry = \"src/main.crush\"\nlanguage = \"crush\"\ncategory = \"cli\"\n\n\
              [capabilities]\nrequired = [\"io.print\", \"sys.args\", \"sys.exit\"]\n\n\
-             # facet parses the command line from the spec in main.crush.\n\
+             # facet parses the command line from the spec in src/main.crush.\n\
              [[dependencies]]\nname = \"facet\"\n{dep}\n"
         ),
     )?;
-    std::fs::write(
-        dir.join("main.crush"),
-        format!(
-            "// {name} \u{2014} a command-line program. The `spec` map drives parsing, defaults,\n\
-             // errors (exit 2) and --help. `facet_parse` comes from the facet dependency.\n\
-             //   crush-pkg run -- --help\n\
-             //   crush-pkg run -- -v --repeat 2 hello world\n\
+    write_if_absent(
+        &dir.join("src/main.crush"),
+        &format!(
+            "// {name} \u{2014} a command-line program. facet (a dependency, see capsule.toml)\n\
+             // parses the command line from `spec`: defaults, errors (exit 2), --help.\n\
+             //   squeeze run -- --help          (or: crush-pkg run -- --help)\n\
+             //   squeeze run -- -v --repeat 2 hello world\n\
+             import facet {{ facet_run }}\n\n\
              fn main() {{\n\
              \x20   let spec = {{ name: \"{name}\", usage: \"{name} [options] [words...]\", flags: [ {{ short: \"-v\", long: \"--verbose\", help: \"print extra detail\" }} ], options: [ {{ long: \"--repeat\", short: \"-r\", type: \"int\", default: 1, help: \"how many times to print\" }} ], positionals: [ {{ name: \"words\", repeat: true, help: \"what to print\" }} ] }}\n\
-             \x20   let args = facet_parse(spec)\n\
-             \x20   let line = \"hello from {name}\"\n\
-             \x20   if len(args.words) > 0 {{ line = str.join(args.words, \" \") }}\n\
+             \x20   facet_run(spec, {{ main: |args| => run(args) }})\n\
+             }}\n\n\
+             fn run(args) {{\n\
+             \x20   let line = render(args)\n\
              \x20   let i = 0\n\
              \x20   while i < args.repeat {{\n\
              \x20       io.print(line)\n\
              \x20       i = i + 1\n\
              \x20   }}\n\
              \x20   if args.verbose == true {{ io.print(\"(repeat=\" + conv.to_str(args.repeat) + \")\") }}\n\
+             }}\n\n\
+             /// The line to print for the parsed arguments.\n\
+             fn render(args) {{\n\
+             \x20   if len(args.words) > 0 {{ return str.join(args.words, \" \") }}\n\
+             \x20   return \"hello from {name}\"\n\
              }}\n"
         ),
     )?;
-    let gi = dir.join(".gitignore");
-    if !gi.exists() {
-        std::fs::write(gi, "target/\n")?;
-    }
+    write_if_absent(
+        &dir.join("tests/render.crush"),
+        &format!(
+            "// A test passes when it exits 0; `squeeze test` runs every tests/*.crush.\n\
+             import {own} {{ render }}\n\n\
+             fn main() {{\n\
+             \x20   if render({{ words: [\"a\", \"b\"], repeat: 1, verbose: false }}) != \"a b\" {{ sys.exit(1) }}\n\
+             \x20   if render({{ words: [], repeat: 1, verbose: false }}) != \"hello from {name}\" {{ sys.exit(1) }}\n\
+             }}\n"
+        ),
+    )?;
+    write_if_absent(&dir.join(".gitignore"), "target/\n")?;
     Ok(())
 }
 

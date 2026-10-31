@@ -48,12 +48,60 @@ pre-compiled, by extension:
 Bundles carry a `.casm` or `.cvm1` (or `.cvm`) payload. The full table is
 [`docs/FILE-FORMATS.md`](../../docs/FILE-FORMATS.md).
 
-## Dependencies
+## The standard layout
 
-Crush has no source-level `import` (CRUSH-110), so a dependency's entry file
-is concatenated into the consumer's program: the consumer calls the
-dependency's functions directly (`facet_parse(spec)`), and `crush-pkg run`,
-`build`, `check` and a bare `crush-pkg` all see them. A row has exactly one
+`crush-pkg new NAME` (and `squeeze new NAME`) generate:
+
+```text
+NAME/
+  capsule.toml     name, version, entry = "src/main.crush", [[dependencies]], [capabilities]
+  capsule.lock     pinned git revs, written by the first build (commit it)
+  src/main.crush   fn main(); `import cli` → src/cli.crush, `import util.strings` → src/util/strings.crush
+  tests/*.crush    one program per file; passes when it exits 0 (`squeeze test`)
+  target/          build output (in .gitignore)
+```
+
+`--lib` makes `src/lib.crush` (no `main`, category `library`) instead;
+`--cli` adds facet (below). Each scaffold ships one sample test.
+
+## Imports and dependencies
+
+A package whose entry file has a top-level `import` builds in **import
+mode** (crush-ast CRUSH-367): the entry is compiled as a file and reaches
+other code only through `import` (the language rules are in
+`crush-frontend/src/import_system.rs`). crush-pkg adds two kinds of root:
+
+- **`src/`** — the entry file's directory is a search root, so a file deep
+  in the tree imports by its path from `src/` (`import util.strings` from
+  `src/cli/args.crush` finds `src/util/strings.crush`). `CRUSH_PATH` follows.
+- **Packages by name** — each dependency, and the package itself, is
+  importable by its `name` (`-` becomes `_`: `my-lib` → `import my_lib`).
+  `import facet` loads that dependency's `entry` file, whatever it is
+  called; `import facet.env` loads `env.crush` next to the entry. A
+  dependency name wins over a same-named file in `src/`. The package's own
+  name is how `tests/*.crush` reach `src/` (`import myapp { helper }`).
+
+```crush
+import facet { facet_run }        // a git dependency, by name
+import cli                        // src/cli.crush
+
+fn main() {
+    facet_run(cli.spec(), { main: |args| => cli.run(args) })
+}
+```
+
+Nothing is concatenated in import mode; a dependency that is never imported
+adds nothing to the program.
+
+**Concatenation mode (legacy).** An entry with no `import` keeps the old
+behaviour: the entry and each dependency's entry file are pasted into one
+program, so the consumer calls a dependency's functions bare
+(`facet_parse(spec)`). It stays for packages written before imports existed
+and will be retired once none are left; new code should `import`.
+
+`crush-pkg run`, `build`, `check` and a bare `crush-pkg` all build the same
+way. A dependency row has exactly one
+source:A row has exactly one
 source:
 
 ```toml
@@ -68,8 +116,8 @@ tag  = "v0.2.0"                   # or rev = "<sha>" / branch = "main"
 ```
 
 Git dependencies (CRUSH-351) are fetched with the `git` command, so git must
-be installed. The checkout is cached, then treated like a path dependency (its
-`capsule.toml` `entry` is what gets concatenated).
+be installed. The checkout is cached, then treated like a path dependency
+(importable by name; its `capsule.toml` `entry` is what `import <name>` loads).
 
 - **Cache:** `$CRUSH_PKG_CACHE`, else `$XDG_CACHE_HOME/crush-pkg`, else
   `~/.cache/crush-pkg`; one tree per commit at
@@ -95,18 +143,19 @@ crush-pkg new mytool --cli --facet-path ~/src/facet   # a local checkout instead
 cd mytool && crush-pkg run -- --help
 ```
 
-`--cli` (CRUSH-352) writes `capsule.toml` (category `cli`, capabilities
-`io.print`, `sys.args`, `sys.exit`, facet as a dependency), a `main.crush`
-with a working spec (a `--verbose` flag, a typed `--repeat` option with a
-default, a `words` positional, automatic `--help`) and a `.gitignore`. A
-program ends with `sys.exit(n)` and `crush-pkg` exits with `n`, so
-`--help` is 0 and a usage error is 2.
+`--cli` (CRUSH-352) writes the standard layout with `capsule.toml` (category
+`cli`, capabilities `io.print`, `sys.args`, `sys.exit`, facet as a git
+dependency), a `src/main.crush` that does `import facet { facet_run }` with a
+working spec (a `--verbose` flag, a typed `--repeat` option with a default, a
+`words` positional, automatic `--help`), a `tests/render.crush` and a
+`.gitignore`. A program ends with `sys.exit(n)` and `crush-pkg` exits with
+`n`, so `--help` is 0 and a usage error is 2.
 
 ## `[capabilities]` and `crush-pkg check`
 
 `required` (and `optional`) list the capabilities the program calls.
-`crush-pkg check` compiles the package the way `build` does (entry plus path
-deps, as one program), works out which capabilities that program can call,
+`crush-pkg check` compiles the package the way `build` does (in import or
+concatenation mode), works out which capabilities that program can call,
 and compares the two:
 
 | Finding | Level |

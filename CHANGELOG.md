@@ -14,6 +14,18 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `crush-pkg` imports through the package (CRUSH-367). A package whose entry has a top-level
+  `import` builds in **import mode**: `src/` is a search root and each dependency (path or git),
+  plus the package itself, is importable by its name (`import facet { facet_run }` loads facet's
+  entry file; `import facet.env` loads `env.crush` beside it; `my-lib` imports as `my_lib`) — no
+  source concatenation. Packages without `import` keep the old concatenation. New in the
+  frontend: `ImportOptions::packages` / `ImportPackage` (named package roots, checked before the
+  search path). New in the library: `PackageBuilder::build_file` / `import_options`,
+  `builder::uses_imports` / `import_name`, `manifest::scaffold_lib_package`. **Scaffold change:**
+  `crush-pkg new` writes the standard layout (`src/main.crush`, `tests/*.crush` with a sample
+  test, `.gitignore` with `target/`); `new --lib` is new; `new --cli` now puts the program in
+  `src/main.crush` and uses `import facet { facet_run }`.
+
 - File formats unified (#365, `docs/FILE-FORMATS.md`). **Migration:** `crushc --emit casm` now
   writes CASM JSON (`<stem>.casm`); the CVM1 assembly it used to print is `--emit cvms`
   (`<stem>.cvms`, with `.cap` lines so a program that prints round-trips through

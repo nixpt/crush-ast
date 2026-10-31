@@ -34,6 +34,11 @@ fn scaffold_runs_help_and_reports_bad_options_with_facets_codes() {
     assert!(toml.contains("category = \"cli\""), "{toml}");
     assert!(toml.contains("required = [\"io.print\", \"sys.args\", \"sys.exit\"]"), "{toml}");
     assert!(toml.contains("name = \"facet\"") && toml.contains("path = "), "{toml}");
+    assert!(toml.contains("entry = \"src/main.crush\""), "{toml}");
+    // The standard layout: facet arrives through `import`, not concatenation.
+    let main = std::fs::read_to_string(app.join("src/main.crush")).unwrap();
+    assert!(main.contains("import facet { facet_run }"), "{main}");
+    assert!(app.join("tests/render.crush").is_file());
 
     let help = crush_pkg(&app, &["run", "--", "--help"]);
     assert_eq!(help.status.code(), Some(0), "{}", text(&help));
