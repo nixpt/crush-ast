@@ -1279,6 +1279,10 @@ hand-editing versions.
 Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
 
 
+## 2026-10-30T18:36:26-05:00 — [ARCHITECTURAL] Stdlib caps reject negative lengths and bound every allocation (CRUSH-181)
+
+Reason:
+Default-on stdlib caps had unchecked casts and no size bound, so a program could abort the host: str.repeat/pad_left/pad_right/collections.chunk cast a negative length to usize (wrapping huge -> capacity overflow), conv.parse_int panicked on a radix outside 2..=36, and str.repeat/buffer.alloc/str.join could request an unbounded allocation. Fix: a shared MAX_STDLIB_ALLOC_BYTES (64 MiB) bound plus a get_bounded_len helper; repeat checks the product with checked_mul, parse_int validates the radix, buffer.alloc bounds size*size_of::<Value>, join sums the lengths before allocating. The bound is fixed, not configurable per run: HostCap::call(&self, args) has no run context, so a --max-memory quota needs an ABI change (follow-up).
 ## 2026-10-30T18:04:54-05:00 — [ARCHITECTURAL] The FastVM/JIT print formatter resolves every heap kind through the arena (CRUSH-294, GitHub #267)
 
 Reason:
