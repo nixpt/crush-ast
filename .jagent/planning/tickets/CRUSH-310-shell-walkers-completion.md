@@ -92,8 +92,8 @@ before coding).
 
 ### Still refused loudly (unchanged classes)
 
-`$(…)`, backticks, pipelines, redirections and heredocs, subshells, `~`,
-brace expansion, external commands, `source`/`eval`/`trap`, environment
+`$(…)`, backticks, subshells, `~`, brace expansion, external commands outside
+the builtin set (`date`, `sed`, `sort`, …), `source`/`eval`/`trap`, environment
 variables the script never assigns, `=~`, file tests (`-f`, `-d`, `-nt`, …) in
 `[[ … ]]` and `test`, `${!x}`, `${x^^}` in zsh, `**`, an absolute path with a
 glob in it (`/usr/*` — the filesystem sandbox is relative to the script's
@@ -230,7 +230,9 @@ much larger change and is listed as a follow-up.
 - Locale collation for glob order, and zsh's "fail the command, not the run"
   for an unmatched pattern.
 - `printf %a` (hex float) and `declare`/`typeset` with associative arrays.
-- Pipelines, redirections and `$(…)` — these need a process/fs capability and a
-  decision about what a shell script is allowed to do: **CRUSH-311** (options,
-  trade-offs and the recommendation are there; nothing is implemented yet).
+- `$(…)`/backticks — needs a process or a builtin-only capture decision;
+  **CRUSH-311** chose builtin-only, which leaves `$(date)` refused.
+- Pipelines, redirections, heredocs and the builtin command set landed in
+  **CRUSH-311** (`|`, `<`, `>`, `>>`, `<<`, `cat ls wc head tail grep cp mv rm
+  mkdir touch`), after this ticket.
 - A POSIX `sh`/`dash` dialect, so `.sh` stops being read with bash rules.

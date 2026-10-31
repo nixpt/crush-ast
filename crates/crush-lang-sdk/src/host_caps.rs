@@ -307,13 +307,7 @@ impl HostCapsBuilder {
                 Some(backend) => FsSandbox::with_backend(root, backend),
                 None => FsSandbox::new(root),
             };
-            caps.register(Box::new(FsReadCap { fs: fs.clone() }));
-            caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
-            caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
-            caps.register(Box::new(FsIsDirCap { fs: fs.clone() }));
-            caps.register(Box::new(FsListCap { fs: fs.clone() }));
-            crate::fs_tools::register(&mut caps, &fs);
-            crate::text_tools::register(&mut caps, &fs);
+            register_fs_caps(&mut caps, &fs);
         }
         if self.env {
             caps.register(Box::new(EnvAllCap {
@@ -804,6 +798,26 @@ impl HostCap for FsExistsCap {
         let path = self.fs.resolve(&args[0])?;
         Ok(Some(Value::Int(if self.fs.backend().kind(&path).is_ok() { 1 } else { 0 })))
     }
+}
+
+/// Register the whole filesystem capability group into `caps`, confined to
+/// `root`: the file caps (`fs.read`, `fs.write`, `fs.exists`, `fs.is_dir`,
+/// `fs.list`) plus the `fs.*` / `text.*` coreutils. `HostCapsBuilder::fs(true)`
+/// builds this group for hosts that want a builder; this is for a host that
+/// already owns its registry — `crush-walk-run`, whose shell programs need the
+/// coreutils for `>`, `<`, `cat`, `cp`, …
+pub fn register_fs(caps: &mut HostCaps, root: &str) {
+    register_fs_caps(caps, &FsSandbox::new(root));
+}
+
+fn register_fs_caps(caps: &mut HostCaps, fs: &FsSandbox) {
+    caps.register(Box::new(FsReadCap { fs: fs.clone() }));
+    caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
+    caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
+    caps.register(Box::new(FsIsDirCap { fs: fs.clone() }));
+    caps.register(Box::new(FsListCap { fs: fs.clone() }));
+    crate::fs_tools::register(caps, fs);
+    crate::text_tools::register(caps, fs);
 }
 
 /// `fs.is_dir(path)`: 1 when `path` is a directory *inside* the sandbox, else
