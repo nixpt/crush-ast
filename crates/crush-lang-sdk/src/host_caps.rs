@@ -1173,6 +1173,59 @@ sleep_cap!(AsyncSleepCap, "async.sleep");
 // Process helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Prefix of the error `exec_with_wall_limit` returns on expiry; `ProcessExecCap::call_with_deadline`
+/// turns it into `HostCapError::Timeout` so the VM names the limit.
+const EXEC_TIMEOUT_MARK: &str = "wall-clock limit expired";
+
+/// Run `cmd`, killing it if the VM run's remaining wall-clock budget
+/// (`crush_vm::wall`, CRUSH-186) runs out. Outside a VM run there is no
+/// budget and this is a plain blocking `output()`.
+fn exec_with_wall_limit(cmd: &str, args: &[String]) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let err = |e: std::io::Error| format!("process.exec {cmd}: {e}");
+    let Some(budget) = crush_vm::wall::remaining() else {
+        return std::process::Command::new(cmd).args(args).output().map_err(err);
+    };
+    let mut child = std::process::Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(err)?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let errp = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let deadline = std::time::Instant::now() + budget;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(err)? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{EXEC_TIMEOUT_MARK}: process.exec {cmd} killed"
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: errp.join().unwrap_or_default(),
+    })
+}
+
 pub struct ProcessExecCap;
 
 impl HostCap for ProcessExecCap {
@@ -1184,6 +1237,22 @@ impl HostCap for ProcessExecCap {
         }
     }
 
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        _deadline_ms: u64,
+    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+        // The budget is the run's remaining wall time (`crush_vm::wall`), already
+        // reflected in `exec_with_wall_limit`; this only maps its expiry to a Timeout.
+        self.call(args).map_err(|m| {
+            if m.contains(EXEC_TIMEOUT_MARK) {
+                crush_vm::host::HostCapError::Timeout
+            } else {
+                crush_vm::host::HostCapError::Message(m)
+            }
+        })
+    }
+
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let cmd = crate::caps::value_as_text(&args[0]);
         let exec_args: Vec<String> = match &args[1] {
@@ -1191,10 +1260,7 @@ impl HostCap for ProcessExecCap {
             v => vec![crate::caps::value_as_text(v)],
         };
 
-        let output = std::process::Command::new(&cmd)
-            .args(&exec_args)
-            .output()
-            .map_err(|e| format!("process.exec {cmd}: {e}"))?;
+        let output = exec_with_wall_limit(&cmd, &exec_args)?;
 
         let result = serde_json::json!({
             "stdout": String::from_utf8_lossy(&output.stdout),
@@ -1544,6 +1610,64 @@ mod tests {
         let cap = EnvGetCap::new(map);
         let result = cap.call(vec![Value::Str("FOO".to_string())]).unwrap();
         assert_eq!(result, Some(Value::Str("bar".to_string())));
+    }
+
+    // CRUSH-186: the run has ONE wall-clock budget, enforced across a blocking
+    // `process.exec` and a plain loop, on the scheduler and on PortableVm.
+    fn run_both_with_wall(source: &str, ms: u64, caps: &crush_vm::HostCaps) -> [(String, std::time::Duration); 2] {
+        let prog = crate::compile::compile_crush_source(source).expect("compile");
+        let quotas = crush_vm::Quotas { max_wall_time_ms: ms, max_steps: usize::MAX, ..Default::default() };
+        let t = std::time::Instant::now();
+        let sched = crush_vm::run_with_caps(&prog, &quotas, Some(caps)).expect_err("scheduler must time out");
+        let sched = (sched.to_string(), t.elapsed());
+        let mut vm = crush_vm::PortableVm::new(prog);
+        vm.set_quotas(quotas);
+        vm.set_host_caps(caps.clone());
+        let t = std::time::Instant::now();
+        let portable = vm.run().expect_err("PortableVm must time out");
+        [sched, (portable.to_string(), t.elapsed())]
+    }
+
+    #[test]
+    fn wall_limit_stops_while_true() {
+        let caps = HostCapsBuilder::new().build();
+        for (msg, took) in run_both_with_wall("fn main() {\n    while true {\n    }\n}\n", 200, &caps) {
+            assert!(msg.contains("wall-clock quota exceeded (200ms)"), "{msg}");
+            assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+        }
+    }
+
+    #[test]
+    fn wall_limit_kills_blocking_process_exec() {
+        let caps = HostCapsBuilder::new().process(true).build();
+        let src = "fn main() {\n    process.exec(\"sleep\", [\"2\"])\n}\n";
+        for (msg, took) in run_both_with_wall(src, 200, &caps) {
+            assert!(msg.contains("process.exec") && msg.contains("wall-clock quota") && msg.contains("killed"), "{msg}");
+            assert!(took < std::time::Duration::from_millis(1500), "sleep 2 must be killed, took {took:?}");
+        }
+    }
+
+    #[test]
+    fn wall_budget_is_shared_not_per_call() {
+        // Two 150ms sleeps against a 200ms budget: each alone fits the limit, together they don't.
+        let caps = HostCapsBuilder::new().process(true).build();
+        let src = "fn main() {\n    process.exec(\"sleep\", [\"0.15\"])\n    process.exec(\"sleep\", [\"0.15\"])\n}\n";
+        for (msg, _) in run_both_with_wall(src, 200, &caps) {
+            assert!(msg.contains("wall-clock"), "{msg}");
+        }
+    }
+
+    // CRUSH-186: `+` is not output; building a >1 MiB string must work, like `str.concat`.
+    #[test]
+    fn plus_builds_strings_past_the_output_quota() {
+        let src = "fn main() {\n    let s = \"x\"\n    let i = 0\n    while i < 21 {\n        s = s + s\n        i = i + 1\n    }\n    io.print(str.len(s))\n}\n";
+        let prog = crate::compile::compile_crush_source(src).expect("compile");
+        let quotas = crush_vm::Quotas::default();
+        let sched = crush_vm::run_with_caps(&prog, &quotas, None).expect("scheduler");
+        let mut vm = crush_vm::PortableVm::new(prog);
+        let portable = vm.run().expect("PortableVm");
+        assert_eq!(sched.output.trim(), "2097152");
+        assert_eq!(portable.output.trim(), "2097152");
     }
 
     #[test]

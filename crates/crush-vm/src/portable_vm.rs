@@ -162,6 +162,8 @@ pub struct PortableVm {
     ip: usize,
     /// Total instruction steps executed.
     steps: usize,
+    /// Wall-clock deadline for the run, armed on the first step (CRUSH-186).
+    wall_deadline: Option<std::time::Instant>,
     /// Set by `jump_to` when the current instruction chose the next IP.
     jumped: bool,
     /// Whether the VM has halted.
@@ -278,6 +280,7 @@ impl PortableVm {
             lang_yield: None,
             ip: start_ip,
             steps: 0,
+            wall_deadline: None,
             jumped: false,
             halted: false,
             privileged_allowed: false,
@@ -658,6 +661,13 @@ impl PortableVm {
         }
 
         self.check_step_quota()?;
+        let limit_ms = self.quotas.max_wall_time_ms;
+        let deadline = *self.wall_deadline.get_or_insert_with(|| {
+            std::time::Instant::now() + std::time::Duration::from_millis(limit_ms)
+        });
+        if self.steps.is_multiple_of(crate::wall::CHECK_EVERY) {
+            crate::wall::check(deadline, limit_ms)?;
+        }
         self.check_stack_quota()?;
 
         let code = &self.program.code;
@@ -1900,7 +1910,7 @@ impl PortableVm {
                                 outputs: &outputs,
                                 deps: &deps,
                                 gate: &gate,
-                                deadline_ms: self.quotas.max_wall_time_ms,
+                                deadline_ms: crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
                                 crush_line,
                             };
                             let executor =
@@ -1964,7 +1974,7 @@ impl PortableVm {
                     &payload,
                     operands,
                     self.host_caps.as_ref(),
-                    self.quotas.max_wall_time_ms,
+                    crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
                 );
                 // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
                 #[cfg(feature = "transcript")]
@@ -2127,6 +2137,9 @@ impl PortableVm {
     }
 
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
+        // CRUSH-186: blocking host caps see the run's remaining wall time.
+        let limit_ms = self.quotas.max_wall_time_ms;
+        let _wall_guard = self.wall_deadline.map(|d| crate::wall::enter(d, limit_ms));
         // Check permission
         crate::scheduler::check_cap_permitted(cap, self.declared_caps.contains(cap), &self.quotas)?;
 
@@ -2347,7 +2360,7 @@ impl PortableVm {
                     got: args.len(),
                 });
             }
-            return match handler.call_with_deadline(args, self.quotas.max_wall_time_ms) {
+            return match handler.call_with_deadline(args, crate::wall::remaining_ms(self.quotas.max_wall_time_ms)) {
                 // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
                 // leaves Null: the compiler only knows the built-ins' arity, so it pops
                 // the result of every host call, and `let x = fs.write(..)` stores one
