@@ -135,6 +135,7 @@ struct RunArgs {
     net_max_response_bytes: usize,
 
     /// Enable database host capabilities (db.query, db.execute) on this path.
+    /// Opt-in at build time: needs a build with `--features db`.
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
 
@@ -430,8 +431,8 @@ fn list_caps() {
     println!("  env.get NAME           read environment variable");
     println!("  env.all                map of every environment variable");
     println!("  env.home_dir           home directory (HOME / USERPROFILE), or null");
-    println!("  time.now               return Unix timestamp (seconds)");
-    println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
+    println!("  time.now               return Unix timestamp in SECONDS (exosphere's time.now was ms: use time.now_ms)");
+    println!("  time.now_ms / now_iso  current time (epoch MILLISECONDS / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
     println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
     println!("  async.sleep MS         same as time.sleep (blocking; does not yield)");
@@ -474,6 +475,17 @@ fn list_caps() {
         println!("Database capabilities (enable with --db PATH):");
         println!("  db.query SQL [PARAMS...]  execute SELECT, return rows");
         println!("  db.execute SQL [PARAMS...] execute INSERT/UPDATE/DELETE, return affected rows");
+    }
+    #[cfg(not(feature = "db"))]
+    {
+        println!("Database capabilities (db.query, db.execute) are not in this build:");
+        println!("  they are opt-in; rebuild with `--features db` (e.g.");
+        println!("  `cargo install crush-lang-sdk --features db`), then run with --db PATH.");
+    }
+    #[cfg(not(feature = "net"))]
+    {
+        println!("Network capabilities (net.http_*) are not in this build:");
+        println!("  rebuild with `--features net`, then run with --net.");
     }
     #[cfg(feature = "stdlib")]
     {
@@ -597,7 +609,10 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     }
     #[cfg(not(feature = "db"))]
     if args.db.is_some() {
-        eprintln!("warning: --db requires the 'db' feature (not enabled in this build)");
+        eprintln!(
+            "warning: --db requires the 'db' feature, which is opt-in and not in this build \
+             (rebuild with `--features db`)"
+        );
     }
 
     // Stdcaps are pure (no I/O, no authority), so they are on unless the

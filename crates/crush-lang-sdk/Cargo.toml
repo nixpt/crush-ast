@@ -31,8 +31,14 @@ name = "crush"
 path = "src/bin/crush.rs"
 
 [features]
-default = ["native-plugins", "polyglot-python", "polyglot-javascript", "polyglot-javascript-swc", "polyglot-rust", "stdlib"]
+default = ["native-plugins", "polyglot-python", "polyglot-javascript", "polyglot-javascript-swc", "polyglot-rust", "stdlib", "net"]
+# `net.http_*` (ureq). On by default (CRUSH-264): still grant-gated, a program
+# using `net.*` is refused unless run with `--net`. Cargo features are
+# per-package, not per-binary, so the binaries cannot take it alone; embedders
+# that want no HTTP client opt out with `default-features = false`.
 net = ["dep:ureq"]
+# `db.query` / `db.execute` (rusqlite, bundled SQLite). Opt-in: build with
+# `--features db` (CRUSH-264).
 db = ["dep:rusqlite"]
 graphics = []
 # Pure-computation stdcaps (str/math/conv/collections/json/path/regex/...).

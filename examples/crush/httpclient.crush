@@ -1,9 +1,8 @@
-// expect-error: Undefined function: format
 capability network connect
 
 fn main() {
     let url = "https://www.google.com" 
-    let resp = http.get(url)
+    let resp = net.http_get(url)
     
     // Simple length calculation (byte length approximates char length for ASCII)
     let len_resp = len(resp)
@@ -13,12 +12,12 @@ fn main() {
     
     // We can't display full body nicely in a small box, so truncate
     if len_resp > 2000 {
-        escaped = str.replace(format("{}", escaped), "\n", "<br>") 
+        escaped = str.replace(str.format("{}", escaped), "\n", "<br>") 
         // Just show first 2000 chars roughly
         // slice not implemented yet?
     }
 
-    let page = format("
+    let tpl = "
         <div style='padding:40px;text-align:center;'>
             <h1 style='color:#38bdf8;margin-bottom:20px'>HTTP Client</h1>
             <div style='background:#1e293b;padding:20px;border-radius:12px;margin-bottom:20px'>
@@ -31,13 +30,17 @@ fn main() {
                 <div style='color:#cbd5e1;font-size:12px;font-family:monospace;white-space:pre-wrap'>{}</div>
             </div>
         </div>
-    ", url, len_resp, escaped)
+    "
+    // str.format takes one value per call (it fills the first remaining {}).
+    let page = str.format(tpl, url)
+    page = str.format(page, len_resp)
+    page = str.format(page, escaped)
     
     return page
 }
 
 fn html_escape(s) {
-    let res = format("{}", s)
+    let res = str.format("{}", s)
     res = str.replace(res, "&", "&amp;")
     res = str.replace(res, "<", "&lt;")
     res = str.replace(res, ">", "&gt;")
