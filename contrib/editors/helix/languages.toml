@@ -1,0 +1,24 @@
+# Helix: append to ~/.config/helix/languages.toml, then
+#   hx --grammar fetch && hx --grammar build
+# and copy the queries (they live in the grammar repo):
+#   mkdir -p ~/.config/helix/runtime/queries/crush
+#   cp crates/tree-sitter-crush/queries/*.scm ~/.config/helix/runtime/queries/crush/
+# locals.scm uses nvim-treesitter's @local.* names, which Helix ignores.
+
+
+[[language]]
+name = "crush"
+scope = "source.crush"
+file-types = ["crush"]
+comment-tokens = ["//"]
+block-comment-tokens = { start = "/*", end = "*/" }
+indent = { tab-width = 4, unit = "    " }
+roots = ["capsule.toml"]
+grammar = "crush"
+
+[[grammar]]
+name = "crush"
+[grammar.source]
+git = "https://github.com/nixpt/crush-ast"
+rev = "main"
+subpath = "crates/tree-sitter-crush"

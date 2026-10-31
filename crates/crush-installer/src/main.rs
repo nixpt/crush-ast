@@ -46,6 +46,7 @@ use clap::{Parser, Subcommand};
 use crush_diagnostics::diag_line_from;
 use serde::{Deserialize, Serialize};
 
+mod desktop;
 mod update;
 
 const BINARIES: &[&str] = &[
@@ -119,6 +120,12 @@ struct InstallArgs {
     /// Run quietly.
     #[arg(short, long)]
     quiet: bool,
+
+    /// Also register the Crush file types with the desktop (opt-in): the
+    /// shared-mime-info package under `$XDG_DATA_HOME/mime/packages/` and a
+    /// `magic(5)` file under `$XDG_DATA_HOME/crush/`. `uninstall` removes both.
+    #[arg(long)]
+    desktop_integration: bool,
 }
 
 #[derive(Parser)]
@@ -299,6 +306,10 @@ fn install(args: InstallArgs) -> Result<()> {
         }
     }
 
+    if args.desktop_integration {
+        desktop::install(&prefix, &desktop::data_home()?, args.quiet)?;
+    }
+
     let manifest = InstallManifest {
         version: env!("CARGO_PKG_VERSION").to_string(),
         install_date: SystemTime::now()
@@ -347,6 +358,8 @@ fn uninstall(args: UninstallArgs) -> Result<()> {
             }
         }
     }
+
+    desktop::uninstall(&prefix, args.quiet)?;
 
     for profile in &manifest.modified_profiles {
         if profile.exists() {
@@ -402,34 +415,22 @@ fn status(args: StatusArgs, out: &mut dyn Write, json_mode: bool) -> Result<()> 
                 // install/uninstall already produce).
                 use crush_diagnostics::diag_line_from;
                 out.write_all(
-                    diag_line_from(
-                        CODE_INSTALL,
-                        "note",
-                        "Crush installation found",
-                        None,
-                        None,
-                    )
-                    .as_bytes(),
+                    diag_line_from(CODE_INSTALL, "note", "Crush installation found", None, None)
+                        .as_bytes(),
                 )?;
                 let prefix_str = prefix.display().to_string();
                 for binary in &manifest.installed_binaries {
                     let path = manifest.bin_dir.join(binary);
                     let (message, level) = if path.exists() {
-                        let version = CommandRunner::version(&path)
-                            .unwrap_or_else(|_| "unknown".to_string());
+                        let version =
+                            CommandRunner::version(&path).unwrap_or_else(|_| "unknown".to_string());
                         (format!("{binary}: {version}"), "note")
                     } else {
                         (format!("{binary}: MISSING"), "warning")
                     };
                     out.write_all(
-                        diag_line_from(
-                            CODE_INSTALL,
-                            level,
-                            &message,
-                            Some(&prefix_str),
-                            None,
-                        )
-                        .as_bytes(),
+                        diag_line_from(CODE_INSTALL, level, &message, Some(&prefix_str), None)
+                            .as_bytes(),
                     )?;
                 }
                 return Ok(());
@@ -464,8 +465,8 @@ fn status(args: StatusArgs, out: &mut dyn Write, json_mode: bool) -> Result<()> 
             for binary in &manifest.installed_binaries {
                 let path = manifest.bin_dir.join(binary);
                 if path.exists() {
-                    let version = CommandRunner::version(&path)
-                        .unwrap_or_else(|_| "unknown".to_string());
+                    let version =
+                        CommandRunner::version(&path).unwrap_or_else(|_| "unknown".to_string());
                     buf.push_str(&format!("  {binary}: {version}\n"));
                 } else {
                     buf.push_str(&format!("  {binary}: MISSING\n"));
@@ -673,13 +674,7 @@ pub const CODE_INSTALL: &str = "E-INSTALL";
 /// `crates/crush-diagnostics/tests/wire_format.rs` simultaneously
 /// — the wrapper centralizes the stream choice without
 /// re-implementing the seven-field shape.
-fn emit_diag(
-    code: &str,
-    level: &str,
-    message: &str,
-    file: Option<&str>,
-    hint: Option<&str>,
-) {
+fn emit_diag(code: &str, level: &str, message: &str, file: Option<&str>, hint: Option<&str>) {
     print!("{}", diag_line_from(code, level, message, hint, file));
 }
 
@@ -715,6 +710,7 @@ mod tests {
             no_path: true,
             force: false,
             quiet: true,
+            desktop_integration: false,
         })
         .unwrap();
 
@@ -739,6 +735,7 @@ mod tests {
             no_path: true,
             force: false,
             quiet: true,
+            desktop_integration: false,
         };
 
         // Absent: the install still succeeds, without it.
@@ -781,6 +778,7 @@ mod tests {
             no_path: true,
             force: false,
             quiet: true,
+            desktop_integration: false,
         })
         .unwrap();
 
@@ -915,8 +913,8 @@ mod tests {
             1,
             "absent status must emit exactly one ndjson record (got {lines:?})"
         );
-        let v: serde_json::Value = serde_json::from_str(lines[0])
-            .expect("headline ndjson record must round-trip serde");
+        let v: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("headline ndjson record must round-trip serde");
         assert_eq!(v["code"], "E-INSTALL");
         assert_eq!(v["level"], "note");
         let msg = v["message"].as_str().expect("message is a json string");

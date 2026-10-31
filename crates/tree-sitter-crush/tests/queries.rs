@@ -37,7 +37,14 @@ fn highlights_capture_the_basics() {
             seen.insert(query.capture_names()[c.index as usize].to_string());
         }
     }
-    for want in ["keyword", "function", "variable.parameter", "type", "function.builtin", "number"] {
+    for want in [
+        "keyword",
+        "function",
+        "variable.parameter",
+        "type",
+        "function.builtin",
+        "number",
+    ] {
         assert!(seen.contains(want), "no @{want} capture; got {seen:?}");
     }
 }
