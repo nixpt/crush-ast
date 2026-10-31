@@ -30,14 +30,23 @@ dependency; `build` works, `run` cannot see the dep.
 
 ## Reproduction
 
+Self-contained (the original case was `facet`, which isn't public). Checked on the
+v0.9.0 release binaries, 2026-10-31:
+
 ```bash
-# /tmp/consumer/capsule.toml:  [[dependencies]] name="facet" path="/workspace/projects/facet"
-# /tmp/consumer/main.crush:    fn main() { let a = facet_parse(spec); … }
-cd /tmp/consumer
-crush-pkg build        # ok: "resolved dep facet -> …/facet.crush", compiles entry+deps
-crush-pkg run          # E-RUN: Undefined function: facet_parse
-crush-pkg -- --help    # bare flow: runs (see CRUSH-349 for its exit handling)
+mkdir -p /tmp/p348/dep /tmp/p348/consumer
+printf '[capsule]\nname = "dep"\nversion = "0.1.0"\nentry = "dep.crush"\nlanguage = "crush"\ncategory = "library"\n' > /tmp/p348/dep/capsule.toml
+printf 'fn dep_hello() {\n    return "hello from dep"\n}\n' > /tmp/p348/dep/dep.crush
+cd /tmp/p348/consumer
+printf '[capsule]\nname = "consumer"\nversion = "0.1.0"\nentry = "main.crush"\nlanguage = "crush"\ncategory = "cli"\n\n[[dependencies]]\nname = "dep"\npath = "/tmp/p348/dep"\n' > capsule.toml
+printf 'fn main() {\n    print(dep_hello())\n}\n' > main.crush
+crush-pkg build < /dev/null   # ok: "done: 2 function(s)"
+crush-pkg < /dev/null         # bare flow: prints "hello from dep"
+crush-pkg run < /dev/null     # crush-pkg[E-RUN]: Undefined function: dep_hello
 ```
+
+(`build` and the bare flow also print a false `dead-code: dependency \`dep\` … not
+referenced by entry file` note here — that's CRUSH-350.)
 
 ## Success criteria
 

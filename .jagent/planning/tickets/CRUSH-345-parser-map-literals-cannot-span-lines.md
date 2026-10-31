@@ -35,8 +35,9 @@ fn f() {
 fn main() { print(f().ok) }
 EOF
 crush-run run /tmp/map.crush
-# [compile] Parse errors: Expected property name but found newline at line 3, column 13,
-#           Unexpected token at line 4, column 11: unexpected token in expression: `:` ...
+# [compile] Parse errors: Expected property name but found newline at line 2, column 13,
+#           Unexpected token at line 3, column 11: unexpected token in expression: `:` ...
+# (checked on the v0.9.0 release binaries, 2026-10-31)
 ```
 
 Both `return {` + newline and `let m = {` + newline fail identically; the

@@ -33,11 +33,14 @@ required checks don't abort.
 cat > /tmp/mapkey.crush <<'EOF'
 fn main() {
     let m = {"only": 1}
-    print(m.only)        // null — field access tolerates absence
+    print(m.nope)        // null — field access tolerates the absent key
     print(m["nope"])     // runtime type error: expected present map key, got absent key
 }
 EOF
 crush-run run /tmp/mapkey.crush
+# null
+# [runtime] type error: expected present map key, got absent key
+# (checked on the v0.9.0 release binaries, 2026-10-31)
 ```
 
 ## Success criteria
