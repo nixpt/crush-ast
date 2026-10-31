@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-71 |
 | **Priority** | P1 |
-| **Status** | In Progress (panini persona-session, s412 2026-08-02) |
+| **Status** | Done — merged `787e34e` (2026-08-02); audit at `docs/design/CRUSH-71-design-audit.md`; foreman fold-in `21ea709` |
 | **Phase** | Correctness spine / M10-prep (feeds BACKLOG-INDEX ranking) |
 | **Branch** | `agent/panini-crush/CRUSH-71` |
 
@@ -42,3 +42,7 @@ branch pushed with incremental commits.
 
 Fold the audit's ranking into `.jagent/planning/BACKLOG-INDEX.md` (open
 questions listed at its bottom) and mint any tickets the client matrix adds.
+
+## Survey 2026-10-31 (status)
+
+Definition of done: the audit doc exists at `docs/design/CRUSH-71-design-audit.md`; merge `787e34e` (design audit + SCC inference + clone-free compile) is on main; `21ea709` folded the audit into the index. Previous status: `In Progress (panini persona-session, s412 2026-08-02)`.

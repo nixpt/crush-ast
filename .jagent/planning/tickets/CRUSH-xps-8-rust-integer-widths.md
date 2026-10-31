@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-8 |
 | **Priority** | P1 |
-| **Status** | In progress; proven dynamic casts and bounded unsigned slice |
+| **Status** | In Progress; proven dynamic casts and bounded unsigned slice |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7 |

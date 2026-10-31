@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-13 |
 | **Priority** | P1 |
-| **Status** | In review — all slices folded into combined PR |
+| **Status** | Done — combined PR #272 merged 2026-10-16 |
 | **Phase** | M2 / Rust AOT parity |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-7; CRUSH-xps-8 for numeric method dispatch |
@@ -238,3 +238,7 @@ Current rebased support matrix (112 native oracle fixtures): VM 63 exact / 48
 loud / 1 existing xps-8 silent; Rust AOT 58 exact / 53 loud / 1 silent; C AOT
 52 exact / 59 loud / 1 silent. No new silent policy was added. The older 82-fixture
 xps-9 snapshot preceded the additional numeric fixtures merged with #246.
+
+## Survey 2026-10-31 (status)
+
+PR #272 (`agent/nixp/CRUSH-xps-13-method-contracts`, the combined slices) merged 2026-10-16; all seven criteria ticked. Previous status: `In review — all slices folded into combined PR`.

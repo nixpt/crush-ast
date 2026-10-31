@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-38 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Done — PR #209 merged 2026-10-15 |
 | **Phase** | Python parity |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -48,3 +48,7 @@ keywords (`sorted(xs, key=f, reverse=True)` once `sorted` exists, user functions
 ## Non-goals
 
 - `**kwargs` / `*args` forwarding (keep loud).
+
+## Survey 2026-10-31 (status)
+
+PR #209 (`agent/vega/CRUSH-zorro-38-python-kwargs`) merged 2026-10-15. The ticket file was not updated by that PR. Previous status: `Backlog`.

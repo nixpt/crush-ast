@@ -1,0 +1,1 @@
+{"code":"E-CAPS","level":"error","file":"cap_fs.crush","line":null,"col":null,"message":"needs capabilities this run does not grant; nothing was run: fs.read","hint":"grant with --fs"}

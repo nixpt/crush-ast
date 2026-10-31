@@ -342,7 +342,11 @@ impl Runtime {
                 if !known && !crush_vm::capabilities().contains_key(capability.as_str())
                     && !allowed.iter().any(|a| a == &capability)
                 {
-                    missing.push(crate::effects::MissingGrant { capability, grant: None });
+                    missing.push(crate::effects::MissingGrant {
+                        capability,
+                        grant: None,
+                        renamed_to: None,
+                    });
                 }
             }
         }

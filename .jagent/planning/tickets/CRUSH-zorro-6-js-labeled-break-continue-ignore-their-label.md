@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-6 |
 | **Priority** | P1 |
-| **Status** | Loud on boa (pinned); real impl needs CAST labels — decision pending |
+| **Status** | Backlog — loud on boa (pinned, #296); a real implementation needs CAST labels — decision pending |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-250 (the new lowering) |

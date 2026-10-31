@@ -5,6 +5,7 @@
 //! via the sourcemap at add-time, so the VM driver can forward them
 //! to `PortableVm` for native pause-on-hit.
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use super::breakpoint::{BreakpointId, BreakpointSet};
@@ -31,21 +32,37 @@ fn quota_message(e: &crush_vm::VmError) -> String {
     format!("quota exceeded ({n})")
 }
 
+/// The field `name` of a record or map, or the element of an array or tuple
+/// at index `name`; boxed variables are looked through.
+fn member(value: &crush_vm::vm::Value, name: &str) -> Option<crush_vm::vm::Value> {
+    use crush_vm::vm::Value;
+    match value {
+        Value::Cell(c) => member(&c.borrow(), name),
+        Value::Record(r) => r.field(name),
+        Value::Map(m) => m.borrow().get(name).cloned(),
+        Value::Array(a) | Value::Vector(a) => a.borrow().get(name.parse::<usize>().ok()?).cloned(),
+        Value::Tuple(t) => t.get(name.parse::<usize>().ok()?).cloned(),
+        _ => None,
+    }
+}
+
 /// REPL help text shown on `help` / `h` / `?`.
 const HELP_BANNER: &str = "\
 Commands:
-  break <file>:<line>  — set a breakpoint
+  break <file>:<line> | <line> — set a breakpoint
   delete <id>          — remove a breakpoint
-  step | s             — execute one instruction (enters calls)
+  step | s             — execute one instruction, or one source line (enters calls)
   next | n             — step over: run a call to completion
+  stepi | nexti        — the same, always by instruction
   finish | fin         — step out: run until this function returns
   continue | c         — run until breakpoint, watchpoint or done
-  watch <slot> [top | frame <depth>]
-                       — stop when a local slot changes (default: this frame)
+  watch <slot|name> [top | frame <depth>]
+                       — stop when a local changes (default: this frame)
   unwatch <id>         — remove a watchpoint
   list | l             — list all breakpoints
   status | info | i    — show VM state
-  print <slot> | p     — print a local slot of the current frame
+  print <slot|name[.field]> | p — print a local, or a field of it
+  locals | vars        — print every assigned local of the current frame
   quit | q             — exit
   help | h | ?         — show this help";
 
@@ -57,6 +74,17 @@ pub struct DebugSession<'a, D: VmDriver> {
     /// Assembler sourcemap: `(source_line, bytecode_offset)` for
     /// resolving `file:line` breakpoints to VM addresses.
     source_map: Vec<(usize, usize)>,
+    /// Name of the source file the program was compiled from, if the host
+    /// compiled one (`set_source_name`): stops then say where they are.
+    source_name: Option<String>,
+    /// Local variable names per function: `function -> [(name, slot)]`.
+    local_names: HashMap<String, Vec<(String, u16)>>,
+    /// Whether `step`/`next` go by source line (`set_line_stepping`).
+    line_stepping: bool,
+    /// The source text, one entry per line, to show at stops.
+    source_lines: Vec<String>,
+    /// Phrases the flag that grants `debug.*` capability, for refusals.
+    grant_hint: fn(&str) -> String,
     /// Renders values at the grant-derived visibility (fixed at `new`).
     redactor: crush_vm::Redactor,
     /// Where events go, if a host attached a sink.
@@ -79,10 +107,56 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
             driver,
             breakpoints: BreakpointSet::new(),
             source_map,
+            source_name: None,
+            local_names: HashMap::new(),
+            line_stepping: false,
+            source_lines: Vec::new(),
+            grant_hint: |grant| format!("crush-debugger run --cap {grant}"),
             redactor,
             sink: None,
             _vm_ref: PhantomData,
         }
+    }
+
+    /// Say which source file the program came from, so stops report
+    /// `file:line` (needs a source map of source lines, as
+    /// `crush-lang-sdk` builds for `.crush` files).
+    pub fn set_source_name(&mut self, name: impl Into<String>) {
+        self.source_name = Some(name.into());
+    }
+
+    /// Make `step` and `next` run to the next source line instead of the
+    /// next instruction (`stepi`/`nexti` stay by instruction). Needs a source
+    /// map of source lines; without one they keep going by instruction.
+    pub fn set_line_stepping(&mut self, on: bool) {
+        self.line_stepping = on;
+    }
+
+    /// The program's source text, to show the current line at each stop.
+    pub fn set_source_text(&mut self, text: &str) {
+        self.source_lines = text.lines().map(str::to_string).collect();
+    }
+
+    /// Give the program's local names, `function -> [(name, slot)]`, so
+    /// `print`/`watch` take names and `locals` labels its output.
+    pub fn set_local_names(&mut self, names: HashMap<String, Vec<(String, u16)>>) {
+        self.local_names = names;
+    }
+
+    /// How a refusal tells the user to grant `debug.*` (default: the
+    /// `crush-debugger run --cap` spelling). Receives the grant name.
+    pub fn set_grant_hint(&mut self, hint: fn(&str) -> String) {
+        self.grant_hint = hint;
+    }
+
+    /// The source line whose code contains bytecode offset `ip`: the last
+    /// source-map entry at or before it. `None` without a source map.
+    pub fn line_for_ip(&self, ip: usize) -> Option<usize> {
+        self.source_map
+            .iter()
+            .filter(|&&(_, offset)| offset <= ip)
+            .max_by_key(|&&(_, offset)| offset)
+            .map(|&(line, _)| line)
     }
 
     /// The visibility this session's grants allow.
@@ -103,29 +177,80 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
 
     /// Register a source-level breakpoint and forward the updated set
     /// to the underlying driver. Resolves `file:line` to a bytecode
-    /// offset via the assembler sourcemap if available.
+    /// offset via the source map if available. Returns the first id; see
+    /// [`add_breakpoints`](Self::add_breakpoints) when a line has code in
+    /// more than one function.
     pub fn add_breakpoint(
         &mut self,
         file: impl Into<std::path::PathBuf>,
         line: u32,
     ) -> BreakpointId {
+        self.add_breakpoints(file, line)[0]
+    }
+
+    /// Like [`add_breakpoint`](Self::add_breakpoint), but a line that has
+    /// code in several functions (`let f = |x| x * k` is code in the
+    /// enclosing function and in the closure) gets one breakpoint, with its
+    /// own id, in each. Always returns at least one id.
+    pub fn add_breakpoints(
+        &mut self,
+        file: impl Into<std::path::PathBuf>,
+        line: u32,
+    ) -> Vec<BreakpointId> {
         let file = file.into();
-        let addr = self
-            .source_map
-            .iter()
-            .find(|(l, _)| *l == line as usize)
-            .map(|(_, offset)| *offset as u32);
-        if addr.is_none() && !self.source_map.is_empty() {
+        let addrs = self.resolve_line(line);
+        if addrs.is_empty() && !self.source_map.is_empty() {
+            let next = match self.next_line_with_code(line) {
+                Some(n) => format!("; the next line with code is {n}"),
+                None => String::new(),
+            };
             eprintln!(
                 "warning: breakpoint at {}:{} has no matching bytecode address \
-                 (line not in sourcemap)",
+                 (line not in sourcemap){next}",
                 file.display(),
                 line
             );
         }
-        let id = self.breakpoints.add(file, line, addr);
+        let ids: Vec<BreakpointId> = if addrs.is_empty() {
+            vec![self.breakpoints.add(file, line, None)]
+        } else {
+            addrs
+                .into_iter()
+                .map(|a| self.breakpoints.add(file.clone(), line, Some(a)))
+                .collect()
+        };
         self.driver.set_breakpoints(&self.breakpoints);
-        id
+        ids
+    }
+
+    /// The bytecode offsets a breakpoint on `line` stops at: one per
+    /// function the line has code in (the lowest offset there). Empty when
+    /// the line has no code.
+    fn resolve_line(&self, line: u32) -> Vec<u32> {
+        let line = line as usize;
+        let mut offsets: Vec<usize> = self
+            .source_map
+            .iter()
+            .filter(|&&(l, _)| l == line)
+            .map(|&(_, o)| o)
+            .collect();
+        offsets.sort_unstable();
+        let mut seen = std::collections::HashSet::new();
+        offsets
+            .into_iter()
+            .filter(|&o| seen.insert(self.driver.function_at(o).unwrap_or_default()))
+            .map(|o| o as u32)
+            .collect()
+    }
+
+    /// The first line after `line` that has code, to tell a user whose
+    /// breakpoint landed on a blank line, comment or closing brace.
+    fn next_line_with_code(&self, line: u32) -> Option<usize> {
+        self.source_map
+            .iter()
+            .map(|&(l, _)| l)
+            .filter(|&l| l > line as usize)
+            .min()
     }
 
     /// Remove a breakpoint by id.
@@ -154,10 +279,17 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
     /// Breakpoints, steps and watchpoints pause through `PortableVm`'s
     /// own hooks (`VmYield::DebugBreak` + `last_stop`).
     pub fn run_repl(&mut self) -> anyhow::Result<()> {
-        use std::io::{self, BufRead, Write};
-        let stdin = io::stdin();
-        let mut stdout = io::stdout();
-        let mut reader = stdin.lock();
+        let stdin = std::io::stdin();
+        self.run_repl_io(stdin.lock(), std::io::stdout())
+    }
+
+    /// [`run_repl`](Self::run_repl) over any reader and writer, so a host can
+    /// feed it commands ahead of (or instead of) stdin.
+    pub fn run_repl_io(
+        &mut self,
+        mut reader: impl std::io::BufRead,
+        mut stdout: impl std::io::Write,
+    ) -> anyhow::Result<()> {
         let mut line = String::new();
 
         loop {
@@ -187,6 +319,65 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
         Ok(())
     }
 
+    /// Drive the session over NDJSON: read command lines from `input`, write
+    /// one JSON object per line to `out` (see [`crate::ndjson`] for the
+    /// schema). No prompt and no prose; ends at EOF or `quit`. This is the
+    /// mode for an editor or agent on a pipe.
+    pub fn run_ndjson<R, W>(&mut self, input: R, out: W) -> anyhow::Result<()>
+    where
+        R: std::io::BufRead,
+        W: std::io::Write + Send + 'static,
+    {
+        use crate::ndjson::{Locator, NdjsonSink, diag, write_line};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let out = Arc::new(Mutex::new(out));
+        let emitted = Arc::new(AtomicUsize::new(0));
+        let at = Locator {
+            source_map: self.source_map.clone(),
+            file: self.source_name.clone(),
+            local_names: self.local_names.clone(),
+            source_lines: self.source_lines.clone(),
+            grant_hint: Some(self.grant_hint),
+        };
+        self.set_event_sink(NdjsonSink::new(out.clone(), at, emitted.clone()));
+        write_line(
+            &out,
+            &serde_json::json!({
+                "event": "started",
+                "file": self.source_name,
+                "visibility": format!("{:?}", self.visibility()),
+            }),
+        );
+        for line in input.lines() {
+            let line = line?;
+            let before = emitted.load(Ordering::SeqCst);
+            match super::repl::parse_command(&line) {
+                Ok(super::repl::Command::Quit) => break,
+                Ok(cmd) => match self.handle_command(cmd) {
+                    // A command that ran the program already said so with events.
+                    Ok(Some(text)) if emitted.load(Ordering::SeqCst) == before => write_line(
+                        &out,
+                        &serde_json::json!({ "event": "message", "command": line.trim(), "text": text }),
+                    ),
+                    Ok(_) => {}
+                    Err(e) => write_line(&out, &diag("E-DBG02", &e.to_string(), None)),
+                },
+                Err(super::repl::ParseCommandError::Empty) => {}
+                Err(e) => write_line(
+                    &out,
+                    &diag(
+                        "E-DBG01",
+                        &e.to_string(),
+                        Some("send `help` for the commands"),
+                    ),
+                ),
+            }
+        }
+        Ok(())
+    }
+
     /// Dispatch a parsed REPL command to the VM driver and breakpoint
     /// registry. Returns `Ok(Some(message))` to print a result line,
     /// `Ok(None)` for a silent no-op. `Quit` is handled by `run_repl`
@@ -209,7 +400,8 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
             self.emit(DebugEvent::Refused { operation, needs });
             return Ok(Some(format!(
                 "refused: `{operation}` needs the `{needs}` grant \
-                 (crush-debugger run --cap {needs})"
+                 ({})",
+                (self.grant_hint)(needs)
             )));
         }
         let message = self.run_command(cmd)?;
@@ -223,13 +415,21 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
             Command::Delete { .. } => "delete",
             Command::Step => "step",
             Command::Next => "next",
+            Command::StepInstruction => "stepi",
+            Command::NextInstruction => "nexti",
             Command::Finish => "finish",
             Command::Continue => "continue",
-            Command::Watch { .. } => "watch",
+            Command::Watch { .. } | Command::WatchName { .. } => "watch",
             Command::Unwatch { .. } => "unwatch",
-            Command::Print { .. } => {
-                return (!self.visibility().can_inspect())
-                    .then_some(("print", crush_vm::debug::DEBUG_INSPECT_REDACTED));
+            Command::Print { .. } | Command::Locals => {
+                return (!self.visibility().can_inspect()).then_some((
+                    if matches!(cmd, Command::Locals) {
+                        "locals"
+                    } else {
+                        "print"
+                    },
+                    crush_vm::debug::DEBUG_INSPECT_REDACTED,
+                ));
             }
             Command::List | Command::Status | Command::Help | Command::Quit => return None,
         };
@@ -239,7 +439,14 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
     fn run_command(&mut self, cmd: Command) -> anyhow::Result<Option<String>> {
         match cmd {
             super::repl::Command::Help => Ok(Some(HELP_BANNER.to_string())),
-            super::repl::Command::Step => {
+            super::repl::Command::Step if self.stepping_by_line() => {
+                self.run_line_step(crush_vm::StepMode::Into)
+            }
+            super::repl::Command::Next if self.stepping_by_line() => {
+                self.run_line_step(crush_vm::StepMode::Over)
+            }
+            super::repl::Command::NextInstruction => self.run_step(crush_vm::StepMode::Over),
+            super::repl::Command::Step | super::repl::Command::StepInstruction => {
                 let stepped = self.driver.step();
                 let output = self.drain_output();
                 match stepped {
@@ -251,8 +458,10 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                         };
                         self.emit_stop(reason);
                         Ok(Some(format!(
-                            "{output}step {}: yielded={}",
-                            outcome.instruction_count, outcome.yielded
+                            "{output}step {}: yielded={}{}",
+                            outcome.instruction_count,
+                            outcome.yielded,
+                            self.where_suffix()
                         )))
                     }
                     Err(super::vm_driver::VmError::Inner(ref e)) if quota_n(e).is_some() => {
@@ -289,11 +498,41 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                     Ok(Some(lines.join("\n")))
                 }
             }
-            super::repl::Command::Break { file, line } => {
-                let id = self.add_breakpoint(file.clone(), line);
+            super::repl::Command::Break { mut file, line } => {
+                // `break 12`: a line of the program being debugged.
+                if file.as_os_str().is_empty() {
+                    file = self.source_name.clone().unwrap_or_default().into();
+                }
+                let ids = self.add_breakpoints(file.clone(), line);
+                let moved = if !self.source_map.is_empty() && self.resolve_line(line).is_empty() {
+                    match self.next_line_with_code(line) {
+                        Some(n) => {
+                            format!(
+                                " (no code on line {line}, so it will not fire; the next line with code is {n})"
+                            )
+                        }
+                        None => format!(" (no code on line {line}, so it will not fire)"),
+                    }
+                } else {
+                    String::new()
+                };
+                let many = if ids.len() > 1 {
+                    format!(" (code in {} functions)", ids.len())
+                } else {
+                    String::new()
+                };
+                let ids = ids
+                    .iter()
+                    .map(|i| format!("#{}", i.0))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let noun = if many.is_empty() {
+                    "breakpoint"
+                } else {
+                    "breakpoints"
+                };
                 Ok(Some(format!(
-                    "breakpoint #{} set at {}:{}",
-                    id.0,
+                    "{noun} {ids} set at {}:{}{moved}{many}",
                     file.display(),
                     line
                 )))
@@ -308,6 +547,41 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
             }
             super::repl::Command::Next => self.run_step(crush_vm::StepMode::Over),
             super::repl::Command::Finish => self.run_step(crush_vm::StepMode::Out),
+            super::repl::Command::WatchName { name, scope } => {
+                let frame_depth = match scope {
+                    Some(crush_vm::WatchScope::Frame(d)) => d,
+                    _ => self.driver.call_depth(),
+                };
+                match self.slot_named("watch", &name, frame_depth) {
+                    Ok(slot) => self.run_command(super::repl::Command::Watch { slot, scope }),
+                    Err(msg) => Ok(Some(msg)),
+                }
+            }
+            super::repl::Command::Locals => {
+                let depth = self.driver.call_depth();
+                let frames = self.driver.frames(&self.redactor);
+                let Some(frame) = frames.iter().find(|f| f.depth == depth) else {
+                    return Ok(Some("no frame (the program has not started)".into()));
+                };
+                if frame.locals.is_empty() {
+                    return Ok(Some(format!("no locals assigned in frame {depth}")));
+                }
+                let names = frame
+                    .function
+                    .as_ref()
+                    .and_then(|f| self.local_names.get(f));
+                let lines: Vec<String> = frame
+                    .locals
+                    .iter()
+                    .map(|(slot, view)| {
+                        match names.and_then(|n| n.iter().find(|(_, s)| s == slot)) {
+                            Some((name, _)) => format!("{name} (slot {slot}) = {view}"),
+                            None => format!("slot {slot} = {view}"),
+                        }
+                    })
+                    .collect();
+                Ok(Some(lines.join("\n")))
+            }
             super::repl::Command::Watch { slot, scope } => {
                 let depth = self.driver.call_depth();
                 let scope = scope.unwrap_or(if depth == 0 {
@@ -337,29 +611,42 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                 }
             }
             super::repl::Command::Print { name } => {
-                let Ok(slot) = name.trim_start_matches('$').parse::<u16>() else {
-                    return Ok(Some(format!(
-                        "`{name}`: compiled bytecode has no local names yet; use `print <slot>`"
-                    )));
-                };
+                // `p.x.y`: a local, then fields (or `0`-based array indices) of its value.
+                let mut path = name.split('.');
+                let base = path.next().unwrap_or("");
                 let depth = self.driver.call_depth();
-                Ok(Some(match self.driver.local(depth, slot) {
-                    Some(v) => format!("slot {slot} = {}", self.redactor.view(&v)),
-                    None => format!("slot {slot} is unset in frame {depth}"),
-                }))
+                let (slot, label) = match base.trim_start_matches('$').parse::<u16>() {
+                    Ok(slot) => (slot, format!("slot {slot}")),
+                    Err(_) => match self.slot_named("print", base, depth) {
+                        Ok(slot) => (slot, base.to_string()),
+                        Err(msg) => return Ok(Some(msg)),
+                    },
+                };
+                let Some(mut value) = self.driver.local(depth, slot) else {
+                    return Ok(Some(format!("{label} is unset in frame {depth}")));
+                };
+                let mut shown = label;
+                for field in path {
+                    match member(&value, field) {
+                        Some(v) => value = v,
+                        None => {
+                            return Ok(Some(format!(
+                                "{shown} has no field `{field}` ({})",
+                                value.type_name()
+                            )));
+                        }
+                    }
+                    shown = format!("{shown}.{field}");
+                }
+                Ok(Some(format!("{shown} = {}", self.redactor.view(&value))))
             }
             super::repl::Command::Status => {
                 let state = self.driver.state();
-                let mut lines = vec![format!(
-                    "instructions: {}",
-                    state.instruction_count
-                )];
+                let mut lines = vec![format!("instructions: {}", state.instruction_count)];
                 match &state.paused_at {
-                    Some(loc) => lines.push(format!(
-                        "paused at: {}:{}",
-                        loc.file.display(),
-                        loc.line
-                    )),
+                    Some(loc) => {
+                        lines.push(format!("paused at: {}:{}", loc.file.display(), loc.line))
+                    }
                     None => lines.push("paused at: (none)".to_string()),
                 }
                 Ok(Some(lines.join("\n")))
@@ -372,6 +659,90 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
 }
 
 impl<'a, D: VmDriver> DebugSession<'a, D> {
+    /// The slot of local `name` in the function running at `depth`, or a
+    /// message saying why it can't be resolved.
+    fn slot_named(&self, verb: &str, name: &str, depth: usize) -> Result<u16, String> {
+        if self.local_names.is_empty() {
+            return Err(format!(
+                "`{name}`: this program has no local names; use `{verb} <slot>`"
+            ));
+        }
+        let frames = self.driver.frames(&self.redactor);
+        let Some(frame) = frames.iter().find(|f| f.depth == depth) else {
+            return Err(format!("`{name}`: no frame at depth {depth}"));
+        };
+        let function = frame.function.clone().unwrap_or_default();
+        let known = self.local_names.get(&function);
+        match known.and_then(|n| n.iter().find(|(n, _)| n == name)) {
+            Some(&(_, slot)) => Ok(slot),
+            None => {
+                let mut names: Vec<&str> = known
+                    .map(|n| n.iter().map(|(n, _)| n.as_str()).collect())
+                    .unwrap_or_default();
+                names.sort_unstable();
+                Err(format!(
+                    "no local `{name}` in `{function}`; its locals: {}",
+                    if names.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                ))
+            }
+        }
+    }
+
+    /// ` at file:line in function` for where the program is now, or empty
+    /// when the host gave no source name or the line is unknown.
+    fn where_suffix(&self) -> String {
+        let Some(file) = &self.source_name else {
+            return String::new();
+        };
+        let Some(top) = self.driver.frames(&self.redactor).into_iter().next() else {
+            return String::new();
+        };
+        let Some(line) = self.line_for_ip(top.ip) else {
+            return String::new();
+        };
+        let text = match self.source_lines.get(line.wrapping_sub(1)) {
+            Some(src) => format!("\n  {line:>4} | {src}"),
+            None => String::new(),
+        };
+        match top.function {
+            Some(f) => format!(" at {file}:{line} in {f}{text}"),
+            None => format!(" at {file}:{line}{text}"),
+        }
+    }
+
+    fn stepping_by_line(&self) -> bool {
+        self.line_stepping && !self.source_map.is_empty()
+    }
+
+    /// The source line the program is on, from the innermost frame.
+    fn current_line(&self) -> Option<usize> {
+        let top = self.driver.frames(&self.redactor).into_iter().next()?;
+        self.line_for_ip(top.ip)
+    }
+
+    /// `step`/`next` by source line: step by instruction until the line (or
+    /// the call depth) changes. Anything else that stops the program — a
+    /// breakpoint, a watchpoint, the end — ends it at once.
+    fn run_line_step(&mut self, mode: crush_vm::StepMode) -> anyhow::Result<Option<String>> {
+        let start_line = self.current_line();
+        let start_depth = self.driver.call_depth();
+        loop {
+            match self.driver.step_mode(mode) {
+                Ok(VmRunResult::Stepped { ip, depth }) => {
+                    let moved = depth != start_depth || self.line_for_ip(ip) != start_line;
+                    if moved {
+                        return self.report(Ok(VmRunResult::Stepped { ip, depth }));
+                    }
+                }
+                other => return self.report(other),
+            }
+        }
+    }
+
     /// `next` / `finish`: run the step and report where it stopped.
     fn run_step(&mut self, mode: crush_vm::StepMode) -> anyhow::Result<Option<String>> {
         let result = self.driver.step_mode(mode);
@@ -420,15 +791,15 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
             }
             VmRunResult::HitBreakpoint(id) => {
                 self.emit_stop(StopReason::Breakpoint(id));
-                format!("hit breakpoint #{}", id.0)
+                format!("hit breakpoint #{}{}", id.0, self.where_suffix())
             }
             VmRunResult::Paused => {
                 self.emit_stop(StopReason::Paused);
-                "paused".to_string()
+                format!("paused{}", self.where_suffix())
             }
             VmRunResult::Stepped { ip, depth } => {
                 self.emit_stop(StopReason::Step);
-                format!("stopped at ip {ip} (depth {depth})")
+                format!("stopped at ip {ip} (depth {depth}){}", self.where_suffix())
             }
             VmRunResult::Watchpoint {
                 id,
@@ -440,10 +811,11 @@ impl<'a, D: VmDriver> DebugSession<'a, D> {
                 let old = old.as_ref().map(|v| self.redactor.view(v));
                 let new = self.redactor.view(&new);
                 let text = format!(
-                    "watchpoint #{}: slot {slot} (depth {depth}) {} -> {new}",
+                    "watchpoint #{}: slot {slot} (depth {depth}) {} -> {new}{}",
                     id.0,
                     old.as_ref()
                         .map_or_else(|| "(unset)".to_string(), ToString::to_string),
+                    self.where_suffix(),
                 );
                 self.emit_stop(StopReason::Watchpoint {
                     id,
@@ -468,9 +840,7 @@ struct MockVmDriver {
 
 #[cfg(test)]
 impl VmDriver for MockVmDriver {
-    fn step(
-        &mut self,
-    ) -> Result<super::vm_driver::StepOutcome, super::vm_driver::VmError> {
+    fn step(&mut self) -> Result<super::vm_driver::StepOutcome, super::vm_driver::VmError> {
         self.step_count += 1;
         Ok(super::vm_driver::StepOutcome {
             yielded: false,
@@ -533,10 +903,52 @@ mod tests {
         let id_a = s.add_breakpoint("main.crush", 7);
         let id_b = s.add_breakpoint("main.crush", 12);
         assert_eq!(s.breakpoint_count(), 2);
-        assert!(s.breakpoints().matches(std::path::Path::new("main.crush"), 7));
-        assert!(s.breakpoints().matches(std::path::Path::new("main.crush"), 12));
+        assert!(
+            s.breakpoints()
+                .matches(std::path::Path::new("main.crush"), 7)
+        );
+        assert!(
+            s.breakpoints()
+                .matches(std::path::Path::new("main.crush"), 12)
+        );
         assert_eq!(id_a.0, 0);
         assert_eq!(id_b.0, 1);
+    }
+
+    #[test]
+    fn break_on_a_line_without_code_says_which_line_has_some() {
+        let mut s = session_with_sourcemap();
+        let out = s
+            .handle_command(Command::Break {
+                file: PathBuf::from("a.crush"),
+                line: 1,
+            })
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("will not fire"), "{out}");
+        assert!(out.contains("next line with code is 2"), "{out}");
+        // A line with code carries no warning.
+        let out = s
+            .handle_command(Command::Break {
+                file: PathBuf::from("a.crush"),
+                line: 3,
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(out, "breakpoint #1 set at a.crush:3");
+    }
+
+    #[test]
+    fn a_bare_line_breaks_in_the_source_file_and_stops_name_it() {
+        let mut s = session_with_sourcemap();
+        s.set_source_name("prog.crush");
+        let out = s
+            .handle_command(crate::repl::parse_command("break 3").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(out, "breakpoint #0 set at prog.crush:3");
+        assert_eq!(s.line_for_ip(5), Some(3));
+        assert_eq!(s.line_for_ip(7), Some(4));
     }
 
     #[test]
@@ -577,10 +989,7 @@ mod tests {
     #[test]
     fn handle_command_continue_reports_done() {
         let mut s = session();
-        let out = s
-            .handle_command(Command::Continue)
-            .unwrap()
-            .unwrap();
+        let out = s.handle_command(Command::Continue).unwrap().unwrap();
         assert_eq!(out, "done");
     }
 
@@ -831,8 +1240,7 @@ mod tests {
         assert_eq!(id.0, 0);
         let bp = &s.breakpoints().list()[0];
         assert_eq!(
-            bp.bytecode_address,
-            None,
+            bp.bytecode_address, None,
             "line 99 should NOT resolve (not in sourcemap)"
         );
     }

@@ -5,6 +5,75 @@ Interactive runtime debugger for Crush programs. It drives
 steps and watchpoints all surface as `VmYield::DebugBreak`, and
 `PortableVm::last_stop()` says which one fired.
 
+## Usage
+
+Debug a `.crush` file with `crush debug` (or its binary, `crush-debug`; both
+come with `crush-lang-sdk` and `crush-installer`):
+
+```text
+$ crush debug prog.crush --step --inspect
+cru-s-debugger> break 18
+breakpoint #0 set at prog.crush:18
+cru-s-debugger> continue
+hit breakpoint #0 at prog.crush:18 in __lambda_0_scale
+    18 |         let scaled = n * k
+cru-s-debugger> print k
+k = 3
+cru-s-debugger> watch scaled
+cru-s-debugger> continue
+watchpoint #0: slot 2 (depth 3) (unset) -> 3 at prog.crush:19 in __lambda_0_scale
+cru-s-debugger> finish
+```
+
+It compiles the file the way `crush run` does, so `break FILE:LINE` (or just
+`break LINE`) means a line you wrote, `print`/`watch` take variable names
+(`print p.x` reads a field; `locals` lists the frame), and `step`/`next` run
+to the next source line (`stepi`/`nexti` go by instruction). A line that holds
+code in two functions (a one-line closure) gets a breakpoint in each. Commands
+come from stdin, one per line, so a script can pipe them in; `--break LINE`
+sets breakpoints before the first command. Never leave stdin open and unread
+(the program's own `io.read` shares it).
+
+Debugging is a capability and nothing is ambient, so **by default it grants
+nothing**: only `help`, `list`, `status` and `quit` work, and the program does
+not run. Ask for what you need:
+
+| Flag | Grants | Lets you |
+|------|--------|----------|
+| `--step` | `debug.step` | `break`, `step`, `next`, `finish`, `continue`, `watch`; values show as `<hidden>` |
+| `--step --inspect=redacted` | `+ debug.inspect.redacted` | `print`/`locals`, values as `<type #hash>` |
+| `--step --inspect` | `+ debug.inspect` | values in full |
+
+A refused command names the flag (`refused: `print` needs the
+`debug.inspect.redacted` grant (pass --step --inspect=redacted, or --inspect)`).
+The program's own capabilities are granted with `crush run`'s flags (`--fs`,
+`--env`, `--time`, `--polyglot`, `--cap NAME`, `--max-steps`, ...); one the
+program needs and the run does not grant is refused before anything runs.
+
+### For editors and agents
+
+`--message-format json` drops the prompt and prose and writes one JSON object
+per line to stdout: `started`, `stopped` (reason, file, line, source text,
+function, every frame with its locals by name), `output`, `finished`,
+`quota_exceeded`, `error`, `refused` (with the flag to pass) and `message` (the
+answer to `break`, `print`, `list`, ...). A command line that did not parse, or
+failed, is a `crush-diagnostics` record (`code` `E-DBG01` / `E-DBG02`). Values
+are `{"hidden":true}`, `{"type":"int","hash":"..."}` or `{"type":"int","text":"3"}`
+according to the grants; nothing else leaves the session.
+
+```text
+$ printf 'break 18\ncontinue\nprint k\nquit\n' | crush debug prog.crush --step --inspect --message-format json
+{"event":"started","file":"prog.crush","visibility":"Full"}
+{"command":"break 18","event":"message","text":"breakpoint #0 set at prog.crush:18"}
+{"event":"stopped","file":"prog.crush","function":"__lambda_0_scale","line":18,"reason":{"id":0,"kind":"breakpoint"},"source":"        let scaled = n * k","frames":[...]}
+{"command":"print k","event":"message","text":"k = 3"}
+```
+
+`crush-debugger run FILE.casm` (below) is the older entry point for CASM
+assembly text; `crush debug` also takes `.casm`, with the assembly's lines
+and slot numbers instead of names. A compiled `.cvm1` carries no source map
+and is refused.
+
 ## Grants
 
 Debugging a program is a capability like any other: nothing is ambient.
@@ -26,15 +95,17 @@ The program's own output is not inspection and always shows.
 
 | Command | What it does |
 |---------|--------------|
-| `break <file>:<line>` / `b` | breakpoint, resolved to a bytecode offset through the assembler source map |
+| `break <file>:<line>` / `break <line>` / `b` | breakpoint, resolved to a bytecode offset through the source map (a line with no code is reported, with the next line that has some) |
 | `delete <id>` / `d` | remove a breakpoint |
-| `step` / `s` | execute one instruction (enters calls) |
-| `next` / `n` | step over: one instruction, running any call it makes to completion |
+| `step` / `s` | execute one instruction (enters calls); to the next source line under `crush debug` |
+| `next` / `n` | step over: one instruction (or source line), running any call it makes to completion |
+| `stepi` / `nexti` | `step` / `next` by instruction even when they go by line |
 | `finish` / `fin` | step out: run until the current function returns (from the entry function: to the end) |
 | `continue` / `c` | run until a breakpoint, a watchpoint, a quota, or the end |
-| `watch <slot> [top \| frame <depth>]` / `w` | stop after an instruction changes a local slot; default scope is the current frame |
+| `watch <slot \| name> [top \| frame <depth>]` / `w` | stop after an instruction changes a local slot; default scope is the current frame |
 | `unwatch <id>` | remove a watchpoint |
-| `print <slot>` / `p` | value of a local slot in the current frame |
+| `print <slot \| name[.field]>` / `p` | value of a local in the current frame, or a field/element of it |
+| `locals` / `vars` | every assigned local of the current frame |
 | `list` / `l`, `status` / `i`, `help` / `h`, `quit` / `q` | |
 
 Stepping and watching work at bytecode level, by call depth:
@@ -50,9 +121,11 @@ Stepping and watching work at bytecode level, by call depth:
   whichever function is running and re-reads the slot silently on calls
   and returns.
 
-Locals are numbered slots: compiled bytecode keeps no variable names, and
-only the assembler emits a line map. Watching by name and line-level
-stepping need a source map from `crush-frontend`.
+Compiled bytecode keeps no variable names and the assembler's line map is the
+assembly's own, so at this level locals are numbered slots. `crush debug`
+supplies both from the compiler (`crush_lang_sdk::compile::compile_crush_source_for_debug`):
+the source map in your lines and the names, which a host passes to
+`DebugSession::set_source_name` / `set_local_names` / `set_line_stepping`.
 
 The same hooks are public on `PortableVm` (`request_step`, `cancel_step`,
 `add_watchpoint`, `remove_watchpoint`, `call_depth`, `local`,

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-232 |
 | **Priority** | P2 |
-| **Status** | Done (pending review) |
+| **Status** | Done — PR #135 merged 2026-10-09 |
 | **Phase** | M1 |
 | **Assignee** | panini |
 | **Dependencies** | none |
@@ -78,3 +78,7 @@ lowered to real CVM1 opcodes (and `spawn` is now correct); `export_var` lowers t
 - [x] Before/after table (above).
 - [x] Each newly lowered op has a value-asserting CVM1 run test.
 - [x] `cargo test -p crush-lang-sdk` and `-p crush-vm` pass.
+
+## Survey 2026-10-31 (status)
+
+PR #135 (`agent/panini/CRUSH-232`) merged 2026-10-09. Previous status: `Done (pending review)`.

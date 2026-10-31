@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-111 |
 | **Priority** | P2 |
-| **Status** | **Done** — merged in PR #275 (`59367ee`, 2026-10-16); see Resolution |
+| **Status** | Done — merged in PR #275 (`59367ee`, 2026-10-16); see Resolution |
 | **Phase** | M1 |
 | **Assignee** | buffy |
 | **Dependencies** | none (see CRUSH-65 for the shared-registry recommendation) |
@@ -138,7 +138,7 @@ JS list has; both list `make_range`). One more reason the shared table should be
 ### Adjacent finding (NOT this ticket — now minted)
 
 `y = +5` / `~5` is refused by **both** doors — `Unsupported op: +` / `Unsupported op: ~` — so it is a
-walker lowering gap, not drift; both entry points agree. Minted as **CRUSH-271** (2026-10-16,
+walker lowering gap, not drift; both entry points agree. Minted as **CRUSH-271** (renumbered **CRUSH-341** on 2026-10-31) (2026-10-16,
 same session, same measurements): Python *and* JS walkers emit the `UnaryOp` node while the C walker
 emits the working `__crush_pos__` / `__crush_bit_not__` intrinsics.
 

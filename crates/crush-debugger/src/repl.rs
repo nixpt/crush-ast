@@ -15,6 +15,10 @@ pub enum Command {
     Step,
     /// `next` — step over: one instruction, running any call to completion.
     Next,
+    /// `stepi` — one instruction, even when `step` goes by source line.
+    StepInstruction,
+    /// `nexti` — step over one instruction, even when `next` goes by source line.
+    NextInstruction,
     /// `finish` — step out: run until the current function returns.
     Finish,
     /// `watch <slot> [top | frame <depth>]` — stop when a local slot
@@ -23,6 +27,16 @@ pub enum Command {
         slot: u16,
         scope: Option<crush_vm::WatchScope>,
     },
+    /// `watch <name> [top | frame <depth>]` — the same, by local name; needs
+    /// the names a source-compiling front end supplies
+    /// ([`DebugSession::set_local_names`](crate::DebugSession::set_local_names)).
+    WatchName {
+        name: String,
+        scope: Option<crush_vm::WatchScope>,
+    },
+    /// `locals` — every assigned local of the current frame, by name when
+    /// the program's names are known.
+    Locals,
     /// `unwatch <id>` — remove a watchpoint.
     Unwatch { id: u32 },
     /// `continue` — run until the next breakpoint or termination.
@@ -65,7 +79,7 @@ impl std::fmt::Display for ParseCommandError {
             Self::BadId(arg) => write!(f, "expected numeric id, got `{arg}`"),
             Self::BadWatch(arg) => write!(
                 f,
-                "expected `watch <slot> [top | frame <depth>]`, got `{arg}`"
+                "expected `watch <slot | name> [top | frame <depth>]`, got `{arg}`"
             ),
             Self::Unknown(verb) => write!(f, "unknown command `{verb}`"),
         }
@@ -80,6 +94,10 @@ impl std::error::Error for ParseCommandError {}
 pub fn parse_breakpoint_arg(arg: &str) -> Result<(std::path::PathBuf, u32), ParseCommandError> {
     if arg.is_empty() {
         return Err(ParseCommandError::BadBreakpoint(String::new()));
+    }
+    // `12`: a line of the program being debugged; the host supplies the file.
+    if let Ok(line) = arg.parse::<u32>() {
+        return Ok((std::path::PathBuf::new(), line));
     }
     let (file, line) = arg
         .rsplit_once(':')
@@ -117,9 +135,12 @@ pub fn parse_command(input: &str) -> Result<Command, ParseCommandError> {
             Ok(Command::Delete { id: n })
         }
         "step" | "s" => Ok(Command::Step),
+        "stepi" | "si" => Ok(Command::StepInstruction),
+        "nexti" | "ni" => Ok(Command::NextInstruction),
         "next" | "n" => Ok(Command::Next),
         "finish" | "fin" => Ok(Command::Finish),
         "watch" | "w" => parse_watch(&rest),
+        "locals" | "vars" => Ok(Command::Locals),
         "unwatch" => {
             let n: u32 = rest_str
                 .trim()
@@ -141,7 +162,7 @@ pub fn parse_command(input: &str) -> Result<Command, ParseCommandError> {
 
 fn parse_watch(args: &[&str]) -> Result<Command, ParseCommandError> {
     let bad = || ParseCommandError::BadWatch(args.join(" "));
-    let slot: u16 = args.first().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    let first = *args.first().ok_or_else(bad)?;
     let scope = match &args[1..] {
         [] => None,
         ["top"] => Some(crush_vm::WatchScope::Top),
@@ -151,7 +172,18 @@ fn parse_watch(args: &[&str]) -> Result<Command, ParseCommandError> {
         },
         _ => return Err(bad()),
     };
-    Ok(Command::Watch { slot, scope })
+    if let Ok(slot) = first.trim_start_matches('$').parse::<u16>() {
+        return Ok(Command::Watch { slot, scope });
+    }
+    let is_name = first.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !first.starts_with(|c: char| c.is_ascii_digit());
+    if !is_name {
+        return Err(bad());
+    }
+    Ok(Command::WatchName {
+        name: first.to_string(),
+        scope,
+    })
 }
 
 #[cfg(test)]
@@ -233,7 +265,10 @@ mod tests {
 
     #[test]
     fn parses_delete_id() {
-        assert_eq!(parse_command("delete 3").unwrap(), Command::Delete { id: 3 });
+        assert_eq!(
+            parse_command("delete 3").unwrap(),
+            Command::Delete { id: 3 }
+        );
         assert_eq!(parse_command("d 12").unwrap(), Command::Delete { id: 12 });
     }
 
@@ -284,7 +319,8 @@ mod tests {
     fn rejects_bad_watch_args() {
         for bad in [
             "watch",
-            "watch x",
+            "watch 1x",
+            "watch a-b",
             "watch 1 frame",
             "watch 1 frame 0",
             "watch 1 everywhere",
@@ -294,6 +330,46 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn parses_watch_by_name_and_locals() {
+        assert_eq!(
+            parse_command("watch total").unwrap(),
+            Command::WatchName {
+                name: "total".into(),
+                scope: None
+            }
+        );
+        assert_eq!(
+            parse_command("w total top").unwrap(),
+            Command::WatchName {
+                name: "total".into(),
+                scope: Some(crush_vm::WatchScope::Top)
+            }
+        );
+        assert_eq!(
+            parse_command("watch $2").unwrap(),
+            Command::Watch {
+                slot: 2,
+                scope: None
+            }
+        );
+        assert_eq!(parse_command("locals").unwrap(), Command::Locals);
+    }
+
+    #[test]
+    fn parses_instruction_steps_and_bare_line_breakpoints() {
+        assert_eq!(parse_command("stepi").unwrap(), Command::StepInstruction);
+        assert_eq!(parse_command("ni").unwrap(), Command::NextInstruction);
+        // `break 12`: the host supplies the file.
+        assert_eq!(
+            parse_command("break 12").unwrap(),
+            Command::Break {
+                file: PathBuf::new(),
+                line: 12
+            }
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-11 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | In Progress — implementation merged in PR #213 (2026-10-15); three verification criteria are unticked |
 | **Phase** | M1 / SDK correctness |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-2, CRUSH-197 |
@@ -119,3 +119,7 @@ Read Rust closure lowering, binding metadata, xps-7 capture checks, shared
 lambda semantic checking and SDK `rust_source`/`rustc_corpus`. Inspect existing
 PR #213 tests before adding anything. Correct only demonstrated gaps in a
 focused worktree; do not expand owned capture or closure traits in this lane.
+
+## Survey 2026-10-31 (status)
+
+PR #213 merged 2026-10-15. Three other criteria are still unticked. Previous status: `In review`.

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-10 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — PR #199 merged 2026-10-15 (with zorro-9, zorro-22) |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-zorro-9 (number text) |
@@ -46,3 +46,7 @@
 - Reference implementation: `node` on PATH (v26; TypeScript runs with built-in type stripping). Never hand-write a `.out`.
 - `crates/crush-lang-js/src/lower_swc.rs` is shared by most tickets. Until CRUSH-zorro-11 lands, keep edits local to the area you own and merge `origin/main` often; after it lands, add entries to the builtin/method table instead of new match arms.
 - Gates before the PR: `cargo test -p crush-lang-js -p crush-lang-sdk -p crush-aot`, the walker set, and clippy. A new loud error must say what isn't supported, never "load from uninitialised slot".
+
+## Survey 2026-10-31 (status)
+
+PR #199 merged 2026-10-15. The ticket file was not updated by that PR. Previous status: `Backlog`.

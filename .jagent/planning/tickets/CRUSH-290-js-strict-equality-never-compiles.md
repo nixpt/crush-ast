@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-290 |
 | **Priority** | P1 |
-| **Status** | Done (PR pending) |
+| **Status** | Done — PR #295 merged 2026-10-29 |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | freebuff (dispatched by muse) |
 | **Filed by** | muse — 2026-10-21, found while landing CRUSH-289 |
@@ -70,3 +70,7 @@ by muse):
 
 Int/int compares exactly (i64), mirroring `loose_eq`, rather than
 as JS doubles — deliberate, for VM/AOT agreement.
+
+## Survey 2026-10-31 (status)
+
+PR #295 (`agent/muse/CRUSH-290`) merged 2026-10-29. Previous status: `Done (PR pending)`.
