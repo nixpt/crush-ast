@@ -21,6 +21,8 @@ pub struct BuildOutput {
 pub struct PackageBuilder {
     manifest: Manifest,
     root_dir: PathBuf,
+    /// Never touch the network for git dependencies (`--offline`).
+    offline: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +393,11 @@ pub fn entry_references_with_deps(manifest: &Manifest, root: &Path) -> Option<Ha
 
 /// A path dependency's entry source, `None` when it can't be located or read.
 fn read_dep_source(root: &Path, dep: &crate::manifest::Dependency) -> Option<String> {
-    let dep_path = root.join(dep.path.as_ref()?);
+    let dep_path = match (&dep.path, &dep.git) {
+        (Some(p), _) => root.join(p),
+        (None, Some(_)) => crate::gitdep::locked_checkout(root, dep)?,
+        _ => return None,
+    };
     let manifest_path = crate::manifest::manifest_path(&dep_path)?;
     let dep_manifest = Manifest::from_file(&manifest_path).ok()?;
     std::fs::read_to_string(dep_path.join(&dep_manifest.capsule.entry)).ok()
@@ -399,7 +405,13 @@ fn read_dep_source(root: &Path, dep: &crate::manifest::Dependency) -> Option<Str
 
 impl PackageBuilder {
     pub fn new(manifest: Manifest, root_dir: PathBuf) -> Self {
-        Self { manifest, root_dir }
+        Self { manifest, root_dir, offline: false }
+    }
+
+    /// Resolve git dependencies from `capsule.lock` and the local cache only.
+    pub fn offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
     }
 
     pub fn manifest(&self) -> &Manifest {
@@ -482,17 +494,27 @@ impl PackageBuilder {
 
     fn resolve_deps(&self) -> anyhow::Result<Vec<DepResolution>> {
         let mut resolved = Vec::new();
+        let lock = crate::gitdep::read_lock(&self.root_dir)?;
+        let mut new_lock = Vec::new();
         for dep in &self.manifest.dependencies {
             let name = &dep.name;
-            let dep_path = if let Some(path) = &dep.path {
-                self.root_dir.join(path)
+            dep.validate()?;
+            // Where the dependency came from, for error messages.
+            let (dep_path, origin) = if let Some(path) = &dep.path {
+                (self.root_dir.join(path), String::new())
+            } else if dep.git.is_some() {
+                let locked = lock.iter().find(|l| &l.name == name);
+                let (dir, entry) = crate::gitdep::resolve(dep, locked, self.offline)?;
+                let origin = format!(" (git dependency {} @ {})", entry.url, &entry.rev[..12]);
+                new_lock.push(entry);
+                (dir, origin)
             } else {
                 continue;
             };
 
             let manifest_path = crate::manifest::manifest_path(&dep_path).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "dependency '{}': no capsule / crush.toml found at {}",
+                    "dependency '{}': no capsule / crush.toml found at {}{origin}",
                     name,
                     dep_path.display()
                 )
@@ -502,8 +524,9 @@ impl PackageBuilder {
             let dep_entry = dep_path.join(&dep_manifest.capsule.entry);
             if !dep_entry.exists() {
                 anyhow::bail!(
-                    "dependency '{}': entry file not found at {}",
+                    "dependency '{}': entry file `{}` (from its capsule.toml `entry`) not found at {}{origin}",
                     name,
+                    dep_manifest.capsule.entry,
                     dep_entry.display()
                 );
             }
@@ -518,6 +541,10 @@ impl PackageBuilder {
                 source,
                 program: None,
             });
+        }
+        // Record (or refresh, or drop) the pinned commits.
+        if !new_lock.is_empty() || self.root_dir.join(crate::gitdep::LOCK_FILE).exists() {
+            crate::gitdep::write_lock(&self.root_dir, &new_lock)?;
         }
         Ok(resolved)
     }
@@ -664,8 +691,8 @@ mod tests {
         // Add the path dep
         let dep = crate::manifest::Dependency {
             name: "dep-lib".to_string(),
-            version: None,
             path: Some(dep_dir.to_string_lossy().to_string()),
+            ..Default::default()
         };
         let mut main_manifest = Manifest::from_file(&main_dir.join("capsule.toml")).unwrap();
         main_manifest.dependencies.push(dep);
@@ -702,8 +729,8 @@ mod tests {
         .unwrap();
         let dep = crate::manifest::Dependency {
             name: "dep-lib".to_string(),
-            version: None,
             path: Some(dep_dir.to_string_lossy().to_string()),
+            ..Default::default()
         };
         let main_manifest = make_manifest("main-pkg", "src/main.crush", vec![dep]);
         main_manifest.write_to_dir(&main_dir).unwrap();

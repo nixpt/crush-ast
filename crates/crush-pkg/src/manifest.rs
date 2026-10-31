@@ -153,13 +153,60 @@ impl Default for RestartPolicy {
 // Dependency types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A `[[dependencies]]` row: exactly one of `path` (local directory) or
+/// `git` (+ exactly one of `tag` / `rev` / `branch`, CRUSH-351).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Dependency {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Git repository URL (anything `git clone` accepts, incl. `file://`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+impl Dependency {
+    /// Reject ambiguous sources: exactly one of `path` / `git`, and a git
+    /// dependency carries exactly one of `tag` / `rev` / `branch`.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let n = &self.name;
+        match (&self.path, &self.git) {
+            (Some(_), Some(_)) => anyhow::bail!(
+                "dependency '{n}': set either `path` or `git`, not both"
+            ),
+            // A bare `version` row is the legacy registry-style shape; the
+            // builder has never resolved it (it is skipped), so it stays legal.
+            (None, None) if self.version.is_some() => {}
+            (None, None) => anyhow::bail!(
+                "dependency '{n}': needs a source, either `path = \"...\"` or `git = \"...\"`"
+            ),
+            (Some(_), None) => {
+                if self.tag.is_some() || self.rev.is_some() || self.branch.is_some() {
+                    anyhow::bail!("dependency '{n}': `tag`/`rev`/`branch` only apply to a `git` dependency");
+                }
+            }
+            (None, Some(url)) => {
+                if url.trim().is_empty() {
+                    anyhow::bail!("dependency '{n}': `git` url is empty");
+                }
+                let refs = [&self.tag, &self.rev, &self.branch].iter().filter(|r| r.is_some()).count();
+                if refs != 1 {
+                    anyhow::bail!(
+                        "dependency '{n}': a git dependency needs exactly one of `tag`, `rev` or `branch` (found {refs})"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +546,9 @@ impl Manifest {
         }
         if self.capsule.entry.is_empty() {
             anyhow::bail!("capsule entry cannot be empty");
+        }
+        for dep in &self.dependencies {
+            dep.validate()?;
         }
         self.validate_catalogue()
     }

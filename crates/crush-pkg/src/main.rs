@@ -84,6 +84,14 @@ fn find_manifest() -> anyhow::Result<PathBuf> {
     }
 }
 
+/// `--offline` / `CRUSH_PKG_OFFLINE`: set once in `main`, read where a
+/// [`PackageBuilder`] is made (git dependencies, CRUSH-351).
+static OFFLINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn offline() -> bool {
+    OFFLINE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn load_manifest() -> anyhow::Result<(Manifest, PathBuf)> {
     let path = find_manifest()?;
     let manifest = Manifest::from_file(&path)?;
@@ -117,6 +125,10 @@ struct Cli {
     /// `crush-installer`.
     #[arg(long, global = true, value_name = "FORMAT")]
     message_format: Option<MessageFormat>,
+    /// Resolve git dependencies from capsule.lock and the local cache only;
+    /// never touch the network. (`CRUSH_PKG_OFFLINE=1` does the same.)
+    #[arg(long, global = true)]
+    offline: bool,
     /// Capability grants for the no-subcommand build-then-run flow
     #[command(flatten)]
     grants: GrantArgs,
@@ -467,6 +479,10 @@ fn emit_diag(
 
 fn main() {
     let cli = Cli::parse();
+    OFFLINE.store(
+        cli.offline || std::env::var_os("CRUSH_PKG_OFFLINE").is_some_and(|v| !v.is_empty() && v != "0"),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let json_mode = matches!(
         cli.message_format,
         Some(MessageFormat::Json) | Some(MessageFormat::Strict),
@@ -679,7 +695,7 @@ fn handle_build() -> anyhow::Result<()> {
         "building {} v{}",
         manifest.capsule.name, manifest.capsule.version
     );
-    let builder = PackageBuilder::new(manifest, root);
+    let builder = PackageBuilder::new(manifest, root).offline(offline());
     let output = builder.build()?;
     builder.write_output(&output)?;
     println!(
@@ -806,7 +822,7 @@ fn handle_check(json_mode: bool, strict_mode: bool) -> anyhow::Result<()> {
         "checking {} v{}",
         manifest.capsule.name, manifest.capsule.version
     );
-    let builder = PackageBuilder::new(manifest, root);
+    let builder = PackageBuilder::new(manifest, root).offline(offline());
     let report = builder.check()?;
     let manifest_text = std::fs::read_to_string(&manifest_path).unwrap_or_default();
     let errors = emit_cap_findings(
@@ -927,7 +943,7 @@ fn build_and_run(
     let version = manifest.capsule.version.clone();
     // The program's arguments ride in the runner's host caps (`sys.args()`).
     let runner = grants.runner(&manifest, &args);
-    let builder = PackageBuilder::new(manifest, root);
+    let builder = PackageBuilder::new(manifest, root).offline(offline());
     // No separate `check` pass: `build` compiles the whole package (entry +
     // path deps), which is the stronger check. `PackageBuilder::check`
     // compiles each file alone and so rejects an entry that calls a
