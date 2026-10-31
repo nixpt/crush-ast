@@ -16,6 +16,12 @@ use crush_cast::{ExternalResourceType, ImportStatement};
 use std::collections::HashMap;
 use crush_cast::ai as cast_ai;
 
+/// A bound separator in `[a:b:c]` slice syntax. `::` (an omitted bound) lexes
+/// as the Rust path separator token, `[1::2]` vs `[1:2]`.
+fn slice_colon(t: &Token) -> bool {
+    matches!(t, Token::Colon(_) | Token::DoubleColon(_))
+}
+
 /// Parser for Crush language with error recovery
 pub struct Parser {
     tokens: Vec<Token>,
@@ -1825,46 +1831,80 @@ impl Parser {
                     meta: self.make_meta(),
                 }
             } else if op == "[]" {
-                // Check for slice syntax: xs[start:end] or xs[start:] or xs[:end]
-                // First check if it's xs[:end] (no start expression)
-                if matches!(self.peek(), Token::Colon(_)) {
-                    self.advance(); // consume ':'
-                    let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
-                        Expression::NullLiteral { meta: self.make_meta() }
-                    } else {
-                        self.parse_expression()?
-                    };
+                // Slice syntax: xs[first:second:third] — any bound may be
+                // omitted, the step (third) is optional (`xs[:]`, `xs[::-1]`,
+                // `xs[::2]`, `xs[3::2]` all parse). An omitted middle bound
+                // lexes as a single `::` (Token::DoubleColon), the Rust path
+                // separator — so bound separators are Colon OR DoubleColon.
+                // Desugars to the registered `seq.slice` capability, whose
+                // `slice_indices` is the shared implementation for strings AND
+                // arrays on both VMs, mirrored by the AOT backends. (The
+                // earlier `arr_slice` desugar here only ever worked on arrays:
+                // slicing a string errored with "expected array, got str".)
+                if slice_colon(&self.peek()) {
+                    // xs[:…] — no start. Which separator was consumed decides
+                    // what follows: `::` (empty stop slot) → optional step;
+                    // `:` → optional stop, then an optional second separator
+                    // with the step (`[:stop:step]`, `[:stop::step]`).
+                    let double = matches!(self.peek(), Token::DoubleColon(_));
+                    self.advance(); // consume ':' or '::'
+                    let mut stop_expr = None;
+                    let mut step_expr = None;
+                    if double {
+                        // xs[::step]
+                        if !matches!(self.peek(), Token::RBracket(_)) {
+                            step_expr = Some(self.parse_expression()?);
+                        }
+                    } else if !matches!(self.peek(), Token::RBracket(_)) {
+                        // xs[:stop] or xs[:stop:step]
+                        stop_expr = Some(self.parse_expression()?);
+                        if slice_colon(&self.peek()) {
+                            self.advance();
+                            if !matches!(self.peek(), Token::RBracket(_)) {
+                                step_expr = Some(self.parse_expression()?);
+                            }
+                        }
+                    }
                     self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
 
+                    let null = || Expression::NullLiteral { meta: self.make_meta() };
                     Expression::CapabilityCall {
-                        name: "arr_slice".to_string(),
-                        args: vec![
-                            left,
-                            Expression::NullLiteral { meta: self.make_meta() },
-                            end_expr,
-                        ],
+                        name: "seq.slice".to_string(),
+                        args: vec![left, null(), stop_expr.unwrap_or_else(null), step_expr.unwrap_or_else(null)],
                         meta: self.make_meta(),
                     }
                 } else {
                     // Parse the start expression
                     let index = self.parse_expression()?;
-                    if matches!(self.peek(), Token::Colon(_)) {
-                        // xs[start:end] — slice with start and optional end
-                        self.advance(); // consume ':'
-                        let end_expr = if matches!(self.peek(), Token::RBracket(_)) {
-                            Expression::NullLiteral { meta: self.make_meta() }
-                        } else {
-                            self.parse_expression()?
-                        };
+                    if slice_colon(&self.peek()) {
+                        // xs[start:…] — `::` (empty stop slot) → optional
+                        // step; `:` → optional stop, then optional step via
+                        // a second separator (`[a:stop:step]`, `[a:stop::step]`).
+                        let double = matches!(self.peek(), Token::DoubleColon(_));
+                        self.advance(); // consume ':' or '::'
+                        let mut stop_expr = None;
+                        let mut step_expr = None;
+                        if double {
+                            // xs[start::step]
+                            if !matches!(self.peek(), Token::RBracket(_)) {
+                                step_expr = Some(self.parse_expression()?);
+                            }
+                        } else if !matches!(self.peek(), Token::RBracket(_)) {
+                            // xs[start:stop] or xs[start:stop:step]
+                            stop_expr = Some(self.parse_expression()?);
+                            if slice_colon(&self.peek()) {
+                                self.advance();
+                                if !matches!(self.peek(), Token::RBracket(_)) {
+                                    step_expr = Some(self.parse_expression()?);
+                                }
+                            }
+                        }
                         self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
 
+                        let null = || Expression::NullLiteral { meta: self.make_meta() };
                         Expression::CapabilityCall {
-                            name: "arr_slice".to_string(),
-                            args: vec![
-                                left,
-                                index,
-                                end_expr,
-                            ],
+                            name: "seq.slice".to_string(),
+                            args: vec![left, index, stop_expr.unwrap_or_else(null), step_expr.unwrap_or_else(null)],
                             meta: self.make_meta(),
                         }
                     } else {

@@ -1,0 +1,54 @@
+// caps: stdlib
+// Unicode conformance: s[i] per character, len() (bytes), ord/chr, iteration,
+// expect: idx: [héd]
+// expect: neg-idx: [dh]
+// expect: u: [日語🎉!]
+// expect: u-neg: [!日]
+// expect: ord-e: 233
+// expect: chr-e: [é]
+// expect: ord-jp: 26085
+// expect: chr-jp: [日]
+// expect: ord-emoji: 127881
+// expect: chr-emoji: [🎉]
+// expect: len-s: 13
+// expect: len-u: 14
+// expect: concat: [café日]
+// expect: eq: truetrue
+// expect: rebuilt: true
+// expect: sliced-chars: truetrue
+// expect: replace: [HELLO wörld]
+// expect: replace-emoji: [日本語*!]
+fn main() {
+    let s = "héllo wörld"          // 2-byte é / ö
+    print("idx: [" + s[0] + s[1] + s[10] + "]")
+    print("neg-idx: [" + s[-1] + s[-11] + "]")
+    let u = "日本語🎉!"           // 3-byte 日本語, 4-byte 🎉, 1-byte !
+    print("u: [" + u[0] + u[2] + u[3] + u[4] + "]")
+    print("u-neg: [" + u[-1] + u[0] + "]")
+    // ord / chr
+    print("ord-e: " + conv.ord("é"))       // 233
+    print("chr-e: [" + conv.chr(233) + "]")
+    print("ord-jp: " + conv.ord(u[0]))     // 日 U+65E5
+    print("chr-jp: [" + conv.chr(0x65E5) + "]")
+    print("ord-emoji: " + conv.ord(u[3]))  // 🎉 U+1F389 = 127881
+    print("chr-emoji: [" + conv.chr(127881) + "]")
+    // len(): pinned to BYTE length (CRUSH-114)
+    print("len-s: " + len(s))     // 11 chars, é+ö are 2B: 13
+    print("len-u: " + len(u))     // 5 chars but 3+3+3+4+1 = 14B
+    // concat & equality across scripts
+    print("concat: [" + "café" + u[0] + "]")
+    print("eq: " + (conv.chr(233) == "é") + (conv.chr(127881) == u[3]))
+    // iteration: rebuild u character-by-character via indexing
+    let i = 0
+    let rebuilt = ""
+    while i < 5 {
+        rebuilt = rebuilt + u[i]
+        i = i + 1
+    }
+    print("rebuilt: " + (rebuilt == u))
+    // char-cutting via seq.slice (bracket slices desugar to it on all engines)
+    print("sliced-chars: " + (u[0:1] == "日") + (u[3:4] == u[3]))
+    // str.replace with multibyte needles
+    print("replace: [" + str.replace(s, "héllo", "HELLO") + "]")
+    print("replace-emoji: [" + str.replace(u, u[3], "*") + "]")
+}

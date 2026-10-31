@@ -1,0 +1,24 @@
+// caps: stdlib
+// Unicode slice conformance: source bracket slices desugar to `seq.slice`
+// (char-based on strings AND arrays, negative bounds, optional step), so the
+// two-byte `é`/`ö`, three-byte `日` and four-byte `🎉` scalars never split —
+// identical output on PortableVm, FastVM, JIT and both AOT backends (the
+// parser used to desugar `[a:b]` to the array-only `arr_slice`, which errored
+// on strings everywhere).
+// expect: héllo
+// expect: wörld
+// expect: !🎉語本日
+// expect: 日語!
+// expect: hé
+// expect: [100, 102]
+fn main() {
+    let s = "héllo wörld"       // é / ö are 2 bytes each in UTF-8
+    let u = "日本語🎉!"           // 3/4-byte scalars
+    print(s[0:5])
+    print(s[-5:])
+    print(u[::-1])
+    print(u[::2])
+    print(s[:2])
+    let xs = [100, 101, 102]
+    print(xs[0:3:2])
+}

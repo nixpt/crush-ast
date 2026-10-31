@@ -1209,6 +1209,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // the fixture lexes the literal "3.14"
     fn test_lex_float() {
         let mut lexer = Lexer::new("3.14");
         assert_eq!(

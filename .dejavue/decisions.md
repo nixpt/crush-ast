@@ -1329,6 +1329,16 @@ Reason:
 task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
 
 
+## 2026-10-30T21:26:43-05:00 — Unicode string semantics are engine-wide: chars for s[i], byte-length for len()
+
+Reason:
+Live-verified 2026-10-30 (unicode-support survey, worktree agent/nixp/unicode-support): s[i]/s[-i] is char-based on PortableVM, scheduler, FastVM, JIT, AOT-Rust and the C runtime's _str_char_at (2/3/4-byte scalars round-trip identically); len() stays pinned to BYTE length via str_len (CRUSH-114) — '日本語🎉!' = 14. Someone fixing 'len can't be right' must NOT unify these two ops.
+
+
+## 2026-10-30T21:42:10-05:00 — Source bracket slices [a:b:c] desugar to seq.slice, not arr_slice
+
+Reason:
+Fix (worktree agent/nixp/unicode-support): arr_slice is arrays-only by contract; seq.slice is the ONE char-based strings-and-arrays implementation mirrored by both AOT backends (_seq_slice/seq_slice). New rule for anyone extending slice-like syntax or porting a walker: bracket slice syntax -> seq.slice (4 args: target,start,stop,step, null=from-edge); arr_slice stays the method-call-compat cap. Gotcha: omitted bounds lex as ONE DoubleColon token (Rust path '::') — treat DoubleColon as a bound separator in [ ], never as two Colons.
 ## 2026-10-30T21:14:22-05:00 — [ARCHITECTURAL] tree-sitter-crush is a published grammar with no in-repo consumer; it must be checked by cargo test, not only by the tree-sitter CLI (CRUSH-207)
 
 Reason:
