@@ -363,23 +363,56 @@ impl Lexer {
 
         let mut value = String::new();
         let mut is_float = false;
+        let mut has_exponent = false;
 
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
                 value.push(ch);
                 self.advance();
             } else if ch == '.' && !is_float {
-                if let Some(next) = self.peek_ahead(1) {
-                    if next.is_ascii_digit() {
+                match self.peek_ahead(1) {
+                    Some(next) if next.is_ascii_digit() => {
                         is_float = true;
                         value.push(ch);
+                        self.advance();
+                    }
+                    // CRUSH-221: `1.e5` is not a float (a fraction needs
+                    // digits after the `.`, as `1.` never was one). Say so,
+                    // rather than lexing `1 . e5` and failing later with a
+                    // field-access error.
+                    Some('e' | 'E') if self.exponent_at(1) => {
+                        value.push(ch);
+                        self.advance();
+                        return Err(self.malformed_number(value, start_line, start_col));
+                    }
+                    _ => break,
+                }
+            } else if (ch == 'e' || ch == 'E') && !has_exponent && self.exponent_at(0) {
+                // CRUSH-221: a decimal exponent, `e`/`E`, an optional sign,
+                // then at least one digit, on an int or fraction mantissa.
+                has_exponent = true;
+                is_float = true;
+                value.push(ch);
+                self.advance();
+                if let Some(sign @ ('+' | '-')) = self.peek() {
+                    value.push(sign);
+                    self.advance();
+                }
+                while let Some(digit) = self.peek() {
+                    if digit.is_ascii_digit() {
+                        value.push(digit);
                         self.advance();
                     } else {
                         break;
                     }
-                } else {
-                    break;
                 }
+            } else if ch == 'e' || ch == 'E' {
+                // An `e` glued to digits that does not complete an exponent
+                // (`1e`, `1e+`, `1.5e`, `1ex`, `1e5e5`) is malformed. It is
+                // not an identifier after a number, so it is not split off.
+                value.push(ch);
+                self.advance();
+                return Err(self.malformed_number(value, start_line, start_col));
             } else {
                 break;
             }
@@ -416,6 +449,35 @@ impl Lexer {
                 }),
             }
         }
+    }
+
+    /// Whether the character `e_offset` ahead is an `e`/`E` that begins a
+    /// complete decimal exponent: an optional `+`/`-`, then at least one digit.
+    fn exponent_at(&self, e_offset: usize) -> bool {
+        if !matches!(self.peek_ahead(e_offset), Some('e' | 'E')) {
+            return false;
+        }
+        match (self.peek_ahead(e_offset + 1), self.peek_ahead(e_offset + 2)) {
+            (Some('+' | '-'), Some(digit)) => digit.is_ascii_digit(),
+            (Some(digit), _) => digit.is_ascii_digit(),
+            _ => false,
+        }
+    }
+
+    /// Build the `InvalidNumber` error for a malformed literal. `value` holds
+    /// the literal so far; the rest of the word is appended so the diagnostic
+    /// names all of it (`1ex`, `1.e+5`).
+    fn malformed_number(&mut self, mut value: String, line: usize, col: usize) -> ParseError {
+        while let Some(c) = self.peek() {
+            let after_e = matches!(value.chars().last(), Some('e' | 'E'));
+            if c.is_alphanumeric() || c == '_' || (after_e && (c == '+' || c == '-')) {
+                value.push(c);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        ParseError::InvalidNumber { line, col, value }
     }
 
     /// Read a hex (0x) or binary (0b) integer literal. The `0x`/`0b` prefix
@@ -1216,6 +1278,75 @@ mod tests {
             lexer.next_token().unwrap(),
             Token::Float(3.14, SourceLocation { line: 1, col: 1 })
         );
+    }
+
+    #[test]
+    fn test_lex_float_with_exponent() {
+        // CRUSH-221: `[0-9]+(\.[0-9]+)?[eE][+-]?[0-9]+` lexes as one Float.
+        let cases: &[(&str, f64)] = &[
+            ("1e10", 1e10),
+            ("1E10", 1e10),
+            ("1.5e10", 1.5e10),
+            ("1.5E10", 1.5e10),
+            ("1e-7", 1e-7),
+            ("1E-7", 1e-7),
+            ("2.5e+3", 2.5e3),
+            ("2.5E+3", 2.5e3),
+            ("0e0", 0.0),
+        ];
+        for (source, expected) in cases {
+            let mut lexer = Lexer::new(source);
+            match lexer.next_token().unwrap() {
+                Token::Float(value, SourceLocation { line: 1, col: 1 }) => {
+                    assert_eq!(value, *expected, "lexing `{source}`");
+                }
+                other => panic!("expected Float for `{source}`, got {other:?}"),
+            }
+            assert!(
+                matches!(lexer.next_token().unwrap(), Token::EOF(_)),
+                "the rest of `{source}` should be EOF"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lex_malformed_exponent_is_a_lexer_error() {
+        // An `e`/`E` glued to digits must start a complete exponent. Anything
+        // else is an InvalidNumber naming the whole literal, not a silent
+        // `Int Ident` split.
+        for source in [
+            "1e", "1e+", "1E-", "1ex", "3e", "1.5e", "1.5e+", "1e5e5", "1.e5", "1.e+5",
+        ] {
+            let mut lexer = Lexer::new(source);
+            match lexer.next_token() {
+                Err(ParseError::InvalidNumber {
+                    line: 1,
+                    col: 1,
+                    value,
+                }) => {
+                    assert_eq!(value, source, "diagnostic for `{source}`");
+                }
+                other => panic!("expected InvalidNumber for `{source}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_lex_dot_without_exponent_is_unchanged() {
+        // `e` after a dot that is not an exponent is still field access, so
+        // these keep the pre-CRUSH-221 token stream.
+        let mut lexer = Lexer::new("1.e");
+        assert!(matches!(lexer.next_token().unwrap(), Token::Int(1, _)));
+        assert!(matches!(lexer.next_token().unwrap(), Token::Dot(_)));
+        assert!(matches!(lexer.next_token().unwrap(), Token::Ident(..)));
+        let mut lexer = Lexer::new("1.foo");
+        assert!(matches!(lexer.next_token().unwrap(), Token::Int(1, _)));
+        assert!(matches!(lexer.next_token().unwrap(), Token::Dot(_)));
+        assert!(matches!(lexer.next_token().unwrap(), Token::Ident(..)));
+        // `.5` never was a float literal and still is not.
+        let mut lexer = Lexer::new(".5");
+        assert!(matches!(lexer.next_token().unwrap(), Token::Dot(_)));
+        assert!(matches!(lexer.next_token().unwrap(), Token::Int(5, _)));
     }
 
     #[test]
