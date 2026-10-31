@@ -4,8 +4,14 @@
       "name": "crush",
       "path": ".",
       "scope": "source.crush",
-      "file-types": ["crush"],
-      "injection-regex": "^crush$"
+      "file-types": [
+        "crush"
+      ],
+      "injection-regex": "^crush$",
+      "highlights": "queries/highlights.scm",
+      "indents": "queries/indents.scm",
+      "locals": "queries/locals.scm",
+      "injections": "queries/injections.scm"
     }
   ],
   "metadata": {

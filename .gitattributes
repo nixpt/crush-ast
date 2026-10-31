@@ -15,3 +15,12 @@
 # (capture-on-discovery), so it conflicts on exactly the same pattern as the
 # dejavue logs — but was never covered. Added 2026-07-24 after it conflicted
 # on two separate branches in a single cleanup pass.
+
+# Crush file formats (CRUSH-366). Compiled/binary artifacts: no text diffs, and
+# not source for GitHub's language statistics.
+*.cvm1    binary linguist-generated
+*.castb   binary linguist-generated
+*.casmb   binary linguist-generated
+*.cap     binary
+*.ecap    binary
+*.crush-pack binary

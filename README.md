@@ -56,6 +56,11 @@ crush update --version 0.9.0    # pin (the only way to downgrade)
 crush update --dir ~/opt/crush  # default: crush's own dir if crush-installer manages it, else ~/.crush/bin
 ```
 
+**File types and editors.** So file managers, `file(1)` and editors recognise `.crush`, `.cast.json`,
+`.casm`, `.cvm1`, `capsule.toml` and the rest: `crush-installer install --desktop-integration`
+(opt-in) registers the MIME types and `magic(5)` rules, and [`contrib/`](contrib/README.md) has
+Vim/Neovim, Helix, Emacs and Zed support plus the tree-sitter queries.
+
 All crates are released together at the workspace version in `Cargo.toml`.
 
 | Command | What it does |
