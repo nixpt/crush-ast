@@ -670,14 +670,13 @@ impl PortableVm {
         let opcode = code[ip];
         let next_ip = ip + instruction_size(opcode).ok_or(VmError::UnknownOpcode(opcode, ip))?;
 
-        if opcode == crate::bytecode::CAP_CALL
-            && self.input.would_block()
-            && self.awaits_io_read(ip)
-        {
-            return Ok(Some(VmYield::HostCall {
-                capability: "io.read".to_string(),
-                args: Vec::new(),
-            }));
+        if opcode == crate::bytecode::CAP_CALL && self.input.would_block() {
+            if let Some(capability) = self.awaited_input_cap(ip) {
+                return Ok(Some(VmYield::HostCall {
+                    capability,
+                    args: Vec::new(),
+                }));
+            }
         }
 
         // Control-flow ops (CALL, RET, JMP/JZ/JNZ taken, THROW, AWAIT) set
@@ -2084,19 +2083,17 @@ impl PortableVm {
         Ok(())
     }
 
-    /// Whether the `CAP_CALL` at `ip` is a permitted `io.read`. A denied one
-    /// must not pause: it falls through so `dispatch_cap` reports the denial.
-    fn awaits_io_read(&self, ip: usize) -> bool {
-        let Some(idx) = self.program.code.get(ip + 1..ip + 3) else {
-            return false;
-        };
+    /// The line-reading capability (`io.read` or `io.read_line`) the
+    /// `CAP_CALL` at `ip` invokes, if it is permitted. A denied one must not
+    /// pause: it falls through so `dispatch_cap` reports the denial.
+    fn awaited_input_cap(&self, ip: usize) -> Option<String> {
+        let idx = self.program.code.get(ip + 1..ip + 3)?;
         let idx = u16::from_be_bytes([idx[0], idx[1]]) as usize;
-        self.program
-            .consts
-            .get(idx)
-            .is_some_and(|cap| cap == "io.read")
-            && self.declared_caps.contains("io.read")
-            && self.quotas.cap_allowed("io.read")
+        let cap = self.program.consts.get(idx)?;
+        (matches!(cap.as_str(), "io.read" | "io.read_line")
+            && self.declared_caps.contains(cap.as_str())
+            && self.quotas.cap_allowed(cap))
+        .then(|| cap.clone())
     }
 
     /// `parallel_map` without threads (wasm): the same share-nothing jobs as
@@ -2218,6 +2215,11 @@ impl PortableVm {
                     .input
                     .read_line()
                     .map(|line| Some(Value::Str(line)))
+                    .map_err(|error| VmError::Io(error.to_string())),
+                "io.read_line" => self
+                    .input
+                    .read_line_opt()
+                    .map(|line| Some(line.map_or(Value::Null, Value::Str)))
                     .map_err(|error| VmError::Io(error.to_string())),
                 "str.concat" => {
                     let s: String = args.iter().map(value_to_text).collect::<Vec<_>>().concat();
@@ -3339,6 +3341,45 @@ HALT"#;
         assert!(result.halted);
         // Second read ran past the supplied text: EOF is "".
         assert_eq!(result.output, "name?\nalice\n\n");
+    }
+
+    const READ_LINE_THRICE: &str = "CAP_CALL \"io.read_line\" 0\nCAP_CALL \"io.print\" 1\nCAP_CALL \"io.read_line\" 0\nCAP_CALL \"io.print\" 1\nCAP_CALL \"io.read_line\" 0\nCAP_CALL \"io.print\" 1\nHALT";
+
+    /// CRUSH-239: `io.read_line` returns "" for a blank line and null only at EOF.
+    #[test]
+    fn test_portable_io_read_line_blank_line_vs_eof() {
+        let program = assemble(
+            READ_LINE_THRICE,
+            Some(&["io.print", "io.read_line"]),
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        vm.set_input(crate::io_read::InputSource::supplied("\nx\n"));
+        let result = vm.run().unwrap();
+        assert!(result.halted);
+        assert_eq!(result.output, "\nx\nnull\n");
+    }
+
+    #[test]
+    fn test_portable_io_read_line_interactive_pauses_and_eofs_as_null() {
+        let program = assemble(
+            READ_LINE_THRICE,
+            Some(&["io.print", "io.read_line"]),
+            Some("test"),
+        )
+        .unwrap();
+        let mut vm = PortableVm::new(program);
+        vm.set_input(crate::io_read::InputSource::interactive());
+        let y = step_until_pause(&mut vm).unwrap();
+        assert!(
+            matches!(&y, Some(VmYield::HostCall { capability, .. }) if capability == "io.read_line"),
+            "expected an io.read_line pause, got {y:?}"
+        );
+        vm.provide_input("").unwrap();
+        vm.close_input();
+        assert!(step_until_pause(&mut vm).unwrap().is_none());
+        assert_eq!(vm.take_result().output, "\nnull\nnull\n");
     }
 
     #[test]

@@ -559,14 +559,22 @@ fn wrap_index(idx: i64, len: usize) -> Option<usize> {
 /// Read one line from stdin using the same LF/CRLF stripping and EOF-empty
 /// convention as `crush_vm::io_read`.
 fn io_read_line() -> String {
+    io_read_line_opt().unwrap_or_default()
+}
+
+/// `io.read_line`: as `io_read_line`, but `None` (-> null) at EOF, so a blank
+/// line and end of input differ (CRUSH-239).
+fn io_read_line_opt() -> Option<String> {
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
     let mut line = String::new();
-    let _ = std::io::BufRead::read_line(&mut reader, &mut line);
+    if std::io::BufRead::read_line(&mut reader, &mut line).unwrap_or(0) == 0 {
+        return None;
+    }
     while matches!(line.as_bytes().last(), Some(b'\n' | b'\r')) {
         line.pop();
     }
-    line
+    Some(line)
 }
 
 /// Single source of truth for the trailing newline that `io.print` must emit.
@@ -1126,6 +1134,10 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ stack.push(RuntimeValue::String(io_read_line())); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                "io.read_line" => {
+                    out.push_str(&format!("{ind}{{ stack.push(io_read_line_opt().map_or(RuntimeValue::Null, RuntimeValue::String)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "conv.chr" => {
                     out.push_str(&format!("{ind}{{ let v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_chr_value(v)); }}\n"));
                     out.push_str(&next_pc_str);
@@ -1330,6 +1342,15 @@ mod tests {
         let rust_src = gen_rust_source(&program);
         assert!(rust_src.contains("fn io_read_line()"));
         assert!(rust_src.contains("RuntimeValue::String(io_read_line())"));
+    }
+
+    #[test]
+    fn rust_aot_io_read_line_yields_null_at_eof() {
+        let source = "fn main() { let line = io.read_line(); return line; }";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let rust_src = gen_rust_source(&program);
+        assert!(rust_src.contains("fn io_read_line_opt()"));
+        assert!(rust_src.contains("io_read_line_opt().map_or(RuntimeValue::Null, RuntimeValue::String)"));
     }
 }
 "#);

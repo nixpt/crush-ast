@@ -54,7 +54,7 @@ What a Crush program can call, from the inside out:
 
 | Layer | Examples | Where | How it is enabled |
 |---|---|---|---|
-| **VM built-ins** | `io.print`, `io.read`, `str.len/concat/contains/split/join/replace`, `conv.chr/ord` | `crates/crush-vm/src/caps.rs` (registry), `scheduler.rs` `dispatch_cap` | always; `--cap` / manifest declaration only |
+| **VM built-ins** | `io.print`, `io.read` (`""` at EOF), `io.read_line` (`null` at EOF; CRUSH-239), `str.len/concat/contains/split/join/replace`, `conv.chr/ord` | `crates/crush-vm/src/caps.rs` (registry), `scheduler.rs` `dispatch_cap` | always; `--cap` / manifest declaration only |
 | **stdcaps** (pure) | `str.*`, `math.*` (incl. seeded RNG), `conv.*`, `json.*`, `regex.*`, `path.*`, `collections.*`, `bytes/buffer/binary`, `result.*`, `text.sort/uniq`, `time.format/parse`, `env.os/arch` | `crates/crush-lang-sdk/src/stdlib.rs`, `src/stdlib/` | `HostCapsBuilder::stdlib(true)` (feature `stdlib`) |
 | **SBL** | `system.*` | `src/sbl.rs`, `sbl/sbl_core.crush` | with the stdlib |
 | **corecaps** (I/O, granted) | `fs.*`, `text.head/tail/wc/cut/grep`, `time.now/sleep`, `env.get`, `net.*`, `process.*`, `crypto.*`, `polyglot.<lang>` | `src/host_caps.rs`, `src/text_tools.rs`, `src/net.rs`, crush-vm `host.rs` | a named grant each (`--fs`, `--time`, `--env`, `--net`, `--polyglot`, …) |

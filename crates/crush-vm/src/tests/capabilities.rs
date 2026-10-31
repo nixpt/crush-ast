@@ -160,3 +160,12 @@ fn map_is_truthy_only_when_non_empty() {
     m.insert("x".to_string(), Value::Int(1));
     assert!(Value::new_map(m).is_truthy());
 }
+
+#[test]
+fn cap_io_read_line_is_registered_as_zero_arg_capability() {
+    let spec = crate::capabilities()
+        .get("io.read_line")
+        .expect("io.read_line should be in the portable registry");
+    assert_eq!(spec.argc, Some(0));
+    assert!(spec.returns);
+}
