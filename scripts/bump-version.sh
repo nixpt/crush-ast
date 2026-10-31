@@ -325,25 +325,26 @@ if git remote get-url origin >/dev/null 2>&1; then
   git push origin "v${NEXT}"
   log "pushed ${MAIN_BRANCH} + v${NEXT} to origin"
   # A pushed tag is not a GitHub Release — the Releases page / `gh release
-  # list` only shows actual Release objects. Pre-1.0, stay tag-only on
-  # purpose (captain: "cut a release once it hits 1.0, don't need release
-  # for every tag, but tag is important" — matches checkstand's own state:
-  # 13 tags, zero Releases, by design). Once a repo crosses 1.0, every bump
-  # gets a real Release. Non-fatal: a missing `gh` or an already-existing
-  # release (re-run, race) must not fail the bump — the tag+push already
-  # succeeded and is the source of truth either way.
-  if [ "$MA" -ge 1 ] 2>/dev/null; then
-    if command -v gh >/dev/null 2>&1; then
-      if gh release create "v${NEXT}" --title "v${NEXT}" --generate-notes --target "${MAIN_BRANCH}"; then
-        log "created GitHub Release v${NEXT}"
-      else
-        log "gh release create failed (non-fatal) — tag+push already succeeded"
-      fi
+  # list` only shows actual Release objects. Policy (captain, 2026-10-31,
+  # CRUSH-342; supersedes the earlier "pre-1.0 stay tag-only, cut a release at
+  # 1.0" rule): every tag gets a GitHub Release. Pre-1.0 it is marked
+  # PRE-RELEASE and not "latest" (`--prerelease --latest=false`); from 1.0 it
+  # is a normal release. release.yml then dispatches artifacts.yml, which
+  # builds the tag's binaries + crush-web pkg and attaches them to this
+  # Release (creating it first if this step did not). Non-fatal: a missing
+  # `gh` or an already-existing release (re-run, race) must not fail the
+  # bump — the tag+push already succeeded and is the source of truth.
+  if command -v gh >/dev/null 2>&1; then
+    rel_flags="--prerelease --latest=false"
+    if [ "$MA" -ge 1 ] 2>/dev/null; then rel_flags=""; fi
+    # shellcheck disable=SC2086 # rel_flags is a deliberate word-split flag list
+    if gh release create "v${NEXT}" --title "v${NEXT}" --generate-notes --verify-tag ${rel_flags}; then
+      log "created GitHub Release v${NEXT} ${rel_flags:-(normal release, >= 1.0)}"
     else
-      log "gh CLI not available — tag pushed, no GitHub Release object created"
+      log "gh release create failed (non-fatal) — tag+push already succeeded"
     fi
   else
-    log "v${NEXT} is pre-1.0 — tag only, no GitHub Release (cut one by hand once this repo hits 1.0)"
+    log "gh CLI not available — tag pushed, no GitHub Release object created"
   fi
 else
   log "no 'origin' remote — commit+tag are local only."

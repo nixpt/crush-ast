@@ -90,6 +90,31 @@ conventional-commit prefixes since the last tag (`feat:` → minor,
 `fix:`/anything else → patch, `BREAKING CHANGE`/`!` → major). **Never
 hand-edit the version in `Cargo.toml`.**
 
+### Releases and prebuilt artifacts (CRUSH-342)
+
+Every `vX.Y.Z` tag gets a GitHub Release, marked **pre-release and not
+latest** while the repo is pre-1.0 (owner's decision, 2026-10-31; it becomes a
+normal release from 1.0). `bump-version` creates it; the `release` workflow
+then dispatches `release-artifacts` (`.github/workflows/artifacts.yml`), which
+builds *from the tag* and attaches:
+
+- `crush-<ver>-x86_64-unknown-linux-gnu.tar.gz` — `crush`, `crushc`, `crush-run`,
+  `crush-compile`, `crush-repl`, `crush-debug`, `crush-pkg` (what `crush-installer`
+  installs) in a top-level `crush-<ver>-x86_64-unknown-linux-gnu/` directory
+- `crush-web-<ver>-pkg.tar.gz` — the browser build of `crates/crush-web`
+  (`wasm-bindgen --target web`, features `polyglot-javascript` + `polyglot-python`)
+- `SHA256SUMS`
+
+`cargo binstall crush-lang-sdk` (or `crush-pkg`) downloads the first one via
+`[package.metadata.binstall]`; if you rename the asset, change both.
+
+Backfill or rebuild a tag (idempotent — assets are replaced):
+`gh workflow run artifacts.yml --ref main -f tag=v0.8.0`.
+
+On pull requests CI only runs `cargo check --release` for the release package
+set; the full release build runs on pushes to `main`, and artifacts come from
+the tag build above.
+
 ## Opening a PR
 
 - PRs land on `main` via a worktree, not a long-lived integration branch —

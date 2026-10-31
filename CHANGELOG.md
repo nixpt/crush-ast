@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Every tag now has a GitHub pre-release with prebuilt artifacts (CRUSH-342):**
+  `release.yml` dispatches the new `artifacts.yml`, which builds the tag and
+  attaches `crush-<ver>-x86_64-unknown-linux-gnu.tar.gz` (the CLIs),
+  `crush-web-<ver>-pkg.tar.gz` (browser wasm package) and `SHA256SUMS`;
+  `cargo binstall crush-lang-sdk` / `crush-pkg` use it. Pre-1.0 releases are
+  marked pre-release and not latest. PR CI runs `cargo check --release` instead
+  of the full release build (which still runs on `main`).
+
 - **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
   (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
   `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run

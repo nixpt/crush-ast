@@ -1356,3 +1356,18 @@ JsLowering::for_ext mapped every unrecognised extension to plain JS, so a .ts fi
 Reason:
 CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
 
+
+## 2026-10-30T22:42:31-05:00 — Release per tag as pre-release with artifacts via workflow_dispatch; PR CI release job is check-only
+
+Reason:
+Tags had no Releases so built artifacts were discarded and re-compiled by consumers. Tags pushed with GITHUB_TOKEN start no push-tag workflows, so release.yml dispatches artifacts.yml (workflow_dispatch is allowed from GITHUB_TOKEN); the same input backfills old tags. Source is checked out at the tag, never main. Owner decision 2026-10-31.
+
+Artifacts: .github/workflows/artifacts.yml
+
+Rejected alternatives:
+- **on:push:tags trigger (never fires for GITHUB_TOKEN-pushed tags)**
+- **build inside release.yml (not re-runnable/backfillable per tag)**
+
+Outcome:
+artifacts.yml + binstall metadata; ci.yml release build on PR becomes cargo check --release
+
