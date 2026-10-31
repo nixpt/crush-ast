@@ -7,9 +7,6 @@ use tree_sitter::{Node, Tree};
 pub mod sdk;
 use crush_walker_core::{BaseWalker, Walker};
 
-#[cfg(test)]
-#[path = "sdk.rs"]
-mod sdk_tests;
 
 pub struct CWalker {
     pub file_name: String,

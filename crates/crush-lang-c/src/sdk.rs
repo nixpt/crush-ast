@@ -153,7 +153,9 @@ mod tests {
     /// End-to-end: walk a C program calling __crush_ffi__ through the full pipeline.
     #[test]
     fn test_c_ffi_full_pipeline() {
-        let out_dir = std::env::temp_dir().join("crush-lang-c-ffi-test");
+        // One directory per test process: a shared fixed path let a second copy of this
+        // test (sdk.rs used to be compiled twice) rewrite the .so while this one loaded it.
+        let out_dir = std::env::temp_dir().join(format!("crush-lang-c-ffi-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&out_dir);
         let so_path = out_dir.join("example_c_plugin.so");
         let plugin_src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
