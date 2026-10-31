@@ -127,6 +127,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // "3.14" must parse to the literal
     fn test_parse_float() {
         assert_eq!(parse_runtime_value("3.14").unwrap(), crush_vm::RuntimeValue::Float(3.14));
     }

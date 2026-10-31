@@ -19,6 +19,7 @@ fn test_aot_int_return() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)] // the fixture returns the literal "3.14"
 fn test_aot_float_return() {
     let compiler = AotCompiler::new();
     let so_path = compiler
