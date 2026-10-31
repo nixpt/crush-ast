@@ -79,14 +79,25 @@
   (setq-local indent-tabs-mode nil))
 
 ;;;###autoload
+(defvar crush-asm-mode-syntax-table
+  (let ((st (make-syntax-table)))
+    ;; `;` and `#` start line comments in CVM1 assembly (assembler.rs)
+    (modify-syntax-entry ?\; "<" st)
+    (modify-syntax-entry ?# "<" st)
+    (modify-syntax-entry ?\n ">" st)
+    (modify-syntax-entry ?\" "\"" st)
+    (modify-syntax-entry ?_ "_" st)
+    st))
+
 (define-derived-mode crush-asm-mode prog-mode "Crush-ASM"
   "Major mode for CVM1 assembly (.cvms)."
+  :syntax-table crush-asm-mode-syntax-table
   (setq-local font-lock-defaults
               '((("^\\.func\\>\\s *\\(\\S-+\\)" 1 font-lock-function-name-face)
                  ("^\\.[a-z]+" . font-lock-keyword-face)
                  ("^\\s *\\([A-Z][A-Z0-9_]*\\)\\>" 1 font-lock-builtin-face)
-                 ("\\<L[0-9]+:?" . font-lock-constant-face))))
-  (setq-local comment-start "// ")
+                 ("^\\([A-Za-z_][A-Za-z0-9_]*\\):" 1 font-lock-constant-face))))
+  (setq-local comment-start "; ")
   (setq-local indent-tabs-mode nil))
 
 ;;; tree-sitter (Emacs 29+) ---------------------------------------------------

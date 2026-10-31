@@ -1,7 +1,7 @@
 # Editor support
 
 All text-editor kits use the grammar in `crates/tree-sitter-crush` and its `queries/`.
-Defaults everywhere: **4 spaces** (matches the polish formatter), `//` line comments (the lexer
+Defaults everywhere (for `.cvms` assembly the comment characters are `;` and `#`): **4 spaces** (matches the polish formatter), `//` line comments (the lexer
 also accepts `#`), `/* … */` block comments.
 
 | Editor | Files | Covers |
