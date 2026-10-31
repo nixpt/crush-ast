@@ -70,7 +70,7 @@ Windows registry associations are not provided yet.
 
 Crush is **not** a Linguist language and this repository does not pretend it is. Linguist
 ([contributing guide](https://github.com/github-linguist/linguist/blob/main/CONTRIBUTING.md))
-requires a language to have a unique, in-use extension with at least **use in at least 200 distinct public
+requires a language to have a unique, in-use extension and **use in at least 200 distinct public
 repositories** (and a TextMate/tree-sitter grammar under a compatible licence, plus samples) before
 it will be added. When the ecosystem reaches that, the PR needs: `lib/linguist/languages.yml`
 entry (`.crush`, `tm_scope: source.crush`), the grammar from
