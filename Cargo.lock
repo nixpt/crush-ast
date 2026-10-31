@@ -1282,6 +1282,7 @@ dependencies = [
  "crush-caison",
  "crush-cast",
  "crush-cosm",
+ "crush-diagnostics",
  "crush-errors",
  "crush-frontend",
  "crush-index",
