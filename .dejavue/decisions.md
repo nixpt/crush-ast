@@ -1300,3 +1300,9 @@ FastVM's compare_op was arena-blind: it fell through to _ => false for every non
 Reason:
 The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
 
+
+## 2026-10-30T18:52:17-05:00 — [ARCHITECTURAL] A walker never silently drops: unsupported statements/expressions are loud errors (CRUSH-198)
+
+Reason:
+The Go walker matched tree-sitter-go's node `short_variable_declaration`, which does not exist (it is `short_var_declaration`), so `a := 7` fell through the `_ => Ok(None)` catch-all and `a` read as uninitialised; var/assignment/inc/for/block were dropped the same way, and unknown expressions became NullLiteral. Fix: visit_statement -> visit_statements returning Vec (one node can yield several statements, e.g. a C-style for -> init + while), implement var/assignment/inc/dec/for(all shapes)/block, and make the catch-all a loud error. The same rule as the rest of the repo: exact or loud, never silently wrong. A multi-value return and unknown expressions also error now. Known divergence left as a follow-up: fmt.Println(a, b) maps to io.print which concatenates, while Go joins with spaces.
+
