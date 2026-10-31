@@ -14,6 +14,21 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
+  (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
+  `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run
+  --tcp` grants outbound client sockets (`tcp.connect`, `tcp.tls_wrap`,
+  `tcp.send`/`recv`/`close`/`ping`); `crush-run --tcp-listen` is a separate,
+  stronger grant for being a server (`tcp.listen`, `tcp.accept`, plus
+  send/recv/close/ping on the connections they return, but not `tcp.connect`).
+  `--net` stays HTTP-client-only and grants neither. The caps were renamed
+  from `net.*` to `tcp.*` so the `net` family can never cover them, and
+  `crush-net` now depends on `crush-vm` instead of `crush-lang-sdk` (the old
+  edge was a cycle). Also fixed in `crush-net`: `tcp.send`/`recv`/`close` did
+  not work on a `tcp.tls_wrap`ped connection, `tls_wrap` could hand out an id
+  that collided with a later plain connection, and `tcp.accept` held the
+  shared state lock while blocking.
+
 - **JS/TS dialect handling: unknown extensions are refused, `cts` is TypeScript
   (CRUSH-zorro-8):** `JsLowering::for_ext` treated every unrecognised extension
   as plain JS, so a `.ts` file reached as `.tmp` (or a typo like `typescript`)

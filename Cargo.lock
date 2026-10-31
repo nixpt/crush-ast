@@ -1290,6 +1290,7 @@ dependencies = [
  "crush-lang-js",
  "crush-lang-python",
  "crush-lang-rust",
+ "crush-net",
  "crush-ptx",
  "crush-vm",
  "crush-walker-core",
@@ -1385,7 +1386,7 @@ dependencies = [
 name = "crush-net"
 version = "0.8.0"
 dependencies = [
- "crush-lang-sdk",
+ "crush-vm",
  "rcgen",
  "rustls",
  "serde",

@@ -8,7 +8,7 @@
 //!   * A `std::net::TcpListener` accepts on 127.0.0.1:0; an acceptor thread drives a
 //!     `rustls::ServerConnection` handshake over the accepted socket, reads a 4-byte
 //!     "ping", writes a 4-byte "pong", then drops.
-//!   * The main thread builds a `NetState`, constructs `NetTlsWrapCap` via
+//!   * The main thread builds a `NetState`, constructs `TcpTlsWrapCap` via
 //!     `with_extra_roots(state.clone(), vec![self_signed_der])` so the client's
 //!     `RootCertStore` includes the test cert as an extra trust anchor, calls
 //!     `HostCap::call(&args)`, asserts the wrap returned a fresh `ConnId` AND that
@@ -25,16 +25,16 @@ use std::{
     time::Duration,
 };
 
-use crush_lang_sdk::{HostCap, Value};
-use crush_net::caps::{NetState, NetTlsWrapCap};
+use crush_net::caps::{NetState, TcpTlsWrapCap};
+use crush_vm::HostCap;
+use crush_vm::vm::Value;
 
 #[test]
 fn net_tls_wrap_performs_handshake_and_probe() {
     // ---- server-side: mint self-signed cert, accept, handshake, send probe ----
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let cert_der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
-    let key_der =
-        rustls::pki_types::PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
+    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
 
     // Clone for the test-side trust anchor (server uses it via with_single_cert).
     let cert_der_for_store = cert_der.clone();
@@ -52,8 +52,7 @@ fn net_tls_wrap_performs_handshake_and_probe() {
             .with_no_client_auth()
             .with_single_cert(vec![cert_der], key_der)
             .expect("server config");
-        let conn = rustls::ServerConnection::new(std::sync::Arc::new(cfg))
-            .expect("server conn");
+        let conn = rustls::ServerConnection::new(std::sync::Arc::new(cfg)).expect("server conn");
         let mut owned = rustls::StreamOwned::new(conn, sock);
         // Drive TLS handshake to completion.
         while owned.conn.is_handshaking() {
@@ -80,13 +79,13 @@ fn net_tls_wrap_performs_handshake_and_probe() {
         transport,
         conns: [(pre_id, Arc::new(Mutex::new(conn)))].into_iter().collect(),
         listeners: Default::default(),
-        next_id: pre_id,
+        next_id: pre_id + 1, // next free id (NetState::next post-increments)
         #[cfg(feature = "tls")]
         tls_client_conns: Default::default(),
     }));
 
     // ---- construct cap WITH the test cert as an extra trust anchor ----
-    let cap = NetTlsWrapCap::with_extra_roots(state.clone(), vec![cert_der_for_store]);
+    let cap = TcpTlsWrapCap::with_extra_roots(state.clone(), vec![cert_der_for_store]);
     let result = cap.call(vec![
         Value::Int(pre_id),
         Value::Str("localhost".to_string()),
@@ -95,15 +94,21 @@ fn net_tls_wrap_performs_handshake_and_probe() {
     let new_id = match result {
         Ok(Some(Value::Int(id))) => id,
         Ok(Some(other)) => panic!("expected Value::Int, got {other:?}"),
-        Ok(None) => panic!("net.tls_wrap returned None — should be Some(Int)"),
-        Err(e) => panic!("net.tls_wrap errored: {e}"),
+        Ok(None) => panic!("tcp.tls_wrap returned None — should be Some(Int)"),
+        Err(e) => panic!("tcp.tls_wrap errored: {e}"),
     };
 
     assert_ne!(new_id, pre_id, "tls_wrap must return a fresh ConnId");
 
     let gs = state.lock().unwrap();
-    assert!(!gs.conns.contains_key(&pre_id), "after wrap, original conn-id {pre_id} must NOT be in state.conns");
-    assert!(gs.tls_client_conns.contains_key(&new_id), "tls_client_conns must contain the new conn-id {new_id}");
+    assert!(
+        !gs.conns.contains_key(&pre_id),
+        "after wrap, original conn-id {pre_id} must NOT be in state.conns"
+    );
+    assert!(
+        gs.tls_client_conns.contains_key(&new_id),
+        "tls_client_conns must contain the new conn-id {new_id}"
+    );
 
     // Drive the application-layer ping/pong round-trip OUTSIDE the cap.
     // Order matters: do the ping/pong exchange first; join the server thread after,
