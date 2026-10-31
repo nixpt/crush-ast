@@ -13,7 +13,7 @@ tls = ["dep:rustls", "dep:webpki-roots"]
 default = ["tls"]
 
 [dependencies]
-crush-vm = { path = "../crush-vm", version = "0.9.0", default-features = false }
+crush-vm = { path = "../crush-vm", version = "0.10.0", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

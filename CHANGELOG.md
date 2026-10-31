@@ -14,6 +14,55 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-31
+
+- Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots
+- feat(crush-pkg): PackageBuilder::resolve, dependencies without a compile
+- feat(crush-pkg): PackageBuilder::quiet and write_output_to for front ends
+- feat(crush-pkg): import through the package, standard layout scaffolds (CRUSH-367)
+- Merge pull request #374 from nixpt/agent/satya/CRUSH-365
+- Merge remote-tracking branch 'origin/main' into agent/satya/CRUSH-365
+- Merge pull request #373 from nixpt/agent/nova/CRUSH-filetypes
+- Merge pull request #366 from nixpt/agent/satya/CRUSH-110
+- docs(dejavue): record the one-extension-per-format decision (#365)
+- docs(formats): link the exo-light golden.casm rename (nixpt/exo-light#12)
+- Merge remote-tracking branch 'origin/main' into agent/satya/CRUSH-110
+- Merge pull request #364 from nixpt/agent/nova/CRUSH-351
+- Merge pull request #361 from nixpt/agent/nova/CRUSH-348-350
+- Merge pull request #360 from nixpt/agent/nixp/tickets-345-347
+- docs(changelog): file-format unification and migration notes (#365)
+- feat(formats): docs/FILE-FORMATS.md and deterministic CVM1 output
+- feat(formats): one rule for CLI inputs and outputs; CAST usable from the CLIs
+- feat(formats): crush-pkg build writes .cvm1 and real CASM JSON .casm
+- fix(contrib): .cvms comments are ; and #, not // (CRUSH-366)
+- docs(contrib): fix Linguist sentence (CRUSH-366)
+- docs(contrib): tighten the Linguist note (CRUSH-366)
+- feat(installer): opt-in --desktop-integration for MIME + magic; editor kits, docs (CRUSH-366)
+- feat(contrib): MIME package, magic rules and tree-sitter queries for Crush file types (CRUSH-366)
+- feat(formats): CVM1 assembly carries its capabilities as .cap lines
+- feat(formats): one CAST_VERSION (0.1.0) written by every producer
+- Merge remote-tracking branch 'origin/agent/nova/CRUSH-351' into agent/satya/CRUSH-365
+- feat(crush-pkg): `new --cli` pins facet v0.2.0
+- docs: import system as implemented; CRUSH-110 in review
+- test(sdk): two-file import tests through the binaries (CRUSH-110)
+- feat(sdk): -L / CRUSH_PATH import search path on the CLIs (CRUSH-110)
+- feat(frontend): resolve Crush imports at compile time (CRUSH-110)
+- feat(crush-pkg): crush-pkg new --cli scaffolds a facet command-line program
+- feat(crush-pkg): git dependencies in capsule.toml with a capsule.lock and a local cache
+- docs(changelog): crush-pkg run / sys.exit / dep lint fixes (CRUSH-348/349/350)
+- fix(crush-pkg): run builds path deps, sys.exit sets the exit status, dep lint counts called functions
+- docs(planning): fix the 345/347/348 repros, mint CRUSH-350
+- docs(planning): mint CRUSH-348/349 (crush-pkg runner integration from the facet path-dep test)
+- docs(planning): mint CRUSH-345/346/347 (Crush language captures from facet)
+- Merge pull request #356 from nixpt/agent/satya/CRUSH-344
+- Merge pull request #357 from nixpt/agent/vega/c-ffi-test-race
+- fix(crush-lang-c): stop compiling sdk.rs twice in tests (FFI test race)
+- feat(crush-installer): crush update self-updater from GitHub release binaries (CRUSH-344)
+- Merge pull request #355 from nixpt/agent/vega/artifacts-crush-web-lock
+- fix(release): refresh crush-web's lock before its --locked wasm build
+
+
+
 - `crush-pkg` imports through the package (CRUSH-367). A package whose entry has a top-level
   `import` builds in **import mode**: `src/` is a search root and each dependency (path or git),
   plus the package itself, is importable by its name (`import facet { facet_run }` loads facet's
