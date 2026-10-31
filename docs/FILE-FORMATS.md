@@ -42,7 +42,7 @@ quota tripped.
 | Name | Was | Now |
 |---|---|---|
 | `.casm.json` | CASM JSON (and crush-pkg's unloadable summary dump) | `.casm` |
-| a `.casm` whose first non-blank byte isn't `{` | CVM1 assembly text (`crushc --emit casm` before #365) | `.cvms` |
+| a `.casm` whose first non-blank byte isn't `{` | CVM1 assembly text (`crushc --emit casm` before #365; exo-light's `examples/golden.casm`, nixpt/exo-light#12) | `.cvms` |
 
 The note is printed in text mode only; `--message-format json` keeps stderr pure NDJSON.
 
