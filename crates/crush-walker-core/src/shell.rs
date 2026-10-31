@@ -3475,7 +3475,7 @@ fn helper_fn(name: &str) -> Function {
         // decimal sits exactly on a rounding tie and is not representable in
         // binary (`2.675` with `%.2f`, which bash prints as `2.67`), this
         // rounds the number as written (`2.68`). Exact `double` behaviour needs
-        // strtod plus exact binary→decimal conversion; see CRUSH-294.
+        // strtod plus exact binary→decimal conversion; see CRUSH-310.
         "__sh_fparse" => func(
             &["v", "at"],
             vec![
