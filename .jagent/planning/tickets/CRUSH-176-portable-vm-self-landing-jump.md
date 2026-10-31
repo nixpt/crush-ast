@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-176 |
 | **Priority** | P1 |
-| **Status** | Done (PR pending merge) |
+| **Status** | Done — PR #101 merged 2026-10-08 |
 | **Phase** | M1 (correctness spine) |
 | **Assignee** | nimbus-c |
 | **Dependencies** | none |
@@ -61,3 +61,7 @@ change.
 - `crush-diff examples/crush/*.crush`: 43 files, 33 agree, 0 diverged,
   10 don't compile (pre-existing).
 - Commit: `d917985`; PR crush-ast#101.
+
+## Survey 2026-10-31 (status)
+
+PR #101 (`agent/nimbus-c/CRUSH-176`) merged 2026-10-08. Previous status: `Done (PR pending merge)`.

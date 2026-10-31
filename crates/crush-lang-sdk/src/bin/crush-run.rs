@@ -22,6 +22,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use crush_lang_sdk::theme::{JsonDiagnostic, JsonDiagnosticExt as _};
 use crush_lang_sdk::{HostCapsBuilder, MessageFormat, Runtime};
 use crush_vm::{Quotas, VmResult};
 
@@ -189,22 +190,31 @@ fn main() {
                         eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, label));
                     }
                     MessageFormat::Json => {
-                        // Map a typed `RuntimeError` to a structured
-                        // diagnostic with a distinct stable code per
-                        // variant. Fall back to a generic I/O code for
-                        // non-RuntimeError arms (load failures, compile
-                        // failures, etc.).
-                        let diag = if let Some(runtime_err) =
-                            e.downcast_ref::<crush_lang_sdk::RuntimeError>()
-                        {
-                            crush_lang_sdk::theme::JsonDiagnostic::runtime_error(runtime_err)
+                        // The same records `crushc` emits for the same input
+                        // (CRUSH-315): syntax errors -> E-PP0n with position,
+                        // semantic errors -> E-TP01 with position, a run that
+                        // fails -> E-RT0n with the error text in `message`, a
+                        // refused capability -> E-CAPS. The program's path is
+                        // attached to every record.
+                        let file = args.path.display().to_string();
+                        let diags = if let Some(refused) = e.downcast_ref::<NotGranted>() {
+                            vec![
+                                JsonDiagnostic::error(JsonDiagnostic::CODE_CAPS, &refused.message)
+                                    .with_hint(&refused.hint)
+                                    .in_file(Some(&file)),
+                            ]
                         } else {
-                            crush_lang_sdk::theme::JsonDiagnostic::generic_error(
-                                &e.to_string(),
-                                crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                            let cause = e.downcast_ref::<CompileFailed>().map_or(&e, |c| &c.0);
+                            crush_lang_sdk::theme::diagnostics_for_error(
+                                cause,
+                                Some(&file),
+                                JsonDiagnostic::CODE_IO,
                             )
                         };
-                        eprint!("{}\n", diag.to_line());
+                        eprint!(
+                            "{}",
+                            crush_lang_sdk::theme::render_diagnostics_ndjson(&diags)
+                        );
                     }
                 }
                 std::process::exit(1);
@@ -216,11 +226,44 @@ fn main() {
 /// The program can request capabilities this run doesn't grant, found before
 /// it ran (CRUSH-243), so `main` labels it `[capabilities]`.
 #[derive(Debug)]
-struct NotGranted(String);
+struct NotGranted {
+    /// The full text-mode explanation (what `Display` prints).
+    text: String,
+    /// One line for a `message`: what is wrong.
+    message: String,
+    /// What to do about it: the flag that grants each missing capability.
+    hint: String,
+}
+
+impl NotGranted {
+    fn new(path: &std::path::Path, missing: &[crush_lang_sdk::effects::MissingGrant]) -> Self {
+        let caps: Vec<&str> = missing.iter().map(|m| m.capability.as_str()).collect();
+        let mut flags: Vec<&str> = missing.iter().filter_map(|m| m.grant).collect();
+        flags.sort_unstable();
+        flags.dedup();
+        let hint = if flags.is_empty() {
+            "no grant in this build provides them".to_string()
+        } else {
+            format!("grant with {}", flags.join(" "))
+        };
+        Self {
+            text: format!(
+                "{} needs capabilities this run does not grant; nothing was run:\n{}",
+                path.display(),
+                crush_lang_sdk::effects::describe_missing(missing)
+            ),
+            message: format!(
+                "needs capabilities this run does not grant; nothing was run: {}",
+                caps.join(", ")
+            ),
+            hint,
+        }
+    }
+}
 
 impl std::fmt::Display for NotGranted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.text)
     }
 }
 
@@ -610,12 +653,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     if let Some(program) = &preflight {
         let missing = runtime.missing_grants(program)?;
         if !missing.is_empty() {
-            return Err(NotGranted(format!(
-                "{} needs capabilities this run does not grant; nothing was run:\n{}",
-                args.path.display(),
-                crush_lang_sdk::effects::describe_missing(&missing)
-            ))
-            .into());
+            return Err(NotGranted::new(&args.path, &missing).into());
         }
     }
 

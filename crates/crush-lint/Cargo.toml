@@ -1,6 +1,6 @@
 [package]
 name = "crush-lint"
-description = "AI-augmented linter for Crush — an ONNX-backed engine that supplements standard compiler diagnostics."
+description = "AI-augmented linter for Crush — a thin hint layer over the real crush-frontend parser and semantic checks."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
@@ -11,6 +11,10 @@ rust-version.workspace = true
 
 [dependencies]
 crush-diagnostics = { path = "../crush-diagnostics", version = "0.8.0" }
+crush-frontend = { path = "../crush-frontend", version = "0.8.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+
+[dev-dependencies]
+tempfile = "3"

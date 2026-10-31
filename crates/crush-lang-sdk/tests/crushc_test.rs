@@ -112,9 +112,10 @@ fn crushc_emits_json_diagnostic_for_type_error() {
     assert_eq!(parsed["code"].as_str(), Some("E-TP01"));
     assert_eq!(parsed["level"].as_str(), Some("error"));
     assert!(parsed["file"].is_string());
-    // Semantic errors don't yet carry source coordinates.
-    assert!(parsed["line"].is_null());
-    assert!(parsed["col"].is_null());
+    // CRUSH-315: semantic errors carry the position of the offending
+    // operator (`+`, line 1, column 26 of the one-line source).
+    assert_eq!(parsed["line"].as_u64(), Some(1));
+    assert_eq!(parsed["col"].as_u64(), Some(26));
     assert!(parsed["message"].as_str().unwrap_or("").contains("binary"));
 }
 
@@ -155,8 +156,8 @@ fn crushc_emits_json_diagnostic_for_io_error() {
         serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
     assert_eq!(parsed["code"].as_str(), Some("E-IO"));
     assert_eq!(parsed["level"].as_str(), Some("error"));
-    // IO failures don't carry source coordinates.
-    assert!(parsed["file"].is_null());
+    // IO failures name the file but carry no source coordinates.
+    assert!(parsed["file"].as_str().is_some_and(|f| f.ends_with("missing.crush")));
     assert!(parsed["line"].is_null());
     assert!(parsed["col"].is_null());
     assert!(

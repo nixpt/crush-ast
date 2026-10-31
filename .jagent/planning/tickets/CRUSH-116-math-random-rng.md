@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-116 |
 | **Priority** | P2 |
-| **Status** | **Done** — merged in `fb2a670` / v0.3.6 |
+| **Status** | Done — merged in `fb2a670` / v0.3.6 |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |

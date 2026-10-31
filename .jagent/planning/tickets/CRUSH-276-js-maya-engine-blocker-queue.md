@@ -7,16 +7,16 @@
 | **Status** | Backlog |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
-| **Dependencies** | CRUSH-266 (exports, both lowerings), CRUSH-zorro-18, CRUSH-zorro-20, CRUSH-zorro-44, COSM K3 (JS class slice) |
+| **Dependencies** | CRUSH-340 (exports, both lowerings), CRUSH-zorro-18, CRUSH-zorro-20, CRUSH-zorro-44, COSM K3 (JS class slice) |
 | **Estimated effort** | L (tracking ticket — the work is in the linked tickets) |
-| **Filed by** | muse — 2026-10-20, maya-engine compile audit (after CRUSH-266) |
+| **Filed by** | muse — 2026-10-20, maya-engine compile audit (after CRUSH-340, then numbered CRUSH-266) |
 
 ## Problem
 
-With CRUSH-266 landed, exported declarations survive on both JS lowerings.
+With CRUSH-340 landed, exported declarations survive on both JS lowerings.
 The next blockers for a real-world ES-module corpus are measurable. Corpus:
 `maya-engine` (`worlds-workspace/maya-engine`), 37 ESM files in `src/`,
-4,643 LOC, `three@0.180.0`. After CRUSH-266:
+4,643 LOC, `three@0.180.0`. After CRUSH-340:
 
 - **swc lowering** (current `.js` default): 3/37 walk; every refusal is loud.
 - **boa lowering** (intended default, CRUSH-250 step 6): 1/37 walks

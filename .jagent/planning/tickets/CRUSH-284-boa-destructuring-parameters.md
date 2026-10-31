@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-284 |
 | **Priority** | P1 |
-| **Status** | Open |
+| **Status** | Done — PR #288 merged 2026-10-22 |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | muse |
 | **Filed by** | muse — 2026-10-20, from the maya-engine sweep (CRUSH-276) |
@@ -73,3 +73,7 @@ assignments (separate shapes), destructuring `catch`/loop heads.
   member `new a.B()`, `performance.now()`, and `new Map`
   (zorro-17) respectively. One file (games/decor.js) now reaches
   destructuring *declarations*, which stay out of scope.
+
+## Survey 2026-10-31 (status)
+
+PR #288 (`agent/muse/CRUSH-284`) merged 2026-10-22. Destructuring declarations/assignments were out of its scope (CRUSH-287). Previous status: `Open`.

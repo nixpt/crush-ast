@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-9 |
 | **Priority** | P1; closes the last formatting silent entry |
-| **Status** | In progress; shared runtime kernel and conservative descriptor proofs |
+| **Status** | In Progress; shared runtime kernel and conservative descriptor proofs |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6, CRUSH-xps-7; CRUSH-xps-8 for numeric descriptors |

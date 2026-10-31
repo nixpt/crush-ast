@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-12 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | In Progress — implementation merged in PR #213 (2026-10-15); three verification criteria are unticked |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-197 |
@@ -122,3 +122,7 @@ CAST statement/control-flow compilation, xps-6/7 checks and SDK block fixtures.
 Start with existing supported/rejected cases in PR #213. Add only missing
 proof/corrections in an isolated worktree and preserve the rejection boundary
 unless a new lowering design has been reviewed.
+
+## Survey 2026-10-31 (status)
+
+PR #213 merged 2026-10-15. Three other criteria are still unticked. Previous status: `In review`.

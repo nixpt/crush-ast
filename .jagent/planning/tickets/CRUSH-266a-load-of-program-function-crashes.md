@@ -1,7 +1,7 @@
 # CRUSH-266a — `Load` of a program-level function name crashes at runtime
 
 > **Renumbered** by kai (2026-10-21) from `CRUSH-275` to `CRUSH-266a`, a residue suffix of the ticket it
-> came in with (PR #283, CRUSH-266), so no new ticket can claim the number again. CRUSH-275 was claimed three
+> came in with (PR #283, CRUSH-266 — renumbered CRUSH-340 on 2026-10-31), so no new ticket can claim the number again. CRUSH-275 was claimed three
 > times (PR #281's 1.0 criteria, PR #284's wheel CI ticket, and this one), and on the way here this ticket
 > briefly held 281, 283 and 284, each taken by a new ticket within hours.
 
@@ -12,9 +12,9 @@
 | **Status** | Done (superseded upstream — no code change needed) |
 | **Phase** | M4 |
 | **Assignee** | muse |
-| **Dependencies** | CRUSH-266 (JS walker keeps exported declarations; this makes their `Export` statements runnable) |
+| **Dependencies** | CRUSH-340 (JS walker keeps exported declarations; this makes their `Export` statements runnable) |
 | **Estimated effort** | S |
-| **Filed by** | muse — 2026-10-20, found while fixing CRUSH-266 |
+| **Filed by** | muse — 2026-10-20, found while fixing CRUSH-340 (then CRUSH-266) |
 
 ## Problem
 
@@ -33,7 +33,7 @@ walks, compiles to CASM/CVM1, then crashes at the `Export { value: Var("double")
 statement. Function *values* elsewhere in this toolchain are name strings
 (the lambda compiler emits `push_str <lambda_name>` and stores that), so a
 `Load` of a known function name should materialise the same string instead
-of reading an uninitialised local slot. CRUSH-266 makes this load-bearing:
+of reading an uninitialised local slot. CRUSH-340 makes this load-bearing:
 every `export function` in a JS module now keeps its body *and* its
 `Export { Var(name) }` statement.
 
@@ -69,6 +69,6 @@ closure value, strictly better than this ticket's proposed `push_str`
 name-string. The `push_str` implementation written against the old `main`
 was dropped during the rebase (`git checkout --ours` on `compiler.rs` and
 its tests). End-to-end coverage that the original reproduction prints `42`
-lives in CRUSH-266's `crates/crush-lang-js/tests/export_defs_test.rs`
+lives in CRUSH-340's `crates/crush-lang-js/tests/export_defs_test.rs`
 (`exported_function_is_callable_end_to_end`), which passes on the rebased
 branch. No code change in this ticket.

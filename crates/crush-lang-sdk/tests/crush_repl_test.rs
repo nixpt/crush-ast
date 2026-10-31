@@ -127,22 +127,15 @@ fn crush_repl_emits_json_diagnostic_for_runtime_error() {
         "step-quota runtime errors must surface as E-RT05"
     );
     assert_eq!(parsed["level"].as_str(), Some("error"));
-    // Pin the `Vm`-arm shape: `RuntimeError::Vm` carries no source so
-    // `JsonDiagnostic::runtime_error` sets `message == ""` and
-    // `hint == Some(vm_err.to_string())`. If a future contributor
-    // flattens the synthetic wrap or drops the dedupe convention, this
-    // assertion will catch it before editors see duplicate-text records.
-    assert_eq!(
-        parsed["message"].as_str(),
-        Some(""),
-        "Vm-arm must dedupe VmError display into hint, not message"
-    );
-    let hint = parsed["hint"].as_str();
+    // Pin the `Vm`-arm shape (CRUSH-315): the error text is the `message`,
+    // like every other code; `hint` stays empty.
+    let message = parsed["message"].as_str().unwrap_or("");
     assert!(
-        hint.is_some() && !hint.unwrap().is_empty(),
-        "Vm-arm hint must carry non-empty VmError display, got: {:?}",
-        parsed["hint"]
+        message.contains("instruction quota"),
+        "Vm-arm message must carry the VmError display, got: {:?}",
+        parsed["message"]
     );
+    assert!(parsed["hint"].is_null(), "Vm-arm carries no hint");
 }
 
 #[test]
