@@ -15,11 +15,19 @@
 //!
 //! # Rules
 //!
-//! - **Search path.** `import a.b` looks for `a/b.crush` in, in order: the
-//!   importing file's directory, each [`ImportOptions::search_paths`] entry
-//!   (`-L DIR`, then `CRUSH_PATH`). The first hit wins. There is no
-//!   `a/b/mod.crush` form. Not found is a compile error that lists every
-//!   directory searched.
+//! - **Packages.** When the first segment of `import a.b` names one of
+//!   [`ImportOptions::packages`] (crush-pkg's dependencies, and the package
+//!   itself), the import resolves inside that package and nowhere else:
+//!   `import facet` loads the package's entry file, `import facet.env` loads
+//!   `env.crush` in the package's root directory. A package name wins over a
+//!   same-named file on the search path: a declared dependency is the more
+//!   explicit statement. A missing file inside a package is a compile error
+//!   naming the package.
+//! - **Search path.** Otherwise `import a.b` looks for `a/b.crush` in, in
+//!   order: the importing file's directory, each
+//!   [`ImportOptions::search_paths`] entry (`-L DIR`, then `CRUSH_PATH`). The
+//!   first hit wins. There is no `a/b/mod.crush` form. Not found is a compile
+//!   error that lists every directory searched.
 //! - **Names.** A module's functions are merged under a module-qualified name,
 //!   `<module path with :: for .>::<name>` (`facet::facet_parse`,
 //!   `util::strings::title`) — the separator the lifted methods already use
@@ -78,13 +86,33 @@ pub struct ImportOptions {
     /// order: `-L DIR` flags first, then `CRUSH_PATH` (see
     /// [`ImportOptions::with_crush_path`]).
     pub search_paths: Vec<PathBuf>,
+    /// Named package roots, consulted before the search path (see the module
+    /// docs). crush-pkg fills this with the package's dependencies.
+    pub packages: Vec<ImportPackage>,
     /// The deepest import chain allowed (the root file imports at depth 1).
     pub max_depth: usize,
 }
 
+/// A package importable by name: `import <name>` loads `entry`,
+/// `import <name>.a.b` loads `<root>/a/b.crush`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportPackage {
+    /// The name `import` uses (one identifier: no `.`).
+    pub name: String,
+    /// The directory `import <name>.a.b` resolves in. crush-pkg uses the
+    /// directory of the package's entry file (`src/` in the standard layout).
+    pub root: PathBuf,
+    /// The package's entry file (its `capsule.toml` `entry`).
+    pub entry: PathBuf,
+}
+
 impl Default for ImportOptions {
     fn default() -> Self {
-        Self { search_paths: Vec::new(), max_depth: DEFAULT_MAX_IMPORT_DEPTH }
+        Self {
+            search_paths: Vec::new(),
+            packages: Vec::new(),
+            max_depth: DEFAULT_MAX_IMPORT_DEPTH,
+        }
     }
 }
 
@@ -330,6 +358,69 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
+    /// The file `import module_path` (written in `file`, in `dir`) names: in
+    /// a package when the first segment is a package name, else on the
+    /// search path.
+    fn find(
+        &self,
+        dir: &Path,
+        file: &str,
+        module_path: &str,
+        at: Option<(usize, usize)>,
+    ) -> Result<PathBuf> {
+        let mut segs = module_path.split('.');
+        let first = segs.next().unwrap_or_default();
+        if let Some(pkg) = self.opts.packages.iter().find(|p| p.name == first) {
+            let rest: Vec<&str> = segs.collect();
+            let found = if rest.is_empty() {
+                pkg.entry.clone()
+            } else {
+                let mut p = pkg.root.clone();
+                p.extend(&rest);
+                p.set_extension("crush");
+                p
+            };
+            if found.is_file() {
+                return Ok(found);
+            }
+            return Err(import_error(
+                file,
+                at,
+                format!(
+                    "`import {module_path}`: package `{first}` (at {}) has no {}",
+                    display_dir(&pkg.root),
+                    found.display()
+                ),
+            ));
+        }
+        let mut rel = PathBuf::new();
+        for seg in module_path.split('.') {
+            rel.push(seg);
+        }
+        rel.set_extension("crush");
+        let mut searched = vec![dir.to_path_buf()];
+        searched.extend(self.opts.search_paths.iter().cloned());
+        if let Some(found) = searched.iter().map(|d| d.join(&rel)).find(|p| p.is_file()) {
+            return Ok(found);
+        }
+        let dirs: Vec<String> = searched.iter().map(|d| format!("  {}", display_dir(d))).collect();
+        let pkgs = if self.opts.packages.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<&str> = self.opts.packages.iter().map(|p| p.name.as_str()).collect();
+            format!("\n(packages importable by name: {})", names.join(", "))
+        };
+        Err(import_error(
+            file,
+            at,
+            format!(
+                "`import {module_path}`: module not found — no {} in any of:\n{}{pkgs}",
+                rel.display(),
+                dirs.join("\n")
+            ),
+        ))
+    }
+
     /// Resolve the `imports` of one file (in `dir`, shown as `file`) and build
     /// its scope. `own` is the module the file is; `local` names a definition
     /// of the importing file that a selective name would collide with.
@@ -431,26 +522,7 @@ impl Resolver<'_> {
         module_path: &str,
         at: Option<(usize, usize)>,
     ) -> Result<usize> {
-        let mut rel = PathBuf::new();
-        for seg in module_path.split('.') {
-            rel.push(seg);
-        }
-        rel.set_extension("crush");
-        let mut searched = vec![dir.to_path_buf()];
-        searched.extend(self.opts.search_paths.iter().cloned());
-        let Some(found) = searched.iter().map(|d| d.join(&rel)).find(|p| p.is_file()) else {
-            let dirs: Vec<String> =
-                searched.iter().map(|d| format!("  {}", display_dir(d))).collect();
-            return Err(import_error(
-                file,
-                at,
-                format!(
-                    "`import {module_path}`: module not found — no {} in any of:\n{}",
-                    rel.display(),
-                    dirs.join("\n")
-                ),
-            ));
-        };
+        let found = self.find(dir, file, module_path, at)?;
         let canonical = std::fs::canonicalize(&found).unwrap_or_else(|_| found.clone());
         if let Some(&idx) = self.by_file.get(&canonical) {
             return Ok(idx);

@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crush_frontend::import_system::{ImportOptions, ImportPackage};
+
 use crate::manifest::Manifest;
 
 pub struct DepResolution {
@@ -26,6 +28,9 @@ pub struct PackageBuilder {
     root_dir: PathBuf,
     /// Never touch the network for git dependencies (`--offline`).
     offline: bool,
+    /// Don't print the per-stage detail lines (`compiled …`, `wrote …`):
+    /// for front ends such as squeeze that print their own status.
+    quiet: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -406,14 +411,38 @@ fn read_dep_source(root: &Path, dep: &crate::manifest::Dependency) -> Option<Str
     std::fs::read_to_string(dep_path.join(&dep_manifest.capsule.entry)).ok()
 }
 
+/// The name a package is imported by: its `capsule.toml` name with `-`
+/// turned into `_` (`my-lib` → `import my_lib`), as cargo does for crates.
+pub fn import_name(package: &str) -> String {
+    package.replace('-', "_")
+}
+
+/// Whether `entry` has a top-level Crush module `import` (a line starting
+/// `import ` that is not an `import @…` external form) — what switches a
+/// package's build to import mode. A text scan, not a parse: a file that
+/// fails to parse fails either way, with the compiler's error.
+pub fn uses_imports(entry: &Path) -> bool {
+    let Ok(src) = std::fs::read_to_string(entry) else { return false };
+    src.lines().any(|line| {
+        line.strip_prefix("import")
+            .is_some_and(|rest| rest.starts_with([' ', '\t']) && !rest.trim_start().starts_with('@'))
+    })
+}
+
 impl PackageBuilder {
     pub fn new(manifest: Manifest, root_dir: PathBuf) -> Self {
-        Self { manifest, root_dir, offline: false }
+        Self { manifest, root_dir, offline: false, quiet: false }
     }
 
     /// Resolve git dependencies from `capsule.lock` and the local cache only.
     pub fn offline(mut self, offline: bool) -> Self {
         self.offline = offline;
+        self
+    }
+
+    /// Suppress the detail lines `build` / `write_output` print to stdout.
+    pub fn quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
         self
     }
 
@@ -439,10 +468,26 @@ impl PackageBuilder {
         Ok(crate::capcheck::CheckReport { used, findings })
     }
 
+    /// Compile the package. Two modes, picked by the entry file:
+    ///
+    /// - **import mode** — the entry has a top-level Crush `import` (see
+    ///   [`uses_imports`]): the entry file is compiled on its own and reaches
+    ///   other code only through `import`. Its directory (`src/`) is a search
+    ///   root, and every dependency, plus the package itself, is importable
+    ///   by name ([`import_options`](Self::import_options)). Nothing is
+    ///   concatenated; a dependency that is never imported contributes
+    ///   nothing.
+    /// - **concatenation mode** (legacy, no `import` in the entry): the entry
+    ///   and every dependency's entry are pasted into one source, so bare
+    ///   calls of a dependency's functions resolve, as before imports existed.
     pub fn build(&self) -> anyhow::Result<BuildOutput> {
+        let entry = self.root_dir.join(&self.manifest.capsule.entry);
+        if entry.is_file() && uses_imports(&entry) {
+            let deps = self.resolve_deps()?;
+            return self.compile_file(&entry, deps);
+        }
         let deps = self.resolve_deps()?;
         let sources = self.collect_all_sources()?;
-        let entry = self.root_dir.join(&self.manifest.capsule.entry);
 
         let has_entry = sources.iter().any(|(p, _)| p == &entry);
         if !has_entry {
@@ -480,13 +525,15 @@ impl PackageBuilder {
         let functions: Vec<String> = program.manifest.functions.keys().cloned().collect();
         let all_source_paths: Vec<PathBuf> = sources.into_iter().map(|(p, _)| p).collect();
 
-        println!(
-            "  compiled {} -> {} function(s), {} byte(s)",
-            entry.display(),
-            functions.len(),
-            program.code.len(),
-        );
-        if !deps.is_empty() {
+        if !self.quiet {
+            println!(
+                "  compiled {} -> {} function(s), {} byte(s)",
+                entry.display(),
+                functions.len(),
+                program.code.len(),
+            );
+        }
+        if !deps.is_empty() && !self.quiet {
             println!("  deps: {}", dep_names.join(", "));
         }
 
@@ -497,6 +544,68 @@ impl PackageBuilder {
             functions,
             deps,
         })
+    }
+
+    /// Compile one Crush file (the entry, or a `tests/*.crush` file) in import
+    /// mode, with this package's dependencies and `src/` importable. What
+    /// `squeeze test` compiles each test with. Resolves (and may fetch) git
+    /// dependencies and refreshes `capsule.lock`, like [`build`](Self::build).
+    pub fn build_file(&self, file: &Path) -> anyhow::Result<BuildOutput> {
+        let deps = self.resolve_deps()?;
+        self.compile_file(file, deps)
+    }
+
+    fn compile_file(&self, file: &Path, deps: Vec<DepResolution>) -> anyhow::Result<BuildOutput> {
+        let imports = self.import_options(&deps);
+        let (casm, warnings) = crush_lang_sdk::compile::compile_crush_file_to_casm(
+            file,
+            &imports,
+            &crush_lang_sdk::compile::CompileOptions::default(),
+        )?;
+        let mut program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
+        program.warnings = warnings;
+        let functions: Vec<String> = program.manifest.functions.keys().cloned().collect();
+        if !self.quiet {
+            println!(
+                "  compiled {} -> {} function(s), {} byte(s)",
+                file.display(),
+                functions.len(),
+                program.code.len(),
+            );
+        }
+        if !deps.is_empty() && !self.quiet {
+            let names: Vec<&str> = deps.iter().map(|d| d.name.as_str()).collect();
+            println!("  deps: {}", names.join(", "));
+        }
+        Ok(BuildOutput { program, casm, source_files: vec![file.to_path_buf()], functions, deps })
+    }
+
+    /// Where an import-mode compile looks for modules: the entry file's
+    /// directory (so `src/util/x.crush` can `import cli` → `src/cli.crush`),
+    /// then `CRUSH_PATH`; and, by name, each resolved dependency and the
+    /// package itself ([`import_name`]). A package's dotted imports
+    /// (`import facet.env`) resolve in the directory of its entry file.
+    pub fn import_options(&self, deps: &[DepResolution]) -> ImportOptions {
+        let entry = self.root_dir.join(&self.manifest.capsule.entry);
+        let src_dir = entry.parent().map(Path::to_path_buf).unwrap_or_else(|| self.root_dir.clone());
+        let mut opts = ImportOptions::with_crush_path([src_dir.clone()]);
+        let own = import_name(&self.manifest.capsule.name);
+        for dep in deps {
+            let name = import_name(&dep.name);
+            if name == own || opts.packages.iter().any(|p| p.name == name) {
+                continue;
+            }
+            let root = dep.source_file.parent().map(Path::to_path_buf).unwrap_or_else(|| dep.root.clone());
+            opts.packages.push(ImportPackage { name, root, entry: dep.source_file.clone() });
+        }
+        opts.packages.push(ImportPackage { name: own, root: src_dir, entry });
+        opts
+    }
+
+    /// Resolve the dependencies (fetching git ones not yet cached, unless
+    /// offline) and refresh `capsule.lock`, without compiling anything.
+    pub fn resolve(&self) -> anyhow::Result<Vec<DepResolution>> {
+        self.resolve_deps()
     }
 
     fn resolve_deps(&self) -> anyhow::Result<Vec<DepResolution>> {
@@ -540,7 +649,9 @@ impl PackageBuilder {
             }
 
             let source = std::fs::read_to_string(&dep_entry)?;
-            println!("  resolved dep {} -> {}", name, dep_entry.display());
+            if !self.quiet {
+                println!("  resolved dep {} -> {}", name, dep_entry.display());
+            }
 
             resolved.push(DepResolution {
                 name: name.clone(),
@@ -583,8 +694,13 @@ impl PackageBuilder {
     }
 
     pub fn write_output(&self, output: &BuildOutput) -> anyhow::Result<()> {
-        let target_dir = self.root_dir.join("target");
-        std::fs::create_dir_all(&target_dir)?;
+        self.write_output_to(output, &self.root_dir.join("target"))
+    }
+
+    /// [`write_output`](Self::write_output) into `target_dir` instead of
+    /// `<root>/target` (squeeze's `--release` profile directory).
+    pub fn write_output_to(&self, output: &BuildOutput, target_dir: &Path) -> anyhow::Result<()> {
+        std::fs::create_dir_all(target_dir)?;
 
         let name = &self.manifest.capsule.name;
 
@@ -593,7 +709,9 @@ impl PackageBuilder {
         let cvm_path = target_dir.join(format!("{}.cvm1", name));
         let blob = output.program.to_blob();
         std::fs::write(&cvm_path, blob)?;
-        println!("  wrote {}", cvm_path.display());
+        if !self.quiet {
+            println!("  wrote {}", cvm_path.display());
+        }
 
         // The CASM IR as CASM JSON (`casm::Program`), which `crush-run` runs.
         // (Before #365 this was a `.casm.json` summary — function names and a
@@ -603,7 +721,9 @@ impl PackageBuilder {
             .casm
             .save(&casm_path)
             .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", casm_path.display()))?;
-        println!("  wrote {}", casm_path.display());
+        if !self.quiet {
+            println!("  wrote {}", casm_path.display());
+        }
 
         Ok(())
     }

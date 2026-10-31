@@ -1411,3 +1411,9 @@ CRUSH-110, captain's qualified+selective model. Merge before SemanticAnalyzer::c
 Reason:
 .casm = CASM JSON, .cvms = CVM1 assembly text, .cvm1 canonical bytecode (.cvm alias), CAST_VERSION 0.1.0 written by every producer. CVM1 assembly carries its manifest as .cap lines (chosen over crush-run inferring caps) so the grant travels with the file like .cvm1/.casm. Artifact emits write <stem>.<ext>, views go to stdout, -o - is stdout. Table: docs/FILE-FORMATS.md.
 
+
+## 2026-10-31T04:45:38-05:00 — crush-pkg import mode: dependencies are importable by name, not flat search roots
+
+Reason:
+CRUSH-367. A package whose entry has a top-level import compiles file-by-file: src/ (the entry's dir) is a search root, and each dependency plus the package itself is a NAMED package root (ImportOptions::packages): import NAME -> its entry file, import NAME.a.b -> a/b.crush beside the entry. Rejected: putting each dependency's directory on the flat search path. That makes every file in every dependency globally importable under its bare file name, two deps with a same-named file resolve silently by order, and a dep whose entry is src/lib.crush could not be imported by its name at all. Named roots keep one namespace per dependency and make the package name the import name (dash->underscore, like cargo). A package name wins over a same-named file in src/ (declared deps are the explicit statement). Mode is chosen by a text scan of the entry for a top-level 'import ' (not @-forms): legacy concatenation stays for packages without imports (tests, facet consumers written before #366) and should be retired when none remain.
+

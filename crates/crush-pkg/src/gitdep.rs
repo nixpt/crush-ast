@@ -8,8 +8,9 @@
 //! ```
 //!
 //! A git dependency is fetched into a cache, checked out at one exact
-//! commit, and from there treated exactly like a path dependency (its
-//! `capsule.toml` entry is concatenated into the program). The commit a
+//! commit, and from there treated exactly like a path dependency (importable
+//! by name in import mode, concatenated in the legacy mode; see
+//! `PackageBuilder::build`). The commit a
 //! `tag`/`branch` resolved to is recorded in `capsule.lock`, so later builds
 //! are reproducible even if the tag moves or the branch advances.
 //!
